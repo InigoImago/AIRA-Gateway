@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import ValidationError
 
 from aira_common.logging import get_logger
+from aira_common.observability import set_span_attributes
 from aira_gateway.api.gemini import schemas
 from aira_gateway.api.gemini.errors import gemini_error_response as _error
 from aira_gateway.api.gemini.mapping import (
@@ -25,6 +26,10 @@ from aira_gateway.api.gemini.mapping import (
 )
 from aira_gateway.core.canonical import CanonicalChunk, CanonicalRequest
 from aira_gateway.persistence.recorder import record_request
+from aira_gateway.pipeline.dispatch import dispatch_with_fallback
+from aira_gateway.pipeline.engine import PipelineEngine
+from aira_gateway.pipeline.errors import PipelineRejected
+from aira_gateway.pipeline.store import PipelineStore
 from aira_gateway.upstreams.base import ProviderRegistry, Upstream, UpstreamError
 
 _log = get_logger("aira_gateway")
@@ -64,6 +69,37 @@ def _registry(request: Request) -> ProviderRegistry:
     return registry
 
 
+async def _run_pipeline(
+    request: Request, canonical: CanonicalRequest
+) -> tuple[CanonicalRequest, tuple[str, ...]]:
+    """Apply the use case's pre-dispatch pipeline (FRD-300). Pass-through when none is configured.
+
+    Returns the effective request (possibly re-routed) and the dispatch fallback chain. May raise
+    ``PipelineRejected`` when a filter/allow-check blocks the request.
+    """
+    store: PipelineStore = request.app.state.pipeline_store
+    engine: PipelineEngine = request.app.state.pipeline_engine
+    use_case = getattr(getattr(request.state, "attribution", None), "use_case", None)
+    pipeline = await store.get(use_case)
+    if pipeline is None:
+        return canonical, ()
+    outcome = await engine.run(pipeline, canonical)
+    if outcome.decisions:
+        set_span_attributes(
+            {
+                "aira.pipeline.decisions": len(outcome.decisions),
+                "aira.pipeline.model": outcome.request.model,
+            }
+        )
+        _log.info(
+            "pipeline_applied",
+            use_case=use_case,
+            model=outcome.request.model,
+            decisions=outcome.decisions,
+        )
+    return outcome.request, outcome.fallback_models
+
+
 @router.get("/v1beta/models")
 async def list_models(request: Request) -> JSONResponse:
     models = [upstream_model_to_gemini(m) for m in _registry(request).models()]
@@ -101,17 +137,30 @@ async def generate(resource: str, request: Request) -> Response:
         except ValidationError as exc:
             return _error(400, _first_error(exc), "INVALID_ARGUMENT")
         canonical = gemini_to_canonical(model, gemini_request)
+
+        try:
+            canonical, fallbacks = await _run_pipeline(request, canonical)
+        except PipelineRejected as exc:
+            return _error(exc.code, exc.message, exc.status)
+
+        # Routing may have changed the model — resolve the effective provider.
+        provider = _registry(request).provider_for(canonical.model)
+        if provider is None:
+            return _error(404, f"Model '{canonical.model}' not found.", "NOT_FOUND")
+
         if method == "generateContent":
             started = time.monotonic()
             try:
-                canonical_response = await provider.generate(canonical)
+                canonical_response = await dispatch_with_fallback(
+                    _registry(request), canonical, fallbacks
+                )
             except UpstreamError as exc:
                 return _upstream_error(exc)
             payload = canonical_to_gemini(canonical_response).model_dump()
             await record_request(
                 request,
                 operation="generateContent",
-                model=model,
+                model=canonical_response.model,
                 status=200,
                 usage=canonical_response.usage,
                 latency_ms=_elapsed_ms(started),

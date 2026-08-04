@@ -26,6 +26,8 @@ from aira_gateway.config import GatewaySettings
 from aira_gateway.db.base import build_engine, build_sessionmaker, create_all
 from aira_gateway.middleware import UseCasePathMiddleware
 from aira_gateway.persistence.redaction import NoOpRedactor
+from aira_gateway.pipeline.engine import PipelineEngine
+from aira_gateway.pipeline.store import PipelineStore
 from aira_gateway.routes.health import router as health_router
 from aira_gateway.upstreams.base import ProviderRegistry, Upstream
 from aira_gateway.upstreams.gemini import build_gemini_upstream
@@ -65,7 +67,10 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
     gemini = build_gemini_upstream(settings)
     if gemini is not None:
         providers.append(gemini)
-    app.state.providers = ProviderRegistry(providers)
+    registry = ProviderRegistry(providers)
+    app.state.providers = registry
+    app.state.pipeline_engine = PipelineEngine(registry)
+    app.state.pipeline_store = PipelineStore(sessionmaker)
     app.state.db_engine = engine
     app.state.db_sessionmaker = sessionmaker
     app.state.oidc_validator = build_oidc_validator(settings)

@@ -88,3 +88,14 @@ class UseCaseMemberRead(Base):
     use_case_slug: Mapped[str] = mapped_column(String(64), index=True)
     subject: Mapped[str] = mapped_column(String(255), index=True)
     role: Mapped[str] = mapped_column(String(16), default="user")
+
+
+class PipelineConfigRead(Base):
+    """Gateway read-model of a use case's pre-dispatch pipeline, fed from Management (FRD-300)."""
+
+    __tablename__ = "pipeline_configs"
+
+    use_case: Mapped[str] = mapped_column(String(64), primary_key=True)
+    steps: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    fallback_models: Mapped[list[str]] = mapped_column(JSON, default=list)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

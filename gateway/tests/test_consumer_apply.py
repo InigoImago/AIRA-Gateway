@@ -10,7 +10,12 @@ from aira_gateway.auth.service import ApiKeyService
 from aira_gateway.consumer.apply import apply_event
 from aira_gateway.consumer.worker import decode_event_type
 from aira_gateway.db.base import build_engine, build_sessionmaker, create_all
-from aira_gateway.db.models import ApiKey, UseCaseMemberRead, UseCaseRead
+from aira_gateway.db.models import (
+    ApiKey,
+    PipelineConfigRead,
+    UseCaseMemberRead,
+    UseCaseRead,
+)
 
 
 @pytest_asyncio.fixture
@@ -125,6 +130,36 @@ async def test_api_key_revoked_unknown_prefix_is_noop(make_session) -> None:
     async with make_session() as session:
         await apply_event(session, "api_key.revoked", {"prefix": "deadbeef"})
     assert await _all(make_session, ApiKey) == []
+
+
+# ---- pipelines (FRD-300) ----------------------------------------------------------------
+
+
+async def test_pipeline_upsert_is_idempotent_and_updates(make_session) -> None:
+    async with make_session() as session:
+        await apply_event(
+            session,
+            "pipeline.upserted",
+            {"use_case": "uc", "steps": [{"type": "allow_check"}], "fallback_models": ["a"]},
+        )
+        await apply_event(
+            session,
+            "pipeline.upserted",
+            {"use_case": "uc", "steps": [], "fallback_models": ["b", "c"]},
+        )
+    rows = await _all(make_session, PipelineConfigRead)
+    assert len(rows) == 1
+    assert rows[0].fallback_models == ["b", "c"]
+    assert rows[0].steps == []
+
+
+async def test_pipeline_delete_removes_config(make_session) -> None:
+    async with make_session() as session:
+        await apply_event(
+            session, "pipeline.upserted", {"use_case": "uc", "steps": [], "fallback_models": []}
+        )
+        await apply_event(session, "pipeline.deleted", {"use_case": "uc"})
+    assert await _all(make_session, PipelineConfigRead) == []
 
 
 def test_decode_event_type() -> None:

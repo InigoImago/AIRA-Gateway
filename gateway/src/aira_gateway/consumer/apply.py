@@ -11,7 +11,12 @@ from typing import Any
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from aira_gateway.db.models import ApiKey, UseCaseMemberRead, UseCaseRead
+from aira_gateway.db.models import (
+    ApiKey,
+    PipelineConfigRead,
+    UseCaseMemberRead,
+    UseCaseRead,
+)
 
 
 async def apply_event(session: AsyncSession, event_type: str, payload: dict[str, Any]) -> None:
@@ -28,6 +33,10 @@ async def apply_event(session: AsyncSession, event_type: str, payload: dict[str,
         await _upsert_api_key(session, payload)
     elif event_type == "api_key.revoked":
         await _set_api_key_active(session, payload["prefix"], active=False)
+    elif event_type == "pipeline.upserted":
+        await _upsert_pipeline(session, payload)
+    elif event_type == "pipeline.deleted":
+        await _delete_pipeline(session, payload["use_case"])
     else:
         return
     await session.commit()
@@ -108,3 +117,21 @@ async def _set_api_key_active(session: AsyncSession, prefix: str, *, active: boo
     record = result.scalar_one_or_none()
     if record is not None:
         record.is_active = active
+
+
+async def _upsert_pipeline(session: AsyncSession, payload: dict[str, Any]) -> None:
+    """Upsert a use case's pipeline config, keyed by use case (FRD-300)."""
+    steps = payload.get("steps", [])
+    fallback = payload.get("fallback_models", [])
+    record = await session.get(PipelineConfigRead, payload["use_case"])
+    if record is None:
+        session.add(
+            PipelineConfigRead(use_case=payload["use_case"], steps=steps, fallback_models=fallback)
+        )
+    else:
+        record.steps = steps
+        record.fallback_models = fallback
+
+
+async def _delete_pipeline(session: AsyncSession, use_case: str) -> None:
+    await session.execute(delete(PipelineConfigRead).where(PipelineConfigRead.use_case == use_case))

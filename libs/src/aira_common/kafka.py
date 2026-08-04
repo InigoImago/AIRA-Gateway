@@ -17,6 +17,7 @@ from aira_common.observability import kafka_headers_from_context
 USECASE_TOPIC = "aira.usecases"
 MEMBERSHIP_TOPIC = "aira.memberships"
 API_KEY_TOPIC = "aira.api-keys"
+PIPELINE_TOPIC = "aira.pipelines"
 
 EVENT_TYPE_HEADER = "event_type"
 
