@@ -25,6 +25,7 @@ from aira_gateway.auth.service import ApiKeyService
 from aira_gateway.config import GatewaySettings
 from aira_gateway.db.base import build_engine, build_sessionmaker, create_all
 from aira_gateway.middleware import UseCasePathMiddleware
+from aira_gateway.persistence.redaction import NoOpRedactor
 from aira_gateway.routes.health import router as health_router
 from aira_gateway.upstreams.base import ProviderRegistry
 from aira_gateway.upstreams.mock import MockProvider
@@ -63,6 +64,7 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
     app.state.db_engine = engine
     app.state.db_sessionmaker = sessionmaker
     app.state.oidc_validator = build_oidc_validator(settings)
+    app.state.redactor = NoOpRedactor()
 
     if otel_enabled:
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor

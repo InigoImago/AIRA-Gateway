@@ -7,7 +7,9 @@ provider, and mapped back. Errors use the Gemini error envelope.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+import time
+from collections.abc import AsyncIterator
+from typing import Any
 
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -21,7 +23,13 @@ from aira_gateway.api.gemini.mapping import (
     upstream_model_to_gemini,
 )
 from aira_gateway.core.canonical import CanonicalChunk, CanonicalRequest
+from aira_gateway.persistence.recorder import record_request
 from aira_gateway.upstreams.base import ProviderRegistry, Upstream
+
+
+def _elapsed_ms(started: float) -> int:
+    return int((time.monotonic() - started) * 1000)
+
 
 router = APIRouter(tags=["gemini"])
 
@@ -75,18 +83,44 @@ async def generate(resource: str, request: Request) -> Response:
             return _error(400, _first_error(exc), "INVALID_ARGUMENT")
         canonical = gemini_to_canonical(model, gemini_request)
         if method == "generateContent":
-            return JSONResponse(canonical_to_gemini(provider.generate(canonical)).model_dump())
-        return _stream_response(provider, canonical)
+            started = time.monotonic()
+            canonical_response = provider.generate(canonical)
+            payload = canonical_to_gemini(canonical_response).model_dump()
+            await record_request(
+                request,
+                operation="generateContent",
+                model=model,
+                status=200,
+                usage=canonical_response.usage,
+                latency_ms=_elapsed_ms(started),
+                request_payload=body,
+                response_payload=payload,
+            )
+            return JSONResponse(payload)
+        return _stream_response(request, provider, canonical, body)
 
     if method == "embedContent":
         try:
             embed_request = schemas.EmbedContentRequest.model_validate(body)
         except ValidationError as exc:
             return _error(400, _first_error(exc), "INVALID_ARGUMENT")
+        started = time.monotonic()
         text = "".join(part.text for part in embed_request.content.parts)
         values = provider.embed(model, text)
-        response = schemas.EmbedContentResponse(embedding=schemas.ContentEmbedding(values=values))
-        return JSONResponse(response.model_dump())
+        payload = schemas.EmbedContentResponse(
+            embedding=schemas.ContentEmbedding(values=values)
+        ).model_dump()
+        await record_request(
+            request,
+            operation="embedContent",
+            model=model,
+            status=200,
+            usage=None,
+            latency_ms=_elapsed_ms(started),
+            request_payload=body,
+            response_payload=payload,
+        )
+        return JSONResponse(payload)
 
     return _error(400, f"Unknown method '{method}'.", "INVALID_ARGUMENT")
 
@@ -110,9 +144,30 @@ def _chunk_to_gemini(chunk: CanonicalChunk, model: str) -> schemas.GenerateConte
     )
 
 
-def _stream_response(provider: Upstream, canonical: CanonicalRequest) -> StreamingResponse:
-    def generate_chunks() -> Iterator[str]:
+def _stream_response(
+    request: Request,
+    provider: Upstream,
+    canonical: CanonicalRequest,
+    body: dict[str, Any],
+) -> StreamingResponse:
+    async def generate_chunks() -> AsyncIterator[str]:
+        started = time.monotonic()
+        parts: list[str] = []
+        final_usage = None
         for chunk in provider.stream_generate(canonical):
+            if chunk.usage is not None:
+                final_usage = chunk.usage
+            parts.append(chunk.text_delta)
             yield _chunk_to_gemini(chunk, canonical.model).model_dump_json() + "\n"
+        await record_request(
+            request,
+            operation="streamGenerateContent",
+            model=canonical.model,
+            status=200,
+            usage=final_usage,
+            latency_ms=_elapsed_ms(started),
+            request_payload=body,
+            response_payload={"text": "".join(parts)},
+        )
 
     return StreamingResponse(generate_chunks(), media_type="application/x-ndjson")

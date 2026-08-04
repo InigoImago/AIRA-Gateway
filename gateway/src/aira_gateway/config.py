@@ -33,6 +33,9 @@ class GatewaySettings(BaseAiraSettings):
     # Require an explicit use case on authenticated (non-demo) requests (FRD-102).
     require_use_case: bool = False
 
+    # Persist request/response payloads (FRD-103). When False, only metadata is stored.
+    store_payloads: bool = True
+
     # OIDC bearer validation (Keycloak). When disabled, only API keys are accepted.
     oidc_enabled: bool = False
     oidc_issuer: str = ""

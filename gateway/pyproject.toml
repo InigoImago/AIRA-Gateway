@@ -11,6 +11,7 @@ dependencies = [
     "sqlalchemy[asyncio]>=2.0",
     "psycopg[binary]>=3.2",
     "pyjwt[crypto]>=2.9",
+    "alembic>=1.13",
 ]
 
 [build-system]

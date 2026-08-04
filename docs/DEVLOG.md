@@ -5,6 +5,24 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-04 — FRD-103: request/response persistence + Alembic
+- **`request_logs`** table + `RequestLogService`: persist each dispatched request/response with
+  attribution (subject, auth_method, use_case), source IP, model, operation, token usage, status,
+  latency, and **trace_id** (correlates to Grafana). Wired into generate/embed/stream routes via
+  `record_request`.
+- **Source IP** from first `X-Forwarded-For` hop else socket peer. **Redaction hook**
+  (`Redactor`/`NoOpRedactor`) + `store_payloads` toggle (metadata-only when off).
+- **Alembic** introduced for the gateway DB (`migrations/`, async env, `0001_initial` = api_keys +
+  request_logs); `make migrate-gateway`. Dev/tests keep `create_all` (SQLite/bootstrap).
+- **Gates green**: 149 tests, **100% coverage**; ruff + mypy --strict clean. Route persistence tested
+  via httpx ASGITransport (hermetic SQLite).
+- **End-to-end verified**: alembic migrated Postgres; a `:generateContent` call wrote a `request_logs`
+  row with subject=demo, use_case=demo-uc, source_ip=203.0.113.7 (XFF), tokens 3/6/9, trace_id set,
+  payloads stored.
+- **Next: FRD-104** (mock upstream full fidelity) / **FRD-105** (tracing spans + IP on the span).
+
+---
+
 ## 2026-08-04 — FRD-102: attribution & use-case selection (OIDC)
 - **Problem addressed**: an OIDC token authenticates the *identity*, not *which use case* — a user
   can be in several. Solution: explicit per-request use-case **selector** + membership authorization

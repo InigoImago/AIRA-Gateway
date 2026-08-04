@@ -92,8 +92,10 @@ routes via **API keys** (`aira_<prefix>_<secret>`, hashed; `x-goog-api-key`/`?ke
 SQLAlchemy-async DB layer; CLI mints keys; `auth_required`/`oidc_enabled` toggles. `FRD-102` done —
 **use-case attribution**: selector via `/uc/<use-case>` path or `X-AIRA-Use-Case` header (header
 wins), OIDC membership authorized from Keycloak **groups** (`/use-cases/<slug>` → `Principal.use_cases`;
-403 for non-members), `require_use_case` toggle. Verified end-to-end. Next: `FRD-103` (persistence).
-See `docs/DEVLOG.md`.
+403 for non-members), `require_use_case` toggle. `FRD-103` done — **persistence**: `request_logs`
+table stores every dispatched request/response with attribution, source IP (XFF), tokens, latency,
+and trace_id; redaction hook + `store_payloads` toggle; **Alembic** migrations (`make migrate-gateway`,
+dev/tests still `create_all`). Verified end-to-end. Next: `FRD-104`/`FRD-105`. See `docs/DEVLOG.md`.
 
 ## 7. Working agreement
 - Confirm scope via PRD/FRD before large changes; work phase by phase.

@@ -4,11 +4,16 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Any
 
-from sqlalchemy import Boolean, DateTime, String, func
+from sqlalchemy import JSON, Boolean, DateTime, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from aira_gateway.db.base import Base
+
+
+def _uuid() -> str:
+    return str(uuid.uuid4())
 
 
 class ApiKey(Base):
@@ -24,3 +29,35 @@ class ApiKey(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class RequestLog(Base):
+    """A persisted API request + response with its attribution (FRD-103)."""
+
+    __tablename__ = "request_logs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+    # attribution (FRD-102)
+    subject: Mapped[str] = mapped_column(String(255), index=True)
+    auth_method: Mapped[str] = mapped_column(String(32))
+    use_case: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    source_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    # request/response metadata
+    api: Mapped[str] = mapped_column(String(32))
+    operation: Mapped[str] = mapped_column(String(64))
+    model: Mapped[str] = mapped_column(String(128), index=True)
+    status: Mapped[int] = mapped_column(Integer)
+    prompt_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    completion_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    total_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    trace_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+
+    # payloads (redacted; nullable when store_payloads is off)
+    request_payload: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    response_payload: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
