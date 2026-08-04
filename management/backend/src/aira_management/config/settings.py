@@ -9,10 +9,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from aira_common.logging import configure_logging
+from aira_management.config.observability import setup_observability
 from aira_management.config.runtime import get_settings
 
 _settings = get_settings()
 configure_logging(_settings.log_level, json_output=_settings.log_json)
+setup_observability(_settings)
 
 # Typed settings are also reachable via aira_management.config.runtime.get_settings().
 AIRA = _settings

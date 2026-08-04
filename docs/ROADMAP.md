@@ -17,8 +17,8 @@ Guiding principles:
 Deliverables:
 - Monorepo layout (`gateway/`, `management/backend/`, `management/frontend/`, `deploy/`, `docs/`).
 - Docker Compose stack: PostgreSQL, Keycloak, Kafka (+ schema registry), Vault (dev mode).
-- **Local observability backend**: OpenTelemetry Collector + **SigNoz** (traces + metrics + logs),
-  both components wired to export via OTLP from day one.
+- **Local observability backend**: OpenTelemetry Collector + **Grafana otel-lgtm** (traces +
+  metrics + logs), both components wired to export via OTLP from day one (ADR-0004).
 - CI pipeline with lint + type-check + tests + **coverage gate**.
 - Shared conventions: logging, config, error handling, OpenTelemetry bootstrap.
 - **Seed framework**: one command to load test data (extended each phase).

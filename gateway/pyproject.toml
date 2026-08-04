@@ -7,6 +7,7 @@ dependencies = [
     "aira-common",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
+    "opentelemetry-instrumentation-fastapi>=0.50b0",
 ]
 
 [build-system]

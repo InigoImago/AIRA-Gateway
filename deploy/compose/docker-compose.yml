@@ -129,6 +129,33 @@ services:
       start_period: 5s
     networks: [aira]
 
+  # --- Observability (opt-in via the "observability" profile; ADR-0004 / FRD-001) ---
+  otel-lgtm:
+    image: grafana/otel-lgtm:0.30.0
+    container_name: aira-otel-lgtm
+    profiles: ["observability"]
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
+    ports:
+      - "3000:3000"   # Grafana UI
+    networks: [aira]
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.157.0
+    container_name: aira-otel-collector
+    profiles: ["observability"]
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./otel/collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
+    ports:
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+    depends_on:
+      otel-lgtm:
+        condition: service_started
+    networks: [aira]
+
 volumes:
   pgdata:
   kafka-data:

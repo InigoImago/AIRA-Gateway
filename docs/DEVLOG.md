@@ -5,6 +5,25 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-04 — FRD-001: observability baseline (backend switched to Grafana otel-lgtm)
+- **Decision change**: SigNoz deprecated its Docker Compose manifests (Foundry-only), so it can't be
+  embedded cleanly. Switched the local OTLP backend to **Grafana `otel-lgtm`** → `ADR-0004`
+  (supersedes `ADR-0002`). Updated PRD/ROADMAP/CLAUDE.md/FRD-001.
+- **Compose**: added `otel-collector` (contrib 0.157) + `otel-lgtm` (0.30) under an `observability`
+  profile; collector config forwards OTLP → otel-lgtm (`otlp_grpc`). `make up` now includes
+  observability by default; `make up-core` for a lean start.
+- **Instrumentation**: new `aira_common.observability` (tracer/meter/logger providers, OTLP/HTTP
+  export, gated by `otel_enabled`); structlog `add_trace_context` processor (trace/span ids in
+  logs); Kafka header inject/extract helpers for cross-component context. Gateway auto-instruments
+  FastAPI, management auto-instruments Django when enabled.
+- **Gates green**: 55 tests, **100% coverage**; ruff + mypy --strict clean.
+- **End-to-end verified**: ran the gateway with `AIRA_OTEL_ENABLED=true`; spans for `/healthz` +
+  `/readyz` (service.name=aira-gateway, http.route, status) flowed apps → collector → otel-lgtm and
+  are **queryable in Tempo**; no export errors. Grafana UI at `http://localhost:3000`.
+- **Next:** `FRD-002` (seed & demo mode), then Phase 1 (Gateway MVP).
+
+---
+
 ## 2026-08-04 — Phase 0 / Slice 3b: Angular frontend shell — **Phase 0 complete**
 - Scaffolded **`management/frontend`** with **Angular 22** (latest; note: Node is 26, Angular is 22).
   Uses the new `@angular/build:unit-test` builder → **Vitest + jsdom** (no browser needed — CI-friendly).

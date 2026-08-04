@@ -11,8 +11,20 @@ import logging
 from typing import Any
 
 import structlog
+from opentelemetry import trace
 
 _LEVELS: dict[str, int] = logging.getLevelNamesMapping()
+
+
+def add_trace_context(
+    _logger: Any, _method_name: str, event_dict: structlog.typing.EventDict
+) -> structlog.typing.EventDict:
+    """structlog processor: add ``trace_id``/``span_id`` when a span is active."""
+    ctx = trace.get_current_span().get_span_context()
+    if ctx.is_valid:
+        event_dict["trace_id"] = trace.format_trace_id(ctx.trace_id)
+        event_dict["span_id"] = trace.format_span_id(ctx.span_id)
+    return event_dict
 
 
 def configure_logging(level: str = "INFO", *, json_output: bool = True) -> None:
@@ -27,6 +39,7 @@ def configure_logging(level: str = "INFO", *, json_output: bool = True) -> None:
     processors: list[structlog.typing.Processor] = [
         structlog.contextvars.merge_contextvars,
         structlog.processors.add_log_level,
+        add_trace_context,
         structlog.processors.TimeStamper(fmt="iso", utc=True),
         structlog.processors.StackInfoRenderer(),
         structlog.processors.format_exc_info,

@@ -2,13 +2,15 @@
 # Run `make help` for available targets.
 
 COMPOSE_DIR := deploy/compose
-COMPOSE := docker compose -f $(COMPOSE_DIR)/docker-compose.yml
+# Include the observability profile (OTel Collector + Grafana otel-lgtm) by default.
+COMPOSE := docker compose -f $(COMPOSE_DIR)/docker-compose.yml --profile observability
+COMPOSE_CORE := docker compose -f $(COMPOSE_DIR)/docker-compose.yml
 ENV_FILE := $(COMPOSE_DIR)/.env
 ENV_EXAMPLE := $(COMPOSE_DIR)/.env.example
 
 .DEFAULT_GOAL := help
 
-.PHONY: help up down destroy ps logs restart env sync test test-py test-frontend \
+.PHONY: help up up-core down destroy ps logs restart env sync test test-py test-frontend \
         lint lint-py lint-frontend fmt seed run-gateway run-backend run-frontend
 
 help: ## Show this help
@@ -24,8 +26,11 @@ env: ## Create deploy/compose/.env from the example if missing
 		echo "$(ENV_FILE) already exists."; \
 	fi
 
-up: env ## Start the local infrastructure stack
+up: env ## Start the full stack (infra + observability)
 	$(COMPOSE) up -d
+
+up-core: env ## Start only core infra (no observability backend)
+	$(COMPOSE_CORE) up -d
 
 down: ## Stop the stack (keep volumes)
 	$(COMPOSE) down
@@ -72,11 +77,12 @@ fmt: ## Auto-format and auto-fix the whole codebase
 	uv run ruff check --fix .
 	cd $(FRONTEND_DIR) && npx prettier --write "src/**/*.{ts,html,scss}"
 
+# Local run targets enable OTLP export to the collector (make up starts it).
 run-gateway: ## Run the Gateway API locally against the Compose stack
-	uv run uvicorn aira_gateway.main:app --reload --port 8001
+	AIRA_OTEL_ENABLED=true uv run uvicorn aira_gateway.main:app --reload --port 8001
 
 run-backend: ## Run the Management backend (Django) locally against the Compose stack
-	cd management/backend && uv run python manage.py runserver 127.0.0.1:8002
+	cd management/backend && AIRA_OTEL_ENABLED=true uv run python manage.py runserver 127.0.0.1:8002
 
 run-frontend: ## Run the Angular dev server
 	cd $(FRONTEND_DIR) && npx ng serve --port 4200

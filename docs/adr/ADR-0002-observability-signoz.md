@@ -1,8 +1,12 @@
 # ADR-0002 — Local observability backend: OpenTelemetry Collector + SigNoz
 
-- **Status:** Accepted
+- **Status:** Superseded by [ADR-0004](ADR-0004-observability-grafana-otel-lgtm.md)
 - **Date:** 2026-08-04
 - **Deciders:** Vadim Scheibe
+
+> **Superseded (2026-08-04):** SigNoz deprecated its Docker Compose manifests in favor of its
+> "Foundry" installer, so it can no longer be embedded cleanly in our Compose stack. We switched to
+> Grafana `otel-lgtm` (the documented alternative below). See ADR-0004.
 
 ## Context
 Both components will emit OpenTelemetry traces, metrics, and logs. We need a local, open-source

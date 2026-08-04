@@ -28,7 +28,8 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
 - **Roles (initial)**: Global Administrator, IT Security, IT Steuerung (Governance),
   Use Case Administrator, Use Case User. Least-privilege, object-scoped.
 - **Secrets**: only in **HashiCorp Vault** — never commit secrets.
-- **Observability**: OTLP → OpenTelemetry Collector → **SigNoz** locally (alt: Grafana LGTM).
+- **Observability**: OTLP → OpenTelemetry Collector → **Grafana `otel-lgtm`** locally (ADR-0004,
+  supersedes the earlier SigNoz choice in ADR-0002).
 - **Deployment**: **Docker Compose** locally now; Kubernetes/Helm later.
 - **Demo mode**: mock upstream + one-command **automated seeding** must always work.
 
@@ -79,8 +80,9 @@ AIRA/
 schema-registry, vault) runs via `make up`. uv workspace with three Python-side packages
 (`aira_common`, `aira_gateway`, `aira_management` = Django+DRF) plus an Angular 22 frontend shell —
 all with `/healthz`+`/readyz`, 100% Python coverage, and green ruff/mypy/prettier gates.
-Still open from the Phase 0 plan: OTel Collector + SigNoz wiring (`FRD-001`) and seed/demo (`FRD-002`).
-**Next: Phase 1 — Gateway MVP.** See `docs/DEVLOG.md` for the latest.
+**`FRD-001` done**: OTel Collector + Grafana `otel-lgtm` wired (observability Compose profile);
+apps export OTLP (traces verified end-to-end in Tempo). Still open from Phase 0: seed/demo (`FRD-002`).
+**Next: `FRD-002`, then Phase 1 — Gateway MVP.** See `docs/DEVLOG.md` for the latest.
 
 ## 7. Working agreement
 - Confirm scope via PRD/FRD before large changes; work phase by phase.

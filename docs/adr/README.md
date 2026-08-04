@@ -12,5 +12,6 @@ Each ADR is immutable once **Accepted** — to change a decision, add a new ADR 
 | # | Title | Status | Date |
 |--:|-------|--------|------|
 | 0001 | [Management UI: Angular + Django REST Framework](ADR-0001-management-ui-angular-drf.md) | Accepted | 2026-08-04 |
-| 0002 | [Local observability backend: OpenTelemetry Collector + SigNoz](ADR-0002-observability-signoz.md) | Accepted | 2026-08-04 |
+| 0002 | [Local observability backend: OpenTelemetry Collector + SigNoz](ADR-0002-observability-signoz.md) | Superseded by 0004 | 2026-08-04 |
 | 0003 | [Toolchain & runtime versions (Python 3.14 + uv, Node 26)](ADR-0003-toolchain-versions.md) | Accepted | 2026-08-04 |
+| 0004 | [Local observability backend: Grafana otel-lgtm](ADR-0004-observability-grafana-otel-lgtm.md) | Accepted | 2026-08-04 |

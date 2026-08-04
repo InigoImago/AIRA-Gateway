@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 
 from aira_common.errors import AiraError
 from aira_common.logging import configure_logging
+from aira_common.observability import configure_observability
 from aira_gateway import __version__
 from aira_gateway.config import GatewaySettings
 from aira_gateway.routes.health import router as health_router
@@ -20,9 +21,22 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
     """Create and configure a Gateway FastAPI application."""
     settings = settings or GatewaySettings()
     configure_logging(settings.log_level, json_output=settings.log_json)
+    otel_enabled = configure_observability(
+        service_name=settings.app_name,
+        service_version=__version__,
+        environment=settings.environment,
+        endpoint=settings.otel_endpoint,
+        enabled=settings.otel_enabled,
+        sample_ratio=settings.otel_sample_ratio,
+    )
 
     app = FastAPI(title=settings.app_name, version=__version__)
     app.state.settings = settings
+
+    if otel_enabled:
+        from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+
+        FastAPIInstrumentor.instrument_app(app)
 
     app.include_router(health_router)
     _register_exception_handlers(app)

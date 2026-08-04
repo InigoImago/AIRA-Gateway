@@ -1,0 +1,49 @@
+# OpenTelemetry Collector config (FRD-001).
+# Apps export OTLP here; the collector forwards to Grafana otel-lgtm. Swapping the
+# backend is a change to the exporter below only — app code is unaffected (ADR-0004).
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 80
+    spike_limit_percentage: 25
+  resource:
+    attributes:
+      - key: collector
+        value: aira-otel-collector
+        action: insert
+  batch: {}
+
+exporters:
+  otlp_grpc/lgtm:
+    endpoint: otel-lgtm:4317
+    tls:
+      insecure: true
+  debug:
+    verbosity: normal
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [otlp_grpc/lgtm, debug]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [otlp_grpc/lgtm]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [otlp_grpc/lgtm, debug]
+  telemetry:
+    logs:
+      level: info

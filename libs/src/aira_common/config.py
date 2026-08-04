@@ -34,3 +34,12 @@ class BaseAiraSettings(BaseSettings):
 
     demo_mode: bool = False
     """When True, enable the mock upstream and demo-safe defaults (see FRD-002)."""
+
+    otel_enabled: bool = False
+    """Enable OpenTelemetry export (traces/metrics/logs) via OTLP (see FRD-001)."""
+
+    otel_endpoint: str = "http://localhost:4318"
+    """OTLP/HTTP endpoint of the OpenTelemetry Collector."""
+
+    otel_sample_ratio: float = 1.0
+    """Trace sampling ratio (parent-based); 1.0 = sample everything."""

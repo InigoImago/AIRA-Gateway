@@ -239,7 +239,7 @@ Core entities (details in FRDs):
 | **Microsoft Foundry** | Upstream | OpenAI + Microsoft models |
 | **Mock provider** | Demo | Built-in, no external calls |
 | **OpenTelemetry Collector** | Telemetry ingestion | OTLP receiver; both components export traces/metrics/logs here |
-| **SigNoz** | Observability backend | Local, self-hosted, OTLP-native; traces + metrics + logs + dashboards + alerting (alt: Grafana LGTM) |
+| **Grafana otel-lgtm** | Observability backend | Local single-container Grafana + Loki + Tempo + Prometheus; OTLP-native (see ADR-0004; supersedes SigNoz) |
 
 ---
 
@@ -258,12 +258,12 @@ Core entities (details in FRDs):
 ## 10. Observability & Operations
 
 - **Telemetry pipeline**: both components export via **OTLP** to an **OpenTelemetry Collector**,
-  which forwards to a local **SigNoz** backend (traces + metrics + logs unified). This is the local
-  observability target on developer hardware from Phase 0. Alternative: Grafana **LGTM** stack.
+  which forwards to a local **Grafana `otel-lgtm`** backend (traces + metrics + logs unified). This
+  is the local observability target on developer hardware from Phase 0 (see ADR-0004).
 - **Logging**: structured JSON logs with correlation/trace IDs (also shipped via OTLP).
 - **Tracing**: OpenTelemetry spans across gateway, pipeline steps, upstreams; source IP recorded.
 - **Monitoring**: metrics (latency, throughput, error rate, cost, budget consumption, anomalies).
-- **Dashboards**: per-use-case and global (SigNoz); security-specific views for IT Security.
+- **Dashboards**: per-use-case and global (Grafana); security-specific views for IT Security.
 - **Alerting**: anomaly-driven alerts feeding incident response.
 
 ---
@@ -298,7 +298,7 @@ Core entities (details in FRDs):
 | Eventing | **Apache Kafka** |
 | SSO | **Keycloak** |
 | Secrets | **HashiCorp Vault** |
-| Observability | **OpenTelemetry Collector** → **SigNoz** (local; alt: Grafana LGTM) |
+| Observability | **OpenTelemetry Collector** → **Grafana otel-lgtm** (local; ADR-0004) |
 | Packaging/Runtime | **Docker Compose** (local) → **Kubernetes/Helm** (future) |
 | Testing | pytest, coverage, Jasmine/Karma or Jest (Angular) |
 | Language | **English** for docs, code, and identifiers |

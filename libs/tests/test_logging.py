@@ -38,3 +38,22 @@ def test_unknown_level_defaults_to_info(capsys) -> None:
     configure_logging("NOPE", json_output=True)
     get_logger("test").info("still-logged")
     assert "still-logged" in capsys.readouterr().out
+
+
+def test_log_includes_trace_context_under_active_span(capsys) -> None:
+    from opentelemetry.sdk.trace import TracerProvider
+
+    configure_logging("INFO", json_output=True)
+    tracer = TracerProvider().get_tracer("test")
+    with tracer.start_as_current_span("s"):
+        get_logger("test").info("traced")
+    record = json.loads(capsys.readouterr().out.strip())
+    assert "trace_id" in record
+    assert "span_id" in record
+
+
+def test_log_omits_trace_context_without_span(capsys) -> None:
+    configure_logging("INFO", json_output=True)
+    get_logger("test").info("untraced")
+    record = json.loads(capsys.readouterr().out.strip())
+    assert "trace_id" not in record

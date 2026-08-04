@@ -20,6 +20,12 @@ def test_create_app_without_settings_uses_defaults() -> None:
     assert app.state.settings.app_name == "aira-gateway"
 
 
+def test_create_app_instruments_when_otel_enabled() -> None:
+    app = create_app(GatewaySettings(otel_enabled=True, otel_endpoint="http://localhost:4318"))
+    client = TestClient(app)
+    assert client.get("/healthz").status_code == 200
+
+
 def test_aira_error_handler_returns_envelope() -> None:
     app = create_app(GatewaySettings())
 
