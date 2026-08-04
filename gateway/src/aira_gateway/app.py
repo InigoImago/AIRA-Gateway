@@ -19,11 +19,12 @@ from aira_common.observability import configure_observability
 from aira_gateway import __version__
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.api.gemini.routes import router as gemini_router
-from aira_gateway.auth.dependencies import require_principal
+from aira_gateway.auth.dependencies import require_attribution
 from aira_gateway.auth.oidc import build_oidc_validator
 from aira_gateway.auth.service import ApiKeyService
 from aira_gateway.config import GatewaySettings
 from aira_gateway.db.base import build_engine, build_sessionmaker, create_all
+from aira_gateway.middleware import UseCasePathMiddleware
 from aira_gateway.routes.health import router as health_router
 from aira_gateway.upstreams.base import ProviderRegistry
 from aira_gateway.upstreams.mock import MockProvider
@@ -68,8 +69,10 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
 
         FastAPIInstrumentor.instrument_app(app)
 
+    app.add_middleware(UseCasePathMiddleware)
+
     app.include_router(health_router)
-    app.include_router(gemini_router, dependencies=[Depends(require_principal)])
+    app.include_router(gemini_router, dependencies=[Depends(require_attribution)])
     _register_exception_handlers(app)
     return app
 

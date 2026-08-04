@@ -31,6 +31,10 @@ select = ["E", "F", "I", "UP", "B", "SIM", "C4", "ASYNC"]
 # ASYNC109: exposing an explicit `timeout` parameter is a deliberate API choice here.
 ignore = ["ASYNC109"]
 
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI dependency injection uses these call expressions in argument defaults by design.
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Header", "fastapi.Path"]
+
 [tool.mypy]
 python_version = "3.14"
 strict = true

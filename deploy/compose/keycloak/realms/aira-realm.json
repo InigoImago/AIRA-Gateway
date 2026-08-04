@@ -3,6 +3,15 @@
   "enabled": true,
   "sslRequired": "none",
   "registrationAllowed": false,
+  "groups": [
+    {
+      "name": "use-cases",
+      "subGroups": [
+        { "name": "demo-uc" },
+        { "name": "other-uc" }
+      ]
+    }
+  ],
   "clients": [
     {
       "clientId": "aira-gateway",
@@ -12,7 +21,21 @@
       "directAccessGrantsEnabled": true,
       "standardFlowEnabled": true,
       "redirectUris": ["*"],
-      "webOrigins": ["*"]
+      "webOrigins": ["*"],
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "config": {
+            "full.path": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "claim.name": "groups"
+          }
+        }
+      ]
     }
   ],
   "users": [
@@ -25,7 +48,8 @@
       "lastName": "User",
       "credentials": [
         { "type": "password", "value": "demo-password", "temporary": false }
-      ]
+      ],
+      "groups": ["/use-cases/demo-uc"]
     }
   ]
 }

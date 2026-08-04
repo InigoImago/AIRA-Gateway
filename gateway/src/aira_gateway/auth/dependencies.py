@@ -6,9 +6,10 @@ same resolver. On failure a Gemini-shaped 401 is raised.
 
 from __future__ import annotations
 
-from fastapi import Request
+from fastapi import Depends, Request
 
 from aira_gateway.api.gemini.errors import GeminiHTTPError
+from aira_gateway.auth.attribution import Attribution, resolve_use_case
 from aira_gateway.auth.credentials import extract_token
 from aira_gateway.auth.keys import is_aira_key
 from aira_gateway.auth.oidc import OidcValidator
@@ -50,3 +51,24 @@ async def require_principal(request: Request) -> Principal:
         raise _unauthenticated("Missing or invalid credentials.")
     request.state.principal = principal
     return principal
+
+
+async def require_attribution(
+    request: Request, principal: Principal = Depends(require_principal)
+) -> Attribution:
+    """Resolve + authorize the use case and attach an Attribution to ``request.state``."""
+    use_case = resolve_use_case(request)
+
+    if use_case is None:
+        if request.app.state.settings.require_use_case and principal.method != "demo":
+            raise GeminiHTTPError(
+                400,
+                "Missing use case (X-AIRA-Use-Case header or /uc/<use-case> path).",
+                "INVALID_ARGUMENT",
+            )
+    elif principal.method == "oidc" and use_case not in principal.use_cases:
+        raise GeminiHTTPError(403, f"Not a member of use case '{use_case}'.", "PERMISSION_DENIED")
+
+    attribution = Attribution(subject=principal.subject, method=principal.method, use_case=use_case)
+    request.state.attribution = attribution
+    return attribution

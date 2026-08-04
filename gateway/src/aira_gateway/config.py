@@ -30,6 +30,9 @@ class GatewaySettings(BaseAiraSettings):
     # Require authentication on the API routes; when False (pure demo) routes are open.
     auth_required: bool = True
 
+    # Require an explicit use case on authenticated (non-demo) requests (FRD-102).
+    require_use_case: bool = False
+
     # OIDC bearer validation (Keycloak). When disabled, only API keys are accepted.
     oidc_enabled: bool = False
     oidc_issuer: str = ""

@@ -5,6 +5,26 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-04 — FRD-102: attribution & use-case selection (OIDC)
+- **Problem addressed**: an OIDC token authenticates the *identity*, not *which use case* — a user
+  can be in several. Solution: explicit per-request use-case **selector** + membership authorization
+  from Keycloak **groups** (no Management DB/Kafka needed yet).
+- **Selector**: `/uc/<use-case>/v1beta/...` path (via `UseCasePathMiddleware`) **or**
+  `X-AIRA-Use-Case` header; **header overrides path** (per user's choice).
+- **Membership**: `Principal.use_cases` derived from token groups under `/use-cases/<slug>`;
+  `require_attribution` dependency authorizes `use_case ∈ use_cases` for OIDC (403 otherwise),
+  attaches `Attribution(subject, method, use_case)` to `request.state`. `require_use_case` toggle
+  (400 when missing). API-key/demo attributed without the group check (binding comes in FRD-205).
+- **Keycloak realm**: added `/use-cases/{demo-uc,other-uc}` groups + a group-membership protocol
+  mapper (`groups` claim); demo-user ∈ `/use-cases/demo-uc`.
+- **Gates green**: 138 tests, **100% coverage**; ruff (+ FastAPI `Depends` bugbear config) + mypy
+  --strict clean.
+- **End-to-end verified**: real Keycloak token carries `groups`; `/uc/demo-uc` → 200, `/uc/other-uc`
+  → 403 PERMISSION_DENIED, header overrides path → 200, no use case → 200.
+- **Next: FRD-103** (persist request/response + attribution), then FRD-104/105.
+
+---
+
 ## 2026-08-04 — Decision: API-key issuance belongs in Management (ADR-0006)
 - Clarified the control-plane/data-plane split for API keys: **issuance/lifecycle/show-once** →
   **Management** (self-service UI, bound to use case); **validation** → **Gateway** against a local

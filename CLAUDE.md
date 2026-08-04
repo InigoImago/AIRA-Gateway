@@ -89,8 +89,11 @@ on a provider-agnostic canonical core, served by the mock provider (verified end
 API direction: **Gemini first, OpenAI later** (ADR-0005). `FRD-101` **complete** — auth on the Gemini
 routes via **API keys** (`aira_<prefix>_<secret>`, hashed; `x-goog-api-key`/`?key=`/Bearer) **and**
 **OIDC bearer** (Keycloak JWKS; realm `aira` under `deploy/compose/keycloak/realms/`). Gateway has a
-SQLAlchemy-async DB layer; CLI mints keys; `auth_required`/`oidc_enabled` toggles. Both paths verified
-end-to-end. Next: `FRD-102` (attribution). See `docs/DEVLOG.md`.
+SQLAlchemy-async DB layer; CLI mints keys; `auth_required`/`oidc_enabled` toggles. `FRD-102` done —
+**use-case attribution**: selector via `/uc/<use-case>` path or `X-AIRA-Use-Case` header (header
+wins), OIDC membership authorized from Keycloak **groups** (`/use-cases/<slug>` → `Principal.use_cases`;
+403 for non-members), `require_use_case` toggle. Verified end-to-end. Next: `FRD-103` (persistence).
+See `docs/DEVLOG.md`.
 
 ## 7. Working agreement
 - Confirm scope via PRD/FRD before large changes; work phase by phase.

@@ -33,6 +33,7 @@ def _token(
     iss: str = ISSUER,
     aud: str | None = None,
     sub: str | None = "user-123",
+    groups: list[str] | None = None,
     expired: bool = False,
 ) -> str:
     now = dt.datetime.now(dt.UTC)
@@ -42,6 +43,8 @@ def _token(
         claims["sub"] = sub
     if aud is not None:
         claims["aud"] = aud
+    if groups is not None:
+        claims["groups"] = groups
     return jwt.encode(claims, private, algorithm="RS256")
 
 
@@ -78,6 +81,24 @@ def test_audience_enforced_when_configured() -> None:
     validator = OidcValidator(ISSUER, "aira-gateway", _Resolver(public))
     assert validator.validate(_token(private, aud="aira-gateway")) is not None
     assert validator.validate(_token(private, aud="other")) is None
+
+
+def test_groups_become_use_cases() -> None:
+    private, public = _keypair()
+    validator = OidcValidator(ISSUER, None, _Resolver(public))
+    principal = validator.validate(
+        _token(private, groups=["/use-cases/demo-uc", "/use-cases/other-uc", "/random"])
+    )
+    assert principal is not None
+    assert principal.use_cases == ("demo-uc", "other-uc")
+
+
+def test_no_groups_claim_yields_no_use_cases() -> None:
+    private, public = _keypair()
+    validator = OidcValidator(ISSUER, None, _Resolver(public))
+    principal = validator.validate(_token(private))
+    assert principal is not None
+    assert principal.use_cases == ()
 
 
 def test_missing_subject_rejected() -> None:

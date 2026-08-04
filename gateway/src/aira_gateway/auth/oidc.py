@@ -12,6 +12,7 @@ from typing import Any, Protocol
 import jwt
 from jwt import PyJWKClient
 
+from aira_gateway.auth.attribution import usecases_from_groups
 from aira_gateway.auth.principal import Principal
 from aira_gateway.config import GatewaySettings
 
@@ -55,7 +56,11 @@ class OidcValidator:
         subject = claims.get("sub")
         if not subject:
             return None
-        return Principal(subject=str(subject), method="oidc")
+        raw_groups = claims.get("groups")
+        groups = raw_groups if isinstance(raw_groups, list) else []
+        return Principal(
+            subject=str(subject), method="oidc", use_cases=usecases_from_groups(groups)
+        )
 
 
 def build_oidc_validator(settings: GatewaySettings) -> OidcValidator | None:
