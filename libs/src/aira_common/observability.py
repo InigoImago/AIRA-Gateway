@@ -9,6 +9,7 @@ without a collector.
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 
 from opentelemetry import metrics, trace
 from opentelemetry._logs import set_logger_provider
@@ -88,6 +89,14 @@ def configure_observability(
 
     _configured = True
     return True
+
+
+def set_span_attributes(attributes: Mapping[str, object]) -> None:
+    """Set primitive (non-None) attributes on the current span; no-op if none is recording."""
+    span = trace.get_current_span()
+    for key, value in attributes.items():
+        if isinstance(value, str | int | float | bool):
+            span.set_attribute(key, value)
 
 
 def trace_context_fields() -> dict[str, str]:

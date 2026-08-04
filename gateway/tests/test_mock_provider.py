@@ -49,6 +49,37 @@ def test_stream_generate_reconstructs_full_text() -> None:
     assert streamed == provider.generate(request).text
 
 
+def test_generate_respects_max_output_tokens() -> None:
+    request = CanonicalRequest(
+        model="mock-1",
+        messages=[CanonicalMessage(role=Role.USER, text="hello")],
+        max_output_tokens=2,
+    )
+    response = MockProvider().generate(request)
+    assert response.finish_reason == "max_tokens"
+    assert response.usage.completion_tokens == 2
+    assert len(response.text.split()) == 2
+
+
+def test_generate_no_truncation_when_limit_high() -> None:
+    request = CanonicalRequest(
+        model="mock-1",
+        messages=[CanonicalMessage(role=Role.USER, text="hello")],
+        max_output_tokens=1000,
+    )
+    assert MockProvider().generate(request).finish_reason == "stop"
+
+
+def test_stream_propagates_max_tokens_finish_reason() -> None:
+    request = CanonicalRequest(
+        model="mock-1",
+        messages=[CanonicalMessage(role=Role.USER, text="hello")],
+        max_output_tokens=2,
+    )
+    chunks = list(MockProvider().stream_generate(request))
+    assert chunks[-1].finish_reason == "max_tokens"
+
+
 def test_embed_is_deterministic_and_sized() -> None:
     provider = MockProvider()
     assert provider.embed("mock-1", "abc") == provider.embed("mock-1", "abc")

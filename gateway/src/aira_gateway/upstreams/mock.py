@@ -35,12 +35,21 @@ class MockProvider:
 
     def generate(self, request: CanonicalRequest) -> CanonicalResponse:
         prompt = request.last_user_text().strip().replace("\n", " ")[:120]
-        text = f"[mock:{request.model}] response to: {prompt}"
+        words = f"[mock:{request.model}] response to: {prompt}".split()
+
+        finish_reason = "stop"
+        limit = request.max_output_tokens
+        if limit is not None and limit < len(words):
+            words = words[:limit]
+            finish_reason = "max_tokens"
+
         usage = CanonicalUsage(
             prompt_tokens=self._prompt_tokens(request),
-            completion_tokens=len(text.split()),
+            completion_tokens=len(words),
         )
-        return CanonicalResponse(model=request.model, text=text, finish_reason="stop", usage=usage)
+        return CanonicalResponse(
+            model=request.model, text=" ".join(words), finish_reason=finish_reason, usage=usage
+        )
 
     def stream_generate(self, request: CanonicalRequest) -> Iterator[CanonicalChunk]:
         full = self.generate(request)
@@ -48,7 +57,7 @@ class MockProvider:
         for start in range(0, len(words), _STREAM_WORDS_PER_CHUNK):
             delta = " ".join(words[start : start + _STREAM_WORDS_PER_CHUNK])
             yield CanonicalChunk(text_delta=f"{delta} ")
-        yield CanonicalChunk(text_delta="", finish_reason="stop", usage=full.usage)
+        yield CanonicalChunk(text_delta="", finish_reason=full.finish_reason, usage=full.usage)
 
     def embed(self, model: str, text: str, *, dimensions: int = 8) -> list[float]:
         data = text.encode("utf-8")

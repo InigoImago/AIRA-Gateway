@@ -95,7 +95,10 @@ wins), OIDC membership authorized from Keycloak **groups** (`/use-cases/<slug>` 
 403 for non-members), `require_use_case` toggle. `FRD-103` done — **persistence**: `request_logs`
 table stores every dispatched request/response with attribution, source IP (XFF), tokens, latency,
 and trace_id; redaction hook + `store_payloads` toggle; **Alembic** migrations (`make migrate-gateway`,
-dev/tests still `create_all`). Verified end-to-end. Next: `FRD-104`/`FRD-105`. See `docs/DEVLOG.md`.
+dev/tests still `create_all`). `FRD-104` done — **streaming fidelity**: SSE (`?alt=sse`) for the
+google-genai SDK + JSON-array default; mock honours `maxOutputTokens` (→`MAX_TOKENS`). `FRD-105` done —
+**tracing enrichment**: `aira.*` span attributes (subject/use_case/model/…) filterable in Grafana/Tempo.
+**Phase 1 (Gateway MVP) is complete.** Next: **Phase 2 (Management foundation)**. See `docs/DEVLOG.md`.
 
 ## 7. Working agreement
 - Confirm scope via PRD/FRD before large changes; work phase by phase.

@@ -97,7 +97,8 @@ async def generate(resource: str, request: Request) -> Response:
                 response_payload=payload,
             )
             return JSONResponse(payload)
-        return _stream_response(request, provider, canonical, body)
+        sse = request.query_params.get("alt") == "sse"
+        return _stream_response(request, provider, canonical, body, sse=sse)
 
     if method == "embedContent":
         try:
@@ -149,16 +150,30 @@ def _stream_response(
     provider: Upstream,
     canonical: CanonicalRequest,
     body: dict[str, Any],
+    *,
+    sse: bool,
 ) -> StreamingResponse:
+    """Stream chunks as SSE (`?alt=sse`, for the google-genai SDK) or a JSON array (Gemini REST)."""
+
     async def generate_chunks() -> AsyncIterator[str]:
         started = time.monotonic()
         parts: list[str] = []
         final_usage = None
+        separator = ""
+        if not sse:
+            yield "["
         for chunk in provider.stream_generate(canonical):
             if chunk.usage is not None:
                 final_usage = chunk.usage
             parts.append(chunk.text_delta)
-            yield _chunk_to_gemini(chunk, canonical.model).model_dump_json() + "\n"
+            payload = _chunk_to_gemini(chunk, canonical.model).model_dump_json()
+            if sse:
+                yield f"data: {payload}\n\n"
+            else:
+                yield f"{separator}{payload}"
+                separator = ","
+        if not sse:
+            yield "]"
         await record_request(
             request,
             operation="streamGenerateContent",
@@ -170,4 +185,5 @@ def _stream_response(
             response_payload={"text": "".join(parts)},
         )
 
-    return StreamingResponse(generate_chunks(), media_type="application/x-ndjson")
+    media_type = "text/event-stream" if sse else "application/json"
+    return StreamingResponse(generate_chunks(), media_type=media_type)

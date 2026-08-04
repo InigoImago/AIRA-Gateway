@@ -9,6 +9,7 @@ from aira_common.observability import (
     configure_observability,
     context_from_kafka_headers,
     kafka_headers_from_context,
+    set_span_attributes,
     trace_context_fields,
 )
 
@@ -26,6 +27,7 @@ __all__ = [
     "context_from_kafka_headers",
     "get_logger",
     "kafka_headers_from_context",
+    "set_span_attributes",
     "trace_context_fields",
     "tcp_reachable",
 ]

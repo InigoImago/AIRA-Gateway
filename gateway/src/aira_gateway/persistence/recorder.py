@@ -10,7 +10,7 @@ from typing import Any
 
 from fastapi import Request
 
-from aira_common.observability import trace_context_fields
+from aira_common.observability import set_span_attributes, trace_context_fields
 from aira_gateway.core.canonical import CanonicalUsage
 from aira_gateway.persistence.redaction import Redactor
 from aira_gateway.persistence.service import RequestLogService
@@ -47,13 +47,24 @@ async def record_request(
             return None
         return redactor.redact(payload)
 
+    source_ip = client_ip(request)
+    set_span_attributes(
+        {
+            "aira.model": model,
+            "aira.operation": operation,
+            "aira.status": status,
+            "aira.source_ip": source_ip,
+            "aira.total_tokens": usage.total_tokens if usage else None,
+        }
+    )
+
     sessionmaker = request.app.state.db_sessionmaker
     async with sessionmaker() as session:
         await RequestLogService(session).record(
             subject=attribution.subject,
             auth_method=attribution.method,
             use_case=attribution.use_case,
-            source_ip=client_ip(request),
+            source_ip=source_ip,
             operation=operation,
             model=model,
             status=status,

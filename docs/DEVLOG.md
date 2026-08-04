@@ -5,6 +5,24 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-04 — FRD-104 + FRD-105 — **Phase 1 (Gateway MVP) complete**
+- **FRD-104 (mock fidelity + streaming)**: `:streamGenerateContent?alt=sse` now returns
+  `text/event-stream` (`data: {json}\n\n`, the google-genai SDK path); the default returns a streamed
+  **JSON array** (Gemini REST form). Mock honours `generationConfig.maxOutputTokens` → truncates and
+  reports `finishReason=MAX_TOKENS`.
+- **FRD-105 (tracing enrichment)**: `aira_common.set_span_attributes(mapping)` sets non-None
+  attributes on the current span. `require_attribution` tags `aira.subject/use_case/auth_method`;
+  `record_request` tags `aira.model/operation/status/source_ip/total_tokens`.
+- **Gates green**: 154 tests, **100% coverage**; ruff + mypy --strict clean.
+- **End-to-end verified**: SSE (`text/event-stream`) + JSON-array streaming + `maxOutputTokens`→
+  `MAX_TOKENS`; a trace is **searchable in Tempo by `aira.use_case=demo-uc`** (filter traces by use
+  case in Grafana).
+- **Phase 1 complete**: FRD-100 (Gemini API) · 101 (auth) · 102 (attribution) · 103 (persistence) ·
+  104 (mock/streaming) · 105 (tracing). Every request is authenticated → attributed to a use case →
+  authorized → dispatched → persisted → traced. **Next: Phase 2 (Management foundation).**
+
+---
+
 ## 2026-08-04 — FRD-103: request/response persistence + Alembic
 - **`request_logs`** table + `RequestLogService`: persist each dispatched request/response with
   attribution (subject, auth_method, use_case), source IP, model, operation, token usage, status,

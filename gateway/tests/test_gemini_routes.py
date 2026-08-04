@@ -82,19 +82,30 @@ def test_get_model_unknown_returns_404(client) -> None:
     assert resp.status_code == 404
 
 
-def test_stream_generate_content(client) -> None:
-    resp = client.post(
-        "/v1beta/models/mock-1:streamGenerateContent",
-        json={"contents": [{"role": "user", "parts": [{"text": "one two three four five"}]}]},
-    )
+_STREAM_BODY = {"contents": [{"role": "user", "parts": [{"text": "one two three four five"}]}]}
+
+
+def test_stream_generate_content_json_array(client) -> None:
+    resp = client.post("/v1beta/models/mock-1:streamGenerateContent", json=_STREAM_BODY)
     assert resp.status_code == 200
-    lines = [line for line in resp.text.splitlines() if line.strip()]
-    assert len(lines) >= 2
+    assert resp.headers["content-type"].startswith("application/json")
 
-    last = json.loads(lines[-1])
-    assert last["candidates"][0]["finishReason"] == "STOP"
+    chunks = json.loads(resp.text)
+    assert isinstance(chunks, list)
+    assert len(chunks) >= 2
+    assert chunks[-1]["candidates"][0]["finishReason"] == "STOP"
 
-    streamed = "".join(
-        json.loads(line)["candidates"][0]["content"]["parts"][0]["text"] for line in lines
-    ).strip()
+    streamed = "".join(c["candidates"][0]["content"]["parts"][0]["text"] for c in chunks).strip()
     assert streamed.startswith("[mock:mock-1]")
+
+
+def test_stream_generate_content_sse(client) -> None:
+    resp = client.post("/v1beta/models/mock-1:streamGenerateContent?alt=sse", json=_STREAM_BODY)
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/event-stream")
+
+    events = [
+        line.removeprefix("data: ") for line in resp.text.splitlines() if line.startswith("data: ")
+    ]
+    assert len(events) >= 2
+    assert json.loads(events[-1])["candidates"][0]["finishReason"] == "STOP"

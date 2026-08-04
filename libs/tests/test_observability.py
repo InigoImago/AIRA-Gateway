@@ -72,3 +72,20 @@ def test_build_resource_attributes() -> None:
         "service.name": "svc",
         "deployment.environment": "local",
     }
+
+
+def test_set_span_attributes_sets_non_none() -> None:
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+
+    with provider.get_tracer("t").start_as_current_span("s"):
+        obs.set_span_attributes({"aira.subject": "u", "aira.use_case": None, "n": 3})
+
+    attributes = exporter.get_finished_spans()[0].attributes
+    assert attributes["aira.subject"] == "u"
+    assert attributes["n"] == 3
+    assert "aira.use_case" not in attributes

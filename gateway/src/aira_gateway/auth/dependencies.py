@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from fastapi import Depends, Request
 
+from aira_common.observability import set_span_attributes
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.auth.attribution import Attribution, resolve_use_case
 from aira_gateway.auth.credentials import extract_token
@@ -71,4 +72,11 @@ async def require_attribution(
 
     attribution = Attribution(subject=principal.subject, method=principal.method, use_case=use_case)
     request.state.attribution = attribution
+    set_span_attributes(
+        {
+            "aira.subject": attribution.subject,
+            "aira.auth_method": attribution.method,
+            "aira.use_case": attribution.use_case,
+        }
+    )
     return attribution
