@@ -36,6 +36,9 @@ class GatewaySettings(BaseAiraSettings):
     # Persist request/response payloads (FRD-103). When False, only metadata is stored.
     store_payloads: bool = True
 
+    # Enforce use-case/member usage budgets pre-dispatch (FRD-401).
+    enforce_budgets: bool = True
+
     # Real Google Gemini upstream (FRD-304). Registered only when an API key is present.
     google_api_key: str = ""
     gemini_models: str = "gemini-2.0-flash,gemini-1.5-flash"

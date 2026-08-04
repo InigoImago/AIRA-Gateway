@@ -24,7 +24,9 @@ from aira_gateway.api.gemini.mapping import (
     gemini_to_canonical,
     upstream_model_to_gemini,
 )
+from aira_gateway.budgets.errors import BudgetExceeded
 from aira_gateway.core.canonical import CanonicalChunk, CanonicalRequest
+from aira_gateway.db.models import BudgetRead
 from aira_gateway.persistence.recorder import record_request
 from aira_gateway.pipeline.dispatch import dispatch_with_fallback
 from aira_gateway.pipeline.engine import PipelineEngine
@@ -148,6 +150,15 @@ async def generate(resource: str, request: Request) -> Response:
         if provider is None:
             return _error(404, f"Model '{canonical.model}' not found.", "NOT_FOUND")
 
+        # Budget enforcement (FRD-401): reject before dispatch if a budget is exhausted.
+        attribution = getattr(request.state, "attribution", None)
+        try:
+            budgets = await request.app.state.budgets.guard(
+                getattr(attribution, "use_case", None), getattr(attribution, "subject", None)
+            )
+        except BudgetExceeded as exc:
+            return _error(429, exc.message, "RESOURCE_EXHAUSTED")
+
         if method == "generateContent":
             started = time.monotonic()
             try:
@@ -156,6 +167,7 @@ async def generate(resource: str, request: Request) -> Response:
                 )
             except UpstreamError as exc:
                 return _upstream_error(exc)
+            await request.app.state.budgets.record(budgets, canonical_response.usage.total_tokens)
             payload = canonical_to_gemini(canonical_response).model_dump()
             await record_request(
                 request,
@@ -169,7 +181,7 @@ async def generate(resource: str, request: Request) -> Response:
             )
             return JSONResponse(payload)
         sse = request.query_params.get("alt") == "sse"
-        return _stream_response(request, provider, canonical, body, sse=sse)
+        return _stream_response(request, provider, canonical, body, budgets, sse=sse)
 
     if method == "embedContent":
         try:
@@ -224,6 +236,7 @@ def _stream_response(
     provider: Upstream,
     canonical: CanonicalRequest,
     body: dict[str, Any],
+    budgets: list[BudgetRead],
     *,
     sse: bool,
 ) -> StreamingResponse:
@@ -257,6 +270,9 @@ def _stream_response(
             )
         if not sse:
             yield "]"
+        await request.app.state.budgets.record(
+            budgets, final_usage.total_tokens if final_usage else 0
+        )
         await record_request(
             request,
             operation="streamGenerateContent",

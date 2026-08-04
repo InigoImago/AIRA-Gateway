@@ -114,3 +114,14 @@ class BudgetRead(Base):
     limit_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     limit_requests: Mapped[int | None] = mapped_column(Integer, nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class BudgetUsage(Base):
+    """Running usage per scope+period, accounted by the gateway to enforce budgets (FRD-401)."""
+
+    __tablename__ = "budget_usage"
+
+    scope_key: Mapped[str] = mapped_column(String(320), primary_key=True)
+    period_key: Mapped[str] = mapped_column(String(10), primary_key=True)
+    tokens: Mapped[int] = mapped_column(Integer, default=0)
+    requests: Mapped[int] = mapped_column(Integer, default=0)

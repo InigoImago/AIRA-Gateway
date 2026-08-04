@@ -5,6 +5,19 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-04 — FRD-401: budget enforcement + usage accounting
+- Gateway `BudgetService`: **pre-dispatch `guard`** loads the budgets applicable to the request's
+  use case + subject, checks the current period's usage, and **rejects with `429 RESOURCE_EXHAUSTED`**
+  when a limit is met; **post-dispatch `record`** increments the counters (generate + streaming).
+- Usage accounting table `budget_usage` keyed by `(scope_key, period_key)` — `uc:<slug>` /
+  `member:<slug>:<subject>` × `YYYY-MM` | `YYYY-MM-DD` — so it **resets at day/month boundaries**
+  (gateway migration 0006). Request-count limits block the request itself; token limits block once
+  exceeded. `enforce_budgets` toggle (default on); no budgets configured → zero overhead.
+- **Gates green**: 326 tests / 99.85% (budget service + routes 100%), ruff + mypy --strict clean.
+  Next: `FRD-402` budget UI.
+
+---
+
 ## 2026-08-04 — FRD-400: budget model + distribution (Phase 4 start)
 - New Management `budgets` app: `Budget` per use case — `scope` (use_case | member), `period`
   (day | month), `limit_tokens` and/or `limit_requests`, `enabled`; unique on

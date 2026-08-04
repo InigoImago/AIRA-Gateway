@@ -23,6 +23,7 @@ from aira_gateway.api.pipeline import router as pipeline_router
 from aira_gateway.auth.dependencies import require_attribution
 from aira_gateway.auth.oidc import build_oidc_validator
 from aira_gateway.auth.service import ApiKeyService
+from aira_gateway.budgets.service import BudgetService
 from aira_gateway.config import GatewaySettings
 from aira_gateway.db.base import build_engine, build_sessionmaker, create_all
 from aira_gateway.middleware import UseCasePathMiddleware
@@ -72,6 +73,7 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
     app.state.providers = registry
     app.state.pipeline_engine = PipelineEngine(registry)
     app.state.pipeline_store = PipelineStore(sessionmaker)
+    app.state.budgets = BudgetService(sessionmaker, enforce=settings.enforce_budgets)
     app.state.db_engine = engine
     app.state.db_sessionmaker = sessionmaker
     app.state.oidc_validator = build_oidc_validator(settings)
