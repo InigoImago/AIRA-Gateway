@@ -26,6 +26,8 @@ from rest_framework.response import Response
 from aira_common.apikeys import generate_api_key
 from aira_management.apps.apikeys.models import ApiKey
 from aira_management.apps.apikeys.serializers import ApiKeySerializer, IssueApiKeySerializer
+from aira_management.apps.pipelines.models import PipelineConfig
+from aira_management.apps.pipelines.serializers import PipelineConfigSerializer
 from aira_management.apps.usecases.events import emit
 from aira_management.apps.usecases.models import UseCase, UseCaseMembership
 from aira_management.apps.usecases.serializers import (
@@ -211,3 +213,35 @@ class UseCaseViewSet(viewsets.ModelViewSet[UseCase]):
                 "api_key.revoked", {"prefix": prefix, "use_case": usecase.slug, "status": "revoked"}
             )
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=True, methods=["get", "put"], url_path="pipeline")
+    def pipeline(self, request: Request, slug: str | None = None) -> Response:
+        """Read or replace the use case's pre-dispatch pipeline (FRD-300/303).
+
+        Any member who can view the use case reads it; admins edit it. A saved config is
+        published to the gateway via `pipeline.upserted`.
+        """
+        usecase = self.get_object()
+        config = PipelineConfig.objects.filter(use_case=usecase).first()
+        if request.method == "GET":
+            if config is None:
+                return Response({"steps": [], "fallback_models": []})
+            return Response(PipelineConfigSerializer(config).data)
+
+        if not self._may_manage(usecase):
+            raise PermissionDenied("You cannot edit the pipeline of this use case.")
+        if config is None:
+            config = PipelineConfig(use_case=usecase)
+        serializer = PipelineConfigSerializer(config, data=request.data)
+        serializer.is_valid(raise_exception=True)
+        with transaction.atomic():
+            config = serializer.save()
+            emit(
+                "pipeline.upserted",
+                {
+                    "use_case": usecase.slug,
+                    "steps": config.steps,
+                    "fallback_models": config.fallback_models,
+                },
+            )
+        return Response(PipelineConfigSerializer(config).data)
