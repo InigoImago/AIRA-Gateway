@@ -5,6 +5,24 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-04 — FRD-101 Slice B: OIDC bearer validation — **auth complete**
+- **OIDC validation** (`gateway/auth/oidc.py`): `OidcValidator` verifies a Keycloak JWT via the
+  issuer's **JWKS** (`PyJWT` + `cryptography`), checking signature, issuer, expiry, and (optional)
+  audience; resolves to a `Principal(method="oidc")`. JWKS client is injectable → unit-testable
+  without a live Keycloak. `build_oidc_validator` gates on `oidc_enabled`/`oidc_issuer`.
+- **Wired** into `resolve_principal`: a non-AIRA `Bearer` token is validated by the OIDC validator
+  when configured (`app.state.oidc_validator`); API keys still take the `aira_` path.
+- **Keycloak realm**: added `deploy/compose/keycloak/realms/aira-realm.json` (realm `aira`, public
+  client `aira-gateway` with direct-access grants, demo user `demo-user`); imported on startup.
+- **Gates green**: 123 tests, **100% coverage**; ruff + mypy --strict clean. Hermetic OIDC tests use
+  a self-signed RS256 keypair + fake JWKS resolver (valid/expired/wrong-iss/wrong-aud/bad-sig/no-sub).
+- **End-to-end verified**: fetched a real access token from Keycloak (password grant) → Gemini route
+  returns **200** with the bearer, **401** for a garbage token. Run with
+  `AIRA_OIDC_ENABLED=true AIRA_OIDC_ISSUER=http://localhost:8080/realms/aira`.
+- **FRD-101 complete** (API key + OIDC). **Next: FRD-102** (attribution: request → user/project/use-case).
+
+---
+
 ## 2026-08-04 — FRD-101 Slice A: API-key authentication + gateway DB layer
 - **Gateway DB layer** (`gateway/db/`): SQLAlchemy 2.0 async via **psycopg3** (Postgres) /
   **aiosqlite** (tests); `Base`, engine/sessionmaker builders, `create_all` (Alembic deferred to

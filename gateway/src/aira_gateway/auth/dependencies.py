@@ -11,6 +11,7 @@ from fastapi import Request
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.auth.credentials import extract_token
 from aira_gateway.auth.keys import is_aira_key
+from aira_gateway.auth.oidc import OidcValidator
 from aira_gateway.auth.principal import Principal
 from aira_gateway.auth.service import ApiKeyService
 
@@ -35,7 +36,10 @@ async def resolve_principal(request: Request) -> Principal | None:
         async with sessionmaker() as session:
             return await ApiKeyService(session).verify(token)
 
-    # OIDC bearer (JWT) validation arrives in Slice B (FRD-101).
+    # Otherwise treat it as an OIDC bearer (JWT), if OIDC is configured.
+    validator: OidcValidator | None = request.app.state.oidc_validator
+    if validator is not None:
+        return validator.validate(token)
     return None
 
 

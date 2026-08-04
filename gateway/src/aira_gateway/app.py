@@ -20,6 +20,7 @@ from aira_gateway import __version__
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.api.gemini.routes import router as gemini_router
 from aira_gateway.auth.dependencies import require_principal
+from aira_gateway.auth.oidc import build_oidc_validator
 from aira_gateway.auth.service import ApiKeyService
 from aira_gateway.config import GatewaySettings
 from aira_gateway.db.base import build_engine, build_sessionmaker, create_all
@@ -60,6 +61,7 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
     app.state.providers = ProviderRegistry([MockProvider()])
     app.state.db_engine = engine
     app.state.db_sessionmaker = sessionmaker
+    app.state.oidc_validator = build_oidc_validator(settings)
 
     if otel_enabled:
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor

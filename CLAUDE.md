@@ -86,10 +86,11 @@ demo (`FRD-002`): extensible seed framework + `seed_demo` command creating the 5
 **Phase 0 complete. Phase 1 in progress:** `FRD-100` done — Gemini-compatible API
 (`/v1beta/models/{model}:generateContent|:streamGenerateContent|:embedContent`, list/get models)
 on a provider-agnostic canonical core, served by the mock provider (verified end-to-end).
-API direction: **Gemini first, OpenAI later** (ADR-0005). `FRD-101` Slice A done — **API-key auth**
-(`aira_<prefix>_<secret>`, hashed; `x-goog-api-key`/`?key=`/Bearer) + gateway DB layer (SQLAlchemy
-async) guarding the Gemini routes; CLI to mint keys; `auth_required` toggle. Next: `FRD-101` Slice B
-(**OIDC bearer** via Keycloak JWKS). See `docs/DEVLOG.md`.
+API direction: **Gemini first, OpenAI later** (ADR-0005). `FRD-101` **complete** — auth on the Gemini
+routes via **API keys** (`aira_<prefix>_<secret>`, hashed; `x-goog-api-key`/`?key=`/Bearer) **and**
+**OIDC bearer** (Keycloak JWKS; realm `aira` under `deploy/compose/keycloak/realms/`). Gateway has a
+SQLAlchemy-async DB layer; CLI mints keys; `auth_required`/`oidc_enabled` toggles. Both paths verified
+end-to-end. Next: `FRD-102` (attribution). See `docs/DEVLOG.md`.
 
 ## 7. Working agreement
 - Confirm scope via PRD/FRD before large changes; work phase by phase.

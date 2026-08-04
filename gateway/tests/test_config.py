@@ -30,6 +30,19 @@ def test_database_url_sqlite() -> None:
 
 def test_database_url_postgres() -> None:
     settings = GatewaySettings(
-        postgres_user="u", postgres_password="p", postgres_host="h", postgres_port=6, postgres_db="d"
+        postgres_user="u",
+        postgres_password="p",
+        postgres_host="h",
+        postgres_port=6,
+        postgres_db="d",
     )
     assert settings.database_url(use_sqlite=False) == "postgresql+psycopg://u:p@h:6/d"
+
+
+def test_jwks_uri_derived_from_issuer() -> None:
+    settings = GatewaySettings(oidc_issuer="https://kc/realms/aira/")
+    assert settings.jwks_uri() == "https://kc/realms/aira/protocol/openid-connect/certs"
+
+
+def test_jwks_uri_explicit_override() -> None:
+    assert GatewaySettings(oidc_jwks_uri="https://x/certs").jwks_uri() == "https://x/certs"

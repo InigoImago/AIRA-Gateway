@@ -30,6 +30,18 @@ class GatewaySettings(BaseAiraSettings):
     # Require authentication on the API routes; when False (pure demo) routes are open.
     auth_required: bool = True
 
+    # OIDC bearer validation (Keycloak). When disabled, only API keys are accepted.
+    oidc_enabled: bool = False
+    oidc_issuer: str = ""
+    oidc_audience: str = ""  # empty → skip audience verification (set in enterprise deployments)
+    oidc_jwks_uri: str = ""  # empty → derived from the issuer
+
+    def jwks_uri(self) -> str:
+        """Return the JWKS URI, deriving it from the issuer when not set explicitly."""
+        if self.oidc_jwks_uri:
+            return self.oidc_jwks_uri
+        return f"{self.oidc_issuer.rstrip('/')}/protocol/openid-connect/certs"
+
     def database_url(self, *, use_sqlite: bool) -> str:
         """Return the async SQLAlchemy URL for the gateway database."""
         if use_sqlite:
