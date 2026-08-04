@@ -104,8 +104,11 @@ google-genai SDK + JSON-array default; mock honours `maxOutputTokens` (→`MAX_T
 realm roles → Django groups, Keycloak is source of truth), DRF role permission classes,
 `scope_queryset` (governance sees all, else `django-guardian` object-level). `FRD-202` done —
 **use-case CRUD + membership** at `/api/v1/use-cases/` (scoped by RBAC; membership grants guardian
-object perms; change hook `events.emit` for FRD-204). Verified end-to-end. Next: `FRD-203` (Angular
-shell) / `FRD-204` (Kafka distribution). See `docs/DEVLOG.md`.
+object perms; change hook `events.emit`). `FRD-204` done — **Kafka config distribution**: management
+**transactional outbox** + `relay` → Kafka (compacted topics) → gateway **idempotent consumer** into
+read-model tables (`use_cases`/`use_case_members`). `aira_common.kafka` (aiokafka); `make
+kafka-topics/relay/consume`. Verified end-to-end. Next: `FRD-205` (API-key issuance) / `FRD-203` (UI).
+See `docs/DEVLOG.md`.
 
 ## 7. Working agreement
 - Confirm scope via PRD/FRD before large changes; work phase by phase.

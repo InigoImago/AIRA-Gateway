@@ -9,6 +9,7 @@ dependencies = [
     "structlog>=24.4",
     "opentelemetry-sdk>=1.29",
     "opentelemetry-exporter-otlp-proto-http>=1.29",
+    "aiokafka>=0.12",
 ]
 
 [build-system]

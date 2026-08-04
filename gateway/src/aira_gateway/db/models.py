@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, DateTime, Integer, String, func
+from sqlalchemy import JSON, Boolean, DateTime, Integer, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from aira_gateway.db.base import Base
@@ -61,3 +61,27 @@ class RequestLog(Base):
     # payloads (redacted; nullable when store_payloads is off)
     request_payload: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     response_payload: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+
+
+class UseCaseRead(Base):
+    """Gateway read-model of a use case, fed from Management via Kafka (FRD-204)."""
+
+    __tablename__ = "use_cases"
+
+    slug: Mapped[str] = mapped_column(String(64), primary_key=True)
+    name: Mapped[str] = mapped_column(String(255))
+    description: Mapped[str] = mapped_column(String(2000), default="")
+    processing_notes: Mapped[str] = mapped_column(String(2000), default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class UseCaseMemberRead(Base):
+    """Gateway read-model of use-case membership (FRD-204)."""
+
+    __tablename__ = "use_case_members"
+    __table_args__ = (UniqueConstraint("use_case_slug", "subject", name="uq_member"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    use_case_slug: Mapped[str] = mapped_column(String(64), index=True)
+    subject: Mapped[str] = mapped_column(String(255), index=True)
+    role: Mapped[str] = mapped_column(String(16), default="user")

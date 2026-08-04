@@ -12,7 +12,7 @@ ENV_EXAMPLE := $(COMPOSE_DIR)/.env.example
 
 .PHONY: help up up-core down destroy ps logs restart env sync test test-py test-frontend \
         test-integration lint lint-py lint-frontend fmt seed seed-reset migrate-gateway \
-        run-gateway run-backend run-frontend
+        kafka-topics relay consume run-gateway run-backend run-frontend
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -93,6 +93,19 @@ run-frontend: ## Run the Angular dev server
 
 migrate-gateway: ## Apply gateway DB migrations (Alembic)
 	cd gateway && uv run alembic upgrade head
+
+kafka-topics: ## Create the compacted config-distribution topics (idempotent)
+	@for t in aira.usecases aira.memberships; do \
+		docker exec aira-kafka /opt/kafka/bin/kafka-topics.sh --create --if-not-exists --topic $$t \
+			--bootstrap-server localhost:9092 --partitions 1 --replication-factor 1 \
+			--config cleanup.policy=compact; \
+	done
+
+relay: ## Publish pending management outbox events to Kafka
+	cd management/backend && uv run python manage.py relay
+
+consume: ## Run the gateway config consumer (applies events into the read-model)
+	uv run python -m aira_gateway.consumer.worker
 
 seed: ## Migrate + seed demo data (idempotent; requires 'make up')
 	cd management/backend && AIRA_DEMO_MODE=true uv run python manage.py migrate --noinput

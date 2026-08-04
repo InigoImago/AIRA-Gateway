@@ -28,11 +28,14 @@ def _create(client: APIClient, slug: str, name: str = "UC"):
 
 @pytest.fixture
 def captured_events():
-    events.clear_subscribers()
     captured: list[tuple[str, dict]] = []
-    events.subscribe(lambda t, p: captured.append((t, p)))
+
+    def spy(event_type: str, payload: dict) -> None:
+        captured.append((event_type, payload))
+
+    events.subscribe(spy)
     yield captured
-    events.clear_subscribers()
+    events.unsubscribe(spy)
 
 
 # ---- create -----------------------------------------------------------------------------
@@ -198,3 +201,10 @@ def test_change_hook_fires(captured_events) -> None:
     types = [t for t, _ in captured_events]
     assert "usecase.upserted" in types
     assert "membership.upserted" in types
+
+
+def test_unsubscribe_not_present_is_noop() -> None:
+    def never_subscribed(event_type: str, payload: dict) -> None:  # pragma: no cover
+        return None
+
+    events.unsubscribe(never_subscribed)  # no error, no-op

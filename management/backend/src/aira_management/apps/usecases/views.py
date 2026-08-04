@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 from django.contrib.auth import get_user_model
+from django.db import transaction
 from django.db.models import QuerySet
 from guardian.shortcuts import assign_perm, remove_perm
 from rest_framework import status, viewsets
@@ -77,24 +78,29 @@ class UseCaseViewSet(viewsets.ModelViewSet[UseCase]):
         return [IsAuthenticated()]
 
     def perform_create(self, serializer: Any) -> None:
-        usecase = serializer.save()
-        user: Any = self.request.user
-        _grant(user, usecase, UseCaseMembership.ADMIN)
-        UseCaseMembership.objects.create(use_case=usecase, user=user, role=UseCaseMembership.ADMIN)
-        emit("usecase.upserted", _snapshot(usecase))
+        with transaction.atomic():
+            usecase = serializer.save()
+            user: Any = self.request.user
+            _grant(user, usecase, UseCaseMembership.ADMIN)
+            UseCaseMembership.objects.create(
+                use_case=usecase, user=user, role=UseCaseMembership.ADMIN
+            )
+            emit("usecase.upserted", _snapshot(usecase))
 
     def perform_update(self, serializer: Any) -> None:
         if not self._may_admin(serializer.instance):
             raise PermissionDenied("You are not an admin of this use case.")
-        usecase = serializer.save()
-        emit("usecase.upserted", _snapshot(usecase))
+        with transaction.atomic():
+            usecase = serializer.save()
+            emit("usecase.upserted", _snapshot(usecase))
 
     def perform_destroy(self, instance: UseCase) -> None:
         if not self._may_admin(instance):
             raise PermissionDenied("You are not an admin of this use case.")
-        slug = instance.slug
-        instance.delete()
-        emit("usecase.deleted", {"slug": slug})
+        with transaction.atomic():
+            slug = instance.slug
+            instance.delete()
+            emit("usecase.deleted", {"slug": slug})
 
     def _may_admin(self, usecase: UseCase) -> bool:
         user = self.request.user
@@ -118,15 +124,16 @@ class UseCaseViewSet(viewsets.ModelViewSet[UseCase]):
         user = _resolve_user(payload.validated_data["username"])
         role = payload.validated_data["role"]
 
-        membership, _created = UseCaseMembership.objects.update_or_create(
-            use_case=usecase, user=user, defaults={"role": role}
-        )
-        _revoke(user, usecase)
-        _grant(user, usecase, role)
-        emit(
-            "membership.upserted",
-            {"slug": usecase.slug, "username": user.get_username(), "role": role},
-        )
+        with transaction.atomic():
+            membership, _created = UseCaseMembership.objects.update_or_create(
+                use_case=usecase, user=user, defaults={"role": role}
+            )
+            _revoke(user, usecase)
+            _grant(user, usecase, role)
+            emit(
+                "membership.upserted",
+                {"slug": usecase.slug, "username": user.get_username(), "role": role},
+            )
         return Response(MembershipSerializer(membership).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["delete"], url_path="members/(?P<username>[^/.]+)")
@@ -137,7 +144,8 @@ class UseCaseViewSet(viewsets.ModelViewSet[UseCase]):
         if not self._may_manage(usecase):
             raise PermissionDenied("You cannot manage members of this use case.")
         user = _resolve_user(username or "")
-        UseCaseMembership.objects.filter(use_case=usecase, user=user).delete()
-        _revoke(user, usecase)
-        emit("membership.removed", {"slug": usecase.slug, "username": username})
+        with transaction.atomic():
+            UseCaseMembership.objects.filter(use_case=usecase, user=user).delete()
+            _revoke(user, usecase)
+            emit("membership.removed", {"slug": usecase.slug, "username": username})
         return Response(status=status.HTTP_204_NO_CONTENT)

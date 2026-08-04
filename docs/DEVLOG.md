@@ -5,6 +5,26 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-04 — FRD-204: config distribution over Kafka (Management → Gateway read-model)
+- **Transactional outbox** (management `outbox` app): use-case/membership change events are written to
+  an `OutboxEvent` row **inside the same transaction** as the change (mutations wrapped in
+  `transaction.atomic`; subscriber wired via `events.subscribe` in app-ready). A `relay` command
+  publishes pending rows to Kafka and marks them — at-least-once (crash-safe; consumer idempotent).
+- **Shared Kafka** (`aira_common.kafka`): `Producer` protocol + `InMemoryProducer` (tests) +
+  `AiokafkaProducer` (real; `# pragma: no cover` I/O); topics `aira.usecases`/`aira.memberships`;
+  W3C trace context on headers.
+- **Gateway consumer**: `apply_event` (idempotent upsert/delete) into read-model tables `use_cases`
+  + `use_case_members` (Alembic 0002); `worker` (aiokafka) + `decode_event_type`. `make kafka-topics`
+  creates compacted topics; `make relay` / `make consume`.
+- **Gates green**: 202 tests, **100% coverage** (pure logic; Kafka I/O pragma-excluded, integration-
+  tested); ruff + mypy --strict clean (aiokafka untyped import ignored).
+- **End-to-end verified**: created `kafka-uc` in management → outbox rows → `relay` published to Kafka
+  → gateway consumer applied → read-model shows `use_cases: kafka-uc` and `use_case_members:
+  kafka-uc/demo-user/admin`. Failed publish (missing topic) left rows pending (nothing lost).
+- **Next: FRD-205** (self-service API-key issuance, distributed via this backbone) or **FRD-203** (UI).
+
+---
+
 ## 2026-08-04 — FRD-202: use-case CRUD + membership
 - **`usecases` app**: `UseCase` (slug/name/description/processing_notes) + `UseCaseMembership`
   (unique per user). CRUD at `/api/v1/use-cases/` (DRF ModelViewSet); slug validated to the gateway

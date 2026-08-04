@@ -19,8 +19,9 @@ def subscribe(subscriber: Subscriber) -> Subscriber:
     return subscriber
 
 
-def clear_subscribers() -> None:
-    _subscribers.clear()
+def unsubscribe(subscriber: Subscriber) -> None:
+    if subscriber in _subscribers:
+        _subscribers.remove(subscriber)
 
 
 def emit(event_type: str, payload: dict[str, Any]) -> None:
