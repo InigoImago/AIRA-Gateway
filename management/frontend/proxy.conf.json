@@ -3,5 +3,11 @@
     "target": "http://localhost:8002",
     "secure": false,
     "changeOrigin": true
+  },
+  "/gw": {
+    "target": "http://localhost:8001",
+    "secure": false,
+    "changeOrigin": true,
+    "pathRewrite": { "^/gw": "" }
   }
 }

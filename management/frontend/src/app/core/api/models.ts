@@ -40,17 +40,26 @@ export interface IssuedApiKey {
 
 export type StepType = 'injection_filter' | 'allow_check' | 'model_route';
 
-export interface RouteRule {
-  if_under_chars?: number | null;
+export interface RouteCategory {
+  name: string;
+  description?: string;
   model: string;
 }
 
 export interface StepConfig {
+  // injection_filter
   mode?: 'heuristic' | 'llm';
   action?: 'block' | 'flag';
-  model?: string;
+  scope?: 'user' | 'system_user';
+  patterns?: string[];
+  use_builtins?: boolean;
+  instruction?: string;
+  // allow_check
   models?: string[];
-  rules?: RouteRule[];
+  // model_route
+  model?: string; // classifier model
+  categories?: RouteCategory[];
+  default_model?: string;
 }
 
 export interface PipelineStep {
@@ -62,4 +71,18 @@ export interface PipelineConfig {
   steps: PipelineStep[];
   fallback_models: string[];
   updated_at?: string;
+}
+
+export interface DryRunTraceEntry {
+  type: string;
+  action: string;
+  detail: Record<string, unknown>;
+}
+
+export interface DryRunResult {
+  blocked: boolean;
+  block_reason: string | null;
+  effective_model: string;
+  fallback_models: string[];
+  trace: DryRunTraceEntry[];
 }

@@ -265,6 +265,10 @@ input::placeholder {
   background: var(--aira-success-soft);
   color: var(--aira-success);
 }
+.badge--warning {
+  background: var(--aira-warning-soft);
+  color: var(--aira-warning);
+}
 .badge--danger {
   background: var(--aira-danger-soft);
   color: var(--aira-danger);

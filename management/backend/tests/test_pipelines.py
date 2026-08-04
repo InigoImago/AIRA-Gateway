@@ -14,7 +14,13 @@ BASE = "/api/v1/use-cases/"
 
 _STEPS = [
     {"type": "injection_filter", "config": {"mode": "llm", "action": "block"}},
-    {"type": "model_route", "config": {"rules": [{"if_under_chars": 100, "model": "cheap-1"}]}},
+    {
+        "type": "model_route",
+        "config": {
+            "model": "router",
+            "categories": [{"name": "code", "description": "coding", "model": "strong-1"}],
+        },
+    },
 ]
 
 

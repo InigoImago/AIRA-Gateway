@@ -1,7 +1,7 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
-import { ApiKey, IssuedApiKey, Membership, PipelineConfig, UseCase } from './models';
+import { ApiKey, DryRunResult, IssuedApiKey, Membership, PipelineConfig, UseCase } from './models';
 
 @Injectable({ providedIn: 'root' })
 export class UseCaseService {
@@ -58,5 +58,15 @@ export class UseCaseService {
 
   savePipeline(slug: string, config: PipelineConfig): Observable<PipelineConfig> {
     return this.http.put<PipelineConfig>(`${this.base}${slug}/pipeline/`, config);
+  }
+
+  /** Dry-run a (possibly unsaved) pipeline against a sample prompt via the gateway. */
+  dryRunPipeline(payload: {
+    system: string;
+    user: string;
+    model?: string;
+    pipeline: PipelineConfig;
+  }): Observable<DryRunResult> {
+    return this.http.post<DryRunResult>('/gw/v1beta/pipeline:dryRun', payload);
   }
 }

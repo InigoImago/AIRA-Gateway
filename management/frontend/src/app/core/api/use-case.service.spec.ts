@@ -85,4 +85,23 @@ describe('UseCaseService', () => {
     expect(req.request.body).toEqual(config);
     req.flush(config);
   });
+
+  it('dry-runs a pipeline against the gateway', () => {
+    const payload = {
+      system: 'sys',
+      user: 'hi',
+      pipeline: { steps: [], fallback_models: [] },
+    };
+    service.dryRunPipeline(payload).subscribe((r) => expect(r.blocked).toBe(false));
+    const req = http.expectOne('/gw/v1beta/pipeline:dryRun');
+    expect(req.request.method).toBe('POST');
+    expect(req.request.body).toEqual(payload);
+    req.flush({
+      blocked: false,
+      block_reason: null,
+      effective_model: 'mock-1',
+      fallback_models: [],
+      trace: [],
+    });
+  });
 });

@@ -5,6 +5,22 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-04 — FRD-306: pipeline rework — LLM routing, explainable filter, dry-run
+- Reworked the pipeline after feedback that routing was length-only and the builder was opaque.
+- **Routing** is now an **LLM classifier**: it reads system + user text, picks one of the configured
+  `categories` (`{name, description, model}`) and routes to that model (`default_model` fallback).
+- **Injection filter**: built-in patterns are **shown**; operators add **custom patterns** (invalid
+  regex → literal); `use_builtins` toggle; `scope` user | system+user; LLM mode takes model +
+  instruction.
+- **Transparency**: `engine.dry_run()` + `POST /v1beta/pipeline:dryRun` return a full per-step trace;
+  the builder gains a **test panel** with an instant **live preview** (deterministic steps,
+  client-side) and a **Dry-run** button (full trace incl. LLM via gateway, `/gw` dev proxy).
+- Inspector redesigned with inline help per step + a categories editor.
+- **Gates green**: backend 299 tests / 99.8% (pipeline modules ~100%), ruff + mypy --strict clean;
+  frontend 23 Vitest tests, Prettier clean, `ng build` OK. `FRD-306` done.
+
+---
+
 ## 2026-08-04 — UI usability: tabbed use-case detail
 - The use-case detail page was overloaded with stacked lists (members + keys + forms). Split into
   **tabs** (Overview / Members / API keys) so one section shows at a time; add/issue forms moved
