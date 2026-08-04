@@ -5,6 +5,24 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-04 — Phase 0 / Slice 2: gateway skeleton + shared libs
+- **uv workspace** at repo root (`pyproject.toml`) with members `gateway` + `libs`; shared tooling
+  config (ruff, mypy strict, pytest, coverage gate `--cov-fail-under=90`). Python 3.14 venv via uv.
+- **`aira-common`** shared lib: `config` (pydantic-settings base), `logging` (structlog JSON),
+  `errors` (AiraError + ErrorResponse envelope), `events` (EventPublisher protocol +
+  InMemoryEventPublisher; real Kafka transport deferred to Phase 1), `health` (async TCP checks).
+- **`aira-gateway`** skeleton (FastAPI): app factory (`create_app`), `GatewaySettings`,
+  `/healthz` + `/readyz` (probes Postgres + Kafka), AiraError exception handler, `main:app` entry.
+- **Quality gates green**: 32 tests, **100% coverage**; `ruff check`, `ruff format --check`, and
+  `mypy --strict` all pass. Wired `make sync/test/lint/fmt/run-gateway`.
+- Note: on Python 3.14, ruff formats multi-type excepts with PEP 758 syntax
+  (`except TimeoutError, OSError:` — no parentheses); valid and intended.
+- **Smoke test**: ran the gateway against the live Compose stack — `/readyz` returns `ready`
+  with postgres+kafka reachable (HTTP 200).
+- **Next:** Slice 3 (management backend skeleton: Django + DRF) + Angular workspace shell.
+
+---
+
 ## 2026-08-04 — Phase 0 / Slice 1: infra stack + toolchain
 - **Toolchain** (ADR-0003): confirmed Python 3.14.4 + uv 0.9.26 present. Installed **Node 26.6.0**
   via nvm; worked around `NPM_CONFIG_PREFIX` (unset in persistent env) and symlinked node/npm/npx

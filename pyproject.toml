@@ -1,0 +1,53 @@
+# AIRA — uv workspace root (virtual; no package of its own).
+# Shared tooling config lives here; each member has its own pyproject.
+
+[tool.uv.workspace]
+members = ["gateway", "libs"]
+
+[tool.uv.sources]
+aira-common = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=1.0",
+    "pytest-cov>=6.0",
+    "httpx>=0.28",
+    "ruff>=0.9",
+    "mypy>=1.14",
+]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+src = ["gateway/src", "libs/src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "C4", "ASYNC"]
+# ASYNC109: exposing an explicit `timeout` parameter is a deliberate API choice here.
+ignore = ["ASYNC109"]
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
+plugins = ["pydantic.mypy"]
+mypy_path = ["gateway/src", "libs/src"]
+
+[[tool.mypy.overrides]]
+module = ["aira_gateway.*", "aira_common.*"]
+disallow_untyped_defs = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["gateway/tests", "libs/tests"]
+# importlib mode lets same-named test modules coexist across packages
+addopts = "-q --import-mode=importlib --cov=aira_gateway --cov=aira_common --cov-report=term-missing --cov-fail-under=90"
+filterwarnings = ["ignore::DeprecationWarning:starlette.*"]
+
+[tool.coverage.run]
+branch = true
+source = ["aira_gateway", "aira_common"]
+
+[tool.coverage.report]
+show_missing = true
+exclude_also = ["if TYPE_CHECKING:", "raise NotImplementedError", "\\.\\.\\."]

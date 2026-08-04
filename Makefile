@@ -8,7 +8,7 @@ ENV_EXAMPLE := $(COMPOSE_DIR)/.env.example
 
 .DEFAULT_GOAL := help
 
-.PHONY: help up down destroy ps logs restart env test lint fmt seed
+.PHONY: help up down destroy ps logs restart env sync test lint fmt seed run-gateway
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -41,14 +41,23 @@ logs: ## Tail logs of all services
 restart: ## Restart the stack
 	$(COMPOSE) restart
 
-test: ## Run all test suites (populated per component in later slices)
-	@echo "TODO: wire gateway/management/frontend test suites (FRD-000 slices 2-4)"
+sync: ## Install/refresh the Python workspace (uv)
+	uv sync
 
-lint: ## Run linters/formatters in check mode (populated in later slices)
-	@echo "TODO: wire ruff/black/mypy + eslint/prettier/tsc (FRD-000 slice 4)"
+test: ## Run all Python test suites with coverage gate
+	uv run pytest
 
-fmt: ## Auto-format the codebase (populated in later slices)
-	@echo "TODO: wire ruff format / prettier (FRD-000 slice 4)"
+lint: ## Run ruff lint + format check + mypy (check mode)
+	uv run ruff check .
+	uv run ruff format --check .
+	uv run mypy gateway/src libs/src
+
+fmt: ## Auto-format and auto-fix the Python codebase
+	uv run ruff format .
+	uv run ruff check --fix .
+
+run-gateway: ## Run the Gateway API locally against the Compose stack
+	uv run uvicorn aira_gateway.main:app --reload --port 8001
 
 seed: ## Seed demo data (implemented in FRD-002)
 	@echo "TODO: implement demo seeding (FRD-002)"
