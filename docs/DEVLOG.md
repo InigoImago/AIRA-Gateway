@@ -5,6 +5,26 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-04 — Quality: error-safety + test-tier separation (Jenkins-ready)
+- **Confirmed the pytest suite is hermetic**: 154→156 tests pass with the **entire Compose stack
+  stopped** (in-memory SQLite, fake JWKS, mock provider). The earlier curl checks were *manual*, not
+  part of the suite.
+- **Two test tiers** for CI: unit tests run by default; stack-dependent tests are marked
+  `@pytest.mark.integration` and **excluded** (`-m 'not integration'`). Added `make test-integration`
+  and an example integration test; documented in **`docs/TESTING.md`** with a Jenkins pipeline sketch
+  (unit stage needs no Docker; integration stage brings the stack up).
+- **Error-safety**: added a global exception handler — any unhandled error now returns a
+  **Gemini-shaped 500 (`INTERNAL`)** on `/v1beta` (AIRA envelope elsewhere), logs full context
+  server-side (path, method, error type/msg, subject, use_case, trace_id), and **does not leak**
+  internal details to the client. Tested with a throwing provider.
+- **Reviewed**: expected errors already carry contextual messages (model-not-found, missing-method,
+  not-a-member-of-use-case, field-located validation errors, unauthenticated). Noted follow-up: OIDC
+  fails closed (401) even when Keycloak/JWKS is unreachable — safe, but can't cleanly distinguish
+  "provider down" (503) from "bad token" via PyJWT alone.
+- **Gates green**: 156 tests, **100% coverage**; ruff + mypy --strict clean.
+
+---
+
 ## 2026-08-04 — FRD-104 + FRD-105 — **Phase 1 (Gateway MVP) complete**
 - **FRD-104 (mock fidelity + streaming)**: `:streamGenerateContent?alt=sse` now returns
   `text/event-stream` (`data: {json}\n\n`, the google-genai SDK path); the default returns a streamed

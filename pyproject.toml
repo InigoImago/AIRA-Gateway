@@ -52,8 +52,13 @@ disallow_untyped_defs = true
 asyncio_mode = "auto"
 DJANGO_SETTINGS_MODULE = "aira_management.config.settings"
 testpaths = ["gateway/tests", "libs/tests", "management/backend/tests"]
-# importlib mode lets same-named test modules coexist across packages
-addopts = "-q --import-mode=importlib --cov=aira_gateway --cov=aira_common --cov=aira_management --cov-report=term-missing --cov-fail-under=90"
+# importlib mode lets same-named test modules coexist across packages.
+# `-m "not integration"` keeps the default run hermetic (CI unit stage); integration tests
+# (which need the live Compose stack) run separately via `make test-integration`.
+addopts = "-q --import-mode=importlib -m 'not integration' --cov=aira_gateway --cov=aira_common --cov=aira_management --cov-report=term-missing --cov-fail-under=90"
+markers = [
+    "integration: requires the live Docker Compose stack (excluded from the default run)",
+]
 filterwarnings = ["ignore::DeprecationWarning:starlette.*"]
 
 [tool.coverage.run]

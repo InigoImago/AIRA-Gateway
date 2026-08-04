@@ -11,7 +11,7 @@ ENV_EXAMPLE := $(COMPOSE_DIR)/.env.example
 .DEFAULT_GOAL := help
 
 .PHONY: help up up-core down destroy ps logs restart env sync test test-py test-frontend \
-        lint lint-py lint-frontend fmt seed seed-reset migrate-gateway \
+        test-integration lint lint-py lint-frontend fmt seed seed-reset migrate-gateway \
         run-gateway run-backend run-frontend
 
 help: ## Show this help
@@ -61,6 +61,9 @@ test-py: ## Run Python test suites with coverage gate
 
 test-frontend: ## Run Angular unit tests (Vitest, single run)
 	cd $(FRONTEND_DIR) && npx ng test --watch=false
+
+test-integration: ## Run integration tests (needs 'make up'; excluded from default run)
+	uv run pytest -m integration --no-cov
 
 lint: lint-py lint-frontend ## Run all linters/type-checks (check mode)
 

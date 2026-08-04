@@ -13,11 +13,11 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from aira_common.errors import AiraError
-from aira_common.logging import configure_logging
-from aira_common.observability import configure_observability
+from aira_common.errors import AiraError, ErrorDetail, ErrorResponse
+from aira_common.logging import configure_logging, get_logger
+from aira_common.observability import configure_observability, trace_context_fields
 from aira_gateway import __version__
-from aira_gateway.api.gemini.errors import GeminiHTTPError
+from aira_gateway.api.gemini.errors import GeminiHTTPError, gemini_error_response
 from aira_gateway.api.gemini.routes import router as gemini_router
 from aira_gateway.auth.dependencies import require_attribution
 from aira_gateway.auth.oidc import build_oidc_validator
@@ -79,6 +79,9 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
     return app
 
 
+_log = get_logger("aira_gateway")
+
+
 def _register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(AiraError)
     async def _handle_aira_error(_request: Request, exc: AiraError) -> JSONResponse:
@@ -90,3 +93,27 @@ def _register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(GeminiHTTPError)
     async def _handle_gemini_error(_request: Request, exc: GeminiHTTPError) -> JSONResponse:
         return exc.to_response()
+
+    @app.exception_handler(Exception)
+    async def _handle_unexpected(request: Request, exc: Exception) -> JSONResponse:
+        """Last resort: log full context server-side, return a safe, shaped error to the client."""
+        attribution = getattr(request.state, "attribution", None)
+        _log.error(
+            "unhandled_error",
+            path=request.url.path,
+            method=request.method,
+            error_type=type(exc).__name__,
+            error=str(exc),
+            subject=getattr(attribution, "subject", None),
+            use_case=getattr(attribution, "use_case", None),
+            **trace_context_fields(),
+        )
+        # API routes get a Gemini-shaped error; other routes get the AIRA envelope.
+        if request.url.path.startswith("/v1beta"):
+            return gemini_error_response(
+                500, "Internal error while processing the request.", "INTERNAL"
+            )
+        envelope = ErrorResponse(
+            error=ErrorDetail(code="internal_error", message="Internal server error.")
+        )
+        return JSONResponse(status_code=500, content=envelope.model_dump(exclude_none=True))
