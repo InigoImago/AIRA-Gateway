@@ -1,7 +1,7 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
-import { ApiKey, IssuedApiKey, Membership, UseCase } from './models';
+import { ApiKey, IssuedApiKey, Membership, PipelineConfig, UseCase } from './models';
 
 @Injectable({ providedIn: 'root' })
 export class UseCaseService {
@@ -50,5 +50,13 @@ export class UseCaseService {
 
   revokeApiKey(slug: string, prefix: string): Observable<void> {
     return this.http.delete<void>(`${this.base}${slug}/api-keys/${prefix}/`);
+  }
+
+  getPipeline(slug: string): Observable<PipelineConfig> {
+    return this.http.get<PipelineConfig>(`${this.base}${slug}/pipeline/`);
+  }
+
+  savePipeline(slug: string, config: PipelineConfig): Observable<PipelineConfig> {
+    return this.http.put<PipelineConfig>(`${this.base}${slug}/pipeline/`, config);
   }
 }

@@ -68,4 +68,21 @@ describe('UseCaseService', () => {
     expect(req.request.method).toBe('DELETE');
     req.flush(null);
   });
+
+  it('gets the pipeline config', () => {
+    service.getPipeline('uc').subscribe((c) => expect(c.steps.length).toBe(0));
+    http.expectOne('/api/v1/use-cases/uc/pipeline/').flush({ steps: [], fallback_models: [] });
+  });
+
+  it('saves the pipeline with PUT', () => {
+    const config = {
+      steps: [{ type: 'allow_check' as const, config: {} }],
+      fallback_models: ['b'],
+    };
+    service.savePipeline('uc', config).subscribe();
+    const req = http.expectOne('/api/v1/use-cases/uc/pipeline/');
+    expect(req.request.method).toBe('PUT');
+    expect(req.request.body).toEqual(config);
+    req.flush(config);
+  });
 });

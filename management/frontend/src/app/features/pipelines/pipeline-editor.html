@@ -1,0 +1,208 @@
+<div class="stack">
+  <a [routerLink]="['/use-cases', slug]" class="muted">&larr; Back to use case</a>
+
+  <div class="spread">
+    <div>
+      <h2 style="margin: 0">Pipeline</h2>
+      <code>{{ slug }}</code>
+    </div>
+    <div class="row">
+      @if (saved()) {
+        <span class="badge badge--success">Saved ✓</span>
+      }
+      <button type="button" class="btn btn--primary" (click)="save()">Save pipeline</button>
+    </div>
+  </div>
+
+  @if (error(); as message) {
+    <p class="callout callout--danger" role="alert">{{ message }}</p>
+  }
+
+  <div class="pipe">
+    <!-- Graph -->
+    <div class="pipe__graph card">
+      <div class="node node--endpoint">Request in</div>
+      <div class="edge"></div>
+
+      @for (step of config().steps; track $index) {
+        <div
+          class="node node--step"
+          [class.is-selected]="selectedIndex() === $index"
+          (click)="select($index)"
+          (keydown.enter)="select($index)"
+          tabindex="0"
+          role="button"
+        >
+          <div class="node__body">
+            <span class="node__index">{{ $index + 1 }}</span>
+            <div>
+              <div class="node__title">{{ label(step.type) }}</div>
+              <div class="node__meta muted">{{ summarize(step) }}</div>
+            </div>
+          </div>
+          <div class="node__controls" (click)="$event.stopPropagation()">
+            <button
+              type="button"
+              class="btn btn--sm btn--ghost"
+              (click)="moveStep($index, -1)"
+              title="Up"
+            >
+              ↑
+            </button>
+            <button
+              type="button"
+              class="btn btn--sm btn--ghost"
+              (click)="moveStep($index, 1)"
+              title="Down"
+            >
+              ↓
+            </button>
+            <button
+              type="button"
+              class="btn btn--sm btn--danger"
+              (click)="removeStep($index)"
+              title="Remove"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+        <div class="edge"></div>
+      }
+
+      <div class="node node--dispatch">Dispatch</div>
+
+      @for (model of config().fallback_models; track model) {
+        <div class="edge edge--fallback"></div>
+        <div
+          class="node node--fallback"
+          (click)="select('fallback')"
+          (keydown.enter)="select('fallback')"
+          tabindex="0"
+          role="button"
+        >
+          fallback → <code>{{ model }}</code>
+        </div>
+      }
+      @if (config().fallback_models.length === 0) {
+        <div class="edge edge--fallback"></div>
+        <div
+          class="node node--fallback node--muted"
+          (click)="select('fallback')"
+          (keydown.enter)="select('fallback')"
+          tabindex="0"
+          role="button"
+        >
+          + add fallback
+        </div>
+      }
+
+      <div class="pipe__add">
+        <span class="muted">Add step:</span>
+        @for (type of stepTypes; track type) {
+          <button type="button" class="btn btn--sm" (click)="addStep(type)">
+            + {{ label(type) }}
+          </button>
+        }
+      </div>
+    </div>
+
+    <!-- Inspector -->
+    <div class="pipe__inspector card">
+      @if (selectedStep(); as step) {
+        <h3 class="section-title">{{ label(step.type) }}</h3>
+
+        @if (step.type === 'injection_filter') {
+          <div class="field">
+            <label>Mode</label>
+            <select
+              [ngModel]="step.config.mode || 'heuristic'"
+              (ngModelChange)="setStepField(selectedIndex(), 'mode', $event)"
+            >
+              <option value="heuristic">Heuristic (patterns)</option>
+              <option value="llm">LLM classifier</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>On detection</label>
+            <select
+              [ngModel]="step.config.action || 'block'"
+              (ngModelChange)="setStepField(selectedIndex(), 'action', $event)"
+            >
+              <option value="block">Block request</option>
+              <option value="flag">Flag &amp; continue</option>
+            </select>
+          </div>
+          @if (step.config.mode === 'llm') {
+            <div class="field">
+              <label>Classifier model (optional)</label>
+              <input
+                [ngModel]="step.config.model || ''"
+                (ngModelChange)="setStepField(selectedIndex(), 'model', $event)"
+                placeholder="defaults to first model"
+              />
+            </div>
+          }
+        } @else if (step.type === 'allow_check') {
+          <div class="field">
+            <label>Allowed models (comma-separated)</label>
+            <input
+              [ngModel]="(step.config.models || []).join(', ')"
+              (ngModelChange)="setAllowModels(selectedIndex(), $event)"
+              placeholder="gemini-2.0-flash, mock-1"
+            />
+          </div>
+          <p class="muted">Requests for any other model are rejected.</p>
+        } @else if (step.type === 'model_route') {
+          <p class="muted">
+            First matching rule wins. Leave “under chars” empty for an unconditional route.
+          </p>
+          @for (rule of step.config.rules || []; track $index) {
+            <div class="rule">
+              <div class="field">
+                <label>Under chars</label>
+                <input
+                  type="number"
+                  [ngModel]="rule.if_under_chars"
+                  (ngModelChange)="setRuleField(selectedIndex(), $index, 'if_under_chars', $event)"
+                  placeholder="∞"
+                />
+              </div>
+              <div class="field grow">
+                <label>Route to model</label>
+                <input
+                  [ngModel]="rule.model"
+                  (ngModelChange)="setRuleField(selectedIndex(), $index, 'model', $event)"
+                  placeholder="cheap-1"
+                />
+              </div>
+              <button
+                type="button"
+                class="btn btn--sm btn--danger"
+                (click)="removeRule(selectedIndex(), $index)"
+              >
+                ✕
+              </button>
+            </div>
+          }
+          <button type="button" class="btn btn--sm" (click)="addRule(selectedIndex())">
+            + Add rule
+          </button>
+        }
+      } @else if (selected() === 'fallback') {
+        <h3 class="section-title">Fallback chain</h3>
+        <div class="field">
+          <label>Fallback models (comma-separated, in order)</label>
+          <input
+            [ngModel]="config().fallback_models.join(', ')"
+            (ngModelChange)="setFallback($event)"
+            placeholder="gemini-1.5-flash, mock-1"
+          />
+        </div>
+        <p class="muted">Tried in order when the primary upstream fails (non-streaming).</p>
+      } @else {
+        <p class="muted">Select a node in the graph to configure it.</p>
+      }
+    </div>
+  </div>
+</div>

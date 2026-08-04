@@ -37,3 +37,29 @@ export interface IssuedApiKey {
   label: string;
   use_case: string;
 }
+
+export type StepType = 'injection_filter' | 'allow_check' | 'model_route';
+
+export interface RouteRule {
+  if_under_chars?: number | null;
+  model: string;
+}
+
+export interface StepConfig {
+  mode?: 'heuristic' | 'llm';
+  action?: 'block' | 'flag';
+  model?: string;
+  models?: string[];
+  rules?: RouteRule[];
+}
+
+export interface PipelineStep {
+  type: StepType;
+  config: StepConfig;
+}
+
+export interface PipelineConfig {
+  steps: PipelineStep[];
+  fallback_models: string[];
+  updated_at?: string;
+}

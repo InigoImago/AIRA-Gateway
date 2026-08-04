@@ -118,9 +118,15 @@ restyled with a global design-system. **Phase 2 (Management Foundation) is compl
 **Phase 3 in progress:** `FRD-304` done — **real Google Gemini upstream adapter** (async `Upstream`
 protocol + `UpstreamError`; injectable `httpx.AsyncClient`, hermetic `MockTransport` tests; key never
 logged; registered only when `AIRA_GOOGLE_API_KEY` is set). Gateway also **passes upstream status
-codes through** (429→RESOURCE_EXHAUSTED, 503→UNAVAILABLE, 504→DEADLINE_EXCEEDED; else 502). Next in
-Phase 3: `FRD-300` pipeline engine, `FRD-301` routing/rerouting, `FRD-302` fallback, `FRD-303`
-pipeline-builder UI. See `docs/DEVLOG.md`.
+codes through** (429→RESOURCE_EXHAUSTED, 503→UNAVAILABLE, 504→DEADLINE_EXCEEDED; else 502).
+`FRD-300`/`FRD-303` done — **pre-dispatch pipeline** (`aira_gateway/pipeline/`): per-use-case,
+config-driven steps run before dispatch — `injection_filter` (heuristic **or LLM-backed**, fails
+open; block|flag), `allow_check` (model allow-list), `model_route` (rule-based cost/length
+rerouting) — then a `fallback_models` dispatch chain. Default = pass-through. Config authored in
+Management (`GET/PUT /use-cases/{slug}/pipeline`) → `aira.pipelines` Kafka → gateway
+`pipeline_configs` read-model (migration 0004); Angular **clickable graph builder** at
+`use-cases/:slug/pipeline`. **Phase 3 core (pipeline) delivered.** Remaining Phase 3 polish:
+drag-drop/parallel branches, dry-run preview. See `docs/DEVLOG.md`.
 
 ## 7. Working agreement
 - Confirm scope via PRD/FRD before large changes; work phase by phase.

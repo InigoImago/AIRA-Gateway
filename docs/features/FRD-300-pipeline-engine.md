@@ -1,6 +1,6 @@
 # FRD-300 — Pre-dispatch pipeline engine (filter · routing · fallback)
 
-> Phase: 3 · Status: **In progress** · Owner: Vadim Scheibe · Last updated: 2026-08-04
+> Phase: 3 · Status: **Done** (engine + distribution + builder UI) · Owner: Vadim Scheibe · Last updated: 2026-08-04
 > Related: `docs/PRD.md` (pre-dispatch pipeline); `docs/ROADMAP.md` Phase 3; builds on FRD-100/102/103/304.
 > Companion FRDs: `FRD-301` (routing/rerouting details), `FRD-302` (fallback), `FRD-303` (builder UI).
 

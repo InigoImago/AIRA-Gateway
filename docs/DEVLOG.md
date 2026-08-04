@@ -5,6 +5,24 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-04 — FRD-300/303: pre-dispatch pipeline (filter · routing · fallback) + graph builder
+- **Gateway engine** (`aira_gateway/pipeline/`): per-use-case, config-driven pipeline runs before
+  dispatch on the canonical request. Steps: `injection_filter` (heuristic **or LLM-backed**, fails
+  open; action block|flag), `allow_check` (model allow-list), `model_route` (rule-based incl.
+  cost/length rerouting). Dispatch follows a `fallback_models` chain. Default (no config) =
+  pass-through, so prior behavior is unchanged. Decisions logged + traced (`aira.pipeline.*`).
+- **Distribution**: `aira.pipelines` topic; idempotent consumer → `pipeline_configs` read-model
+  (gateway migration 0004). Management `pipelines` app + `GET/PUT /use-cases/{slug}/pipeline`
+  (members read, admins edit) publishes `pipeline.upserted` via the outbox.
+- **Angular graph builder** (`features/pipelines`): route `use-cases/:slug/pipeline` renders the
+  pipeline as a **clickable node graph** (Request → steps → Dispatch → fallback) with a per-step
+  inspector; zoneless-safe signal state. Entry from the use-case detail.
+- **Gates green**: backend 285 tests / 99.8% (pipeline modules ~100%), ruff + mypy --strict clean;
+  frontend 21 Vitest tests, Prettier clean, `ng build` OK. `FRD-300`/`FRD-303` done. **Phase 3 core
+  (pipeline) delivered.**
+
+---
+
 ## 2026-08-04 — FRD-205: self-service API-key issuance + UI redesign (closes Phase 2)
 - **Backend (Management → Gateway)**: Management is now the source of truth for API keys
   (ADR-0006). New `apikeys` app (model + serializers) with nested endpoints on the use-case

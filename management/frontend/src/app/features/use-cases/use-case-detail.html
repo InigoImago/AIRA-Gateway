@@ -8,6 +8,9 @@
           <h2 class="card__title">{{ useCase.name }}</h2>
           <code>{{ useCase.slug }}</code>
         </div>
+        <a class="btn btn--sm" [routerLink]="['/use-cases', useCase.slug, 'pipeline']">
+          Edit pipeline →
+        </a>
       </div>
       @if (useCase.description) {
         <p style="margin: 0.75rem 0 0">{{ useCase.description }}</p>

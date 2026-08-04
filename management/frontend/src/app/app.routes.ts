@@ -14,4 +14,10 @@ export const routes: Routes = [
     loadComponent: () =>
       import('./features/use-cases/use-case-detail').then((m) => m.UseCaseDetail),
   },
+  {
+    path: 'use-cases/:slug/pipeline',
+    canActivate: [authGuard],
+    loadComponent: () =>
+      import('./features/pipelines/pipeline-editor').then((m) => m.PipelineEditor),
+  },
 ];

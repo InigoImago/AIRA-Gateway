@@ -1,0 +1,149 @@
+:host {
+  display: block;
+}
+
+.pipe {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) minmax(280px, 1.1fr);
+  gap: 1.25rem;
+  align-items: start;
+
+  @media (max-width: 720px) {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ---- graph ---------------------------------------------------------------------- */
+
+.pipe__graph {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.node {
+  width: 100%;
+  max-width: 340px;
+  border: 1px solid var(--aira-border-strong);
+  border-radius: var(--aira-radius);
+  padding: 0.65rem 0.85rem;
+  background: var(--aira-surface);
+  text-align: center;
+}
+
+.node--endpoint,
+.node--dispatch {
+  font-weight: 700;
+  background: var(--aira-brand-soft);
+  border-color: transparent;
+  color: var(--aira-brand-strong);
+}
+
+.node--dispatch {
+  background: #111827;
+  color: #f9fafb;
+}
+
+.node--step {
+  cursor: pointer;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  transition:
+    border-color 0.12s ease,
+    box-shadow 0.12s ease;
+
+  &:hover {
+    border-color: var(--aira-brand);
+  }
+  &.is-selected {
+    border-color: var(--aira-brand);
+    box-shadow: 0 0 0 3px var(--aira-brand-soft);
+  }
+}
+
+.node__body {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.node__index {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--aira-brand-strong);
+  background: var(--aira-brand-soft);
+  border-radius: 50%;
+}
+.node__title {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.node__meta {
+  font-size: 0.78rem;
+}
+.node__controls {
+  display: flex;
+  gap: 0.2rem;
+  flex: none;
+}
+
+.node--fallback {
+  cursor: pointer;
+  font-size: 0.85rem;
+  border-style: dashed;
+
+  &:hover {
+    border-color: var(--aira-brand);
+  }
+}
+.node--muted {
+  color: var(--aira-text-muted);
+}
+
+.edge {
+  width: 2px;
+  height: 18px;
+  background: var(--aira-border-strong);
+}
+.edge--fallback {
+  background: repeating-linear-gradient(
+    to bottom,
+    var(--aira-border-strong) 0 3px,
+    transparent 3px 6px
+  );
+}
+
+.pipe__add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px dashed var(--aira-border);
+  width: 100%;
+  justify-content: center;
+}
+
+/* ---- inspector ------------------------------------------------------------------ */
+
+.pipe__inspector {
+  position: sticky;
+  top: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.rule {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.5rem;
+}
