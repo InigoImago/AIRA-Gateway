@@ -61,6 +61,19 @@ def test_get_returns_empty_default() -> None:
     assert resp.json() == {"steps": [], "fallback_models": []}
 
 
+def test_get_returns_saved_config() -> None:
+    admin = _user("admin1", "use-case-admin")
+    _make_uc(admin, "demo-uc")
+    client = _client(admin)
+    client.put(
+        f"{BASE}demo-uc/pipeline/", {"steps": _STEPS, "fallback_models": ["b"]}, format="json"
+    )
+    resp = client.get(f"{BASE}demo-uc/pipeline/")
+    assert resp.status_code == 200
+    assert resp.json()["steps"] == _STEPS
+    assert resp.json()["fallback_models"] == ["b"]
+
+
 def test_put_saves_and_emits(captured_events) -> None:
     admin = _user("admin1", "use-case-admin")
     _make_uc(admin, "demo-uc")

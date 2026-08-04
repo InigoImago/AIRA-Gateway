@@ -39,6 +39,7 @@ INSTALLED_APPS = [
     "aira_management.apps.usecases",
     "aira_management.apps.apikeys",
     "aira_management.apps.pipelines",
+    "aira_management.apps.budgets",
     "aira_management.apps.outbox",
 ]
 

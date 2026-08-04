@@ -5,6 +5,19 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-04 — FRD-400: budget model + distribution (Phase 4 start)
+- New Management `budgets` app: `Budget` per use case — `scope` (use_case | member), `period`
+  (day | month), `limit_tokens` and/or `limit_requests`, `enabled`; unique on
+  (use_case, scope, subject, period). Nested endpoints `GET/POST /use-cases/{slug}/budgets` (POST
+  upserts) + `DELETE …/budgets/{id}` (members read, admins write); validation (member needs subject;
+  at least one positive limit).
+- Distribution: `budget.upserted` / `budget.deleted` via the transactional outbox → Kafka
+  `aira.budgets` → gateway idempotent consumer → `budgets` read-model (gateway migration 0005).
+- Enforcement + usage accounting is FRD-401; UI is FRD-402 (both planned).
+- **Gates green**: 314 tests / 99.85% (budget modules + views 100%), ruff + mypy --strict clean.
+
+---
+
 ## 2026-08-04 — FRD-306: pipeline rework — LLM routing, explainable filter, dry-run
 - Reworked the pipeline after feedback that routing was length-only and the builder was opaque.
 - **Routing** is now an **LLM classifier**: it reads system + user text, picks one of the configured

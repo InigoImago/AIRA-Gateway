@@ -10,6 +10,7 @@ from typing import Any
 
 from aira_common.kafka import (
     API_KEY_TOPIC,
+    BUDGET_TOPIC,
     MEMBERSHIP_TOPIC,
     PIPELINE_TOPIC,
     USECASE_TOPIC,
@@ -25,6 +26,8 @@ _TOPIC_FOR = {
     "api_key.revoked": API_KEY_TOPIC,
     "pipeline.upserted": PIPELINE_TOPIC,
     "pipeline.deleted": PIPELINE_TOPIC,
+    "budget.upserted": BUDGET_TOPIC,
+    "budget.deleted": BUDGET_TOPIC,
 }
 
 
@@ -32,6 +35,11 @@ def record_to_outbox(event_type: str, payload: dict[str, Any]) -> None:
     topic = _TOPIC_FOR.get(event_type)
     if topic is None:
         return
-    # Compacted topics are keyed by the entity's natural key.
-    key = payload.get("prefix") or payload.get("slug") or payload.get("use_case", "")
+    # Compacted topics are keyed by the entity's natural key (budget id first, then prefix/slug).
+    key = str(
+        payload.get("id")
+        or payload.get("prefix")
+        or payload.get("slug")
+        or payload.get("use_case", "")
+    )
     OutboxEvent.objects.create(topic=topic, key=key, event_type=event_type, payload=payload)

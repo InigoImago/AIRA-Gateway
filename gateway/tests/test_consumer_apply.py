@@ -12,6 +12,7 @@ from aira_gateway.consumer.worker import decode_event_type
 from aira_gateway.db.base import build_engine, build_sessionmaker, create_all
 from aira_gateway.db.models import (
     ApiKey,
+    BudgetRead,
     PipelineConfigRead,
     UseCaseMemberRead,
     UseCaseRead,
@@ -160,6 +161,41 @@ async def test_pipeline_delete_removes_config(make_session) -> None:
         )
         await apply_event(session, "pipeline.deleted", {"use_case": "uc"})
     assert await _all(make_session, PipelineConfigRead) == []
+
+
+# ---- budgets (FRD-400) ------------------------------------------------------------------
+
+
+def _budget_event(**over: object) -> dict:
+    payload = {
+        "id": 1,
+        "use_case": "uc",
+        "scope": "use_case",
+        "subject": "",
+        "period": "month",
+        "limit_tokens": 1000,
+        "limit_requests": None,
+        "enabled": True,
+    }
+    payload.update(over)
+    return payload
+
+
+async def test_budget_upsert_is_idempotent_and_updates(make_session) -> None:
+    async with make_session() as session:
+        await apply_event(session, "budget.upserted", _budget_event())
+        await apply_event(session, "budget.upserted", _budget_event(limit_tokens=5000))
+    rows = await _all(make_session, BudgetRead)
+    assert len(rows) == 1
+    assert rows[0].limit_tokens == 5000
+    assert rows[0].use_case == "uc"
+
+
+async def test_budget_delete_removes_row(make_session) -> None:
+    async with make_session() as session:
+        await apply_event(session, "budget.upserted", _budget_event())
+        await apply_event(session, "budget.deleted", {"id": 1})
+    assert await _all(make_session, BudgetRead) == []
 
 
 def test_decode_event_type() -> None:

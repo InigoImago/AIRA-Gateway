@@ -26,6 +26,8 @@ from rest_framework.response import Response
 from aira_common.apikeys import generate_api_key
 from aira_management.apps.apikeys.models import ApiKey
 from aira_management.apps.apikeys.serializers import ApiKeySerializer, IssueApiKeySerializer
+from aira_management.apps.budgets.models import Budget
+from aira_management.apps.budgets.serializers import BudgetSerializer
 from aira_management.apps.pipelines.models import PipelineConfig
 from aira_management.apps.pipelines.serializers import PipelineConfigSerializer
 from aira_management.apps.usecases.events import emit
@@ -69,6 +71,19 @@ def _resolve_user(username: str) -> Any:
     if user is None:
         raise ValidationError({"username": [f"Unknown user '{username}'."]})
     return user
+
+
+def _budget_payload(budget: Budget, slug: str) -> dict[str, Any]:
+    return {
+        "id": budget.pk,
+        "use_case": slug,
+        "scope": budget.scope,
+        "subject": budget.subject,
+        "period": budget.period,
+        "limit_tokens": budget.limit_tokens,
+        "limit_requests": budget.limit_requests,
+        "enabled": budget.enabled,
+    }
 
 
 class UseCaseViewSet(viewsets.ModelViewSet[UseCase]):
@@ -245,3 +260,52 @@ class UseCaseViewSet(viewsets.ModelViewSet[UseCase]):
                 },
             )
         return Response(PipelineConfigSerializer(config).data)
+
+    @action(detail=True, methods=["get", "post"], url_path="budgets")
+    def budgets(self, request: Request, slug: str | None = None) -> Response:
+        """List or upsert usage budgets for this use case (FRD-400).
+
+        Members read; admins define. POST upserts on (scope, subject, period) and publishes
+        `budget.upserted` to the gateway.
+        """
+        usecase = self.get_object()
+        if request.method == "GET":
+            budgets = Budget.objects.filter(use_case=usecase)
+            return Response(BudgetSerializer(budgets, many=True).data)
+
+        if not self._may_manage(usecase):
+            raise PermissionDenied("You cannot edit budgets of this use case.")
+        serializer = BudgetSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        with transaction.atomic():
+            budget, _created = Budget.objects.update_or_create(
+                use_case=usecase,
+                scope=data["scope"],
+                subject=data["subject"],
+                period=data["period"],
+                defaults={
+                    "limit_tokens": data.get("limit_tokens"),
+                    "limit_requests": data.get("limit_requests"),
+                    "enabled": data.get("enabled", True),
+                },
+            )
+            emit("budget.upserted", _budget_payload(budget, usecase.slug))
+        return Response(BudgetSerializer(budget).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["delete"], url_path="budgets/(?P<budget_id>[0-9]+)")
+    def delete_budget(
+        self, request: Request, slug: str | None = None, budget_id: str | None = None
+    ) -> Response:
+        usecase = self.get_object()
+        if not self._may_manage(usecase):
+            raise PermissionDenied("You cannot edit budgets of this use case.")
+        assert budget_id is not None  # the URL route guarantees a numeric id
+        budget = Budget.objects.filter(use_case=usecase, pk=int(budget_id)).first()
+        if budget is None:
+            raise ValidationError({"budget": [f"No budget '{budget_id}' for this use case."]})
+        with transaction.atomic():
+            budget_pk = budget.pk
+            budget.delete()
+            emit("budget.deleted", {"id": budget_pk, "use_case": usecase.slug})
+        return Response(status=status.HTTP_204_NO_CONTENT)

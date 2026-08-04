@@ -128,7 +128,12 @@ in Management (`GET/PUT /use-cases/{slug}/pipeline`) → `aira.pipelines` Kafka 
 `pipeline_configs` read-model (migration 0004); Angular **clickable graph builder** at
 `use-cases/:slug/pipeline` with **inline help + a test panel** (client-side live preview + real
 **dry-run** via `POST /v1beta/pipeline:dryRun`, `/gw` proxy). **Phase 3 core (pipeline) delivered.**
-Remaining polish: drag-drop/parallel branches, authenticated dry-run. See `docs/DEVLOG.md`.
+Backlog: `FRD-307` (Global-Admin-approved model catalog + builder pickers, documented), drag-drop/
+parallel branches, authenticated dry-run, `FRD-106` (OpenAI surface).
+**Phase 4 (Budgets & Quotas) in progress:** `FRD-400` done — Management `budgets` app + `GET/POST/
+DELETE /use-cases/{slug}/budgets` (scope use_case|member, period day|month, token/request limits) →
+`aira.budgets` Kafka → gateway `budgets` read-model (migration 0005). Next: `FRD-401` enforcement +
+usage accounting in the gateway (reject with 429 over budget), `FRD-402` budget UI. See `docs/DEVLOG.md`.
 
 ## 7. Working agreement
 - Confirm scope via PRD/FRD before large changes; work phase by phase.

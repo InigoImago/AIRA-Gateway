@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from aira_gateway.db.models import (
     ApiKey,
+    BudgetRead,
     PipelineConfigRead,
     UseCaseMemberRead,
     UseCaseRead,
@@ -37,6 +38,10 @@ async def apply_event(session: AsyncSession, event_type: str, payload: dict[str,
         await _upsert_pipeline(session, payload)
     elif event_type == "pipeline.deleted":
         await _delete_pipeline(session, payload["use_case"])
+    elif event_type == "budget.upserted":
+        await _upsert_budget(session, payload)
+    elif event_type == "budget.deleted":
+        await _delete_budget(session, payload["id"])
     else:
         return
     await session.commit()
@@ -135,3 +140,26 @@ async def _upsert_pipeline(session: AsyncSession, payload: dict[str, Any]) -> No
 
 async def _delete_pipeline(session: AsyncSession, use_case: str) -> None:
     await session.execute(delete(PipelineConfigRead).where(PipelineConfigRead.use_case == use_case))
+
+
+async def _upsert_budget(session: AsyncSession, payload: dict[str, Any]) -> None:
+    """Upsert a budget definition into the read-model, keyed by id (FRD-400)."""
+    record = await session.get(BudgetRead, payload["id"])
+    fields = {
+        "use_case": payload["use_case"],
+        "scope": payload["scope"],
+        "subject": payload.get("subject", ""),
+        "period": payload["period"],
+        "limit_tokens": payload.get("limit_tokens"),
+        "limit_requests": payload.get("limit_requests"),
+        "enabled": payload.get("enabled", True),
+    }
+    if record is None:
+        session.add(BudgetRead(id=payload["id"], **fields))
+    else:
+        for key, value in fields.items():
+            setattr(record, key, value)
+
+
+async def _delete_budget(session: AsyncSession, budget_id: int) -> None:
+    await session.execute(delete(BudgetRead).where(BudgetRead.id == budget_id))

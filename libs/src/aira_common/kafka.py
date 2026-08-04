@@ -18,6 +18,7 @@ USECASE_TOPIC = "aira.usecases"
 MEMBERSHIP_TOPIC = "aira.memberships"
 API_KEY_TOPIC = "aira.api-keys"
 PIPELINE_TOPIC = "aira.pipelines"
+BUDGET_TOPIC = "aira.budgets"
 
 EVENT_TYPE_HEADER = "event_type"
 

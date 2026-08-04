@@ -99,3 +99,18 @@ class PipelineConfigRead(Base):
     steps: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     fallback_models: Mapped[list[str]] = mapped_column(JSON, default=list)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class BudgetRead(Base):
+    """Gateway read-model of a usage budget, fed from Management (FRD-400)."""
+
+    __tablename__ = "budgets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    use_case: Mapped[str] = mapped_column(String(64), index=True)
+    scope: Mapped[str] = mapped_column(String(16))
+    subject: Mapped[str] = mapped_column(String(255), default="")
+    period: Mapped[str] = mapped_column(String(8))
+    limit_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    limit_requests: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
