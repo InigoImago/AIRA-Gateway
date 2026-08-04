@@ -21,7 +21,9 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
 - **Language**: all docs, code, and identifiers in **English**.
 - **Management UI**: **Angular** (TypeScript SPA) + **Django REST Framework** backend.
   Django keeps ORM/migrations/`django-guardian` object-level RBAC/admin; Angular is the frontend.
-- **Gateway**: **FastAPI** (Python 3.12+).
+- **Gateway**: **FastAPI** (Python **3.14**).
+- **Toolchain** (see `ADR-0003`): **Python 3.14 + uv**, **Node 26** (Angular). Pin versions in
+  `pyproject.toml`/`.python-version` and `package.json` `engines`/`.nvmrc`.
 - **AuthN**: Keycloak OIDC (bearer) **and** self-generated API keys (hashed at rest).
 - **Roles (initial)**: Global Administrator, IT Security, IT Steuerung (Governance),
   Use Case Administrator, Use Case User. Least-privilege, object-scoped.
