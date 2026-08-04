@@ -42,3 +42,20 @@ apps ─OTLP→ otel-collector ─OTLP→ grafana/otel-lgtm ─→ Grafana UI (t
   persistence guarantees, single-node). Production observability is revisited in Phase 7. We diverge
   from the earlier SigNoz decision, but the app instrumentation is identical, so the switch is cheap.
 - Follow-ups: pin image tags in `deploy/compose`; production backend decided in Phase 7.
+
+## Vendor portability (why this stays open to Dynatrace, Grafana Cloud, Datadog, …)
+Because apps emit vendor-neutral **OTLP** and only ever talk to the Collector, changing the
+observability vendor is a **Collector-config change, not an app change**:
+
+```yaml
+exporters:
+  otlphttp/dynatrace:
+    endpoint: https://<env>.live.dynatrace.com/api/v2/otlp
+    headers: { Authorization: "Api-Token ${DT_API_TOKEN}" }
+# add it to the pipeline's exporters list (optionally alongside otel-lgtm = fan-out)
+```
+
+The same applies to Grafana Cloud, Datadog, Honeycomb, New Relic, and Elastic — all accept OTLP.
+The standard resource attributes we set (`service.name`, `service.version`, `deployment.environment`)
+map into each vendor's entity model. Caveat: some vendors' host/infra deep-instrumentation (e.g.
+Dynatrace OneAgent) is agent-based and would be added *alongside* OTLP in Phase 7, not instead of it.

@@ -265,6 +265,10 @@ Core entities (details in FRDs):
 - **Monitoring**: metrics (latency, throughput, error rate, cost, budget consumption, anomalies).
 - **Dashboards**: per-use-case and global (Grafana); security-specific views for IT Security.
 - **Alerting**: anomaly-driven alerts feeding incident response.
+- **Vendor portability**: apps emit vendor-neutral **OTLP** and only talk to the Collector, so the
+  backend is swappable without app changes — a production move to **Dynatrace, Grafana Cloud,
+  Datadog, Honeycomb, New Relic, Elastic**, etc. is a Collector-exporter change (and can fan out to
+  several backends at once). See ADR-0004.
 
 ---
 
