@@ -18,6 +18,9 @@ export class UseCaseDetail implements OnInit {
   protected readonly apiKeys = signal<ApiKey[]>([]);
   protected readonly issued = signal<IssuedApiKey | null>(null);
   protected readonly copied = signal(false);
+  protected readonly tab = signal<'overview' | 'members' | 'keys'>('overview');
+  protected readonly showAddMember = signal(false);
+  protected readonly showIssueKey = signal(false);
   protected slug = '';
   protected memberUsername = '';
   protected memberRole = 'user';

@@ -12,154 +12,218 @@
           Edit pipeline →
         </a>
       </div>
-      @if (useCase.description) {
-        <p style="margin: 0.75rem 0 0">{{ useCase.description }}</p>
-      }
-      @if (useCase.processing_notes) {
-        <p class="muted" style="margin: 0.5rem 0 0">
-          <strong>Processing:</strong> {{ useCase.processing_notes }}
-        </p>
-      }
     </div>
   }
 
-  <!-- Members ---------------------------------------------------------------->
-  <div class="card">
-    <h3 class="section-title">Members</h3>
-    <table class="table">
-      <thead>
-        <tr>
-          <th>User</th>
-          <th>Role</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        @for (member of members(); track member.username) {
-          <tr>
-            <td>{{ member.username }}</td>
-            <td>
-              <span class="badge badge--muted">{{ member.role }}</span>
-            </td>
-            <td style="text-align: right">
-              <button
-                type="button"
-                class="btn btn--sm btn--danger"
-                (click)="removeMember(member.username)"
-              >
-                Remove
-              </button>
-            </td>
-          </tr>
-        } @empty {
-          <tr>
-            <td class="table__empty" colspan="3">No members yet.</td>
-          </tr>
-        }
-      </tbody>
-    </table>
-
-    <form class="form-inline" style="margin-top: 1rem" (ngSubmit)="addMember()">
-      <div class="field grow">
-        <label for="member-user">Username</label>
-        <input
-          id="member-user"
-          name="username"
-          [(ngModel)]="memberUsername"
-          placeholder="username"
-        />
-      </div>
-      <div class="field">
-        <label for="member-role">Role</label>
-        <select id="member-role" name="role" [(ngModel)]="memberRole">
-          <option value="user">user</option>
-          <option value="admin">admin</option>
-        </select>
-      </div>
-      <button type="submit" class="btn btn--primary">Add member</button>
-    </form>
+  <div class="tabs">
+    <button
+      type="button"
+      class="tab"
+      [class.is-active]="tab() === 'overview'"
+      (click)="tab.set('overview')"
+    >
+      Overview
+    </button>
+    <button
+      type="button"
+      class="tab"
+      [class.is-active]="tab() === 'members'"
+      (click)="tab.set('members')"
+    >
+      Members <span class="tab__count">{{ members().length }}</span>
+    </button>
+    <button
+      type="button"
+      class="tab"
+      [class.is-active]="tab() === 'keys'"
+      (click)="tab.set('keys')"
+    >
+      API keys <span class="tab__count">{{ apiKeys().length }}</span>
+    </button>
   </div>
 
-  <!-- API keys --------------------------------------------------------------->
-  <div class="card">
-    <div class="spread">
-      <h3 class="section-title" style="margin: 0">API keys</h3>
-    </div>
-    <p class="muted" style="margin: 0.25rem 0 1rem">
-      Keys are bound to this use case — requests made with them are attributed here automatically.
-    </p>
-
-    @if (issued(); as key) {
-      <div class="callout callout--warning stack" style="margin-bottom: 1rem">
-        <strong>Copy this key now — it is shown only once.</strong>
-        <code class="secret">{{ key.api_key }}</code>
-        <div class="row">
-          <button type="button" class="btn btn--sm btn--primary" (click)="copyKey(key.api_key)">
-            {{ copied() ? 'Copied ✓' : 'Copy' }}
-          </button>
-          <button type="button" class="btn btn--sm btn--ghost" (click)="dismissIssued()">
-            Done
-          </button>
+  <!-- Overview -->
+  @if (tab() === 'overview') {
+    <div class="card stack">
+      @if (useCase(); as useCase) {
+        <p style="margin: 0">{{ useCase.description || 'No description.' }}</p>
+        @if (useCase.processing_notes) {
+          <p class="muted" style="margin: 0">
+            <strong>Processing:</strong> {{ useCase.processing_notes }}
+          </p>
+        }
+      }
+      <div class="tiles">
+        <div class="tile">
+          <div class="tile__value">{{ members().length }}</div>
+          <div class="tile__label">Members</div>
+        </div>
+        <div class="tile">
+          <div class="tile__value">{{ apiKeys().length }}</div>
+          <div class="tile__label">API keys</div>
         </div>
       </div>
-    }
+    </div>
+  }
 
-    <table class="table">
-      <thead>
-        <tr>
-          <th>Prefix</th>
-          <th>Label</th>
-          <th>Owner</th>
-          <th>Status</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        @for (key of apiKeys(); track key.prefix) {
+  <!-- Members -->
+  @if (tab() === 'members') {
+    <div class="card">
+      <div class="spread">
+        <h3 class="section-title" style="margin: 0">Members</h3>
+        <button type="button" class="btn btn--sm" (click)="showAddMember.set(!showAddMember())">
+          {{ showAddMember() ? 'Cancel' : '+ Add member' }}
+        </button>
+      </div>
+
+      @if (showAddMember()) {
+        <form class="form-inline disclosure" (ngSubmit)="addMember(); showAddMember.set(false)">
+          <div class="field grow">
+            <label for="member-user">Username</label>
+            <input
+              id="member-user"
+              name="username"
+              [(ngModel)]="memberUsername"
+              placeholder="username"
+            />
+          </div>
+          <div class="field">
+            <label for="member-role">Role</label>
+            <select id="member-role" name="role" [(ngModel)]="memberRole">
+              <option value="user">user</option>
+              <option value="admin">admin</option>
+            </select>
+          </div>
+          <button type="submit" class="btn btn--primary">Add</button>
+        </form>
+      }
+
+      <table class="table" style="margin-top: 1rem">
+        <thead>
           <tr>
-            <td>
-              <code>aira_{{ key.prefix }}_…</code>
-            </td>
-            <td>{{ key.label || '—' }}</td>
-            <td>{{ key.owner }}</td>
-            <td>
-              @if (key.is_active) {
-                <span class="badge badge--success">active</span>
-              } @else {
-                <span class="badge badge--danger">revoked</span>
-              }
-            </td>
-            <td style="text-align: right">
-              @if (key.is_active) {
+            <th>User</th>
+            <th>Role</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (member of members(); track member.username) {
+            <tr>
+              <td>{{ member.username }}</td>
+              <td>
+                <span class="badge badge--muted">{{ member.role }}</span>
+              </td>
+              <td style="text-align: right">
                 <button
                   type="button"
                   class="btn btn--sm btn--danger"
-                  (click)="revokeKey(key.prefix)"
+                  (click)="removeMember(member.username)"
                 >
-                  Revoke
+                  Remove
                 </button>
-              }
-            </td>
-          </tr>
-        } @empty {
-          <tr>
-            <td class="table__empty" colspan="5">No keys issued yet.</td>
-          </tr>
-        }
-      </tbody>
-    </table>
+              </td>
+            </tr>
+          } @empty {
+            <tr>
+              <td class="table__empty" colspan="3">No members yet.</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  }
 
-    <form class="form-inline" style="margin-top: 1rem" (ngSubmit)="issueKey()">
-      <div class="field grow">
-        <label for="key-label">Label (optional)</label>
-        <input
-          id="key-label"
-          name="label"
-          [(ngModel)]="keyLabel"
-          placeholder="e.g. opencode laptop"
-        />
+  <!-- API keys -->
+  @if (tab() === 'keys') {
+    <div class="card">
+      <div class="spread">
+        <h3 class="section-title" style="margin: 0">API keys</h3>
+        <button
+          type="button"
+          class="btn btn--sm btn--primary"
+          (click)="showIssueKey.set(!showIssueKey())"
+        >
+          {{ showIssueKey() ? 'Cancel' : '+ Issue key' }}
+        </button>
       </div>
-      <button type="submit" class="btn btn--primary">Issue key</button>
-    </form>
-  </div>
+      <p class="muted" style="margin: 0.25rem 0 0">
+        Keys are bound to this use case — requests made with them are attributed here automatically.
+      </p>
+
+      @if (showIssueKey()) {
+        <form class="form-inline disclosure" (ngSubmit)="issueKey(); showIssueKey.set(false)">
+          <div class="field grow">
+            <label for="key-label">Label (optional)</label>
+            <input
+              id="key-label"
+              name="label"
+              [(ngModel)]="keyLabel"
+              placeholder="e.g. opencode laptop"
+            />
+          </div>
+          <button type="submit" class="btn btn--primary">Issue</button>
+        </form>
+      }
+
+      @if (issued(); as key) {
+        <div class="callout callout--warning stack" style="margin-top: 1rem">
+          <strong>Copy this key now — it is shown only once.</strong>
+          <code class="secret">{{ key.api_key }}</code>
+          <div class="row">
+            <button type="button" class="btn btn--sm btn--primary" (click)="copyKey(key.api_key)">
+              {{ copied() ? 'Copied ✓' : 'Copy' }}
+            </button>
+            <button type="button" class="btn btn--sm btn--ghost" (click)="dismissIssued()">
+              Done
+            </button>
+          </div>
+        </div>
+      }
+
+      <table class="table" style="margin-top: 1rem">
+        <thead>
+          <tr>
+            <th>Prefix</th>
+            <th>Label</th>
+            <th>Owner</th>
+            <th>Status</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (key of apiKeys(); track key.prefix) {
+            <tr>
+              <td>
+                <code>aira_{{ key.prefix }}_…</code>
+              </td>
+              <td>{{ key.label || '—' }}</td>
+              <td>{{ key.owner }}</td>
+              <td>
+                @if (key.is_active) {
+                  <span class="badge badge--success">active</span>
+                } @else {
+                  <span class="badge badge--danger">revoked</span>
+                }
+              </td>
+              <td style="text-align: right">
+                @if (key.is_active) {
+                  <button
+                    type="button"
+                    class="btn btn--sm btn--danger"
+                    (click)="revokeKey(key.prefix)"
+                  >
+                    Revoke
+                  </button>
+                }
+              </td>
+            </tr>
+          } @empty {
+            <tr>
+              <td class="table__empty" colspan="5">No keys issued yet.</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  }
 </div>

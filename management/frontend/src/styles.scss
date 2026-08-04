@@ -298,3 +298,65 @@ input::placeholder {
   color: #f9fafb;
   border-radius: var(--aira-radius-sm);
 }
+
+/* ---- tabs ------------------------------------------------------------------------ */
+
+.tabs {
+  display: flex;
+  gap: 0.25rem;
+  border-bottom: 1px solid var(--aira-border);
+}
+.tab {
+  padding: 0.55rem 0.9rem;
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--aira-text-muted);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+
+  &:hover {
+    color: var(--aira-text);
+  }
+  &.is-active {
+    color: var(--aira-brand-strong);
+    border-bottom-color: var(--aira-brand);
+  }
+}
+.tab__count {
+  margin-left: 0.35rem;
+  font-size: 0.72rem;
+  color: var(--aira-text-muted);
+}
+
+/* ---- stat tiles (overview) ------------------------------------------------------- */
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.75rem;
+}
+.tile {
+  border: 1px solid var(--aira-border);
+  border-radius: var(--aira-radius-sm);
+  padding: 0.75rem 0.9rem;
+  background: var(--aira-surface);
+}
+.tile__value {
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+.tile__label {
+  font-size: 0.78rem;
+  color: var(--aira-text-muted);
+}
+
+/* ---- disclosure (toggle a form) -------------------------------------------------- */
+
+.disclosure {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px dashed var(--aira-border);
+}

@@ -5,6 +5,14 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-04 — UI usability: tabbed use-case detail
+- The use-case detail page was overloaded with stacked lists (members + keys + forms). Split into
+  **tabs** (Overview / Members / API keys) so one section shows at a time; add/issue forms moved
+  behind **disclosure** toggles; Overview shows quick **stat tiles**. Added `.tabs`/`.tile`/
+  `.disclosure` to the design-system. `ng build` + 21 Vitest + Prettier green.
+
+---
+
 ## 2026-08-04 — FRD-300/303: pre-dispatch pipeline (filter · routing · fallback) + graph builder
 - **Gateway engine** (`aira_gateway/pipeline/`): per-use-case, config-driven pipeline runs before
   dispatch on the canonical request. Steps: `injection_filter` (heuristic **or LLM-backed**, fails
