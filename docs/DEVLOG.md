@@ -5,6 +5,23 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-04 — Phase 0 / Slice 3b: Angular frontend shell — **Phase 0 complete**
+- Scaffolded **`management/frontend`** with **Angular 22** (latest; note: Node is 26, Angular is 22).
+  Uses the new `@angular/build:unit-test` builder → **Vitest + jsdom** (no browser needed — CI-friendly).
+- Replaced the default welcome page with a minimal **AIRA shell** (title/subtitle header, nav
+  placeholder, `router-outlet`); updated specs (3 tests) and page `<title>`.
+- Wired frontend into `make`: `test`/`test-frontend`, `lint`/`lint-frontend` (Prettier + build),
+  `fmt`, `run-frontend`, and `sync` (npm install). `make test` now runs Python + frontend together.
+- **Gates green**: `ng build` OK (~216 kB), 3 frontend tests pass, Prettier clean; Python side still
+  41 tests / 100% coverage / ruff + mypy clean. `node_modules`/`dist` git-ignored.
+- **Phase 0 (Foundation & Infra) is complete**: full local stack (`make up`) + gateway, management
+  backend, and frontend skeletons, all tested and observ-ready hooks in place.
+- **Next:** Phase 1 — Gateway MVP (`FRD-100` unified API, `FRD-101` auth, `FRD-102` attribution,
+  `FRD-103` persistence, `FRD-104` mock upstream, `FRD-105` tracing/IP). Also still pending from
+  Phase 0 plan: OTel Collector + SigNoz wiring (`FRD-001`) and seed/demo (`FRD-002`).
+
+---
+
 ## 2026-08-04 — Phase 0 / Slice 3a: management backend (Django + DRF)
 - Added **`management/backend`** as a third uv workspace member: **Django 6.0 + DRF 3.17 +
   psycopg 3.3** on Python 3.14 (src layout, package `aira_management`).

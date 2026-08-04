@@ -1,0 +1,34 @@
+:host {
+  display: block;
+  font-family: system-ui, sans-serif;
+}
+
+.aira-header {
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid #e2e8f0;
+
+  h1 {
+    margin: 0;
+    font-size: 1.4rem;
+  }
+}
+
+.aira-subtitle {
+  margin: 0.25rem 0 0;
+  color: #64748b;
+  font-size: 0.9rem;
+}
+
+.aira-nav {
+  padding: 0.75rem 1.5rem;
+  border-bottom: 1px solid #e2e8f0;
+
+  &__item {
+    font-weight: 600;
+    color: #334155;
+  }
+}
+
+.aira-main {
+  padding: 1.5rem;
+}

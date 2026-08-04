@@ -1,0 +1,13 @@
+<header class="aira-header">
+  <h1>{{ title() }}</h1>
+  <p class="aira-subtitle">{{ subtitle() }}</p>
+</header>
+
+<nav class="aira-nav" aria-label="Main navigation">
+  <!-- Role-aware navigation (use cases, security, governance) arrives in Phase 2 (FRD-203). -->
+  <span class="aira-nav__item">Dashboard</span>
+</nav>
+
+<main class="aira-main">
+  <router-outlet />
+</main>

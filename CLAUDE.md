@@ -75,8 +75,12 @@ AIRA/
 (Directories are created as phases begin; not all exist yet.)
 
 ## 6. Current status
-Planning phase. PRD + ROADMAP drafted. Next: write Phase 0 FRDs, then start implementation
-(Foundation & Infra). See `docs/DEVLOG.md` for the latest.
+**Phase 0 (Foundation & Infra) complete.** Local Compose stack (postgres, keycloak, kafka,
+schema-registry, vault) runs via `make up`. uv workspace with three Python-side packages
+(`aira_common`, `aira_gateway`, `aira_management` = Django+DRF) plus an Angular 22 frontend shell —
+all with `/healthz`+`/readyz`, 100% Python coverage, and green ruff/mypy/prettier gates.
+Still open from the Phase 0 plan: OTel Collector + SigNoz wiring (`FRD-001`) and seed/demo (`FRD-002`).
+**Next: Phase 1 — Gateway MVP.** See `docs/DEVLOG.md` for the latest.
 
 ## 7. Working agreement
 - Confirm scope via PRD/FRD before large changes; work phase by phase.

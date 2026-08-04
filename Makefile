@@ -8,7 +8,8 @@ ENV_EXAMPLE := $(COMPOSE_DIR)/.env.example
 
 .DEFAULT_GOAL := help
 
-.PHONY: help up down destroy ps logs restart env sync test lint fmt seed run-gateway run-backend
+.PHONY: help up down destroy ps logs restart env sync test test-py test-frontend \
+        lint lint-py lint-frontend fmt seed run-gateway run-backend run-frontend
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -41,26 +42,44 @@ logs: ## Tail logs of all services
 restart: ## Restart the stack
 	$(COMPOSE) restart
 
-sync: ## Install/refresh the Python workspace (uv)
-	uv sync
+FRONTEND_DIR := management/frontend
 
-test: ## Run all Python test suites with coverage gate
+sync: ## Install/refresh Python (uv) and frontend (npm) dependencies
+	uv sync
+	cd $(FRONTEND_DIR) && npm install
+
+test: test-py test-frontend ## Run all test suites (Python + frontend)
+
+test-py: ## Run Python test suites with coverage gate
 	uv run pytest
 
-lint: ## Run ruff lint + format check + mypy (check mode)
+test-frontend: ## Run Angular unit tests (Vitest, single run)
+	cd $(FRONTEND_DIR) && npx ng test --watch=false
+
+lint: lint-py lint-frontend ## Run all linters/type-checks (check mode)
+
+lint-py: ## Run ruff lint + format check + mypy
 	uv run ruff check .
 	uv run ruff format --check .
 	uv run mypy gateway/src libs/src management/backend/src
 
-fmt: ## Auto-format and auto-fix the Python codebase
+lint-frontend: ## Check frontend formatting (Prettier) and types (build)
+	cd $(FRONTEND_DIR) && npx prettier --check "src/**/*.{ts,html,scss}"
+	cd $(FRONTEND_DIR) && npx ng build --configuration development
+
+fmt: ## Auto-format and auto-fix the whole codebase
 	uv run ruff format .
 	uv run ruff check --fix .
+	cd $(FRONTEND_DIR) && npx prettier --write "src/**/*.{ts,html,scss}"
 
 run-gateway: ## Run the Gateway API locally against the Compose stack
 	uv run uvicorn aira_gateway.main:app --reload --port 8001
 
 run-backend: ## Run the Management backend (Django) locally against the Compose stack
 	cd management/backend && uv run python manage.py runserver 127.0.0.1:8002
+
+run-frontend: ## Run the Angular dev server
+	cd $(FRONTEND_DIR) && npx ng serve --port 4200
 
 seed: ## Seed demo data (implemented in FRD-002)
 	@echo "TODO: implement demo seeding (FRD-002)"
