@@ -36,6 +36,11 @@ class GatewaySettings(BaseAiraSettings):
     # Persist request/response payloads (FRD-103). When False, only metadata is stored.
     store_payloads: bool = True
 
+    # Real Google Gemini upstream (FRD-304). Registered only when an API key is present.
+    google_api_key: str = ""
+    gemini_models: str = "gemini-2.0-flash,gemini-1.5-flash"
+    gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
+
     # OIDC bearer validation (Keycloak). When disabled, only API keys are accepted.
     oidc_enabled: bool = False
     oidc_issuer: str = ""

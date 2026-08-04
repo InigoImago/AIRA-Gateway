@@ -27,7 +27,8 @@ from aira_gateway.db.base import build_engine, build_sessionmaker, create_all
 from aira_gateway.middleware import UseCasePathMiddleware
 from aira_gateway.persistence.redaction import NoOpRedactor
 from aira_gateway.routes.health import router as health_router
-from aira_gateway.upstreams.base import ProviderRegistry
+from aira_gateway.upstreams.base import ProviderRegistry, Upstream
+from aira_gateway.upstreams.gemini import build_gemini_upstream
 from aira_gateway.upstreams.mock import MockProvider
 
 
@@ -59,8 +60,12 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
 
     app = FastAPI(title=settings.app_name, version=__version__, lifespan=lifespan)
     app.state.settings = settings
-    # Phase 1: only the deterministic mock provider. Real adapters arrive in Phase 3.
-    app.state.providers = ProviderRegistry([MockProvider()])
+    # Deterministic mock is always available; the real Gemini provider is added when configured.
+    providers: list[Upstream] = [MockProvider()]
+    gemini = build_gemini_upstream(settings)
+    if gemini is not None:
+        providers.append(gemini)
+    app.state.providers = ProviderRegistry(providers)
     app.state.db_engine = engine
     app.state.db_sessionmaker = sessionmaker
     app.state.oidc_validator = build_oidc_validator(settings)

@@ -7,7 +7,7 @@ simulation, tools, multimodal) arrives in FRD-104.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import AsyncIterator
 
 from aira_gateway.core.canonical import (
     CanonicalChunk,
@@ -33,7 +33,7 @@ class MockProvider:
     def models(self) -> list[UpstreamModel]:
         return [self._model]
 
-    def generate(self, request: CanonicalRequest) -> CanonicalResponse:
+    async def generate(self, request: CanonicalRequest) -> CanonicalResponse:
         prompt = request.last_user_text().strip().replace("\n", " ")[:120]
         words = f"[mock:{request.model}] response to: {prompt}".split()
 
@@ -51,15 +51,15 @@ class MockProvider:
             model=request.model, text=" ".join(words), finish_reason=finish_reason, usage=usage
         )
 
-    def stream_generate(self, request: CanonicalRequest) -> Iterator[CanonicalChunk]:
-        full = self.generate(request)
+    async def stream_generate(self, request: CanonicalRequest) -> AsyncIterator[CanonicalChunk]:
+        full = await self.generate(request)
         words = full.text.split()
         for start in range(0, len(words), _STREAM_WORDS_PER_CHUNK):
             delta = " ".join(words[start : start + _STREAM_WORDS_PER_CHUNK])
             yield CanonicalChunk(text_delta=f"{delta} ")
         yield CanonicalChunk(text_delta="", finish_reason=full.finish_reason, usage=full.usage)
 
-    def embed(self, model: str, text: str, *, dimensions: int = 8) -> list[float]:
+    async def embed(self, model: str, text: str, *, dimensions: int = 8) -> list[float]:
         data = text.encode("utf-8")
         return [((sum(data[i::dimensions]) % 1000) / 1000.0) for i in range(dimensions)]
 

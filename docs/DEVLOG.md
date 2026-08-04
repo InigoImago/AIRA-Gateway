@@ -5,6 +5,27 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-04 — FRD-304: real Google Gemini upstream adapter (Phase 3)
+- **Async provider protocol**: `Upstream` (`upstreams/base.py`) is now `async` (`generate`/`embed`
+  coroutines, `stream_generate` async-iterator); added `UpstreamError` for upstream failures.
+  `MockProvider` updated accordingly.
+- **`GeminiUpstream`** (`upstreams/gemini.py`): calls the Generative Language API
+  (`generativelanguage.googleapis.com/v1beta`) with an **injectable `httpx.AsyncClient`** so tests
+  drive it via `MockTransport` — fully hermetic. API key sent as `?key=` query param, **never
+  logged**. Non-2xx / transport errors → `UpstreamError`. `build_gemini_upstream(settings)` returns
+  `None` when no key is set; the app registers `[MockProvider(), *gemini]`.
+- **Pure mappers** (`upstreams/gemini_mapping.py`): canonical ⇄ Gemini request/response/stream-chunk,
+  incl. `systemInstruction`, `generationConfig`, `usageMetadata`, `finishReason` normalisation.
+- **Routes**: `generateContent`/`embedContent` return **502 `UNAVAILABLE`** on `UpstreamError`;
+  streaming logs the error server-side and terminates the stream cleanly (headers already sent).
+- **Config**: `GOOGLE_API_KEY`, `GEMINI_MODELS` (`gemini-2.0-flash,gemini-1.5-flash`),
+  `GEMINI_BASE_URL`. `httpx` promoted to a gateway runtime dependency.
+- **Gates green**: **222 tests / 99.9%** (new `gemini` modules 100%), ruff + `mypy --strict` clean.
+- Enables binding **opencode** (Google provider + custom baseURL) to a use-case with real responses.
+- See `docs/features/FRD-304-upstream-adapters.md`.
+
+---
+
 ## 2026-08-04 — FRD-203: Angular management shell
 - **Auth** (`core/auth`): `angular-oauth2-oidc` code-flow+PKCE against the `aira` realm; `AuthService`
   facade; functional `authInterceptor` (bearer on `/api` calls) + `authGuard` (redirect to login);

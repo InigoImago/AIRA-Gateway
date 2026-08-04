@@ -7,11 +7,19 @@ Phase 3 (FRD-304) implementing the same protocol.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 from aira_gateway.core.canonical import CanonicalChunk, CanonicalRequest, CanonicalResponse
+
+
+class UpstreamError(Exception):
+    """A recoverable failure talking to an upstream provider (maps to a 502)."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message = message
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,11 +37,11 @@ class Upstream(Protocol):
 
     def models(self) -> list[UpstreamModel]: ...
 
-    def generate(self, request: CanonicalRequest) -> CanonicalResponse: ...
+    async def generate(self, request: CanonicalRequest) -> CanonicalResponse: ...
 
-    def stream_generate(self, request: CanonicalRequest) -> Iterator[CanonicalChunk]: ...
+    def stream_generate(self, request: CanonicalRequest) -> AsyncIterator[CanonicalChunk]: ...
 
-    def embed(self, model: str, text: str) -> list[float]: ...
+    async def embed(self, model: str, text: str) -> list[float]: ...
 
 
 class ProviderRegistry:

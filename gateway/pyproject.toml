@@ -12,6 +12,7 @@ dependencies = [
     "psycopg[binary]>=3.2",
     "pyjwt[crypto]>=2.9",
     "alembic>=1.13",
+    "httpx>=0.28",
 ]
 
 [build-system]

@@ -12,16 +12,16 @@ def test_models() -> None:
     assert "generateContent" in model.supported_methods
 
 
-def test_generate_is_deterministic() -> None:
+async def test_generate_is_deterministic() -> None:
     provider = MockProvider()
-    first = provider.generate(_request())
-    second = provider.generate(_request())
+    first = await provider.generate(_request())
+    second = await provider.generate(_request())
     assert first == second
     assert first.text.startswith("[mock:mock-1]")
     assert first.usage.total_tokens == first.usage.prompt_tokens + first.usage.completion_tokens
 
 
-def test_generate_uses_last_user_message_and_counts_all_tokens() -> None:
+async def test_generate_uses_last_user_message_and_counts_all_tokens() -> None:
     request = CanonicalRequest(
         model="mock-1",
         messages=[
@@ -31,56 +31,56 @@ def test_generate_uses_last_user_message_and_counts_all_tokens() -> None:
             CanonicalMessage(role=Role.USER, text="latest question"),
         ],
     )
-    response = MockProvider().generate(request)
+    response = await MockProvider().generate(request)
     assert "latest question" in response.text
-    assert response.usage.prompt_tokens == 5  # 1 + 1 + 1 + 2
+    assert response.usage.prompt_tokens == 5
 
 
-def test_stream_generate_reconstructs_full_text() -> None:
+async def test_stream_generate_reconstructs_full_text() -> None:
     provider = MockProvider()
     request = _request("one two three four five six")
-    chunks = list(provider.stream_generate(request))
+    chunks = [chunk async for chunk in provider.stream_generate(request)]
 
     assert len(chunks) >= 2
     assert chunks[-1].finish_reason == "stop"
     assert chunks[-1].usage is not None
 
     streamed = "".join(chunk.text_delta for chunk in chunks).strip()
-    assert streamed == provider.generate(request).text
+    assert streamed == (await provider.generate(request)).text
 
 
-def test_generate_respects_max_output_tokens() -> None:
+async def test_generate_respects_max_output_tokens() -> None:
     request = CanonicalRequest(
         model="mock-1",
         messages=[CanonicalMessage(role=Role.USER, text="hello")],
         max_output_tokens=2,
     )
-    response = MockProvider().generate(request)
+    response = await MockProvider().generate(request)
     assert response.finish_reason == "max_tokens"
     assert response.usage.completion_tokens == 2
     assert len(response.text.split()) == 2
 
 
-def test_generate_no_truncation_when_limit_high() -> None:
+async def test_generate_no_truncation_when_limit_high() -> None:
     request = CanonicalRequest(
         model="mock-1",
         messages=[CanonicalMessage(role=Role.USER, text="hello")],
         max_output_tokens=1000,
     )
-    assert MockProvider().generate(request).finish_reason == "stop"
+    assert (await MockProvider().generate(request)).finish_reason == "stop"
 
 
-def test_stream_propagates_max_tokens_finish_reason() -> None:
+async def test_stream_propagates_max_tokens_finish_reason() -> None:
     request = CanonicalRequest(
         model="mock-1",
         messages=[CanonicalMessage(role=Role.USER, text="hello")],
         max_output_tokens=2,
     )
-    chunks = list(MockProvider().stream_generate(request))
+    chunks = [chunk async for chunk in MockProvider().stream_generate(request)]
     assert chunks[-1].finish_reason == "max_tokens"
 
 
-def test_embed_is_deterministic_and_sized() -> None:
+async def test_embed_is_deterministic_and_sized() -> None:
     provider = MockProvider()
-    assert provider.embed("mock-1", "abc") == provider.embed("mock-1", "abc")
-    assert len(provider.embed("mock-1", "abc")) == 8
+    assert await provider.embed("mock-1", "abc") == await provider.embed("mock-1", "abc")
+    assert len(await provider.embed("mock-1", "abc")) == 8

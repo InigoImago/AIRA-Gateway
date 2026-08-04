@@ -15,6 +15,7 @@ from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import ValidationError
 
+from aira_common.logging import get_logger
 from aira_gateway.api.gemini import schemas
 from aira_gateway.api.gemini.errors import gemini_error_response as _error
 from aira_gateway.api.gemini.mapping import (
@@ -24,7 +25,9 @@ from aira_gateway.api.gemini.mapping import (
 )
 from aira_gateway.core.canonical import CanonicalChunk, CanonicalRequest
 from aira_gateway.persistence.recorder import record_request
-from aira_gateway.upstreams.base import ProviderRegistry, Upstream
+from aira_gateway.upstreams.base import ProviderRegistry, Upstream, UpstreamError
+
+_log = get_logger("aira_gateway")
 
 
 def _elapsed_ms(started: float) -> int:
@@ -84,7 +87,10 @@ async def generate(resource: str, request: Request) -> Response:
         canonical = gemini_to_canonical(model, gemini_request)
         if method == "generateContent":
             started = time.monotonic()
-            canonical_response = provider.generate(canonical)
+            try:
+                canonical_response = await provider.generate(canonical)
+            except UpstreamError as exc:
+                return _error(502, exc.message, "UNAVAILABLE")
             payload = canonical_to_gemini(canonical_response).model_dump()
             await record_request(
                 request,
@@ -107,7 +113,10 @@ async def generate(resource: str, request: Request) -> Response:
             return _error(400, _first_error(exc), "INVALID_ARGUMENT")
         started = time.monotonic()
         text = "".join(part.text for part in embed_request.content.parts)
-        values = provider.embed(model, text)
+        try:
+            values = await provider.embed(model, text)
+        except UpstreamError as exc:
+            return _error(502, exc.message, "UNAVAILABLE")
         payload = schemas.EmbedContentResponse(
             embedding=schemas.ContentEmbedding(values=values)
         ).model_dump()
@@ -162,16 +171,20 @@ def _stream_response(
         separator = ""
         if not sse:
             yield "["
-        for chunk in provider.stream_generate(canonical):
-            if chunk.usage is not None:
-                final_usage = chunk.usage
-            parts.append(chunk.text_delta)
-            payload = _chunk_to_gemini(chunk, canonical.model).model_dump_json()
-            if sse:
-                yield f"data: {payload}\n\n"
-            else:
-                yield f"{separator}{payload}"
-                separator = ","
+        try:
+            async for chunk in provider.stream_generate(canonical):
+                if chunk.usage is not None:
+                    final_usage = chunk.usage
+                parts.append(chunk.text_delta)
+                payload = _chunk_to_gemini(chunk, canonical.model).model_dump_json()
+                if sse:
+                    yield f"data: {payload}\n\n"
+                else:
+                    yield f"{separator}{payload}"
+                    separator = ","
+        except UpstreamError as exc:
+            # Headers are already sent; log and terminate the stream cleanly.
+            _log.error("upstream_stream_error", error=exc.message, model=canonical.model)
         if not sse:
             yield "]"
         await record_request(
