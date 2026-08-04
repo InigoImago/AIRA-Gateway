@@ -100,8 +100,10 @@ google-genai SDK + JSON-array default; mock honours `maxOutputTokens` (→`MAX_T
 **tracing enrichment**: `aira.*` span attributes (subject/use_case/model/…) filterable in Grafana/Tempo.
 **Phase 1 (Gateway MVP) is complete.** **Phase 2 in progress:** `FRD-200` done — management **DRF API**
 + **OIDC bearer auth** (Keycloak JWT via shared `aira_common.oidc.JwtVerifier`; auto-provisions users)
-+ `GET /api/v1/me` + consistent error envelope. Verified end-to-end. Next: `FRD-201` (RBAC:
-realm roles → Django groups + `django-guardian` object-level use-case perms). See `docs/DEVLOG.md`.
++ `GET /api/v1/me` + consistent error envelope. `FRD-201` done — **RBAC**: `sync_user_roles` (token
+realm roles → Django groups, Keycloak is source of truth), DRF role permission classes,
+`scope_queryset` (governance sees all, else `django-guardian` object-level). Verified end-to-end.
+Next: `FRD-202` (use-case CRUD + membership). See `docs/DEVLOG.md`.
 
 ## 7. Working agreement
 - Confirm scope via PRD/FRD before large changes; work phase by phase.

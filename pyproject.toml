@@ -48,6 +48,10 @@ django_settings_module = "aira_management.config.settings"
 module = ["aira_gateway.*", "aira_common.*", "aira_management.*"]
 disallow_untyped_defs = true
 
+[[tool.mypy.overrides]]
+module = ["guardian.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 DJANGO_SETTINGS_MODULE = "aira_management.config.settings"

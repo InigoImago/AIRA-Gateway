@@ -18,6 +18,7 @@ from rest_framework.request import Request
 
 from aira_common.oidc import JwtVerifier, build_jwks_client
 from aira_management.config.runtime import get_settings
+from aira_management.rbac import sync_user_roles
 
 _BEARER = "bearer "
 
@@ -46,7 +47,9 @@ class KeycloakJWTAuthentication(BaseAuthentication):
         claims = verifier.verify(header[len(_BEARER) :].strip())
         if claims is None:
             raise AuthenticationFailed("Invalid or expired token.")
-        return self._provision_user(claims), claims
+        user = self._provision_user(claims)
+        sync_user_roles(user, claims)  # Keycloak realm roles are the source of truth
+        return user, claims
 
     def authenticate_header(self, request: Request) -> str:
         # Present so DRF returns 401 (not 403) for unauthenticated requests.

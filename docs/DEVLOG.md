@@ -5,6 +5,22 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-04 — FRD-201: RBAC (roles + object-level use-case perms)
+- **`aira_management.rbac`**: `sync_user_roles` maps a token's realm roles onto Django groups (the
+  five AIRA roles) on every auth — Keycloak is the source of truth. DRF permission classes
+  (`IsGlobalAdmin`, `IsITSecurity`, `IsITSteuerung`, `IsUseCaseAdmin`, `IsUseCaseUser`; global-admin
+  implies all). `scope_queryset` narrows lists: governance roles (global-admin, it-steuerung) see all;
+  others are limited to their **`django-guardian`** object-level permissions.
+- **Wiring**: `django-guardian` added (INSTALLED_APPS + object-perm backend; `ANONYMOUS_USER_NAME=None`).
+  The auth class calls `sync_user_roles` after provisioning.
+- **Gates green**: 174 tests, **100% coverage**; ruff + mypy --strict clean (guardian import ignored).
+- **End-to-end verified**: assigned realm role `global-admin` to `demo-user` in Keycloak → token
+  carries it → `/api/v1/me` shows `roles:[global-admin]` and the Django group membership is synced
+  (`demo-user | global-admin` in `aira_mgmt`).
+- **Next: FRD-202** (use-case CRUD + membership, using these RBAC mechanics).
+
+---
+
 ## 2026-08-04 — Phase 2 begins · FRD-200: management DRF API + OIDC
 - **Shared OIDC** (`aira_common.oidc.JwtVerifier` + `build_jwks_client`): extracted JWT/JWKS
   verification so the gateway **and** management use one implementation. Gateway `OidcValidator`

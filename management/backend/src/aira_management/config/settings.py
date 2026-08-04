@@ -32,10 +32,18 @@ INSTALLED_APPS = [
     "django.contrib.contenttypes",
     "django.contrib.auth",
     "rest_framework",
+    "guardian",
     "aira_management.apps.health",
     "aira_management.apps.seed",
     "aira_management.apps.api",
 ]
+
+AUTHENTICATION_BACKENDS = [
+    "django.contrib.auth.backends.ModelBackend",
+    "guardian.backends.ObjectPermissionBackend",
+]
+# No anonymous object-level permissions: skip guardian's anonymous-user provisioning.
+ANONYMOUS_USER_NAME = None
 
 MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",

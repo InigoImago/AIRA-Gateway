@@ -91,6 +91,7 @@ source = { editable = "management/backend" }
 dependencies = [
     { name = "aira-common" },
     { name = "django" },
+    { name = "django-guardian" },
     { name = "djangorestframework" },
     { name = "opentelemetry-instrumentation-django" },
     { name = "psycopg", extra = ["binary"] },
@@ -100,6 +101,7 @@ dependencies = [
 requires-dist = [
     { name = "aira-common", editable = "libs" },
     { name = "django", specifier = ">=5.2" },
+    { name = "django-guardian", specifier = ">=2.4" },
     { name = "djangorestframework", specifier = ">=3.15" },
     { name = "opentelemetry-instrumentation-django", specifier = ">=0.50b0" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
@@ -424,6 +426,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/89/55/664f24ff81c9ea19cb7dfc851afeae1f3c2390c7aee01d4ded68b5c1580d/django-6.0.7.tar.gz", hash = "sha256:2998503fc083124fb58037084bfa00de323c7c743f05f1b4284e77bff0ab8890", size = 10921299, upload-time = "2026-07-07T13:51:26.485Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ba/ec/1ce5334b6a2c52ce619c23a0be8d366a57a0e080ebb2d88266e5c849157c/django-6.0.7-py3-none-any.whl", hash = "sha256:a037427c2288443a8c02a1b02295a31c239663aa682bc50b1976afb7cf6a769e", size = 8373344, upload-time = "2026-07-07T13:51:20.007Z" },
+]
+
+[[package]]
+name = "django-guardian"
+version = "3.3.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "django" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f4/27/2924c6ebb788d5b76ca9f28ba4da82a2d828e56bb0f9b973dd523e797da4/django_guardian-3.3.3.tar.gz", hash = "sha256:fa9be851e5e7df4fccd0b0d7a171042cdbfaf0412a9aa54c56361d642eaccff1", size = 111083, upload-time = "2026-07-22T23:35:21.784Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/40/e4/68a8224d9746f51e39e5f2442c240424c1545f63a60e28dc63735104a2cd/django_guardian-3.3.3-py3-none-any.whl", hash = "sha256:490c04c81564a15470a95cd39a5844c5898adefa4334eed6a70aa7bb41a0b7e3", size = 147566, upload-time = "2026-07-22T23:35:20.158Z" },
 ]
 
 [[package]]
