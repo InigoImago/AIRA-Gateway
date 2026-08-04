@@ -56,7 +56,9 @@ Deliverables:
 - Config event schema (Management → Gateway) v1 over Kafka; Gateway read-model skeleton.
 
 FRDs: `FRD-200-mgmt-backend-foundation`, `FRD-201-keycloak-rbac`, `FRD-202-usecase-crud`,
-`FRD-203-angular-shell`, `FRD-204-config-distribution-kafka`.
+`FRD-203-angular-shell`, `FRD-204-config-distribution-kafka`,
+`FRD-205-api-key-issuance` (self-service API-key issuance in Management + `api_key.*` Kafka events →
+Gateway read-model; the Gateway keeps validation only — see ADR-0006).
 
 ---
 
@@ -133,7 +135,7 @@ FRDs: `FRD-700-hardening`, `FRD-701-k8s-helm`, `FRD-702-perf-and-ha`.
 |------:|-------|------|
 | 0 | Foundation & Infra | 000, 001, 002 |
 | 1 | Gateway MVP | 100–105 |
-| 2 | Management Foundation | 200–204 |
+| 2 | Management Foundation | 200–205 |
 | 3 | Routing/Pipeline/Fallback | 300–304 |
 | 4 | Budgets & Quotas | 400–402 |
 | 5 | Anomaly & IT Security | 500–503 |

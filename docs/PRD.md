@@ -149,7 +149,9 @@ config-distribution mechanism are defined in the architecture doc / relevant FRD
   (`/v1/chat/completions`, `/v1/embeddings`, `/v1/models`) is added later (FRD-106). Both normalize
   to one internal canonical schema, then translate to the target upstream's dialect. See ADR-0005.
 - **FR-GW-2 Authentication**: Accept (a) OIDC bearer tokens validated against Keycloak, and
-  (b) self-generated API keys (hashed at rest, prefix-identifiable, revocable, scoped).
+  (b) self-generated API keys (hashed at rest, prefix-identifiable, revocable, scoped). Per ADR-0006,
+  API keys are **issued in Management** (self-service, show-once) and distributed to the Gateway via
+  Kafka into a local read-model; the **Gateway only validates**. OIDC validation lives in the Gateway.
 - **FR-GW-3 Attribution**: Resolve each request to `user`, `project`, `use_case`, and
   `user∈use_case`. Attribution derives from the credential + request context.
 - **FR-GW-4 Routing & rerouting**: Route requests to a model/upstream based on use-case config;

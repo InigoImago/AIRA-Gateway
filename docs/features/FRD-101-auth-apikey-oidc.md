@@ -27,6 +27,13 @@ API-key store), which FRD-103 (persistence) will build on.
   use-case. Attribution to user/project/use-case is FRD-102.
 - Managing keys via the UI (Phase 2). Alembic migrations (FRD-103; Phase 1 uses `create_all`).
 
+> **Architecture note (ADR-0006):** API-key **issuance/lifecycle** ultimately belongs in
+> **Management** (self-service UI, show-once, bound to use case), distributed to the Gateway via
+> **Kafka** into a local **read-model**; the Gateway keeps only **validation**. The gateway-side
+> generation + CLI in this FRD are a **Phase-1 bootstrap**; issuance moves to Management in Phase 2
+> (ROADMAP `FRD-205`). The `api_keys` table here is the future read-model. **OIDC validation stays
+> in the Gateway.**
+
 ## 3. User Stories
 - As a **client project**, I authenticate to AIRA exactly as I do to Gemini — an API key in
   `x-goog-api-key` (or `?key=`) — and it just works.

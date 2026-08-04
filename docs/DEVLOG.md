@@ -5,6 +5,18 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-04 — Decision: API-key issuance belongs in Management (ADR-0006)
+- Clarified the control-plane/data-plane split for API keys: **issuance/lifecycle/show-once** →
+  **Management** (self-service UI, bound to use case); **validation** → **Gateway** against a local
+  **read-model** fed by **Kafka** (`api_key.*` events; never plaintext). Rejected sync-call and
+  shared-DB alternatives.
+- The Phase-1 gateway-side generation + CLI are a **bootstrap**; issuance moves to Management in
+  **Phase 2** (new ROADMAP `FRD-205`). The gateway `api_keys` table becomes the read-model. OIDC
+  validation stays in the Gateway. No code change now — documented as `ADR-0006`; updated
+  FRD-101/PRD/ROADMAP.
+
+---
+
 ## 2026-08-04 — FRD-101 Slice B: OIDC bearer validation — **auth complete**
 - **OIDC validation** (`gateway/auth/oidc.py`): `OidcValidator` verifies a Keycloak JWT via the
   issuer's **JWKS** (`PyJWT` + `cryptography`), checking signature, issuer, expiry, and (optional)
