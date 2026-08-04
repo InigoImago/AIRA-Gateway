@@ -120,13 +120,15 @@ protocol + `UpstreamError`; injectable `httpx.AsyncClient`, hermetic `MockTransp
 logged; registered only when `AIRA_GOOGLE_API_KEY` is set). Gateway also **passes upstream status
 codes through** (429→RESOURCE_EXHAUSTED, 503→UNAVAILABLE, 504→DEADLINE_EXCEEDED; else 502).
 `FRD-300`/`FRD-303` done — **pre-dispatch pipeline** (`aira_gateway/pipeline/`): per-use-case,
-config-driven steps run before dispatch — `injection_filter` (heuristic **or LLM-backed**, fails
-open; block|flag), `allow_check` (model allow-list), `model_route` (rule-based cost/length
-rerouting) — then a `fallback_models` dispatch chain. Default = pass-through. Config authored in
-Management (`GET/PUT /use-cases/{slug}/pipeline`) → `aira.pipelines` Kafka → gateway
+config-driven steps run before dispatch — `injection_filter` (heuristic w/ visible built-in +
+custom patterns, or LLM-backed; scope user|system+user; block|flag), `allow_check` (model
+allow-list), `model_route` (**LLM classifier** reads system+user, picks a configured category →
+model; `FRD-306`) — then a `fallback_models` dispatch chain. Default = pass-through. Config authored
+in Management (`GET/PUT /use-cases/{slug}/pipeline`) → `aira.pipelines` Kafka → gateway
 `pipeline_configs` read-model (migration 0004); Angular **clickable graph builder** at
-`use-cases/:slug/pipeline`. **Phase 3 core (pipeline) delivered.** Remaining Phase 3 polish:
-drag-drop/parallel branches, dry-run preview. See `docs/DEVLOG.md`.
+`use-cases/:slug/pipeline` with **inline help + a test panel** (client-side live preview + real
+**dry-run** via `POST /v1beta/pipeline:dryRun`, `/gw` proxy). **Phase 3 core (pipeline) delivered.**
+Remaining polish: drag-drop/parallel branches, authenticated dry-run. See `docs/DEVLOG.md`.
 
 ## 7. Working agreement
 - Confirm scope via PRD/FRD before large changes; work phase by phase.
