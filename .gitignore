@@ -1,0 +1,53 @@
+# ---- Secrets / environment (NEVER commit) ----
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+secrets/
+vault/data/
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.log
+
+# ---- Django ----
+*.sqlite3
+staticfiles/
+mediafiles/
+management/backend/static_collected/
+
+# ---- Node / Angular ----
+node_modules/
+management/frontend/dist/
+management/frontend/.angular/
+npm-debug.log*
+yarn-error.log*
+
+# ---- Docker / data volumes ----
+deploy/**/data/
+pgdata/
+kafka-data/
+
+# ---- IDE / OS ----
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
