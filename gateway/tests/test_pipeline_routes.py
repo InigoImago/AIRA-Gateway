@@ -51,6 +51,31 @@ class _Echo:
         return [0.0]
 
 
+class _Classifier:
+    """Provider that always returns a fixed verdict — drives the LLM router in route tests."""
+
+    def __init__(self, name: str, verdict: str) -> None:
+        self._name = name
+        self._verdict = verdict
+
+    def models(self) -> list[UpstreamModel]:
+        return [UpstreamModel(self._name, self._name, ("generateContent",))]
+
+    async def generate(self, request: CanonicalRequest) -> CanonicalResponse:
+        return CanonicalResponse(
+            model=self._name,
+            text=self._verdict,
+            usage=CanonicalUsage(prompt_tokens=1, completion_tokens=1),
+        )
+
+    async def stream_generate(self, request):  # noqa: ANN001, ANN201
+        raise NotImplementedError
+        yield  # pragma: no cover
+
+    async def embed(self, model: str, text: str) -> list[float]:
+        return [0.0]
+
+
 def _client(pipeline: Pipeline, *providers: object) -> TestClient:
     app = create_app(GatewaySettings(auth_required=False))
     if providers:
@@ -72,15 +97,18 @@ def test_injection_filter_blocks_request() -> None:
     assert "injection" in resp.json()["error"]["message"].lower()
 
 
-def test_model_route_reroutes_to_cheaper_model() -> None:
+def test_model_route_reroutes_to_category_model() -> None:
     pipeline = Pipeline(
         steps=(
             PipelineStep(
-                StepType.MODEL_ROUTE, {"rules": [{"if_under_chars": 100, "model": "cheap-1"}]}
+                StepType.MODEL_ROUTE,
+                {"model": "router", "categories": [{"name": "cheap", "model": "cheap-1"}]},
             ),
         )
     )
-    with _client(pipeline, _Echo("mock-1"), _Echo("cheap-1")) as client:
+    with _client(
+        pipeline, _Echo("mock-1"), _Echo("cheap-1"), _Classifier("router", "cheap")
+    ) as client:
         resp = client.post("/v1beta/models/mock-1:generateContent", json=_body("short question"))
     assert resp.status_code == 200
     assert resp.json()["modelVersion"] == "cheap-1"
@@ -102,9 +130,14 @@ def test_pass_through_when_pipeline_empty() -> None:
 
 def test_route_to_unknown_model_returns_404() -> None:
     pipeline = Pipeline(
-        steps=(PipelineStep(StepType.MODEL_ROUTE, {"rules": [{"model": "ghost"}]}),)
+        steps=(
+            PipelineStep(
+                StepType.MODEL_ROUTE,
+                {"model": "router", "categories": [{"name": "ghost", "model": "ghost"}]},
+            ),
+        )
     )
-    with _client(pipeline, _Echo("mock-1")) as client:
+    with _client(pipeline, _Echo("mock-1"), _Classifier("router", "ghost")) as client:
         resp = client.post("/v1beta/models/mock-1:generateContent", json=_body("hi"))
     assert resp.status_code == 404
     assert "ghost" in resp.json()["error"]["message"]

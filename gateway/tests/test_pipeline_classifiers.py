@@ -1,6 +1,7 @@
 from aira_gateway.core.canonical import CanonicalRequest, CanonicalResponse, CanonicalUsage
 from aira_gateway.pipeline.classifiers import (
     HeuristicInjectionClassifier,
+    LlmCategoryRouter,
     LlmInjectionClassifier,
 )
 from aira_gateway.upstreams.base import UpstreamError, UpstreamModel
@@ -53,3 +54,26 @@ class _BoomProvider(_StubProvider):
 
 async def test_llm_classifier_fails_open_on_upstream_error() -> None:
     assert await LlmInjectionClassifier(_BoomProvider("x"), "guard").is_injection("hi") is False
+
+
+async def test_heuristic_custom_invalid_regex_matches_as_literal() -> None:
+    classifier = HeuristicInjectionClassifier(("(unclosed",), use_builtins=False)
+    assert await classifier.is_injection("text with (unclosed paren") is True
+    assert await classifier.is_injection("clean text") is False
+
+
+_CATS = [{"name": "cheap", "description": "simple", "model": "c1"}]
+
+
+async def test_router_matches_category() -> None:
+    router = LlmCategoryRouter(_StubProvider("cheap"), "guard", _CATS)
+    assert await router.classify("x") == "cheap"
+
+
+async def test_router_returns_none_when_unmatched() -> None:
+    router = LlmCategoryRouter(_StubProvider("something-else"), "guard", _CATS)
+    assert await router.classify("x") is None
+
+
+async def test_router_fails_open_on_upstream_error() -> None:
+    assert await LlmCategoryRouter(_BoomProvider("x"), "guard", _CATS).classify("x") is None
