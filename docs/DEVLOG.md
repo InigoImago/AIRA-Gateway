@@ -18,9 +18,11 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 - **Brought up & verified healthy**: postgres (DBs created), kafka (fixed a KRaft
   `advertised.listeners 0.0.0.0` error → use `://:PORT` + `localhost` quorum), schema-registry
   (API responds), vault (unsealed).
-- **Blocked**: Keycloak image pull from `quay.io` returns 403 (network policy). Needs the host to
-  allow quay.io domains: `sbx policy allow network quay.io,cdn01.quay.io,cdn02.quay.io,cdn03.quay.io`.
-- **Next:** unblock Keycloak, then Slice 2 (gateway skeleton + shared `libs/`).
+- **Keycloak**: initially blocked (quay.io 403); resolved after the host allowed quay.io. Image
+  pulled, service healthy, OIDC discovery reachable at `/realms/master/.well-known/openid-configuration`.
+- **Slice 1 complete**: all five infra services (postgres, keycloak, kafka, schema-registry, vault)
+  up and healthy via `make up`.
+- **Next:** Slice 2 (gateway skeleton + shared `libs/`).
 
 ---
 
