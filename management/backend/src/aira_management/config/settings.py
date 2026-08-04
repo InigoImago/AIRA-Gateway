@@ -36,6 +36,7 @@ INSTALLED_APPS = [
     "aira_management.apps.health",
     "aira_management.apps.seed",
     "aira_management.apps.api",
+    "aira_management.apps.usecases",
 ]
 
 AUTHENTICATION_BACKENDS = [

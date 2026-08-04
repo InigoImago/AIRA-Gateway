@@ -5,6 +5,24 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-04 — FRD-202: use-case CRUD + membership
+- **`usecases` app**: `UseCase` (slug/name/description/processing_notes) + `UseCaseMembership`
+  (unique per user). CRUD at `/api/v1/use-cases/` (DRF ModelViewSet); slug validated to the gateway
+  selector charset (`[a-z0-9-]`).
+- **RBAC applied** (FRD-201): list is scoped (governance sees all, others see permitted); create needs
+  the use-case-admin/global-admin role and makes the creator the use-case admin; edit/delete needs
+  `change_usecase` (or global-admin); membership needs `manage_members` (or global-admin). Adding a
+  member grants **`django-guardian`** object perms (view; +change/manage for admins).
+- **Membership actions**: `POST/GET /use-cases/{slug}/members/`, `DELETE …/members/{username}`.
+- **Change hook** (`events.emit`): in-process subscribers on usecase/membership changes — the Kafka
+  publisher subscribes here in FRD-204. Migrations excluded from coverage.
+- **Gates green**: 190 tests, **100% coverage**; ruff + mypy --strict clean (DRF generics typed).
+- **End-to-end verified**: as global-admin `demo-user` created `live-uc`, listed it, added a member,
+  and an invalid slug → 400.
+- **Next: FRD-203** (Angular shell) or **FRD-204** (Kafka distribution).
+
+---
+
 ## 2026-08-04 — FRD-201: RBAC (roles + object-level use-case perms)
 - **`aira_management.rbac`**: `sync_user_roles` maps a token's realm roles onto Django groups (the
   five AIRA roles) on every auth — Keycloak is the source of truth. DRF permission classes

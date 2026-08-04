@@ -1,0 +1,200 @@
+import pytest
+from aira_management.apps.usecases import events
+from aira_management.apps.usecases.models import UseCase, UseCaseMembership
+from aira_management.rbac import sync_user_roles
+from django.contrib.auth import get_user_model
+from rest_framework.test import APIClient
+
+pytestmark = pytest.mark.django_db
+
+BASE = "/api/v1/use-cases/"
+
+
+def _user(username: str, *roles: str):
+    user = get_user_model().objects.create(username=username)
+    sync_user_roles(user, {"realm_access": {"roles": list(roles)}})
+    return user
+
+
+def _client(user) -> APIClient:
+    client = APIClient()
+    client.force_authenticate(user=user)
+    return client
+
+
+def _create(client: APIClient, slug: str, name: str = "UC"):
+    return client.post(BASE, {"slug": slug, "name": name}, format="json")
+
+
+@pytest.fixture
+def captured_events():
+    events.clear_subscribers()
+    captured: list[tuple[str, dict]] = []
+    events.subscribe(lambda t, p: captured.append((t, p)))
+    yield captured
+    events.clear_subscribers()
+
+
+# ---- create -----------------------------------------------------------------------------
+
+
+def test_create_as_use_case_admin() -> None:
+    admin = _user("admin1", "use-case-admin")
+    resp = _create(_client(admin), "my-uc")
+    assert resp.status_code == 201
+    assert resp.json()["slug"] == "my-uc"
+
+    usecase = UseCase.objects.get(slug="my-uc")
+    assert UseCaseMembership.objects.filter(use_case=usecase, user=admin, role="admin").exists()
+    assert get_user_model().objects.get(pk=admin.pk).has_perm("usecases.change_usecase", usecase)
+
+
+def test_create_forbidden_for_plain_user() -> None:
+    user = _user("plain", "use-case-user")
+    assert _create(_client(user), "x").status_code == 403
+
+
+def test_invalid_slug_rejected() -> None:
+    admin = _user("a", "use-case-admin")
+    assert _create(_client(admin), "Bad_Slug").status_code == 400
+
+
+def test_duplicate_slug_rejected() -> None:
+    admin = _user("a", "use-case-admin")
+    _create(_client(admin), "uc")
+    assert _create(_client(admin), "uc").status_code == 400
+
+
+# ---- visibility / scoping ---------------------------------------------------------------
+
+
+def test_list_is_scoped_and_governance_sees_all() -> None:
+    admin_a = _user("a", "use-case-admin")
+    admin_b = _user("b", "use-case-admin")
+    gov = _user("g", "global-admin")
+    _create(_client(admin_a), "uc-a")
+    _create(_client(admin_b), "uc-b")
+
+    a_slugs = {x["slug"] for x in _client(admin_a).get(BASE).json()}
+    assert a_slugs == {"uc-a"}
+
+    gov_slugs = {x["slug"] for x in _client(gov).get(BASE).json()}
+    assert {"uc-a", "uc-b"} <= gov_slugs
+
+
+def test_non_member_gets_404() -> None:
+    admin = _user("a", "use-case-admin")
+    outsider = _user("o")
+    _create(_client(admin), "uc")
+    assert _client(outsider).get(f"{BASE}uc/").status_code == 404
+
+
+# ---- update / delete permissions --------------------------------------------------------
+
+
+def test_admin_can_update_member_cannot() -> None:
+    admin = _user("a", "use-case-admin")
+    member = _user("m")
+    _create(_client(admin), "uc")
+    _client(admin).post(f"{BASE}uc/members/", {"username": "m", "role": "user"}, format="json")
+
+    assert _client(member).get(f"{BASE}uc/").status_code == 200
+    assert _client(member).patch(f"{BASE}uc/", {"name": "x"}, format="json").status_code == 403
+    assert _client(admin).patch(f"{BASE}uc/", {"name": "x"}, format="json").status_code == 200
+
+
+def test_global_admin_can_update_any() -> None:
+    owner = _user("o", "use-case-admin")
+    gov = _user("g", "global-admin")
+    _create(_client(owner), "uc")
+    assert _client(gov).patch(f"{BASE}uc/", {"name": "x"}, format="json").status_code == 200
+
+
+def test_admin_can_delete_member_cannot() -> None:
+    admin = _user("a", "use-case-admin")
+    member = _user("m")
+    _create(_client(admin), "uc")
+    _client(admin).post(f"{BASE}uc/members/", {"username": "m", "role": "user"}, format="json")
+
+    assert _client(member).delete(f"{BASE}uc/").status_code == 403
+    assert _client(admin).delete(f"{BASE}uc/").status_code == 204
+    assert not UseCase.objects.filter(slug="uc").exists()
+
+
+# ---- membership -------------------------------------------------------------------------
+
+
+def test_add_list_and_remove_member() -> None:
+    admin = _user("a", "use-case-admin")
+    member = _user("m")
+    _create(_client(admin), "uc")
+
+    added = _client(admin).post(
+        f"{BASE}uc/members/", {"username": "m", "role": "user"}, format="json"
+    )
+    assert added.status_code == 201
+    usecase = UseCase.objects.get(slug="uc")
+    assert get_user_model().objects.get(pk=member.pk).has_perm("usecases.view_usecase", usecase)
+
+    listed = _client(admin).get(f"{BASE}uc/members/").json()
+    assert any(x["username"] == "m" for x in listed)
+    assert _client(member).get(f"{BASE}uc/").status_code == 200
+
+    assert _client(admin).delete(f"{BASE}uc/members/m/").status_code == 204
+    assert _client(member).get(f"{BASE}uc/").status_code == 404
+
+
+def test_member_cannot_add_members() -> None:
+    admin = _user("a", "use-case-admin")
+    member = _user("m")
+    _create(_client(admin), "uc")
+    _client(admin).post(f"{BASE}uc/members/", {"username": "m", "role": "user"}, format="json")
+
+    resp = _client(member).post(f"{BASE}uc/members/", {"username": "x"}, format="json")
+    assert resp.status_code == 403
+
+
+def test_add_unknown_user_returns_400() -> None:
+    admin = _user("a", "use-case-admin")
+    _create(_client(admin), "uc")
+    resp = _client(admin).post(f"{BASE}uc/members/", {"username": "ghost"}, format="json")
+    assert resp.status_code == 400
+
+
+def test_member_cannot_remove_members() -> None:
+    admin = _user("a", "use-case-admin")
+    member = _user("m")
+    _create(_client(admin), "uc")
+    _client(admin).post(f"{BASE}uc/members/", {"username": "m", "role": "user"}, format="json")
+    assert _client(member).delete(f"{BASE}uc/members/m/").status_code == 403
+
+
+def test_model_str() -> None:
+    admin = _user("a", "use-case-admin")
+    _create(_client(admin), "uc", name="My UC")
+    usecase = UseCase.objects.get(slug="uc")
+    assert str(usecase) == "uc"
+    membership = usecase.memberships.get(user=admin)
+    assert "admin" in str(membership)
+
+
+def test_add_admin_member_grants_change() -> None:
+    admin = _user("a", "use-case-admin")
+    second = _user("s")
+    _create(_client(admin), "uc")
+    _client(admin).post(f"{BASE}uc/members/", {"username": "s", "role": "admin"}, format="json")
+    usecase = UseCase.objects.get(slug="uc")
+    assert get_user_model().objects.get(pk=second.pk).has_perm("usecases.change_usecase", usecase)
+
+
+# ---- change hook ------------------------------------------------------------------------
+
+
+def test_change_hook_fires(captured_events) -> None:
+    admin = _user("a", "use-case-admin")
+    _create(_client(admin), "uc")
+    _client(admin).post(f"{BASE}uc/members/", {"username": "a", "role": "user"}, format="json")
+
+    types = [t for t, _ in captured_events]
+    assert "usecase.upserted" in types
+    assert "membership.upserted" in types

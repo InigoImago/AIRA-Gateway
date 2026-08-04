@@ -1,0 +1,143 @@
+"""Use-case CRUD + membership management (FRD-202).
+
+Visibility and mutation follow the RBAC mechanics from FRD-201: list results are scoped
+(governance sees all, others see use cases they may view); editing/deleting requires
+change permission on the object (or global-admin); membership management requires the
+``manage_members`` object permission (or global-admin). Object permissions are granted via
+``django-guardian`` when a member is added.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from django.contrib.auth import get_user_model
+from django.db.models import QuerySet
+from guardian.shortcuts import assign_perm, remove_perm
+from rest_framework import status, viewsets
+from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.request import Request
+from rest_framework.response import Response
+
+from aira_management.apps.usecases.events import emit
+from aira_management.apps.usecases.models import UseCase, UseCaseMembership
+from aira_management.apps.usecases.serializers import (
+    AddMemberSerializer,
+    MembershipSerializer,
+    UseCaseSerializer,
+)
+from aira_management.rbac import IsUseCaseAdmin, has_role, scope_queryset
+from aira_management.roles import Role
+
+_VIEW = "usecases.view_usecase"
+_CHANGE = "usecases.change_usecase"
+_MANAGE = "usecases.manage_members"
+
+
+def _grant(user: Any, usecase: UseCase, role: str) -> None:
+    assign_perm(_VIEW, user, usecase)
+    if role == UseCaseMembership.ADMIN:
+        assign_perm(_CHANGE, user, usecase)
+        assign_perm(_MANAGE, user, usecase)
+
+
+def _revoke(user: Any, usecase: UseCase) -> None:
+    for perm in (_VIEW, _CHANGE, _MANAGE):
+        remove_perm(perm, user, usecase)
+
+
+def _snapshot(usecase: UseCase) -> dict[str, Any]:
+    return {
+        "slug": usecase.slug,
+        "name": usecase.name,
+        "description": usecase.description,
+        "processing_notes": usecase.processing_notes,
+    }
+
+
+def _resolve_user(username: str) -> Any:
+    user = get_user_model().objects.filter(username=username).first()
+    if user is None:
+        raise ValidationError({"username": [f"Unknown user '{username}'."]})
+    return user
+
+
+class UseCaseViewSet(viewsets.ModelViewSet[UseCase]):
+    serializer_class = UseCaseSerializer
+    lookup_field = "slug"
+
+    def get_queryset(self) -> QuerySet[UseCase]:
+        return scope_queryset(self.request.user, _VIEW, UseCase.objects.all())
+
+    def get_permissions(self) -> list[Any]:
+        if self.action == "create":
+            return [IsAuthenticated(), IsUseCaseAdmin()]
+        return [IsAuthenticated()]
+
+    def perform_create(self, serializer: Any) -> None:
+        usecase = serializer.save()
+        user: Any = self.request.user
+        _grant(user, usecase, UseCaseMembership.ADMIN)
+        UseCaseMembership.objects.create(use_case=usecase, user=user, role=UseCaseMembership.ADMIN)
+        emit("usecase.upserted", _snapshot(usecase))
+
+    def perform_update(self, serializer: Any) -> None:
+        if not self._may_admin(serializer.instance):
+            raise PermissionDenied("You are not an admin of this use case.")
+        usecase = serializer.save()
+        emit("usecase.upserted", _snapshot(usecase))
+
+    def perform_destroy(self, instance: UseCase) -> None:
+        if not self._may_admin(instance):
+            raise PermissionDenied("You are not an admin of this use case.")
+        slug = instance.slug
+        instance.delete()
+        emit("usecase.deleted", {"slug": slug})
+
+    def _may_admin(self, usecase: UseCase) -> bool:
+        user = self.request.user
+        return has_role(user, Role.GLOBAL_ADMIN) or user.has_perm(_CHANGE, usecase)
+
+    def _may_manage(self, usecase: UseCase) -> bool:
+        user = self.request.user
+        return has_role(user, Role.GLOBAL_ADMIN) or user.has_perm(_MANAGE, usecase)
+
+    @action(detail=True, methods=["get", "post"])
+    def members(self, request: Request, slug: str | None = None) -> Response:
+        usecase = self.get_object()
+        if request.method == "GET":
+            memberships = usecase.memberships.select_related("user").all()
+            return Response(MembershipSerializer(memberships, many=True).data)
+
+        if not self._may_manage(usecase):
+            raise PermissionDenied("You cannot manage members of this use case.")
+        payload = AddMemberSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        user = _resolve_user(payload.validated_data["username"])
+        role = payload.validated_data["role"]
+
+        membership, _created = UseCaseMembership.objects.update_or_create(
+            use_case=usecase, user=user, defaults={"role": role}
+        )
+        _revoke(user, usecase)
+        _grant(user, usecase, role)
+        emit(
+            "membership.upserted",
+            {"slug": usecase.slug, "username": user.get_username(), "role": role},
+        )
+        return Response(MembershipSerializer(membership).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["delete"], url_path="members/(?P<username>[^/.]+)")
+    def remove_member(
+        self, request: Request, slug: str | None = None, username: str | None = None
+    ) -> Response:
+        usecase = self.get_object()
+        if not self._may_manage(usecase):
+            raise PermissionDenied("You cannot manage members of this use case.")
+        user = _resolve_user(username or "")
+        UseCaseMembership.objects.filter(use_case=usecase, user=user).delete()
+        _revoke(user, usecase)
+        emit("membership.removed", {"slug": usecase.slug, "username": username})
+        return Response(status=status.HTTP_204_NO_CONTENT)

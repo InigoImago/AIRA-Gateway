@@ -68,7 +68,7 @@ filterwarnings = ["ignore::DeprecationWarning:starlette.*"]
 [tool.coverage.run]
 branch = true
 source = ["aira_gateway", "aira_common", "aira_management"]
-omit = ["*/asgi.py", "*/wsgi.py", "*/manage.py"]
+omit = ["*/asgi.py", "*/wsgi.py", "*/manage.py", "*/migrations/*"]
 
 [tool.coverage.report]
 show_missing = true
