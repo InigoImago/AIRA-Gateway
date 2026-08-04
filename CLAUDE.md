@@ -83,7 +83,10 @@ all with `/healthz`+`/readyz`, 100% Python coverage, and green ruff/mypy/prettie
 Observability (`FRD-001`): OTel Collector + Grafana `otel-lgtm` (traces verified in Tempo). Seed &
 demo (`FRD-002`): extensible seed framework + `seed_demo` command creating the 5 roles/users
 (verified end-to-end against Postgres); deterministic mock upstream for demo mode.
-**Phase 0 (Foundation & Infra) is fully complete. Next: Phase 1 — Gateway MVP.** See `docs/DEVLOG.md`.
+**Phase 0 complete. Phase 1 in progress:** `FRD-100` done — Gemini-compatible API
+(`/v1beta/models/{model}:generateContent|:streamGenerateContent|:embedContent`, list/get models)
+on a provider-agnostic canonical core, served by the mock provider (verified end-to-end).
+API direction: **Gemini first, OpenAI later** (ADR-0005). Next: `FRD-101` (auth). See `docs/DEVLOG.md`.
 
 ## 7. Working agreement
 - Confirm scope via PRD/FRD before large changes; work phase by phase.

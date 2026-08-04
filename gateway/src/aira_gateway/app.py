@@ -13,8 +13,11 @@ from aira_common.errors import AiraError
 from aira_common.logging import configure_logging
 from aira_common.observability import configure_observability
 from aira_gateway import __version__
+from aira_gateway.api.gemini.routes import router as gemini_router
 from aira_gateway.config import GatewaySettings
 from aira_gateway.routes.health import router as health_router
+from aira_gateway.upstreams.base import ProviderRegistry
+from aira_gateway.upstreams.mock import MockProvider
 
 
 def create_app(settings: GatewaySettings | None = None) -> FastAPI:
@@ -32,6 +35,8 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
 
     app = FastAPI(title=settings.app_name, version=__version__)
     app.state.settings = settings
+    # Phase 1: only the deterministic mock provider. Real adapters arrive in Phase 3.
+    app.state.providers = ProviderRegistry([MockProvider()])
 
     if otel_enabled:
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
@@ -39,6 +44,7 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
         FastAPIInstrumentor.instrument_app(app)
 
     app.include_router(health_router)
+    app.include_router(gemini_router)
     _register_exception_handlers(app)
     return app
 

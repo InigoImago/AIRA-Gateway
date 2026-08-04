@@ -5,6 +5,23 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-04 — FRD-100: Gemini-compatible unified API (Phase 1 begins)
+- **Decision**: ship the **Gemini** wire format first (existing projects run on it); OpenAI later →
+  `ADR-0005`. Updated PRD/ROADMAP/README; added detailed `FRD-100`.
+- **Canonical core** (`gateway/core/canonical.py`): provider-agnostic request/response/usage/chunk —
+  the single schema every surface and upstream agrees on (so OpenAI/FRD-106 is just another mapper).
+- **Upstream abstraction** (`upstreams/base.py`): `Upstream` protocol + `ProviderRegistry`; the
+  deterministic `MockProvider` (evolved from FRD-002) is the only provider in Phase 1.
+- **Gemini surface** (`api/gemini/`): Pydantic wire schemas, Gemini⇄canonical mappers, and routes —
+  `POST /v1beta/models/{model}:generateContent | :streamGenerateContent | :embedContent`,
+  `GET /v1beta/models`, `GET /v1beta/models/{model}`. Gemini-shaped error envelope (400/404/500).
+- **Gates green**: 88 tests, **100% coverage**; ruff + mypy --strict clean.
+- **End-to-end verified** via curl: list models, `:generateContent` (correct candidates + usage),
+  NDJSON `:streamGenerateContent`, and unknown-model → 404.
+- **Next in Phase 1**: FRD-101 (auth: API key + OIDC), then attribution/persistence/tracing.
+
+---
+
 ## 2026-08-04 — FRD-002: seed & demo mode — **Phase 0 fully complete**
 - **Seed framework** (Django, `aira_management.apps.seed`): an extensible registry — each phase
   registers idempotent `SeedContribution`s (run in `(order, name)`); a `seed_demo` management command
