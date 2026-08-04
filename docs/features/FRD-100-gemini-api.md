@@ -24,6 +24,14 @@ what lets an OpenAI-compatible surface (FRD-106) be added later without touching
 - Real Gemini/Foundry upstreams (Phase 3). OpenAI surface (FRD-106).
 - Tools/function-calling, multimodal parts beyond text (later; schema is designed to extend).
 
+**Deferred (compatibility backlog — tracked here so it is not lost):**
+- **SSE streaming** (`?alt=sse`, `text/event-stream`): the official `google-genai` SDK expects SSE
+  for streaming; we currently emit NDJSON. Needed for full SDK drop-in.
+- **`batchEmbedContents`** and `outputDimensionality` on embeddings.
+- Preserving/forwarding advanced fields (`safetySettings`, `tools`, `thinkingConfig`,
+  `responseSchema`) through the canonical schema; multimodal `inlineData`/`fileData` parts.
+- Wire-accepted today (`extra="ignore"`) so clients don't break, but not yet processed.
+
 ## 3. User Stories
 - As a **developer with a Gemini project**, I want to point my client's base URL at AIRA and have
   `:generateContent` work unchanged.
