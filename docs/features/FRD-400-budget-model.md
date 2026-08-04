@@ -1,6 +1,6 @@
 # FRD-400 — Budget model & distribution
 
-> Phase: 4 · Status: **In progress** · Owner: Vadim Scheibe · Last updated: 2026-08-04
+> Phase: 4 · Status: **Done** · Owner: Vadim Scheibe · Last updated: 2026-08-04
 > Related: `docs/ROADMAP.md` Phase 4; builds on FRD-102 (attribution), FRD-103 (request logs),
 > FRD-202/204 (use-case CRUD + Kafka distribution). Companion: FRD-401 (enforcement), FRD-402 (UI).
 
