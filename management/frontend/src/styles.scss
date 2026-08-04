@@ -364,3 +364,23 @@ input::placeholder {
   padding-top: 1rem;
   border-top: 1px dashed var(--aira-border);
 }
+
+/* ---- progress bar (budget consumption) ------------------------------------------- */
+
+.progress {
+  height: 8px;
+  border-radius: 999px;
+  background: #eef2f7;
+  overflow: hidden;
+}
+.progress__bar {
+  height: 100%;
+  background: var(--aira-brand);
+  transition: width 0.2s ease;
+}
+.progress__bar.is-warn {
+  background: var(--aira-warning);
+}
+.progress__bar.is-full {
+  background: var(--aira-danger);
+}

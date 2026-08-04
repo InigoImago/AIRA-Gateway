@@ -40,6 +40,14 @@
     >
       API keys <span class="tab__count">{{ apiKeys().length }}</span>
     </button>
+    <button
+      type="button"
+      class="tab"
+      [class.is-active]="tab() === 'budgets'"
+      (click)="tab.set('budgets')"
+    >
+      Budgets <span class="tab__count">{{ budgets().length }}</span>
+    </button>
   </div>
 
   <!-- Overview -->
@@ -224,6 +232,118 @@
           }
         </tbody>
       </table>
+    </div>
+  }
+
+  <!-- Budgets -->
+  @if (tab() === 'budgets') {
+    <div class="card">
+      <div class="spread">
+        <h3 class="section-title" style="margin: 0">Budgets</h3>
+        <button
+          type="button"
+          class="btn btn--sm btn--primary"
+          (click)="showAddBudget.set(!showAddBudget())"
+        >
+          {{ showAddBudget() ? 'Cancel' : '+ Add budget' }}
+        </button>
+      </div>
+      <p class="muted" style="margin: 0.25rem 0 0">
+        Token / request limits per period. The gateway rejects requests over budget with 429.
+      </p>
+
+      @if (showAddBudget()) {
+        <form class="form-inline disclosure" (ngSubmit)="addBudget()">
+          <div class="field">
+            <label>Scope</label>
+            <select name="scope" [(ngModel)]="budgetScope">
+              <option value="use_case">Whole use case</option>
+              <option value="member">Member</option>
+            </select>
+          </div>
+          @if (budgetScope === 'member') {
+            <div class="field">
+              <label>Member username</label>
+              <input name="subject" [(ngModel)]="budgetSubject" placeholder="username" />
+            </div>
+          }
+          <div class="field">
+            <label>Period</label>
+            <select name="period" [(ngModel)]="budgetPeriod">
+              <option value="day">Daily</option>
+              <option value="month">Monthly</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Token limit</label>
+            <input type="number" name="tokens" [(ngModel)]="budgetTokens" placeholder="—" />
+          </div>
+          <div class="field">
+            <label>Request limit</label>
+            <input type="number" name="requests" [(ngModel)]="budgetRequests" placeholder="—" />
+          </div>
+          <button type="submit" class="btn btn--primary">Add</button>
+        </form>
+      }
+
+      <div class="stack" style="margin-top: 1rem">
+        @for (budget of budgets(); track budget.id) {
+          <div class="card" style="padding: 0.9rem 1rem">
+            <div class="spread">
+              <div>
+                <strong>{{ budget.scope === 'member' ? budget.subject : 'Whole use case' }}</strong>
+                <span class="badge badge--muted">{{ budget.period }}</span>
+              </div>
+              <button
+                type="button"
+                class="btn btn--sm btn--danger"
+                (click)="removeBudget(budget.id)"
+              >
+                Remove
+              </button>
+            </div>
+
+            @if (budget.limit_requests != null) {
+              <div style="margin-top: 0.6rem">
+                <div class="spread" style="font-size: 0.82rem">
+                  <span class="muted">Requests</span>
+                  <span>{{ usedFor(budget).used_requests }} / {{ budget.limit_requests }}</span>
+                </div>
+                <div class="progress">
+                  <div
+                    class="progress__bar"
+                    [class.is-warn]="
+                      pct(usedFor(budget).used_requests, budget.limit_requests) >= 80
+                    "
+                    [class.is-full]="
+                      pct(usedFor(budget).used_requests, budget.limit_requests) >= 100
+                    "
+                    [style.width.%]="pct(usedFor(budget).used_requests, budget.limit_requests)"
+                  ></div>
+                </div>
+              </div>
+            }
+            @if (budget.limit_tokens != null) {
+              <div style="margin-top: 0.6rem">
+                <div class="spread" style="font-size: 0.82rem">
+                  <span class="muted">Tokens</span>
+                  <span>{{ usedFor(budget).used_tokens }} / {{ budget.limit_tokens }}</span>
+                </div>
+                <div class="progress">
+                  <div
+                    class="progress__bar"
+                    [class.is-warn]="pct(usedFor(budget).used_tokens, budget.limit_tokens) >= 80"
+                    [class.is-full]="pct(usedFor(budget).used_tokens, budget.limit_tokens) >= 100"
+                    [style.width.%]="pct(usedFor(budget).used_tokens, budget.limit_tokens)"
+                  ></div>
+                </div>
+              </div>
+            }
+          </div>
+        } @empty {
+          <p class="muted">No budgets yet.</p>
+        }
+      </div>
     </div>
   }
 </div>

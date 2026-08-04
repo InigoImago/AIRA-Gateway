@@ -55,3 +55,19 @@ def test_stream_records_usage() -> None:
         resp = client.post("/v1beta/models/mock-1:streamGenerateContent", json=_BODY)
     assert resp.status_code == 200
     assert len(recorder.recorded) == 1
+
+
+class _UsageBudgets:
+    async def usage(self, use_case):  # noqa: ANN001, ANN201
+        return [{"id": 1, "used_tokens": 5, "used_requests": 2}]
+
+
+def test_usage_endpoint_reports_consumption() -> None:
+    app = create_app(GatewaySettings(auth_required=False))
+    app.state.budgets = _UsageBudgets()
+    with TestClient(app) as client:
+        resp = client.get("/v1beta/usage/demo-uc")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["use_case"] == "demo-uc"
+    assert body["usage"][0]["used_requests"] == 2

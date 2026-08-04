@@ -104,4 +104,27 @@ describe('UseCaseService', () => {
       trace: [],
     });
   });
+
+  it('creates a budget with POST', () => {
+    const budget = { scope: 'use_case' as const, period: 'month' as const, limit_tokens: 1000 };
+    service.createBudget('uc', budget).subscribe();
+    const req = http.expectOne('/api/v1/use-cases/uc/budgets/');
+    expect(req.request.method).toBe('POST');
+    expect(req.request.body).toEqual(budget);
+    req.flush({ id: 1, ...budget });
+  });
+
+  it('deletes a budget by id', () => {
+    service.deleteBudget('uc', 7).subscribe();
+    const req = http.expectOne('/api/v1/use-cases/uc/budgets/7/');
+    expect(req.request.method).toBe('DELETE');
+    req.flush(null);
+  });
+
+  it('reads budget usage from the gateway', () => {
+    service.budgetUsage('uc').subscribe((r) => expect(r.usage.length).toBe(1));
+    http
+      .expectOne('/gw/v1beta/usage/uc')
+      .flush({ usage: [{ id: 1, used_tokens: 5, used_requests: 2 }] });
+  });
 });

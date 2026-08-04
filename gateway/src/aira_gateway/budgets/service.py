@@ -77,6 +77,21 @@ class BudgetService:
                 record.requests += 1
             await session.commit()
 
+    async def usage(self, use_case: str, now: datetime | None = None) -> list[dict[str, int]]:
+        """Current-period usage per budget for a use case (for the UI consumption view, FRD-402)."""
+        now = now or datetime.now(UTC)
+        async with self._sessionmaker() as session:
+            result = await session.execute(
+                select(BudgetRead).where(BudgetRead.use_case == use_case)
+            )
+            out: list[dict[str, int]] = []
+            for budget in result.scalars():
+                tokens, requests = await self._usage(
+                    session, _scope_key(budget), _period_key(budget.period, now)
+                )
+                out.append({"id": budget.id, "used_tokens": tokens, "used_requests": requests})
+            return out
+
     async def _applicable(
         self, session: AsyncSession, use_case: str, subject: str | None
     ) -> list[BudgetRead]:

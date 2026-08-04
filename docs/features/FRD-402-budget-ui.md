@@ -1,6 +1,6 @@
 # FRD-402 — Budget UI (set limits + view consumption)
 
-> Phase: 4 · Status: **Planned** · Owner: Vadim Scheibe · Last updated: 2026-08-04
+> Phase: 4 · Status: **Done** · Owner: Vadim Scheibe · Last updated: 2026-08-04
 > Builds on FRD-400 (definitions) + FRD-401 (usage accounting).
 
 ## 1. Summary

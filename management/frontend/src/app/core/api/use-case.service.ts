@@ -1,7 +1,16 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
-import { ApiKey, DryRunResult, IssuedApiKey, Membership, PipelineConfig, UseCase } from './models';
+import {
+  ApiKey,
+  Budget,
+  BudgetUsage,
+  DryRunResult,
+  IssuedApiKey,
+  Membership,
+  PipelineConfig,
+  UseCase,
+} from './models';
 
 @Injectable({ providedIn: 'root' })
 export class UseCaseService {
@@ -68,5 +77,22 @@ export class UseCaseService {
     pipeline: PipelineConfig;
   }): Observable<DryRunResult> {
     return this.http.post<DryRunResult>('/gw/v1beta/pipeline:dryRun', payload);
+  }
+
+  budgets(slug: string): Observable<Budget[]> {
+    return this.http.get<Budget[]>(`${this.base}${slug}/budgets/`);
+  }
+
+  createBudget(slug: string, budget: Budget): Observable<Budget> {
+    return this.http.post<Budget>(`${this.base}${slug}/budgets/`, budget);
+  }
+
+  deleteBudget(slug: string, id: number): Observable<void> {
+    return this.http.delete<void>(`${this.base}${slug}/budgets/${id}/`);
+  }
+
+  /** Current-period consumption per budget, from the gateway. */
+  budgetUsage(slug: string): Observable<{ usage: BudgetUsage[] }> {
+    return this.http.get<{ usage: BudgetUsage[] }>(`/gw/v1beta/usage/${slug}`);
   }
 }

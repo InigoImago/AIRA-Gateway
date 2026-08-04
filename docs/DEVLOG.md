@@ -5,6 +5,17 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-04 — FRD-402: budget UI (closes Phase 4)
+- Gateway `BudgetService.usage()` + unauthenticated `GET /v1beta/usage/{use_case}` return
+  current-period consumption per budget (used tokens/requests).
+- Angular use-case detail gains a **Budgets tab**: set use-case / per-member budgets (scope, period,
+  token/request limits) and **see consumption** as progress bars (warn ≥80%, full ≥100%); admins
+  edit, members read. Consumption fetched from the gateway via `/gw`; limits from Management.
+- **Gates green**: backend 328 tests / 99.85%; frontend 26 Vitest tests, Prettier clean, `ng build` OK.
+- **Phase 4 (Budgets & Quotas) complete.**
+
+---
+
 ## 2026-08-04 — FRD-401: budget enforcement + usage accounting
 - Gateway `BudgetService`: **pre-dispatch `guard`** loads the budgets applicable to the request's
   use case + subject, checks the current period's usage, and **rejects with `429 RESOURCE_EXHAUSTED`**

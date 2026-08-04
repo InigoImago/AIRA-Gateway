@@ -115,3 +115,10 @@ async def test_month_period_key(sessionmaker) -> None:
     # same month, next day → still counts (monthly window)
     with pytest.raises(BudgetExceeded):
         await service.guard("uc", "bob", NEXT_DAY)
+
+
+async def test_usage_reports_current_period(sessionmaker) -> None:
+    await _add(sessionmaker, id=1, limit_requests=5)
+    service = BudgetService(sessionmaker)
+    await service.record(await service.guard("uc", "bob", NOW), 30, NOW)
+    assert await service.usage("uc", NOW) == [{"id": 1, "used_tokens": 30, "used_requests": 1}]

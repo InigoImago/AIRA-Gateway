@@ -135,8 +135,10 @@ DELETE /use-cases/{slug}/budgets` (scope use_case|member, period day|month, toke
 `aira.budgets` Kafka → gateway `budgets` read-model (migration 0005). `FRD-401` done — gateway
 `BudgetService`: pre-dispatch `guard` rejects over-budget requests with **429 RESOURCE_EXHAUSTED**,
 post-dispatch `record` increments the `budget_usage` counters (keyed by scope+period, resets at
-day/month boundaries; migration 0006; `enforce_budgets` toggle). Next: `FRD-402` budget UI (set
-limits + view consumption). See `docs/DEVLOG.md`.
+day/month boundaries; migration 0006; `enforce_budgets` toggle). `FRD-402` done — **Budgets tab** in
+the use-case detail: set use-case/member limits + see consumption bars; usage from gateway
+`GET /v1beta/usage/{use_case}` (`/gw` proxy). **Phase 4 (Budgets & Quotas) complete.** Next candidates:
+Phase 5 (anomaly/IT-Security), `FRD-307` (model catalog), `FRD-106` (OpenAI surface). See `docs/DEVLOG.md`.
 
 ## 7. Working agreement
 - Confirm scope via PRD/FRD before large changes; work phase by phase.

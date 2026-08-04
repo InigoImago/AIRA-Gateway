@@ -86,3 +86,19 @@ export interface DryRunResult {
   fallback_models: string[];
   trace: DryRunTraceEntry[];
 }
+
+export interface Budget {
+  id?: number;
+  scope: 'use_case' | 'member';
+  subject?: string;
+  period: 'day' | 'month';
+  limit_tokens?: number | null;
+  limit_requests?: number | null;
+  enabled?: boolean;
+}
+
+export interface BudgetUsage {
+  id: number;
+  used_tokens: number;
+  used_requests: number;
+}
