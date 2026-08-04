@@ -60,6 +60,18 @@ async def require_attribution(
     """Resolve + authorize the use case and attach an Attribution to ``request.state``."""
     use_case = resolve_use_case(request)
 
+    # An API key issued by Management is bound to exactly one use case (FRD-205): it needs no
+    # selector, and a selector that disagrees with the binding is rejected. Unbound keys
+    # (demo/CLI break-glass) fall through to the selector-based path below.
+    if principal.method == "api_key" and principal.use_cases:
+        bound = principal.use_cases[0]
+        if use_case is None:
+            use_case = bound
+        elif use_case != bound:
+            raise GeminiHTTPError(
+                403, f"API key is bound to use case '{bound}'.", "PERMISSION_DENIED"
+            )
+
     if use_case is None:
         if request.app.state.settings.require_use_case and principal.method != "demo":
             raise GeminiHTTPError(

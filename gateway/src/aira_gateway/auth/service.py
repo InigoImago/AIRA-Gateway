@@ -35,7 +35,10 @@ class ApiKeyService:
         record = await self._active_by_prefix(prefix)
         if record is None or not keys.verify_hash(full, record.key_hash):
             return None
-        return Principal(subject=record.subject, method="api_key", label=record.label)
+        use_cases = (record.use_case,) if record.use_case else ()
+        return Principal(
+            subject=record.subject, method="api_key", label=record.label, use_cases=use_cases
+        )
 
     async def revoke(self, prefix: str) -> bool:
         """Deactivate an active key by prefix. Returns True if one was revoked."""

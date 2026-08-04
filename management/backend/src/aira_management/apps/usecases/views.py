@@ -14,6 +14,7 @@ from typing import Any
 from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.db.models import QuerySet
+from django.utils import timezone
 from guardian.shortcuts import assign_perm, remove_perm
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -22,6 +23,9 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 
+from aira_common.apikeys import generate_api_key
+from aira_management.apps.apikeys.models import ApiKey
+from aira_management.apps.apikeys.serializers import ApiKeySerializer, IssueApiKeySerializer
 from aira_management.apps.usecases.events import emit
 from aira_management.apps.usecases.models import UseCase, UseCaseMembership
 from aira_management.apps.usecases.serializers import (
@@ -148,4 +152,62 @@ class UseCaseViewSet(viewsets.ModelViewSet[UseCase]):
             UseCaseMembership.objects.filter(use_case=usecase, user=user).delete()
             _revoke(user, usecase)
             emit("membership.removed", {"slug": usecase.slug, "username": username})
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=True, methods=["get", "post"], url_path="api-keys")
+    def api_keys(self, request: Request, slug: str | None = None) -> Response:
+        """List keys, or issue a new one bound to this use case (FRD-205).
+
+        Any member who can view the use case may issue a key (bound to it, owned by them).
+        The plaintext is returned **once**; only its hash is stored and distributed.
+        """
+        usecase = self.get_object()
+        if request.method == "GET":
+            keys = ApiKey.objects.filter(use_case=usecase).select_related("owner")
+            return Response(ApiKeySerializer(keys, many=True).data)
+
+        payload = IssueApiKeySerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        label = payload.validated_data["label"]
+        user: Any = request.user
+        full, prefix, key_hash = generate_api_key()
+        with transaction.atomic():
+            ApiKey.objects.create(
+                use_case=usecase, owner=user, prefix=prefix, key_hash=key_hash, label=label
+            )
+            emit(
+                "api_key.created",
+                {
+                    "prefix": prefix,
+                    "key_hash": key_hash,
+                    "subject": user.get_username(),
+                    "use_case": usecase.slug,
+                    "label": label,
+                    "status": "active",
+                },
+            )
+        # The one and only time the plaintext leaves Management.
+        return Response(
+            {"api_key": full, "prefix": prefix, "label": label, "use_case": usecase.slug},
+            status=status.HTTP_201_CREATED,
+        )
+
+    @action(detail=True, methods=["delete"], url_path="api-keys/(?P<prefix>[^/.]+)")
+    def revoke_api_key(
+        self, request: Request, slug: str | None = None, prefix: str | None = None
+    ) -> Response:
+        """Revoke a key by prefix (use-case admins only); publishes the revocation."""
+        usecase = self.get_object()
+        if not self._may_manage(usecase):
+            raise PermissionDenied("You cannot manage keys of this use case.")
+        key = ApiKey.objects.filter(use_case=usecase, prefix=prefix, is_active=True).first()
+        if key is None:
+            raise ValidationError({"prefix": [f"No active key '{prefix}' for this use case."]})
+        with transaction.atomic():
+            key.is_active = False
+            key.revoked_at = timezone.now()
+            key.save(update_fields=["is_active", "revoked_at"])
+            emit(
+                "api_key.revoked", {"prefix": prefix, "use_case": usecase.slug, "status": "revoked"}
+            )
         return Response(status=status.HTTP_204_NO_CONTENT)

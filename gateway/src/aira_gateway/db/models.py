@@ -25,6 +25,9 @@ class ApiKey(Base):
     prefix: Mapped[str] = mapped_column(String(32), unique=True, index=True)
     key_hash: Mapped[str] = mapped_column(String(64))
     subject: Mapped[str] = mapped_column(String(255))
+    # Use case the key is bound to (FRD-205). Management-issued keys carry it; the demo/CLI
+    # break-glass keys leave it null (usable only with an explicit /uc selector).
+    use_case: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     label: Mapped[str | None] = mapped_column(String(255), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

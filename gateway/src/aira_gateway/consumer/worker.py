@@ -10,7 +10,12 @@ from __future__ import annotations
 import asyncio
 import sys
 
-from aira_common.kafka import EVENT_TYPE_HEADER, MEMBERSHIP_TOPIC, USECASE_TOPIC
+from aira_common.kafka import (
+    API_KEY_TOPIC,
+    EVENT_TYPE_HEADER,
+    MEMBERSHIP_TOPIC,
+    USECASE_TOPIC,
+)
 from aira_gateway.config import GatewaySettings
 from aira_gateway.consumer.apply import apply_event
 from aira_gateway.db.base import build_engine, build_sessionmaker, create_all
@@ -34,6 +39,7 @@ async def run_consumer(settings: GatewaySettings) -> None:  # pragma: no cover
     consumer = AIOKafkaConsumer(
         USECASE_TOPIC,
         MEMBERSHIP_TOPIC,
+        API_KEY_TOPIC,
         bootstrap_servers=settings.kafka_bootstrap_servers,
         group_id="aira-gateway",
         auto_offset_reset="earliest",

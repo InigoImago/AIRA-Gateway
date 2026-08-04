@@ -11,7 +11,7 @@ from typing import Any
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from aira_gateway.db.models import UseCaseMemberRead, UseCaseRead
+from aira_gateway.db.models import ApiKey, UseCaseMemberRead, UseCaseRead
 
 
 async def apply_event(session: AsyncSession, event_type: str, payload: dict[str, Any]) -> None:
@@ -24,6 +24,10 @@ async def apply_event(session: AsyncSession, event_type: str, payload: dict[str,
         await _upsert_member(session, payload)
     elif event_type == "membership.removed":
         await _remove_member(session, payload["slug"], payload["username"])
+    elif event_type == "api_key.created":
+        await _upsert_api_key(session, payload)
+    elif event_type == "api_key.revoked":
+        await _set_api_key_active(session, payload["prefix"], active=False)
     else:
         return
     await session.commit()
@@ -74,3 +78,33 @@ async def _remove_member(session: AsyncSession, slug: str, subject: str) -> None
             UseCaseMemberRead.use_case_slug == slug, UseCaseMemberRead.subject == subject
         )
     )
+
+
+async def _upsert_api_key(session: AsyncSession, payload: dict[str, Any]) -> None:
+    """Upsert a Management-issued API key into the read-model, keyed by prefix (FRD-205)."""
+    result = await session.execute(select(ApiKey).where(ApiKey.prefix == payload["prefix"]))
+    record = result.scalar_one_or_none()
+    if record is None:
+        session.add(
+            ApiKey(
+                prefix=payload["prefix"],
+                key_hash=payload["key_hash"],
+                subject=payload.get("subject", ""),
+                use_case=payload.get("use_case"),
+                label=payload.get("label"),
+                is_active=True,
+            )
+        )
+    else:
+        record.key_hash = payload["key_hash"]
+        record.subject = payload.get("subject", "")
+        record.use_case = payload.get("use_case")
+        record.label = payload.get("label")
+        record.is_active = True
+
+
+async def _set_api_key_active(session: AsyncSession, prefix: str, *, active: bool) -> None:
+    result = await session.execute(select(ApiKey).where(ApiKey.prefix == prefix))
+    record = result.scalar_one_or_none()
+    if record is not None:
+        record.is_active = active
