@@ -5,6 +5,19 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-04 — Upstream status passthrough (gateway hardening)
+- `UpstreamError` now carries the upstream HTTP `status_code` (`None` for transport failures).
+- Gemini routes map it: **429 → `429 RESOURCE_EXHAUSTED`**, **503 → `503 UNAVAILABLE`**,
+  **504 → `504 DEADLINE_EXCEEDED`**; everything else (upstream 4xx from *our* key/config, upstream
+  5xx, transport errors) is masked as a generic **502 UNAVAILABLE** so a broken upstream is never
+  mistaken for a client error. Streaming still logs + terminates cleanly (status already sent),
+  now including the upstream status.
+- Rationale: a client (e.g. opencode) hitting a real Gemini rate-limit should see `429` and back
+  off, not a misleading `502`.
+- **Gates green**: 225 tests / 99.9% (routes + gemini modules 100%), ruff + mypy --strict clean.
+
+---
+
 ## 2026-08-04 — FRD-304: real Google Gemini upstream adapter (Phase 3)
 - **Async provider protocol**: `Upstream` (`upstreams/base.py`) is now `async` (`generate`/`embed`
   coroutines, `stream_generate` async-iterator); added `UpstreamError` for upstream failures.

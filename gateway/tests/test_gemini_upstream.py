@@ -43,20 +43,22 @@ async def test_generate_maps_response_and_sends_key() -> None:
     assert response.usage.total_tokens == 4
 
 
-async def test_generate_error_status_raises() -> None:
+async def test_generate_error_status_is_carried() -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(500, json={"error": "boom"})
+        return httpx.Response(429, json={"error": "boom"})
 
-    with pytest.raises(UpstreamError, match="returned 500"):
+    with pytest.raises(UpstreamError, match="returned 429") as exc_info:
         await _upstream(handler).generate(_request())
+    assert exc_info.value.status_code == 429
 
 
-async def test_generate_transport_error_raises() -> None:
+async def test_generate_transport_error_has_no_status() -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("down")
 
-    with pytest.raises(UpstreamError, match="ConnectError"):
+    with pytest.raises(UpstreamError, match="ConnectError") as exc_info:
         await _upstream(handler).generate(_request())
+    assert exc_info.value.status_code is None
 
 
 async def test_embed_returns_vector() -> None:
@@ -82,12 +84,13 @@ async def test_stream_reconstructs_text_and_finish() -> None:
     assert chunks[-1].finish_reason == "stop"
 
 
-async def test_stream_error_status_raises() -> None:
+async def test_stream_error_status_is_carried() -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(503, content=b"")
 
-    with pytest.raises(UpstreamError, match="returned 503"):
+    with pytest.raises(UpstreamError, match="returned 503") as exc_info:
         [chunk async for chunk in _upstream(handler).stream_generate(_request())]
+    assert exc_info.value.status_code == 503
 
 
 async def test_stream_transport_error_raises() -> None:

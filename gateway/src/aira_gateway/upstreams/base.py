@@ -15,11 +15,17 @@ from aira_gateway.core.canonical import CanonicalChunk, CanonicalRequest, Canoni
 
 
 class UpstreamError(Exception):
-    """A recoverable failure talking to an upstream provider (maps to a 502)."""
+    """A failure talking to an upstream provider.
 
-    def __init__(self, message: str) -> None:
+    ``status_code`` is the upstream HTTP status when the provider answered (used by the
+    routes to pass meaningful codes like 429/503 through to the client); it is ``None`` for
+    transport-level failures where no response was received.
+    """
+
+    def __init__(self, message: str, status_code: int | None = None) -> None:
         super().__init__(message)
         self.message = message
+        self.status_code = status_code
 
 
 @dataclass(frozen=True, slots=True)

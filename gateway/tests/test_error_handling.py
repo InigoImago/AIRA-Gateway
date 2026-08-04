@@ -36,48 +36,75 @@ def test_unexpected_error_on_api_returns_gemini_500() -> None:
     assert "secret detail" not in resp.text
 
 
-class _UnavailableProvider:
+class _RaisingProvider:
+    """Provider whose methods raise an ``UpstreamError`` with a configurable upstream status."""
+
+    def __init__(self, status: int | None) -> None:
+        self._status = status
+
     def models(self) -> list[UpstreamModel]:
         return [UpstreamModel("mock-1", "mock-1", ("generateContent",))]
 
     async def generate(self, request):  # noqa: ANN001, ANN201
-        raise UpstreamError("upstream is down")
+        raise UpstreamError("upstream failure", self._status)
 
     async def stream_generate(self, request):  # noqa: ANN001, ANN201
-        raise UpstreamError("upstream is down")
+        raise UpstreamError("upstream failure", self._status)
         yield  # pragma: no cover  (make this an async generator)
 
     async def embed(self, model, text):  # noqa: ANN001, ANN201
-        raise UpstreamError("upstream is down")
+        raise UpstreamError("upstream failure", self._status)
 
 
-def _unavailable_client() -> TestClient:
+def _raising_client(status: int | None) -> TestClient:
     app = create_app(GatewaySettings(auth_required=False))
-    app.state.providers = ProviderRegistry([_UnavailableProvider()])
+    app.state.providers = ProviderRegistry([_RaisingProvider(status)])
     return TestClient(app, raise_server_exceptions=False)
 
 
-def test_upstream_error_on_generate_returns_502() -> None:
-    with _unavailable_client() as client:
+def test_upstream_error_without_status_maps_to_502() -> None:
+    with _raising_client(None) as client:
         resp = client.post("/v1beta/models/mock-1:generateContent", json=_BODY)
     assert resp.status_code == 502
     body = resp.json()
     assert body["error"]["status"] == "UNAVAILABLE"
-    assert body["error"]["message"] == "upstream is down"
+    assert body["error"]["message"] == "upstream failure"
 
 
-def test_upstream_error_on_embed_returns_502() -> None:
-    with _unavailable_client() as client:
-        resp = client.post(
-            "/v1beta/models/mock-1:embedContent",
-            json={"content": {"parts": [{"text": "hi"}]}},
-        )
+def test_upstream_429_passes_through_as_resource_exhausted() -> None:
+    with _raising_client(429) as client:
+        resp = client.post("/v1beta/models/mock-1:generateContent", json=_BODY)
+    assert resp.status_code == 429
+    assert resp.json()["error"]["status"] == "RESOURCE_EXHAUSTED"
+
+
+def test_upstream_503_passes_through_as_unavailable() -> None:
+    with _raising_client(503) as client:
+        resp = client.post("/v1beta/models/mock-1:generateContent", json=_BODY)
+    assert resp.status_code == 503
+    assert resp.json()["error"]["status"] == "UNAVAILABLE"
+
+
+def test_upstream_4xx_config_error_is_masked_as_502() -> None:
+    # A 400 from the upstream reflects *our* key/config, not the client's request → generic 502.
+    with _raising_client(400) as client:
+        resp = client.post("/v1beta/models/mock-1:generateContent", json=_BODY)
     assert resp.status_code == 502
     assert resp.json()["error"]["status"] == "UNAVAILABLE"
 
 
+def test_upstream_error_on_embed_maps_status() -> None:
+    with _raising_client(429) as client:
+        resp = client.post(
+            "/v1beta/models/mock-1:embedContent",
+            json={"content": {"parts": [{"text": "hi"}]}},
+        )
+    assert resp.status_code == 429
+    assert resp.json()["error"]["status"] == "RESOURCE_EXHAUSTED"
+
+
 def test_upstream_error_on_stream_terminates_cleanly() -> None:
-    with _unavailable_client() as client:
+    with _raising_client(503) as client:
         resp = client.post("/v1beta/models/mock-1:streamGenerateContent", json=_BODY)
     # Stream headers are already sent when the upstream fails: status stays 200, body is an
     # empty JSON array (the error is logged server-side, never leaked to the client).

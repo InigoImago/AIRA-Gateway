@@ -43,6 +43,22 @@ def _first_error(exc: ValidationError) -> str:
     return f"{location}: {first.get('msg', 'invalid')}".strip(": ")
 
 
+# Pass meaningful upstream statuses (rate limit / unavailable / timeout) through to the client;
+# everything else — upstream 4xx caused by *our* key/config, upstream 5xx, or a transport failure
+# (status_code is None) — is surfaced as a generic 502, so a broken upstream is never mistaken for a
+# client mistake.
+_UPSTREAM_STATUS_MAP: dict[int, tuple[int, str]] = {
+    429: (429, "RESOURCE_EXHAUSTED"),
+    503: (503, "UNAVAILABLE"),
+    504: (504, "DEADLINE_EXCEEDED"),
+}
+
+
+def _upstream_error(exc: UpstreamError) -> JSONResponse:
+    code, status = _UPSTREAM_STATUS_MAP.get(exc.status_code or 0, (502, "UNAVAILABLE"))
+    return _error(code, exc.message, status)
+
+
 def _registry(request: Request) -> ProviderRegistry:
     registry: ProviderRegistry = request.app.state.providers
     return registry
@@ -90,7 +106,7 @@ async def generate(resource: str, request: Request) -> Response:
             try:
                 canonical_response = await provider.generate(canonical)
             except UpstreamError as exc:
-                return _error(502, exc.message, "UNAVAILABLE")
+                return _upstream_error(exc)
             payload = canonical_to_gemini(canonical_response).model_dump()
             await record_request(
                 request,
@@ -116,7 +132,7 @@ async def generate(resource: str, request: Request) -> Response:
         try:
             values = await provider.embed(model, text)
         except UpstreamError as exc:
-            return _error(502, exc.message, "UNAVAILABLE")
+            return _upstream_error(exc)
         payload = schemas.EmbedContentResponse(
             embedding=schemas.ContentEmbedding(values=values)
         ).model_dump()
@@ -184,7 +200,12 @@ def _stream_response(
                     separator = ","
         except UpstreamError as exc:
             # Headers are already sent; log and terminate the stream cleanly.
-            _log.error("upstream_stream_error", error=exc.message, model=canonical.model)
+            _log.error(
+                "upstream_stream_error",
+                error=exc.message,
+                status=exc.status_code,
+                model=canonical.model,
+            )
         if not sse:
             yield "]"
         await record_request(

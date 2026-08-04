@@ -56,7 +56,10 @@ class GeminiUpstream:
                 json=body,
             ) as response:
                 if response.status_code != httpx.codes.OK:
-                    raise UpstreamError(f"Gemini upstream returned {response.status_code}.")
+                    raise UpstreamError(
+                        f"Gemini upstream returned {response.status_code}.",
+                        response.status_code,
+                    )
                 async for line in response.aiter_lines():
                     if line.startswith("data: "):
                         yield gemini_chunk_to_canonical(json.loads(line[len("data: ") :]))
@@ -69,7 +72,9 @@ class GeminiUpstream:
         except httpx.HTTPError as exc:
             raise UpstreamError(f"Gemini upstream error: {type(exc).__name__}.") from exc
         if response.status_code != httpx.codes.OK:
-            raise UpstreamError(f"Gemini upstream returned {response.status_code}.")
+            raise UpstreamError(
+                f"Gemini upstream returned {response.status_code}.", response.status_code
+            )
         result: dict[str, Any] = response.json()
         return result
 
