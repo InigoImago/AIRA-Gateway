@@ -5,6 +5,26 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-04 — FRD-101 Slice A: API-key authentication + gateway DB layer
+- **Gateway DB layer** (`gateway/db/`): SQLAlchemy 2.0 async via **psycopg3** (Postgres) /
+  **aiosqlite** (tests); `Base`, engine/sessionmaker builders, `create_all` (Alembic deferred to
+  FRD-103), and the `api_keys` table. App builds the engine + runs `create_all` in a lifespan.
+- **API keys** (`gateway/auth/`): format `aira_<prefix>_<secret>` (hex), only the SHA-256 **hash**
+  stored; `ApiKeyService` (create/verify/revoke/ensure_demo_key) with constant-time compare;
+  `Principal` (subject + method); credential extraction (`Authorization: Bearer` → `x-goog-api-key`
+  → `?key=`); `require_principal` dependency guarding the Gemini routes (Gemini-shaped 401).
+- **Toggle & demo**: `auth_required` (default true); demo mode seeds a deterministic demo key.
+- **CLI** (`python -m aira_gateway.cli api-key create|revoke`) to mint/revoke keys.
+- **Gates green**: 111 tests, **100% coverage**; ruff + mypy --strict clean. Tests hermetic
+  (in-memory SQLite; pytest auto-detected).
+- **End-to-end verified** against Postgres: CLI minted a real key (persisted in `api_keys`); the
+  Gemini route returns **401** without a credential, **200** with the key (header/`?key=`/Bearer),
+  **401** for a bad/revoked key.
+- **Next: FRD-101 Slice B** — OIDC bearer validation (Keycloak JWKS) + realm import, plugged into
+  the same `resolve_principal`.
+
+---
+
 ## 2026-08-04 — FRD-100: Gemini-compatible unified API (Phase 1 begins)
 - **Decision**: ship the **Gemini** wire format first (existing projects run on it); OpenAI later →
   `ADR-0005`. Updated PRD/ROADMAP/README; added detailed `FRD-100`.

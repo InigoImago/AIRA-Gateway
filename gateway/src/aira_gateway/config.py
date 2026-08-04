@@ -17,9 +17,27 @@ class GatewaySettings(BaseAiraSettings):
     # Postgres (system of record). Defaults target the local Compose stack from the host.
     postgres_host: str = "localhost"
     postgres_port: int = 5432
+    postgres_db: str = "aira_gateway"
+    postgres_user: str = "aira"
+    postgres_password: str = "aira-local"
 
     # Kafka event bus. Host-facing listener from the Compose stack.
     kafka_bootstrap_servers: str = "localhost:29092"
+
+    # Use an in-memory SQLite DB (set under pytest) instead of Postgres.
+    test_database: bool = False
+
+    # Require authentication on the API routes; when False (pure demo) routes are open.
+    auth_required: bool = True
+
+    def database_url(self, *, use_sqlite: bool) -> str:
+        """Return the async SQLAlchemy URL for the gateway database."""
+        if use_sqlite:
+            return "sqlite+aiosqlite:///:memory:"
+        return (
+            f"postgresql+psycopg://{self.postgres_user}:{self.postgres_password}"
+            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+        )
 
     @property
     def kafka_host_port(self) -> tuple[str, int]:

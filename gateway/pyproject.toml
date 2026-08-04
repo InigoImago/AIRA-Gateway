@@ -8,6 +8,8 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
     "opentelemetry-instrumentation-fastapi>=0.50b0",
+    "sqlalchemy[asyncio]>=2.0",
+    "psycopg[binary]>=3.2",
 ]
 
 [build-system]

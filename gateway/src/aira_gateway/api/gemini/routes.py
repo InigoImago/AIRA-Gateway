@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import ValidationError
 
 from aira_gateway.api.gemini import schemas
+from aira_gateway.api.gemini.errors import gemini_error_response as _error
 from aira_gateway.api.gemini.mapping import (
     canonical_to_gemini,
     gemini_to_canonical,
@@ -23,13 +24,6 @@ from aira_gateway.core.canonical import CanonicalChunk, CanonicalRequest
 from aira_gateway.upstreams.base import ProviderRegistry, Upstream
 
 router = APIRouter(tags=["gemini"])
-
-
-def _error(code: int, message: str, status: str) -> JSONResponse:
-    body = schemas.GeminiError(
-        error=schemas.GeminiErrorDetail(code=code, message=message, status=status)
-    )
-    return JSONResponse(status_code=code, content=body.model_dump())
 
 
 def _first_error(exc: ValidationError) -> str:

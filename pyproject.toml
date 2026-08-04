@@ -13,6 +13,7 @@ dev = [
     "pytest-asyncio>=1.0",
     "pytest-cov>=6.0",
     "pytest-django>=4.9",
+    "aiosqlite>=0.20",
     "httpx>=0.28",
     "ruff>=0.9",
     "mypy>=1.14",
