@@ -5,6 +5,25 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-04 — FRD-002: seed & demo mode — **Phase 0 fully complete**
+- **Seed framework** (Django, `aira_management.apps.seed`): an extensible registry — each phase
+  registers idempotent `SeedContribution`s (run in `(order, name)`); a `seed_demo` management command
+  runs them, supports `--fresh` (reset) and refuses production without `--force`.
+- **Phase 0 contribution** `roles_and_users`: creates the five roles as Django `Group`s and one
+  deterministic demo user each (admin/itsec/itgov/ucadmin/ucuser), idempotently. Roles centralized in
+  `aira_management.roles.Role` (reused by Phase 2 RBAC).
+- **Mock upstream** (gateway `upstreams/mock.py`): deterministic offline completions/embeddings for
+  demo mode (basic; full fidelity in FRD-104).
+- **Hermetic tests**: `settings.py` uses in-memory SQLite under pytest (`"pytest" in sys.modules` —
+  ordering-robust, replaced a fragile conftest env hack), so the suite needs no Postgres.
+- `make seed` / `make seed-reset` wired (migrate + seed_demo).
+- **Gates green**: 68 tests, **100% coverage**; ruff + mypy --strict clean.
+- **End-to-end verified**: `make seed` against live Postgres created 5 groups + 5 users mapped to
+  roles; re-run created nothing (idempotent); confirmed in the `aira_mgmt` DB.
+- **Phase 0 (Foundation & Infra) is complete** (all of FRD-000/001/002). **Next: Phase 1 — Gateway MVP.**
+
+---
+
 ## 2026-08-04 — FRD-001: observability baseline (backend switched to Grafana otel-lgtm)
 - **Decision change**: SigNoz deprecated its Docker Compose manifests (Foundry-only), so it can't be
   embedded cleanly. Switched the local OTLP backend to **Grafana `otel-lgtm`** → `ADR-0004`

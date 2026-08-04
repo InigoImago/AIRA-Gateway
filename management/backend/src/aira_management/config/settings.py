@@ -6,9 +6,11 @@ skeleton for Phase 0; RBAC apps, Keycloak OIDC, and domain models arrive in Phas
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from aira_common.logging import configure_logging
+from aira_management.config.database import build_databases
 from aira_management.config.observability import setup_observability
 from aira_management.config.runtime import get_settings
 
@@ -31,6 +33,7 @@ INSTALLED_APPS = [
     "django.contrib.auth",
     "rest_framework",
     "aira_management.apps.health",
+    "aira_management.apps.seed",
 ]
 
 MIDDLEWARE = [
@@ -51,16 +54,9 @@ TEMPLATES = [
 WSGI_APPLICATION = "aira_management.config.wsgi.application"
 ASGI_APPLICATION = "aira_management.config.asgi.application"
 
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.postgresql",
-        "NAME": _settings.postgres_db,
-        "USER": _settings.postgres_user,
-        "PASSWORD": _settings.postgres_password,
-        "HOST": _settings.postgres_host,
-        "PORT": str(_settings.postgres_port),
-    }
-}
+# Use in-memory SQLite under pytest (or when explicitly requested) so tests are hermetic.
+_use_sqlite = _settings.test_database or ("pytest" in sys.modules)
+DATABASES = build_databases(_settings, _use_sqlite)
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 

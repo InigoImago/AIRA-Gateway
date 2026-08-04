@@ -32,5 +32,7 @@ def test_django_settings_wire_up() -> None:
     from django.conf import settings as django_settings
 
     assert "aira_management.apps.health" in django_settings.INSTALLED_APPS
+    assert "aira_management.apps.seed" in django_settings.INSTALLED_APPS
     assert django_settings.AIRA.app_name == "aira-management"
-    assert django_settings.DATABASES["default"]["NAME"] == "aira_mgmt"
+    # tests run with an in-memory SQLite DB (AIRA_TEST_DATABASE=1 via repo-root conftest)
+    assert django_settings.DATABASES["default"]["ENGINE"] == "django.db.backends.sqlite3"

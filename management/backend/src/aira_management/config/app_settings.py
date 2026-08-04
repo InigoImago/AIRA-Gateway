@@ -31,6 +31,9 @@ class ManagementSettings(BaseAiraSettings):
     # Kafka event bus
     kafka_bootstrap_servers: str = "localhost:29092"
 
+    # Use an in-memory SQLite DB (set by the test harness) instead of Postgres.
+    test_database: bool = False
+
     @property
     def allowed_hosts_list(self) -> list[str]:
         """Return ``allowed_hosts`` as a list for Django's ``ALLOWED_HOSTS``."""

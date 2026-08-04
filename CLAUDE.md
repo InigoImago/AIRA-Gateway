@@ -80,9 +80,10 @@ AIRA/
 schema-registry, vault) runs via `make up`. uv workspace with three Python-side packages
 (`aira_common`, `aira_gateway`, `aira_management` = Django+DRF) plus an Angular 22 frontend shell —
 all with `/healthz`+`/readyz`, 100% Python coverage, and green ruff/mypy/prettier gates.
-**`FRD-001` done**: OTel Collector + Grafana `otel-lgtm` wired (observability Compose profile);
-apps export OTLP (traces verified end-to-end in Tempo). Still open from Phase 0: seed/demo (`FRD-002`).
-**Next: `FRD-002`, then Phase 1 — Gateway MVP.** See `docs/DEVLOG.md` for the latest.
+Observability (`FRD-001`): OTel Collector + Grafana `otel-lgtm` (traces verified in Tempo). Seed &
+demo (`FRD-002`): extensible seed framework + `seed_demo` command creating the 5 roles/users
+(verified end-to-end against Postgres); deterministic mock upstream for demo mode.
+**Phase 0 (Foundation & Infra) is fully complete. Next: Phase 1 — Gateway MVP.** See `docs/DEVLOG.md`.
 
 ## 7. Working agreement
 - Confirm scope via PRD/FRD before large changes; work phase by phase.

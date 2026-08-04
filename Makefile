@@ -11,7 +11,7 @@ ENV_EXAMPLE := $(COMPOSE_DIR)/.env.example
 .DEFAULT_GOAL := help
 
 .PHONY: help up up-core down destroy ps logs restart env sync test test-py test-frontend \
-        lint lint-py lint-frontend fmt seed run-gateway run-backend run-frontend
+        lint lint-py lint-frontend fmt seed seed-reset run-gateway run-backend run-frontend
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -87,5 +87,9 @@ run-backend: ## Run the Management backend (Django) locally against the Compose 
 run-frontend: ## Run the Angular dev server
 	cd $(FRONTEND_DIR) && npx ng serve --port 4200
 
-seed: ## Seed demo data (implemented in FRD-002)
-	@echo "TODO: implement demo seeding (FRD-002)"
+seed: ## Migrate + seed demo data (idempotent; requires 'make up')
+	cd management/backend && AIRA_DEMO_MODE=true uv run python manage.py migrate --noinput
+	cd management/backend && AIRA_DEMO_MODE=true uv run python manage.py seed_demo
+
+seed-reset: ## Reset and reseed demo data
+	cd management/backend && AIRA_DEMO_MODE=true uv run python manage.py seed_demo --fresh
