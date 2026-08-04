@@ -6,8 +6,9 @@ routing, governance, observability, and security.
 
 It consists of two self-developed components plus open-source infrastructure:
 
-1. **Gateway API** (FastAPI) — the data plane: unified API, auth, attribution, routing/fallback,
-   pipeline enforcement, request/response persistence, tracing.
+1. **Gateway API** (FastAPI) — the data plane: unified API (**Gemini-compatible first**, OpenAI
+   later), auth, attribution, routing/fallback, pipeline enforcement, request/response persistence,
+   tracing.
 2. **Management & Monitoring** (Angular + Django REST Framework) — the control plane: use-case
    self-service, pipeline builder, budgets, anomaly rules, IT Security console, governance views.
 

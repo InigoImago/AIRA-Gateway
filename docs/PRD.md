@@ -27,8 +27,9 @@ IT security have full visibility and control.
 ## 2. Goals & Non-Goals
 
 ### 2.1 Goals
-- **G1 — Unified API surface**: One OpenAI/Gemini-compatible REST interface for all clients,
-  independent of the upstream provider.
+- **G1 — Unified API surface**: A single provider-agnostic REST interface for all clients. The
+  **Gemini-compatible** surface ships **first** (existing projects already run on it); an
+  **OpenAI-compatible** surface is added later. Both normalize to one canonical internal schema.
 - **G2 — Strong AuthN/AuthZ**: SSO via bearer token (OIDC/Keycloak) *and* self-generated API keys.
 - **G3 — Attribution**: Every request is attributed to a user, a project, a use case, or a
   user-within-a-use-case.
@@ -82,8 +83,8 @@ AIRA consists of **two self-developed components** plus **open-source infrastruc
                          ┌──────────────────────────────────────────────┐
    Clients (SDKs,        │                 AIRA GATEWAY                   │
    apps, agents) ──────▶ │  Component 1: Gateway API (FastAPI)           │
-   OpenAI/Gemini-        │   • Unified API  • AuthN/Z  • Attribution     │
-   compatible            │   • Routing/Fallback  • Pipeline execution    │
+   Gemini-compat         │   • Unified API  • AuthN/Z  • Attribution     │
+   (OpenAI later)        │   • Routing/Fallback  • Pipeline execution    │
                          │   • Request/Response persistence  • Tracing   │
                          └───────┬───────────────────────┬──────────────┘
                                  │                        │
@@ -108,7 +109,7 @@ AIRA consists of **two self-developed components** plus **open-source infrastruc
 
 ### 4.1 Component 1 — Gateway API (FastAPI)
 The data-plane. High-throughput, stateless-where-possible service that:
-- Exposes a **unified, OpenAI/Gemini-compatible** REST API.
+- Exposes a **unified, Gemini-compatible** REST API first (OpenAI-compatible surface added later).
 - Authenticates via **bearer token (OIDC)** or **API key**.
 - **Classifies & attributes** each request to user / project / use case.
 - Applies the **use-case pre-dispatch pipeline** (injection filter, allow checks, routing).
@@ -142,9 +143,11 @@ config-distribution mechanism are defined in the architecture doc / relevant FRD
 
 ### 5.1 Gateway API (Component 1)
 
-- **FR-GW-1 Unified interface**: Provide OpenAI-compatible endpoints (e.g. `/v1/chat/completions`,
-  `/v1/embeddings`, `/v1/models`) and a Gemini-compatible surface. Requests are normalized to an
-  internal canonical schema, then translated to the target upstream's dialect.
+- **FR-GW-1 Unified interface**: Provide a **Gemini-compatible** surface **first** (Google
+  Generative Language API v1beta: `POST /v1beta/models/{model}:generateContent`,
+  `:streamGenerateContent`, `:embedContent`, `GET /v1beta/models`). An **OpenAI-compatible** surface
+  (`/v1/chat/completions`, `/v1/embeddings`, `/v1/models`) is added later (FRD-106). Both normalize
+  to one internal canonical schema, then translate to the target upstream's dialect. See ADR-0005.
 - **FR-GW-2 Authentication**: Accept (a) OIDC bearer tokens validated against Keycloak, and
   (b) self-generated API keys (hashed at rest, prefix-identifiable, revocable, scoped).
 - **FR-GW-3 Attribution**: Resolve each request to `user`, `project`, `use_case`, and

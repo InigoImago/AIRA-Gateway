@@ -32,14 +32,17 @@ FRDs: `FRD-000-foundation-infra`, `FRD-001-observability-baseline`, `FRD-002-see
 persists everything.
 
 Deliverables:
-- OpenAI-compatible endpoints (`/v1/chat/completions`, `/v1/models`) → canonical internal schema.
+- **Gemini-compatible** endpoints (`/v1beta/models/{model}:generateContent`, `:streamGenerateContent`,
+  `:embedContent`, `GET /v1beta/models`) → canonical internal schema. **This ships first** (existing
+  projects run on Gemini); the **OpenAI-compatible** surface is added later as `FRD-106` (ADR-0005).
 - **API-key auth** (issue/hash/verify/revoke) + **OIDC bearer** validation against Keycloak.
 - Request attribution to user / project / use case.
 - **Mock upstream** provider; request/response **persistence**; source-IP capture; tracing spans.
 - Kafka usage/audit event emission (schema v1).
 
-FRDs: `FRD-100-unified-api`, `FRD-101-auth-apikey-oidc`, `FRD-102-attribution`,
+FRDs: `FRD-100-gemini-api`, `FRD-101-auth-apikey-oidc`, `FRD-102-attribution`,
 `FRD-103-request-response-persistence`, `FRD-104-mock-upstream`, `FRD-105-tracing-and-ip`.
+Later: `FRD-106-openai-api` (OpenAI-compatible surface on the same canonical schema).
 
 ---
 
