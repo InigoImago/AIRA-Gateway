@@ -1,0 +1,22 @@
+<h2>Use Cases</h2>
+
+@if (error(); as message) {
+  <p class="error" role="alert">{{ message }}</p>
+}
+
+<ul class="use-case-list">
+  @for (useCase of useCases(); track useCase.slug) {
+    <li>
+      <a [routerLink]="['/use-cases', useCase.slug]">{{ useCase.name }}</a>
+      <code>{{ useCase.slug }}</code>
+    </li>
+  } @empty {
+    <li>No use cases yet.</li>
+  }
+</ul>
+
+<form class="create-form" (ngSubmit)="create()">
+  <input name="slug" [(ngModel)]="slug" placeholder="slug (a-z0-9-)" />
+  <input name="name" [(ngModel)]="name" placeholder="name" />
+  <button type="submit">Create</button>
+</form>

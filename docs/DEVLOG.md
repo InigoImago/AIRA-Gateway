@@ -5,6 +5,23 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-04 — FRD-203: Angular management shell
+- **Auth** (`core/auth`): `angular-oauth2-oidc` code-flow+PKCE against the `aira` realm; `AuthService`
+  facade; functional `authInterceptor` (bearer on `/api` calls) + `authGuard` (redirect to login);
+  `provideAppInitializer` runs OIDC discovery on startup.
+- **API** (`core/api`): typed `MeService` + `UseCaseService` (list/get/create/update/remove +
+  members) with models.
+- **Shell**: header + **role-aware navigation** (Security/Governance/Administration shown by role
+  from `/api/v1/me`), logout.
+- **Screens** (lazy-loaded): use-case **list** (+ create form) and **detail** (edit context, member
+  add/remove) wired to FRD-202 endpoints.
+- **Dev proxy** (`proxy.conf.json`): `/api` → management `:8002`; `make run-frontend` uses it.
+- **Gates green**: `ng build` OK (lazy chunks), **13 Vitest tests** pass (interceptor/guard/service/
+  list/shell, browserless), Prettier clean. Python side unchanged (202 tests / 100%).
+- **Next: FRD-205** (self-service API-key issuance) closes Phase 2.
+
+---
+
 ## 2026-08-04 — FRD-204: config distribution over Kafka (Management → Gateway read-model)
 - **Transactional outbox** (management `outbox` app): use-case/membership change events are written to
   an `OutboxEvent` row **inside the same transaction** as the change (mutations wrapped in

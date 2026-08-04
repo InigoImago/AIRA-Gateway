@@ -1,0 +1,30 @@
+@if (useCase(); as useCase) {
+  <h2>
+    {{ useCase.name }} <code>{{ useCase.slug }}</code>
+  </h2>
+  <p>{{ useCase.description }}</p>
+  @if (useCase.processing_notes) {
+    <p class="notes"><strong>Processing:</strong> {{ useCase.processing_notes }}</p>
+  }
+}
+
+<h3>Members</h3>
+<ul class="member-list">
+  @for (member of members(); track member.username) {
+    <li>
+      {{ member.username }} <em>({{ member.role }})</em>
+      <button type="button" (click)="removeMember(member.username)">Remove</button>
+    </li>
+  } @empty {
+    <li>No members.</li>
+  }
+</ul>
+
+<form class="add-member" (ngSubmit)="addMember()">
+  <input name="username" [(ngModel)]="memberUsername" placeholder="username" />
+  <select name="role" [(ngModel)]="memberRole">
+    <option value="user">user</option>
+    <option value="admin">admin</option>
+  </select>
+  <button type="submit">Add member</button>
+</form>

@@ -88,8 +88,8 @@ run-gateway: ## Run the Gateway API locally against the Compose stack
 run-backend: ## Run the Management backend (Django) locally against the Compose stack
 	cd management/backend && AIRA_OTEL_ENABLED=true uv run python manage.py runserver 127.0.0.1:8002
 
-run-frontend: ## Run the Angular dev server
-	cd $(FRONTEND_DIR) && npx ng serve --port 4200
+run-frontend: ## Run the Angular dev server (proxies /api to the management backend)
+	cd $(FRONTEND_DIR) && npx ng serve --host 0.0.0.0 --port 4200 --proxy-config proxy.conf.json
 
 migrate-gateway: ## Apply gateway DB migrations (Alembic)
 	cd gateway && uv run alembic upgrade head

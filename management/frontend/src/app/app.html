@@ -1,11 +1,24 @@
 <header class="aira-header">
   <h1>{{ title() }}</h1>
-  <p class="aira-subtitle">{{ subtitle() }}</p>
+  @if (me(); as user) {
+    <div class="aira-user">
+      <span>{{ user.username }}</span>
+      <button type="button" (click)="logout()">Logout</button>
+    </div>
+  }
 </header>
 
 <nav class="aira-nav" aria-label="Main navigation">
-  <!-- Role-aware navigation (use cases, security, governance) arrives in Phase 2 (FRD-203). -->
-  <span class="aira-nav__item">Dashboard</span>
+  <a class="aira-nav__item" routerLink="/use-cases">Use Cases</a>
+  @if (hasRole('it-security')) {
+    <span class="aira-nav__item" data-role="it-security">Security</span>
+  }
+  @if (hasRole('it-steuerung')) {
+    <span class="aira-nav__item" data-role="it-steuerung">Governance</span>
+  }
+  @if (hasRole('global-admin')) {
+    <span class="aira-nav__item" data-role="global-admin">Administration</span>
+  }
 </nav>
 
 <main class="aira-main">

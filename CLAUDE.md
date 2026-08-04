@@ -107,7 +107,9 @@ realm roles → Django groups, Keycloak is source of truth), DRF role permission
 object perms; change hook `events.emit`). `FRD-204` done — **Kafka config distribution**: management
 **transactional outbox** + `relay` → Kafka (compacted topics) → gateway **idempotent consumer** into
 read-model tables (`use_cases`/`use_case_members`). `aira_common.kafka` (aiokafka); `make
-kafka-topics/relay/consume`. Verified end-to-end. Next: `FRD-205` (API-key issuance) / `FRD-203` (UI).
+kafka-topics/relay/consume`. Verified end-to-end. `FRD-203` done — **Angular shell**: OIDC login
+(angular-oauth2-oidc), bearer interceptor + auth guard, role-aware nav from `/api/v1/me`, use-case
+list/detail screens (dev proxy `/api`→:8002). Next: `FRD-205` (API-key issuance) closes Phase 2.
 See `docs/DEVLOG.md`.
 
 ## 7. Working agreement
