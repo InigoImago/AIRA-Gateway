@@ -109,8 +109,18 @@ object perms; change hook `events.emit`). `FRD-204` done — **Kafka config dist
 read-model tables (`use_cases`/`use_case_members`). `aira_common.kafka` (aiokafka); `make
 kafka-topics/relay/consume`. Verified end-to-end. `FRD-203` done — **Angular shell**: OIDC login
 (angular-oauth2-oidc), bearer interceptor + auth guard, role-aware nav from `/api/v1/me`, use-case
-list/detail screens (dev proxy `/api`→:8002). Next: `FRD-205` (API-key issuance) closes Phase 2.
-See `docs/DEVLOG.md`.
+list/detail screens (dev proxy `/api`→:8002). `FRD-205` done — **self-service API-key issuance**
+(ADR-0006): Management issues keys **bound to a use case** (plaintext shown once, hash stored),
+distributes `api_key.*` over Kafka (`aira.api-keys`) → gateway `api_keys` read-model; a verified
+api_key `Principal` carries its use case (no `/uc` selector needed; mismatched selector → 403).
+Shared key format in `aira_common.apikeys`; Angular use-case detail gets an API-keys panel; UI
+restyled with a global design-system. **Phase 2 (Management Foundation) is complete.**
+**Phase 3 in progress:** `FRD-304` done — **real Google Gemini upstream adapter** (async `Upstream`
+protocol + `UpstreamError`; injectable `httpx.AsyncClient`, hermetic `MockTransport` tests; key never
+logged; registered only when `AIRA_GOOGLE_API_KEY` is set). Gateway also **passes upstream status
+codes through** (429→RESOURCE_EXHAUSTED, 503→UNAVAILABLE, 504→DEADLINE_EXCEEDED; else 502). Next in
+Phase 3: `FRD-300` pipeline engine, `FRD-301` routing/rerouting, `FRD-302` fallback, `FRD-303`
+pipeline-builder UI. See `docs/DEVLOG.md`.
 
 ## 7. Working agreement
 - Confirm scope via PRD/FRD before large changes; work phase by phase.

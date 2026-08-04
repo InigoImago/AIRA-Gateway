@@ -1,23 +1,29 @@
 <header class="aira-header">
-  <h1>{{ title() }}</h1>
+  <div class="aira-header__brand">
+    <span class="aira-logo" aria-hidden="true">AI</span>
+    <div>
+      <h1>{{ title() }}</h1>
+      <p class="aira-subtitle">Management &amp; Monitoring</p>
+    </div>
+  </div>
   @if (me(); as user) {
     <div class="aira-user">
-      <span>{{ user.username }}</span>
-      <button type="button" (click)="logout()">Logout</button>
+      <span class="aira-user__name">{{ user.username }}</span>
+      <button type="button" class="btn btn--sm" (click)="logout()">Logout</button>
     </div>
   }
 </header>
 
 <nav class="aira-nav" aria-label="Main navigation">
-  <a class="aira-nav__item" routerLink="/use-cases">Use Cases</a>
+  <a class="aira-nav__item" routerLink="/use-cases" routerLinkActive="is-active">Use Cases</a>
   @if (hasRole('it-security')) {
-    <span class="aira-nav__item" data-role="it-security">Security</span>
+    <span class="aira-nav__item is-disabled" data-role="it-security">Security</span>
   }
   @if (hasRole('it-steuerung')) {
-    <span class="aira-nav__item" data-role="it-steuerung">Governance</span>
+    <span class="aira-nav__item is-disabled" data-role="it-steuerung">Governance</span>
   }
   @if (hasRole('global-admin')) {
-    <span class="aira-nav__item" data-role="global-admin">Administration</span>
+    <span class="aira-nav__item is-disabled" data-role="global-admin">Administration</span>
   }
 </nav>
 

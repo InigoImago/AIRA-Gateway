@@ -5,6 +5,27 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-04 — FRD-205: self-service API-key issuance + UI redesign (closes Phase 2)
+- **Backend (Management → Gateway)**: Management is now the source of truth for API keys
+  (ADR-0006). New `apikeys` app (model + serializers) with nested endpoints on the use-case
+  viewset: `POST/GET/DELETE /api/v1/use-cases/{slug}/api-keys[/{prefix}]`. A member issues a key
+  **bound to the use case**, plaintext returned **once**, only the hash stored. `api_key.created`/
+  `api_key.revoked` flow through the transactional outbox to a new `aira.api-keys` compacted topic.
+- **Gateway**: idempotent consumer upserts/deactivates the `api_keys` read-model; `ApiKey` gains
+  `use_case` (migration 0003); a verified api_key `Principal` carries its bound use case, so
+  requests need **no `/uc` selector** and a mismatched selector is rejected (403). Shared key
+  format/hash extracted to `aira_common.apikeys`. CLI stays as break-glass.
+- **Frontend**: use-case detail gains an **API-keys panel** (issue with one-time reveal + copy,
+  list masked, revoke) and a members table. Typed `UseCaseService` methods + tests.
+- **UI redesign**: global design-system (`styles.scss`) — tokens, cards, buttons, tables, badges,
+  callouts; polished app shell (brand header, active-state nav, constrained content). Templates
+  restyled with the shared classes.
+- **Gates green**: backend 241 tests / 99.95%, ruff + mypy --strict clean; frontend 16 Vitest tests,
+  Prettier clean, `ng build` OK.
+- **Phase 2 (Management Foundation) is complete.**
+
+---
+
 ## 2026-08-04 — Upstream status passthrough (gateway hardening)
 - `UpstreamError` now carries the upstream HTTP `status_code` (`None` for transport failures).
 - Gemini routes map it: **429 → `429 RESOURCE_EXHAUSTED`**, **503 → `503 UNAVAILABLE`**,

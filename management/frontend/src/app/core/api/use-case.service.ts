@@ -1,7 +1,7 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
-import { Membership, UseCase } from './models';
+import { ApiKey, IssuedApiKey, Membership, UseCase } from './models';
 
 @Injectable({ providedIn: 'root' })
 export class UseCaseService {
@@ -38,5 +38,17 @@ export class UseCaseService {
 
   removeMember(slug: string, username: string): Observable<void> {
     return this.http.delete<void>(`${this.base}${slug}/members/${username}/`);
+  }
+
+  apiKeys(slug: string): Observable<ApiKey[]> {
+    return this.http.get<ApiKey[]>(`${this.base}${slug}/api-keys/`);
+  }
+
+  issueApiKey(slug: string, label: string): Observable<IssuedApiKey> {
+    return this.http.post<IssuedApiKey>(`${this.base}${slug}/api-keys/`, { label });
+  }
+
+  revokeApiKey(slug: string, prefix: string): Observable<void> {
+    return this.http.delete<void>(`${this.base}${slug}/api-keys/${prefix}/`);
   }
 }

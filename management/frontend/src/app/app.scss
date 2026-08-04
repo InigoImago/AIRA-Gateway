@@ -1,34 +1,94 @@
 :host {
   display: block;
-  font-family: system-ui, sans-serif;
+  min-height: 100vh;
 }
 
 .aira-header {
-  padding: 1rem 1.5rem;
-  border-bottom: 1px solid #e2e8f0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.85rem 1.75rem;
+  background: var(--aira-surface);
+  border-bottom: 1px solid var(--aira-border);
+  box-shadow: var(--aira-shadow);
+
+  &__brand {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
 
   h1 {
     margin: 0;
-    font-size: 1.4rem;
+    font-size: 1.15rem;
+    letter-spacing: -0.01em;
   }
 }
 
-.aira-subtitle {
-  margin: 0.25rem 0 0;
-  color: #64748b;
+.aira-logo {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  font-weight: 800;
   font-size: 0.9rem;
+  color: #fff;
+  background: linear-gradient(135deg, var(--aira-brand), var(--aira-brand-strong));
+  border-radius: 9px;
+}
+
+.aira-subtitle {
+  margin: 0.1rem 0 0;
+  color: var(--aira-text-muted);
+  font-size: 0.8rem;
+}
+
+.aira-user {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+
+  &__name {
+    font-weight: 600;
+    font-size: 0.9rem;
+  }
 }
 
 .aira-nav {
-  padding: 0.75rem 1.5rem;
-  border-bottom: 1px solid #e2e8f0;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0 1.75rem;
+  background: var(--aira-surface);
+  border-bottom: 1px solid var(--aira-border);
 
   &__item {
+    padding: 0.7rem 0.85rem;
     font-weight: 600;
-    color: #334155;
+    font-size: 0.9rem;
+    color: var(--aira-text-muted);
+    border-bottom: 2px solid transparent;
+
+    &:hover {
+      color: var(--aira-text);
+      text-decoration: none;
+    }
+
+    &.is-active {
+      color: var(--aira-brand-strong);
+      border-bottom-color: var(--aira-brand);
+    }
+
+    &.is-disabled {
+      color: #9ca3af;
+      cursor: not-allowed;
+    }
   }
 }
 
 .aira-main {
-  padding: 1.5rem;
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 1.75rem;
 }

@@ -1,22 +1,49 @@
-<h2>Use Cases</h2>
+<div class="stack">
+  <h2 style="margin: 0">Use Cases</h2>
 
-@if (error(); as message) {
-  <p class="error" role="alert">{{ message }}</p>
-}
-
-<ul class="use-case-list">
-  @for (useCase of useCases(); track useCase.slug) {
-    <li>
-      <a [routerLink]="['/use-cases', useCase.slug]">{{ useCase.name }}</a>
-      <code>{{ useCase.slug }}</code>
-    </li>
-  } @empty {
-    <li>No use cases yet.</li>
+  @if (error(); as message) {
+    <p class="callout callout--danger" role="alert">{{ message }}</p>
   }
-</ul>
 
-<form class="create-form" (ngSubmit)="create()">
-  <input name="slug" [(ngModel)]="slug" placeholder="slug (a-z0-9-)" />
-  <input name="name" [(ngModel)]="name" placeholder="name" />
-  <button type="submit">Create</button>
-</form>
+  <div class="card" style="padding: 0">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Slug</th>
+        </tr>
+      </thead>
+      <tbody>
+        @for (useCase of useCases(); track useCase.slug) {
+          <tr>
+            <td>
+              <a [routerLink]="['/use-cases', useCase.slug]">{{ useCase.name }}</a>
+            </td>
+            <td>
+              <code>{{ useCase.slug }}</code>
+            </td>
+          </tr>
+        } @empty {
+          <tr>
+            <td class="table__empty" colspan="2">No use cases yet.</td>
+          </tr>
+        }
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h3 class="section-title">Create a use case</h3>
+    <form class="form-inline" (ngSubmit)="create()">
+      <div class="field">
+        <label for="uc-slug">Slug</label>
+        <input id="uc-slug" name="slug" [(ngModel)]="slug" placeholder="a-z0-9-" />
+      </div>
+      <div class="field grow">
+        <label for="uc-name">Name</label>
+        <input id="uc-name" name="name" [(ngModel)]="name" placeholder="Human-readable name" />
+      </div>
+      <button type="submit" class="btn btn--primary">Create</button>
+    </form>
+  </div>
+</div>

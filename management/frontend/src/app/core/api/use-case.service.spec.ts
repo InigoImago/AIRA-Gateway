@@ -44,4 +44,28 @@ describe('UseCaseService', () => {
     expect(req.request.method).toBe('DELETE');
     req.flush(null);
   });
+
+  it('lists api keys', () => {
+    service.apiKeys('uc').subscribe((keys) => expect(keys.length).toBe(1));
+    http
+      .expectOne('/api/v1/use-cases/uc/api-keys/')
+      .flush([{ prefix: 'ab12', label: 'k', owner: 'bob', is_active: true }]);
+  });
+
+  it('issues an api key with a label', () => {
+    service
+      .issueApiKey('uc', 'laptop')
+      .subscribe((issued) => expect(issued.api_key).toContain('aira_'));
+    const req = http.expectOne('/api/v1/use-cases/uc/api-keys/');
+    expect(req.request.method).toBe('POST');
+    expect(req.request.body).toEqual({ label: 'laptop' });
+    req.flush({ api_key: 'aira_ab12_secret', prefix: 'ab12', label: 'laptop', use_case: 'uc' });
+  });
+
+  it('revokes an api key by prefix', () => {
+    service.revokeApiKey('uc', 'ab12').subscribe();
+    const req = http.expectOne('/api/v1/use-cases/uc/api-keys/ab12/');
+    expect(req.request.method).toBe('DELETE');
+    req.flush(null);
+  });
 });
