@@ -13,6 +13,15 @@ def test_allowed_hosts_list() -> None:
     assert settings.allowed_hosts_list == ["a.example", "b.example"]
 
 
+def test_jwks_uri_derived_from_issuer() -> None:
+    settings = ManagementSettings(oidc_issuer="https://kc/realms/aira/")
+    assert settings.jwks_uri() == "https://kc/realms/aira/protocol/openid-connect/certs"
+
+
+def test_jwks_uri_explicit_override() -> None:
+    assert ManagementSettings(oidc_jwks_uri="https://x/certs").jwks_uri() == "https://x/certs"
+
+
 def test_kafka_host_port() -> None:
     settings = ManagementSettings(kafka_bootstrap_servers="broker:9092,other:9092")
     assert settings.kafka_host_port == ("broker", 9092)

@@ -5,6 +5,22 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-04 — Phase 2 begins · FRD-200: management DRF API + OIDC
+- **Shared OIDC** (`aira_common.oidc.JwtVerifier` + `build_jwks_client`): extracted JWT/JWKS
+  verification so the gateway **and** management use one implementation. Gateway `OidcValidator`
+  refactored to wrap it (behaviour unchanged, tests green).
+- **Management DRF foundation**: `api` app with `KeycloakJWTAuthentication` (verifies the bearer JWT,
+  auto-provisions a Django user from claims, attaches claims as `request.auth`), a consistent DRF
+  **error envelope** (`{"error":{code,message,details}}`), and `GET /api/v1/me` (subject, username,
+  email, realm roles, use-case groups). `IsAuthenticated` default; 401 via `authenticate_header`.
+- **Gates green**: 167 tests, **100% coverage**; ruff + mypy --strict clean. Hermetic tests use a
+  self-signed RS256 + fake JWKS (no Keycloak needed).
+- **End-to-end verified**: management backend with `AIRA_OIDC_ISSUER=…/realms/aira` — no token → 401;
+  a real Keycloak `demo-user` token → 200 `me` with username/email/groups; user auto-provisioned.
+- **Next: FRD-201** (RBAC: realm roles → Django groups + `django-guardian` object-level use-case perms).
+
+---
+
 ## 2026-08-04 — Quality: error-safety + test-tier separation (Jenkins-ready)
 - **Confirmed the pytest suite is hermetic**: 154→156 tests pass with the **entire Compose stack
   stopped** (in-memory SQLite, fake JWKS, mock provider). The earlier curl checks were *manual*, not

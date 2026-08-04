@@ -98,7 +98,10 @@ and trace_id; redaction hook + `store_payloads` toggle; **Alembic** migrations (
 dev/tests still `create_all`). `FRD-104` done — **streaming fidelity**: SSE (`?alt=sse`) for the
 google-genai SDK + JSON-array default; mock honours `maxOutputTokens` (→`MAX_TOKENS`). `FRD-105` done —
 **tracing enrichment**: `aira.*` span attributes (subject/use_case/model/…) filterable in Grafana/Tempo.
-**Phase 1 (Gateway MVP) is complete.** Next: **Phase 2 (Management foundation)**. See `docs/DEVLOG.md`.
+**Phase 1 (Gateway MVP) is complete.** **Phase 2 in progress:** `FRD-200` done — management **DRF API**
++ **OIDC bearer auth** (Keycloak JWT via shared `aira_common.oidc.JwtVerifier`; auto-provisions users)
++ `GET /api/v1/me` + consistent error envelope. Verified end-to-end. Next: `FRD-201` (RBAC:
+realm roles → Django groups + `django-guardian` object-level use-case perms). See `docs/DEVLOG.md`.
 
 ## 7. Working agreement
 - Confirm scope via PRD/FRD before large changes; work phase by phase.

@@ -34,6 +34,17 @@ class ManagementSettings(BaseAiraSettings):
     # Use an in-memory SQLite DB (set by the test harness) instead of Postgres.
     test_database: bool = False
 
+    # OIDC (Keycloak) — the Angular SPA sends a bearer JWT that the API validates.
+    oidc_issuer: str = ""
+    oidc_audience: str = ""
+    oidc_jwks_uri: str = ""
+
+    def jwks_uri(self) -> str:
+        """Return the JWKS URI, deriving it from the issuer when not set explicitly."""
+        if self.oidc_jwks_uri:
+            return self.oidc_jwks_uri
+        return f"{self.oidc_issuer.rstrip('/')}/protocol/openid-connect/certs"
+
     @property
     def allowed_hosts_list(self) -> list[str]:
         """Return ``allowed_hosts`` as a list for Django's ``ALLOWED_HOSTS``."""

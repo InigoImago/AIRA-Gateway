@@ -34,6 +34,7 @@ INSTALLED_APPS = [
     "rest_framework",
     "aira_management.apps.health",
     "aira_management.apps.seed",
+    "aira_management.apps.api",
 ]
 
 MIDDLEWARE = [
@@ -65,4 +66,9 @@ USE_TZ = True
 REST_FRAMEWORK = {
     "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"],
     "DEFAULT_PARSER_CLASSES": ["rest_framework.parsers.JSONParser"],
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "aira_management.apps.api.authentication.KeycloakJWTAuthentication"
+    ],
+    "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
+    "EXCEPTION_HANDLER": "aira_management.apps.api.exceptions.exception_handler",
 }
