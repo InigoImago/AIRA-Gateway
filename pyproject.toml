@@ -2,7 +2,7 @@
 # Shared tooling config lives here; each member has its own pyproject.
 
 [tool.uv.workspace]
-members = ["gateway", "libs"]
+members = ["gateway", "libs", "management/backend"]
 
 [tool.uv.sources]
 aira-common = { workspace = true }
@@ -12,9 +12,12 @@ dev = [
     "pytest>=8.3",
     "pytest-asyncio>=1.0",
     "pytest-cov>=6.0",
+    "pytest-django>=4.9",
     "httpx>=0.28",
     "ruff>=0.9",
     "mypy>=1.14",
+    "django-stubs>=5.1",
+    "djangorestframework-stubs>=3.15",
 ]
 
 [tool.ruff]
@@ -30,23 +33,28 @@ ignore = ["ASYNC109"]
 [tool.mypy]
 python_version = "3.14"
 strict = true
-plugins = ["pydantic.mypy"]
-mypy_path = ["gateway/src", "libs/src"]
+plugins = ["pydantic.mypy", "mypy_django_plugin.main"]
+mypy_path = ["gateway/src", "libs/src", "management/backend/src"]
+
+[tool.django-stubs]
+django_settings_module = "aira_management.config.settings"
 
 [[tool.mypy.overrides]]
-module = ["aira_gateway.*", "aira_common.*"]
+module = ["aira_gateway.*", "aira_common.*", "aira_management.*"]
 disallow_untyped_defs = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["gateway/tests", "libs/tests"]
+DJANGO_SETTINGS_MODULE = "aira_management.config.settings"
+testpaths = ["gateway/tests", "libs/tests", "management/backend/tests"]
 # importlib mode lets same-named test modules coexist across packages
-addopts = "-q --import-mode=importlib --cov=aira_gateway --cov=aira_common --cov-report=term-missing --cov-fail-under=90"
+addopts = "-q --import-mode=importlib --cov=aira_gateway --cov=aira_common --cov=aira_management --cov-report=term-missing --cov-fail-under=90"
 filterwarnings = ["ignore::DeprecationWarning:starlette.*"]
 
 [tool.coverage.run]
 branch = true
-source = ["aira_gateway", "aira_common"]
+source = ["aira_gateway", "aira_common", "aira_management"]
+omit = ["*/asgi.py", "*/wsgi.py", "*/manage.py"]
 
 [tool.coverage.report]
 show_missing = true

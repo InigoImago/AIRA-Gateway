@@ -5,6 +5,22 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-04 — Phase 0 / Slice 3a: management backend (Django + DRF)
+- Added **`management/backend`** as a third uv workspace member: **Django 6.0 + DRF 3.17 +
+  psycopg 3.3** on Python 3.14 (src layout, package `aira_management`).
+- Structure: `config` (settings driven by a typed `ManagementSettings`, `runtime.get_settings()`,
+  urls/asgi/wsgi), `apps/health` (`/healthz` + `/readyz` mirroring the gateway contract, reusing
+  `aira_common`), `manage.py`.
+- **Type-checking**: wired **django-stubs** mypy plugin; refactored the dynamic `settings.AIRA`
+  access to a typed `get_settings()` accessor so `mypy --strict` stays clean.
+- **Quality gates green**: 41 tests total, **100% coverage** across gateway+libs+backend;
+  `ruff`, `ruff format`, and `mypy --strict` (25 files) all pass. `make run-backend` added.
+- **Smoke test**: `manage.py check` clean; runserver `/readyz` returns `ready` against the live
+  Compose stack (postgres+kafka reachable, HTTP 200).
+- **Next:** Slice 3b (Angular frontend shell) to close Phase 0.
+
+---
+
 ## 2026-08-04 — Phase 0 / Slice 2: gateway skeleton + shared libs
 - **uv workspace** at repo root (`pyproject.toml`) with members `gateway` + `libs`; shared tooling
   config (ruff, mypy strict, pytest, coverage gate `--cov-fail-under=90`). Python 3.14 venv via uv.

@@ -1,0 +1,36 @@
+from aira_management.config.app_settings import ManagementSettings
+
+
+def test_defaults() -> None:
+    settings = ManagementSettings()
+    assert settings.app_name == "aira-management"
+    assert settings.postgres_db == "aira_mgmt"
+    assert settings.debug is True
+
+
+def test_allowed_hosts_list() -> None:
+    settings = ManagementSettings(allowed_hosts="a.example, b.example ,")
+    assert settings.allowed_hosts_list == ["a.example", "b.example"]
+
+
+def test_kafka_host_port() -> None:
+    settings = ManagementSettings(kafka_bootstrap_servers="broker:9092,other:9092")
+    assert settings.kafka_host_port == ("broker", 9092)
+
+
+def test_kafka_host_port_without_port() -> None:
+    settings = ManagementSettings(kafka_bootstrap_servers="hostonly")
+    assert settings.kafka_host_port == ("hostonly", 9092)
+
+
+def test_env_override(monkeypatch) -> None:
+    monkeypatch.setenv("AIRA_POSTGRES_DB", "custom_db")
+    assert ManagementSettings().postgres_db == "custom_db"
+
+
+def test_django_settings_wire_up() -> None:
+    from django.conf import settings as django_settings
+
+    assert "aira_management.apps.health" in django_settings.INSTALLED_APPS
+    assert django_settings.AIRA.app_name == "aira-management"
+    assert django_settings.DATABASES["default"]["NAME"] == "aira_mgmt"

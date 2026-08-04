@@ -8,7 +8,7 @@ ENV_EXAMPLE := $(COMPOSE_DIR)/.env.example
 
 .DEFAULT_GOAL := help
 
-.PHONY: help up down destroy ps logs restart env sync test lint fmt seed run-gateway
+.PHONY: help up down destroy ps logs restart env sync test lint fmt seed run-gateway run-backend
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -50,7 +50,7 @@ test: ## Run all Python test suites with coverage gate
 lint: ## Run ruff lint + format check + mypy (check mode)
 	uv run ruff check .
 	uv run ruff format --check .
-	uv run mypy gateway/src libs/src
+	uv run mypy gateway/src libs/src management/backend/src
 
 fmt: ## Auto-format and auto-fix the Python codebase
 	uv run ruff format .
@@ -58,6 +58,9 @@ fmt: ## Auto-format and auto-fix the Python codebase
 
 run-gateway: ## Run the Gateway API locally against the Compose stack
 	uv run uvicorn aira_gateway.main:app --reload --port 8001
+
+run-backend: ## Run the Management backend (Django) locally against the Compose stack
+	cd management/backend && uv run python manage.py runserver 127.0.0.1:8002
 
 seed: ## Seed demo data (implemented in FRD-002)
 	@echo "TODO: implement demo seeding (FRD-002)"
