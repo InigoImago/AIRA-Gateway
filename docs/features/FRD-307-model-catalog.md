@@ -1,46 +1,69 @@
-# FRD-307 — Model catalog + model pickers in the builder
+# FRD-307 — Approved-model catalog + model pickers
 
 > Phase: 3 · Status: **Requested (backlog)** · Owner: Vadim Scheibe · Last updated: 2026-08-04
-> Origin: user feature request — "an overview of all models, and be able to pick them in the
-> injection filter / allowed-model config; currently you have to type names blindly."
+> Origin: user feature request — "an overview of all models, and pick them in the injection filter /
+> allowed-model config." Refined: **model availability is governed — only models a Global
+> Administrator has approved are usable; the raw gateway model list is not the same as the usable set.**
 
 ## 1. Problem
-The pipeline builder asks operators to type model names as free text (classifier model, allow-list,
-routing category targets, fallback chain). There is no visible list of which models the gateway can
-actually serve, so names are guessed and typos silently produce mis-routing or 404s at runtime.
+The builder asks operators to type model names as free text, and there is no notion of which models
+are *allowed*. Two gaps:
+1. **No visibility** of available models → names are guessed, typos cause runtime 404s.
+2. **No governance** → today any name can be typed, but the business rule is that only **Global-Admin-
+   approved** models may be used across use cases.
 
 ## 2. Goal
-Surface the gateway's real model list and let operators **pick** models instead of typing them:
-- A **Models overview** (all available models + supported methods + provider).
-- **Model pickers** wherever a model is chosen in the builder: `injection_filter` LLM classifier
-  model, `allow_check` allow-list, `model_route` classifier/category/default models, fallback chain.
-- Keep free-text entry as a fallback (a model may be configured later than the UI is refreshed).
+- A **Global Administrator approves models** into an **approved catalog** (the raw gateway registry is
+  just the candidate pool).
+- Everywhere the builder picks a model (injection-filter classifier, allow-check list, routing
+  classifier/category/default models, fallback chain), operators **choose from the approved catalog**
+  only — no free-typing of un-approved models.
+- A **Models overview** page: everyone sees the approved catalog; the Global Admin additionally sees
+  the raw gateway list with an **approve / revoke** toggle.
 
 ## 3. Design
-- **Source of truth**: the gateway already exposes `GET /v1beta/models` (built from
-  `ProviderRegistry`). The builder fetches it via the existing `/gw` proxy → a typed
-  `ModelService.list()` returning `{name, supportedMethods}[]`.
-  - Optional: a management passthrough `GET /api/v1/models` (proxying the gateway) so the SPA has a
-    single origin and it works without the `/gw` dev proxy in prod. Decide during implementation.
-- **Models overview**: a lazy route `/models` + nav item; a table of name / methods / provider.
-  Governance/admin visible; read-only.
-- **Builder pickers**:
-  - `allow_check.models`: a checklist of available models (multi-select) with a free-text add.
-  - `injection_filter.model` (llm), `model_route.model`, category `model`, `default_model`,
-    `fallback_models`: `<select>`/combobox populated from the catalog, each allowing a custom value.
-- Model list is fetched once on builder load and cached; a "refresh" affordance re-fetches.
+### 3.1 Catalog (source of truth for *usable* models)
+- Management `Model` table: `{name, display_name?, provider?, enabled, approved_by, approved_at}`.
+- The **candidate pool** comes from the gateway's `GET /v1beta/models` (built from `ProviderRegistry`);
+  the Global Admin promotes candidates into the approved catalog. A model can also be pre-seeded.
+- `GET /api/v1/models` → **approved** models (any authenticated user, for the pickers).
+- `GET /api/v1/models/candidates` → raw gateway list + approved flag (**Global Admin only**), for the
+  approve UI. (Management proxies `/gw/v1beta/models`.)
+- `POST /api/v1/models` / `DELETE /api/v1/models/{name}` → approve / revoke (**Global Admin only**),
+  via the existing role-permission classes.
 
-## 4. Non-goals
-Per-model metadata beyond name/methods (pricing, context window, health) — later. Editing/registering
-models from the UI (models come from gateway provider config / Vault) — out of scope.
+### 3.2 Enforcement (security by default)
+- UI restriction alone is not enough. The **approved set is distributed to the gateway** over Kafka
+  (`model.approved` / `model.revoked` → read-model), and the gateway **rejects requests for a model
+  not in the approved catalog** (global gate, on top of the per-use-case `allow_check`). This closes
+  the bypass where a key holder calls a non-approved model directly. (May be phased: catalog + pickers
+  first, gateway enforcement second.)
 
-## 5. Testing & Acceptance
-- `ModelService.list()` unit test (hits `/gw/v1beta/models`).
-- Builder renders dropdowns populated from the catalog; selecting a model writes the name into config;
-  custom values still accepted. Models overview renders the list. Gates green.
-- Acceptance: open the builder, pick the classifier/allow/route models from dropdowns (no typing),
-  save, dry-run confirms the chosen models — and the Models page lists everything the gateway serves.
+### 3.3 UI
+- **Models overview** (`/models`, lazy + nav item): approved table for all; Global Admin gets the
+  candidate list with approve/revoke.
+- **Builder pickers**: `<select>`/checklist populated from `GET /api/v1/models` (approved). Because a
+  saved config may reference a now-revoked model, show such values as an "unavailable" chip rather
+  than dropping them silently.
 
-## 6. Notes
-Small, well-scoped, and unblocks correct pipeline authoring. Depends only on the existing
-`/v1beta/models` endpoint (FRD-100) and the pipeline builder (FRD-303/306).
+## 4. RBAC
+- **Read approved catalog**: any authenticated user (pickers, overview).
+- **Approve / revoke / manage**: **Global Administrator** only (`IsGlobalAdmin`).
+
+## 5. Non-goals
+Per-model pricing/context/health metadata (later); registering upstream providers from the UI
+(providers come from gateway config / Vault).
+
+## 6. Testing & Acceptance
+- Management: catalog CRUD scoped to Global Admin; `GET /api/v1/models` returns approved only;
+  candidates endpoint lists gateway models with approved flags. Gateway (if enforcement in scope):
+  request for a non-approved model is rejected; approved passes.
+- Frontend: `ModelService` unit test; builder pickers populated from approved catalog; revoked model
+  shown as unavailable; Models overview renders; Global-Admin-only approve controls.
+- Acceptance: as Global Admin, approve `gemini-2.0-flash`; as a use-case admin, the builder offers it
+  in every model picker (and *only* approved models); dry-run/live request confirms; revoke removes it
+  from the pickers (and, with enforcement, the gateway then rejects it).
+
+## 7. Dependencies
+`/v1beta/models` (FRD-100), RBAC roles + permission classes (FRD-201), Kafka distribution pattern
+(FRD-204) for enforcement, pipeline builder (FRD-303/306).
