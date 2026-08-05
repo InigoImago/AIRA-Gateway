@@ -223,6 +223,10 @@ services:
     environment:
       AIRA_MANAGEMENT_UPSTREAM: http://management:8002
       AIRA_GATEWAY_UPSTREAM: http://gateway:8001
+      # Docker's embedded DNS. nginx re-resolves the upstreams through it on every request, so a
+      # redeploy of the gateway or of management does not leave this proxy talking to a stale
+      # address. Override where the platform provides a different resolver.
+      AIRA_DNS_RESOLVER: ${AIRA_DNS_RESOLVER:-127.0.0.11}
     # 4200 on the host because the Keycloak realm pins its redirect URIs to
     # http://localhost:4200 — see deploy/compose/keycloak/realms/aira-realm.json.
     ports:

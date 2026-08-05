@@ -15,6 +15,21 @@ server {
     root  /usr/share/nginx/html;
     index index.html;
 
+    # Re-resolve the upstream names instead of pinning whatever they meant at startup.
+    #
+    # nginx resolves a literal hostname in `proxy_pass` exactly once, when the configuration is
+    # loaded, and then keeps that address for the life of the process. Every container restart
+    # gives the gateway or management a new address, so a redeploy of either left this proxy
+    # talking to an address nobody was listening on — and the SPA reported "the gateway could not
+    # be reached" until somebody thought to restart nginx as well. Nothing else surfaced it: the
+    # services themselves were healthy the whole time.
+    #
+    # Passing the upstream through a variable defers resolution to request time, and the resolver
+    # below is what makes that possible. 127.0.0.11 is Docker's embedded DNS; override it where
+    # the platform provides a different one.
+    resolver ${AIRA_DNS_RESOLVER} valid=10s ipv6=off;
+    resolver_timeout 5s;
+
     # The bundle is content-hashed, so it can be cached hard.
     location ~* \.(js|css|woff2?|png|svg|ico)$ {
         expires 1y;
@@ -29,7 +44,10 @@ server {
     }
 
     location /api/ {
-        proxy_pass       ${AIRA_MANAGEMENT_UPSTREAM};
+        # A variable in proxy_pass passes the request URI through unchanged, which is what this
+        # location wants: management serves the /api prefix itself.
+        set              $management_upstream ${AIRA_MANAGEMENT_UPSTREAM};
+        proxy_pass       $management_upstream;
         proxy_set_header Host              $host;
         proxy_set_header X-Real-IP         $remote_addr;
         proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
@@ -38,7 +56,12 @@ server {
 
     # The gateway is mounted under /gw for the SPA; strip the prefix before forwarding.
     location /gw/ {
-        proxy_pass       ${AIRA_GATEWAY_UPSTREAM}/;
+        # The prefix is stripped explicitly here. With a literal upstream a trailing "/" in
+        # proxy_pass would do it, but that form resolves the name once and never again — and a
+        # variable form passes the URI through untouched, so the rewrite has to be spelled out.
+        set              $gateway_upstream ${AIRA_GATEWAY_UPSTREAM};
+        rewrite          ^/gw/(.*)$ /$1 break;
+        proxy_pass       $gateway_upstream;
         proxy_set_header Host              $host;
         proxy_set_header X-Real-IP         $remote_addr;
         proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;

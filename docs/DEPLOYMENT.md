@@ -362,6 +362,22 @@ file in the **process working directory** (see `aira_common.config.BaseAiraSetti
 | `AIRA_GEMINI_MODELS` | `gemini-2.0-flash,gemini-1.5-flash` | Models exposed by that provider |
 | `AIRA_GEMINI_BASE_URL` | Google's v1beta endpoint | Upstream base URL |
 
+#### The SPA's reverse proxy must re-resolve its upstreams
+
+The container image serves the SPA through nginx and proxies `/api` to management and `/gw` to the
+gateway, so the browser keeps calling one origin and the bearer token never crosses to a third.
+
+nginx resolves a hostname written literally in `proxy_pass` **once**, when the configuration
+loads, and holds that address for the life of the process. In an orchestrator every redeploy
+hands a container a new address, so a literal upstream leaves the proxy talking to an address
+nobody is listening on — the SPA reports the backend as unreachable while both services are
+perfectly healthy, and only restarting nginx fixes it.
+
+The shipped config therefore passes each upstream through a variable and configures a `resolver`,
+which defers resolution to request time. If you replace this config, keep that shape.
+`AIRA_DNS_RESOLVER` defaults to Docker's embedded DNS (`127.0.0.11`); set it to your platform's
+resolver elsewhere (in Kubernetes, `kube-dns.kube-system.svc.cluster.local`).
+
 #### What happens when Redis is unavailable
 
 Deliberate, not accidental — a cache outage must not become a product outage (ADR-0008):

@@ -5,6 +5,38 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-05 — The browser layer finally ran, and immediately earned its keep
+The Playwright download had been blocked by network policy since the e2e suite was written, so
+36 browser tests had never executed here. Allowed at last: **38 passed, 4 failed**, all four in
+`gateway.spec.ts` — everything that needs the browser's own session token to reach the gateway.
+
+The cause was not in either service. The SPA's container serves through nginx and proxies `/gw`
+to the gateway; nginx was connecting to `172.19.0.4` while Docker's DNS had been answering
+`172.19.0.10` for some time. **nginx resolves a literal hostname in `proxy_pass` exactly once**,
+when the configuration loads, and keeps that address for the life of the process. Every restart
+of the gateway container since then had been invisible to it.
+
+This is a production defect, not a test artefact: in any orchestrator a redeploy gives the
+container a new address, so every gateway redeploy silently breaks the dry-run and consumption
+screens until somebody thinks to restart the frontend too. The symptom — "the gateway could not
+be reached" — points at the wrong service, which is the part that would have cost the most time.
+
+Both upstreams now go through a variable with a `resolver`, which defers resolution to request
+time. Proved rather than assumed: the gateway was forced onto a different address (a placeholder
+container took its old one) and `/gw` kept answering 200 with nginx untouched — `172.19.0.5` →
+`172.19.0.14`, no restart.
+
+Two guards added to the integration suite: that the SPA reaches both services through its own
+origin, and that the rendered config still passes its upstreams through variables. The second
+asserts the *shape* of the config, because the behaviour it protects only appears after a
+container has actually moved. Verified to fail against the old form.
+
+Also, and worth saying plainly: the six rate-limit e2e specs written earlier without ever being
+run all passed. That was luck as much as care — writing tests one cannot execute is not a
+practice to repeat.
+
+---
+
 ## 2026-08-05 — The older phases under the same standard (74 properties)
 The mutation check covered FRD-405 and the tombstone work; auth, budgets, the pipeline, retention
 and the management control plane had never faced it. Two samples in older code had already turned
