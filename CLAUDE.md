@@ -193,9 +193,23 @@ reproduces the hermetic half. Node is now pinned per ADR-0003 (`.nvmrc` + `engin
 prompts/responses expire per use case, **default 7 days**, enforced by `python -m aira_gateway.retention` (hourly container; **schedule it or nothing
 is deleted**). Payload retention and record retention are separate clocks — whole-row deletion is
 off by default so the cost reporting (FRD-403) keeps its horizon.
-Next candidates: content redaction (the `Redactor` hook is still a no-op), per-caller rate
-limiting incl. the budget guard/record race, request-log and spend reporting UI, Phase 5 (anomaly/IT-Security), `FRD-307` (model catalog),
-`FRD-106` (OpenAI surface). See `docs/DEVLOG.md`.
+**Rate limiting & atomic budgets (`FRD-405`, `ADR-0008`, 2026-08-05)**: **Redis** joins the stack
+as the shared counter store, because two things were being decided on stale state. Per-use-case /
+per-member **rate limits** (token bucket, refill-test-take in one Lua script) now hold across
+gateway instances — per-process counters would let N replicas behind a load balancer allow N × the
+limit; over the limit is a **429 with `Retry-After`**. Budget `guard` **reserves** before dispatch
+and `settle`/`release` reconcile afterwards, closing the race in which N concurrent requests all
+passed a limit with room for one (proved by a test pair: 20/20 pass on the old path, 1/20 on the
+new). Postgres stays authoritative and seeds the counter on a miss. Degradation is decided:
+without Redis, limits fall back to a **per-instance** bucket (not fail-open — that is the worst
+moment to stop bounding a caller) and budgets to the old **Postgres** path (enforcing but racy);
+`/readyz` reports `degraded: true` and still returns 200. The **request-log write moved off the
+hot path** (bounded queue, drained on shutdown, inline when full — never dropped), finally
+honouring §3's "async on the hot path". New SPA tab **Rate limits**.
+Next candidates: **content redaction** (`FRD-406`, the `Redactor` hook is still a no-op —
+deliberately deferred, see the ROADMAP backlog), request-log and spend reporting UI, budget
+threshold alerting, Phase 5 (anomaly/IT-Security), `FRD-307` (model catalog), `FRD-106` (OpenAI
+surface). See `docs/DEVLOG.md`.
 
 ## 7. Working agreement
 - Confirm scope via PRD/FRD before large changes; work phase by phase.

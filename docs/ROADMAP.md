@@ -136,7 +136,7 @@ product owner; the reason for the order is recorded so it is not re-litigated la
 
 | Item | FRD | Why it waits |
 |---|---|---|
-| **Per-caller rate limiting** + fixing the budget guard/record race | `FRD-405` | Next. Budgets are enforced in **money** since FRD-403, and nothing limits how fast a single caller may spend. The guard reads usage, then dispatch runs, then `record` books it — so N concurrent requests all pass a guard that is not yet aware of them and a budget can be overshot N-fold. |
+| ~~Per-caller rate limiting + the budget guard/record race~~ | `FRD-405` | **Done (2026-08-05).** Token buckets and atomic budget reservations over Redis (ADR-0008); the audit write also moved off the request path. |
 | **Content redaction** — masking sensitive values *inside* a stored payload | `FRD-406` | **Deferred by decision (2026-08-05), to be done later.** The `Redactor` hook is still a `NoOpRedactor`. Two mitigations already exist: a per-use-case retention period (7 days, FRD-404) and switching payload storage off entirely. Neither masks anything in a payload that *is* kept — redaction remains genuinely open, it is only not urgent. |
 | Request-log and spend reporting UI | `FRD-601` | Data is recorded (incl. per-request cost); nothing displays it beyond the budget bars. |
 | Budget threshold alerting | `FRD-402` follow-up | Today a breach is a 429 and nothing else — nobody is told before the wall is hit. |

@@ -1,6 +1,6 @@
 # FRD-405 — Rate limiting, atomic budget reservation, and persistence off the hot path
 
-> Phase: 4 · Status: **In progress** · Owner: Vadim Scheibe · Last updated: 2026-08-05
+> Phase: 4 · Status: **Done** · Owner: Vadim Scheibe · Last updated: 2026-08-05
 > Depends on `FRD-401` (budget enforcement) and `FRD-403` (cost budgets). Decided in `ADR-0008`.
 
 ## 1. Problem
@@ -156,10 +156,16 @@ exactly the ones from the incident someone will later investigate.
   is the property no unit test can demonstrate; N concurrent requests against a budget with room
   for one do not overshoot it.
 - **e2e**: the rate-limit panel sets, shows and removes a limit, and reports a refused change.
-- **Acceptance**: with a limit of 60/minute and burst 10 on a use case, a burst of 20 yields 10 ×
-  200 and 10 × 429 with `Retry-After`; a second gateway instance shares that budget of tokens
-  rather than doubling it. With a cost budget of one request's worth, 20 concurrent requests
-  result in **at most one** dispatch.
+- **Acceptance** (verified against the live stack, 2026-08-05): a use case limited to burst 2
+  answered 2 × 200 then 429 with `Retry-After` through the real gateway; two independent limiter
+  instances sharing one Redis allowed **4** of 6 requests against a burst of 4, rather than 4
+  each; 25 concurrent guards against a budget with room for one admitted **exactly one**; 20
+  concurrent guards against a 1.00 cost budget with a 0.40 estimate admitted **exactly three**;
+  ten released reservations left the budget untouched; and a counter seeded from Postgres refused
+  a request whose budget had already been spent before Redis knew about it.
+  The e2e specs for the new tab are written but **were not executed** in the authoring
+  environment — the Playwright browser download is blocked there by network policy
+  (`cdn.playwright.dev`, 403). They run with `make test-e2e` wherever the browser is available.
 
 ## 6. Consequences & follow-ups
 

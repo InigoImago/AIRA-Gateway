@@ -5,6 +5,68 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-05 — Rate limiting, atomic budget reservations, and the audit write off the hot path
+`FRD-405`, decided in `ADR-0008`. Three defects with one cause: the gateway acted on state it had
+already stopped being sure about.
+
+**Nothing limited how fast a caller could consume.** Measured on the running stack, one request
+opened six to seven separate database sessions — so a client in a retry loop exhausted the
+connection pool, and the first casualties were the *other* use cases. A budget states how much
+may be spent, never how fast.
+
+**A budget could be exceeded by a multiple.** `guard` read the period's usage, dispatch ran, then
+`record` booked it. Requests in flight were invisible to each other's guard, so twenty concurrent
+requests all passed a limit with room for one. Since `FRD-403` that limit is a sum of money, which
+made it an accounting defect rather than a cosmetic one.
+
+**The audit write blocked the answer.** `record_request` was awaited before the response
+returned, contradicting `CLAUDE.md` line 55 — *persistence must not block the request path*.
+
+Added **Redis** as the shared counter store. The argument was the access pattern, not raw speed:
+these counters are high-frequency, tiny, contended and worthless once their window closes, which
+is the one shape a row-locking MVCC database handles worst — and pointing the hottest path at
+Postgres would have loaded the component that is already the throughput ceiling.
+
+- **Rate limits** per use case and per member: a token bucket, refill-test-take in one Lua script,
+  so instances behind a load balancer enforce one limit rather than one each. A bucket rather than
+  a fixed window, which permits twice the limit across a boundary and cannot tell a short
+  legitimate burst from sustained flooding. Over the limit is a 429 carrying `Retry-After`.
+- **Budget reservation**: `guard` reserves an estimate before dispatch, `settle` corrects it to
+  the real figure, `release` gives it back when the request failed — otherwise a provider outage
+  would look to a use case exactly like having spent its month. Postgres stays authoritative and
+  seeds the counter on a miss, so a Redis restart costs the in-flight reservations and never the
+  period's accounting.
+- **Persistence** moved to a bounded queue drained by a worker. Bounded, because an unbounded one
+  only moves the exhaustion from the connection pool to memory; drained on shutdown; and a full
+  queue writes inline rather than dropping, since the rows lost under pressure would be exactly
+  the ones from the incident someone later has to reconstruct. Also removed a `session.refresh()`
+  that re-selected every inserted row for nothing.
+
+**Degradation is decided, not accidental** — a new dependency on the request path must not turn a
+cache outage into a product outage. Rate limiting falls back to a per-instance bucket,
+deliberately *not* to allowing everything: Redis being down is when infrastructure is already
+strained, the worst moment to stop bounding a runaway caller. Budgets fall back to the old
+Postgres path — enforcing but racy — because refusing traffic would be an outage and skipping
+enforcement would be free money. `/readyz` reports `degraded: true` and still returns 200.
+
+Verified against the live stack: two independent limiter instances allowed 4 of 6 requests against
+a burst of 4 rather than 4 each; 25 concurrent guards against a budget with room for one admitted
+exactly one; 20 concurrent guards against a 1.00 cost budget with a 0.40 estimate admitted exactly
+three; the real gateway answered 429 with `Retry-After` after its burst; and with Redis stopped,
+requests kept being served in ~6 ms while `/readyz` reported the degradation and recovered by
+itself when Redis came back.
+
+The proof that the race was real is a pair of tests sharing one harness: twenty concurrent
+requests pass 20/20 on the old path and 1/20 on the new one. The reservation tests run the real
+Lua against `fakeredis` rather than a Python reimplementation — the defect lives exactly in the
+gap the script closes.
+
+Counts: 22 integration tests (from 14), 199 frontend tests (from 191), Python coverage 99%.
+The e2e specs for the new tab are written but were **not executed** here: the Playwright browser
+download is blocked by network policy in this environment.
+
+---
+
 ## 2026-08-05 — Inline forms were a staircase
 Reported from looking at the running app: the hint under the slug field ("Used in the gateway URL
 and in API keys.") pushed that input upwards, so the controls in the row no longer lined up.

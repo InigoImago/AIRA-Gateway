@@ -49,7 +49,8 @@ def _run_relay() -> subprocess.CompletedProcess[str]:
 
 
 async def _wait_for(engine: AsyncEngine, query: str, params: dict[str, str], timeout: float = 30.0):
-    """Poll the gateway read-model until the consumer has applied the event."""
+    """Poll until a row appears — for config the consumer has to apply, or for an audit row the
+    gateway now writes after the response has gone out (FRD-405 §4.4)."""
     deadline = asyncio.get_running_loop().time() + timeout
     while asyncio.get_running_loop().time() < deadline:
         async with engine.connect() as connection:
@@ -152,17 +153,17 @@ async def test_an_api_key_event_reaches_the_gateway_and_authenticates(engine: As
             )
         assert response.status_code == 200
 
-        async with engine.connect() as connection:
-            logged = (
-                await connection.execute(
-                    text(
-                        "SELECT use_case FROM request_logs"
-                        " WHERE subject = 'integration-distributed'"
-                        " ORDER BY created_at DESC LIMIT 1"
-                    )
-                )
-            ).first()
-        assert logged is not None and logged.use_case == slug
+        # The audit row is written after the response goes out (FRD-405 §4.4), so this waits for
+        # it rather than reading immediately — the row is guaranteed, its timing is not.
+        logged = await _wait_for(
+            engine,
+            "SELECT use_case FROM request_logs WHERE subject = 'integration-distributed'"
+            " ORDER BY created_at DESC LIMIT 1",
+            {},
+            timeout=10.0,
+        )
+        assert logged is not None, "the request was never written to the audit log"
+        assert logged.use_case == slug
     finally:
         async with engine.begin() as connection:
             await connection.execute(

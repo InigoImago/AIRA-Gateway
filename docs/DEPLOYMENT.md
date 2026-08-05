@@ -347,11 +347,31 @@ file in the **process working directory** (see `aira_common.config.BaseAiraSetti
 | `AIRA_DEFAULT_RETENTION_DAYS` | `7` | Payload retention for requests that carry **no** use case. Use-case traffic follows the period set on its use case (FRD-404). |
 | `AIRA_LOG_RETENTION_DAYS` | `0` | Delete whole `request_logs` rows older than this. `0` keeps them forever — the cost reporting reads them, so opt in deliberately. |
 | `AIRA_ENFORCE_BUDGETS` | `true` | Reject over-budget requests with 429 |
+| `AIRA_REDIS_URL` | `redis://localhost:6379/0` | Shared counter store for rate-limit buckets and budget reservations (ADR-0008). **Set this whenever more than one gateway instance runs**: without it each instance keeps its own counters, so N instances allow N × the configured rate and a budget can be overshot. Empty disables it — see the degradation table below. |
+| `AIRA_ENFORCE_RATE_LIMITS` | `true` | Enforce the per-use-case/per-member request rate. A use case with no configured limit stays unlimited either way. |
+| `AIRA_BUDGET_ESTIMATE_OUTPUT_TOKENS` | `1024` | Tokens assumed for a request whose output length the caller did not bound, used to reserve budget before the real usage is known. Corrected the moment the response arrives. |
+| `AIRA_LOG_QUEUE_SIZE` | `512` | Request-log rows buffered off the request path. A full queue writes inline rather than dropping. **`0` writes every row synchronously**, which is the pre-FRD-405 behaviour — choose it if a request must be durably logged before its response goes out. |
 | `AIRA_TRUST_FORWARDED_FOR` | `false` | Honour `X-Forwarded-For` for the recorded source IP |
 | `AIRA_MAX_REQUEST_BYTES` | `8388608` (8 MiB) | Hard ceiling on a request body; larger bodies get 413 before being buffered |
 | `AIRA_GOOGLE_API_KEY` | `''` | Registers the real Gemini provider when set |
 | `AIRA_GEMINI_MODELS` | `gemini-2.0-flash,gemini-1.5-flash` | Models exposed by that provider |
 | `AIRA_GEMINI_BASE_URL` | Google's v1beta endpoint | Upstream base URL |
+
+#### What happens when Redis is unavailable
+
+Deliberate, not accidental — a cache outage must not become a product outage (ADR-0008):
+
+| | Behaviour | Consequence for you |
+|---|---|---|
+| Rate limiting | falls back to a **per-instance** bucket | Still bounded, but N instances allow N × the limit until Redis returns. Not fail-open: Redis being down is exactly when a runaway caller does the most damage. |
+| Budget enforcement | falls back to the **Postgres** read-then-book path | Still enforced, but concurrent requests stop seeing each other's reservations, so a limit can be overshot by requests in flight. |
+
+Both log a warning. Postgres remains the system of record for budget usage in every case, so a
+Redis restart costs the in-flight reservations and never the period's accounting.
+
+**Production Redis**: the reference stack runs it without authentication or TLS, which is fine on
+a Compose network and not fine anywhere else. Use `rediss://user:password@host:6379/0` and give it
+its own instance or database — the keys are namespaced (`rl:*`, `budget:*`) but not isolated.
 
 ### Management only
 
