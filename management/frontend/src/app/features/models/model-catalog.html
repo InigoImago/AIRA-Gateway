@@ -1,0 +1,172 @@
+<div class="stack">
+  <h2 style="margin: 0">Models &amp; prices</h2>
+  <p class="muted" style="margin: 0">
+    What each model costs per 1,000,000 tokens, priced separately for input and output because every
+    provider bills the two differently. Cost budgets are calculated from these figures; a model
+    without a price still works, but its consumption cannot be costed.
+  </p>
+
+  @if (error(); as message) {
+    <p class="callout callout--danger" role="alert">{{ message }}</p>
+  }
+  @if (notice(); as message) {
+    <p class="callout" role="status">{{ message }}</p>
+  }
+  @if (!loading() && unpriced().length) {
+    <p class="callout callout--warning">
+      {{ unpriced().length }} model(s) have no price on file. Requests using them are counted, but
+      their cost is unknown and is left out of every spend figure.
+    </p>
+  }
+
+  <div class="card" style="padding: 0">
+    @if (loading()) {
+      <p class="loading" style="padding: 1rem">
+        <span class="spinner" aria-hidden="true"></span>
+        Loading catalog…
+      </p>
+    } @else if (!models().length) {
+      <p class="empty">No models in the catalog yet.</p>
+    } @else {
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th scope="col">Model</th>
+              <th scope="col">Provider</th>
+              <th scope="col">Input / 1M</th>
+              <th scope="col">Output / 1M</th>
+              <th scope="col"><span class="sr-only">Actions</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (model of models(); track model.name) {
+              <tr>
+                <td>
+                  <code>{{ model.name }}</code>
+                  @if (model.display_name) {
+                    <div class="muted" style="font-size: 0.8rem">{{ model.display_name }}</div>
+                  }
+                </td>
+                <td>{{ model.provider || '—' }}</td>
+                <td>
+                  @if (model.is_priced) {
+                    {{ model.input_price_per_million }}
+                  } @else {
+                    <span class="badge badge--warning">no price</span>
+                  }
+                </td>
+                <td>{{ model.is_priced ? model.output_price_per_million : '—' }}</td>
+                <td class="table__actions">
+                  @if (canEdit()) {
+                    <button
+                      type="button"
+                      class="btn btn--sm"
+                      [attr.aria-label]="'Edit ' + model.name"
+                      (click)="edit(model)"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      class="btn btn--sm btn--danger"
+                      [disabled]="busy()"
+                      [attr.aria-label]="'Remove ' + model.name"
+                      (click)="remove(model)"
+                    >
+                      Remove
+                    </button>
+                  }
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    }
+  </div>
+
+  @if (canEdit()) {
+    <div class="card">
+      <div class="spread">
+        <h3 class="section-title" style="margin: 0">Add or update a model</h3>
+        <button
+          type="button"
+          class="btn btn--sm btn--primary"
+          [attr.aria-expanded]="showAdd()"
+          (click)="showAdd.set(!showAdd())"
+        >
+          {{ showAdd() ? 'Cancel' : '+ Add model' }}
+        </button>
+      </div>
+
+      @if (showAdd()) {
+        <form class="form-inline disclosure" (ngSubmit)="save()">
+          <div class="field grow">
+            <label for="model-name">Model id</label>
+            <input
+              id="model-name"
+              name="name"
+              [ngModel]="name()"
+              (ngModelChange)="name.set($event)"
+              placeholder="gemini-2.0-flash"
+              autocomplete="off"
+            />
+            <span class="field__hint">Exactly as the gateway exposes it.</span>
+          </div>
+          <div class="field">
+            <label for="model-display">Display name</label>
+            <input
+              id="model-display"
+              name="display_name"
+              [ngModel]="displayName()"
+              (ngModelChange)="displayName.set($event)"
+              autocomplete="off"
+            />
+          </div>
+          <div class="field">
+            <label for="model-provider">Provider</label>
+            <input
+              id="model-provider"
+              name="provider"
+              [ngModel]="provider()"
+              (ngModelChange)="provider.set($event)"
+              placeholder="google"
+              autocomplete="off"
+            />
+          </div>
+          <div class="field">
+            <label for="model-input">Input price / 1M</label>
+            <input
+              id="model-input"
+              name="input_price"
+              inputmode="decimal"
+              [ngModel]="inputPrice()"
+              (ngModelChange)="inputPrice.set($event)"
+              placeholder="0.075"
+              autocomplete="off"
+            />
+          </div>
+          <div class="field">
+            <label for="model-output">Output price / 1M</label>
+            <input
+              id="model-output"
+              name="output_price"
+              inputmode="decimal"
+              [ngModel]="outputPrice()"
+              (ngModelChange)="outputPrice.set($event)"
+              placeholder="0.30"
+              autocomplete="off"
+            />
+          </div>
+          <button type="submit" class="btn btn--primary" [disabled]="!canSave()">
+            {{ busy() ? 'Saving…' : 'Save' }}
+          </button>
+          @if (formError(); as message) {
+            <span class="field__hint field__hint--error">{{ message }}</span>
+          }
+        </form>
+      }
+    </div>
+  }
+</div>

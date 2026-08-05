@@ -167,6 +167,15 @@ width-overflow fixes throughout (scrollable tables/nav/tabs, `min-width:0`, long
 breaking, capped sticky inspector, wide builder ≥1200px); accessibility (tablist semantics, labels,
 accessible names, focus rings); deep-linkable tabs. Frontend coverage **53.8% → 92.3%** statements
 (30 → **134** tests) with a gate in `angular.json`.
+**Cost-based budgeting (`FRD-403`, 2026-08-05)**: budgets can cap **spend**, not just tokens — a
+token differs in price by >10x between models and output is billed several times higher than
+input, so a token cap was never a cost control. Management gains a **model catalog with prices**
+(global-admin only, the price half of `FRD-307`) distributed over `aira.models`; the gateway
+prices each request from the prompt/completion split, records `request_logs.cost_nanos`, and
+enforces `limit_cost` with 429. **Money is integer nano-units, never a float** (`aira_common.money`;
+amounts cross APIs as decimal strings), and **unpriced traffic is counted apart, never as zero**.
+New SPA screen **Models & prices**.
+
 **Verified against the live stack (2026-08-05)**: new `e2e/` (Playwright, 22 tests, real browser)
 and `tests/integration/` (12 tests, live stack). The run found three defects the hermetic suites
 could not: the hardened realm's client description exceeded Keycloak's `varchar(255)` and broke

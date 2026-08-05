@@ -43,6 +43,7 @@ async def record_request(
     latency_ms: int | None,
     request_payload: dict[str, Any] | None,
     response_payload: dict[str, Any] | None,
+    cost_nanos: int | None = None,
 ) -> None:
     """Persist a request/response record with its attribution."""
     attribution = request.state.attribution
@@ -62,6 +63,7 @@ async def record_request(
             "aira.status": status,
             "aira.source_ip": source_ip,
             "aira.total_tokens": usage.total_tokens if usage else None,
+            "aira.cost_nanos": cost_nanos,
         }
     )
 
@@ -80,4 +82,5 @@ async def record_request(
             trace_id=trace_context_fields().get("trace_id"),
             request_payload=_maybe(request_payload),
             response_payload=_maybe(response_payload),
+            cost_nanos=cost_nanos,
         )

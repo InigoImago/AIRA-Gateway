@@ -1,5 +1,9 @@
 # FRD-402 — Budget UI (set limits + view consumption)
 
+> **Extended by [FRD-403](FRD-403-cost-budgets.md) (2026-08-05)**: the tab leads with a spend
+> limit and a spend bar, and names traffic whose cost is unknown. Prices are maintained under
+> **Models & prices**.
+
 > Phase: 4 · Status: **Done** · Owner: Vadim Scheibe · Last updated: 2026-08-04
 > Builds on FRD-400 (definitions) + FRD-401 (usage accounting).
 

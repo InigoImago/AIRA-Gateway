@@ -1,4 +1,4 @@
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { Observable } from 'rxjs';
@@ -64,6 +64,8 @@ export class UseCaseDetail implements OnInit {
   protected readonly budgetPeriod = signal<'day' | 'month'>('month');
   protected readonly budgetTokens = signal<number | null>(null);
   protected readonly budgetRequests = signal<number | null>(null);
+  /** Kept as text: a spend limit must not round-trip through a JS number. */
+  protected readonly budgetCost = signal('');
 
   ngOnInit(): void {
     this.slug = this.route.snapshot.paramMap.get('slug') ?? '';
@@ -232,8 +234,12 @@ export class UseCaseDetail implements OnInit {
     if (this.budgetScope() === 'member' && !this.budgetSubject().trim()) {
       return 'A member budget needs a username.';
     }
-    if (this.budgetTokens() == null && this.budgetRequests() == null) {
-      return 'Set a token limit, a request limit, or both.';
+    const cost = this.budgetCost().trim();
+    if (cost && !/^\d+([.,]\d{1,6})?$/.test(cost)) {
+      return 'The spend limit must be an amount, e.g. 250 or 250.00.';
+    }
+    if (!cost && this.budgetTokens() == null && this.budgetRequests() == null) {
+      return 'Set a spend limit, a token limit, or a request limit.';
     }
     return null;
   }
@@ -246,10 +252,12 @@ export class UseCaseDetail implements OnInit {
     if (!this.canAddBudget()) {
       return;
     }
+    const cost = this.budgetCost().trim().replace(',', '.');
     const budget: Budget = {
       scope: this.budgetScope(),
       subject: this.budgetScope() === 'member' ? this.budgetSubject().trim() : '',
       period: this.budgetPeriod(),
+      limit_cost: cost || null,
       limit_tokens: this.budgetTokens(),
       limit_requests: this.budgetRequests(),
     };
@@ -258,6 +266,7 @@ export class UseCaseDetail implements OnInit {
       success: () => {
         this.notice.set('Budget saved.');
         this.budgetSubject.set('');
+        this.budgetCost.set('');
         this.budgetTokens.set(null);
         this.budgetRequests.set(null);
         this.showAddBudget.set(false);
@@ -285,9 +294,26 @@ export class UseCaseDetail implements OnInit {
         id: budget.id ?? 0,
         used_tokens: 0,
         used_requests: 0,
+        used_cost_nanos: 0,
+        used_cost: '0.00',
+        unpriced_requests: 0,
       }
     );
   }
+
+  /** Percentage of a spend limit consumed. Compares in nano-units, so the division never
+   * touches a decimal amount. */
+  protected costPct(budget: Budget): number {
+    const limit = budget.limit_cost ? Number(budget.limit_cost) * 1_000_000_000 : 0;
+    return limit
+      ? Math.min(100, Math.round((this.usedFor(budget).used_cost_nanos / limit) * 100))
+      : 0;
+  }
+
+  /** Total requests in the period whose cost is unknown because the model has no price. */
+  protected readonly unpricedRequests = computed(() =>
+    Object.values(this.usage()).reduce((sum, entry) => sum + (entry.unpriced_requests ?? 0), 0),
+  );
 
   protected pct(used: number, limit: number | null | undefined): number {
     return limit ? Math.min(100, Math.round((used / limit) * 100)) : 0;

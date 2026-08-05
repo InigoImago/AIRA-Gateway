@@ -98,6 +98,26 @@ describe('UseCaseService', () => {
     });
   });
 
+  it('reads the model catalog', () => {
+    service.models().subscribe((models) => expect(models.length).toBe(1));
+    http.expectOne('/api/v1/models/').flush([{ name: 'm-1' }]);
+  });
+
+  it('saves a model with its prices as strings', () => {
+    service.saveModel({ name: 'm-1', input_price_per_million: '0.075' }).subscribe();
+    const req = http.expectOne('/api/v1/models/');
+    expect(req.request.method).toBe('POST');
+    expect(req.request.body.input_price_per_million).toBe('0.075');
+    req.flush({ name: 'm-1' });
+  });
+
+  it('encodes the model name when removing it', () => {
+    service.removeModel('vendor/model:1').subscribe();
+    const req = http.expectOne('/api/v1/models/vendor%2Fmodel%3A1/');
+    expect(req.request.method).toBe('DELETE');
+    req.flush(null);
+  });
+
   it('lists api keys', () => {
     service.apiKeys('uc').subscribe((keys) => expect(keys.length).toBe(1));
     http

@@ -6,7 +6,16 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, DateTime, Integer, String, UniqueConstraint, func
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    Boolean,
+    DateTime,
+    Integer,
+    String,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from aira_gateway.db.base import Base
@@ -60,6 +69,9 @@ class RequestLog(Base):
     total_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     trace_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    # What the request cost, in nano-units of the installation currency. NULL means the model
+    # had no price on file — deliberately distinct from a genuine zero (FRD-403).
+    cost_nanos: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
     # payloads (redacted; nullable when store_payloads is off)
     request_payload: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
@@ -102,7 +114,7 @@ class PipelineConfigRead(Base):
 
 
 class BudgetRead(Base):
-    """Gateway read-model of a usage budget, fed from Management (FRD-400)."""
+    """Gateway read-model of a usage budget, fed from Management (FRD-400/403)."""
 
     __tablename__ = "budgets"
 
@@ -111,6 +123,8 @@ class BudgetRead(Base):
     scope: Mapped[str] = mapped_column(String(16))
     subject: Mapped[str] = mapped_column(String(255), default="")
     period: Mapped[str] = mapped_column(String(8))
+    # Money as integer nano-units — never a float; see aira_common.money.
+    limit_cost_nanos: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     limit_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     limit_requests: Mapped[int | None] = mapped_column(Integer, nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -125,3 +139,23 @@ class BudgetUsage(Base):
     period_key: Mapped[str] = mapped_column(String(10), primary_key=True)
     tokens: Mapped[int] = mapped_column(Integer, default=0)
     requests: Mapped[int] = mapped_column(Integer, default=0)
+    cost_nanos: Mapped[int] = mapped_column(BigInteger, default=0)
+    # Requests served by a model with no price on file. Counted apart so the gap is visible
+    # instead of quietly reading as "this consumption was free" (FRD-403).
+    unpriced_requests: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class ModelPriceRead(Base):
+    """Gateway read-model of the model catalog's prices, fed from Management (FRD-403).
+
+    Prices are stored per one million tokens in nano-units of the installation currency, split
+    by direction because every provider bills input and output differently.
+    """
+
+    __tablename__ = "model_prices"
+
+    model: Mapped[str] = mapped_column(String(128), primary_key=True)
+    display_name: Mapped[str] = mapped_column(String(255), default="")
+    provider: Mapped[str] = mapped_column(String(64), default="")
+    input_price_per_million_nanos: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    output_price_per_million_nanos: Mapped[int | None] = mapped_column(BigInteger, nullable=True)

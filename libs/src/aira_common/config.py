@@ -35,6 +35,14 @@ class BaseAiraSettings(BaseSettings):
     demo_mode: bool = False
     """When True, enable the mock upstream and demo-safe defaults (see FRD-002)."""
 
+    currency: str = "EUR"
+    """Currency all prices and cost budgets are expressed in (FRD-403).
+
+    One currency per installation: prices come from a single provider contract, so quoting some
+    of them in another currency would require exchange rates and a rate date per booking — a
+    standing source of figures nobody can reconcile. Display only; no conversion happens.
+    """
+
     otel_enabled: bool = False
     """Enable OpenTelemetry export (traces/metrics/logs) via OTLP (see FRD-001)."""
 

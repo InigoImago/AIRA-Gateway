@@ -13,6 +13,7 @@ from aira_common.kafka import (
     API_KEY_TOPIC,
     BUDGET_TOPIC,
     MEMBERSHIP_TOPIC,
+    MODEL_TOPIC,
     PIPELINE_TOPIC,
     USECASE_TOPIC,
 )
@@ -29,6 +30,8 @@ _TOPIC_FOR = {
     "pipeline.deleted": PIPELINE_TOPIC,
     "budget.upserted": BUDGET_TOPIC,
     "budget.deleted": BUDGET_TOPIC,
+    "model.upserted": MODEL_TOPIC,
+    "model.deleted": MODEL_TOPIC,
 }
 
 
@@ -41,6 +44,7 @@ def record_to_outbox(event_type: str, payload: dict[str, Any]) -> None:
         payload.get("id")
         or payload.get("prefix")
         or payload.get("slug")
+        or payload.get("name")
         or payload.get("use_case", "")
     )
     OutboxEvent.objects.create(topic=topic, key=key, event_type=event_type, payload=payload)

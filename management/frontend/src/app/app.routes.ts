@@ -15,6 +15,11 @@ export const routes: Routes = [
       import('./features/use-cases/use-case-detail').then((m) => m.UseCaseDetail),
   },
   {
+    path: 'models',
+    canActivate: [authGuard],
+    loadComponent: () => import('./features/models/model-catalog').then((m) => m.ModelCatalog),
+  },
+  {
     path: 'use-cases/:slug/pipeline',
     canActivate: [authGuard],
     loadComponent: () =>

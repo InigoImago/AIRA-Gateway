@@ -24,19 +24,21 @@ class _BlockingBudgets:
     async def guard(self, use_case, subject):  # noqa: ANN001, ANN201
         raise BudgetExceeded("Request budget exhausted for use_case (day).")
 
-    async def record(self, budgets, tokens):  # noqa: ANN001, ANN201
+    async def record(self, budgets, tokens, *, cost_nanos=None, now=None):  # noqa: ANN001, ANN201
         return None
 
 
 class _RecordingBudgets:
     def __init__(self) -> None:
         self.recorded: list[int] = []
+        self.costs: list[int | None] = []
 
     async def guard(self, use_case, subject):  # noqa: ANN001, ANN201
         return []
 
-    async def record(self, budgets, tokens):  # noqa: ANN001, ANN201
+    async def record(self, budgets, tokens, *, cost_nanos=None, now=None):  # noqa: ANN001, ANN201
         self.recorded.append(tokens)
+        self.costs.append(cost_nanos)
 
 
 def test_over_budget_returns_429() -> None:

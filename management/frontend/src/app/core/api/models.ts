@@ -92,6 +92,8 @@ export interface Budget {
   scope: 'use_case' | 'member';
   subject?: string;
   period: 'day' | 'month';
+  /** Spend limit for the period, as an exact decimal string (never a JS number). */
+  limit_cost?: string | null;
   limit_tokens?: number | null;
   limit_requests?: number | null;
   enabled?: boolean;
@@ -101,4 +103,21 @@ export interface BudgetUsage {
   id: number;
   used_tokens: number;
   used_requests: number;
+  /** Consumed spend in nano-units — integer, safe to divide for a progress bar. */
+  used_cost_nanos: number;
+  /** The same amount rounded for display. */
+  used_cost: string;
+  /** Requests served by a model with no price on file; their cost is unknown, not zero. */
+  unpriced_requests: number;
+}
+
+/** A model in the catalog, with what it costs (FRD-403). */
+export interface CatalogModel {
+  name: string;
+  display_name?: string;
+  provider?: string;
+  input_price_per_million?: string | null;
+  output_price_per_million?: string | null;
+  is_priced?: boolean;
+  updated_at?: string;
 }

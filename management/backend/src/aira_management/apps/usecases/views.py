@@ -80,6 +80,8 @@ def _budget_payload(budget: Budget, slug: str) -> dict[str, Any]:
         "scope": budget.scope,
         "subject": budget.subject,
         "period": budget.period,
+        # Decimal as a string: JSON numbers are floats, and money must not round-trip through one.
+        "limit_cost": str(budget.limit_cost) if budget.limit_cost is not None else None,
         "limit_tokens": budget.limit_tokens,
         "limit_requests": budget.limit_requests,
         "enabled": budget.enabled,
@@ -301,6 +303,7 @@ class UseCaseViewSet(viewsets.ModelViewSet[UseCase]):
                 subject=data["subject"],
                 period=data["period"],
                 defaults={
+                    "limit_cost": data.get("limit_cost"),
                     "limit_tokens": data.get("limit_tokens"),
                     "limit_requests": data.get("limit_requests"),
                     "enabled": data.get("enabled", True),

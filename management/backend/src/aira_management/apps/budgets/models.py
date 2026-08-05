@@ -1,11 +1,19 @@
 """Budget definitions per use case / member (FRD-400).
 
 Authored in Management and distributed to the gateway, which accounts usage and enforces the
-limits (FRD-401). Limits are in tokens and/or request count over a day/month period.
+limits (FRD-401). A limit is a **cost** in the installation currency (FRD-403) and/or a token
+or request count, over a day/month period.
+
+Cost is the limit that answers the question a budget is usually asked — token counts differ in
+price by more than an order of magnitude between models, so a token cap says little about spend.
+The count-based limits remain useful as a volume guard and stay supported.
 """
 
 from __future__ import annotations
 
+from decimal import Decimal
+
+from django.core.validators import MinValueValidator
 from django.db import models
 
 from aira_management.apps.usecases.models import UseCase
@@ -24,6 +32,14 @@ class Budget(models.Model):
     scope = models.CharField(max_length=16, choices=SCOPE_CHOICES)
     subject = models.CharField(max_length=255, blank=True)  # member username; empty for use_case
     period = models.CharField(max_length=8, choices=PERIOD_CHOICES, default=MONTH)
+    limit_cost = models.DecimalField(
+        max_digits=14,
+        decimal_places=6,
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(Decimal("0"))],
+        help_text="Spend limit for the period, in the installation currency",
+    )
     limit_tokens = models.PositiveIntegerField(null=True, blank=True)
     limit_requests = models.PositiveIntegerField(null=True, blank=True)
     enabled = models.BooleanField(default=True)

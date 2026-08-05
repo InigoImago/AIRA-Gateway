@@ -11,13 +11,20 @@ from typing import Any
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from aira_common.money import to_nanos
 from aira_gateway.db.models import (
     ApiKey,
     BudgetRead,
+    ModelPriceRead,
     PipelineConfigRead,
     UseCaseMemberRead,
     UseCaseRead,
 )
+
+
+def _price_nanos(value: object) -> int | None:
+    """Prices arrive as exact decimal strings; absent means "no price on file"."""
+    return None if value is None else to_nanos(str(value))
 
 
 async def apply_event(session: AsyncSession, event_type: str, payload: dict[str, Any]) -> None:
@@ -42,6 +49,10 @@ async def apply_event(session: AsyncSession, event_type: str, payload: dict[str,
         await _upsert_budget(session, payload)
     elif event_type == "budget.deleted":
         await _delete_budget(session, payload["id"])
+    elif event_type == "model.upserted":
+        await _upsert_model(session, payload)
+    elif event_type == "model.deleted":
+        await _delete_model(session, payload["name"])
     else:
         return
     await session.commit()
@@ -154,6 +165,7 @@ async def _upsert_budget(session: AsyncSession, payload: dict[str, Any]) -> None
         "scope": payload["scope"],
         "subject": payload.get("subject", ""),
         "period": payload["period"],
+        "limit_cost_nanos": _price_nanos(payload.get("limit_cost")),
         "limit_tokens": payload.get("limit_tokens"),
         "limit_requests": payload.get("limit_requests"),
         "enabled": payload.get("enabled", True),
@@ -167,3 +179,23 @@ async def _upsert_budget(session: AsyncSession, payload: dict[str, Any]) -> None
 
 async def _delete_budget(session: AsyncSession, budget_id: int) -> None:
     await session.execute(delete(BudgetRead).where(BudgetRead.id == budget_id))
+
+
+async def _upsert_model(session: AsyncSession, payload: dict[str, Any]) -> None:
+    """Upsert a catalogued model and its prices, keyed by model name (FRD-403)."""
+    fields = {
+        "display_name": payload.get("display_name", ""),
+        "provider": payload.get("provider", ""),
+        "input_price_per_million_nanos": _price_nanos(payload.get("input_price_per_million")),
+        "output_price_per_million_nanos": _price_nanos(payload.get("output_price_per_million")),
+    }
+    record = await session.get(ModelPriceRead, payload["name"])
+    if record is None:
+        session.add(ModelPriceRead(model=payload["name"], **fields))
+    else:
+        for key, value in fields.items():
+            setattr(record, key, value)
+
+
+async def _delete_model(session: AsyncSession, name: str) -> None:
+    await session.execute(delete(ModelPriceRead).where(ModelPriceRead.model == name))

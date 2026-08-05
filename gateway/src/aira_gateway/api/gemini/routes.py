@@ -167,7 +167,14 @@ async def generate(resource: str, request: Request) -> Response:
                 )
             except UpstreamError as exc:
                 return _upstream_error(exc)
-            await request.app.state.budgets.record(budgets, canonical_response.usage.total_tokens)
+            # Priced once, then shared: the budget counters and the audit trail must not be
+            # able to disagree about what a request cost (FRD-403).
+            cost = await request.app.state.pricing.cost_nanos(
+                canonical_response.model, canonical_response.usage
+            )
+            await request.app.state.budgets.record(
+                budgets, canonical_response.usage.total_tokens, cost_nanos=cost
+            )
             payload = canonical_to_gemini(canonical_response).model_dump()
             await record_request(
                 request,
@@ -178,6 +185,7 @@ async def generate(resource: str, request: Request) -> Response:
                 latency_ms=_elapsed_ms(started),
                 request_payload=body,
                 response_payload=payload,
+                cost_nanos=cost,
             )
             return JSONResponse(payload)
         sse = request.query_params.get("alt") == "sse"
@@ -274,8 +282,9 @@ def _stream_response(
             )
         if not sse:
             yield "]"
+        cost = await request.app.state.pricing.cost_nanos(canonical.model, final_usage)
         await request.app.state.budgets.record(
-            budgets, final_usage.total_tokens if final_usage else 0
+            budgets, final_usage.total_tokens if final_usage else 0, cost_nanos=cost
         )
         await record_request(
             request,
@@ -286,6 +295,7 @@ def _stream_response(
             latency_ms=_elapsed_ms(started),
             request_payload=body,
             response_payload={"text": "".join(parts)},
+            cost_nanos=cost,
         )
 
     media_type = "text/event-stream" if sse else "application/json"

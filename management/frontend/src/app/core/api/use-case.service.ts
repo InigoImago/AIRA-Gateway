@@ -5,6 +5,7 @@ import {
   ApiKey,
   Budget,
   BudgetUsage,
+  CatalogModel,
   DryRunResult,
   IssuedApiKey,
   Membership,
@@ -96,6 +97,19 @@ export class UseCaseService {
 
   deleteBudget(slug: string, id: number): Observable<void> {
     return this.http.delete<void>(`${this.base}${seg(slug)}/budgets/${id}/`);
+  }
+
+  /** The model catalog with its prices; everyone reads it, only a global admin writes. */
+  models(): Observable<CatalogModel[]> {
+    return this.http.get<CatalogModel[]>('/api/v1/models/');
+  }
+
+  saveModel(model: CatalogModel): Observable<CatalogModel> {
+    return this.http.post<CatalogModel>('/api/v1/models/', model);
+  }
+
+  removeModel(name: string): Observable<void> {
+    return this.http.delete<void>(`/api/v1/models/${seg(name)}/`);
   }
 
   /** Current-period consumption per budget, from the gateway. */

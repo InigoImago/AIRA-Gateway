@@ -192,3 +192,40 @@ def test_str_representation() -> None:
     uc = _make_uc(admin, "demo-uc")
     budget = Budget.objects.create(use_case=uc, scope="member", subject="bob", period="day")
     assert str(budget) == "budget member:bob (day)"
+
+
+# ---- cost limits (FRD-403) ---------------------------------------------------------------
+
+
+def test_a_budget_may_cap_cost() -> None:
+    admin = _user("admin1", "use-case-admin")
+    _make_uc(admin, "demo-uc")
+    resp = _client(admin).post(
+        f"{BASE}demo-uc/budgets/",
+        {"scope": "use_case", "period": "month", "limit_cost": "250.00"},
+        format="json",
+    )
+    assert resp.status_code == 201
+    assert resp.json()["limit_cost"] == "250.000000"
+
+
+def test_a_budget_still_needs_at_least_one_limit() -> None:
+    admin = _user("admin1", "use-case-admin")
+    _make_uc(admin, "demo-uc")
+    resp = _client(admin).post(
+        f"{BASE}demo-uc/budgets/", {"scope": "use_case", "period": "month"}, format="json"
+    )
+    assert resp.status_code == 400
+    assert "cost" in str(resp.json()).lower()
+
+
+def test_the_cost_limit_is_published_as_a_string(captured_events) -> None:
+    admin = _user("admin1", "use-case-admin")
+    _make_uc(admin, "demo-uc")
+    _client(admin).post(
+        f"{BASE}demo-uc/budgets/",
+        {"scope": "use_case", "period": "day", "limit_cost": "12.50"},
+        format="json",
+    )
+    published = [p for t, p in captured_events if t == "budget.upserted"]
+    assert published[-1]["limit_cost"] == "12.500000"

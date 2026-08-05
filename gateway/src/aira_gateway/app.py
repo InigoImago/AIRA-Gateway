@@ -40,6 +40,7 @@ from aira_gateway.middleware import (
 from aira_gateway.persistence.redaction import NoOpRedactor
 from aira_gateway.pipeline.engine import PipelineEngine
 from aira_gateway.pipeline.store import PipelineStore
+from aira_gateway.pricing import PricingService
 from aira_gateway.routes.health import router as health_router
 from aira_gateway.upstreams.base import ProviderRegistry, Upstream
 from aira_gateway.upstreams.gemini import build_gemini_upstream
@@ -84,6 +85,7 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
     app.state.pipeline_engine = PipelineEngine(registry)
     app.state.pipeline_store = PipelineStore(sessionmaker)
     app.state.budgets = BudgetService(sessionmaker, enforce=settings.enforce_budgets)
+    app.state.pricing = PricingService(sessionmaker)
     app.state.db_engine = engine
     app.state.db_sessionmaker = sessionmaker
     app.state.oidc_validator = build_oidc_validator(settings)

@@ -47,6 +47,9 @@ interface Detail {
   budgetScope: { set: (v: 'use_case' | 'member') => void; (): string };
   budgetSubject: { set: (v: string) => void; (): string };
   budgetTokens: { set: (v: number | null) => void; (): number | null };
+  budgetCost: { set: (v: string) => void; (): string };
+  costPct: (b: Budget) => number;
+  unpricedRequests: () => number;
   budgetRequests: { set: (v: number | null) => void; (): number | null };
   canAddMember: () => boolean;
   canAddBudget: () => boolean;
@@ -325,7 +328,7 @@ describe('UseCaseDetail', () => {
   it('requires at least one limit', () => {
     const { component } = setup();
     component.budgetScope.set('use_case');
-    expect(component.budgetError()).toBe('Set a token limit, a request limit, or both.');
+    expect(component.budgetError()).toBe('Set a spend limit, a token limit, or a request limit.');
   });
 
   it('creates a valid budget and resets the form', () => {
@@ -359,7 +362,18 @@ describe('UseCaseDetail', () => {
       budgets: of([
         { id: 1, scope: 'use_case', period: 'month', limit_tokens: 1000, limit_requests: 10 },
       ]),
-      budgetUsage: of({ usage: [{ id: 1, used_tokens: 900, used_requests: 5 }] }),
+      budgetUsage: of({
+        usage: [
+          {
+            id: 1,
+            used_tokens: 900,
+            used_requests: 5,
+            used_cost_nanos: 0,
+            used_cost: '0.00',
+            unpriced_requests: 0,
+          },
+        ],
+      }),
     });
     component.selectTab('budgets');
     fixture.detectChanges();
@@ -399,6 +413,9 @@ describe('UseCaseDetail', () => {
       id: 0,
       used_tokens: 0,
       used_requests: 0,
+      used_cost_nanos: 0,
+      used_cost: '0.00',
+      unpriced_requests: 0,
     });
   });
 
@@ -491,7 +508,18 @@ describe('UseCaseDetail rendering', () => {
         budgets: of([
           { id: 1, scope: 'use_case', period: 'month', limit_tokens: 1000, limit_requests: 10 },
         ]),
-        budgetUsage: of({ usage: [{ id: 1, used_tokens: 900, used_requests: 10 }] }),
+        budgetUsage: of({
+          usage: [
+            {
+              id: 1,
+              used_tokens: 900,
+              used_requests: 10,
+              used_cost_nanos: 0,
+              used_cost: '0.00',
+              unpriced_requests: 0,
+            },
+          ],
+        }),
       },
       'budgets',
     );
@@ -633,5 +661,105 @@ describe('UseCaseDetail consumption messaging', () => {
     harness.component.selectTab('budgets');
     harness.fixture.detectChanges();
     expect(harness.text()).toContain('could not be reached');
+  });
+});
+
+describe('UseCaseDetail cost budgets', () => {
+  const COST_BUDGET: Budget = {
+    id: 1,
+    scope: 'use_case',
+    period: 'month',
+    limit_cost: '250.00',
+  };
+
+  it('requires at least one limit, and accepts a spend limit alone', () => {
+    const { component, calls } = setup();
+    expect(component.budgetError()).toContain('Set a spend limit');
+
+    component.budgetCost.set('250.00');
+    expect(component.budgetError()).toBeNull();
+    component.addBudget();
+    expect(calls).toContain('createBudget:use_case:');
+  });
+
+  it('rejects a spend limit that is not an amount', () => {
+    const { component } = setup();
+    component.budgetCost.set('viel');
+    expect(component.budgetError()).toContain('must be an amount');
+    expect(component.canAddBudget()).toBe(false);
+  });
+
+  it('accepts a comma as the decimal separator', () => {
+    const { component } = setup();
+    component.budgetCost.set('250,50');
+    expect(component.budgetError()).toBeNull();
+  });
+
+  it('computes the spend bar from nano-units, not from the decimal string', () => {
+    const { component } = setup({
+      budgets: of([COST_BUDGET]),
+      budgetUsage: of({
+        usage: [
+          {
+            id: 1,
+            used_tokens: 0,
+            used_requests: 0,
+            used_cost_nanos: 200_000_000_000, // 200.00
+            used_cost: '200.00',
+            unpriced_requests: 0,
+          },
+        ],
+      }),
+    });
+    expect(component.costPct(COST_BUDGET)).toBe(80);
+    expect(component.costPct({ scope: 'use_case', period: 'day' })).toBe(0);
+  });
+
+  it('renders the spend bar with the consumed and the limit amount', () => {
+    const harness = setup({
+      budgets: of([COST_BUDGET]),
+      budgetUsage: of({
+        usage: [
+          {
+            id: 1,
+            used_tokens: 0,
+            used_requests: 0,
+            used_cost_nanos: 250_000_000_000,
+            used_cost: '250.00',
+            unpriced_requests: 0,
+          },
+        ],
+      }),
+    });
+    harness.component.selectTab('budgets');
+    harness.fixture.detectChanges();
+
+    expect(harness.text()).toContain('250.00 / 250.00');
+    const bar = (harness.fixture.nativeElement as HTMLElement).querySelector('.progress__bar');
+    expect(bar?.classList.contains('is-full')).toBe(true);
+  });
+
+  it('says when consumption could not be costed instead of implying it was free', () => {
+    const harness = setup({
+      budgets: of([COST_BUDGET]),
+      budgetUsage: of({
+        usage: [
+          {
+            id: 1,
+            used_tokens: 5000,
+            used_requests: 3,
+            used_cost_nanos: 0,
+            used_cost: '0.00',
+            unpriced_requests: 3,
+          },
+        ],
+      }),
+    });
+    harness.component.selectTab('budgets');
+    harness.fixture.detectChanges();
+
+    expect(harness.component.unpricedRequests()).toBe(3);
+    expect(harness.text()).toContain('no price on file');
+    expect(harness.text()).toContain('unknown, not zero');
   });
 });

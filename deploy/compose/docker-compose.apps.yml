@@ -104,7 +104,7 @@ services:
     command:
       - |
         set -e
-        for t in aira.usecases aira.memberships aira.api-keys aira.pipelines aira.budgets; do
+        for t in aira.usecases aira.memberships aira.api-keys aira.pipelines aira.budgets aira.models; do
           /opt/kafka/bin/kafka-topics.sh --create --if-not-exists --topic "$$t" --bootstrap-server kafka:9092 --partitions 1 --replication-factor 1 --config cleanup.policy=compact
         done
     depends_on:

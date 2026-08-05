@@ -31,6 +31,7 @@ class RequestLogService:
         trace_id: str | None,
         request_payload: dict[str, Any] | None,
         response_payload: dict[str, Any] | None,
+        cost_nanos: int | None = None,
         api: str = "gemini",
     ) -> RequestLog:
         entry = RequestLog(
@@ -49,6 +50,7 @@ class RequestLogService:
             trace_id=trace_id,
             request_payload=request_payload,
             response_payload=response_payload,
+            cost_nanos=cost_nanos,
         )
         self._session.add(entry)
         await self._session.commit()

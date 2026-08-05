@@ -15,6 +15,7 @@ from aira_common.kafka import (
     BUDGET_TOPIC,
     EVENT_TYPE_HEADER,
     MEMBERSHIP_TOPIC,
+    MODEL_TOPIC,
     PIPELINE_TOPIC,
     USECASE_TOPIC,
 )
@@ -44,6 +45,7 @@ async def run_consumer(settings: GatewaySettings) -> None:  # pragma: no cover
         API_KEY_TOPIC,
         PIPELINE_TOPIC,
         BUDGET_TOPIC,
+        MODEL_TOPIC,
         bootstrap_servers=settings.kafka_bootstrap_servers,
         group_id="aira-gateway",
         auto_offset_reset="earliest",

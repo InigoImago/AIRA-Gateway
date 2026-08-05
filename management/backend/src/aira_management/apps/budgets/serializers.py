@@ -17,6 +17,7 @@ class BudgetSerializer(serializers.ModelSerializer[Budget]):
             "scope",
             "subject",
             "period",
+            "limit_cost",
             "limit_tokens",
             "limit_requests",
             "enabled",
@@ -33,6 +34,10 @@ class BudgetSerializer(serializers.ModelSerializer[Budget]):
         if scope == Budget.USE_CASE:
             subject = ""
         attrs["subject"] = subject
-        if attrs.get("limit_tokens") is None and attrs.get("limit_requests") is None:
-            raise serializers.ValidationError("Set at least one of limit_tokens / limit_requests.")
+        if (
+            attrs.get("limit_cost") is None
+            and attrs.get("limit_tokens") is None
+            and attrs.get("limit_requests") is None
+        ):
+            raise serializers.ValidationError("Set at least one limit: cost, tokens, or requests.")
         return attrs

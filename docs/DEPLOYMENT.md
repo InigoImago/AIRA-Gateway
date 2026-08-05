@@ -218,6 +218,7 @@ gateway rebuilds its read-model by replaying them):
 | `aira.api-keys` | API-key issuance and revocation (hash only, never plaintext) |
 | `aira.pipelines` | pipeline configuration |
 | `aira.budgets` | budget definitions |
+| `aira.models` | model catalog and prices (FRD-403) |
 
 ```bash
 kafka-topics.sh --create --topic aira.usecases --config cleanup.policy=compact ...
@@ -242,7 +243,18 @@ Traces, metrics and logs are exported over OTLP/HTTP. Spans carry `aira.*` attri
 (subject, use case, model, tokens, latency); credential-bearing query parameters are redacted
 before they reach a span (ADR-0007).
 
-### 3.5 Upstream LLM provider
+### 3.5 Model prices
+
+Cost budgets are calculated from prices a Global Administrator maintains under **Models &
+prices** (`/api/v1/models/`): per model, the price of 1,000,000 input and 1,000,000 output
+tokens, in `AIRA_CURRENCY`. Input and output must both be set — a one-sided price would produce
+a cost figure that looks complete and silently omits half the spend.
+
+A model with no price still serves requests; its consumption is counted under
+`unpriced_requests` and left out of the spend figures rather than counted as free. Check that
+warning after adding a model, or the budget everyone is watching will be quietly too low.
+
+### 3.6 Upstream LLM provider
 
 Without a provider key the gateway serves only the deterministic **mock** provider (`mock-1`) —
 useful for demos and tests, and the reason the stack works out of the box.
@@ -256,7 +268,7 @@ AIRA_GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1beta
 `AIRA_GEMINI_BASE_URL` is what you point at a proxy or a regional endpoint. The key is sent as a
 query parameter to the upstream and is never logged or exported.
 
-### 3.6 Reverse proxy and TLS
+### 3.7 Reverse proxy and TLS
 
 The `aira-frontend` image already contains an nginx that serves the SPA and proxies `/api` and
 `/gw` (upstreams configurable via `AIRA_MANAGEMENT_UPSTREAM` and `AIRA_GATEWAY_UPSTREAM`). It
@@ -282,7 +294,7 @@ AIRA_TRUST_FORWARDED_FOR=true    # ONLY if your proxy overwrites X-Forwarded-For
 Left at `false` (the default), the socket peer is recorded. Turn it on only when the header cannot
 be forged by clients — otherwise the audit trail becomes client-controlled (ADR-0007).
 
-### 3.7 The SPA is configured at build time
+### 3.8 The SPA is configured at build time
 
 `management/frontend/src/app/core/auth/auth.config.ts` **hardcodes** the issuer and client id:
 
@@ -312,6 +324,7 @@ file in the **process working directory** (see `aira_common.config.BaseAiraSetti
 | `AIRA_LOG_LEVEL` | `INFO` | `DEBUG`/`INFO`/`WARNING`/`ERROR` |
 | `AIRA_LOG_JSON` | `true` | JSON lines (`true`) or human-readable console output |
 | `AIRA_DEMO_MODE` | `false` | Gateway: seeds a deterministic demo API key. Management: allows `seed_demo`. **Never in production.** |
+| `AIRA_CURRENCY` | `EUR` | Currency all model prices and cost budgets are expressed in (FRD-403). One per installation; no conversion happens, so it must match the prices you enter. |
 | `AIRA_OTEL_ENABLED` | `false` | Export OTLP |
 | `AIRA_OTEL_ENDPOINT` | `http://localhost:4318` | OTLP/HTTP endpoint |
 | `AIRA_OTEL_SAMPLE_RATIO` | `1.0` | Trace sampling ratio |
@@ -464,6 +477,8 @@ Operations:
 - [ ] **The relay is scheduled.** `manage.py relay` publishes pending rows once and exits — a cron
       job, systemd timer or Kubernetes CronJob every minute is the intended shape. Without it,
       nothing a user configures in the UI ever reaches the gateway.
+- [ ] Prices on file for every model in use — check the unpriced warning on **Models & prices**;
+      unpriced traffic is excluded from every spend figure (FRD-403)
 - [ ] `AIRA_STORE_PAYLOADS` reviewed against your data-protection rules — with it on, full prompts
       and responses are written to `request_logs`, and the redaction hook is a no-op by default
       (`aira_gateway.persistence.redaction.NoOpRedactor`)

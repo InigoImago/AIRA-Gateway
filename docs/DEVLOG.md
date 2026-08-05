@@ -5,6 +5,49 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-05 — FRD-403: budgets in money, not tokens
+Driven by the observation that budgeting in tokens is not cost control. A token differs in price
+by more than an order of magnitude between models, and every provider bills **output** tokens
+several times higher than input — so even a known price cannot be applied to a single
+`total_tokens` figure.
+
+- **Model catalog with prices** (the price half of FRD-307): per model, the cost of 1M input and
+  1M output tokens, maintained by a **Global Administrator** only — a price follows the provider
+  contract, not a use case. Distributed over the new compacted topic `aira.models`.
+- **`Budget.limit_cost`** alongside the existing token/request caps, enforced pre-dispatch with
+  the same `429 RESOURCE_EXHAUSTED`.
+- **Per-request cost in `request_logs`**, so spend can be *reported*, not only capped.
+- **UI**: the budget tab leads with a spend limit and a spend bar; a new **Models & prices**
+  screen (read-only unless global-admin).
+
+**Two decisions worth recording.**
+
+*Money is an integer, never a float.* Amounts are nano-units (10⁻⁹ of the currency) in `BIGINT`,
+via the new `aira_common.money`. Floating point cannot represent 0.1 exactly and a spend figure
+is the sum of millions of small charges; `NUMERIC` would be exact on Postgres but SQLite — which
+the tests run on — stores it as a float, so the tests would not exercise production behaviour.
+Amounts therefore also cross API boundaries as decimal **strings**, never JSON numbers.
+
+*Unknown is not zero.* A request on an unpriced model did cost money; AIRA just cannot say how
+much. Booking it as `0` would make the spend figure silently too low — the worst failure mode for
+a number somebody is accountable for. It is counted under `unpriced_requests`, excluded from the
+cost total, does not consume the cost budget, and is named in the UI. In the same spirit, the
+display never renders a non-zero amount as `0.00`; it widens its precision until it is truthful.
+
+Also fixed along the way: adding a positional `cost_nanos` to `BudgetService.record` made the
+existing callers pass their *timestamp* as an amount. Both extra arguments are keyword-only now —
+an amount of money and a timestamp side by side as positionals is exactly how a wrong figure gets
+booked with nothing failing.
+
+**Verified on the live stack**: `mock-1` priced at 1.00/10.00 per 1M; three requests of 5 input +
+8 output tokens each priced at exactly 85 000 nanos, accumulating to exactly 255 000 — no drift;
+lowering the limit below that produced `429 Cost budget exhausted`.
+
+**Gates**: 429 unit + 12 integration + 28 e2e + 165 frontend tests green; ruff, mypy and both
+coverage gates unchanged.
+
+---
+
 ## 2026-08-05 — Containerised: `make up-full` brings the whole system up
 Three images (`gateway/Dockerfile`, `management/backend/Dockerfile`,
 `management/frontend/Dockerfile`) and a compose overlay

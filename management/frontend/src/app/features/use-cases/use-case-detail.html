@@ -357,6 +357,21 @@
             </select>
           </div>
           <div class="field">
+            <label for="budget-cost">Spend limit</label>
+            <input
+              id="budget-cost"
+              name="cost"
+              inputmode="decimal"
+              [ngModel]="budgetCost()"
+              (ngModelChange)="budgetCost.set($event)"
+              placeholder="e.g. 250.00"
+              autocomplete="off"
+            />
+            <span class="field__hint"
+              >What this may cost per period — the limit most people mean.</span
+            >
+          </div>
+          <div class="field">
             <label for="budget-tokens">Token limit</label>
             <input
               id="budget-tokens"
@@ -385,6 +400,14 @@
             <span class="field__hint field__hint--error">{{ message }}</span>
           }
         </form>
+      }
+
+      @if (unpricedRequests() > 0) {
+        <p class="callout callout--warning" style="margin-top: 1rem">
+          {{ unpricedRequests() }} request(s) this period used a model with no price on file — their
+          cost is unknown, not zero, and is therefore not included in the spend figures above. A
+          Global Administrator can add the missing prices under <a routerLink="/models">Models</a>.
+        </p>
       }
 
       @if (usageUnavailable() && budgets().length) {
@@ -419,6 +442,29 @@
               </button>
             </div>
 
+            @if (budget.limit_cost) {
+              <div style="margin-top: 0.6rem">
+                <div class="spread" style="font-size: 0.82rem">
+                  <span class="muted">Spend</span>
+                  <span>{{ usedFor(budget).used_cost }} / {{ budget.limit_cost }}</span>
+                </div>
+                <div
+                  class="progress"
+                  role="progressbar"
+                  [attr.aria-valuenow]="costPct(budget)"
+                  aria-valuemin="0"
+                  aria-valuemax="100"
+                  [attr.aria-label]="'Spend budget for ' + budgetLabel(budget)"
+                >
+                  <div
+                    class="progress__bar"
+                    [class.is-warn]="costPct(budget) >= 80"
+                    [class.is-full]="costPct(budget) >= 100"
+                    [style.width.%]="costPct(budget)"
+                  ></div>
+                </div>
+              </div>
+            }
             @if (budget.limit_requests != null) {
               <div style="margin-top: 0.6rem">
                 <div class="spread" style="font-size: 0.82rem">
