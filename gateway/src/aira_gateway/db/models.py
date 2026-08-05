@@ -143,6 +143,26 @@ class BudgetRead(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
+class RateLimitRead(Base):
+    """Gateway read-model of a request-rate limit, fed from Management (FRD-405).
+
+    A budget states how much may be spent over a day or a month; this states how fast. The two
+    are independent: a monthly budget is no protection against a retry loop burning it in an
+    afternoon, and a rate limit says nothing about the total.
+    """
+
+    __tablename__ = "rate_limits"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    use_case: Mapped[str] = mapped_column(String(64), index=True)
+    scope: Mapped[str] = mapped_column(String(16))
+    subject: Mapped[str] = mapped_column(String(255), default="")
+    limit_rpm: Mapped[int] = mapped_column(Integer)
+    # How many may arrive at once. Bursts are normal traffic; sustained flooding is not.
+    burst: Mapped[int] = mapped_column(Integer, default=0)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
 class BudgetUsage(Base):
     """Running usage per scope+period, accounted by the gateway to enforce budgets (FRD-401)."""
 

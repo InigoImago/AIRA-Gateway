@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import ValidationError
 
 from aira_common.logging import get_logger
+from aira_common.money import cost_nanos
 from aira_common.observability import set_span_attributes
 from aira_gateway.api.gemini import schemas
 from aira_gateway.api.gemini.errors import gemini_error_response as _error
@@ -25,13 +26,15 @@ from aira_gateway.api.gemini.mapping import (
     upstream_model_to_gemini,
 )
 from aira_gateway.budgets.errors import BudgetExceeded
+from aira_gateway.budgets.ledger import Amounts
+from aira_gateway.budgets.service import Reservation
 from aira_gateway.core.canonical import CanonicalChunk, CanonicalRequest
-from aira_gateway.db.models import BudgetRead
 from aira_gateway.persistence.recorder import record_request
 from aira_gateway.pipeline.dispatch import dispatch_with_fallback
 from aira_gateway.pipeline.engine import PipelineEngine
 from aira_gateway.pipeline.errors import PipelineRejected
 from aira_gateway.pipeline.store import PipelineStore
+from aira_gateway.ratelimit.errors import RateLimited
 from aira_gateway.upstreams.base import ProviderRegistry, Upstream, UpstreamError
 
 _log = get_logger("aira_gateway")
@@ -59,6 +62,25 @@ _UPSTREAM_STATUS_MAP: dict[int, tuple[int, str]] = {
     503: (503, "UNAVAILABLE"),
     504: (504, "DEADLINE_EXCEEDED"),
 }
+
+
+async def _estimate(request: Request, canonical: CanonicalRequest) -> Amounts:
+    """What this request is expected to consume, for the pre-dispatch reservation (FRD-405).
+
+    The real cost is unknowable before the model answers, so the estimate is deliberately
+    conservative: the caller's own ``maxOutputTokens`` where it bounded the response, a
+    configured default otherwise, and priced entirely at the **output** rate, which every
+    provider charges several times higher than input. Over-reserving briefly is the safe
+    direction for a spend limit, and the figure is corrected the moment the response arrives.
+
+    An unpriced model estimates zero cost — the same "unknown is not zero" rule as everywhere
+    else: it is not counted as free, it simply cannot constrain a cost limit.
+    """
+    settings = request.app.state.settings
+    tokens = canonical.max_output_tokens or settings.budget_estimate_output_tokens
+    price = await request.app.state.pricing.price_for(canonical.model)
+    cost = 0 if price is None else cost_nanos(tokens, price.output_per_million_nanos)
+    return Amounts(tokens=tokens, requests=1, cost_nanos=cost)
 
 
 def _upstream_error(exc: UpstreamError) -> JSONResponse:
@@ -150,11 +172,28 @@ async def generate(resource: str, request: Request) -> Response:
         if provider is None:
             return _error(404, f"Model '{canonical.model}' not found.", "NOT_FOUND")
 
-        # Budget enforcement (FRD-401): reject before dispatch if a budget is exhausted.
         attribution = getattr(request.state, "attribution", None)
+        use_case = getattr(attribution, "use_case", None)
+        subject = getattr(attribution, "subject", None)
+
+        # Rate limiting (FRD-405) runs first: the point of a limit is that the expensive part of
+        # the request — the upstream call — never happens.
         try:
-            budgets = await request.app.state.budgets.guard(
-                getattr(attribution, "use_case", None), getattr(attribution, "subject", None)
+            await request.app.state.rate_limits.check(use_case, subject)
+        except RateLimited as exc:
+            return _error(
+                429,
+                exc.message,
+                "RESOURCE_EXHAUSTED",
+                headers={"Retry-After": exc.retry_after},
+            )
+
+        # Budget enforcement (FRD-401/405): reserve before dispatch, so requests in flight are
+        # visible to each other's check instead of all passing the same stale figure.
+        estimate = await _estimate(request, canonical)
+        try:
+            reservation = await request.app.state.budgets.guard(
+                use_case, subject, estimated=estimate
             )
         except BudgetExceeded as exc:
             return _error(429, exc.message, "RESOURCE_EXHAUSTED")
@@ -166,14 +205,17 @@ async def generate(resource: str, request: Request) -> Response:
                     _registry(request), canonical, fallbacks
                 )
             except UpstreamError as exc:
+                # The request produced nothing chargeable; keeping the reservation would make a
+                # provider outage indistinguishable from having spent the month's budget.
+                await request.app.state.budgets.release(reservation)
                 return _upstream_error(exc)
             # Priced once, then shared: the budget counters and the audit trail must not be
             # able to disagree about what a request cost (FRD-403).
             cost = await request.app.state.pricing.cost_nanos(
                 canonical_response.model, canonical_response.usage
             )
-            await request.app.state.budgets.record(
-                budgets, canonical_response.usage.total_tokens, cost_nanos=cost
+            await request.app.state.budgets.settle(
+                reservation, canonical_response.usage.total_tokens, cost_nanos=cost
             )
             payload = canonical_to_gemini(canonical_response).model_dump()
             await record_request(
@@ -189,7 +231,7 @@ async def generate(resource: str, request: Request) -> Response:
             )
             return JSONResponse(payload)
         sse = request.query_params.get("alt") == "sse"
-        return _stream_response(request, provider, canonical, body, budgets, sse=sse)
+        return _stream_response(request, provider, canonical, body, reservation, sse=sse)
 
     if method == "embedContent":
         try:
@@ -244,7 +286,7 @@ def _stream_response(
     provider: Upstream,
     canonical: CanonicalRequest,
     body: dict[str, Any],
-    budgets: list[BudgetRead],
+    reservation: Reservation,
     *,
     sse: bool,
 ) -> StreamingResponse:
@@ -283,8 +325,8 @@ def _stream_response(
         if not sse:
             yield "]"
         cost = await request.app.state.pricing.cost_nanos(canonical.model, final_usage)
-        await request.app.state.budgets.record(
-            budgets, final_usage.total_tokens if final_usage else 0, cost_nanos=cost
+        await request.app.state.budgets.settle(
+            reservation, final_usage.total_tokens if final_usage else 0, cost_nanos=cost
         )
         await record_request(
             request,

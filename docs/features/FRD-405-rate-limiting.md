@@ -66,9 +66,10 @@ than better: per-process counters mean N instances permit N times the configured
   a **failed request releases it** — an upstream error must not permanently consume budget.
 - **FR-6 Postgres stays authoritative**: Redis holds a running counter seeded from Postgres and is
   never the only copy. Losing Redis loses in-flight reservations, not the period's accounting.
-- **FR-7 Decided degradation**: Redis unavailable → rate limiting **allows** (fail open), budget
-  enforcement **falls back to the Postgres path** (today's behaviour: enforcing but racy). Both
-  log a warning and surface in `/readyz` as degraded rather than failing it.
+- **FR-7 Decided degradation**: Redis unavailable → rate limiting falls back to a **per-instance
+  in-memory bucket** (bounded, but N × the limit across N instances), budget enforcement falls
+  back to the **Postgres read-then-book path** (today's behaviour: enforcing but racy). Both log
+  a warning and surface in `/readyz` as degraded rather than failing it.
 - **FR-8 Off by default**: a use case without a configured rate limit is unlimited, exactly as
   today. This feature must not silently start rejecting existing traffic on upgrade.
 - **FR-9 Persistence off the hot path**: the response is returned before the log row is written.
@@ -121,8 +122,11 @@ someone reading only this document:
 
 | | Behaviour | Reasoning |
 |---|---|---|
-| Rate limiting | allow | A limiter that takes the service down when its counter store hiccups does more damage than the abuse it prevents. It is a fairness mechanism, not a security boundary. |
+| Rate limiting | per-instance in-memory bucket | Deliberately **not** fail-open. Redis being down is when infrastructure is already strained — the worst moment to stop bounding a runaway caller. In-memory is exact on one instance and N × the limit on N, which is degraded but still bounded, and still protects the connection pool. |
 | Budget enforcement | fall back to the Postgres read-then-book path | Refusing would turn a cache outage into an outage; skipping enforcement would turn it into a free-money mode. Falling back is exactly today's behaviour — enforcing, but racy. |
+
+The asymmetry is the point: an ephemeral per-window counter may live in memory, a figure about
+money may not. For a budget the only honest fallback is the store that is already authoritative.
 
 ### 4.4 Persistence off the hot path
 

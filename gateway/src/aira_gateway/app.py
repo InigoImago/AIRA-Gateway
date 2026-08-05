@@ -14,6 +14,7 @@ from typing import Any
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from aira_common.counters import build_runner
 from aira_common.errors import AiraError, ErrorDetail, ErrorResponse
 from aira_common.logging import configure_logging, get_logger
 from aira_common.observability import (
@@ -29,6 +30,7 @@ from aira_gateway.api.usage import router as usage_router
 from aira_gateway.auth.dependencies import require_attribution
 from aira_gateway.auth.oidc import build_oidc_validator
 from aira_gateway.auth.service import ApiKeyService
+from aira_gateway.budgets.ledger import BudgetLedger
 from aira_gateway.budgets.service import BudgetService
 from aira_gateway.config import GatewaySettings
 from aira_gateway.db.base import build_engine, build_sessionmaker, create_all
@@ -41,6 +43,12 @@ from aira_gateway.persistence.redaction import NoOpRedactor
 from aira_gateway.pipeline.engine import PipelineEngine
 from aira_gateway.pipeline.store import PipelineStore
 from aira_gateway.pricing import PricingService
+from aira_gateway.ratelimit.buckets import (
+    FallbackTokenBucket,
+    InMemoryTokenBucket,
+    RedisTokenBucket,
+)
+from aira_gateway.ratelimit.service import RateLimitService
 from aira_gateway.routes.health import router as health_router
 from aira_gateway.upstreams.base import ProviderRegistry, Upstream
 from aira_gateway.upstreams.gemini import build_gemini_upstream
@@ -64,6 +72,11 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
     engine = build_engine(settings.database_url(use_sqlite=use_sqlite))
     sessionmaker = build_sessionmaker(engine)
 
+    # Shared counters for rate-limit buckets and budget reservations (ADR-0008). An empty URL
+    # yields a runner that reports itself unavailable, so both features take their documented
+    # fallback rather than needing a second code path for "not configured".
+    counters = build_runner(settings.redis_url)
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await create_all(engine)
@@ -71,6 +84,7 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
             async with sessionmaker() as session:
                 await ApiKeyService(session).ensure_demo_key()
         yield
+        await counters.close()
         await engine.dispose()
 
     app = FastAPI(title=settings.app_name, version=__version__, lifespan=lifespan)
@@ -84,7 +98,15 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
     app.state.providers = registry
     app.state.pipeline_engine = PipelineEngine(registry)
     app.state.pipeline_store = PipelineStore(sessionmaker)
-    app.state.budgets = BudgetService(sessionmaker, enforce=settings.enforce_budgets)
+    app.state.counters = counters
+    app.state.budgets = BudgetService(
+        sessionmaker, enforce=settings.enforce_budgets, ledger=BudgetLedger(counters)
+    )
+    app.state.rate_limits = RateLimitService(
+        sessionmaker,
+        FallbackTokenBucket(RedisTokenBucket(counters), InMemoryTokenBucket()),
+        enforce=settings.enforce_rate_limits,
+    )
     app.state.pricing = PricingService(sessionmaker)
     app.state.db_engine = engine
     app.state.db_sessionmaker = sessionmaker

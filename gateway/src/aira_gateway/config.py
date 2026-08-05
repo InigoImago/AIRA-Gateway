@@ -47,6 +47,25 @@ class GatewaySettings(BaseAiraSettings):
     # Enforce use-case/member usage budgets pre-dispatch (FRD-401).
     enforce_budgets: bool = True
 
+    # Shared counter store for rate-limit buckets and budget reservations (ADR-0008 / FRD-405).
+    # Empty disables it: rate limits then hold per process instead of across instances, and
+    # budget enforcement uses the racy read-then-book path. Both are documented degradations,
+    # not silent ones.
+    redis_url: str = "redis://localhost:6379/0"
+
+    # Enforce per-use-case/per-member request rate limits pre-dispatch (FRD-405). A use case
+    # without a configured limit stays unlimited regardless of this toggle.
+    enforce_rate_limits: bool = True
+
+    # Tokens assumed for a request whose output length the caller did not bound, used to reserve
+    # budget before the real usage is known (FRD-405 §4.2). Reconciled to the actual figure the
+    # moment the response arrives; erring high is the safe direction for a spend limit.
+    budget_estimate_output_tokens: int = 1024
+
+    # Requests buffered for the off-path request-log writer (FRD-405 §4.4). A full queue makes
+    # the write happen inline rather than dropping the record.
+    log_queue_size: int = 512
+
     # Trust ``X-Forwarded-For`` for the recorded source IP. Only enable when the gateway sits
     # behind a reverse proxy that *overwrites* the header — otherwise any client can forge the
     # audit trail. Off by default: the socket peer is used (ADR-0007).

@@ -129,6 +129,26 @@ services:
       start_period: 5s
     networks: [aira]
 
+  # Shared counter store for rate-limit buckets and budget reservations (ADR-0008 / FRD-405).
+  # Deliberately not persisted: these counters are seeded from Postgres, which stays the system
+  # of record, and a bucket outlives its window by nothing worth writing to disk.
+  #
+  # noeviction, not an LRU policy: an evicted budget counter would silently reset and quietly
+  # forgive spend. Refusing the write instead surfaces as "Redis unavailable" and takes the
+  # decided degradation path (fail open for limits, Postgres fallback for budgets).
+  redis:
+    image: redis:7.4-alpine
+    container_name: aira-redis
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory-policy", "noeviction"]
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    networks: [aira]
+
   # --- Observability (opt-in via the "observability" profile; ADR-0004 / FRD-001) ---
   otel-lgtm:
     image: grafana/otel-lgtm:0.30.0

@@ -46,8 +46,8 @@ indivisible operation*. The question is where it lives.
   path in the system would be pointed at the component that is already the throughput ceiling.
 
 - **In-process counters** — fastest possible, no dependency. Correct only while exactly one
-  gateway process exists, which contradicts the load-balancer plan. Rejected as a primary
-  mechanism, kept as a fallback for single-instance and test runs.
+  gateway process exists, which contradicts the load-balancer plan. Rejected as the primary
+  mechanism, but retained as the *rate-limit* fallback (see below) and for hermetic tests.
 
 - **Redis** — `INCR`/`EXPIRE` and Lua scripts give atomic check-and-reserve in one round trip,
   sub-millisecond, lock-free, with self-expiring keys. Costs a new infrastructure component and a
@@ -74,8 +74,13 @@ a cache outage into an outage of the product.
 
 | Concern | Behaviour | Why |
 |---|---|---|
-| **Rate limiting** | **Allow the request** (fail open) | A limiter that takes the service down when its counter store hiccups causes more damage than the abuse it prevents. The limit protects against a caller misbehaving; it is not a security boundary. |
+| **Rate limiting** | **Fall back to a per-instance in-memory bucket** | Not fail-open. A Redis outage is exactly when infrastructure is already under strain, so it is the worst moment to stop bounding a runaway caller. An in-memory bucket is exact on one instance and permits N × the limit on N instances — degraded, but still bounded, and it still protects the connection pool, which is the point. |
 | **Budget enforcement** | **Fall back to the Postgres read-then-book path** | Refusing traffic would make a cache outage a full outage; skipping enforcement would make it a free-money mode. Falling back degrades to exactly today's behaviour — enforcing, but racy — which is a defensible middle. |
+
+The asymmetry is deliberate: an in-memory bucket is acceptable for a rate limit, because the
+counter is ephemeral and per-window and losing it costs nothing beyond precision. It would be
+wrong for a budget, whose figure is durable, shared, and about money — there, the only honest
+fallback is the store that is already authoritative.
 
 Both fallbacks log a warning and are visible in the health endpoint, so degraded operation is
 observable rather than silent.

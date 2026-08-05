@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 from aira_gateway.app import create_app
 from aira_gateway.auth.principal import Principal
 from aira_gateway.budgets.errors import BudgetExceeded
+from aira_gateway.budgets.service import Reservation
 from aira_gateway.config import GatewaySettings
 
 _BODY = {"contents": [{"role": "user", "parts": [{"text": "hi"}]}]}
@@ -21,10 +22,13 @@ class _MemberOf:
 
 
 class _BlockingBudgets:
-    async def guard(self, use_case, subject):  # noqa: ANN001, ANN201
+    async def guard(self, use_case, subject, *, estimated=None):  # noqa: ANN001, ANN201
         raise BudgetExceeded("Request budget exhausted for use_case (day).")
 
-    async def record(self, budgets, tokens, *, cost_nanos=None, now=None):  # noqa: ANN001, ANN201
+    async def settle(self, reservation, tokens, *, cost_nanos=None, now=None):  # noqa: ANN001, ANN201
+        return None
+
+    async def release(self, reservation):  # noqa: ANN001, ANN201
         return None
 
 
@@ -32,13 +36,19 @@ class _RecordingBudgets:
     def __init__(self) -> None:
         self.recorded: list[int] = []
         self.costs: list[int | None] = []
+        self.released = 0
+        self.estimates: list[object] = []
 
-    async def guard(self, use_case, subject):  # noqa: ANN001, ANN201
-        return []
+    async def guard(self, use_case, subject, *, estimated=None):  # noqa: ANN001, ANN201
+        self.estimates.append(estimated)
+        return Reservation()
 
-    async def record(self, budgets, tokens, *, cost_nanos=None, now=None):  # noqa: ANN001, ANN201
+    async def settle(self, reservation, tokens, *, cost_nanos=None, now=None):  # noqa: ANN001, ANN201
         self.recorded.append(tokens)
         self.costs.append(cost_nanos)
+
+    async def release(self, reservation):  # noqa: ANN001, ANN201
+        self.released += 1
 
 
 def test_over_budget_returns_429() -> None:

@@ -14,6 +14,9 @@ dependencies = [
     # gateway happened to declare pyjwt and the dev environment installs the whole workspace.
     # An isolated management image has no gateway, and failed to import at startup.
     "pyjwt[crypto]>=2.9",
+    # aira_common.counters — shared atomic counters for rate limits and budget
+    # reservations (ADR-0008).
+    "redis>=5.2",
 ]
 
 [build-system]

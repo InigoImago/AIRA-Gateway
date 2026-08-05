@@ -43,7 +43,7 @@ async def test_request_budget_blocks_after_limit(sessionmaker) -> None:
     service = BudgetService(sessionmaker)
 
     for _ in range(2):
-        budgets = await service.guard("uc", "bob", NOW)
+        budgets = (await service.guard("uc", "bob", NOW)).budgets
         await service.record(budgets, 10, now=NOW)
 
     with pytest.raises(BudgetExceeded, match="Request budget"):
@@ -54,9 +54,9 @@ async def test_token_budget_blocks_once_exceeded(sessionmaker) -> None:
     await _add(sessionmaker, id=1, limit_tokens=100)
     service = BudgetService(sessionmaker)
 
-    budgets = await service.guard("uc", "bob", NOW)  # 0 < 100
+    budgets = (await service.guard("uc", "bob", NOW)).budgets  # 0 < 100
     await service.record(budgets, 60, now=NOW)  # 60
-    budgets = await service.guard("uc", "bob", NOW)  # 60 < 100 still allowed
+    budgets = (await service.guard("uc", "bob", NOW)).budgets  # 60 < 100 still allowed
     await service.record(budgets, 60, now=NOW)  # 120
 
     with pytest.raises(BudgetExceeded, match="Token budget"):
@@ -68,9 +68,9 @@ async def test_member_scope_only_applies_to_subject(sessionmaker) -> None:
     service = BudgetService(sessionmaker)
 
     # alice is not the budget's subject → not applicable
-    assert await service.guard("uc", "alice", NOW) == []
+    assert (await service.guard("uc", "alice", NOW)).budgets == []
 
-    budgets = await service.guard("uc", "bob", NOW)
+    budgets = (await service.guard("uc", "bob", NOW)).budgets
     await service.record(budgets, 5, now=NOW)
     with pytest.raises(BudgetExceeded):
         await service.guard("uc", "bob", NOW)
@@ -79,28 +79,28 @@ async def test_member_scope_only_applies_to_subject(sessionmaker) -> None:
 async def test_period_rolls_over(sessionmaker) -> None:
     await _add(sessionmaker, id=1, limit_requests=1)
     service = BudgetService(sessionmaker)
-    await service.record(await service.guard("uc", "bob", NOW), 1, now=NOW)
+    await service.record((await service.guard("uc", "bob", NOW)).budgets, 1, now=NOW)
     with pytest.raises(BudgetExceeded):
         await service.guard("uc", "bob", NOW)
     # next day → fresh counter
-    assert await service.guard("uc", "bob", NEXT_DAY) != []
+    assert (await service.guard("uc", "bob", NEXT_DAY)).budgets != []
 
 
 async def test_disabled_budget_is_ignored(sessionmaker) -> None:
     await _add(sessionmaker, id=1, limit_requests=1, enabled=False)
     service = BudgetService(sessionmaker)
-    assert await service.guard("uc", "bob", NOW) == []
+    assert (await service.guard("uc", "bob", NOW)).budgets == []
 
 
 async def test_enforce_off_returns_empty(sessionmaker) -> None:
     await _add(sessionmaker, id=1, limit_requests=1)
     service = BudgetService(sessionmaker, enforce=False)
-    assert await service.guard("uc", "bob", NOW) == []
+    assert (await service.guard("uc", "bob", NOW)).budgets == []
 
 
 async def test_no_use_case_returns_empty(sessionmaker) -> None:
     service = BudgetService(sessionmaker)
-    assert await service.guard(None, "bob", NOW) == []
+    assert (await service.guard(None, "bob", NOW)).budgets == []
 
 
 async def test_record_no_budgets_is_noop(sessionmaker) -> None:
@@ -111,7 +111,7 @@ async def test_record_no_budgets_is_noop(sessionmaker) -> None:
 async def test_month_period_key(sessionmaker) -> None:
     await _add(sessionmaker, id=1, period="month", limit_requests=1)
     service = BudgetService(sessionmaker)
-    await service.record(await service.guard("uc", "bob", NOW), 1, now=NOW)
+    await service.record((await service.guard("uc", "bob", NOW)).budgets, 1, now=NOW)
     # same month, next day → still counts (monthly window)
     with pytest.raises(BudgetExceeded):
         await service.guard("uc", "bob", NEXT_DAY)
@@ -120,7 +120,7 @@ async def test_month_period_key(sessionmaker) -> None:
 async def test_usage_reports_current_period(sessionmaker) -> None:
     await _add(sessionmaker, id=1, limit_requests=5)
     service = BudgetService(sessionmaker)
-    await service.record(await service.guard("uc", "bob", NOW), 30, now=NOW)
+    await service.record((await service.guard("uc", "bob", NOW)).budgets, 30, now=NOW)
     assert await service.usage("uc", NOW) == [
         {
             "id": 1,

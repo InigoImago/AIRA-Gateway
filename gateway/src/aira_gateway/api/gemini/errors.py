@@ -7,12 +7,19 @@ from fastapi.responses import JSONResponse
 from aira_gateway.api.gemini import schemas
 
 
-def gemini_error_response(code: int, message: str, status: str) -> JSONResponse:
-    """Build a Gemini error-envelope JSON response."""
+def gemini_error_response(
+    code: int, message: str, status: str, headers: dict[str, str] | None = None
+) -> JSONResponse:
+    """Build a Gemini error-envelope JSON response.
+
+    ``headers`` carries the response metadata a client needs to act on the refusal — today only
+    ``Retry-After`` on a rate-limit rejection, without which a well-behaved client has no choice
+    but to retry immediately against the thing the limit protects.
+    """
     body = schemas.GeminiError(
         error=schemas.GeminiErrorDetail(code=code, message=message, status=status)
     )
-    return JSONResponse(status_code=code, content=body.model_dump())
+    return JSONResponse(status_code=code, content=body.model_dump(), headers=headers)
 
 
 class GeminiHTTPError(Exception):

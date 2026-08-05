@@ -95,10 +95,10 @@ async def test_a_cost_budget_blocks_once_the_limit_is_reached(sessionmaker) -> N
     )
     service = BudgetService(sessionmaker)
 
-    budgets = await service.guard("uc", "alice", NOW)
+    budgets = (await service.guard("uc", "alice", NOW)).budgets
     await service.record(budgets, 1000, cost_nanos=to_nanos("0.60"), now=NOW)
     # Still under the limit.
-    budgets = await service.guard("uc", "alice", NOW)
+    budgets = (await service.guard("uc", "alice", NOW)).budgets
     await service.record(budgets, 1000, cost_nanos=to_nanos("0.60"), now=NOW)
 
     with pytest.raises(BudgetExceeded, match="Cost budget exhausted"):
@@ -120,7 +120,7 @@ async def test_unpriced_traffic_is_counted_apart_and_never_as_free(sessionmaker)
     )
     service = BudgetService(sessionmaker)
 
-    budgets = await service.guard("uc", "alice", NOW)
+    budgets = (await service.guard("uc", "alice", NOW)).budgets
     await service.record(budgets, 5000, cost_nanos=None, now=NOW)
 
     usage = (await service.usage("uc", NOW))[0]
@@ -146,7 +146,7 @@ async def test_usage_reports_cost_as_an_exact_string(sessionmaker) -> None:
         ),
     )
     service = BudgetService(sessionmaker)
-    budgets = await service.guard("uc", "alice", NOW)
+    budgets = (await service.guard("uc", "alice", NOW)).budgets
     for _ in range(3):
         await service.record(budgets, 100, cost_nanos=to_nanos("0.105"), now=NOW)
 
@@ -170,7 +170,7 @@ async def test_cost_and_count_limits_coexist(sessionmaker) -> None:
         ),
     )
     service = BudgetService(sessionmaker)
-    budgets = await service.guard("uc", "alice", NOW)
+    budgets = (await service.guard("uc", "alice", NOW)).budgets
     await service.record(budgets, 10, cost_nanos=to_nanos("0.01"), now=NOW)
 
     # Far below the cost limit, but the request count is spent.

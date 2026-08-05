@@ -19,6 +19,7 @@ dev = [
     "mypy>=1.14",
     "django-stubs>=5.1",
     "djangorestframework-stubs>=3.15",
+    "fakeredis[lua]>=2.26",
 ]
 
 [tool.ruff]

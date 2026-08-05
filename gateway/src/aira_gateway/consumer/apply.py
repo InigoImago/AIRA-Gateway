@@ -17,6 +17,7 @@ from aira_gateway.db.models import (
     BudgetRead,
     ModelPriceRead,
     PipelineConfigRead,
+    RateLimitRead,
     UseCaseMemberRead,
     UseCaseRead,
 )
@@ -50,6 +51,10 @@ async def apply_event(session: AsyncSession, event_type: str, payload: dict[str,
         await _upsert_budget(session, payload)
     elif event_type == "budget.deleted":
         await _delete_budget(session, payload["id"])
+    elif event_type == "ratelimit.upserted":
+        await _upsert_rate_limit(session, payload)
+    elif event_type == "ratelimit.deleted":
+        await _delete_rate_limit(session, payload["id"])
     elif event_type == "model.upserted":
         await _upsert_model(session, payload)
     elif event_type == "model.deleted":
@@ -181,6 +186,28 @@ async def _upsert_budget(session: AsyncSession, payload: dict[str, Any]) -> None
 
 async def _delete_budget(session: AsyncSession, budget_id: int) -> None:
     await session.execute(delete(BudgetRead).where(BudgetRead.id == budget_id))
+
+
+async def _upsert_rate_limit(session: AsyncSession, payload: dict[str, Any]) -> None:
+    """Upsert a request-rate limit into the read-model, keyed by id (FRD-405)."""
+    record = await session.get(RateLimitRead, payload["id"])
+    fields = {
+        "use_case": payload["use_case"],
+        "scope": payload["scope"],
+        "subject": payload.get("subject", ""),
+        "limit_rpm": int(payload.get("limit_rpm") or 0),
+        "burst": int(payload.get("burst") or 0),
+        "enabled": payload.get("enabled", True),
+    }
+    if record is None:
+        session.add(RateLimitRead(id=payload["id"], **fields))
+    else:
+        for key, value in fields.items():
+            setattr(record, key, value)
+
+
+async def _delete_rate_limit(session: AsyncSession, limit_id: int) -> None:
+    await session.execute(delete(RateLimitRead).where(RateLimitRead.id == limit_id))
 
 
 async def _upsert_model(session: AsyncSession, payload: dict[str, Any]) -> None:
