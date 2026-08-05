@@ -5,6 +5,36 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-05 — CI: the gates are enforced, not merely available
+`.github/workflows/ci.yml`. Until now every quality gate — three test layers, two coverage
+thresholds, ruff, mypy, Prettier — only ran when somebody remembered, while `CLAUDE.md` claimed
+CI enforced them. It does now.
+
+- **Three jobs**: Python (lint, format, mypy, unit tests with the coverage gate); frontend
+  (Prettier, a **production** build, unit tests with their thresholds); and the stack, which
+  builds the three images, runs `make up-full`, waits for health, then runs the integration
+  suite and the Playwright end-to-end suite against it. On failure it uploads the Playwright
+  report and dumps the container logs.
+- **The workflow is deliberately thin**: every step calls the same `make` target a developer
+  runs locally, so CI and a local run cannot drift, and switching CI systems is a rewrite of one
+  file. `make ci` reproduces the hermetic half; `make wait-healthy` is the readiness gate, useful
+  by hand too.
+- **The frontend job builds for production on purpose** — that is where the CSP silently disabled
+  the entire stylesheet; a development build would not have caught it.
+
+**Verified by breaking it on purpose**: a stray import, a wrong return type, and a deliberately
+miscalculated cost each made `make ci` exit non-zero; the clean tree exits 0. A gate that cannot
+fail is theatre.
+
+Also fixed on the way: **Node was never pinned**, although ADR-0003 requires it — added
+`.nvmrc` (26) and an `engines` block, which CI now reads instead of hardcoding a version.
+
+**Caveat**: the workflow runs on push, but a green run only *blocks* a merge if branch protection
+requires it, and this repository has no remote configured yet — the workflow starts working the
+moment it is pushed to GitHub.
+
+---
+
 ## 2026-08-05 — FRD-403: budgets in money, not tokens
 Driven by the observation that budgeting in tokens is not cost control. A token differs in price
 by more than an order of magnitude between models, and every provider bills **output** tokens

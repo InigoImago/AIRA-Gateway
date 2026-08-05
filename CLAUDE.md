@@ -34,10 +34,11 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
 - **Demo mode**: mock upstream + one-command **automated seeding** must always work.
 
 ## 3. Engineering conventions
-- **Test-first / high coverage**: near-100% unit-test coverage is a hard goal; CI enforces a
-  coverage gate — Python via `pytest --cov-fail-under`, Angular via `coverageThresholds` in
-  `angular.json`. Every feature ships with tests. No feature is "done" without tests. Frontend
-  tests assert the **rendered DOM and real interactions**, not just component methods.
+- **Test-first / high coverage**: near-100% unit-test coverage is a hard goal; **CI enforces the
+  gates** (`.github/workflows/ci.yml`) — Python via `pytest --cov-fail-under`, Angular via
+  `coverageThresholds` in `angular.json`. `make ci` runs exactly what CI checks, locally.
+  Every feature ships with tests. No feature is "done" without tests. Frontend tests assert the
+  **rendered DOM and real interactions**, not just component methods.
 - **Three test layers**, each for what the layer below cannot see:
   `unit` (hermetic, `make test`) → `tests/integration/` (live stack, `make test-integration`)
   → `e2e/` (real browser, `make test-e2e`). Anything needing a user token belongs in `e2e/`: the
@@ -183,8 +184,12 @@ its boot; the dev realm had none of the five AIRA roles, so the documented demo 
 not pass; and the pipeline builder discarded edits made before its config had loaded. All fixed.
 Note: Keycloak imports a realm only if it does not exist — recreate it after editing
 (`deploy/compose/README.md`).
-Next candidates: CI (there is still **no** CI config, although the gates exist as make targets),
-per-caller rate limiting, Phase 5 (anomaly/IT-Security), `FRD-307` (model catalog),
+**CI (2026-08-05)**: `.github/workflows/ci.yml` — three jobs (Python lint/types/tests, frontend
+format/build/tests, and the full containerised stack with integration + Playwright e2e). The
+workflow is a thin wrapper around `make` targets so CI and a local run cannot drift; `make ci`
+reproduces the hermetic half. Node is now pinned per ADR-0003 (`.nvmrc` + `engines`).
+Next candidates: retention + redaction for `request_logs` (full prompts are stored indefinitely
+with a no-op redactor), per-caller rate limiting, Phase 5 (anomaly/IT-Security), `FRD-307` (model catalog),
 `FRD-106` (OpenAI surface). See `docs/DEVLOG.md`.
 
 ## 7. Working agreement

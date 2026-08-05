@@ -17,7 +17,7 @@ ENV_EXAMPLE := $(COMPOSE_DIR)/.env.example
 .PHONY: help up up-core down destroy ps logs restart env sync test test-py test-frontend \
         test-integration test-e2e e2e lint lint-py lint-frontend fmt seed seed-reset \
         migrate-gateway kafka-topics relay consume run-gateway run-gateway-oidc run-backend \
-        run-frontend up-full down-full logs-apps build-images
+        run-frontend up-full down-full logs-apps build-images ci wait-healthy
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -72,6 +72,10 @@ sync: ## Install/refresh Python (uv) and frontend (npm) dependencies
 	uv sync
 	cd $(FRONTEND_DIR) && npm install
 
+# What CI runs, and what to run before pushing. Deliberately the hermetic half: no Docker, no
+# network, so it is fast and cannot fail for reasons unrelated to the change.
+ci: lint test ## Run every hermetic gate (lint + types + unit tests with coverage) — what CI checks
+
 test: test-py test-frontend ## Run all test suites (Python + frontend)
 
 test-py: ## Run Python test suites with coverage gate
@@ -82,6 +86,19 @@ test-frontend: ## Run Angular unit tests (Vitest, single run) with the coverage 
 
 test-integration: ## Run server-side integration tests (needs the live stack; see tests/integration)
 	uv run pytest -m integration --no-cov
+
+wait-healthy: ## Block until the containerised stack answers (after up-full, and in CI)
+	@echo "waiting for the stack to become ready…"
+	@for i in $$(seq 1 80); do \
+		if curl -sf http://127.0.0.1:4200/ >/dev/null 2>&1 \
+			&& curl -sf http://127.0.0.1:8001/healthz >/dev/null 2>&1 \
+			&& curl -sf http://127.0.0.1:8002/healthz >/dev/null 2>&1 \
+			&& curl -sf http://127.0.0.1:8080/realms/aira/.well-known/openid-configuration >/dev/null 2>&1; \
+		then echo "ready after $$((i * 3))s"; exit 0; fi; \
+		sleep 3; \
+	done; \
+	echo "the stack did not become ready in time"; \
+	$(COMPOSE_FULL) ps; exit 1
 
 test-e2e: ## Run browser end-to-end tests (needs the stack + all services; see e2e/README.md)
 	cd e2e && npm install --silent && npx playwright test

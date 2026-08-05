@@ -58,13 +58,17 @@ runs it in a loop for you.)
 ## Development
 
 ```bash
-make test              # hermetic unit tests (Python + frontend), with coverage gates
+make ci                # everything CI checks: lint + types + unit tests with coverage gates
 make test-integration  # server-side checks against the running stack
 make test-e2e          # browser end-to-end (Playwright) — see e2e/README.md
-make lint              # ruff + mypy + prettier + frontend build
 make fmt               # auto-format everything
 make help              # all targets
 ```
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs the same targets on every push: the
+two hermetic jobs, plus a third that builds the images, brings the whole stack up and runs the
+integration and browser suites against it. Every step calls a `make` target, so a green local run
+means a green CI run.
 
 Three test layers, each covering what the one below cannot: unit (hermetic) →
 [`tests/integration/`](tests/integration/) (live stack) → [`e2e/`](e2e/) (real browser).

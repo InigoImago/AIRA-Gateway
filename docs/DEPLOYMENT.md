@@ -503,4 +503,3 @@ Stated plainly, because a deployment guide that hides them wastes your time:
 | **Membership is split** between Management and Keycloak groups | Consumption views and data-plane access need the Keycloak group; the UI membership alone is not enough | ADR-0007 addendum, follow-up recorded |
 | **No rate limiting** | Budgets cap tokens and requests per period, but nothing throttles a caller per second | Follow-up in ADR-0007 |
 | **No retention** for `request_logs` | The table grows without bound | Not implemented |
-| **No CI** | The gates exist as `make` targets but nothing enforces them on push | Next planned step |
