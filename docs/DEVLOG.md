@@ -5,6 +5,39 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-05 — Proving the tests can fail (`make mutants`)
+Prompted by the obvious question after the review: the suite was green, coverage was 99%, and
+seven real defects were in there anyway. How?
+
+Three different mechanisms, not one.
+
+1. **The tests were written from the code, not the requirement.** A test named "both scopes apply
+   and the stricter wins" asserted *alice is refused* — which is what the code did. The
+   requirement said more: *and it must cost the use case nothing*. Test and code came from the
+   same mental model, so they agreed. Agreement is not evidence.
+2. **Coverage measures lines, not properties.** `embedContent` was neither rate limited nor
+   budgeted while its lines were fully covered — by the happy-path test. A missing requirement is
+   invisible to a coverage tool.
+3. **Two tests never reached the path they were named after.** `TestClient` buffers a streamed
+   body before the test can hang up, and SQLite enforces no column lengths, so the "failing
+   write" test's write always succeeded.
+
+The response is `tools/mutation_check.py` (`make mutants`): 26 properties, each expressed as the
+one-line defect that would break it. It applies each in turn and checks that something goes red.
+The first run found five survivors — four real gaps (the failing-write test that could not fail,
+the untested circuit-breaker reopening, an unasserted `maxOutputTokens` estimate, and an
+unasserted `enabled` flag), and one false gap caused by too narrow a test selection, which the
+tool now warns about because a false gap costs as much time as a real one.
+
+The harness is crash-safe for a concrete reason: the first run was interrupted and left
+`writer.py` mutated. Undetected, that would have looked like a genuine defect to whoever ran the
+suite next. It now journals the original before each edit and restores from it on the next start.
+
+After the four gaps were closed: **all 26 properties are defended**. The convention is in
+`CLAUDE.md` — when you fix a bug, add the mutation that reintroduces it.
+
+---
+
 ## 2026-08-05 — Review of FRD-405: seven defects found and fixed
 A structured review of the freshly written FRD-405 code and its documentation, run as four
 parallel audits (docs-vs-code, correctness, extensibility/readability, test quality) with every
