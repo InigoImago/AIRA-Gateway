@@ -129,6 +129,23 @@ FRDs: `FRD-700-hardening`, `FRD-701-k8s-helm`, `FRD-702-perf-and-ha`.
 
 ---
 
+## Backlog — agreed, not yet scheduled
+
+Work that is decided but deliberately not in the current phase. Ordered as agreed with the
+product owner; the reason for the order is recorded so it is not re-litigated later.
+
+| Item | FRD | Why it waits |
+|---|---|---|
+| **Per-caller rate limiting** + fixing the budget guard/record race | `FRD-405` | Next. Budgets are enforced in **money** since FRD-403, and nothing limits how fast a single caller may spend. The guard reads usage, then dispatch runs, then `record` books it — so N concurrent requests all pass a guard that is not yet aware of them and a budget can be overshot N-fold. |
+| **Content redaction** — masking sensitive values *inside* a stored payload | `FRD-406` | **Deferred by decision (2026-08-05), to be done later.** The `Redactor` hook is still a `NoOpRedactor`. Two mitigations already exist: a per-use-case retention period (7 days, FRD-404) and switching payload storage off entirely. Neither masks anything in a payload that *is* kept — redaction remains genuinely open, it is only not urgent. |
+| Request-log and spend reporting UI | `FRD-601` | Data is recorded (incl. per-request cost); nothing displays it beyond the budget bars. |
+| Budget threshold alerting | `FRD-402` follow-up | Today a breach is a 429 and nothing else — nobody is told before the wall is hit. |
+| Membership reconciliation (Keycloak groups ↔ Management) | — | The two sources can drift; nothing detects it. |
+| Pagination | — | No list endpoint or screen paginates. |
+| Read-model tombstones | — | Deleting a use case leaves its budgets/keys in the gateway read-model (31 orphan budget rows observed from e2e runs). |
+
+---
+
 ## Phase → FRD index (summary)
 
 | Phase | Theme | FRDs |
@@ -137,7 +154,7 @@ FRDs: `FRD-700-hardening`, `FRD-701-k8s-helm`, `FRD-702-perf-and-ha`.
 | 1 | Gateway MVP | 100–105 |
 | 2 | Management Foundation | 200–205 |
 | 3 | Routing/Pipeline/Fallback | 300–304 |
-| 4 | Budgets & Quotas | 400–402 |
+| 4 | Budgets & Quotas | 400–404 |
 | 5 | Anomaly & IT Security | 500–503 |
 | 6 | Governance & Analytics | 600–601 |
 | 7 | Hardening & Prod | 700–702 |

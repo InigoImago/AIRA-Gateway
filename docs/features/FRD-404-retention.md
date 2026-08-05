@@ -117,7 +117,8 @@ nothing is deleted** — the period configured in the UI is a promise that only 
   rather than buried in configuration.
 - Switching storage off does not affect requests already in flight, and the purge happens on the
   next pruner run rather than immediately.
-- **Follow-ups**: content redaction (the `Redactor` hook is still a no-op); a retention period for
+- **Follow-ups**: content redaction (the `Redactor` hook is still a no-op) — tracked as `FRD-406`
+  in the ROADMAP backlog and **deliberately deferred** until after rate limiting; a retention period for
   the management database's own records; exporting or archiving before deletion for use cases
   with a statutory retention duty; surfacing "payload removed" distinctly from "never stored" in
   a future request-log viewer.
