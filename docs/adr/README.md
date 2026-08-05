@@ -18,3 +18,4 @@ Each ADR is immutable once **Accepted** — to change a decision, add a new ADR 
 | 0005 | [Gemini-compatible API surface first (OpenAI later)](ADR-0005-gemini-compatible-api-first.md) | Accepted | 2026-08-04 |
 | 0006 | [API key lifecycle: issued by Management, validated by Gateway (Kafka)](ADR-0006-api-key-lifecycle-split.md) | Accepted | 2026-08-04 |
 | 0007 | [Security hardening baseline (authorization boundaries, safe defaults, input bounds)](ADR-0007-security-hardening-baseline.md) | Accepted | 2026-08-04 |
+| 0008 | [Redis as the shared counter store for rate limits and budget reservations](ADR-0008-redis-shared-counters.md) | Accepted | 2026-08-05 |

@@ -1,0 +1,167 @@
+# FRD-405 — Rate limiting, atomic budget reservation, and persistence off the hot path
+
+> Phase: 4 · Status: **In progress** · Owner: Vadim Scheibe · Last updated: 2026-08-05
+> Depends on `FRD-401` (budget enforcement) and `FRD-403` (cost budgets). Decided in `ADR-0008`.
+
+## 1. Problem
+
+Three defects with one shared cause: **the gateway decides on state it has already stopped
+being sure about by the time it acts.**
+
+**1. No caller can be slowed down.** A client in a retry loop is served at whatever rate it asks
+for. Measured on the running stack: one request opens **six to seven separate database sessions**.
+A burst therefore exhausts the connection pool, and the first casualties are the *other* use
+cases, which did nothing wrong. The same burst spends the shared Google quota, which is throttled
+per installation. A budget states how much may be spent, never how fast.
+
+**2. A budget can be exceeded by a multiple.** `guard()` reads usage, dispatch runs, `record()`
+books. Requests in flight are invisible to each other's guard:
+
+```
+A: reads 95 € of 100 € → passes → dispatches → books 0,50 €
+B: reads 95 €  ← A has not booked yet → passes → …
+C: reads 95 €  ← neither has booked → passes → …
+```
+
+Since FRD-403 the limit is a sum of money, so this is a wrong number on an invoice, not a
+rounding artefact.
+
+**3. The audit write blocks the answer.** `api/gemini/routes.py` awaits `record_request(...)`
+before returning, so the caller waits for the log row to be committed. `CLAUDE.md` line 55 says
+the opposite is required: *"persistence and event emission must not block the gateway request
+path."* The code has been contradicting its own convention.
+
+A load balancer in front of the gateway — the stated intention — makes (1) and (2) worse rather
+than better: per-process counters mean N instances permit N times the configured limit.
+
+## 2. Goals & Non-Goals
+
+**Goals**
+- A **rate limit per use case and per member**, enforced across all gateway instances.
+- Budget enforcement that **cannot be overshot by concurrency**.
+- The request log written **off the request path**, without ever losing a record.
+- Degradation that is decided, not accidental: a Redis outage must not become a product outage.
+
+**Non-Goals**
+- Content redaction (`FRD-406`) — unrelated, deliberately deferred.
+- Per-caller *concurrency* caps (how many requests at once, as opposed to per minute). The same
+  Redis primitive supports it; it is not needed yet.
+- Queueing or shaping. Over the limit means a `429`, not a delayed answer: the caller controls its
+  own retry, and holding a connection open is exactly the resource a limiter is protecting.
+- Global limits across use cases, and limits per API key rather than per subject.
+
+## 3. Functional Requirements
+
+- **FR-1 Definition**: a rate limit belongs to a use case, with `scope` = `use_case` | `member`
+  (mirroring budgets), `limit_rpm` (sustained requests per minute) and `burst` (how many may
+  arrive at once). Authored in Management, distributed over Kafka, read by the gateway.
+- **FR-2 Enforcement**: over the limit → **429 `RESOURCE_EXHAUSTED`** with a `Retry-After` header
+  in seconds, so a well-behaved client backs off instead of retrying immediately.
+- **FR-3 Shared across instances**: two gateway processes behind a load balancer enforce **one**
+  limit, not one each.
+- **FR-4 Both scopes apply**: where a use-case limit and a member limit exist, both are checked
+  and the stricter one wins. A member's own burst may not consume the whole use case.
+- **FR-5 Atomic budget reservation**: the budget check reserves before dispatch, so a concurrent
+  request sees the reservation. A completed request reconciles the reservation to the actual cost;
+  a **failed request releases it** — an upstream error must not permanently consume budget.
+- **FR-6 Postgres stays authoritative**: Redis holds a running counter seeded from Postgres and is
+  never the only copy. Losing Redis loses in-flight reservations, not the period's accounting.
+- **FR-7 Decided degradation**: Redis unavailable → rate limiting **allows** (fail open), budget
+  enforcement **falls back to the Postgres path** (today's behaviour: enforcing but racy). Both
+  log a warning and surface in `/readyz` as degraded rather than failing it.
+- **FR-8 Off by default**: a use case without a configured rate limit is unlimited, exactly as
+  today. This feature must not silently start rejecting existing traffic on upgrade.
+- **FR-9 Persistence off the hot path**: the response is returned before the log row is written.
+  Under a full queue the write happens inline rather than being dropped — an audit trail may be
+  delayed, never lost.
+
+## 4. Design
+
+### 4.1 Token bucket, not a fixed window
+
+A fixed-window counter is simpler and wrong in a way that matters here: it permits twice the limit
+across a window boundary (100 in the last second of one minute, 100 in the first second of the
+next), and it treats a short legitimate burst exactly like sustained abuse.
+
+A **token bucket** matches the actual goal — "fast is fine, sustained flooding is not". The bucket
+holds `burst` tokens and refills at `limit_rpm / 60` per second. A request takes one token; an
+empty bucket means 429, and `Retry-After` is the time until the next token accrues.
+
+Refill is computed lazily from the elapsed time on each check, so no timer or background job is
+needed and an idle bucket costs nothing.
+
+The whole check — refill, test, take — is **one Lua script**, so it is one round trip and
+indivisible. Doing it as separate `GET`/`SET` calls would reintroduce the very race this FRD
+exists to remove.
+
+### 4.2 Reserve, then reconcile
+
+The budget cannot be checked exactly before dispatch, because the cost depends on how many tokens
+the model returns. So:
+
+```
+guard    → reserve (1 request, estimated tokens, estimated cost)   ── atomic, in Redis
+dispatch
+success  → reconcile: adjust the reservation by (actual − estimate), persist the actual
+failure  → release: undo the reservation entirely
+```
+
+The estimate uses the caller's `maxOutputTokens` where it was given, otherwise a configured
+default. It is deliberately conservative: for a spend limit, briefly over-reserving is the safe
+direction, and the correction lands within milliseconds.
+
+**Redis is a cache, Postgres is the record.** On a cache miss the counter is seeded from
+`budget_usage`, which `record` keeps current. A Redis restart therefore costs the reservations
+currently in flight — not the month's accounting.
+
+### 4.3 What happens when Redis is down
+
+Decided in `ADR-0008`, restated here because it is the part most likely to be reconsidered by
+someone reading only this document:
+
+| | Behaviour | Reasoning |
+|---|---|---|
+| Rate limiting | allow | A limiter that takes the service down when its counter store hiccups does more damage than the abuse it prevents. It is a fairness mechanism, not a security boundary. |
+| Budget enforcement | fall back to the Postgres read-then-book path | Refusing would turn a cache outage into an outage; skipping enforcement would turn it into a free-money mode. Falling back is exactly today's behaviour — enforcing, but racy. |
+
+### 4.4 Persistence off the hot path
+
+A bounded queue with a worker draining it, started and stopped with the application lifespan.
+
+Two properties are non-negotiable. **Bounded**, because unbounded background tasks under load are
+the same failure mode the rate limiter exists to prevent — the queue would simply move the
+exhaustion from the connection pool to memory. And **drained on shutdown**, so a redeploy does not
+discard whatever had not yet been written.
+
+When the queue is full the write happens inline, applying backpressure to the caller that is
+causing it. That is a deliberate choice over dropping the record: a request log that silently
+loses entries under load is worse than one that is occasionally slow, because the entries lost are
+exactly the ones from the incident someone will later investigate.
+
+## 5. Testing & Acceptance
+
+- **Unit**: bucket refills over time; a burst is allowed and the next request is not; `Retry-After`
+  matches the refill rate; both scopes apply and the stricter wins; an unconfigured use case is
+  unlimited; Redis unavailable → allowed, and the fallback is reported.
+- **Unit (budget)**: a reservation is visible to a concurrent guard; reconciliation lands on the
+  actual figure; a failed dispatch releases the reservation; a cache miss seeds from Postgres;
+  Redis unavailable → the Postgres path still enforces.
+- **Unit (persistence)**: the response does not wait for the write; the queue drains on shutdown;
+  a full queue writes inline instead of dropping.
+- **Integration (live stack, real Redis)**: the limit holds across **two gateway instances**, which
+  is the property no unit test can demonstrate; N concurrent requests against a budget with room
+  for one do not overshoot it.
+- **e2e**: the rate-limit panel sets, shows and removes a limit, and reports a refused change.
+- **Acceptance**: with a limit of 60/minute and burst 10 on a use case, a burst of 20 yields 10 ×
+  200 and 10 × 429 with `Retry-After`; a second gateway instance shares that budget of tokens
+  rather than doubling it. With a cost budget of one request's worth, 20 concurrent requests
+  result in **at most one** dispatch.
+
+## 6. Consequences & follow-ups
+
+- Redis becomes a runtime dependency of the gateway. It is optional in the sense that its absence
+  degrades rather than breaks, but a production deployment should treat it as required.
+- Existing installations are unaffected until a rate limit is configured (FR-8).
+- **Follow-ups**: per-caller concurrency caps; caching pipeline config and model prices (the
+  larger remaining latency win, deliberately out of scope here); using the same primitive for the
+  `throttle` incident-response action in `FRD-503`.
