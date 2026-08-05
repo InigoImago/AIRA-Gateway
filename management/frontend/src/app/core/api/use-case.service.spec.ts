@@ -194,6 +194,34 @@ describe('UseCaseService', () => {
     req.flush(null);
   });
 
+  it('lists rate limits', () => {
+    service.rateLimits('uc').subscribe((limits) => expect(limits.length).toBe(1));
+    const req = http.expectOne('/api/v1/use-cases/uc/rate-limits/');
+    expect(req.request.method).toBe('GET');
+    req.flush([{ id: 1, scope: 'use_case', limit_rpm: 60, burst: 10 }]);
+  });
+
+  it('creates a rate limit with POST', () => {
+    const limit = { scope: 'use_case' as const, limit_rpm: 60, burst: 10 };
+    service.createRateLimit('uc', limit).subscribe();
+    const req = http.expectOne('/api/v1/use-cases/uc/rate-limits/');
+    expect(req.request.method).toBe('POST');
+    expect(req.request.body).toEqual(limit);
+    req.flush({ id: 1, ...limit });
+  });
+
+  it('deletes a rate limit by id', () => {
+    service.deleteRateLimit('uc', 4).subscribe();
+    const req = http.expectOne('/api/v1/use-cases/uc/rate-limits/4/');
+    expect(req.request.method).toBe('DELETE');
+    req.flush(null);
+  });
+
+  it('encodes a slug into the rate-limit URL', () => {
+    service.rateLimits('a/b').subscribe();
+    http.expectOne('/api/v1/use-cases/a%2Fb/rate-limits/').flush([]);
+  });
+
   it('reads budget usage from the gateway', () => {
     service.budgetUsage('uc').subscribe((r) => expect(r.usage.length).toBe(1));
     http

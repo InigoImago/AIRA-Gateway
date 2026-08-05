@@ -1,7 +1,7 @@
 import { TestBed } from '@angular/core/testing';
 import { ActivatedRoute, provideRouter } from '@angular/router';
 import { Observable, of, throwError } from 'rxjs';
-import { ApiKey, Budget, BudgetUsage, Membership, UseCase } from '../../core/api/models';
+import { ApiKey, Budget, BudgetUsage, Membership, RateLimit, UseCase } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { ConfirmService } from '../../core/ui/confirm.service';
 import { UseCaseDetail } from './use-case-detail';
@@ -29,6 +29,9 @@ interface Overrides {
   revokeApiKey?: Observable<void>;
   createBudget?: Observable<Budget>;
   deleteBudget?: Observable<void>;
+  rateLimits?: Observable<RateLimit[]>;
+  createRateLimit?: Observable<RateLimit>;
+  deleteRateLimit?: Observable<void>;
 }
 
 interface Detail {
@@ -78,6 +81,18 @@ interface Detail {
   usedFor: (b: Budget) => BudgetUsage;
   pct: (used: number, limit: number | null | undefined) => number;
   budgetLabel: (b: Budget) => string;
+  rateLimits: () => RateLimit[];
+  showAddRateLimit: { set: (v: boolean) => void; (): boolean };
+  rlScope: { set: (v: 'use_case' | 'member') => void; (): string };
+  rlSubject: { set: (v: string) => void; (): string };
+  rlRpm: { set: (v: number | null) => void; (): number | null };
+  rlBurst: { set: (v: number | null) => void; (): number | null };
+  rateLimitError: () => string | null;
+  canAddRateLimit: () => boolean;
+  addRateLimit: () => void;
+  removeRateLimit: (id: number | undefined) => void;
+  rateLimitLabel: (l: RateLimit) => string;
+  effectiveBurst: (l: RateLimit) => number;
 }
 
 function setup(overrides: Overrides = {}, confirmAnswer = true, queryTab: string | null = null) {
@@ -120,6 +135,17 @@ function setup(overrides: Overrides = {}, confirmAnswer = true, queryTab: string
     deleteBudget: (_s: string, id: number) => {
       calls.push(`deleteBudget:${id}`);
       return overrides.deleteBudget ?? of(undefined as unknown as void);
+    },
+    rateLimits: () => overrides.rateLimits ?? of([]),
+    createRateLimit: (_s: string, limit: RateLimit) => {
+      calls.push(
+        `createRateLimit:${limit.scope}:${limit.subject}:${limit.limit_rpm}:${limit.burst}`,
+      );
+      return overrides.createRateLimit ?? of(limit);
+    },
+    deleteRateLimit: (_s: string, id: number) => {
+      calls.push(`deleteRateLimit:${id}`);
+      return overrides.deleteRateLimit ?? of(undefined as unknown as void);
     },
   };
 
@@ -911,5 +937,151 @@ describe('UseCaseDetail payload storage', () => {
     harness.fixture.detectChanges();
     expect(harness.text()).toContain('Payload storage');
     expect(harness.text()).toContain('off');
+  });
+
+  // ---- rate limits -----------------------------------------------------------------
+
+  it('reports a failed rate-limit load instead of showing an empty tab', () => {
+    expect(setup({ rateLimits: httpError(500) }).component.error()).toBe(
+      'Could not load the rate limits.',
+    );
+  });
+
+  it('requires a username for a member rate limit', () => {
+    const { component } = setup();
+    component.rlScope.set('member');
+    component.rlRpm.set(60);
+    component.rlSubject.set('  ');
+    expect(component.rateLimitError()).toBe('A member limit needs a username.');
+    expect(component.canAddRateLimit()).toBe(false);
+  });
+
+  it('requires a rate to be given at all', () => {
+    const { component } = setup();
+    expect(component.rateLimitError()).toBe('Set how many requests per minute are allowed.');
+  });
+
+  it('refuses a rate of zero rather than silently switching the use case off', () => {
+    const { component } = setup();
+    component.rlRpm.set(0);
+    expect(component.rateLimitError()).toBe('At least 1 request per minute.');
+  });
+
+  it('refuses a burst below one', () => {
+    const { component } = setup();
+    component.rlRpm.set(60);
+    component.rlBurst.set(0);
+    expect(component.rateLimitError()).toBe('A burst must be at least 1, or left empty.');
+  });
+
+  it('saves a rate limit and clears the form', () => {
+    const { component, calls } = setup();
+    component.rlRpm.set(120);
+    component.rlBurst.set(20);
+    component.addRateLimit();
+
+    expect(calls).toContain('createRateLimit:use_case::120:20');
+    expect(component.notice()).toBe('Rate limit saved.');
+    expect(component.rlRpm()).toBeNull();
+    expect(component.showAddRateLimit()).toBe(false);
+  });
+
+  it('does not submit an invalid rate limit', () => {
+    const { component, calls } = setup();
+    component.addRateLimit();
+    expect(calls.filter((c) => c.startsWith('createRateLimit'))).toEqual([]);
+  });
+
+  it('surfaces a refused rate limit rather than appearing to have saved it', () => {
+    const { component } = setup({ createRateLimit: httpError(403) });
+    component.rlRpm.set(60);
+    component.addRateLimit();
+    expect(component.error()).toBeTruthy();
+    expect(component.notice()).toBeNull();
+  });
+
+  it('asks before removing a rate limit and does nothing when declined', () => {
+    const declined = setup({}, false);
+    declined.component.removeRateLimit(3);
+    expect(declined.calls).toEqual([]);
+
+    const accepted = setup({}, true);
+    accepted.component.removeRateLimit(3);
+    expect(accepted.calls).toContain('deleteRateLimit:3');
+    expect(accepted.component.notice()).toBe('Rate limit removed.');
+  });
+
+  it('treats an unset burst as the per-minute figure', () => {
+    const { component } = setup();
+    expect(component.effectiveBurst({ scope: 'use_case', limit_rpm: 60 })).toBe(60);
+    expect(component.effectiveBurst({ scope: 'use_case', limit_rpm: 60, burst: 5 })).toBe(5);
+  });
+
+  it('names who a limit applies to', () => {
+    const { component } = setup();
+    expect(component.rateLimitLabel({ scope: 'use_case', limit_rpm: 60 })).toBe('Whole use case');
+    expect(component.rateLimitLabel({ scope: 'member', subject: 'alice', limit_rpm: 60 })).toBe(
+      'alice',
+    );
+  });
+
+  it('renders the configured limits in the tab', () => {
+    const harness = setup({
+      rateLimits: of([{ id: 1, scope: 'member', subject: 'alice', limit_rpm: 90, burst: 9 }]),
+    });
+    harness.component.selectTab('rate-limits');
+    harness.fixture.detectChanges();
+
+    const text = harness.text();
+    expect(text).toContain('alice');
+    expect(text).toContain('90');
+    expect(text).toContain('9');
+  });
+
+  it('says plainly that no limit means no throttling', () => {
+    const harness = setup();
+    harness.component.selectTab('rate-limits');
+    harness.fixture.detectChanges();
+    expect(harness.text()).toContain('may send as fast as it likes');
+  });
+
+  it('opens the rate-limit tab from the URL', () => {
+    expect(setup({}, true, 'rate-limits').component.tab()).toBe('rate-limits');
+  });
+
+  it('falls back to a generic label for a member limit with no username', () => {
+    const { component } = setup();
+    expect(component.rateLimitLabel({ scope: 'member', limit_rpm: 60 })).toBe('member');
+  });
+
+  it('ignores a remove with no id', () => {
+    const { component, calls } = setup();
+    component.removeRateLimit(undefined);
+    expect(calls).toEqual([]);
+  });
+
+  it('reveals the member field and the validation hint when the form is opened', () => {
+    const harness = setup();
+    harness.component.selectTab('rate-limits');
+    harness.component.showAddRateLimit.set(true);
+    harness.component.rlScope.set('member');
+    harness.fixture.detectChanges();
+
+    const html = harness.fixture.nativeElement as HTMLElement;
+    expect(html.querySelector('#rl-subject')).toBeTruthy();
+    expect(html.querySelector('#rl-rpm')).toBeTruthy();
+    expect(harness.text()).toContain('Cancel');
+    // The form must say why it will not submit rather than just disabling the button.
+    expect(harness.text()).toContain('A member limit needs a username.');
+  });
+
+  it('marks a disabled limit as such instead of showing it as active', () => {
+    const harness = setup({
+      rateLimits: of([{ id: 2, scope: 'use_case', limit_rpm: 30, enabled: false }]),
+    });
+    harness.component.selectTab('rate-limits');
+    harness.fixture.detectChanges();
+    expect(harness.text()).toContain('Disabled');
+    expect(harness.text()).not.toContain('Active');
   });
 });

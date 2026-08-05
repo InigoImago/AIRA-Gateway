@@ -103,6 +103,18 @@ export interface Budget {
   enabled?: boolean;
 }
 
+/** A request-rate limit (FRD-405). A budget says how much; this says how fast. */
+export interface RateLimit {
+  id?: number;
+  scope: 'use_case' | 'member';
+  subject?: string;
+  /** Sustained requests per minute. */
+  limit_rpm: number;
+  /** How many may arrive at once; 0 means "use the per-minute figure". */
+  burst?: number;
+  enabled?: boolean;
+}
+
 export interface BudgetUsage {
   id: number;
   used_tokens: number;

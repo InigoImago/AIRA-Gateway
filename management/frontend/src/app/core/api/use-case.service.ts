@@ -5,6 +5,7 @@ import {
   ApiKey,
   Budget,
   BudgetUsage,
+  RateLimit,
   CatalogModel,
   DryRunResult,
   IssuedApiKey,
@@ -97,6 +98,18 @@ export class UseCaseService {
 
   deleteBudget(slug: string, id: number): Observable<void> {
     return this.http.delete<void>(`${this.base}${seg(slug)}/budgets/${id}/`);
+  }
+
+  rateLimits(slug: string): Observable<RateLimit[]> {
+    return this.http.get<RateLimit[]>(`${this.base}${seg(slug)}/rate-limits/`);
+  }
+
+  createRateLimit(slug: string, limit: RateLimit): Observable<RateLimit> {
+    return this.http.post<RateLimit>(`${this.base}${seg(slug)}/rate-limits/`, limit);
+  }
+
+  deleteRateLimit(slug: string, id: number): Observable<void> {
+    return this.http.delete<void>(`${this.base}${seg(slug)}/rate-limits/${id}/`);
   }
 
   /** The model catalog with its prices; everyone reads it, only a global admin writes. */

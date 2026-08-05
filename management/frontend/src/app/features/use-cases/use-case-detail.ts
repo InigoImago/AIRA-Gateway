@@ -9,14 +9,15 @@ import {
   BudgetUsage,
   IssuedApiKey,
   Membership,
+  RateLimit,
   UseCase,
 } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { ConfirmService } from '../../core/ui/confirm.service';
 
-type Tab = 'overview' | 'members' | 'keys' | 'budgets';
+type Tab = 'overview' | 'members' | 'keys' | 'budgets' | 'rate-limits';
 
-const TABS: readonly Tab[] = ['overview', 'members', 'keys', 'budgets'];
+const TABS: readonly Tab[] = ['overview', 'members', 'keys', 'budgets', 'rate-limits'];
 
 @Component({
   selector: 'app-use-case-detail',
@@ -39,7 +40,9 @@ export class UseCaseDetail implements OnInit {
   protected readonly showAddMember = signal(false);
   protected readonly showIssueKey = signal(false);
   protected readonly showAddBudget = signal(false);
+  protected readonly showAddRateLimit = signal(false);
   protected readonly budgets = signal<Budget[]>([]);
+  protected readonly rateLimits = signal<RateLimit[]>([]);
   protected readonly usage = signal<Record<number, BudgetUsage>>({});
   protected readonly usageUnavailable = signal(false);
   /** Why consumption is missing: refused by the gateway, or not reachable at all. */
@@ -66,6 +69,10 @@ export class UseCaseDetail implements OnInit {
   protected readonly budgetRequests = signal<number | null>(null);
   /** Kept as text: a spend limit must not round-trip through a JS number. */
   protected readonly budgetCost = signal('');
+  protected readonly rlScope = signal<'use_case' | 'member'>('use_case');
+  protected readonly rlSubject = signal('');
+  protected readonly rlRpm = signal<number | null>(null);
+  protected readonly rlBurst = signal<number | null>(null);
   /** Data-protection settings being edited on the overview tab (FRD-404). */
   protected readonly retentionDays = signal<number | null>(null);
   protected readonly storePayloads = signal(true);
@@ -108,6 +115,15 @@ export class UseCaseDetail implements OnInit {
     });
     this.loadKeys();
     this.loadBudgets();
+    this.loadRateLimits();
+  }
+
+  protected loadRateLimits(): void {
+    this.service.rateLimits(this.slug).subscribe({
+      next: (limits) => this.rateLimits.set(limits),
+      error: (response: unknown) =>
+        this.error.set(errorMessage(response, 'Could not load the rate limits.')),
+    });
   }
 
   protected loadKeys(): void {
@@ -326,6 +342,74 @@ export class UseCaseDetail implements OnInit {
 
   protected budgetLabel(budget: Budget): string {
     return budget.scope === 'member' ? budget.subject || 'member' : 'Whole use case';
+  }
+
+  // -- rate limits ---------------------------------------------------------------------
+
+  protected rateLimitError(): string | null {
+    if (this.rlScope() === 'member' && !this.rlSubject().trim()) {
+      return 'A member limit needs a username.';
+    }
+    const rpm = this.rlRpm();
+    if (rpm == null) return 'Set how many requests per minute are allowed.';
+    if (!Number.isInteger(rpm) || rpm < 1) return 'At least 1 request per minute.';
+    const burst = this.rlBurst();
+    if (burst != null && (!Number.isInteger(burst) || burst < 1)) {
+      return 'A burst must be at least 1, or left empty.';
+    }
+    return null;
+  }
+
+  protected canAddRateLimit(): boolean {
+    return !this.rateLimitError() && !this.busy();
+  }
+
+  protected addRateLimit(): void {
+    if (!this.canAddRateLimit()) {
+      return;
+    }
+    const limit: RateLimit = {
+      scope: this.rlScope(),
+      subject: this.rlScope() === 'member' ? this.rlSubject().trim() : '',
+      limit_rpm: this.rlRpm() ?? 0,
+      burst: this.rlBurst() ?? 0,
+    };
+    this.run(this.service.createRateLimit(this.slug, limit), {
+      failure: 'Could not save the rate limit.',
+      success: () => {
+        this.notice.set('Rate limit saved.');
+        this.rlSubject.set('');
+        this.rlRpm.set(null);
+        this.rlBurst.set(null);
+        this.showAddRateLimit.set(false);
+        this.loadRateLimits();
+      },
+    });
+  }
+
+  protected removeRateLimit(id: number | undefined): void {
+    if (
+      id == null ||
+      !this.confirmService.ask('Remove this rate limit? Requests stop being throttled.')
+    ) {
+      return;
+    }
+    this.run(this.service.deleteRateLimit(this.slug, id), {
+      failure: 'Could not remove the rate limit.',
+      success: () => {
+        this.notice.set('Rate limit removed.');
+        this.loadRateLimits();
+      },
+    });
+  }
+
+  protected rateLimitLabel(limit: RateLimit): string {
+    return limit.scope === 'member' ? limit.subject || 'member' : 'Whole use case';
+  }
+
+  /** What the bucket actually allows at once — an unset burst means the per-minute figure. */
+  protected effectiveBurst(limit: RateLimit): number {
+    return limit.burst && limit.burst > 0 ? limit.burst : limit.limit_rpm;
   }
 
   // -- retention -----------------------------------------------------------------------
