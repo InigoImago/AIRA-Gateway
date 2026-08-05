@@ -5,6 +5,58 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-05 — Review of FRD-405: seven defects found and fixed
+A structured review of the freshly written FRD-405 code and its documentation, run as four
+parallel audits (docs-vs-code, correctness, extensibility/readability, test quality) with every
+serious finding re-verified by hand before being acted on. It found real defects in work that had
+been reported as verified the same day — the verification had covered the paths that were tested,
+not the edges.
+
+**The worst one was the opposite of a promised property.** `FR-4` says a member's own burst may
+not consume the whole use case. The code took a token from the wide use-case bucket *first* and
+only then tested the narrow member bucket, keeping the token when the member was refused.
+Measured: use case 5/burst, alice 1/burst — after alice's one allowance and four refusals, bob
+got **0** of the remaining 4. One throttled member starved everyone else, which is a denial of
+service rather than a rounding error. The decision is now all-or-nothing across every bucket a
+request must pass, expressed in the interface (`take()` takes the whole set) rather than as a
+rule callers must remember.
+
+**Reservations leaked on several exit paths.** Only `UpstreamError` released, so any other
+failure — a malformed upstream body, a database hiccup in the pricing lookup, an outright bug —
+left the reservation behind. The streaming path settled instead of releasing on failure, charging
+a request-limited budget for a request that produced nothing, and its settlement and audit write
+sat after the loop with nothing guarding them, so a client hanging up skipped both: the request
+vanished from the log despite having reached the upstream. `BudgetService.hold` now makes the
+guarantee structural, and the streaming finish runs in a `finally`.
+
+**`embedContent` was neither rate limited nor budgeted** — the controls sat inside the
+generateContent branch, so a caller only had to pick the other verb. The handler now parses per
+method and runs one shared gate, which is the actual fix: a control that applies to some verbs and
+not others has to be impossible to write by accident.
+
+**Two Redis edge cases.** A failure between two budgets left the first reservation unreachable;
+it is now handed back. And a correction that could not reach Redis left the estimate in place for
+the rest of the period — my first attempt at a fix was to delete the key, which is nonsense,
+because the store holding the stale figure is the store that is unreachable. The real fix is a
+lifetime, not a repair: counters expire in five minutes and are rebuilt from Postgres, which costs
+nothing since every reservation already reads that figure to seed with.
+
+**And the audit writer dropped rows during shutdown** — `stop()` awaits the worker, and a request
+landing in that await queued against a worker already being cancelled.
+
+Documentation: `DEPLOYMENT.md` still listed "No rate limiting" as a known gap and its topic table
+omitted `aira.rate-limits`, which fails **silently** — Management writes its outbox, the relay
+cannot publish, and a setting appears saved while doing nothing.
+
+Test quality mattered as much as the code. Three integration tests caught `except Exception`
+around the guards, which would have counted a database error as "correctly refused". The
+config-cache test only exercised manual invalidation, which production never calls. And the
+disconnect test I wrote first passed against the *old* structure — going through `TestClient`
+buffers the whole body, so it never reached the path it was named after. Each fix was proved by
+restoring the defect and watching the test fail.
+
+---
+
 ## 2026-08-05 — Rate limiting, atomic budget reservations, and the audit write off the hot path
 `FRD-405`, decided in `ADR-0008`. Three defects with one cause: the gateway acted on state it had
 already stopped being sure about.

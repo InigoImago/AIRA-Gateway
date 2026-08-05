@@ -206,6 +206,17 @@ moment to stop bounding a caller) and budgets to the old **Postgres** path (enfo
 `/readyz` reports `degraded: true` and still returns 200. The **request-log write moved off the
 hot path** (bounded queue, drained on shutdown, inline when full — never dropped), finally
 honouring §3's "async on the hot path". New SPA tab **Rate limits**.
+**Review pass on FRD-405 (2026-08-05)** — a structured audit (four parallel reviews, every
+finding re-verified by hand) found seven defects in the same day's work and fixed each with a test
+that was first shown to fail: a refused member drained the whole use case's bucket (the token
+decision is now **all-or-nothing across scopes**); reservations leaked on every failure that was
+not an `UpstreamError`, on a failed stream, and on a client disconnect (`BudgetService.hold` makes
+release-unless-settled structural); **`embedContent` bypassed both controls** (all verbs now pass
+one shared pre-dispatch gate); two Redis edge cases (a half-made reservation is handed back, and
+counters expire in **five minutes** and rebuild from Postgres so drift cannot outlive the period);
+and the audit writer dropped rows submitted during shutdown. `DEPLOYMENT.md` had also kept "No
+rate limiting" as a known gap and omitted `aira.rate-limits` from its topic list — a **silent**
+failure, since a missing topic produces no error anywhere.
 Next candidates: **content redaction** (`FRD-406`, the `Redactor` hook is still a no-op —
 deliberately deferred, see the ROADMAP backlog), request-log and spend reporting UI, budget
 threshold alerting, Phase 5 (anomaly/IT-Security), `FRD-307` (model catalog), `FRD-106` (OpenAI

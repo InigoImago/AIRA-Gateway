@@ -103,6 +103,10 @@ observable rather than silent.
   briefly appear more consumed than it is. The estimate is corrected the moment the response
   arrives, and a failed request releases its reservation. Erring toward over-reserving is the
   right direction for a spend limit.
+- **Trade-off**: a counter is deliberately short-lived (minutes, not the budget period), so that
+  a correction that never reached Redis cannot leave a stale figure in force until the period
+  rolls over. The cost is that reservations in flight across an expiry are forgotten. This is the
+  reason Postgres has to stay authoritative: the rebuild is a reseed, not a reset.
 - **Follow-ups**: Redis is not yet used for anything else. The pipeline config and model prices
   are read from Postgres on every request and change rarely — caching them is the larger remaining
   latency win, and is deliberately not part of this decision.

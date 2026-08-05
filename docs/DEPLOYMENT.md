@@ -208,9 +208,13 @@ The `AIRA_OIDC_JWKS_URI` override exists for providers that do not follow Keyclo
 
 ### 3.3 Kafka
 
-Five **compacted** topics carry the configuration. Auto-creation is off in the reference stack, so
-create them (partition/replication counts are yours to choose; compaction is not optional — the
-gateway rebuilds its read-model by replaying them):
+Seven **compacted** topics carry the configuration. Auto-creation is off in the reference stack,
+so create them (partition/replication counts are yours to choose; compaction is not optional —
+the gateway rebuilds its read-model by replaying them).
+
+**Create all of them.** A missing topic produces no error anywhere: Management writes its outbox,
+the relay cannot publish, and the gateway simply never learns about that kind of configuration.
+The symptom is a setting that appears saved in the UI and does nothing.
 
 | Topic | Carries |
 |---|---|
@@ -219,6 +223,7 @@ gateway rebuilds its read-model by replaying them):
 | `aira.api-keys` | API-key issuance and revocation (hash only, never plaintext) |
 | `aira.pipelines` | pipeline configuration |
 | `aira.budgets` | budget definitions |
+| `aira.rate-limits` | request-rate limits (FRD-405) |
 | `aira.models` | model catalog and prices (FRD-403) |
 
 ```bash
@@ -495,7 +500,7 @@ Security (all from ADR-0007):
 Operations:
 
 - [ ] Both migration commands run on every deploy
-- [ ] All five Kafka topics exist and are **compacted**
+- [ ] All seven Kafka topics exist and are **compacted** (`make kafka-topics` creates them)
 - [ ] The consumer runs as a long-lived process and is restarted on failure
 - [ ] **The retention pruner is scheduled.** `python -m aira_gateway.retention` does one pass and
       exits. If nothing runs it, **nothing is ever deleted** and the period configured per use
@@ -530,5 +535,4 @@ Stated plainly, because a deployment guide that hides them wastes your time:
 | **Kafka has no auth/TLS settings** | A broker requiring SASL/TLS needs a code change | `aira_common.kafka` takes bootstrap servers only |
 | **The relay is not a daemon** | Must be scheduled externally, or configuration never propagates | By design (transactional outbox), but unscheduled by default |
 | **Membership is split** between Management and Keycloak groups | Consumption views and data-plane access need the Keycloak group; the UI membership alone is not enough | ADR-0007 addendum, follow-up recorded |
-| **No rate limiting** | Budgets cap tokens and requests per period, but nothing throttles a caller per second | Follow-up in ADR-0007 |
 | **No content redaction** | Payloads are stored verbatim until their retention period expires; nothing masks sensitive values inside them | `NoOpRedactor`; retention itself is done (FRD-404) |

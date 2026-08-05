@@ -52,6 +52,9 @@ than better: per-process counters mean N instances permit N times the configured
 
 ## 3. Functional Requirements
 
+- **FR-0 Every verb**: the controls apply to `generateContent`, `streamGenerateContent` **and**
+  `embedContent`. They are enforced at one shared point rather than per method, because a control
+  that applies to some verbs and not others is one a caller evades by picking another verb.
 - **FR-1 Definition**: a rate limit belongs to a use case, with `scope` = `use_case` | `member`
   (mirroring budgets), `limit_rpm` (sustained requests per minute) and `burst` (how many may
   arrive at once). Authored in Management, distributed over Kafka, read by the gateway.
@@ -60,10 +63,15 @@ than better: per-process counters mean N instances permit N times the configured
 - **FR-3 Shared across instances**: two gateway processes behind a load balancer enforce **one**
   limit, not one each.
 - **FR-4 Both scopes apply**: where a use-case limit and a member limit exist, both are checked
-  and the stricter one wins. A member's own burst may not consume the whole use case.
+  and the stricter one wins. A member's own burst may not consume the whole use case — and,
+  equally, a member who is *refused* must cost the use case nothing, or one throttled member
+  becomes a denial of service for everyone else. The decision is therefore all-or-nothing across
+  every bucket a request must pass.
 - **FR-5 Atomic budget reservation**: the budget check reserves before dispatch, so a concurrent
   request sees the reservation. A completed request reconciles the reservation to the actual cost;
-  a **failed request releases it** — an upstream error must not permanently consume budget.
+  a **failed request releases it** — an upstream error must not permanently consume budget. This
+  holds on *every* exit path, including a stream that fails, a client that hangs up mid-stream,
+  and a failure that is not an `UpstreamError` at all.
 - **FR-6 Postgres stays authoritative**: Redis holds a running counter seeded from Postgres and is
   never the only copy. Losing Redis loses in-flight reservations, not the period's accounting.
 - **FR-7 Decided degradation**: Redis unavailable → rate limiting falls back to a **per-instance
@@ -114,6 +122,15 @@ direction, and the correction lands within milliseconds.
 **Redis is a cache, Postgres is the record.** On a cache miss the counter is seeded from
 `budget_usage`, which `record` keeps current. A Redis restart therefore costs the reservations
 currently in flight — not the month's accounting.
+
+A counter also **expires well before its budget period does** (`COUNTER_TTL_SECONDS`, five
+minutes). This is what bounds drift: if the correction after a request cannot reach Redis, the
+counter keeps that request's deliberately high estimate, and it cannot be repaired from there —
+the store holding the stale figure is the store that is unreachable. Letting it expire makes the
+drift self-healing, and costs nothing, because every reservation already reads the Postgres figure
+to seed with. The trade is that reservations still in flight when a counter expires are forgotten,
+briefly reopening the race for whatever is in flight at that instant; a rare under-count of one
+estimate is a far better failure than a permanent over-count nobody can clear.
 
 ### 4.3 What happens when Redis is down
 
