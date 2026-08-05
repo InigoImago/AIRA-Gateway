@@ -134,6 +134,36 @@ async def test_a_full_queue_writes_inline_instead_of_dropping(sessionmaker) -> N
     assert len(await _rows(sessionmaker)) == 20
 
 
+async def test_a_row_submitted_while_stopping_is_not_lost(sessionmaker) -> None:
+    """`stop()` drains, cancels the worker, then awaits it — and that await is a real yield
+    point. A request landing in that window used to queue against a worker that would never
+    consume it again, so the row was silently dropped by the very shutdown that promises not to
+    discard anything."""
+    writer = _writer(sessionmaker, max_queue=8)
+    await writer.start()
+
+    async def submit_during_shutdown() -> None:
+        await asyncio.sleep(0)  # let stop() reach its await
+        await writer.submit(_entry(operation="late"))
+
+    await asyncio.gather(writer.stop(), submit_during_shutdown())
+
+    operations = [row.operation for row in await _rows(sessionmaker)]
+    assert "late" in operations
+
+
+async def test_submitting_after_a_full_stop_still_writes(sessionmaker) -> None:
+    """Once stopped there is no worker, so the entry has to be written inline rather than
+    queued into nothing."""
+    writer = _writer(sessionmaker, max_queue=8)
+    await writer.start()
+    await writer.stop()
+
+    await writer.submit(_entry(operation="after-stop"))
+
+    assert [row.operation for row in await _rows(sessionmaker)] == ["after-stop"]
+
+
 async def test_a_failing_write_does_not_kill_the_worker(sessionmaker) -> None:
     """Otherwise one bad row would silently stop every subsequent one from being written."""
     writer = _writer(sessionmaker, max_queue=8)

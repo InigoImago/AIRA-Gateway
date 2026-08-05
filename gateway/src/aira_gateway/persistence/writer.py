@@ -71,6 +71,11 @@ class RequestLogWriter:
         self._max_queue = max_queue
         self._queue: asyncio.Queue[PendingLog] = asyncio.Queue(maxsize=max(1, max_queue))
         self._worker: asyncio.Task[None] | None = None
+        # Set the moment a shutdown begins, not when it finishes. `stop()` awaits the worker,
+        # and that await is a real yield point: a request landing in it would otherwise queue
+        # against a worker already being cancelled, and the row would be dropped by the very
+        # shutdown that promises not to discard anything.
+        self._stopping = False
         self.written_inline = 0
 
     async def start(self) -> None:
@@ -82,6 +87,7 @@ class RequestLogWriter:
         """
         if self._max_queue <= 0:
             return
+        self._stopping = False
         if self._worker is None:
             self._worker = asyncio.create_task(self._run())
 
@@ -100,6 +106,7 @@ class RequestLogWriter:
         """Drain what is queued, then stop. A redeploy must not discard pending audit rows."""
         if self._worker is None:
             return
+        self._stopping = True
         await self._queue.join()
         self._worker.cancel()
         with contextlib.suppress(asyncio.CancelledError):
@@ -108,8 +115,9 @@ class RequestLogWriter:
 
     async def submit(self, entry: PendingLog) -> None:
         """Hand an entry over; falls back to writing it here if the queue is saturated."""
-        if self._worker is None:
-            await self._write(entry)  # no worker running (tests, or before startup)
+        if self._worker is None or self._stopping:
+            # No worker, or one on its way out: write it here rather than queue it into nothing.
+            await self._write(entry)
             return
         try:
             self._queue.put_nowait(entry)

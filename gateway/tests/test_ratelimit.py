@@ -23,7 +23,7 @@ from aira_gateway.ratelimit.buckets import (
     RedisTokenBucket,
 )
 from aira_gateway.ratelimit.errors import RateLimited
-from aira_gateway.ratelimit.service import RateLimitService
+from aira_gateway.ratelimit.service import CONFIG_CACHE_SECONDS, RateLimitService
 
 
 class FakeClock:
@@ -313,6 +313,24 @@ async def test_enforcement_can_be_switched_off(sessionmaker) -> None:
     await _limit(sessionmaker, limit_rpm=1, burst=1)
     service = RateLimitService(sessionmaker, InMemoryTokenBucket(FakeClock()), enforce=False)
     for _ in range(10):
+        await service.check("uc", "alice")
+
+
+async def test_a_new_limit_takes_effect_once_the_cache_expires(sessionmaker) -> None:
+    """The cache exists so the check does not add a database round trip per request, but a limit
+    an administrator just saved has to start binding without a restart. Nothing tested the
+    expiry itself — only that manual invalidation worked, which production never calls."""
+    clock = FakeClock()
+    service = RateLimitService(sessionmaker, InMemoryTokenBucket(FakeClock()), clock=clock)
+    await service.check("uc", "alice")  # caches "no limits"
+
+    await _limit(sessionmaker, limit_rpm=60, burst=1)
+    await service.check("uc", "alice")  # still cached, so still unlimited
+
+    clock.advance(CONFIG_CACHE_SECONDS + 0.1)
+
+    await service.check("uc", "alice")
+    with pytest.raises(RateLimited):
         await service.check("uc", "alice")
 
 

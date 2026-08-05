@@ -11,6 +11,7 @@ as before this feature existed — this must never start rejecting traffic on up
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -38,10 +39,14 @@ class RateLimitService:
         bucket: TokenBucket,
         *,
         enforce: bool = True,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._sessionmaker = sessionmaker
         self._bucket = bucket
         self._enforce = enforce
+        # Injectable so the cache's *expiry* can be tested rather than only its manual
+        # invalidation — a TTL nothing ever crosses is a TTL nothing tests.
+        self._clock = clock
         self._cache: dict[str, tuple[float, list[RateLimitRead]]] = {}
 
     async def check(self, use_case: str | None, subject: str | None) -> None:
@@ -107,7 +112,7 @@ class RateLimitService:
 
     async def _config(self, use_case: str) -> list[RateLimitRead]:
         cached = self._cache.get(use_case)
-        now = time.monotonic()
+        now = self._clock()
         if cached is not None and now < cached[0]:
             return cached[1]
         async with self._sessionmaker() as session:

@@ -21,7 +21,12 @@ from sqlalchemy.pool import StaticPool
 from aira_common.counters import CountersUnavailable
 from aira_common.money import to_nanos
 from aira_gateway.budgets.errors import BudgetExceeded
-from aira_gateway.budgets.ledger import COUNTER_TTL_SECONDS, Amounts, BudgetLedger
+from aira_gateway.budgets.ledger import (
+    COUNTER_TTL_SECONDS,
+    Amounts,
+    BudgetLedger,
+    Limits,
+)
 from aira_gateway.budgets.service import BudgetService
 from aira_gateway.db.base import Base
 from aira_gateway.db.models import BudgetRead, BudgetUsage
@@ -218,6 +223,43 @@ async def test_a_budget_that_refuses_releases_what_this_request_already_reserved
     # The wide use-case budget saw one successful reservation, not two.
     counter = await runner._client.hgetall("budget:uc:uc:2026-08")
     assert int(counter["requests"]) == 1
+
+
+async def test_a_counter_never_goes_negative(sessionmaker, runner) -> None:
+    """A double release, or a correction larger than what was reserved, must not drive a counter
+    below zero — that would silently grant free headroom for the rest of the period instead of
+    failing visibly. The clamp existed but nothing exercised it."""
+    ledger = BudgetLedger(runner)
+    key = "clamp-probe"
+
+    await ledger.reserve(
+        key,
+        "2026-08",
+        limits=Limits(requests=10),
+        amounts=Amounts(tokens=5, requests=1, cost_nanos=5),
+        seed=Amounts(),
+    )
+    # Give back far more than was ever taken.
+    await ledger.adjust(key, "2026-08", amounts=Amounts(tokens=-99, requests=-99, cost_nanos=-99))
+
+    counter = await runner._client.hgetall(f"budget:{key}:2026-08")
+    assert {int(counter[field]) for field in ("tokens", "requests", "cost")} == {0}
+
+
+async def test_a_double_release_does_not_hand_back_more_than_was_taken(
+    sessionmaker, runner
+) -> None:
+    await _budget(sessionmaker, limit_requests=2)
+    service = BudgetService(sessionmaker, ledger=BudgetLedger(runner))
+
+    first = await service.guard("uc", "alice", NOW, estimated=Amounts(requests=1))
+    second = await service.guard("uc", "alice", NOW, estimated=Amounts(requests=1))
+    await service.release(first)
+    await service.release(first)  # released twice by mistake
+    await service.release(second)
+
+    counter = await runner._client.hgetall("budget:uc:uc:2026-08")
+    assert int(counter["requests"]) == 0  # not negative, which would be free headroom
 
 
 # ---- Redis as a cache, Postgres as the record --------------------------------------------

@@ -10,6 +10,10 @@ whole feature rests on:
 2. **The reservation is atomic on real infrastructure.** ``fakeredis`` runs the same Lua, but the
    concurrency is simulated inside one event loop. Here the counters live in the real server.
 
+The exception types are caught narrowly on purpose: a bare ``except Exception`` around a guard
+would count a database error as "correctly refused", and the assertion on the number of admitted
+requests would then pass for entirely the wrong reason.
+
 Run with ``make test-integration`` while the stack is up.
 """
 
@@ -24,10 +28,12 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from aira_common.counters import build_runner
+from aira_gateway.budgets.errors import BudgetExceeded
 from aira_gateway.budgets.ledger import Amounts, BudgetLedger, Limits
 from aira_gateway.budgets.service import BudgetService
 from aira_gateway.db.base import build_sessionmaker
 from aira_gateway.ratelimit.buckets import BucketRequest, RedisTokenBucket
+from aira_gateway.ratelimit.errors import RateLimited
 from aira_gateway.ratelimit.service import RateLimitService
 
 from .conftest import GATEWAY_URL
@@ -112,7 +118,7 @@ async def test_two_gateway_instances_enforce_one_limit_not_one_each(engine, runn
         try:
             await service.check(slug, "alice")
             allowed += 1
-        except Exception:  # noqa: BLE001 - RateLimited; anything else fails the assertion below
+        except RateLimited:
             pass
 
     assert allowed == 4, "the burst of 4 was shared, not granted to each instance"
@@ -172,7 +178,7 @@ async def test_concurrent_requests_do_not_overshoot_a_request_budget(engine, run
     async def attempt() -> bool:
         try:
             await service.guard(slug, "alice", estimated=Amounts(requests=1))
-        except Exception:  # noqa: BLE001 - BudgetExceeded
+        except BudgetExceeded:
             return False
         return True
 
@@ -193,7 +199,7 @@ async def test_concurrent_requests_do_not_overshoot_a_cost_budget(engine, runner
     async def attempt() -> bool:
         try:
             await service.guard(slug, "alice", estimated=estimate)
-        except Exception:  # noqa: BLE001 - BudgetExceeded
+        except BudgetExceeded:
             return False
         return True
 
@@ -233,7 +239,7 @@ async def test_the_counter_is_seeded_from_postgres_when_redis_forgets(engine, ru
 
     service = BudgetService(build_sessionmaker(engine), ledger=BudgetLedger(runner))
 
-    with pytest.raises(Exception, match="budget exhausted"):
+    with pytest.raises(BudgetExceeded, match="budget exhausted"):
         await service.guard(slug, "alice", estimated=Amounts(requests=1))
 
 
