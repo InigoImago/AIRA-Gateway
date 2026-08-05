@@ -286,14 +286,9 @@ MUTATIONS = [
         'return now.strftime("%Y-%m")',
         "gateway/tests/test_budget_service.py",
     ),
-    Mutation(
-        "B6",
-        "a member-scoped budget binds only that member",
-        "gateway/src/aira_gateway/budgets/service.py",
-        "                and budget.subject == subject",
-        "                and True",
-        "gateway/tests/test_budget_service.py",
-    ),
+    # B6 ("a member-scoped budget binds only that member") is superseded by S1: the rule now
+    # lives in one place for budgets and rate limits alike, so it has one mutation rather than
+    # two that could drift apart.
     Mutation(
         "B7",
         "a disabled budget does not bind",
@@ -497,8 +492,8 @@ MUTATIONS = [
         "M7",
         "losing Redis degrades the limit, it does not remove it",
         "gateway/src/aira_gateway/ratelimit/buckets.py",
-        "            self.degraded = True\n            return await self._local.take(requests)",
-        "            self.degraded = True\n            return ALLOWED",
+        "            return await self._local.take(requests)",
+        "            return ALLOWED",
         RATELIMIT,
     ),
     Mutation(
@@ -674,6 +669,56 @@ MUTATIONS = [
         "    await session.execute(delete(RequestLog).where(RequestLog.use_case == slug))\n"
         "    await session.execute(delete(UseCaseRead).where(UseCaseRead.slug == slug))",
         "gateway/tests/test_consumer_apply.py",
+    ),
+    Mutation(
+        "S1",
+        "a member-scoped row binds only its own subject",
+        "gateway/src/aira_gateway/scopes.py",
+        "        if scope == MEMBER and caller and subject == caller:",
+        "        if scope == MEMBER and caller:",
+        "gateway/tests/test_scopes.py gateway/tests/test_budget_service.py gateway/tests/test_ratelimit.py",
+    ),
+    Mutation(
+        "S2",
+        "the budget usage key keeps the shape already stored in the database",
+        "gateway/src/aira_gateway/scopes.py",
+        'return f"uc:{self.use_case}"',
+        'return f"usecase:{self.use_case}"',
+        "gateway/tests/test_scopes.py",
+    ),
+    Mutation(
+        "S3",
+        "every bucket of one use case shares a Redis Cluster slot",
+        "gateway/src/aira_gateway/scopes.py",
+        '        tag = f"rl:{{{self.use_case}}}"',
+        '        tag = "rl" if self.member is None else f"rl:{{{self.member}}}"',
+        "gateway/tests/test_scopes.py",
+    ),
+    Mutation(
+        "S4",
+        "a feature running on its fallback says so in /readyz",
+        "gateway/src/aira_gateway/ratelimit/buckets.py",
+        "            self._degradation.degraded(\n"
+        '                self.FEATURE, "per-instance buckets; N instances allow N x the limit"\n'
+        "            )",
+        "            pass",
+        "gateway/tests/test_ratelimit.py gateway/tests/test_health.py",
+    ),
+    Mutation(
+        "S5",
+        "a recovered store clears the feature's fallback record",
+        "libs/src/aira_common/counters.py",
+        "        self._degraded.pop(feature, None)",
+        "        pass",
+        "gateway/tests/test_ratelimit.py gateway/tests/test_health.py",
+    ),
+    Mutation(
+        "S6",
+        "a caller's degradation log is used, not silently replaced by a private one",
+        "gateway/src/aira_gateway/ratelimit/buckets.py",
+        "        self._degradation = degradation if degradation is not None else DegradationLog()",
+        "        self._degradation = degradation or DegradationLog()",
+        "gateway/tests/test_ratelimit.py",
     ),
     # ---- the counter transport -----------------------------------------------------------
     Mutation(

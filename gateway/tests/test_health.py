@@ -92,3 +92,47 @@ def test_readyz_says_so_when_no_counter_store_is_configured(client, monkeypatch)
 
     assert body["checks"]["counters"]["detail"] == "not configured"
     assert body["checks"]["counters"]["required"] is False
+
+
+def test_readyz_names_the_features_that_are_running_on_a_fallback(client, monkeypatch) -> None:
+    """A probe answers "is the store reachable now". It cannot tell you that rate limiting has
+    been serving from per-instance buckets for the last hour — for that, the features have to
+    say so themselves."""
+
+    async def all_ok(name: str, host: str, port: int, *, timeout: float = 1.0) -> CheckResult:
+        return CheckResult(name=name, ok=True)
+
+    monkeypatch.setattr(health_module, "check_tcp", all_ok)
+
+    class _Up:
+        async def run(self, script, keys, args):  # noqa: ANN001, ANN201
+            return 1
+
+    client.app.state.counters = _Up()  # the probe succeeds …
+    client.app.state.degradation.degraded("rate limiting", "per-instance buckets")
+
+    body = client.get("/readyz").json()
+
+    # … and the endpoint still reports the degradation, because a reachable store does not undo
+    # what the feature already fell back to.
+    assert body["degraded"] is True
+    assert body["fallbacks"] == {"rate limiting": "per-instance buckets"}
+    assert body["checks"]["counters"]["ok"] is True
+
+
+def test_readyz_reports_no_fallbacks_when_everything_is_working(client, monkeypatch) -> None:
+    async def all_ok(name: str, host: str, port: int, *, timeout: float = 1.0) -> CheckResult:
+        return CheckResult(name=name, ok=True)
+
+    monkeypatch.setattr(health_module, "check_tcp", all_ok)
+
+    class _Up:
+        async def run(self, script, keys, args):  # noqa: ANN001, ANN201
+            return 1
+
+    client.app.state.counters = _Up()
+
+    body = client.get("/readyz").json()
+
+    assert body["degraded"] is False
+    assert body["fallbacks"] == {}

@@ -14,7 +14,7 @@ from typing import Any
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from aira_common.counters import build_runner
+from aira_common.counters import DegradationLog, build_runner
 from aira_common.errors import AiraError, ErrorDetail, ErrorResponse
 from aira_common.logging import configure_logging, get_logger
 from aira_common.observability import (
@@ -77,6 +77,9 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
     # yields a runner that reports itself unavailable, so both features take their documented
     # fallback rather than needing a second code path for "not configured".
     counters = build_runner(settings.redis_url)
+    # One record of what the counter-backed features are actually experiencing, so a gateway
+    # running on its fallbacks says so instead of only answering a health-check ping.
+    degradation = DegradationLog()
 
     @asynccontextmanager
     async def lifespan(app_: FastAPI) -> AsyncIterator[None]:
@@ -103,12 +106,16 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
     app.state.pipeline_engine = PipelineEngine(registry)
     app.state.pipeline_store = PipelineStore(sessionmaker)
     app.state.counters = counters
+    app.state.degradation = degradation
     app.state.budgets = BudgetService(
-        sessionmaker, enforce=settings.enforce_budgets, ledger=BudgetLedger(counters)
+        sessionmaker,
+        enforce=settings.enforce_budgets,
+        ledger=BudgetLedger(counters),
+        degradation=degradation,
     )
     app.state.rate_limits = RateLimitService(
         sessionmaker,
-        FallbackTokenBucket(RedisTokenBucket(counters), InMemoryTokenBucket()),
+        FallbackTokenBucket(RedisTokenBucket(counters), InMemoryTokenBucket(), degradation),
         enforce=settings.enforce_rate_limits,
     )
     app.state.pricing = PricingService(sessionmaker)

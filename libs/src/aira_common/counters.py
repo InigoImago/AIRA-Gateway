@@ -40,6 +40,40 @@ class CountersUnavailable(RuntimeError):
     """Redis could not be reached. The caller decides what that means for its feature."""
 
 
+class DegradationLog:
+    """What each feature has most recently experienced from the shared counter store.
+
+    Every feature built on these counters needs a decided answer to "and what if it is gone" —
+    and every one of those answers is invisible unless somebody records it. Before this, one
+    feature set a flag nobody read and another logged a warning, so a gateway could run for a
+    week on its fallbacks with the health endpoint reporting nothing but a successful ping.
+
+    The *shape* of the fallback is deliberately not shared. Rate limiting degrades to a local
+    equivalent, budgets degrade to the store that is already authoritative, and forcing those
+    into one abstraction would hide the reason they differ (see ADR-0008). What is shared is
+    that both say so, in one place, in the same words.
+    """
+
+    def __init__(self) -> None:
+        self._degraded: dict[str, str] = {}
+
+    def working(self, feature: str) -> None:
+        """Record that ``feature`` reached the counter store."""
+        self._degraded.pop(feature, None)
+
+    def degraded(self, feature: str, detail: str) -> None:
+        """Record that ``feature`` fell back, and what that costs while it lasts."""
+        self._degraded[feature] = detail
+
+    @property
+    def features(self) -> dict[str, str]:
+        """Features currently on their fallback, mapped to what that means."""
+        return dict(self._degraded)
+
+    def __bool__(self) -> bool:
+        return bool(self._degraded)
+
+
 class ScriptRunner(Protocol):
     """Runs an atomic script against the shared counter store."""
 

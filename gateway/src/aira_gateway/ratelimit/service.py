@@ -20,6 +20,7 @@ from aira_common.logging import get_logger
 from aira_gateway.db.models import RateLimitRead
 from aira_gateway.ratelimit.buckets import BucketRequest, TokenBucket
 from aira_gateway.ratelimit.errors import RateLimited
+from aira_gateway.scopes import Scope
 
 _log = get_logger("aira_gateway.ratelimit")
 
@@ -90,24 +91,22 @@ class RateLimitService:
         for record in records:
             if not record.enabled or record.limit_rpm <= 0:
                 continue
-            if record.scope == "use_case":
-                buckets.append(
-                    BucketRequest(
-                        key=bucket_key(use_case),
-                        capacity=_capacity(record),
-                        refill_per_second=record.limit_rpm / 60,
-                        label="use case",
-                    )
+            scope = Scope.applying(
+                scope=record.scope,
+                use_case=use_case,
+                subject=record.subject,
+                caller=subject,
+            )
+            if scope is None:
+                continue
+            buckets.append(
+                BucketRequest(
+                    key=scope.bucket_key,
+                    capacity=_capacity(record),
+                    refill_per_second=record.limit_rpm / 60,
+                    label=scope.label,
                 )
-            elif record.scope == "member" and subject and record.subject == subject:
-                buckets.append(
-                    BucketRequest(
-                        key=bucket_key(use_case, subject),
-                        capacity=_capacity(record),
-                        refill_per_second=record.limit_rpm / 60,
-                        label="member",
-                    )
-                )
+            )
         return buckets
 
     async def _config(self, use_case: str) -> list[RateLimitRead]:
@@ -135,14 +134,3 @@ def _capacity(record: RateLimitRead) -> int:
     """Bucket size. An unset burst means the limit itself, so a plain "60 per minute" behaves
     the way someone reading it expects rather than allowing nothing through at once."""
     return record.burst if record.burst and record.burst > 0 else record.limit_rpm
-
-
-def bucket_key(use_case: str, subject: str | None = None) -> str:
-    """The Redis key for a use-case or member bucket.
-
-    The use case sits in a hash tag so that every bucket a single request must pass hashes to the
-    same slot. A multi-key script is what makes the all-or-nothing decision possible, and Redis
-    Cluster refuses one whose keys live on different nodes — so this is what keeps the design
-    valid if the counter store is ever clustered.
-    """
-    return f"rl:{{{use_case}}}:member:{subject}" if subject else f"rl:{{{use_case}}}:uc"

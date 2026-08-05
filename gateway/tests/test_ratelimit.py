@@ -397,3 +397,40 @@ async def test_a_removed_limit_stops_binding(sessionmaker) -> None:
     async with sessionmaker() as session:
         await apply_event(session, "ratelimit.deleted", {"id": 7, "use_case": "uc"})
         assert await session.get(RateLimitRead, 7) is None
+
+
+async def test_a_recovered_store_stops_reporting_the_fallback(sessionmaker) -> None:
+    """Degradation has to end as visibly as it starts.
+
+    A record that is only ever set would leave a gateway reporting a fallback it left behind
+    hours ago — and an operator who learns that the report lags reality stops reading it, which
+    costs more than never having had it.
+    """
+    from aira_common.counters import DegradationLog
+
+    class _Flaky:
+        def __init__(self) -> None:
+            self.down = True
+
+        async def run(self, script, keys, args):  # noqa: ANN001, ANN201
+            if self.down:
+                raise CountersUnavailable("down")
+            return [1, 0, 0]
+
+        async def close(self) -> None:
+            return None
+
+    runner = _Flaky()
+    log = DegradationLog()
+    bucket = FallbackTokenBucket(RedisTokenBucket(runner), InMemoryTokenBucket(FakeClock()), log)
+
+    await bucket.take(_one("k", 5, 1.0))
+    assert bucket.degraded is True
+    assert "rate limiting" in log.features
+
+    runner.down = False
+    await bucket.take(_one("k", 5, 1.0))
+
+    assert bucket.degraded is False
+    assert log.features == {}
+    assert not log

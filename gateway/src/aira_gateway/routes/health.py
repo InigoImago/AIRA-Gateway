@@ -7,6 +7,11 @@ Redis is reported but does **not** fail readiness (ADR-0008): rate limiting and 
 enforcement both degrade to a documented fallback without it, so taking the instance out of
 service would turn a cache outage into an outage. It is still surfaced, because degraded
 operation that nobody can see is indistinguishable from working.
+
+Two different things are reported, deliberately. ``checks.counters`` is a probe — is the store
+reachable *now*. ``fallbacks`` is what each feature last experienced on the request path, and
+names what its fallback costs while it lasts. A probe can succeed while traffic is still being
+served degraded, and a store can be unreachable with no feature having needed it yet.
 """
 
 from __future__ import annotations
@@ -43,13 +48,20 @@ async def readyz(request: Request) -> JSONResponse:
     counters_ok, counters_detail = await _counters_state(request)
     checks["counters"] = {"ok": counters_ok, "detail": counters_detail, "required": False}
 
+    # What the features have actually *experienced*, which the probe above cannot tell you: a
+    # store that answers a ping right now may still have refused the last hundred requests, and
+    # one that is unreachable matters only insofar as some feature had to fall back.
+    degradation = getattr(request.app.state, "degradation", None)
+    fallbacks = degradation.features if degradation is not None else {}
+
     return JSONResponse(
         status_code=200 if ready else 503,
         content={
             "status": "ready" if ready else "not_ready",
             # Degraded is not "not ready": the instance still serves, with the fallbacks in
             # ADR-0008 in force. Anything watching this should alert, not evacuate.
-            "degraded": not counters_ok,
+            "degraded": not counters_ok or bool(fallbacks),
+            "fallbacks": fallbacks,
             "checks": checks,
         },
     )

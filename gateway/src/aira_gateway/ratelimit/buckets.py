@@ -32,7 +32,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
-from aira_common.counters import CountersUnavailable, ScriptRunner
+from aira_common.counters import CountersUnavailable, DegradationLog, ScriptRunner
 
 # Refill, test, take — over every bucket, in one indivisible step. Splitting this into a read and
 # a write, or into one call per bucket, is precisely the race the shared bucket exists to remove.
@@ -204,16 +204,29 @@ class FallbackTokenBucket:
     Per-process buckets are imprecise across instances and still prevent that.
     """
 
-    def __init__(self, shared: TokenBucket, local: TokenBucket) -> None:
+    FEATURE = "rate limiting"
+
+    def __init__(
+        self, shared: TokenBucket, local: TokenBucket, degradation: DegradationLog | None = None
+    ) -> None:
         self._shared = shared
         self._local = local
-        self.degraded = False
+        # `is not None`, not `or`: an empty log is falsy by design (so `if degradation:` reads
+        # as "is anything degraded"), and `or` would quietly swap a caller's log for a private
+        # one at exactly the moment nothing was wrong yet — which is always, at construction.
+        self._degradation = degradation if degradation is not None else DegradationLog()
+
+    @property
+    def degraded(self) -> bool:
+        return self.FEATURE in self._degradation.features
 
     async def take(self, requests: Sequence[BucketRequest]) -> BucketDecision:
         try:
             decision = await self._shared.take(requests)
         except CountersUnavailable:
-            self.degraded = True
+            self._degradation.degraded(
+                self.FEATURE, "per-instance buckets; N instances allow N x the limit"
+            )
             return await self._local.take(requests)
-        self.degraded = False
+        self._degradation.working(self.FEATURE)
         return decision

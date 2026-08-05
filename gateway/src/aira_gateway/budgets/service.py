@@ -34,12 +34,13 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from aira_common.counters import CountersUnavailable
+from aira_common.counters import CountersUnavailable, DegradationLog
 from aira_common.logging import get_logger
 from aira_common.money import format_display
 from aira_gateway.budgets.errors import BudgetExceeded
 from aira_gateway.budgets.ledger import Amounts, BudgetLedger, Limits
 from aira_gateway.db.models import BudgetRead, BudgetUsage
+from aira_gateway.scopes import Scope
 
 _log = get_logger("aira_gateway.budgets")
 
@@ -65,9 +66,16 @@ def _period_key(period: str, now: datetime) -> str:
 
 
 def _scope_key(budget: BudgetRead) -> str:
-    if budget.scope == "use_case":
-        return f"uc:{budget.use_case}"
-    return f"member:{budget.use_case}:{budget.subject}"
+    """The key this budget's consumption is accounted under.
+
+    The subject is passed as its own caller so a member budget resolves to itself: at this point
+    applicability has already been decided by :meth:`_applicable`.
+    """
+    scope = Scope.applying(
+        scope=budget.scope, use_case=budget.use_case, subject=budget.subject, caller=budget.subject
+    )
+    assert scope is not None  # _applicable only returns budgets that bind
+    return scope.usage_key
 
 
 @dataclass(slots=True)
@@ -94,16 +102,22 @@ class Reservation:
 
 
 class BudgetService:
+    FEATURE = "budget enforcement"
+
     def __init__(
         self,
         sessionmaker: async_sessionmaker[AsyncSession],
         *,
         enforce: bool = True,
         ledger: BudgetLedger | None = None,
+        degradation: DegradationLog | None = None,
     ) -> None:
         self._sessionmaker = sessionmaker
         self._enforce = enforce
         self._ledger = ledger
+        # See the note in ratelimit/buckets.py: an empty log is falsy, so `or` would discard
+        # the caller's log every time.
+        self._degradation = degradation if degradation is not None else DegradationLog()
 
     async def guard(
         self,
@@ -131,7 +145,9 @@ class BudgetService:
             if self._ledger is not None:
                 partial = Reservation(budgets=budgets, reserved=amounts, atomic=True)
                 try:
-                    return await self._reserve(session, partial, now)
+                    reserved = await self._reserve(session, partial, now)
+                    self._degradation.working(self.FEATURE)
+                    return reserved
                 except CountersUnavailable:
                     # Redis may have gone away *between* two budgets, leaving the ones already
                     # reserved holding a request that nothing downstream still has a reference
@@ -141,6 +157,10 @@ class BudgetService:
                     # Enforce anyway, the old way: racy, but the alternatives are refusing all
                     # traffic or handing out free spend while a cache is down (FRD-405 §4.3).
                     _log.warning("budget_reservation_degraded", use_case=use_case)
+                    self._degradation.degraded(
+                        self.FEATURE,
+                        "Postgres read-then-book; concurrent requests can overshoot a limit",
+                    )
             await self._check_only(session, budgets, now)
         return Reservation(budgets=budgets, atomic=False)
 
@@ -360,16 +380,17 @@ class BudgetService:
         result = await session.execute(
             select(BudgetRead).where(BudgetRead.use_case == use_case, BudgetRead.enabled.is_(True))
         )
-        budgets: list[BudgetRead] = []
-        for budget in result.scalars():
-            if (
-                budget.scope == "use_case"
-                or budget.scope == "member"
-                and subject
-                and budget.subject == subject
-            ):
-                budgets.append(budget)
-        return budgets
+        return [
+            budget
+            for budget in result.scalars()
+            if Scope.applying(
+                scope=budget.scope,
+                use_case=budget.use_case,
+                subject=budget.subject,
+                caller=subject,
+            )
+            is not None
+        ]
 
     async def _usage(self, session: AsyncSession, scope_key: str, period_key: str) -> _Usage:
         record = await session.get(BudgetUsage, (scope_key, period_key))
