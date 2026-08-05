@@ -17,6 +17,7 @@ from aira_gateway.db.base import Base
 from aira_gateway.db.models import RateLimitRead
 from aira_gateway.ratelimit.buckets import (
     BucketDecision,
+    BucketRequest,
     FallbackTokenBucket,
     InMemoryTokenBucket,
     RedisTokenBucket,
@@ -65,33 +66,38 @@ async def _limit(sessionmaker, **fields) -> None:
         await session.commit()
 
 
+def _one(key: str = "k", capacity: int = 5, refill: float = 1.0) -> list[BucketRequest]:
+    """A single bucket, for the tests that are about the arithmetic rather than the scopes."""
+    return [BucketRequest(key=key, capacity=capacity, refill_per_second=refill, label=key)]
+
+
 # ---- the bucket itself -------------------------------------------------------------------
 
 
 async def test_a_burst_is_allowed_up_to_the_capacity() -> None:
     bucket = InMemoryTokenBucket(FakeClock())
-    allowed = [(await bucket.take("k", 5, 1.0)).allowed for _ in range(5)]
+    allowed = [(await bucket.take(_one("k", 5, 1.0))).allowed for _ in range(5)]
     assert allowed == [True] * 5
 
 
 async def test_the_request_after_the_burst_is_refused() -> None:
     bucket = InMemoryTokenBucket(FakeClock())
     for _ in range(5):
-        await bucket.take("k", 5, 1.0)
-    assert (await bucket.take("k", 5, 1.0)).allowed is False
+        await bucket.take(_one("k", 5, 1.0))
+    assert (await bucket.take(_one("k", 5, 1.0))).allowed is False
 
 
 async def test_the_bucket_refills_over_time() -> None:
     clock = FakeClock()
     bucket = InMemoryTokenBucket(clock)
     for _ in range(5):
-        await bucket.take("k", 5, 1.0)
-    assert (await bucket.take("k", 5, 1.0)).allowed is False
+        await bucket.take(_one("k", 5, 1.0))
+    assert (await bucket.take(_one("k", 5, 1.0))).allowed is False
 
     clock.advance(2.0)  # one token per second
-    assert (await bucket.take("k", 5, 1.0)).allowed is True
-    assert (await bucket.take("k", 5, 1.0)).allowed is True
-    assert (await bucket.take("k", 5, 1.0)).allowed is False
+    assert (await bucket.take(_one("k", 5, 1.0))).allowed is True
+    assert (await bucket.take(_one("k", 5, 1.0))).allowed is True
+    assert (await bucket.take(_one("k", 5, 1.0))).allowed is False
 
 
 async def test_the_bucket_never_refills_past_its_capacity() -> None:
@@ -99,17 +105,17 @@ async def test_the_bucket_never_refills_past_its_capacity() -> None:
     the burst limit would mean nothing after any idle period."""
     clock = FakeClock()
     bucket = InMemoryTokenBucket(clock)
-    await bucket.take("k", 5, 1.0)
+    await bucket.take(_one("k", 5, 1.0))
     clock.advance(86_400)
-    allowed = [(await bucket.take("k", 5, 1.0)).allowed for _ in range(6)]
+    allowed = [(await bucket.take(_one("k", 5, 1.0))).allowed for _ in range(6)]
     assert allowed == [True] * 5 + [False]
 
 
 async def test_retry_after_reflects_the_refill_rate() -> None:
     clock = FakeClock()
     bucket = InMemoryTokenBucket(clock)
-    await bucket.take("k", 1, 0.5)  # one token per two seconds
-    decision = await bucket.take("k", 1, 0.5)
+    await bucket.take(_one("k", 1, 0.5))  # one token per two seconds
+    decision = await bucket.take(_one("k", 1, 0.5))
     assert decision.allowed is False
     assert decision.retry_after_seconds == pytest.approx(2.0)
 
@@ -122,8 +128,8 @@ async def test_retry_after_is_never_zero_seconds() -> None:
 
 async def test_separate_keys_do_not_share_a_bucket() -> None:
     bucket = InMemoryTokenBucket(FakeClock())
-    await bucket.take("a", 1, 1.0)
-    assert (await bucket.take("b", 1, 1.0)).allowed is True
+    await bucket.take(_one("a", 1, 1.0))
+    assert (await bucket.take(_one("b", 1, 1.0))).allowed is True
 
 
 # ---- the fallback ------------------------------------------------------------------------
@@ -143,7 +149,7 @@ async def test_an_unreachable_redis_falls_back_to_the_local_bucket_not_to_allowi
     clock = FakeClock()
     bucket = FallbackTokenBucket(RedisTokenBucket(_BrokenRunner()), InMemoryTokenBucket(clock))
 
-    allowed = [(await bucket.take("k", 2, 1.0)).allowed for _ in range(3)]
+    allowed = [(await bucket.take(_one("k", 2, 1.0))).allowed for _ in range(3)]
 
     assert allowed == [True, True, False]  # still bounded
     assert bucket.degraded is True
@@ -152,13 +158,13 @@ async def test_an_unreachable_redis_falls_back_to_the_local_bucket_not_to_allowi
 async def test_the_shared_bucket_is_used_when_redis_answers() -> None:
     class _Runner:
         async def run(self, script, keys, args):  # noqa: ANN001, ANN201
-            return [0, 1500]
+            return [0, 1500, 1]
 
         async def close(self) -> None:
             return None
 
     bucket = FallbackTokenBucket(RedisTokenBucket(_Runner()), InMemoryTokenBucket(FakeClock()))
-    decision = await bucket.take("k", 5, 1.0)
+    decision = await bucket.take(_one("k", 5, 1.0))
 
     assert decision.allowed is False
     assert decision.retry_after_seconds == pytest.approx(1.5)
@@ -206,6 +212,58 @@ async def test_a_member_limit_only_binds_that_member(sessionmaker) -> None:
         await service.check("uc", "alice")
     assert "member" in exc.value.message
     await service.check("uc", "bob")  # unaffected
+
+
+async def test_a_throttled_member_does_not_drain_the_use_cases_allowance(sessionmaker) -> None:
+    """The guarantee in FR-4, stated the other way round.
+
+    A member being refused must cost the *use case* nothing. Debiting the wide bucket before
+    testing the narrow one turns one throttled member into a denial of service for everyone
+    else in the use case — the opposite of what a per-member limit is for.
+    """
+    await _limit(sessionmaker, id=1, scope="use_case", limit_rpm=600, burst=5)
+    await _limit(sessionmaker, id=2, scope="member", subject="alice", limit_rpm=60, burst=1)
+    service = RateLimitService(sessionmaker, InMemoryTokenBucket(FakeClock()))
+
+    await service.check("uc", "alice")  # her one allowance
+    for _ in range(4):
+        with pytest.raises(RateLimited):
+            await service.check("uc", "alice")  # refused, and must cost the use case nothing
+
+    # The use case had 5; alice legitimately used 1. Four must remain for everyone else.
+    for _ in range(4):
+        await service.check("uc", "bob")
+    with pytest.raises(RateLimited):
+        await service.check("uc", "bob")
+
+
+async def test_nothing_is_debited_when_any_scope_refuses(sessionmaker) -> None:
+    """The same property from the other direction: the narrow bucket must not be charged for a
+    request the wide bucket is going to refuse anyway.
+
+    The use-case bucket is small and refills fast; the member bucket is large and refills so
+    slowly that advancing the clock cannot disguise a wrongful debit.
+    """
+    await _limit(sessionmaker, id=1, scope="use_case", limit_rpm=600, burst=1)  # 10/s, holds 1
+    await _limit(sessionmaker, id=2, scope="member", subject="alice", limit_rpm=6, burst=5)
+    clock = FakeClock()
+    service = RateLimitService(sessionmaker, InMemoryTokenBucket(clock))
+
+    await service.check("uc", "alice")  # takes the single use-case token, and one of alice's five
+    for _ in range(3):
+        with pytest.raises(RateLimited):
+            await service.check("uc", "alice")  # refused by the use case, must not cost alice
+
+    # Alice has four left. Let the use-case bucket refill before each attempt so only her own
+    # allowance is under test.
+    for _ in range(4):
+        clock.advance(0.1)
+        await service.check("uc", "alice")
+
+    clock.advance(0.1)
+    with pytest.raises(RateLimited) as exc:
+        await service.check("uc", "alice")
+    assert "member" in exc.value.message  # her own allowance, not the use case's
 
 
 async def test_both_scopes_apply_and_the_stricter_one_wins(sessionmaker) -> None:

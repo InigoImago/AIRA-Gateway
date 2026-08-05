@@ -27,7 +27,7 @@ from aira_common.counters import build_runner
 from aira_gateway.budgets.ledger import Amounts, BudgetLedger, Limits
 from aira_gateway.budgets.service import BudgetService
 from aira_gateway.db.base import build_sessionmaker
-from aira_gateway.ratelimit.buckets import RedisTokenBucket
+from aira_gateway.ratelimit.buckets import BucketRequest, RedisTokenBucket
 from aira_gateway.ratelimit.service import RateLimitService
 
 from .conftest import GATEWAY_URL
@@ -123,17 +123,41 @@ async def test_the_bucket_refills_on_the_servers_clock(engine, runner) -> None:
     about the rate."""
     slug = f"itest-{uuid.uuid4().hex[:8]}"
     bucket = RedisTokenBucket(runner)
-    key = f"rl:itest:{slug}"
-
     # 2 tokens, refilling at 10/second: exhaust, then wait for one to accrue.
-    assert (await bucket.take(key, 2, 10.0)).allowed
-    assert (await bucket.take(key, 2, 10.0)).allowed
-    refused = await bucket.take(key, 2, 10.0)
+    one = [BucketRequest(key=f"rl:itest:{slug}", capacity=2, refill_per_second=10.0)]
+
+    assert (await bucket.take(one)).allowed
+    assert (await bucket.take(one)).allowed
+    refused = await bucket.take(one)
     assert refused.allowed is False
     assert refused.retry_after_seconds > 0
 
     await asyncio.sleep(0.3)
-    assert (await bucket.take(key, 2, 10.0)).allowed is True
+    assert (await bucket.take(one)).allowed is True
+
+
+async def test_a_refused_scope_does_not_debit_the_other_on_real_redis(runner) -> None:
+    """B1 against the real Lua: the multi-key script must decide over every bucket before
+    debiting any of them, or one throttled member starves the whole use case."""
+    slug = f"itest-{uuid.uuid4().hex[:8]}"
+    bucket = RedisTokenBucket(runner)
+    wide = BucketRequest(key=f"rl:{{{slug}}}:uc", capacity=5, refill_per_second=0.01, label="uc")
+    narrow = BucketRequest(
+        key=f"rl:{{{slug}}}:member:alice", capacity=1, refill_per_second=0.01, label="member"
+    )
+
+    assert (await bucket.take([wide, narrow])).allowed  # alice spends her one
+    for _ in range(4):
+        decision = await bucket.take([wide, narrow])
+        assert decision.allowed is False
+        assert decision.refused is not None and decision.refused.label == "member"
+
+    # The wide bucket had 5 and only one request ever passed, so four must remain for others.
+    allowed = 0
+    for _ in range(5):
+        if (await bucket.take([wide])).allowed:
+            allowed += 1
+    assert allowed == 4
 
 
 # ---- the budget race, on real infrastructure -----------------------------------------------

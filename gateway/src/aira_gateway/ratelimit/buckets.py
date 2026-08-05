@@ -9,6 +9,12 @@ through across a boundary (all of it in the last second of one minute, all of it
 first second of the next) and it cannot tell a short legitimate burst from sustained flooding.
 A bucket expresses the actual intent — bursts are fine, a sustained flood is not.
 
+**A request is weighed against every bucket that applies to it, all or nothing.** A caller may be
+subject to a use-case bucket and a member bucket at once; taking a token from the first before
+discovering the second is empty would charge the whole use case for a request that was refused,
+so one throttled member could starve everybody else. Taking from all of them or from none is
+therefore a property of the interface, not a rule callers are expected to remember.
+
 Two implementations, and the difference matters:
 
 - :class:`RedisTokenBucket` is shared by every gateway instance and does refill-test-take in one
@@ -22,58 +28,88 @@ from __future__ import annotations
 
 import math
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
 from aira_common.counters import CountersUnavailable, ScriptRunner
 
-# Refill, test, take — in one indivisible step. Splitting this into a read and a write is
-# precisely the race the shared bucket exists to remove.
+# Refill, test, take — over every bucket, in one indivisible step. Splitting this into a read and
+# a write, or into one call per bucket, is precisely the race the shared bucket exists to remove.
 #
-# The clock is Redis' own (``TIME``), not the caller's: the instances sharing this bucket do not
+# The clock is Redis' own (``TIME``), not the caller's: the instances sharing these buckets do not
 # share a clock, and letting each one supply its own would make the refill rate depend on which
 # instance happened to serve the request.
-_TAKE_TOKEN = """
-local capacity = tonumber(ARGV[1])
-local refill = tonumber(ARGV[2])
-local ttl = tonumber(ARGV[3])
-
+#
+# Two passes on purpose. The first only *reads* and decides; the second writes. A single pass
+# would have to debit each bucket before knowing whether a later one refuses, which is the defect
+# this shape exists to make impossible.
+_TAKE_TOKENS = """
 local clock = redis.call('TIME')
 local now = tonumber(clock[1]) + tonumber(clock[2]) / 1000000.0
 
-local state = redis.call('HMGET', KEYS[1], 'tokens', 'ts')
-local tokens = tonumber(state[1])
-local ts = tonumber(state[2])
-if tokens == nil or ts == nil then
-  tokens = capacity
-  ts = now
-end
-
-local elapsed = now - ts
-if elapsed < 0 then elapsed = 0 end
-tokens = math.min(capacity, tokens + elapsed * refill)
-
-local allowed = 0
+local tokens = {}
+local allowed = 1
 local retry_ms = 0
-if tokens >= 1 then
-  tokens = tokens - 1
-  allowed = 1
-else
-  retry_ms = math.ceil((1 - tokens) / refill * 1000)
+local refused = 0
+
+for i = 1, #KEYS do
+  local capacity = tonumber(ARGV[(i - 1) * 2 + 1])
+  local refill = tonumber(ARGV[(i - 1) * 2 + 2])
+
+  local state = redis.call('HMGET', KEYS[i], 'tokens', 'ts')
+  local available = tonumber(state[1])
+  local ts = tonumber(state[2])
+  if available == nil or ts == nil then
+    available = capacity
+    ts = now
+  end
+
+  local elapsed = now - ts
+  if elapsed < 0 then elapsed = 0 end
+  available = math.min(capacity, available + elapsed * refill)
+  tokens[i] = available
+
+  if available < 1 then
+    local wait = math.ceil((1 - available) / refill * 1000)
+    if allowed == 1 then refused = i end
+    allowed = 0
+    if wait > retry_ms then retry_ms = wait end
+  end
 end
 
-redis.call('HSET', KEYS[1], 'tokens', tostring(tokens), 'ts', tostring(now))
-redis.call('EXPIRE', KEYS[1], ttl)
-return {allowed, retry_ms}
+-- The accrued refill is written back either way: time passed regardless of the decision. Only
+-- the debit is conditional.
+for i = 1, #KEYS do
+  local capacity = tonumber(ARGV[(i - 1) * 2 + 1])
+  local refill = tonumber(ARGV[(i - 1) * 2 + 2])
+  local available = tokens[i]
+  if allowed == 1 then available = available - 1 end
+  redis.call('HSET', KEYS[i], 'tokens', tostring(available), 'ts', tostring(now))
+  redis.call('EXPIRE', KEYS[i], math.max(60, math.ceil(capacity / refill) + 1))
+end
+
+return {allowed, retry_ms, refused}
 """
 
 
 @dataclass(frozen=True, slots=True)
+class BucketRequest:
+    """One bucket a request must pass, and the terms it is judged on."""
+
+    key: str
+    capacity: int
+    refill_per_second: float
+    label: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class BucketDecision:
-    """Whether the request may proceed, and how long until a token is available if not."""
+    """Whether the request may proceed, how long until it could, and which bucket refused."""
 
     allowed: bool
-    retry_after_seconds: float
+    retry_after_seconds: float = 0.0
+    refused: BucketRequest | None = None
 
     @property
     def retry_after_header(self) -> str:
@@ -82,43 +118,45 @@ class BucketDecision:
         return str(max(1, math.ceil(self.retry_after_seconds)))
 
 
+ALLOWED = BucketDecision(allowed=True)
+
+
 class TokenBucket(Protocol):
-    async def take(self, key: str, capacity: int, refill_per_second: float) -> BucketDecision: ...
-
-
-def _ttl_seconds(capacity: int, refill_per_second: float) -> int:
-    """How long an untouched bucket needs to refill completely.
-
-    Expiring earlier would hand a caller a full bucket sooner than it earned one; expiring later
-    just keeps a key around that is indistinguishable from a fresh one.
-    """
-    if refill_per_second <= 0:
-        return 60
-    return max(60, math.ceil(capacity / refill_per_second) + 1)
+    async def take(self, requests: Sequence[BucketRequest]) -> BucketDecision:
+        """Take one token from **every** bucket, or from none of them."""
+        ...
 
 
 class RedisTokenBucket:
-    """Shared bucket. All gateway instances enforce one limit together."""
+    """Shared buckets. All gateway instances enforce one limit together."""
 
     def __init__(self, runner: ScriptRunner) -> None:
         self._runner = runner
 
-    async def take(self, key: str, capacity: int, refill_per_second: float) -> BucketDecision:
-        """Take a token, or report how long until one is available.
+    async def take(self, requests: Sequence[BucketRequest]) -> BucketDecision:
+        """Take a token from each bucket, or report how long until one is available.
 
         Raises :class:`CountersUnavailable` when Redis cannot be reached — the caller falls back
         to the in-memory bucket rather than letting the request through (FRD-405 §4.3).
         """
-        allowed, retry_ms = await self._runner.run(
-            _TAKE_TOKEN,
-            [key],
-            [capacity, refill_per_second, _ttl_seconds(capacity, refill_per_second)],
+        if not requests:
+            return ALLOWED
+        args: list[str | int | float] = []
+        for request in requests:
+            args.extend((request.capacity, request.refill_per_second))
+        allowed, retry_ms, refused = await self._runner.run(
+            _TAKE_TOKENS, [request.key for request in requests], args
         )
-        return BucketDecision(allowed=bool(int(allowed)), retry_after_seconds=int(retry_ms) / 1000)
+        index = int(refused)
+        return BucketDecision(
+            allowed=bool(int(allowed)),
+            retry_after_seconds=int(retry_ms) / 1000,
+            refused=requests[index - 1] if index else None,
+        )
 
 
 class InMemoryTokenBucket:
-    """Per-process bucket: the fallback while Redis is unreachable, and what unit tests use.
+    """Per-process buckets: the fallback while Redis is unreachable, and what unit tests use.
 
     ``clock`` is injectable so refill over time can be tested without sleeping — a limiter whose
     time-dependent behaviour is only ever exercised at one instant is barely tested at all.
@@ -128,27 +166,42 @@ class InMemoryTokenBucket:
         self._state: dict[str, tuple[float, float]] = {}
         self._clock = clock or time.monotonic
 
-    async def take(self, key: str, capacity: int, refill_per_second: float) -> BucketDecision:
+    async def take(self, requests: Sequence[BucketRequest]) -> BucketDecision:
+        if not requests:
+            return ALLOWED
         now = float(self._clock())  # type: ignore[operator]
-        tokens, ts = self._state.get(key, (float(capacity), now))
-        tokens = min(float(capacity), tokens + max(0.0, now - ts) * refill_per_second)
 
-        if tokens >= 1:
-            self._state[key] = (tokens - 1, now)
-            return BucketDecision(allowed=True, retry_after_seconds=0.0)
+        # Same two passes as the Lua, for the same reason: decide over all of them before
+        # debiting any of them.
+        available: list[float] = []
+        decision = ALLOWED
+        for request in requests:
+            tokens, ts = self._state.get(request.key, (float(request.capacity), now))
+            tokens = min(
+                float(request.capacity),
+                tokens + max(0.0, now - ts) * request.refill_per_second,
+            )
+            available.append(tokens)
+            if tokens < 1 and decision.allowed:
+                wait = (
+                    (1 - tokens) / request.refill_per_second
+                    if request.refill_per_second > 0
+                    else float("inf")
+                )
+                decision = BucketDecision(allowed=False, retry_after_seconds=wait, refused=request)
 
-        self._state[key] = (tokens, now)
-        wait = (1 - tokens) / refill_per_second if refill_per_second > 0 else float("inf")
-        return BucketDecision(allowed=False, retry_after_seconds=wait)
+        for request, tokens in zip(requests, available, strict=True):
+            self._state[request.key] = (tokens - 1 if decision.allowed else tokens, now)
+        return decision
 
 
 class FallbackTokenBucket:
-    """Uses the shared bucket, and the local one whenever the shared one is unreachable.
+    """Uses the shared buckets, and the local ones whenever the shared store is unreachable.
 
     The fallback is not "allow everything". Redis being down coincides with infrastructure
     already under strain, which is the worst moment to stop bounding a runaway caller: one
     client can exhaust the database connection pool and take every other use case down with it.
-    A per-process bucket is imprecise across instances and still prevents that.
+    Per-process buckets are imprecise across instances and still prevent that.
     """
 
     def __init__(self, shared: TokenBucket, local: TokenBucket) -> None:
@@ -156,11 +209,11 @@ class FallbackTokenBucket:
         self._local = local
         self.degraded = False
 
-    async def take(self, key: str, capacity: int, refill_per_second: float) -> BucketDecision:
+    async def take(self, requests: Sequence[BucketRequest]) -> BucketDecision:
         try:
-            decision = await self._shared.take(key, capacity, refill_per_second)
+            decision = await self._shared.take(requests)
         except CountersUnavailable:
             self.degraded = True
-            return await self._local.take(key, capacity, refill_per_second)
+            return await self._local.take(requests)
         self.degraded = False
         return decision
