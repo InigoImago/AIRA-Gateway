@@ -5,6 +5,40 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-05 — Deleting a use case did not withdraw access
+Found while looking for the next piece of work, and verified against the running stack before
+being believed: **24 active API keys were bound to use cases that no longer existed**, and a
+request with such a key answered **HTTP 200**.
+
+Management cascades a use-case deletion in its own database — the foreign keys see to that — but
+publishes only `usecase.deleted`. The gateway's handler removed the use case and its members and
+nothing else, so keys, budgets, rate limits, pipeline configs and usage counters were left
+pointing at nothing. Two consequences, and the first is the serious one: whoever deleted a use
+case believed access had ended when it had not, and a slug created again later silently inherited
+the deleted one's budgets, limits and pipeline.
+
+The handler now cascades. Two asymmetries are deliberate. Keys are **deactivated, not deleted** —
+delivery is at-least-once, so a re-delivered `api_key.created` would otherwise resurrect one, the
+same reason revocation is terminal elsewhere (ADR-0007). And `request_logs` are **kept**: the
+audit trail and the spend history are what a later question about what was spent, and by whom, is
+answered from, so they outlive the use case on purpose (FRD-404 §4.1).
+
+Migration `0011` clears what earlier deletions already left behind, since those never get a second
+`usecase.deleted` event. Applied to the running database: 24 orphaned active keys → 0, orphaned
+budgets and pipelines gone, all 73 request-log rows untouched.
+
+One thing deliberately *not* done: refusing a key at authentication time because its use case is
+unknown. It looks like cheap defence in depth and is not — keys and use cases arrive on different
+Kafka topics with no ordering between them, so a freshly issued key can legitimately reach the
+gateway before the use case it belongs to, and the check would refuse it.
+
+Proved end to end over the real event path: the key answers 200, the tombstone is applied, the
+same key answers 401. Three mutations added (`make mutants` is now 29), including one asserting
+that the request log is *not* deleted — with a local import inside the mutation, so it fails on a
+test rather than on a NameError, which would have counted as caught for the wrong reason.
+
+---
+
 ## 2026-08-05 — Proving the tests can fail (`make mutants`)
 Prompted by the obvious question after the review: the suite was green, coverage was 99%, and
 seven real defects were in there anyway. How?

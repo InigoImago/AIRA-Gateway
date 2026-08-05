@@ -142,7 +142,7 @@ product owner; the reason for the order is recorded so it is not re-litigated la
 | Budget threshold alerting | `FRD-402` follow-up | Today a breach is a 429 and nothing else — nobody is told before the wall is hit. |
 | Membership reconciliation (Keycloak groups ↔ Management) | — | The two sources can drift; nothing detects it. |
 | Pagination | — | No list endpoint or screen paginates. |
-| Read-model tombstones | — | Deleting a use case leaves its budgets/keys in the gateway read-model (31 orphan budget rows observed from e2e runs). |
+| ~~Read-model tombstones~~ | — | **Done (2026-08-05).** Deleting a use case left its keys authenticating and its budgets, limits and pipeline in force; the tombstone now cascades and migration 0011 cleared what earlier deletions had left. |
 
 ---
 

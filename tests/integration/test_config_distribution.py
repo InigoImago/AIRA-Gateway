@@ -24,6 +24,10 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from aira_common.apikeys import generate_api_key
+from aira_gateway.consumer.apply import apply_event
+from aira_gateway.db.base import build_sessionmaker
+
 pytestmark = pytest.mark.integration
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -177,3 +181,49 @@ async def test_an_api_key_event_reaches_the_gateway_and_authenticates(engine: As
                 text("DELETE FROM outbox_outboxevent WHERE key = :key"), {"key": prefix}
             )
         await management.dispose()
+
+
+async def test_deleting_a_use_case_stops_its_key_from_working(engine: AsyncEngine) -> None:
+    """The whole point, over the real event path and the real HTTP surface.
+
+    Before the cascade, a key bound to a deleted use case kept answering 200: whoever deleted the
+    use case believed access had ended, and it had not.
+    """
+    slug = f"itest-{uuid.uuid4().hex[:8]}"
+    async with engine.begin() as connection:
+        await connection.execute(
+            text("INSERT INTO use_cases (slug, name) VALUES (:slug, :slug)"), {"slug": slug}
+        )
+    full, prefix, key_hash = generate_api_key()
+    async with engine.begin() as connection:
+        await connection.execute(
+            text(
+                "INSERT INTO api_keys (id, prefix, key_hash, subject, use_case, label, is_active)"
+                " VALUES (:id, :prefix, :hash, 'itest-tombstone', :slug, 'itest', true)"
+            ),
+            {"id": f"{prefix}-tomb", "prefix": prefix, "hash": key_hash, "slug": slug},
+        )
+
+    import httpx
+    from tests.integration.conftest import GATEWAY_URL
+
+    body = {"contents": [{"role": "user", "parts": [{"text": "hi"}]}]}
+    headers = {"x-goog-api-key": full}
+    async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=20.0) as client:
+        before = await client.post(
+            "/v1beta/models/mock-1:generateContent", json=body, headers=headers
+        )
+        assert before.status_code == 200, "the key must work while its use case exists"
+
+        # The tombstone the gateway receives when Management deletes the use case.
+        sessionmaker = build_sessionmaker(engine)
+        async with sessionmaker() as session:
+            await apply_event(session, "usecase.deleted", {"slug": slug})
+
+        after = await client.post(
+            "/v1beta/models/mock-1:generateContent", json=body, headers=headers
+        )
+
+    assert after.status_code == 401, (
+        f"the key still worked after the deletion ({after.status_code})"
+    )

@@ -262,6 +262,35 @@ MUTATIONS = [
         "            slug: max(1, days or self._default_retention_days)",
         "gateway/tests/test_retention.py gateway/tests/test_store_payloads.py",
     ),
+    Mutation(
+        "M27",
+        "deleting a use case revokes the keys bound to it",
+        "gateway/src/aira_gateway/consumer/apply.py",
+        "    await session.execute("
+        "update(ApiKey).where(ApiKey.use_case == slug).values(is_active=False))",
+        "    pass",
+        "gateway/tests/test_consumer_apply.py",
+    ),
+    Mutation(
+        "M28",
+        "deleting a use case clears its budgets, limits, pipeline and counters",
+        "gateway/src/aira_gateway/consumer/apply.py",
+        "    await session.execute(delete(BudgetRead).where(BudgetRead.use_case == slug))",
+        "    pass",
+        "gateway/tests/test_consumer_apply.py",
+    ),
+    Mutation(
+        "M29",
+        "deleting a use case keeps its request log",
+        "gateway/src/aira_gateway/consumer/apply.py",
+        "    await session.execute(delete(UseCaseRead).where(UseCaseRead.slug == slug))",
+        # The import is local to the mutation: without it this would fail on a NameError, and a
+        # collection error counts as "caught" for entirely the wrong reason.
+        "    from aira_gateway.db.models import RequestLog\n"
+        "    await session.execute(delete(RequestLog).where(RequestLog.use_case == slug))\n"
+        "    await session.execute(delete(UseCaseRead).where(UseCaseRead.slug == slug))",
+        "gateway/tests/test_consumer_apply.py",
+    ),
     # ---- the counter transport -----------------------------------------------------------
     Mutation(
         "M21",

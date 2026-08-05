@@ -13,7 +13,10 @@ from aira_gateway.db.base import build_engine, build_sessionmaker, create_all
 from aira_gateway.db.models import (
     ApiKey,
     BudgetRead,
+    BudgetUsage,
     PipelineConfigRead,
+    RateLimitRead,
+    RequestLog,
     UseCaseMemberRead,
     UseCaseRead,
 )
@@ -50,6 +53,130 @@ async def test_usecase_delete_removes_members(make_session) -> None:
         await apply_event(session, "usecase.deleted", {"slug": "uc"})
     assert await _all(make_session, UseCaseRead) == []
     assert await _all(make_session, UseCaseMemberRead) == []
+
+
+async def test_deleting_a_use_case_revokes_the_keys_bound_to_it(make_session) -> None:
+    """A use case removed in Management must stop being usable in the gateway.
+
+    Management cascades the deletion in its own database but publishes only ``usecase.deleted``,
+    so the gateway is the only place that can clear what hung off it. Left behind, an API key
+    keeps authenticating: whoever deleted the use case believes access ended, and it has not.
+
+    The key is *deactivated* rather than removed, for the same reason revocation is terminal
+    (ADR-0007): delivery is at-least-once, so a re-delivered ``api_key.created`` must not be able
+    to bring it back.
+    """
+    async with make_session() as session:
+        await apply_event(session, "usecase.upserted", {"slug": "uc", "name": "N"})
+        await apply_event(
+            session,
+            "api_key.created",
+            {"prefix": "abc", "key_hash": "h", "subject": "alice", "use_case": "uc"},
+        )
+        await apply_event(session, "usecase.deleted", {"slug": "uc"})
+
+        key = (await session.execute(select(ApiKey).where(ApiKey.prefix == "abc"))).scalar_one()
+        assert key.is_active is False
+
+        # And a replayed creation must not resurrect it.
+        await apply_event(
+            session,
+            "api_key.created",
+            {"prefix": "abc", "key_hash": "h", "subject": "alice", "use_case": "uc"},
+        )
+        key = (await session.execute(select(ApiKey).where(ApiKey.prefix == "abc"))).scalar_one()
+        assert key.is_active is False
+
+
+async def test_deleting_a_use_case_clears_its_configuration(make_session) -> None:
+    """Otherwise a slug created again later silently inherits the old budgets, limits, pipeline
+    and consumption — from a use case whose deletion was somebody's deliberate decision."""
+    async with make_session() as session:
+        await apply_event(session, "usecase.upserted", {"slug": "uc", "name": "N"})
+        await apply_event(
+            session,
+            "budget.upserted",
+            {
+                "id": 1,
+                "use_case": "uc",
+                "scope": "use_case",
+                "period": "month",
+                "limit_requests": 5,
+            },
+        )
+        await apply_event(
+            session,
+            "ratelimit.upserted",
+            {"id": 1, "use_case": "uc", "scope": "use_case", "limit_rpm": 60},
+        )
+        await apply_event(session, "pipeline.upserted", {"use_case": "uc", "steps": []})
+        session.add(
+            BudgetUsage(scope_key="uc:uc", period_key="2026-08", tokens=9, requests=9, cost_nanos=9)
+        )
+        await session.commit()
+
+        await apply_event(session, "usecase.deleted", {"slug": "uc"})
+
+    assert await _all(make_session, BudgetRead) == []
+    assert await _all(make_session, RateLimitRead) == []
+    assert await _all(make_session, PipelineConfigRead) == []
+    assert await _all(make_session, BudgetUsage) == []
+
+
+async def test_deleting_a_use_case_keeps_its_request_log(make_session) -> None:
+    """The audit trail and the spend history outlive the use case on purpose: they are what a
+    later question about what was spent, and by whom, is answered from (FRD-404 §4.1)."""
+    async with make_session() as session:
+        await apply_event(session, "usecase.upserted", {"slug": "uc", "name": "N"})
+        session.add(
+            RequestLog(
+                subject="alice",
+                auth_method="api_key",
+                use_case="uc",
+                api="gemini",
+                operation="generateContent",
+                model="mock-1",
+                status=200,
+                total_tokens=30,
+                cost_nanos=85_000,
+            )
+        )
+        await session.commit()
+
+        await apply_event(session, "usecase.deleted", {"slug": "uc"})
+
+    rows = await _all(make_session, RequestLog)
+    assert len(rows) == 1
+    assert rows[0].cost_nanos == 85_000
+
+
+async def test_a_member_scoped_counter_goes_with_the_use_case(make_session) -> None:
+    async with make_session() as session:
+        await apply_event(session, "usecase.upserted", {"slug": "uc", "name": "N"})
+        session.add(
+            BudgetUsage(
+                scope_key="member:uc:alice",
+                period_key="2026-08",
+                tokens=1,
+                requests=1,
+                cost_nanos=1,
+            )
+        )
+        session.add(
+            BudgetUsage(
+                scope_key="member:other:bob",
+                period_key="2026-08",
+                tokens=1,
+                requests=1,
+                cost_nanos=1,
+            )
+        )
+        await session.commit()
+
+        await apply_event(session, "usecase.deleted", {"slug": "uc"})
+
+    remaining = [row.scope_key for row in await _all(make_session, BudgetUsage)]
+    assert remaining == ["member:other:bob"]  # another use case's counter is untouched
 
 
 async def test_membership_upsert_updates_role_then_remove(make_session) -> None:

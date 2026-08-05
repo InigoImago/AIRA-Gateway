@@ -8,13 +8,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aira_common.money import to_nanos
 from aira_gateway.db.models import (
     ApiKey,
     BudgetRead,
+    BudgetUsage,
     ModelPriceRead,
     PipelineConfigRead,
     RateLimitRead,
@@ -83,6 +84,41 @@ async def _upsert_usecase(session: AsyncSession, payload: dict[str, Any]) -> Non
 
 
 async def _delete_usecase(session: AsyncSession, slug: str) -> None:
+    """Remove a use case and everything that hung off it.
+
+    Management cascades the deletion in its own database but publishes only ``usecase.deleted``,
+    so this is the one place the gateway can learn that the children are gone. Leaving them was a
+    real defect: an API key kept authenticating after its use case had been deleted, so whoever
+    deleted it believed access had ended when it had not — and a slug created again later
+    silently inherited the old budgets, limits and pipeline.
+
+    Two deliberate asymmetries:
+
+    - Keys are **deactivated, not deleted**. Delivery is at-least-once, so a re-delivered
+      ``api_key.created`` would otherwise resurrect one; revocation has to be terminal for the
+      same reason it is in :func:`_upsert_api_key` (ADR-0007).
+    - ``request_logs`` are **kept**. The audit trail and the spend history are what a later
+      question about what was spent, and by whom, is answered from; they outlive the use case on
+      purpose (FRD-404 §4.1). Their payloads still expire on the retention clock.
+
+    This tombstone is the *only* place the check belongs. Refusing a key at authentication time
+    because its use case is unknown looks like cheap defence in depth and is not: keys and use
+    cases arrive on different Kafka topics with no ordering between them, so a freshly issued key
+    can legitimately reach the gateway before the use case it belongs to, and the check would
+    refuse it.
+    """
+    await session.execute(update(ApiKey).where(ApiKey.use_case == slug).values(is_active=False))
+    await session.execute(delete(BudgetRead).where(BudgetRead.use_case == slug))
+    await session.execute(delete(RateLimitRead).where(RateLimitRead.use_case == slug))
+    await session.execute(delete(PipelineConfigRead).where(PipelineConfigRead.use_case == slug))
+    # Usage counters are keyed by scope, not by a foreign key: "uc:<slug>" for the whole use case
+    # and "member:<slug>:<subject>" for each member.
+    await session.execute(
+        delete(BudgetUsage).where(
+            (BudgetUsage.scope_key == f"uc:{slug}")
+            | (BudgetUsage.scope_key.startswith(f"member:{slug}:"))
+        )
+    )
     await session.execute(delete(UseCaseMemberRead).where(UseCaseMemberRead.use_case_slug == slug))
     await session.execute(delete(UseCaseRead).where(UseCaseRead.slug == slug))
 
