@@ -39,6 +39,15 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
   `coverageThresholds` in `angular.json`. `make ci` runs exactly what CI checks, locally.
   Every feature ships with tests. No feature is "done" without tests. Frontend tests assert the
   **rendered DOM and real interactions**, not just component methods.
+- **A green test proves nothing on its own.** It proves the code and the test agree, which they
+  inevitably do when both were written from the same mental model — and line coverage cannot see
+  a *missing requirement*: on 2026-08-05 a review found seven real defects behind a green suite at
+  99% coverage. So: **prove a test can fail.** Break the property, watch it go red, restore.
+  `make mutants` (`tools/mutation_check.py`) does this for the properties worth defending; when
+  you fix a bug, add the mutation that reintroduces it. Two traps that cost real defects here:
+  a stand-in that is more permissive than the thing it replaces (reuse the real method where you
+  can), and a test whose setup never reaches the path it is named after — SQLite enforces no
+  column lengths, and `TestClient` buffers a whole streamed body before you can hang up.
 - **Three test layers**, each for what the layer below cannot see:
   `unit` (hermetic, `make test`) → `tests/integration/` (live stack, `make test-integration`)
   → `e2e/` (real browser, `make test-e2e`). Anything needing a user token belongs in `e2e/`: the

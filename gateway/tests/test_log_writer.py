@@ -164,18 +164,37 @@ async def test_submitting_after_a_full_stop_still_writes(sessionmaker) -> None:
     assert [row.operation for row in await _rows(sessionmaker)] == ["after-stop"]
 
 
+class _RedactorThatFailsOnce:
+    """Fails the first payload it is handed, then behaves.
+
+    The failure has to be produced deliberately rather than by feeding the database something
+    invalid: SQLite does not enforce ``VARCHAR`` lengths, so an over-long value — the obvious
+    way to write this test — is stored happily and the test proves nothing at all.
+    """
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def redact(self, payload: dict) -> dict:  # noqa: ANN001
+        self.calls += 1
+        if self.calls == 1:
+            raise RuntimeError("redaction blew up")
+        return payload
+
+
 async def test_a_failing_write_does_not_kill_the_worker(sessionmaker) -> None:
     """Otherwise one bad row would silently stop every subsequent one from being written."""
-    writer = _writer(sessionmaker, max_queue=8)
+    writer = RequestLogWriter(
+        sessionmaker, GatewaySettings(), _RedactorThatFailsOnce(), max_queue=8
+    )
     await writer.start()
 
-    # 'api' is not nullable, so a row with an over-long value fails on write.
-    await writer.submit(_entry(operation="x" * 100_000))
+    await writer.submit(_entry(operation="doomed"))
     await writer.submit(_entry(operation="fine"))
     await writer.drain()
 
     operations = [row.operation for row in await _rows(sessionmaker)]
-    assert "fine" in operations
+    assert operations == ["fine"], "the bad row must be dropped, and only it"
     await writer.stop()
 
 

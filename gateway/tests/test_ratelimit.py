@@ -368,6 +368,28 @@ async def test_a_limit_arrives_from_management(sessionmaker) -> None:
         stored = await session.get(RateLimitRead, 7)
     assert stored is not None
     assert (stored.limit_rpm, stored.burst) == (120, 20)
+    assert stored.enabled is True
+
+
+async def test_a_limit_arrives_disabled_when_management_says_so(sessionmaker) -> None:
+    """A limit switched off in the UI must not keep binding in the gateway — and one sent
+    without the field must not arrive switched off, which would silently stop enforcing."""
+    async with sessionmaker() as session:
+        await apply_event(
+            session,
+            "ratelimit.upserted",
+            {"id": 8, "use_case": "uc", "scope": "use_case", "limit_rpm": 60, "enabled": False},
+        )
+        await apply_event(
+            session,
+            "ratelimit.upserted",
+            {"id": 9, "use_case": "uc", "scope": "use_case", "subject": "", "limit_rpm": 60},
+        )
+        disabled = await session.get(RateLimitRead, 8)
+        defaulted = await session.get(RateLimitRead, 9)
+
+    assert disabled is not None and disabled.enabled is False
+    assert defaulted is not None and defaulted.enabled is True
 
 
 async def test_a_removed_limit_stops_binding(sessionmaker) -> None:

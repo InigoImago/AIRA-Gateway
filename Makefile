@@ -17,7 +17,7 @@ ENV_EXAMPLE := $(COMPOSE_DIR)/.env.example
 .PHONY: help up up-core down destroy ps logs restart env sync test test-py test-frontend \
         test-integration test-e2e e2e lint lint-py lint-frontend fmt seed seed-reset \
         migrate-gateway kafka-topics relay consume run-gateway run-gateway-oidc run-backend \
-        run-frontend up-full down-full logs-apps build-images ci wait-healthy prune
+        run-frontend up-full down-full logs-apps build-images ci wait-healthy prune mutants
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -83,6 +83,9 @@ test-py: ## Run Python test suites with coverage gate
 
 test-frontend: ## Run Angular unit tests (Vitest, single run) with the coverage gate
 	cd $(FRONTEND_DIR) && npx ng test --watch=false
+
+mutants: ## Break each guarded property on purpose and check the tests notice (see tools/mutation_check.py)
+	uv run python tools/mutation_check.py
 
 test-integration: ## Run server-side integration tests (needs the live stack; see tests/integration)
 	uv run pytest -m integration --no-cov

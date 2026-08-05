@@ -76,6 +76,32 @@ def test_within_budget_records_usage() -> None:
     assert len(recorder.recorded) == 1  # usage recorded once
 
 
+def test_the_reservation_uses_the_caller_s_own_output_bound() -> None:
+    """A caller that bounds its response must be reserved against that bound, not against the
+    installation default. Ignoring it over-reserves by a wide margin on short requests, and a
+    budget that refuses traffic it has room for is as wrong as one that lets too much through."""
+    app = create_app(GatewaySettings(auth_required=False, budget_estimate_output_tokens=4096))
+    recorder = _RecordingBudgets()
+    app.state.budgets = recorder
+
+    body = {**_BODY, "generationConfig": {"maxOutputTokens": 7}}
+    with TestClient(app) as client:
+        client.post("/v1beta/models/mock-1:generateContent", json=body)
+
+    assert recorder.estimates[0].tokens == 7
+
+
+def test_an_unbounded_request_falls_back_to_the_configured_estimate() -> None:
+    app = create_app(GatewaySettings(auth_required=False, budget_estimate_output_tokens=321))
+    recorder = _RecordingBudgets()
+    app.state.budgets = recorder
+
+    with TestClient(app) as client:
+        client.post("/v1beta/models/mock-1:generateContent", json=_BODY)
+
+    assert recorder.estimates[0].tokens == 321
+
+
 def test_stream_records_usage() -> None:
     app = create_app(GatewaySettings(auth_required=False))
     recorder = _RecordingBudgets()

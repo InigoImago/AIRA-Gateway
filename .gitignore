@@ -51,3 +51,4 @@ kafka-data/
 *.swp
 .DS_Store
 Thumbs.db
+.mutation-journal.json

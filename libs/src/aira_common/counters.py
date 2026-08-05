@@ -18,7 +18,7 @@ for a runner and handle :class:`CountersUnavailable` by taking their own decided
 from __future__ import annotations
 
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any, Protocol
 
 from aira_common.logging import get_logger
@@ -73,9 +73,18 @@ class RedisRunner:
     the upload once.
     """
 
-    def __init__(self, url: str, *, connect_timeout: float = 1.0) -> None:
+    def __init__(
+        self,
+        url: str,
+        *,
+        connect_timeout: float = 1.0,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
         self._url = url
         self._connect_timeout = connect_timeout
+        # Injectable so the breaker's *reopening* can be tested and not only its closing. A
+        # breaker that never lets go is indistinguishable, in a green suite, from one that does.
+        self._clock = clock
         self._client: Any | None = None
         self._scripts: dict[str, Any] = {}
         self._unavailable_until = 0.0
@@ -93,7 +102,7 @@ class RedisRunner:
         return self._client
 
     async def run(self, script: str, keys: Sequence[str], args: Sequence[ScriptArg]) -> Any:
-        now = time.monotonic()
+        now = self._clock()
         if now < self._unavailable_until:
             raise CountersUnavailable("Counter store is in a failed state; not retrying yet.")
         try:
@@ -106,7 +115,7 @@ class RedisRunner:
         except CountersUnavailable:
             raise
         except Exception as exc:  # redis errors, DNS, timeouts — all mean "not usable right now"
-            self._unavailable_until = time.monotonic() + RETRY_AFTER_FAILURE_SECONDS
+            self._unavailable_until = self._clock() + RETRY_AFTER_FAILURE_SECONDS
             _log.warning("counters_unavailable", error=str(exc), error_type=type(exc).__name__)
             raise CountersUnavailable(str(exc)) from exc
         self._unavailable_until = 0.0
