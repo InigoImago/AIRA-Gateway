@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 from aira_gateway.app import create_app
 from aira_gateway.auth.principal import Principal
 from aira_gateway.budgets.errors import BudgetExceeded
-from aira_gateway.budgets.service import Reservation
+from aira_gateway.budgets.service import BudgetService, Reservation
 from aira_gateway.config import GatewaySettings
 
 _BODY = {"contents": [{"role": "user", "parts": [{"text": "hi"}]}]}
@@ -26,10 +26,12 @@ class _BlockingBudgets:
         raise BudgetExceeded("Request budget exhausted for use_case (day).")
 
     async def settle(self, reservation, tokens, *, cost_nanos=None, now=None):  # noqa: ANN001, ANN201
-        return None
+        reservation.resolved = True
 
     async def release(self, reservation):  # noqa: ANN001, ANN201
-        return None
+        reservation.resolved = True
+
+    hold = BudgetService.hold
 
 
 class _RecordingBudgets:
@@ -44,11 +46,15 @@ class _RecordingBudgets:
         return Reservation()
 
     async def settle(self, reservation, tokens, *, cost_nanos=None, now=None):  # noqa: ANN001, ANN201
+        reservation.resolved = True
         self.recorded.append(tokens)
         self.costs.append(cost_nanos)
 
     async def release(self, reservation):  # noqa: ANN001, ANN201
+        reservation.resolved = True
         self.released += 1
+
+    hold = BudgetService.hold
 
 
 def test_over_budget_returns_429() -> None:

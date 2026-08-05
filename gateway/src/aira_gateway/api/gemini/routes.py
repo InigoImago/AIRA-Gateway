@@ -28,7 +28,7 @@ from aira_gateway.api.gemini.mapping import (
 from aira_gateway.budgets.errors import BudgetExceeded
 from aira_gateway.budgets.ledger import Amounts
 from aira_gateway.budgets.service import Reservation
-from aira_gateway.core.canonical import CanonicalChunk, CanonicalRequest
+from aira_gateway.core.canonical import CanonicalChunk, CanonicalRequest, CanonicalUsage
 from aira_gateway.persistence.recorder import record_request
 from aira_gateway.pipeline.dispatch import dispatch_with_fallback
 from aira_gateway.pipeline.engine import PipelineEngine
@@ -199,37 +199,38 @@ async def generate(resource: str, request: Request) -> Response:
             return _error(429, exc.message, "RESOURCE_EXHAUSTED")
 
         if method == "generateContent":
-            started = time.monotonic()
-            try:
-                canonical_response = await dispatch_with_fallback(
-                    _registry(request), canonical, fallbacks
+            # `hold` releases the reservation unless it is settled inside the block, so no exit
+            # path — an upstream outage, a pricing lookup that fails, an outright bug — can leave
+            # budget consumed by a request that produced nothing (FRD-405 FR-5).
+            async with request.app.state.budgets.hold(reservation):
+                started = time.monotonic()
+                try:
+                    canonical_response = await dispatch_with_fallback(
+                        _registry(request), canonical, fallbacks
+                    )
+                except UpstreamError as exc:
+                    return _upstream_error(exc)
+                # Priced once, then shared: the budget counters and the audit trail must not be
+                # able to disagree about what a request cost (FRD-403).
+                cost = await request.app.state.pricing.cost_nanos(
+                    canonical_response.model, canonical_response.usage
                 )
-            except UpstreamError as exc:
-                # The request produced nothing chargeable; keeping the reservation would make a
-                # provider outage indistinguishable from having spent the month's budget.
-                await request.app.state.budgets.release(reservation)
-                return _upstream_error(exc)
-            # Priced once, then shared: the budget counters and the audit trail must not be
-            # able to disagree about what a request cost (FRD-403).
-            cost = await request.app.state.pricing.cost_nanos(
-                canonical_response.model, canonical_response.usage
-            )
-            await request.app.state.budgets.settle(
-                reservation, canonical_response.usage.total_tokens, cost_nanos=cost
-            )
-            payload = canonical_to_gemini(canonical_response).model_dump()
-            await record_request(
-                request,
-                operation="generateContent",
-                model=canonical_response.model,
-                status=200,
-                usage=canonical_response.usage,
-                latency_ms=_elapsed_ms(started),
-                request_payload=body,
-                response_payload=payload,
-                cost_nanos=cost,
-            )
-            return JSONResponse(payload)
+                await request.app.state.budgets.settle(
+                    reservation, canonical_response.usage.total_tokens, cost_nanos=cost
+                )
+                payload = canonical_to_gemini(canonical_response).model_dump()
+                await record_request(
+                    request,
+                    operation="generateContent",
+                    model=canonical_response.model,
+                    status=200,
+                    usage=canonical_response.usage,
+                    latency_ms=_elapsed_ms(started),
+                    request_payload=body,
+                    response_payload=payload,
+                    cost_nanos=cost,
+                )
+                return JSONResponse(payload)
         sse = request.query_params.get("alt") == "sse"
         return _stream_response(request, provider, canonical, body, reservation, sse=sse)
 
@@ -293,52 +294,91 @@ def _stream_response(
     """Stream chunks as SSE (`?alt=sse`, for the google-genai SDK) or a JSON array (Gemini REST)."""
 
     async def generate_chunks() -> AsyncIterator[str]:
-        started = time.monotonic()
-        parts: list[str] = []
-        final_usage = None
-        separator = ""
-        # A stream that dies half way still has 200 in its (already sent) headers; the audit
-        # record keeps the real outcome so the log does not claim a success that never happened.
-        status = 200
-        if not sse:
-            yield "["
-        try:
-            async for chunk in provider.stream_generate(canonical):
-                if chunk.usage is not None:
-                    final_usage = chunk.usage
-                parts.append(chunk.text_delta)
-                payload = _chunk_to_gemini(chunk, canonical.model).model_dump_json()
-                if sse:
-                    yield f"data: {payload}\n\n"
-                else:
-                    yield f"{separator}{payload}"
-                    separator = ","
-        except UpstreamError as exc:
-            # Headers are already sent; log and terminate the stream cleanly.
-            status = _UPSTREAM_STATUS_MAP.get(exc.status_code or 0, (502, "UNAVAILABLE"))[0]
-            _log.error(
-                "upstream_stream_error",
-                error=exc.message,
-                status=exc.status_code,
-                model=canonical.model,
-            )
-        if not sse:
-            yield "]"
-        cost = await request.app.state.pricing.cost_nanos(canonical.model, final_usage)
-        await request.app.state.budgets.settle(
-            reservation, final_usage.total_tokens if final_usage else 0, cost_nanos=cost
-        )
-        await record_request(
-            request,
-            operation="streamGenerateContent",
-            model=canonical.model,
-            status=status,
-            usage=final_usage,
-            latency_ms=_elapsed_ms(started),
-            request_payload=body,
-            response_payload={"text": "".join(parts)},
-            cost_nanos=cost,
-        )
+        # The same guarantee as the non-streaming path: whatever ends this generator — the stream
+        # completing, an upstream failure, or the client hanging up — the reservation is resolved.
+        async with request.app.state.budgets.hold(reservation):
+            started = time.monotonic()
+            parts: list[str] = []
+            final_usage = None
+            separator = ""
+            # A stream that dies half way still has 200 in its (already sent) headers; the audit
+            # record keeps the real outcome so the log does not claim a success that never
+            # happened.
+            status = 200
+            try:
+                if not sse:
+                    yield "["
+                try:
+                    async for chunk in provider.stream_generate(canonical):
+                        if chunk.usage is not None:
+                            final_usage = chunk.usage
+                        parts.append(chunk.text_delta)
+                        payload = _chunk_to_gemini(chunk, canonical.model).model_dump_json()
+                        if sse:
+                            yield f"data: {payload}\n\n"
+                        else:
+                            yield f"{separator}{payload}"
+                            separator = ","
+                except UpstreamError as exc:
+                    # Headers are already sent; log and terminate the stream cleanly.
+                    status = _UPSTREAM_STATUS_MAP.get(exc.status_code or 0, (502, "UNAVAILABLE"))[0]
+                    _log.error(
+                        "upstream_stream_error",
+                        error=exc.message,
+                        status=exc.status_code,
+                        model=canonical.model,
+                    )
+                if not sse:
+                    yield "]"
+            finally:
+                # Runs when the client hangs up too. The upstream was called either way, so the
+                # request has to be accounted for and logged rather than vanishing from both.
+                await _finish_stream(
+                    request,
+                    reservation,
+                    model=canonical.model,
+                    body=body,
+                    text="".join(parts),
+                    usage=final_usage,
+                    status=status,
+                    started=started,
+                )
 
     media_type = "text/event-stream" if sse else "application/json"
     return StreamingResponse(generate_chunks(), media_type=media_type)
+
+
+async def _finish_stream(
+    request: Request,
+    reservation: Reservation,
+    *,
+    model: str,
+    body: dict[str, Any],
+    text: str,
+    usage: CanonicalUsage | None,
+    status: int,
+    started: float,
+) -> None:
+    """Account for a finished stream and write its audit row.
+
+    A stream that reported no usage produced nothing chargeable, so it is *released* rather than
+    settled — settling would still book one request, and a use case with a request limit would
+    lose allowance to an upstream outage. Anything that did produce output is settled with what
+    it actually used, including a stream that died half way.
+    """
+    cost = await request.app.state.pricing.cost_nanos(model, usage)
+    if usage is None:
+        await request.app.state.budgets.release(reservation)
+    else:
+        await request.app.state.budgets.settle(reservation, usage.total_tokens, cost_nanos=cost)
+    await record_request(
+        request,
+        operation="streamGenerateContent",
+        model=model,
+        status=status,
+        usage=usage,
+        latency_ms=_elapsed_ms(started),
+        request_payload=body,
+        response_payload={"text": text},
+        cost_nanos=cost,
+    )

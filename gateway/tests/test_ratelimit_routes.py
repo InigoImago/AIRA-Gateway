@@ -5,15 +5,44 @@ route's contract with a client: the status, the ``Retry-After`` header, and the 
 request which failed upstream gives its reservation back.
 """
 
+from fastapi import Request
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
+from aira_gateway.api.gemini.routes import _stream_response
 from aira_gateway.app import create_app
-from aira_gateway.budgets.service import Reservation
+from aira_gateway.auth.attribution import Attribution
+from aira_gateway.budgets.service import BudgetService, Reservation
 from aira_gateway.config import GatewaySettings
+from aira_gateway.core.canonical import CanonicalMessage, CanonicalRequest, Role
+from aira_gateway.db.models import RequestLog
 from aira_gateway.ratelimit.errors import RateLimited
 from aira_gateway.upstreams.base import ProviderRegistry, UpstreamError, UpstreamModel
 
 _BODY = {"contents": [{"role": "user", "parts": [{"text": "hi"}]}]}
+
+
+def _canonical() -> CanonicalRequest:
+    return CanonicalRequest(
+        model="mock-1",
+        messages=[CanonicalMessage(role=Role.USER, text="hi")],
+    )
+
+
+def _stream_request(app) -> Request:  # noqa: ANN001
+    """A minimal ASGI request carrying the app state the streaming path reads."""
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/v1beta/models/mock-1:streamGenerateContent",
+        "headers": [],
+        "query_string": b"",
+        "app": app,
+        "client": ("127.0.0.1", 1234),
+    }
+    request = Request(scope)
+    request.state.attribution = Attribution(subject="demo", method="demo", use_case=None)
+    return request
 
 
 class _AlwaysLimited:
@@ -45,10 +74,17 @@ class _TrackingBudgets:
         return Reservation()
 
     async def settle(self, reservation, tokens, *, cost_nanos=None, now=None):  # noqa: ANN001, ANN201
+        reservation.resolved = True
         self.settled += 1
 
     async def release(self, reservation):  # noqa: ANN001, ANN201
+        reservation.resolved = True
         self.released += 1
+
+    # The real `hold` is reused rather than re-implemented: a hand-written copy of the
+    # release-unless-resolved contract in a test double is exactly how a double drifts away from
+    # the thing it stands in for.
+    hold = BudgetService.hold
 
 
 def test_over_the_rate_limit_returns_429_with_retry_after() -> None:
@@ -93,6 +129,93 @@ def test_a_failed_upstream_releases_the_reservation() -> None:
     assert response.status_code == 503
     assert budgets.released == 1
     assert budgets.settled == 0
+
+
+class _BoomProvider:
+    """Fails with something that is *not* an UpstreamError — a bug, not an outage."""
+
+    def models(self) -> list[UpstreamModel]:
+        return [UpstreamModel("mock-1", "mock-1", ("generateContent",))]
+
+    async def generate(self, request):  # noqa: ANN001, ANN201
+        raise RuntimeError("a defect nobody anticipated")
+
+    async def stream_generate(self, request):  # noqa: ANN001, ANN201
+        raise RuntimeError("a defect nobody anticipated")
+        yield  # pragma: no cover  (make this an async generator)
+
+    async def embed(self, model, text):  # noqa: ANN001, ANN201
+        raise RuntimeError("a defect nobody anticipated")
+
+
+def test_an_unexpected_error_also_releases_the_reservation() -> None:
+    """Only releasing on UpstreamError leaves a reservation behind for every other failure —
+    a malformed upstream body, a pricing lookup that hits a database hiccup, an outright bug.
+    The budget would then shrink with each defect until the period rolled over."""
+    app = create_app(GatewaySettings(auth_required=False))
+    app.state.providers = ProviderRegistry([_BoomProvider()])
+    budgets = _TrackingBudgets()
+    app.state.budgets = budgets
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        response = client.post("/v1beta/models/mock-1:generateContent", json=_BODY)
+
+    assert response.status_code == 500
+    assert budgets.released == 1
+    assert budgets.settled == 0
+
+
+def test_a_failed_stream_releases_rather_than_charging_for_nothing() -> None:
+    """A stream that produced no output consumed nothing. Settling would still book a request
+    against a request-limited budget, so a provider outage would eat the allowance."""
+    app = create_app(GatewaySettings(auth_required=False))
+    app.state.providers = ProviderRegistry([_FailingProvider()])
+    budgets = _TrackingBudgets()
+    app.state.budgets = budgets
+
+    url = "/v1beta/models/mock-1:streamGenerateContent"
+    with TestClient(app) as client, client.stream("POST", url, json=_BODY) as response:
+        response.read()
+
+    assert budgets.released == 1
+    assert budgets.settled == 0
+
+
+async def test_a_client_that_disconnects_mid_stream_does_not_leak_the_reservation() -> None:
+    """The settlement and the audit row sat after the streaming loop with nothing guarding them,
+    so a client hanging up skipped both: the reservation stayed and the request vanished from the
+    log despite having reached the upstream.
+
+    Driven through the response's own iterator and closed explicitly, because going through
+    ``TestClient`` buffers the whole body before the test can hang up — the test would then pass
+    without ever reaching the path it is about.
+    """
+    app = create_app(GatewaySettings(auth_required=False, log_queue_size=0))
+    budgets = _TrackingBudgets()
+    app.state.budgets = budgets
+
+    with TestClient(app):  # runs the lifespan so app.state is complete
+        request = _stream_request(app)
+        response = _stream_response(
+            request,
+            app.state.providers.provider_for("mock-1"),
+            _canonical(),
+            _BODY,
+            Reservation(),
+            sse=False,
+        )
+        iterator = response.body_iterator
+        await iterator.__anext__()  # one chunk, then the client goes away
+        await iterator.aclose()
+
+        assert budgets.settled + budgets.released == 1, "the reservation must be accounted for"
+
+        # And the request must still appear in the audit log. The upstream was called, so a
+        # client hanging up must not make the request disappear from the record.
+        async with app.state.db_sessionmaker() as session:
+            rows = list((await session.execute(select(RequestLog))).scalars())
+        assert len(rows) == 1, "a disconnected stream must still be logged"
+        assert rows[0].operation == "streamGenerateContent"
 
 
 def test_a_successful_request_settles_rather_than_releases() -> None:

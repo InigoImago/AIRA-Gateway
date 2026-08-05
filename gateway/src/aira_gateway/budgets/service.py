@@ -25,6 +25,8 @@ as integer nano-units throughout — see ``aira_common.money`` for why never as 
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -75,12 +77,17 @@ class Reservation:
     ``atomic`` records whether the shared counter store actually held the reservation. When it
     did not, the request was admitted by the fallback path and there is nothing to correct in
     Redis — only Postgres to book.
+
+    ``resolved`` records that the outcome has been accounted for, by either settling or
+    releasing. :meth:`BudgetService.hold` uses it to guarantee that no exit path can leave a
+    reservation behind, and it also makes a double resolution a no-op.
     """
 
     budgets: list[BudgetRead] = field(default_factory=list)
     reserved: Amounts = Amounts()
     period_keys: dict[int, str] = field(default_factory=dict)
     atomic: bool = False
+    resolved: bool = False
 
     def __bool__(self) -> bool:
         return bool(self.budgets)
@@ -193,6 +200,27 @@ class BudgetService:
                     _BREACH_MESSAGES[breached].format(scope=budget.scope, period=budget.period)
                 )
 
+    @asynccontextmanager
+    async def hold(self, reservation: Reservation) -> AsyncIterator[Reservation]:
+        """Guarantee that a reservation is resolved, whatever happens inside the block.
+
+        Releasing at each failure site was one `except` clause short of correct: only
+        ``UpstreamError`` was handled, so a malformed upstream body, a database hiccup in the
+        pricing lookup or any outright bug left the reservation behind — and a budget that
+        shrinks a little with every defect is one nobody can reason about. Making the guarantee
+        structural means a future exit path cannot forget it.
+        """
+        try:
+            yield reservation
+        finally:
+            if not reservation.resolved:
+                try:
+                    await self.release(reservation)
+                except Exception as exc:  # cleanup must not replace the original failure
+                    _log.error(
+                        "budget_release_failed", error=str(exc), error_type=type(exc).__name__
+                    )
+
     async def settle(
         self,
         reservation: Reservation,
@@ -206,6 +234,7 @@ class BudgetService:
         Postgres receives the actual consumption; the shared counter is moved by the difference
         between what was reserved and what was really used, so it converges on the same total.
         """
+        reservation.resolved = True
         if not reservation.budgets:
             return
         now = now or datetime.now(UTC)
@@ -226,6 +255,7 @@ class BudgetService:
         Without this an upstream failure would consume budget permanently, so a provider outage
         would look to a use case exactly like having spent its month.
         """
+        reservation.resolved = True
         if not reservation.atomic or self._ledger is None:
             return
         await self._move(reservation, reservation.reserved.negated())
