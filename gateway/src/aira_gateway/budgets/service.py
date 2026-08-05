@@ -129,9 +129,15 @@ class BudgetService:
             if not budgets:
                 return Reservation()
             if self._ledger is not None:
+                partial = Reservation(budgets=budgets, reserved=amounts, atomic=True)
                 try:
-                    return await self._reserve(session, budgets, amounts, now)
+                    return await self._reserve(session, partial, now)
                 except CountersUnavailable:
+                    # Redis may have gone away *between* two budgets, leaving the ones already
+                    # reserved holding a request that nothing downstream still has a reference
+                    # to. Handing them back is what stops a counter being inflated by a request
+                    # that will never be settled or released.
+                    await self.release(partial)
                     # Enforce anyway, the old way: racy, but the alternatives are refusing all
                     # traffic or handing out free spend while a cache is down (FRD-405 §4.3).
                     _log.warning("budget_reservation_degraded", use_case=use_case)
@@ -139,28 +145,27 @@ class BudgetService:
         return Reservation(budgets=budgets, atomic=False)
 
     async def _reserve(
-        self,
-        session: AsyncSession,
-        budgets: list[BudgetRead],
-        amounts: Amounts,
-        now: datetime,
+        self, session: AsyncSession, reservation: Reservation, now: datetime
     ) -> Reservation:
         """Atomically reserve against every applicable budget.
 
         A budget that refuses undoes the reservations already made for *this* request before
         raising. Leaving them in place would let a refused request permanently consume headroom
         on the budgets it did clear.
+
+        The reservation is passed in rather than created here so the caller still holds it if
+        this raises part-way through — otherwise the reservations already made become
+        unreachable, which is exactly how a counter ends up inflated with nobody able to clear it.
         """
         assert self._ledger is not None
-        reservation = Reservation(budgets=budgets, reserved=amounts, atomic=True)
-        for budget in budgets:
+        amounts = reservation.reserved
+        for budget in reservation.budgets:
             scope_key = _scope_key(budget)
             period_key = _period_key(budget.period, now)
             seed = await self._usage(session, scope_key, period_key)
             breached = await self._ledger.reserve(
                 scope_key,
                 period_key,
-                budget.period,
                 limits=Limits(
                     tokens=budget.limit_tokens,
                     requests=budget.limit_requests,
@@ -175,6 +180,7 @@ class BudgetService:
                     _BREACH_MESSAGES[breached].format(scope=budget.scope, period=budget.period)
                 )
             reservation.period_keys[budget.id] = period_key
+        reservation.resolved = False  # reserved; the outcome is still open
         return reservation
 
     async def _check_only(
@@ -267,11 +273,12 @@ class BudgetService:
             if period_key is None:
                 continue  # never reserved against this budget (the one that refused)
             try:
-                await self._ledger.adjust(
-                    _scope_key(budget), period_key, budget.period, amounts=amounts
-                )
+                await self._ledger.adjust(_scope_key(budget), period_key, amounts=amounts)
             except CountersUnavailable:
-                # Postgres already holds the truth; the counter reseeds from it on the next miss.
+                # The counter keeps this request's estimate for now. It cannot be repaired from
+                # here — the store holding the stale figure is the store that is unreachable —
+                # but the damage is bounded: the counter expires well before its period does and
+                # is rebuilt from Postgres, which has the settled figure (COUNTER_TTL_SECONDS).
                 _log.warning("budget_adjust_degraded", budget_id=budget.id)
 
     async def record(

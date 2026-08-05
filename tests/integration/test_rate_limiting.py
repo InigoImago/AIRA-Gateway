@@ -247,7 +247,6 @@ async def test_the_ledger_reports_which_limit_refused(engine, runner) -> None:
         await ledger.reserve(
             key,
             "2026-08",
-            "month",
             limits=Limits(requests=1, cost_nanos=10),
             amounts=Amounts(requests=1, cost_nanos=1),
             seed=Amounts(),
@@ -257,7 +256,6 @@ async def test_the_ledger_reports_which_limit_refused(engine, runner) -> None:
     breached = await ledger.reserve(
         key,
         "2026-08",
-        "month",
         limits=Limits(requests=1, cost_nanos=10),
         amounts=Amounts(requests=1, cost_nanos=1),
         seed=Amounts(),

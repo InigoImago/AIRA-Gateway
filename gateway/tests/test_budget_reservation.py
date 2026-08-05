@@ -21,7 +21,7 @@ from sqlalchemy.pool import StaticPool
 from aira_common.counters import CountersUnavailable
 from aira_common.money import to_nanos
 from aira_gateway.budgets.errors import BudgetExceeded
-from aira_gateway.budgets.ledger import Amounts, BudgetLedger
+from aira_gateway.budgets.ledger import COUNTER_TTL_SECONDS, Amounts, BudgetLedger
 from aira_gateway.budgets.service import BudgetService
 from aira_gateway.db.base import Base
 from aira_gateway.db.models import BudgetRead, BudgetUsage
@@ -278,6 +278,88 @@ async def test_redis_failing_between_reserve_and_settle_still_books_postgres(
 
     usage = await _usage(sessionmaker)
     assert usage is not None and (usage.tokens, usage.cost_nanos) == (33, 44)
+
+
+class FlakyRunner:
+    """Works for ``ok_calls``, then fails, then works again after ``recover_after`` failures.
+
+    Models the case the fallback is written for: Redis is not gone for good, it is gone for the
+    moment — which is exactly when a half-made reservation has to be handed back.
+    """
+
+    def __init__(self, inner: FakeRunner, ok_calls: int, recover_after: int = 10**9) -> None:
+        self._inner = inner
+        self._remaining = ok_calls
+        self._failures = 0
+        self._recover_after = recover_after
+
+    async def run(self, script, keys, args):  # noqa: ANN001, ANN201
+        if self._remaining <= 0 and self._failures < self._recover_after:
+            self._failures += 1
+            raise CountersUnavailable("down")
+        self._remaining = max(self._remaining - 1, 0)
+        return await self._inner.run(script, keys, args)
+
+    async def close(self) -> None:
+        await self._inner.close()
+
+
+async def test_redis_failing_between_two_budgets_gives_back_what_it_already_took(
+    sessionmaker, runner
+) -> None:
+    """Two applicable budgets is the ordinary case — a use-case budget plus a member one.
+
+    If the first reservation succeeds and Redis then disappears, the request falls back to the
+    Postgres path. The reservation already made must be handed back rather than becoming
+    unreachable, because nothing downstream holds a reference to it any more.
+    """
+    await _budget(sessionmaker, id=1, limit_requests=10)
+    await _budget(sessionmaker, id=2, scope="member", subject="alice", limit_requests=10)
+    # Reserve on the first budget, fail on the second, then let the rollback through.
+    flaky = FlakyRunner(runner, ok_calls=1, recover_after=1)
+    service = BudgetService(sessionmaker, ledger=BudgetLedger(flaky))
+
+    reservation = await service.guard("uc", "alice", NOW, estimated=Amounts(requests=1))
+
+    assert reservation.atomic is False  # admitted by the fallback path
+    counter = await runner._client.hgetall("budget:uc:uc:2026-08")
+    assert int(counter.get("requests", 0)) == 0, f"the first reservation was left behind: {counter}"
+
+
+async def test_a_counter_expires_long_before_its_budget_period_does(sessionmaker, runner) -> None:
+    """The self-healing property, and the reason the fix is a short lifetime rather than a repair.
+
+    A correction that cannot reach Redis cannot be repaired from Redis either — the store holding
+    the stale figure is the store that is unreachable. What bounds the damage is that the counter
+    is rebuilt from Postgres regularly, so a drifted figure cannot survive to the end of the
+    month and refuse traffic Postgres says has room for.
+    """
+    await _budget(sessionmaker, limit_cost_nanos=to_nanos("100.00"))
+    service = BudgetService(sessionmaker, ledger=BudgetLedger(runner))
+
+    await service.guard(
+        "uc", "alice", NOW, estimated=Amounts(tokens=5000, requests=1, cost_nanos=to_nanos("9.00"))
+    )
+
+    ttl = await runner._client.ttl("budget:uc:uc:2026-08")
+    assert 0 < ttl <= COUNTER_TTL_SECONDS
+    assert COUNTER_TTL_SECONDS < 24 * 3600, "a day-long counter would outlive a daily budget"
+
+
+async def test_a_rebuilt_counter_takes_the_settled_figure_from_postgres(
+    sessionmaker, runner
+) -> None:
+    """What makes the short lifetime safe: the rebuild is not a reset."""
+    await _budget(sessionmaker, limit_requests=5)
+    service = BudgetService(sessionmaker, ledger=BudgetLedger(runner))
+    reservation = await service.guard("uc", "alice", NOW, estimated=Amounts(requests=1))
+    await service.settle(reservation, 10, cost_nanos=20, now=NOW)
+
+    await runner._client.delete("budget:uc:uc:2026-08")  # the counter expires
+
+    await service.guard("uc", "alice", NOW, estimated=Amounts(requests=1))
+    counter = await runner._client.hgetall("budget:uc:uc:2026-08")
+    assert int(counter["requests"]) == 2  # the settled one from Postgres, plus this reservation
 
 
 # ---- unchanged behaviour ------------------------------------------------------------------

@@ -12,7 +12,9 @@ the request fails it is released in full.
 
 **Redis is a cache here, never the record.** The counter is seeded from ``budget_usage`` on a
 miss, and Postgres continues to receive the authoritative figure after every request. Losing
-Redis therefore costs the reservations currently in flight — not the period's accounting.
+Redis therefore costs the reservations currently in flight — not the period's accounting. The
+counter also expires long before its budget period does, so any drift it picks up is corrected by
+being rebuilt rather than carried to the end of the month.
 """
 
 from __future__ import annotations
@@ -79,8 +81,20 @@ redis.call('EXPIRE', key, ARGV[4])
 return 1
 """
 
-# A counter must outlive the period it belongs to; beyond that it only occupies memory.
-_TTL_SECONDS = {"day": 2 * 24 * 3600, "month": 40 * 24 * 3600}
+# How long a counter is trusted before it is rebuilt from Postgres.
+#
+# Deliberately far shorter than the budget period. A counter can drift: if the correction after a
+# request cannot reach Redis, the key keeps that request's (deliberately high) estimate, and a key
+# that exists is never reseeded — so a long-lived counter would refuse traffic for the rest of the
+# month against a figure Postgres does not share. Letting it expire makes the drift self-healing
+# instead of permanent, and costs nothing: every reservation already reads the Postgres figure to
+# seed with, so a rebuild is not an extra query.
+#
+# The trade is that reservations still in flight when a counter expires are forgotten, briefly
+# reopening the race for whatever is in flight at that instant. Requests outlive this window only
+# exceptionally, and a rare under-count of one estimate is a far better failure than a permanent
+# over-count nobody can clear.
+COUNTER_TTL_SECONDS = 300
 
 NO_LIMIT = -1
 
@@ -120,7 +134,6 @@ class BudgetLedger:
         self,
         scope_key: str,
         period_key: str,
-        period: str,
         *,
         limits: Limits,
         amounts: Amounts,
@@ -145,22 +158,15 @@ class BudgetLedger:
                 NO_LIMIT if limits.tokens is None else limits.tokens,
                 NO_LIMIT if limits.requests is None else limits.requests,
                 NO_LIMIT if limits.cost_nanos is None else limits.cost_nanos,
-                _TTL_SECONDS.get(period, _TTL_SECONDS["month"]),
+                COUNTER_TTL_SECONDS,
             ],
         )
         return breached or None
 
-    async def adjust(
-        self, scope_key: str, period_key: str, period: str, *, amounts: Amounts
-    ) -> None:
+    async def adjust(self, scope_key: str, period_key: str, *, amounts: Amounts) -> None:
         """Move a counter by ``amounts`` — a correction after settling, or a release."""
         await self._runner.run(
             _ADJUST,
             [_key(scope_key, period_key)],
-            [
-                amounts.tokens,
-                amounts.requests,
-                amounts.cost_nanos,
-                _TTL_SECONDS.get(period, _TTL_SECONDS["month"]),
-            ],
+            [amounts.tokens, amounts.requests, amounts.cost_nanos, COUNTER_TTL_SECONDS],
         )
