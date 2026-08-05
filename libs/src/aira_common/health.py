@@ -11,6 +11,8 @@ import asyncio
 import contextlib
 from dataclasses import dataclass
 
+from aira_common.logging import get_logger
+
 
 @dataclass(frozen=True, slots=True)
 class CheckResult:
@@ -36,6 +38,16 @@ async def tcp_reachable(host: str, port: int, *, timeout: float = 1.0) -> bool:
 
 
 async def check_tcp(name: str, host: str, port: int, *, timeout: float = 1.0) -> CheckResult:
-    """Run :func:`tcp_reachable` and wrap the outcome in a :class:`CheckResult`."""
+    """Run :func:`tcp_reachable` and wrap the outcome in a :class:`CheckResult`.
+
+    ``/readyz`` is unauthenticated, so the failure detail names only the dependency, never the
+    host and port it lives on — internal topology is not something a probe should hand out
+    (ADR-0007). The full address goes to the service log instead.
+    """
     ok = await tcp_reachable(host, port, timeout=timeout)
-    return CheckResult(name=name, ok=ok, detail=None if ok else f"{host}:{port} unreachable")
+    if ok:
+        return CheckResult(name=name, ok=True, detail=None)
+    get_logger("aira_common.health").warning(
+        "dependency_unreachable", dependency=name, host=host, port=port
+    )
+    return CheckResult(name=name, ok=False, detail="unreachable")

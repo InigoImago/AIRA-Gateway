@@ -1,8 +1,9 @@
-"""Pipeline dry-run endpoint (FRD-306) — unauthenticated builder utility."""
+"""Pipeline dry-run endpoint (FRD-306) — authenticated builder utility (ADR-0007)."""
 
 from fastapi.testclient import TestClient
 
 from aira_gateway.app import create_app
+from aira_gateway.auth.keys import DEMO_API_KEY
 from aira_gateway.config import GatewaySettings
 from aira_gateway.core.canonical import CanonicalRequest, CanonicalResponse, CanonicalUsage
 from aira_gateway.pipeline.engine import PipelineEngine
@@ -34,14 +35,18 @@ class _Classifier:
         return [0.0]
 
 
-def _client(*providers: object) -> TestClient:
-    # auth_required is on, proving the dry-run endpoint is deliberately unauthenticated.
-    app = create_app(GatewaySettings(auth_required=True))
+def _app(*providers: object):  # noqa: ANN202
+    # Demo mode seeds the deterministic demo key so the authenticated calls below have one.
+    app = create_app(GatewaySettings(auth_required=True, demo_mode=True))
     if providers:
         registry = ProviderRegistry(list(providers))
         app.state.providers = registry
         app.state.pipeline_engine = PipelineEngine(registry)
-    return TestClient(app)
+    return app
+
+
+def _client(*providers: object) -> TestClient:
+    return TestClient(_app(*providers), headers={"x-goog-api-key": DEMO_API_KEY})
 
 
 def test_dryrun_blocks_injection() -> None:
@@ -105,4 +110,17 @@ def test_dryrun_invalid_json() -> None:
 def test_dryrun_validation_error() -> None:
     with _client() as client:
         resp = client.post(_URL, json={"pipeline": "notadict"})
+    assert resp.status_code == 400
+
+
+def test_dryrun_requires_authentication() -> None:
+    """The dry-run runs real (LLM) steps against the providers — it must not be open."""
+    with TestClient(_app()) as client:
+        resp = client.post(_URL, json={"user": "hello", "pipeline": {}})
+    assert resp.status_code == 401
+
+
+def test_dryrun_rejects_oversized_sample() -> None:
+    with _client() as client:
+        resp = client.post(_URL, json={"user": "x" * 9_000, "pipeline": {}})
     assert resp.status_code == 400

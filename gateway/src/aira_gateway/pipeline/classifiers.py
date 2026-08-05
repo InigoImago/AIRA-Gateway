@@ -25,6 +25,15 @@ BUILTIN_INJECTION_PATTERNS: tuple[str, ...] = (
 )
 
 
+# Operator-supplied patterns are attacker-adjacent input for a shared process: a pathological
+# regex can backtrack exponentially and stall a worker. Management rejects obviously unsafe
+# patterns at authoring time; here we bound how much work a single scan can ever cost
+# (ADR-0007). Both limits are deliberately far above any legitimate configuration.
+MAX_CUSTOM_PATTERNS = 64
+MAX_PATTERN_LENGTH = 256
+MAX_SCANNED_CHARS = 20_000
+
+
 @runtime_checkable
 class InjectionClassifier(Protocol):
     async def is_injection(self, text: str) -> bool: ...
@@ -43,11 +52,13 @@ class HeuristicInjectionClassifier:
 
     def __init__(self, extra_patterns: tuple[str, ...] = (), *, use_builtins: bool = True) -> None:
         patterns = list(BUILTIN_INJECTION_PATTERNS) if use_builtins else []
-        patterns += [p for p in extra_patterns if p]
+        extras = [p for p in extra_patterns if p and len(p) <= MAX_PATTERN_LENGTH]
+        patterns += extras[:MAX_CUSTOM_PATTERNS]
         self._compiled = [_compile(pattern) for pattern in patterns]
 
     async def is_injection(self, text: str) -> bool:
-        return any(pattern.search(text) for pattern in self._compiled)
+        scanned = text[:MAX_SCANNED_CHARS]
+        return any(pattern.search(scanned) for pattern in self._compiled)
 
 
 DEFAULT_INJECTION_INSTRUCTION = (

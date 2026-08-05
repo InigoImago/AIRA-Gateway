@@ -127,6 +127,17 @@ async def test_api_key_revoked_stops_verification(make_session) -> None:
         assert await ApiKeyService(session).verify(full) is None
 
 
+async def test_replayed_created_event_does_not_resurrect_a_revoked_key(make_session) -> None:
+    """Delivery is at-least-once: a re-delivered `created` must not undo a revocation."""
+    full, prefix, key_hash = keys.generate_api_key()
+    async with make_session() as session:
+        await apply_event(session, "api_key.created", _created_event(prefix, key_hash))
+        await apply_event(session, "api_key.revoked", {"prefix": prefix})
+        await apply_event(session, "api_key.created", _created_event(prefix, key_hash))
+    async with make_session() as session:
+        assert await ApiKeyService(session).verify(full) is None
+
+
 async def test_api_key_revoked_unknown_prefix_is_noop(make_session) -> None:
     async with make_session() as session:
         await apply_event(session, "api_key.revoked", {"prefix": "deadbeef"})

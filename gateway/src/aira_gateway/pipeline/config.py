@@ -11,6 +11,11 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
+# Defence in depth: Management validates configs at authoring time, but the gateway also
+# refuses to build an unbounded pipeline out of whatever the read-model happens to contain.
+MAX_STEPS = 32
+MAX_FALLBACK_MODELS = 16
+
 
 class StepType(StrEnum):
     INJECTION_FILTER = "injection_filter"
@@ -36,11 +41,16 @@ class Pipeline:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Pipeline:
         steps: list[PipelineStep] = []
-        for raw in data.get("steps", []):
+        for raw in list(data.get("steps", []))[:MAX_STEPS]:
             try:
                 step_type = StepType(raw["type"])
-            except KeyError, ValueError:
+            except KeyError, ValueError, TypeError:
                 continue  # forward-compatible: skip unknown/malformed steps
-            steps.append(PipelineStep(type=step_type, config=raw.get("config", {})))
-        fallbacks = tuple(str(m) for m in data.get("fallback_models", []) if m)
+            config = raw.get("config", {})
+            steps.append(
+                PipelineStep(type=step_type, config=config if isinstance(config, dict) else {})
+            )
+        fallbacks = tuple(
+            str(m) for m in list(data.get("fallback_models", []))[:MAX_FALLBACK_MODELS] if m
+        )
         return cls(steps=tuple(steps), fallback_models=fallbacks)

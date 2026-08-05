@@ -121,3 +121,11 @@ def test_build_validator_disabled() -> None:
 def test_build_validator_enabled() -> None:
     validator = build_oidc_validator(GatewaySettings(oidc_enabled=True, oidc_issuer=ISSUER))
     assert validator is not None
+
+
+def test_build_validator_with_audience_skips_the_warning() -> None:
+    """An explicit audience is the configuration we want; no warning path is taken."""
+    validator = build_oidc_validator(
+        GatewaySettings(oidc_enabled=True, oidc_issuer=ISSUER, oidc_audience="aira-gateway")
+    )
+    assert validator is not None

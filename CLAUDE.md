@@ -137,8 +137,19 @@ DELETE /use-cases/{slug}/budgets` (scope use_case|member, period day|month, toke
 post-dispatch `record` increments the `budget_usage` counters (keyed by scope+period, resets at
 day/month boundaries; migration 0006; `enforce_budgets` toggle). `FRD-402` done — **Budgets tab** in
 the use-case detail: set use-case/member limits + see consumption bars; usage from gateway
-`GET /v1beta/usage/{use_case}` (`/gw` proxy). **Phase 4 (Budgets & Quotas) complete.** Next candidates:
-Phase 5 (anomaly/IT-Security), `FRD-307` (model catalog), `FRD-106` (OpenAI surface). See `docs/DEVLOG.md`.
+`GET /v1beta/usage/{use_case}` (`/gw` proxy). **Phase 4 (Budgets & Quotas) complete.**
+**Security hardening pass (`ADR-0007`, no new features)** — closed authorization gaps (dry-run +
+usage endpoints now authenticated; API-key issuance requires **membership**, not just visibility;
+Django users bound to the Keycloak `sub` via `OidcIdentity`), safe defaults (management refuses to
+boot outside `local` with dev `SECRET_KEY`/`DEBUG`/`ALLOWED_HOSTS=*`; security headers; `X-Forwarded-For`
+only via `AIRA_TRUST_FORWARDED_FOR`; `?key=` redacted from spans; revocation terminal in the read-model;
+`seed_demo` local/demo only), and input bounds (body ceiling `AIRA_MAX_REQUEST_BYTES`; slug-validated
+use-case selector; pipeline-config bounds + **nested-quantifier regexes rejected** — ReDoS). Frontend:
+`requireHttps: 'remoteOnly'`, CSP, encoded URL segments, bearer scoped to `/api` + `/gw`. Keycloak dev
+realm: pinned redirect URIs/web origins, password grant off. **The SPA's dry-run/consumption views now
+need `AIRA_OIDC_ENABLED` on the gateway** (see `.env.example`); both degrade gracefully without it.
+Next candidates: Phase 5 (anomaly/IT-Security), `FRD-307` (model catalog), `FRD-106` (OpenAI surface),
+per-caller rate limiting. See `docs/DEVLOG.md`.
 
 ## 7. Working agreement
 - Confirm scope via PRD/FRD before large changes; work phase by phase.

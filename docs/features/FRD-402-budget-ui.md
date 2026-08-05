@@ -11,7 +11,9 @@ consumption** against them, with a threshold warning.
 - CRUD via `UseCaseService` (`budgets` list/create/delete) → FRD-400 endpoints.
 - **Consumption**: the gateway exposes current usage per scope+period; the SPA reads it (via `/gw`
   proxy or a management passthrough) and renders progress bars (used / limit) with a colour when a
-  configurable threshold (e.g. 80%) is crossed.
+  configurable threshold (e.g. 80%) is crossed. Since ADR-0007 `GET /v1beta/usage/{use_case}`
+  requires an authenticated caller entitled to that use case; when the gateway does not accept the
+  SPA's token the tab still renders the configured limits, without consumption.
 - Admin edits; members read.
 
 ## 3. Testing & Acceptance

@@ -16,12 +16,22 @@
     {
       "clientId": "aira-gateway",
       "name": "AIRA Gateway (dev)",
+      "description": "Public SPA client. Redirect URIs and web origins are pinned to the local dev hosts: a wildcard on a public client lets an attacker redirect the authorization code to a site they control (ADR-0007). Add your own origin here rather than widening it back to '*'.",
       "enabled": true,
       "publicClient": true,
-      "directAccessGrantsEnabled": true,
+      "directAccessGrantsEnabled": false,
       "standardFlowEnabled": true,
-      "redirectUris": ["*"],
-      "webOrigins": ["*"],
+      "redirectUris": [
+        "http://localhost:4200/*",
+        "http://127.0.0.1:4200/*"
+      ],
+      "webOrigins": [
+        "http://localhost:4200",
+        "http://127.0.0.1:4200"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
       "protocolMappers": [
         {
           "name": "groups",

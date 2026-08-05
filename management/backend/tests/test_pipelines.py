@@ -176,3 +176,87 @@ def test_str_representation() -> None:
     uc = _make_uc(admin, "demo-uc")
     config = PipelineConfig.objects.create(use_case=uc)
     assert str(config) == "pipeline for demo-uc"
+
+
+# ---- config bounds (ADR-0007) --------------------------------------------------------------
+
+
+def _save(steps=None, fallback_models=None):
+    admin = _user("admin1", "use-case-admin")
+    _make_uc(admin, "demo-uc")
+    return _client(admin).put(
+        f"{BASE}demo-uc/pipeline/",
+        {"steps": steps or [], "fallback_models": fallback_models or []},
+        format="json",
+    )
+
+
+def test_rejects_catastrophic_backtracking_pattern() -> None:
+    """A nested quantifier could stall a gateway worker on every request of the use case."""
+    resp = _save([{"type": "injection_filter", "config": {"patterns": ["(a+)+$"]}}])
+    assert resp.status_code == 400
+    assert "nests quantifiers" in str(resp.json())
+
+
+def test_accepts_ordinary_custom_pattern() -> None:
+    resp = _save([{"type": "injection_filter", "config": {"patterns": ["internal[- ]secret"]}}])
+    assert resp.status_code == 200
+
+
+def test_accepts_invalid_regex_as_literal() -> None:
+    resp = _save([{"type": "injection_filter", "config": {"patterns": ["unbalanced("]}}])
+    assert resp.status_code == 200
+
+
+def test_rejects_too_many_steps() -> None:
+    resp = _save([{"type": "allow_check", "config": {}}] * 40)
+    assert resp.status_code == 400
+
+
+def test_rejects_overlong_pattern() -> None:
+    resp = _save([{"type": "injection_filter", "config": {"patterns": ["x" * 300]}}])
+    assert resp.status_code == 400
+
+
+def test_rejects_too_many_patterns() -> None:
+    resp = _save([{"type": "injection_filter", "config": {"patterns": ["a"] * 100}}])
+    assert resp.status_code == 400
+
+
+def test_rejects_non_list_patterns() -> None:
+    resp = _save([{"type": "injection_filter", "config": {"patterns": "a"}}])
+    assert resp.status_code == 400
+
+
+def test_rejects_overlong_instruction() -> None:
+    resp = _save([{"type": "injection_filter", "config": {"instruction": "x" * 5000}}])
+    assert resp.status_code == 400
+
+
+def test_rejects_too_many_allowed_models() -> None:
+    resp = _save([{"type": "allow_check", "config": {"models": ["m"] * 100}}])
+    assert resp.status_code == 400
+
+
+def test_rejects_too_many_categories() -> None:
+    categories = [{"name": f"c{i}", "model": "m"} for i in range(40)]
+    resp = _save([{"type": "model_route", "config": {"categories": categories}}])
+    assert resp.status_code == 400
+
+
+def test_rejects_non_object_category() -> None:
+    resp = _save([{"type": "model_route", "config": {"categories": ["nope"]}}])
+    assert resp.status_code == 400
+
+
+def test_rejects_overlong_category_name() -> None:
+    resp = _save([{"type": "model_route", "config": {"categories": [{"name": "x" * 5000}]}}])
+    assert resp.status_code == 400
+
+
+def test_rejects_too_many_fallback_models() -> None:
+    assert _save([], [f"m{i}" for i in range(20)]).status_code == 400
+
+
+def test_rejects_overlong_fallback_model_name() -> None:
+    assert _save([], ["x" * 200]).status_code == 400

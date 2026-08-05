@@ -7,6 +7,7 @@ against the caller's Keycloak group membership. Membership groups live under
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 
@@ -15,6 +16,16 @@ from fastapi import Request
 USE_CASE_GROUP_PREFIX = "/use-cases/"
 USE_CASE_HEADER = "x-aira-use-case"
 USE_CASE_PATH_KEY = "aira_use_case_path"
+
+# A client-supplied selector must look like a Management use-case slug (same charset and length
+# as ``UseCase.slug``). Rejecting anything else keeps unvalidated client input out of the audit
+# log, the read-model lookups, and the trace attributes (ADR-0007).
+_SLUG = re.compile(r"^[a-z0-9-]{1,64}$")
+
+
+def is_valid_use_case(slug: str) -> bool:
+    """True if ``slug`` is a syntactically valid use-case identifier."""
+    return bool(_SLUG.match(slug))
 
 
 @dataclass(frozen=True, slots=True)

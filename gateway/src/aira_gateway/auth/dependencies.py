@@ -10,7 +10,7 @@ from fastapi import Depends, Request
 
 from aira_common.observability import set_span_attributes
 from aira_gateway.api.gemini.errors import GeminiHTTPError
-from aira_gateway.auth.attribution import Attribution, resolve_use_case
+from aira_gateway.auth.attribution import Attribution, is_valid_use_case, resolve_use_case
 from aira_gateway.auth.credentials import extract_token
 from aira_gateway.auth.keys import is_aira_key
 from aira_gateway.auth.oidc import OidcValidator
@@ -54,23 +54,41 @@ async def require_principal(request: Request) -> Principal:
     return principal
 
 
+def authorize_use_case(principal: Principal, use_case: str) -> None:
+    """Raise 403 unless ``principal`` may act on ``use_case``.
+
+    OIDC principals must be members (Keycloak group). An API key issued by Management is bound
+    to exactly one use case and may only touch that one; an unbound key (the CLI break-glass
+    key, minted by an operator with DB access) is not restricted. Demo principals exist only
+    when authentication is switched off entirely.
+    """
+    if principal.method == "oidc" and use_case not in principal.use_cases:
+        raise GeminiHTTPError(403, f"Not a member of use case '{use_case}'.", "PERMISSION_DENIED")
+    if principal.method == "api_key" and principal.use_cases and use_case != principal.use_cases[0]:
+        raise GeminiHTTPError(
+            403, f"API key is bound to use case '{principal.use_cases[0]}'.", "PERMISSION_DENIED"
+        )
+
+
+def require_valid_use_case(use_case: str) -> str:
+    """Return ``use_case`` if it is a syntactically valid slug, else raise a 400."""
+    if not is_valid_use_case(use_case):
+        raise GeminiHTTPError(400, "Invalid use case identifier.", "INVALID_ARGUMENT")
+    return use_case
+
+
 async def require_attribution(
     request: Request, principal: Principal = Depends(require_principal)
 ) -> Attribution:
     """Resolve + authorize the use case and attach an Attribution to ``request.state``."""
     use_case = resolve_use_case(request)
+    if use_case is not None:
+        require_valid_use_case(use_case)
 
     # An API key issued by Management is bound to exactly one use case (FRD-205): it needs no
-    # selector, and a selector that disagrees with the binding is rejected. Unbound keys
-    # (demo/CLI break-glass) fall through to the selector-based path below.
-    if principal.method == "api_key" and principal.use_cases:
-        bound = principal.use_cases[0]
-        if use_case is None:
-            use_case = bound
-        elif use_case != bound:
-            raise GeminiHTTPError(
-                403, f"API key is bound to use case '{bound}'.", "PERMISSION_DENIED"
-            )
+    # selector. Unbound keys (demo/CLI break-glass) fall through to the selector-based path.
+    if principal.method == "api_key" and principal.use_cases and use_case is None:
+        use_case = principal.use_cases[0]
 
     if use_case is None:
         if request.app.state.settings.require_use_case and principal.method != "demo":
@@ -79,8 +97,8 @@ async def require_attribution(
                 "Missing use case (X-AIRA-Use-Case header or /uc/<use-case> path).",
                 "INVALID_ARGUMENT",
             )
-    elif principal.method == "oidc" and use_case not in principal.use_cases:
-        raise GeminiHTTPError(403, f"Not a member of use case '{use_case}'.", "PERMISSION_DENIED")
+    else:
+        authorize_use_case(principal, use_case)
 
     attribution = Attribution(subject=principal.subject, method=principal.method, use_case=use_case)
     request.state.attribution = attribution

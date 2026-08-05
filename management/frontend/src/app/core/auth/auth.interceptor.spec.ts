@@ -23,6 +23,18 @@ describe('authInterceptor', () => {
     expect(runInterceptor('/api/v1/me', 'tok').headers.get('Authorization')).toBe('Bearer tok');
   });
 
+  it('adds the bearer token to /gw gateway requests', () => {
+    expect(runInterceptor('/gw/v1beta/usage/demo-uc', 'tok').headers.get('Authorization')).toBe(
+      'Bearer tok',
+    );
+  });
+
+  it('leaves third-party requests untouched', () => {
+    expect(
+      runInterceptor('https://evil.example/collect', 'tok').headers.get('Authorization'),
+    ).toBeNull();
+  });
+
   it('leaves non-api requests untouched', () => {
     expect(runInterceptor('/assets/logo.png', 'tok').headers.get('Authorization')).toBeNull();
   });

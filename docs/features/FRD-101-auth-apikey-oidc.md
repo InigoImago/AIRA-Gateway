@@ -53,8 +53,9 @@ API-key store), which FRD-103 (persistence) will build on.
 - **FR-6 Credential extraction** (precedence): `Authorization: Bearer <jwt-or-key>` →
   `x-goog-api-key: <key>` → `?key=<key>`. A `Bearer` value that is an AIRA key (`aira_…`) is treated
   as an API key; otherwise as a JWT.
-- **FR-7 Auth dependency**: guards all Gemini routes; returns Gemini-shaped 401 on failure. Health
-  endpoints remain unauthenticated.
+- **FR-7 Auth dependency**: guards all Gemini routes; returns Gemini-shaped 401 on failure. Since
+  ADR-0007 it also guards the pipeline dry-run and the usage endpoint. Only the health endpoints
+  (`/healthz`, `/readyz`) remain unauthenticated.
 - **FR-8 Demo/open toggle**: `auth_required` (default **true**). When false (pure demo) routes are
   open and a synthetic `demo` principal is used. Demo mode also **seeds a deterministic demo key**.
 - **FR-9 CLI**: `python -m aira_gateway.cli api-key create --subject … [--label …]` prints the new

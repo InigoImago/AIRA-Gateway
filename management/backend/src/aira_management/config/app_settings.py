@@ -10,6 +10,10 @@ from __future__ import annotations
 
 from aira_common.config import BaseAiraSettings
 
+# The well-known development signing key. ``config.security`` refuses to start any non-local
+# environment that is still using it.
+DEV_SECRET_KEY = "dev-insecure-secret-key-change-me"  # noqa: S105
+
 
 class ManagementSettings(BaseAiraSettings):
     """Configuration for the Management backend service."""
@@ -17,7 +21,7 @@ class ManagementSettings(BaseAiraSettings):
     app_name: str = "aira-management"
 
     # Django core (dev defaults; real secrets come from Vault)
-    secret_key: str = "dev-insecure-secret-key-change-me"  # noqa: S105
+    secret_key: str = DEV_SECRET_KEY
     debug: bool = True
     allowed_hosts: str = "*"
 

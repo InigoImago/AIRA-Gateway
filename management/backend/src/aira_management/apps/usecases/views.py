@@ -131,6 +131,18 @@ class UseCaseViewSet(viewsets.ModelViewSet[UseCase]):
         user = self.request.user
         return has_role(user, Role.GLOBAL_ADMIN) or user.has_perm(_MANAGE, usecase)
 
+    def _is_member(self, usecase: UseCase) -> bool:
+        """True if the caller is an actual member of the use case (or a global admin).
+
+        Deliberately *not* the same as "may see it": the governance roles (global-admin,
+        it-steuerung) get organisation-wide read visibility through ``scope_queryset``, and
+        read visibility must never imply the right to act inside a use case (ADR-0007).
+        """
+        user: Any = self.request.user
+        if has_role(user, Role.GLOBAL_ADMIN):
+            return True
+        return UseCaseMembership.objects.filter(use_case=usecase, user=user).exists()
+
     @action(detail=True, methods=["get", "post"])
     def members(self, request: Request, slug: str | None = None) -> Response:
         usecase = self.get_object()
@@ -175,14 +187,18 @@ class UseCaseViewSet(viewsets.ModelViewSet[UseCase]):
     def api_keys(self, request: Request, slug: str | None = None) -> Response:
         """List keys, or issue a new one bound to this use case (FRD-205).
 
-        Any member who can view the use case may issue a key (bound to it, owned by them).
-        The plaintext is returned **once**; only its hash is stored and distributed.
+        A **member** of the use case may issue a key (bound to it, owned by them); the
+        plaintext is returned **once** and only its hash is stored and distributed. Being able
+        to *see* a use case is not enough — an API key is data-plane access, so the oversight
+        roles, which see every use case, must not be able to mint one (ADR-0007).
         """
         usecase = self.get_object()
         if request.method == "GET":
             keys = ApiKey.objects.filter(use_case=usecase).select_related("owner")
             return Response(ApiKeySerializer(keys, many=True).data)
 
+        if not self._is_member(usecase):
+            raise PermissionDenied("Only members of this use case may issue API keys.")
         payload = IssueApiKeySerializer(data=request.data)
         payload.is_valid(raise_exception=True)
         label = payload.validated_data["label"]

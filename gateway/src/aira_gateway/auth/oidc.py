@@ -6,6 +6,7 @@ gateway :class:`Principal` (subject + use-case membership from Keycloak groups).
 
 from __future__ import annotations
 
+from aira_common.logging import get_logger
 from aira_common.oidc import JwtVerifier, SigningKeyResolver, build_jwks_client
 from aira_gateway.auth.attribution import usecases_from_groups
 from aira_gateway.auth.principal import Principal
@@ -42,6 +43,14 @@ def build_oidc_validator(settings: GatewaySettings) -> OidcValidator | None:
     """Build an OidcValidator from settings, or None when OIDC is disabled/unconfigured."""
     if not settings.oidc_enabled or not settings.oidc_issuer:
         return None
+    if not settings.oidc_audience:
+        # Without an audience, *any* token the realm issued — including one minted for an
+        # unrelated client — is accepted here. Fine locally, a real weakness in production.
+        get_logger("aira_gateway").warning(
+            "oidc_audience_unset",
+            issuer=settings.oidc_issuer,
+            detail="Set AIRA_OIDC_AUDIENCE so tokens issued for other clients are rejected.",
+        )
     return OidcValidator(
         issuer=settings.oidc_issuer,
         audience=settings.oidc_audience,

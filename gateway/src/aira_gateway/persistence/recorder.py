@@ -17,12 +17,19 @@ from aira_gateway.persistence.service import RequestLogService
 
 
 def client_ip(request: Request) -> str | None:
-    """Return the client IP: first ``X-Forwarded-For`` hop if present, else the socket peer."""
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        first = forwarded.split(",")[0].strip()
-        if first:
-            return first
+    """Return the client IP for the audit trail (FRD-105, PRD FR-GW-9).
+
+    ``X-Forwarded-For`` is honoured **only** when ``trust_forwarded_for`` is set — i.e. when the
+    gateway is known to sit behind a reverse proxy that overwrites the header. Trusting it
+    unconditionally would let any client forge its own entry in the audit log (ADR-0007).
+    """
+    settings = request.app.state.settings
+    if settings.trust_forwarded_for:
+        forwarded = request.headers.get("x-forwarded-for")
+        if forwarded:
+            first = forwarded.split(",")[0].strip()
+            if first:
+                return first[:64]
     return request.client.host if request.client else None
 
 

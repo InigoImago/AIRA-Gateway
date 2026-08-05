@@ -45,6 +45,59 @@ describe('UseCaseService', () => {
     req.flush(null);
   });
 
+  it('encodes user-supplied path segments', () => {
+    // A username or slug must never be able to retarget the request at another endpoint.
+    service.removeMember('uc', '../../admin').subscribe();
+    const req = http.expectOne('/api/v1/use-cases/uc/members/..%2F..%2Fadmin/');
+    expect(req.request.method).toBe('DELETE');
+    req.flush(null);
+  });
+
+  it('encodes the slug in gateway usage calls', () => {
+    service.budgetUsage('a/b').subscribe();
+    http.expectOne('/gw/v1beta/usage/a%2Fb').flush({ usage: [] });
+  });
+
+  it('fetches a single use case', () => {
+    service.get('uc').subscribe();
+    http.expectOne('/api/v1/use-cases/uc/').flush({ slug: 'uc', name: 'UC' });
+  });
+
+  it('updates a use case with PATCH', () => {
+    service.update('uc', { name: 'Renamed' }).subscribe();
+    const req = http.expectOne('/api/v1/use-cases/uc/');
+    expect(req.request.method).toBe('PATCH');
+    expect(req.request.body).toEqual({ name: 'Renamed' });
+    req.flush({ slug: 'uc', name: 'Renamed' });
+  });
+
+  it('deletes a use case', () => {
+    service.remove('uc').subscribe();
+    const req = http.expectOne('/api/v1/use-cases/uc/');
+    expect(req.request.method).toBe('DELETE');
+    req.flush(null);
+  });
+
+  it('lists members', () => {
+    service.members('uc').subscribe((members) => expect(members.length).toBe(1));
+    http.expectOne('/api/v1/use-cases/uc/members/').flush([{ username: 'bob', role: 'user' }]);
+  });
+
+  it('dry-runs a pipeline against the gateway', () => {
+    service
+      .dryRunPipeline({ system: '', user: 'hi', pipeline: { steps: [], fallback_models: [] } })
+      .subscribe((result) => expect(result.blocked).toBe(false));
+    const req = http.expectOne('/gw/v1beta/pipeline:dryRun');
+    expect(req.request.method).toBe('POST');
+    req.flush({
+      blocked: false,
+      block_reason: null,
+      effective_model: 'mock-1',
+      fallback_models: [],
+      trace: [],
+    });
+  });
+
   it('lists api keys', () => {
     service.apiKeys('uc').subscribe((keys) => expect(keys.length).toBe(1));
     http

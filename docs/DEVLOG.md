@@ -5,6 +5,42 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-04 — ADR-0007: security hardening pass (gateway, management, frontend)
+Full-codebase security review with no new features — see **ADR-0007** for the findings, the
+options weighed, and the trade-offs.
+
+- **Closed authorization gaps.** `POST /v1beta/pipeline:dryRun` and `GET /v1beta/usage/{use_case}`
+  now require an authenticated principal (usage additionally authorizes the use case) — the
+  dry-run runs real LLM steps with caller-supplied prompts, so open access was a free relay to
+  the upstream. Issuing an API key now requires **membership**, not mere visibility: the
+  oversight roles see every use case and could previously mint a data-plane key for any of them.
+  Django users are bound to the Keycloak `sub` (`OidcIdentity`, api migration 0001, trust-on-
+  first-use for existing accounts) so a re-issued username cannot inherit someone's permissions.
+- **Safe defaults.** Management refuses to boot outside `local` with the dev `SECRET_KEY`,
+  wildcard `ALLOWED_HOSTS`, or `DEBUG`; security headers on by default. `X-Forwarded-For` is
+  only honoured behind a declared proxy (`AIRA_TRUST_FORWARDED_FOR`) — the audit trail was
+  client-forgeable. `?key=` and friends are redacted before the query string reaches a span.
+  Revocation is terminal in the gateway read-model (a replayed `created` no longer resurrects a
+  revoked key). `seed_demo` only runs locally / in demo mode.
+- **Input bounds.** Request-body ceiling (`AIRA_MAX_REQUEST_BYTES`, 8 MiB, enforced before
+  buffering, with or without `Content-Length`); use-case selector validated against the slug
+  charset; pipeline configs bounded and **nested-quantifier regexes rejected** at authoring time,
+  with independent execution bounds in the gateway and the browser preview (ReDoS on the hot path).
+- **Frontend.** `requireHttps: 'remoteOnly'` + strict discovery validation + PKCE explicit,
+  bearer token scoped to first-party prefixes only, every user-supplied URL segment encoded,
+  CSP shipped in `index.html` (scripts same-origin), bounded live preview.
+- **Infra.** Keycloak dev realm: redirect URIs / web origins pinned to the dev hosts (were `*`
+  on a public client) and the password grant disabled. `make kafka-topics` now creates all five
+  compacted topics (three were missing, so api-key/pipeline/budget distribution silently failed
+  on a fresh stack with auto-create off).
+- **Operational note:** the SPA's dry-run and consumption views now need a token the gateway
+  accepts — enable `AIRA_OIDC_ENABLED`/`AIRA_OIDC_ISSUER` (see `.env.example`). Without it both
+  degrade gracefully; nothing else changes.
+- **Gates green**: backend 389 tests / 99.83% coverage, ruff + mypy clean; frontend 30 Vitest
+  tests, Prettier clean, `ng build` OK.
+
+---
+
 ## 2026-08-04 — FRD-402: budget UI (closes Phase 4)
 - Gateway `BudgetService.usage()` + unauthenticated `GET /v1beta/usage/{use_case}` return
   current-period consumption per budget (used tokens/requests).

@@ -3,10 +3,21 @@
 from fastapi.testclient import TestClient
 
 from aira_gateway.app import create_app
+from aira_gateway.auth.principal import Principal
 from aira_gateway.budgets.errors import BudgetExceeded
 from aira_gateway.config import GatewaySettings
 
 _BODY = {"contents": [{"role": "user", "parts": [{"text": "hi"}]}]}
+
+
+class _MemberOf:
+    """Stand-in OIDC validator resolving every token to a member of ``use_case``."""
+
+    def __init__(self, use_case: str) -> None:
+        self._use_case = use_case
+
+    def validate(self, token: str) -> Principal:
+        return Principal(subject="someone", method="oidc", use_cases=(self._use_case,))
 
 
 class _BlockingBudgets:
@@ -71,3 +82,31 @@ def test_usage_endpoint_reports_consumption() -> None:
     body = resp.json()
     assert body["use_case"] == "demo-uc"
     assert body["usage"][0]["used_requests"] == 2
+
+
+def test_usage_endpoint_requires_authentication() -> None:
+    """Consumption is per-use-case operational data, not public (ADR-0007)."""
+    app = create_app(GatewaySettings(auth_required=True))
+    app.state.budgets = _UsageBudgets()
+    with TestClient(app) as client:
+        resp = client.get("/v1beta/usage/demo-uc")
+    assert resp.status_code == 401
+
+
+def test_usage_endpoint_rejects_other_use_case() -> None:
+    app = create_app(GatewaySettings(auth_required=True, demo_mode=True))
+    app.state.budgets = _UsageBudgets()
+    with TestClient(app) as client:
+        # The demo key is unbound, so bind a principal explicitly via a bound key instead:
+        # an OIDC principal that is not a member must be refused.
+        app.state.oidc_validator = _MemberOf("other-uc")
+        resp = client.get("/v1beta/usage/demo-uc", headers={"authorization": "Bearer jwt"})
+    assert resp.status_code == 403
+
+
+def test_usage_endpoint_rejects_invalid_slug() -> None:
+    app = create_app(GatewaySettings(auth_required=False))
+    app.state.budgets = _UsageBudgets()
+    with TestClient(app) as client:
+        resp = client.get("/v1beta/usage/Not%20A%20Slug")
+    assert resp.status_code == 400

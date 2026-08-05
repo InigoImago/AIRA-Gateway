@@ -12,6 +12,13 @@ import {
   UseCase,
 } from './models';
 
+/**
+ * Every value interpolated into a URL is encoded: slugs, usernames, and key prefixes come from
+ * user input, and an unencoded `/` or `..` would silently retarget the request at a different
+ * endpoint (ADR-0007).
+ */
+const seg = (value: string): string => encodeURIComponent(value);
+
 @Injectable({ providedIn: 'root' })
 export class UseCaseService {
   private readonly http = inject(HttpClient);
@@ -22,7 +29,7 @@ export class UseCaseService {
   }
 
   get(slug: string): Observable<UseCase> {
-    return this.http.get<UseCase>(`${this.base}${slug}/`);
+    return this.http.get<UseCase>(`${this.base}${seg(slug)}/`);
   }
 
   create(useCase: Partial<UseCase>): Observable<UseCase> {
@@ -30,43 +37,43 @@ export class UseCaseService {
   }
 
   update(slug: string, changes: Partial<UseCase>): Observable<UseCase> {
-    return this.http.patch<UseCase>(`${this.base}${slug}/`, changes);
+    return this.http.patch<UseCase>(`${this.base}${seg(slug)}/`, changes);
   }
 
   remove(slug: string): Observable<void> {
-    return this.http.delete<void>(`${this.base}${slug}/`);
+    return this.http.delete<void>(`${this.base}${seg(slug)}/`);
   }
 
   members(slug: string): Observable<Membership[]> {
-    return this.http.get<Membership[]>(`${this.base}${slug}/members/`);
+    return this.http.get<Membership[]>(`${this.base}${seg(slug)}/members/`);
   }
 
   addMember(slug: string, username: string, role: string): Observable<Membership> {
-    return this.http.post<Membership>(`${this.base}${slug}/members/`, { username, role });
+    return this.http.post<Membership>(`${this.base}${seg(slug)}/members/`, { username, role });
   }
 
   removeMember(slug: string, username: string): Observable<void> {
-    return this.http.delete<void>(`${this.base}${slug}/members/${username}/`);
+    return this.http.delete<void>(`${this.base}${seg(slug)}/members/${seg(username)}/`);
   }
 
   apiKeys(slug: string): Observable<ApiKey[]> {
-    return this.http.get<ApiKey[]>(`${this.base}${slug}/api-keys/`);
+    return this.http.get<ApiKey[]>(`${this.base}${seg(slug)}/api-keys/`);
   }
 
   issueApiKey(slug: string, label: string): Observable<IssuedApiKey> {
-    return this.http.post<IssuedApiKey>(`${this.base}${slug}/api-keys/`, { label });
+    return this.http.post<IssuedApiKey>(`${this.base}${seg(slug)}/api-keys/`, { label });
   }
 
   revokeApiKey(slug: string, prefix: string): Observable<void> {
-    return this.http.delete<void>(`${this.base}${slug}/api-keys/${prefix}/`);
+    return this.http.delete<void>(`${this.base}${seg(slug)}/api-keys/${seg(prefix)}/`);
   }
 
   getPipeline(slug: string): Observable<PipelineConfig> {
-    return this.http.get<PipelineConfig>(`${this.base}${slug}/pipeline/`);
+    return this.http.get<PipelineConfig>(`${this.base}${seg(slug)}/pipeline/`);
   }
 
   savePipeline(slug: string, config: PipelineConfig): Observable<PipelineConfig> {
-    return this.http.put<PipelineConfig>(`${this.base}${slug}/pipeline/`, config);
+    return this.http.put<PipelineConfig>(`${this.base}${seg(slug)}/pipeline/`, config);
   }
 
   /** Dry-run a (possibly unsaved) pipeline against a sample prompt via the gateway. */
@@ -80,19 +87,19 @@ export class UseCaseService {
   }
 
   budgets(slug: string): Observable<Budget[]> {
-    return this.http.get<Budget[]>(`${this.base}${slug}/budgets/`);
+    return this.http.get<Budget[]>(`${this.base}${seg(slug)}/budgets/`);
   }
 
   createBudget(slug: string, budget: Budget): Observable<Budget> {
-    return this.http.post<Budget>(`${this.base}${slug}/budgets/`, budget);
+    return this.http.post<Budget>(`${this.base}${seg(slug)}/budgets/`, budget);
   }
 
   deleteBudget(slug: string, id: number): Observable<void> {
-    return this.http.delete<void>(`${this.base}${slug}/budgets/${id}/`);
+    return this.http.delete<void>(`${this.base}${seg(slug)}/budgets/${id}/`);
   }
 
   /** Current-period consumption per budget, from the gateway. */
   budgetUsage(slug: string): Observable<{ usage: BudgetUsage[] }> {
-    return this.http.get<{ usage: BudgetUsage[] }>(`/gw/v1beta/usage/${slug}`);
+    return this.http.get<{ usage: BudgetUsage[] }>(`/gw/v1beta/usage/${seg(slug)}`);
   }
 }

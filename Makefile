@@ -59,7 +59,7 @@ test: test-py test-frontend ## Run all test suites (Python + frontend)
 test-py: ## Run Python test suites with coverage gate
 	uv run pytest
 
-test-frontend: ## Run Angular unit tests (Vitest, single run)
+test-frontend: ## Run Angular unit tests (Vitest, single run) with the coverage gate
 	cd $(FRONTEND_DIR) && npx ng test --watch=false
 
 test-integration: ## Run integration tests (needs 'make up'; excluded from default run)
@@ -95,7 +95,7 @@ migrate-gateway: ## Apply gateway DB migrations (Alembic)
 	cd gateway && uv run alembic upgrade head
 
 kafka-topics: ## Create the compacted config-distribution topics (idempotent)
-	@for t in aira.usecases aira.memberships; do \
+	@for t in aira.usecases aira.memberships aira.api-keys aira.pipelines aira.budgets; do \
 		docker exec aira-kafka /opt/kafka/bin/kafka-topics.sh --create --if-not-exists --topic $$t \
 			--bootstrap-server localhost:9092 --partitions 1 --replication-factor 1 \
 			--config cleanup.policy=compact; \

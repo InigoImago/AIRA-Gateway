@@ -95,7 +95,12 @@ async def _remove_member(session: AsyncSession, slug: str, subject: str) -> None
 
 
 async def _upsert_api_key(session: AsyncSession, payload: dict[str, Any]) -> None:
-    """Upsert a Management-issued API key into the read-model, keyed by prefix (FRD-205)."""
+    """Upsert a Management-issued API key into the read-model, keyed by prefix (FRD-205).
+
+    Delivery is at-least-once, so a ``created`` event can be re-delivered *after* the matching
+    ``revoked`` event. Revocation is therefore terminal here: an existing record's metadata is
+    refreshed, but a key that has been deactivated is never brought back to life (ADR-0007).
+    """
     result = await session.execute(select(ApiKey).where(ApiKey.prefix == payload["prefix"]))
     record = result.scalar_one_or_none()
     if record is None:
@@ -114,7 +119,6 @@ async def _upsert_api_key(session: AsyncSession, payload: dict[str, Any]) -> Non
         record.subject = payload.get("subject", "")
         record.use_case = payload.get("use_case")
         record.label = payload.get("label")
-        record.is_active = True
 
 
 async def _set_api_key_active(session: AsyncSession, prefix: str, *, active: bool) -> None:

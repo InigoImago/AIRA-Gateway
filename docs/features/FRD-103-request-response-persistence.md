@@ -15,7 +15,7 @@ detection. This FRD also introduces **Alembic** migrations for the gateway schem
 **Goals**
 - A `request_logs` table capturing metadata + (optionally redacted) request/response payloads.
 - Record on every successful dispatch (generateContent / streamGenerateContent / embedContent).
-- Capture **source IP** (respecting `X-Forwarded-For`), **trace id**, latency, token usage.
+- Capture **source IP** (from a *trusted* `X-Forwarded-For` only), **trace id**, latency, token usage.
 - A pluggable **`Redactor`** hook (default no-op) and a `store_payloads` toggle.
 - **Alembic** migrations for the gateway DB (`api_keys` + `request_logs`).
 
@@ -30,7 +30,9 @@ detection. This FRD also introduces **Alembic** migrations for the gateway schem
   request_payload, response_payload)`.
 - **FR-2 Record on dispatch**: after a successful generate/stream/embed, write one row with the
   attribution from `request.state`, timing, usage, and payloads.
-- **FR-3 Source IP**: first `X-Forwarded-For` hop if present, else the socket peer.
+- **FR-3 Source IP**: the socket peer by default. The first `X-Forwarded-For` hop is used only when
+  `AIRA_TRUST_FORWARDED_FOR` declares that a header-overwriting reverse proxy sits in front —
+  otherwise any client could forge its own entry in the audit trail (ADR-0007).
 - **FR-4 Redaction hook**: `Redactor.redact(payload)` applied to request+response payloads before
   storage; default `NoOpRedactor`. `store_payloads=false` stores metadata only (payloads null).
 - **FR-5 Trace correlation**: store the current `trace_id` (from the OTel span, FRD-001).

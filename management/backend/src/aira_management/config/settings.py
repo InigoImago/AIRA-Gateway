@@ -13,10 +13,14 @@ from aira_common.logging import configure_logging
 from aira_management.config.database import build_databases
 from aira_management.config.observability import setup_observability
 from aira_management.config.runtime import get_settings
+from aira_management.config.security import effective_debug, enforce_safe_settings, is_local
 
 _settings = get_settings()
 configure_logging(_settings.log_level, json_output=_settings.log_json)
 setup_observability(_settings)
+
+# Refuse to boot a non-local deployment that still carries the development defaults (ADR-0007).
+enforce_safe_settings(_settings)
 
 # Typed settings are also reachable via aira_management.config.runtime.get_settings().
 AIRA = _settings
@@ -24,7 +28,7 @@ AIRA = _settings
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = _settings.secret_key
-DEBUG = _settings.debug
+DEBUG = effective_debug(_settings)
 ALLOWED_HOSTS = _settings.allowed_hosts_list
 APPEND_SLASH = False
 
@@ -51,8 +55,22 @@ AUTHENTICATION_BACKENDS = [
 ANONYMOUS_USER_NAME = None
 
 MIDDLEWARE = [
+    "django.middleware.security.SecurityMiddleware",
     "django.middleware.common.CommonMiddleware",
+    "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
+
+# Response hardening (ADR-0007). The API is bearer-authenticated JSON with no cookies, so the
+# relevant controls are the ones that stop a browser from reinterpreting or embedding it.
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_REFERRER_POLICY = "same-origin"
+SECURE_CROSS_ORIGIN_OPENER_POLICY = "same-origin"
+X_FRAME_OPTIONS = "DENY"
+# Ask browsers to stay on HTTPS once they have seen it. Not applied locally (plain HTTP), and
+# deliberately without SECURE_SSL_REDIRECT: TLS termination happens in front of this service,
+# and a redirect here would loop unless the proxy header is also configured.
+SECURE_HSTS_SECONDS = 0 if is_local(_settings) else 31_536_000
+SECURE_HSTS_INCLUDE_SUBDOMAINS = not is_local(_settings)
 
 ROOT_URLCONF = "aira_management.config.urls"
 

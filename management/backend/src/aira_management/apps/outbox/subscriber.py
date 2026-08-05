@@ -1,7 +1,8 @@
 """Subscribe use-case change events into the outbox (FRD-204).
 
-Runs inside the request transaction (ATOMIC_REQUESTS), so an outbox row is committed
-atomically with the change it describes — the event is never lost.
+``emit`` is called from inside the view's ``transaction.atomic()`` block, so the outbox row is
+committed atomically with the change it describes — the event is never lost, and never
+published for a change that rolled back.
 """
 
 from __future__ import annotations

@@ -99,6 +99,32 @@ def set_span_attributes(attributes: Mapping[str, object]) -> None:
             span.set_attribute(key, value)
 
 
+# Query parameters that may carry a credential (the Gemini wire protocol passes API keys as
+# ``?key=``). They must never reach a span attribute, a log line, or an exported trace.
+REDACTED = "REDACTED"
+SENSITIVE_QUERY_PARAMS = frozenset(
+    {"key", "api_key", "apikey", "access_token", "token", "password"}
+)
+
+
+def redact_query_string(query: str) -> str:
+    """Return ``query`` with the values of credential-bearing parameters replaced.
+
+    Order and unknown parameters are preserved so the redacted string stays useful for
+    debugging (e.g. ``alt=sse&key=REDACTED``).
+    """
+    if not query:
+        return query
+    parts: list[str] = []
+    for pair in query.split("&"):
+        name, separator, _value = pair.partition("=")
+        if separator and name.lower() in SENSITIVE_QUERY_PARAMS:
+            parts.append(f"{name}={REDACTED}")
+        else:
+            parts.append(pair)
+    return "&".join(parts)
+
+
 def trace_context_fields() -> dict[str, str]:
     """Return ``trace_id``/``span_id`` (hex) for the current span, if one is active."""
     ctx = trace.get_current_span().get_span_context()

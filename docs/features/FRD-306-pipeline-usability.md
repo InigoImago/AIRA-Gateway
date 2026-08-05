@@ -21,8 +21,10 @@
   takes a configurable `model` + `instruction`.
 - `engine.dry_run()` → full per-step **trace** (passed/flagged/blocked/allowed/rejected/rerouted/
   unchanged) without dispatching.
-- `POST /v1beta/pipeline:dryRun` — unauthenticated builder utility that evaluates an inline pipeline
-  against a sample system+user prompt (runs real steps incl. LLM; no generation, no stored data).
+- `POST /v1beta/pipeline:dryRun` — builder utility that evaluates an inline pipeline against a
+  sample system+user prompt (runs real steps incl. LLM; no generation, no stored data).
+  **Authenticated** since ADR-0007 (it reaches the configured providers with caller-supplied
+  prompts) and bounded: 8 000 chars per sample field, 32 steps.
 
 **Builder (frontend)**
 - Inspector redesigned per step with **inline help**, visible built-in patterns + custom patterns,
@@ -38,5 +40,6 @@
   (see the live preview + dry-run trace), save, and the gateway enforces it after propagation.
 
 ## 4. Later / hardening
-Authenticated dry-run for production; parallel branches; category routing cache; richer live
-simulation (model-aware allow-check preview).
+Authenticated dry-run — **done** in ADR-0007 (the SPA sends its Keycloak bearer to `/gw`, so the
+gateway needs `AIRA_OIDC_ENABLED` pointed at the same realm). Remaining: parallel branches;
+category routing cache; richer live simulation (model-aware allow-check preview).

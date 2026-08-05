@@ -7,15 +7,20 @@ tests can construct apps with custom settings. Production entry point lives in `
 from __future__ import annotations
 
 import sys
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, MutableMapping
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from aira_common.errors import AiraError, ErrorDetail, ErrorResponse
 from aira_common.logging import configure_logging, get_logger
-from aira_common.observability import configure_observability, trace_context_fields
+from aira_common.observability import (
+    configure_observability,
+    redact_query_string,
+    trace_context_fields,
+)
 from aira_gateway import __version__
 from aira_gateway.api.gemini.errors import GeminiHTTPError, gemini_error_response
 from aira_gateway.api.gemini.routes import router as gemini_router
@@ -27,7 +32,11 @@ from aira_gateway.auth.service import ApiKeyService
 from aira_gateway.budgets.service import BudgetService
 from aira_gateway.config import GatewaySettings
 from aira_gateway.db.base import build_engine, build_sessionmaker, create_all
-from aira_gateway.middleware import UseCasePathMiddleware
+from aira_gateway.middleware import (
+    BodySizeLimitMiddleware,
+    RequestTooLarge,
+    UseCasePathMiddleware,
+)
 from aira_gateway.persistence.redaction import NoOpRedactor
 from aira_gateway.pipeline.engine import PipelineEngine
 from aira_gateway.pipeline.store import PipelineStore
@@ -83,9 +92,12 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
     if otel_enabled:
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
-        FastAPIInstrumentor.instrument_app(app)
+        FastAPIInstrumentor.instrument_app(app, server_request_hook=redact_span_query)
 
+    # Middleware runs outermost-last: the body limit is added last so it is the first thing an
+    # inbound request meets, before any of it is buffered.
     app.add_middleware(UseCasePathMiddleware)
+    app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.max_request_bytes)
 
     app.include_router(health_router)
     app.include_router(pipeline_router)
@@ -98,7 +110,27 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
 _log = get_logger("aira_gateway")
 
 
+def redact_span_query(span: Any, scope: MutableMapping[str, Any]) -> None:
+    """OTel server-request hook: keep credentials out of exported spans.
+
+    Gemini clients may authenticate with ``?key=<api key>``; the ASGI instrumentation would
+    otherwise record that verbatim as a span attribute and ship it to the trace backend.
+    """
+    if span is None or not span.is_recording():
+        return
+    query = bytes(scope.get("query_string", b"")).decode("latin-1")
+    if not query:
+        return
+    redacted = redact_query_string(query)
+    span.set_attribute("url.query", redacted)
+    span.set_attribute("http.target", f"{scope.get('path', '')}?{redacted}")
+
+
 def _register_exception_handlers(app: FastAPI) -> None:
+    @app.exception_handler(RequestTooLarge)
+    async def _handle_too_large(_request: Request, exc: RequestTooLarge) -> JSONResponse:
+        return gemini_error_response(413, "Request body too large.", "INVALID_ARGUMENT")
+
     @app.exception_handler(AiraError)
     async def _handle_aira_error(_request: Request, exc: AiraError) -> JSONResponse:
         return JSONResponse(

@@ -39,6 +39,15 @@ class GatewaySettings(BaseAiraSettings):
     # Enforce use-case/member usage budgets pre-dispatch (FRD-401).
     enforce_budgets: bool = True
 
+    # Trust ``X-Forwarded-For`` for the recorded source IP. Only enable when the gateway sits
+    # behind a reverse proxy that *overwrites* the header — otherwise any client can forge the
+    # audit trail. Off by default: the socket peer is used (ADR-0007).
+    trust_forwarded_for: bool = False
+
+    # Hard ceiling on an accepted request body; larger bodies are rejected with 413 before
+    # they are buffered (ADR-0007).
+    max_request_bytes: int = 8 * 1024 * 1024
+
     # Real Google Gemini upstream (FRD-304). Registered only when an API key is present.
     google_api_key: str = ""
     gemini_models: str = "gemini-2.0-flash,gemini-1.5-flash"

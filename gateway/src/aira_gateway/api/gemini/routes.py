@@ -247,6 +247,9 @@ def _stream_response(
         parts: list[str] = []
         final_usage = None
         separator = ""
+        # A stream that dies half way still has 200 in its (already sent) headers; the audit
+        # record keeps the real outcome so the log does not claim a success that never happened.
+        status = 200
         if not sse:
             yield "["
         try:
@@ -262,6 +265,7 @@ def _stream_response(
                     separator = ","
         except UpstreamError as exc:
             # Headers are already sent; log and terminate the stream cleanly.
+            status = _UPSTREAM_STATUS_MAP.get(exc.status_code or 0, (502, "UNAVAILABLE"))[0]
             _log.error(
                 "upstream_stream_error",
                 error=exc.message,
@@ -277,7 +281,7 @@ def _stream_response(
             request,
             operation="streamGenerateContent",
             model=canonical.model,
-            status=200,
+            status=status,
             usage=final_usage,
             latency_ms=_elapsed_ms(started),
             request_payload=body,
