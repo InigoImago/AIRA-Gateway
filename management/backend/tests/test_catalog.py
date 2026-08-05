@@ -142,3 +142,30 @@ def test_an_unpriced_model_publishes_nulls(captured_events) -> None:
 
 def test_str_is_the_model_name() -> None:
     assert str(Model(name="m-1")) == "m-1"
+
+
+def test_a_model_priced_only_on_output_is_refused_too() -> None:
+    """The half-price rule has two directions and only one was tested.
+
+    A model priced on output alone bills nothing for the prompt, so its figure looks complete and
+    is short by whatever the input cost. That is the failure the rule exists to prevent, and it
+    was undefended in exactly one of the two directions.
+    """
+    admin = _user("admin-out", "global-admin")
+    resp = _client(admin).post(
+        BASE,
+        {"name": "output-only", "output_price_per_million": "0.30"},
+        format="json",
+    )
+    assert resp.status_code == 400
+    assert "both" in str(resp.json())
+
+
+def test_a_model_priced_only_on_input_is_refused() -> None:
+    admin = _user("admin-in", "global-admin")
+    resp = _client(admin).post(
+        BASE,
+        {"name": "input-only", "input_price_per_million": "0.075"},
+        format="json",
+    )
+    assert resp.status_code == 400

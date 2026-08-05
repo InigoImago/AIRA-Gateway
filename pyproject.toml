@@ -32,6 +32,12 @@ select = ["E", "F", "I", "UP", "B", "SIM", "C4", "ASYNC"]
 # ASYNC109: exposing an explicit `timeout` parameter is a deliberate API choice here.
 ignore = ["ASYNC109"]
 
+[tool.ruff.lint.per-file-ignores]
+# The mutation anchors are verbatim copies of source lines: reflowing one to satisfy the line
+# length would silently stop it matching, and the tool would report a property as undefended
+# when nothing had changed about the code.
+"tools/mutation_check.py" = ["E501"]
+
 [tool.ruff.lint.flake8-bugbear]
 # FastAPI dependency injection uses these call expressions in argument defaults by design.
 extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Header", "fastapi.Path"]

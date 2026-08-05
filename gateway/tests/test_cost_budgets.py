@@ -249,3 +249,41 @@ async def test_a_cost_limit_arrives_from_management(sessionmaker) -> None:
         budget = await session.get(BudgetRead, 7)
     assert budget is not None
     assert budget.limit_cost_nanos == to_nanos("25.50")
+
+
+async def test_a_model_published_without_prices_stays_unpriced(sessionmaker) -> None:
+    """ "Unknown is not zero" has to survive the distribution path, not just the pricing call.
+
+    A model catalogued without prices arrives as a `model.upserted` event with two nulls. Turning
+    those into 0 on the way in would make every request on that model cost exactly nothing —
+    a complete-looking spend figure with a silent hole in it, which is the failure FRD-403 §4.4
+    exists to prevent. Nothing was checking the conversion.
+    """
+    async with sessionmaker() as session:
+        await apply_event(
+            session,
+            "model.upserted",
+            {"name": "unpriced-1", "display_name": "Unpriced", "provider": "mock"},
+        )
+
+    service = PricingService(sessionmaker)
+    assert await service.price_for("unpriced-1") is None
+    assert (
+        await service.cost_nanos(
+            "unpriced-1", CanonicalUsage(prompt_tokens=1000, completion_tokens=1000)
+        )
+        is None
+    )
+
+
+async def test_a_model_published_with_one_price_missing_stays_unpriced(sessionmaker) -> None:
+    """Management refuses a half-priced model, but the gateway must not depend on that: a
+    figure it cannot compute in full is unknown, never partially billed."""
+    async with sessionmaker() as session:
+        await apply_event(
+            session,
+            "model.upserted",
+            {"name": "half-1", "input_price_per_million": "0.075"},
+        )
+
+    assert await PricingService(sessionmaker).price_for("half-1") is None

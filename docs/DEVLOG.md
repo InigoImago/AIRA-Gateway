@@ -5,6 +5,40 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-05 — The older phases under the same standard (74 properties)
+The mutation check covered FRD-405 and the tombstone work; auth, budgets, the pipeline, retention
+and the management control plane had never faced it. Two samples in older code had already turned
+up one real defect each, so the odds of the rest being clean were not good.
+
+The properties were derived **from the requirement documents**, not from the code — that is the
+whole discipline, and reading in the other direction is what let the earlier defects hide. Four
+parallel passes over FRD-101/102, FRD-200/201/202/204, FRD-400/401/403 and FRD-300/303/404 plus
+ADR-0006/0007 produced ~50 candidate properties; 45 became mutations, for 74 in total.
+
+**4 of 74 survived**, all of them missing tests rather than defects:
+
+- **A key bound to one use case could act on another** — nothing defended the tenant boundary for
+  API keys. Verified against the running gateway before deciding: the code is correct (403 on a
+  foreign selector), so this was a hole in the suite, not in the product. It is the one that would
+  have hurt most if it ever regressed.
+- The half-price rule was tested in **one direction only** — an output-only model would have been
+  accepted, billing nothing for the prompt.
+- A model published **without any price** was never exercised through the consumer, so turning
+  those nulls into zero would have made its traffic silently free.
+- The default for whole-row deletion (`log_retention_days = 0`) was unpinned; a drift to non-zero
+  would have given every installation a reporting horizon nobody chose.
+
+One prediction was wrong in a useful way. I expected `JSON(none_as_null=True)` to survive, on the
+grounds that SQLite cannot distinguish SQL NULL from the JSON literal — it is caught, by the
+retention *idempotence* test, because the SQL-level `is_not(None)` still sees the difference. The
+mechanism was not what I assumed, and checking which test failed is what showed that.
+
+Deliberately excluded: the constant-time hash comparison. It is a timing property, and no
+hermetic test can defend it honestly. Staging one that appears to would be exactly the
+self-deception this exercise is against, so it is recorded as knowingly undefended instead.
+
+---
+
 ## 2026-08-05 — Deleting a use case did not withdraw access
 Found while looking for the next piece of work, and verified against the running stack before
 being believed: **24 active API keys were bound to use cases that no longer existed**, and a

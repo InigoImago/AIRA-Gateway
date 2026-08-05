@@ -46,3 +46,19 @@ def test_jwks_uri_derived_from_issuer() -> None:
 
 def test_jwks_uri_explicit_override() -> None:
     assert GatewaySettings(oidc_jwks_uri="https://x/certs").jwks_uri() == "https://x/certs"
+
+
+def test_whole_row_deletion_is_off_by_default() -> None:
+    """FRD-404 FR-5: 0 means keep forever, and that is the default on purpose.
+
+    The spend reporting reads `request_logs`, so a non-zero default would silently give every
+    installation a reporting horizon nobody chose. A default is exactly the kind of value that
+    drifts without anything going red, so it is pinned here rather than assumed.
+    """
+    assert GatewaySettings().log_retention_days == 0
+
+
+def test_payload_retention_defaults_to_a_week() -> None:
+    """The other half of FRD-404: payloads do not keep forever, and the promised period is a
+    week. An installation that upgrades without configuring anything gets this."""
+    assert GatewaySettings().default_retention_days == 7
