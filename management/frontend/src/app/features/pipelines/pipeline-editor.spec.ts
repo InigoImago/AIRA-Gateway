@@ -545,3 +545,25 @@ describe('PipelineEditor interactions', () => {
     expect(harness.component.config().steps[0].config.categories?.length).toBe(1);
   });
 });
+
+describe('PipelineEditor loading guard', () => {
+  it('does not render the builder before the config has arrived', () => {
+    // Regression: the builder used to be interactive while the GET was still in flight, so an
+    // early "add step" was silently clobbered by the arriving response — the graph stayed empty
+    // while the header claimed "Unsaved changes". Found by the e2e suite against the real stack.
+    const { component, fixture, text } = setup(
+      { steps: [], fallback_models: [] },
+      { load: new Observable<PipelineConfig>(() => undefined) },
+    );
+    const html = fixture.nativeElement as HTMLElement;
+    expect(component.loading()).toBe(true);
+    expect(text()).toContain('Loading pipeline…');
+    expect(html.querySelector('.pipe')).toBeNull();
+    expect(html.querySelectorAll('.pipe__add .btn').length).toBe(0);
+  });
+
+  it('renders the builder once the config is there', () => {
+    const { fixture } = setup({ steps: [], fallback_models: [] });
+    expect((fixture.nativeElement as HTMLElement).querySelector('.pipe')).not.toBeNull();
+  });
+});

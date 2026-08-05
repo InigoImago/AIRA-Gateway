@@ -11,8 +11,9 @@ ENV_EXAMPLE := $(COMPOSE_DIR)/.env.example
 .DEFAULT_GOAL := help
 
 .PHONY: help up up-core down destroy ps logs restart env sync test test-py test-frontend \
-        test-integration lint lint-py lint-frontend fmt seed seed-reset migrate-gateway \
-        kafka-topics relay consume run-gateway run-backend run-frontend
+        test-integration test-e2e e2e lint lint-py lint-frontend fmt seed seed-reset \
+        migrate-gateway kafka-topics relay consume run-gateway run-gateway-oidc run-backend \
+        run-frontend
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -62,8 +63,11 @@ test-py: ## Run Python test suites with coverage gate
 test-frontend: ## Run Angular unit tests (Vitest, single run) with the coverage gate
 	cd $(FRONTEND_DIR) && npx ng test --watch=false
 
-test-integration: ## Run integration tests (needs 'make up'; excluded from default run)
+test-integration: ## Run server-side integration tests (needs the live stack; see tests/integration)
 	uv run pytest -m integration --no-cov
+
+test-e2e e2e: ## Run browser end-to-end tests (needs the stack + all services; see e2e/README.md)
+	cd e2e && npm install --silent && npx playwright test
 
 lint: lint-py lint-frontend ## Run all linters/type-checks (check mode)
 
@@ -84,6 +88,13 @@ fmt: ## Auto-format and auto-fix the whole codebase
 # Local run targets enable OTLP export to the collector (make up starts it).
 run-gateway: ## Run the Gateway API locally against the Compose stack
 	AIRA_OTEL_ENABLED=true uv run uvicorn aira_gateway.main:app --reload --port 8001
+
+# The SPA's dry-run and consumption views send their Keycloak bearer to the gateway, so it has
+# to be able to verify it (ADR-0007).
+run-gateway-oidc: ## Run the Gateway with OIDC enabled (required for the SPA's gateway views)
+	AIRA_OTEL_ENABLED=true AIRA_OIDC_ENABLED=true \
+		AIRA_OIDC_ISSUER=http://localhost:8080/realms/aira \
+		uv run uvicorn aira_gateway.main:app --reload --port 8001
 
 run-backend: ## Run the Management backend (Django) locally against the Compose stack
 	cd management/backend && AIRA_OTEL_ENABLED=true uv run python manage.py runserver 127.0.0.1:8002

@@ -5,6 +5,49 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-05 — Verified against the live stack: e2e (Playwright) + integration tests
+Point 1 of the plan: stop trusting the hermetic suites and actually run the thing. Three defects
+surfaced that no unit test could have caught — two of them in the security pass itself.
+
+**What the run found**
+- **The hardened Keycloak realm broke Keycloak's boot.** The client `description` added in
+  ADR-0007 was 259 characters; the `CLIENT.DESCRIPTION` column is `varchar(255)`, so the import
+  aborted and the container refused to start. Also: `--import-realm` skips existing realms, so a
+  running stack silently kept the old wildcard `redirectUris`/`webOrigins` — the hardening was
+  never actually applied. Both now documented in `deploy/compose/README.md`.
+- **The dev realm had none of the five AIRA roles** and one user with no roles. Keycloak is the
+  source of truth for roles (FRD-201), so the documented demo acceptance in FRD-203 §5 could not
+  pass: you could log in and do nothing. The realm now carries the roles and one user per role,
+  usernames matching the Django seed so a login adopts the seeded account.
+- **The pipeline builder discarded early edits.** Adding a step before the config GET resolved
+  let the response clobber it: the graph stayed empty while the header claimed "Unsaved changes".
+  The builder is now rendered only after the config has arrived; unit-tested as a regression.
+- `make kafka-topics` really did need its fix — the three previously missing topics were created
+  on this run.
+
+**Consequence of ADR-0007 that was not thought through**: the gateway authorizes `usage` by
+Keycloak group membership, but use cases are administered in Management, so a use case created in
+the SPA has no group and its consumption stays hidden. The strict check is kept (it matches how
+the data plane authorizes); the UI now distinguishes "refused" from "unreachable" and names the
+missing group. Proper fix recorded as a follow-up in the ADR addendum.
+
+**New test layers**
+- `e2e/` — Playwright, **22 tests**, real Chrome: the Keycloak code flow incl. PKCE, role-aware
+  nav, layout at 360/768/1280/1920 px (measured as `scrollWidth <= clientWidth`, which jsdom
+  structurally cannot do), the sticky-inspector reachability fix, key issue/reveal-once/revoke
+  with confirmation, the ADR-0007 rule that a governance role cannot mint a key, and the
+  gateway dry-run driven with the browser's own token.
+- `tests/integration/` — **12 tests** against the live stack, moved out of `gateway/tests/` into
+  a top-level folder: the gateway's HTTP contract (401s, 413 body ceiling, `/readyz` not naming
+  hosts, API-key auth + `request_logs` attribution over real HTTP) and the full config
+  distribution round trip management outbox → relay → Kafka → consumer → gateway read-model.
+- `make test-e2e` and `make run-gateway-oidc` added; `make test-integration` unchanged.
+
+**Gates**: 392 unit + 12 integration + 22 e2e + 139 frontend unit tests, all green; ruff, mypy
+and the coverage gates unchanged.
+
+---
+
 ## 2026-08-05 — Management UI: usability, layout, and a frontend coverage gate
 No new screens — a pass over the existing SPA for the things that made it feel unfinished.
 

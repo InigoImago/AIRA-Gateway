@@ -37,6 +37,7 @@ interface Detail {
   error: () => string | null;
   notice: () => string | null;
   usageUnavailable: () => boolean;
+  usageRefused: () => boolean;
   showAddMember: { set: (v: boolean) => void; (): boolean };
   showIssueKey: { set: (v: boolean) => void; (): boolean };
   showAddBudget: { set: (v: boolean) => void; (): boolean };
@@ -378,6 +379,16 @@ describe('UseCaseDetail', () => {
     expect(text()).toContain('0 / 1000');
   });
 
+  it('distinguishes a refused consumption read from an unreachable gateway', () => {
+    const refused = setup({ budgetUsage: throwError(() => ({ status: 403 })) });
+    expect(refused.component.usageUnavailable()).toBe(true);
+    expect(refused.component.usageRefused()).toBe(true);
+
+    const unreachable = setup({ budgetUsage: throwError(() => ({ status: 0 })) });
+    expect(unreachable.component.usageUnavailable()).toBe(true);
+    expect(unreachable.component.usageRefused()).toBe(false);
+  });
+
   it('computes usage percentages defensively', () => {
     const { component } = setup();
     expect(component.pct(5, 10)).toBe(50);
@@ -599,5 +610,28 @@ describe('UseCaseDetail interactions', () => {
     harness.fixture.detectChanges();
     click(harness.fixture, '[aria-label="Remove budget for Whole use case"]');
     expect(harness.calls).toContain('deleteBudget:3');
+  });
+});
+
+describe('UseCaseDetail consumption messaging', () => {
+  it('names the Keycloak group when the gateway refuses the read', () => {
+    const harness = setup({
+      budgets: of([{ id: 1, scope: 'use_case', period: 'day', limit_requests: 5 }]),
+      budgetUsage: throwError(() => ({ status: 403 })),
+    });
+    harness.component.selectTab('budgets');
+    harness.fixture.detectChanges();
+    expect(harness.text()).toContain('does not count you as a member');
+    expect(harness.text()).toContain('/use-cases/demo-uc');
+  });
+
+  it('says the gateway is unreachable for anything else', () => {
+    const harness = setup({
+      budgets: of([{ id: 1, scope: 'use_case', period: 'day', limit_requests: 5 }]),
+      budgetUsage: throwError(() => ({ status: 0 })),
+    });
+    harness.component.selectTab('budgets');
+    harness.fixture.detectChanges();
+    expect(harness.text()).toContain('could not be reached');
   });
 });

@@ -14,6 +14,10 @@ consumption** against them, with a threshold warning.
   configurable threshold (e.g. 80%) is crossed. Since ADR-0007 `GET /v1beta/usage/{use_case}`
   requires an authenticated caller entitled to that use case; when the gateway does not accept the
   SPA's token the tab still renders the configured limits, without consumption.
+- **Visibility rule** (verified end-to-end, see the ADR-0007 addendum): "entitled" means the
+  caller belongs to the Keycloak group `/use-cases/<slug>` — the same membership the data plane
+  uses (FRD-102). A use case created in Management has no such group yet, so its consumption
+  stays hidden; the tab then names the missing group instead of implying the gateway is down.
 - Admin edits; members read.
 
 ## 3. Testing & Acceptance

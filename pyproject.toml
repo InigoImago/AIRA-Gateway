@@ -55,7 +55,7 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 DJANGO_SETTINGS_MODULE = "aira_management.config.settings"
-testpaths = ["gateway/tests", "libs/tests", "management/backend/tests"]
+testpaths = ["gateway/tests", "libs/tests", "management/backend/tests", "tests/integration"]
 # importlib mode lets same-named test modules coexist across packages.
 # `-m "not integration"` keeps the default run hermetic (CI unit stage); integration tests
 # (which need the live Compose stack) run separately via `make test-integration`.

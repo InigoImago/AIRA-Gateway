@@ -389,8 +389,14 @@
 
       @if (usageUnavailable() && budgets().length) {
         <p class="callout callout--warning" style="margin-top: 1rem">
-          Consumption is unavailable — the gateway could not be reached (or did not accept this
-          login). The configured limits below are still in force.
+          @if (usageRefused()) {
+            Consumption is hidden because the gateway does not count you as a member of this use
+            case. Membership for the data plane comes from the Keycloak group
+            <code>/use-cases/{{ slug }}</code> — ask an administrator to add you there.
+          } @else {
+            Consumption is unavailable — the gateway could not be reached. The configured limits
+            below are still in force.
+          }
         </p>
       }
 

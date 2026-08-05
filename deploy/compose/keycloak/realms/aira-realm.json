@@ -7,8 +7,12 @@
     {
       "name": "use-cases",
       "subGroups": [
-        { "name": "demo-uc" },
-        { "name": "other-uc" }
+        {
+          "name": "demo-uc"
+        },
+        {
+          "name": "other-uc"
+        }
       ]
     }
   ],
@@ -16,7 +20,7 @@
     {
       "clientId": "aira-gateway",
       "name": "AIRA Gateway (dev)",
-      "description": "Public SPA client. Redirect URIs and web origins are pinned to the local dev hosts: a wildcard on a public client lets an attacker redirect the authorization code to a site they control (ADR-0007). Add your own origin here rather than widening it back to '*'.",
+      "description": "Public SPA client (dev). Redirect URIs and web origins are pinned on purpose \u2014 a wildcard on a public client lets an attacker capture the authorization code. See ADR-0007.",
       "enabled": true,
       "publicClient": true,
       "directAccessGrantsEnabled": false,
@@ -50,16 +54,148 @@
   ],
   "users": [
     {
+      "username": "admin",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "admin@demo.aira",
+      "firstName": "Admin",
+      "lastName": "Demo",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "demo-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "global-admin"
+      ],
+      "groups": []
+    },
+    {
+      "username": "itsec",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "itsec@demo.aira",
+      "firstName": "Itsec",
+      "lastName": "Demo",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "demo-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "it-security"
+      ],
+      "groups": []
+    },
+    {
+      "username": "itgov",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "itgov@demo.aira",
+      "firstName": "Itgov",
+      "lastName": "Demo",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "demo-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "it-steuerung"
+      ],
+      "groups": []
+    },
+    {
+      "username": "ucadmin",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "ucadmin@demo.aira",
+      "firstName": "Ucadmin",
+      "lastName": "Demo",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "demo-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "use-case-admin"
+      ],
+      "groups": [
+        "/use-cases/demo-uc"
+      ]
+    },
+    {
+      "username": "ucuser",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "ucuser@demo.aira",
+      "firstName": "Ucuser",
+      "lastName": "Demo",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "demo-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "use-case-user"
+      ],
+      "groups": [
+        "/use-cases/demo-uc"
+      ]
+    },
+    {
       "username": "demo-user",
       "enabled": true,
       "emailVerified": true,
       "email": "demo-user@demo.aira",
-      "firstName": "Demo",
-      "lastName": "User",
+      "firstName": "Demo-user",
+      "lastName": "Demo",
       "credentials": [
-        { "type": "password", "value": "demo-password", "temporary": false }
+        {
+          "type": "password",
+          "value": "demo-password",
+          "temporary": false
+        }
       ],
-      "groups": ["/use-cases/demo-uc"]
+      "realmRoles": [
+        "use-case-admin"
+      ],
+      "groups": [
+        "/use-cases/demo-uc"
+      ]
     }
-  ]
+  ],
+  "roles": {
+    "realm": [
+      {
+        "name": "global-admin",
+        "description": "Global Administrator \u2014 full administration"
+      },
+      {
+        "name": "it-security",
+        "description": "IT Security \u2014 anomaly/incident oversight"
+      },
+      {
+        "name": "it-steuerung",
+        "description": "Governance \u2014 organisation-wide read visibility"
+      },
+      {
+        "name": "use-case-admin",
+        "description": "Use Case Administrator \u2014 may create use cases"
+      },
+      {
+        "name": "use-case-user",
+        "description": "Use Case User \u2014 may consume a use case"
+      }
+    ]
+  }
 }

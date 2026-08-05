@@ -1,0 +1,17 @@
+{
+  "name": "aira-e2e",
+  "private": true,
+  "description": "Browser-driven end-to-end tests for the AIRA stack (Playwright).",
+  "scripts": {
+    "test": "playwright test",
+    "report": "playwright show-report",
+    "typecheck": "tsc --noEmit",
+    "format:check": "prettier --check \"**/*.ts\""
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1",
+    "prettier": "^3.8.1",
+    "typescript": "~5.9.0",
+    "@types/node": "^24.0.0"
+  }
+}

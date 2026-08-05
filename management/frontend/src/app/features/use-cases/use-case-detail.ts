@@ -42,6 +42,8 @@ export class UseCaseDetail implements OnInit {
   protected readonly budgets = signal<Budget[]>([]);
   protected readonly usage = signal<Record<number, BudgetUsage>>({});
   protected readonly usageUnavailable = signal(false);
+  /** Why consumption is missing: refused by the gateway, or not reachable at all. */
+  protected readonly usageRefused = signal(false);
 
   /** One banner per page: the last thing that failed, and the last thing that worked. */
   protected readonly error = signal<string | null>(null);
@@ -122,12 +124,13 @@ export class UseCaseDetail implements OnInit {
         this.usage.set(map);
         this.usageUnavailable.set(false);
       },
-      // Consumption comes from the gateway, limits from Management: the gateway being
-      // unreachable (or not accepting this login) must not blank out the whole tab — show the
-      // limits and say why the numbers are missing.
-      error: () => {
+      // Consumption comes from the gateway, limits from Management: a gateway that is
+      // unreachable — or that will not show *this* caller the numbers — must not blank out the
+      // whole tab. Show the limits and say precisely which of the two happened.
+      error: (response: { status?: number }) => {
         this.usage.set({});
         this.usageUnavailable.set(true);
+        this.usageRefused.set(response?.status === 403);
       },
     });
   }

@@ -38,6 +38,10 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
   coverage gate — Python via `pytest --cov-fail-under`, Angular via `coverageThresholds` in
   `angular.json`. Every feature ships with tests. No feature is "done" without tests. Frontend
   tests assert the **rendered DOM and real interactions**, not just component methods.
+- **Three test layers**, each for what the layer below cannot see:
+  `unit` (hermetic, `make test`) → `tests/integration/` (live stack, `make test-integration`)
+  → `e2e/` (real browser, `make test-e2e`). Anything needing a user token belongs in `e2e/`: the
+  dev realm has the password grant disabled, so a token only comes from the real code flow.
 - **Typed code**: Python type hints (mypy), TypeScript strict mode.
 - **Angular is zoneless**: all mutable component state must be a `signal`. A plain property
   changed from code schedules no re-render, so `[(ngModel)]` is written as
@@ -163,8 +167,16 @@ width-overflow fixes throughout (scrollable tables/nav/tabs, `min-width:0`, long
 breaking, capped sticky inspector, wide builder ≥1200px); accessibility (tablist semantics, labels,
 accessible names, focus rings); deep-linkable tabs. Frontend coverage **53.8% → 92.3%** statements
 (30 → **134** tests) with a gate in `angular.json`.
-Next candidates: Phase 5 (anomaly/IT-Security), `FRD-307` (model catalog), `FRD-106` (OpenAI surface),
-per-caller rate limiting. See `docs/DEVLOG.md`.
+**Verified against the live stack (2026-08-05)**: new `e2e/` (Playwright, 22 tests, real browser)
+and `tests/integration/` (12 tests, live stack). The run found three defects the hermetic suites
+could not: the hardened realm's client description exceeded Keycloak's `varchar(255)` and broke
+its boot; the dev realm had none of the five AIRA roles, so the documented demo acceptance could
+not pass; and the pipeline builder discarded edits made before its config had loaded. All fixed.
+Note: Keycloak imports a realm only if it does not exist — recreate it after editing
+(`deploy/compose/README.md`).
+Next candidates: CI (there is still **no** CI config, although the gates exist as make targets),
+per-caller rate limiting, Phase 5 (anomaly/IT-Security), `FRD-307` (model catalog),
+`FRD-106` (OpenAI surface). See `docs/DEVLOG.md`.
 
 ## 7. Working agreement
 - Confirm scope via PRD/FRD before large changes; work phase by phase.

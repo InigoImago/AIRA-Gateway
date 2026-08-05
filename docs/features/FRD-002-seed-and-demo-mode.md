@@ -102,3 +102,13 @@ new feature ships with demo data that showcases it.
 - Demo: `DEMO_MODE=1 make up && make seed`, then log in as each role and browse a fully populated
   system; show a gateway call served by the mock upstream with a trace in SigNoz.
 - Every subsequent phase adds a seed contribution so its features are demoable on day one.
+
+
+## Addendum (2026-08-05) — Keycloak carries the roles too
+
+Seeding created the five roles and demo users as Django groups/users only. Keycloak is the
+source of truth for roles (FRD-201), so those accounts could never actually log in, and the one
+realm user had no roles — the acceptance in FRD-203 §5 was not reachable. The realm import now
+carries the five realm roles and one user per role (`admin`, `itsec`, `itgov`, `ucadmin`,
+`ucuser`, password `demo-password`), with usernames matching this seed so a first login adopts
+the seeded Django account instead of provisioning a duplicate (see `OidcIdentity`, ADR-0007).

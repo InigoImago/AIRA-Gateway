@@ -125,3 +125,29 @@ who may invoke them, what they may submit, and what the system does by default.
 - **Follow-ups:** per-caller rate limiting on the gateway; an explicit `oidc_audience` in
   every deployment (an empty audience means any token from the realm is accepted); moving
   the remaining dev credentials in `deploy/compose` into Vault.
+
+## Addendum (2026-08-05) — what running it against the live stack changed
+
+Verifying this ADR end-to-end (see `e2e/` and `tests/integration/`) surfaced three things the
+hermetic suites could not:
+
+1. **The hardened realm broke Keycloak's boot.** The client `description` added here was 259
+   characters; Keycloak's `CLIENT.DESCRIPTION` column is `varchar(255)`, so the import aborted
+   and the container refused to start. Shortened. Note that Keycloak imports a realm only when
+   it does not already exist (`IGNORE_EXISTING`) — an existing deployment keeps the *old*,
+   wildcard configuration until the realm is recreated. That is now stated in
+   `deploy/compose/README.md` and `e2e/README.md`.
+2. **The dev realm had none of the five AIRA roles**, and its single user had no roles at all.
+   Since FRD-201 makes Keycloak the source of truth for roles, the documented demo acceptance
+   ("log in, see role-appropriate nav, create a use case") could not pass. The realm now carries
+   the five roles and one user per role, with usernames matching the Django seed so a login
+   adopts the seeded account rather than provisioning a duplicate.
+3. **Authorizing `usage` by Keycloak group membership has a consequence** that was not thought
+   through here: use cases are administered in Management, but the gateway's notion of
+   membership for OIDC callers is the Keycloak group `/use-cases/<slug>` (FRD-102). A use case
+   created in the SPA therefore has no group, and its consumption numbers stay hidden from
+   everyone. The strict check is kept — it is the safer default and matches how the data plane
+   authorizes — and the UI now says precisely that instead of implying an outage. Making
+   Management-administered membership visible to the gateway (it already ships a
+   `use_case_members` read-model, keyed by username rather than by `sub`) is the proper fix and
+   is listed as a follow-up.
