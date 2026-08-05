@@ -64,7 +64,29 @@ _UPSTREAM_STATUS_MAP: dict[int, tuple[int, str]] = {
 }
 
 
-async def _estimate(request: Request, canonical: CanonicalRequest) -> Amounts:
+async def _enforce_pre_dispatch(
+    request: Request, *, model: str, max_output_tokens: int | None
+) -> Reservation:
+    """Every control a request must clear before anything expensive happens.
+
+    Rate limiting comes first: the whole point of a limit is that the upstream call never
+    happens. The budget then reserves what the request is expected to consume, so requests in
+    flight are visible to each other's check instead of all passing the same stale figure.
+    """
+    attribution = getattr(request.state, "attribution", None)
+    use_case = getattr(attribution, "use_case", None)
+    subject = getattr(attribution, "subject", None)
+
+    await request.app.state.rate_limits.check(use_case, subject)
+    estimate = await _estimate(request, model=model, max_output_tokens=max_output_tokens)
+    # `app.state` is untyped, so the annotation is what states the contract the route relies on.
+    reservation: Reservation = await request.app.state.budgets.guard(
+        use_case, subject, estimated=estimate
+    )
+    return reservation
+
+
+async def _estimate(request: Request, *, model: str, max_output_tokens: int | None) -> Amounts:
     """What this request is expected to consume, for the pre-dispatch reservation (FRD-405).
 
     The real cost is unknowable before the model answers, so the estimate is deliberately
@@ -77,8 +99,8 @@ async def _estimate(request: Request, canonical: CanonicalRequest) -> Amounts:
     else: it is not counted as free, it simply cannot constrain a cost limit.
     """
     settings = request.app.state.settings
-    tokens = canonical.max_output_tokens or settings.budget_estimate_output_tokens
-    price = await request.app.state.pricing.price_for(canonical.model)
+    tokens = max_output_tokens or settings.budget_estimate_output_tokens
+    price = await request.app.state.pricing.price_for(model)
     cost = 0 if price is None else cost_nanos(tokens, price.output_per_million_nanos)
     return Amounts(tokens=tokens, requests=1, cost_nanos=cost)
 
@@ -155,6 +177,11 @@ async def generate(resource: str, request: Request) -> Response:
     except ValueError:
         return _error(400, "Request body is not valid JSON.", "INVALID_ARGUMENT")
 
+    # Parse and prepare per method, then run the pre-dispatch controls once for all of them.
+    canonical: CanonicalRequest | None = None
+    fallbacks: tuple[str, ...] = ()
+    embed_request: schemas.EmbedContentRequest | None = None
+
     if method in ("generateContent", "streamGenerateContent"):
         try:
             gemini_request = schemas.GenerateContentRequest.model_validate(body)
@@ -171,33 +198,33 @@ async def generate(resource: str, request: Request) -> Response:
         provider = _registry(request).provider_for(canonical.model)
         if provider is None:
             return _error(404, f"Model '{canonical.model}' not found.", "NOT_FOUND")
-
-        attribution = getattr(request.state, "attribution", None)
-        use_case = getattr(attribution, "use_case", None)
-        subject = getattr(attribution, "subject", None)
-
-        # Rate limiting (FRD-405) runs first: the point of a limit is that the expensive part of
-        # the request — the upstream call — never happens.
+    elif method == "embedContent":
         try:
-            await request.app.state.rate_limits.check(use_case, subject)
-        except RateLimited as exc:
-            return _error(
-                429,
-                exc.message,
-                "RESOURCE_EXHAUSTED",
-                headers={"Retry-After": exc.retry_after},
-            )
+            embed_request = schemas.EmbedContentRequest.model_validate(body)
+        except ValidationError as exc:
+            return _error(400, _first_error(exc), "INVALID_ARGUMENT")
+    else:
+        return _error(400, f"Unknown method '{method}'.", "INVALID_ARGUMENT")
 
-        # Budget enforcement (FRD-401/405): reserve before dispatch, so requests in flight are
-        # visible to each other's check instead of all passing the same stale figure.
-        estimate = await _estimate(request, canonical)
-        try:
-            reservation = await request.app.state.budgets.guard(
-                use_case, subject, estimated=estimate
-            )
-        except BudgetExceeded as exc:
-            return _error(429, exc.message, "RESOURCE_EXHAUSTED")
+    # One gate for every method. Keeping these inside the generateContent branch is how
+    # `:embedContent` ended up unlimited and unbudgeted — a caller only had to pick the other
+    # verb. A control that applies to some verbs and not others has to be impossible to write
+    # by accident, so there is exactly one place to add the next one.
+    effective_model = canonical.model if canonical is not None else model
+    try:
+        reservation = await _enforce_pre_dispatch(
+            request,
+            model=effective_model,
+            max_output_tokens=canonical.max_output_tokens if canonical is not None else None,
+        )
+    except RateLimited as exc:
+        return _error(
+            429, exc.message, "RESOURCE_EXHAUSTED", headers={"Retry-After": exc.retry_after}
+        )
+    except BudgetExceeded as exc:
+        return _error(429, exc.message, "RESOURCE_EXHAUSTED")
 
+    if canonical is not None:
         if method == "generateContent":
             # `hold` releases the reservation unless it is settled inside the block, so no exit
             # path — an upstream outage, a pricing lookup that fails, an outright bug — can leave
@@ -234,11 +261,8 @@ async def generate(resource: str, request: Request) -> Response:
         sse = request.query_params.get("alt") == "sse"
         return _stream_response(request, provider, canonical, body, reservation, sse=sse)
 
-    if method == "embedContent":
-        try:
-            embed_request = schemas.EmbedContentRequest.model_validate(body)
-        except ValidationError as exc:
-            return _error(400, _first_error(exc), "INVALID_ARGUMENT")
+    assert embed_request is not None  # the method dispatch above guarantees it
+    async with request.app.state.budgets.hold(reservation):
         started = time.monotonic()
         text = "".join(part.text for part in embed_request.content.parts)
         try:
@@ -248,6 +272,9 @@ async def generate(resource: str, request: Request) -> Response:
         payload = schemas.EmbedContentResponse(
             embedding=schemas.ContentEmbedding(values=values)
         ).model_dump()
+        # Embeddings report no token usage, so there is nothing to price. The request still
+        # counts against a request-limited budget, which is what settling with zero tokens does.
+        await request.app.state.budgets.settle(reservation, 0, cost_nanos=None)
         await record_request(
             request,
             operation="embedContent",
@@ -259,8 +286,6 @@ async def generate(resource: str, request: Request) -> Response:
             response_payload=payload,
         )
         return JSONResponse(payload)
-
-    return _error(400, f"Unknown method '{method}'.", "INVALID_ARGUMENT")
 
 
 def _chunk_to_gemini(chunk: CanonicalChunk, model: str) -> schemas.GenerateContentResponse:

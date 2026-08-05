@@ -12,6 +12,7 @@ from sqlalchemy import select
 from aira_gateway.api.gemini.routes import _stream_response
 from aira_gateway.app import create_app
 from aira_gateway.auth.attribution import Attribution
+from aira_gateway.budgets.errors import BudgetExceeded
 from aira_gateway.budgets.service import BudgetService, Reservation
 from aira_gateway.config import GatewaySettings
 from aira_gateway.core.canonical import CanonicalMessage, CanonicalRequest, Role
@@ -216,6 +217,72 @@ async def test_a_client_that_disconnects_mid_stream_does_not_leak_the_reservatio
             rows = list((await session.execute(select(RequestLog))).scalars())
         assert len(rows) == 1, "a disconnected stream must still be logged"
         assert rows[0].operation == "streamGenerateContent"
+
+
+_EMBED_BODY = {"content": {"parts": [{"text": "hi"}]}}
+
+
+class _BlockingBudgets:
+    async def guard(self, use_case, subject, *, estimated=None):  # noqa: ANN001, ANN201
+        raise BudgetExceeded("Cost budget exhausted for use_case (month).")
+
+    async def settle(self, reservation, tokens, *, cost_nanos=None, now=None):  # noqa: ANN001, ANN201
+        reservation.resolved = True
+
+    async def release(self, reservation):  # noqa: ANN001, ANN201
+        reservation.resolved = True
+
+    hold = BudgetService.hold
+
+
+def test_embedding_is_rate_limited_like_everything_else() -> None:
+    """The controls used to sit inside the generateContent branch, so `:embedContent` was
+    unlimited and unbudgeted — a caller could send as fast and as much as it liked simply by
+    choosing the other verb."""
+    app = create_app(GatewaySettings(auth_required=False))
+    app.state.rate_limits = _AlwaysLimited()
+
+    with TestClient(app) as client:
+        response = client.post("/v1beta/models/mock-1:embedContent", json=_EMBED_BODY)
+
+    assert response.status_code == 429
+    assert response.headers["Retry-After"] == "7"
+
+
+def test_embedding_passes_the_budget_and_is_settled() -> None:
+    app = create_app(GatewaySettings(auth_required=False))
+    budgets = _TrackingBudgets()
+    app.state.budgets = budgets
+
+    with TestClient(app) as client:
+        response = client.post("/v1beta/models/mock-1:embedContent", json=_EMBED_BODY)
+
+    assert response.status_code == 200
+    assert (budgets.settled, budgets.released) == (1, 0)
+
+
+def test_an_over_budget_embedding_is_refused() -> None:
+    app = create_app(GatewaySettings(auth_required=False))
+    app.state.budgets = _BlockingBudgets()
+
+    with TestClient(app) as client:
+        response = client.post("/v1beta/models/mock-1:embedContent", json=_EMBED_BODY)
+
+    assert response.status_code == 429
+    assert response.json()["error"]["status"] == "RESOURCE_EXHAUSTED"
+
+
+def test_a_failed_embedding_releases_its_reservation() -> None:
+    app = create_app(GatewaySettings(auth_required=False))
+    app.state.providers = ProviderRegistry([_FailingProvider()])
+    budgets = _TrackingBudgets()
+    app.state.budgets = budgets
+
+    with TestClient(app) as client:
+        response = client.post("/v1beta/models/mock-1:embedContent", json=_EMBED_BODY)
+
+    assert response.status_code == 503
+    assert (budgets.settled, budgets.released) == (0, 1)
 
 
 def test_a_successful_request_settles_rather_than_releases() -> None:
