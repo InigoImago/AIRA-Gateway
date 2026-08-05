@@ -14,14 +14,23 @@ const baseMe: Me = {
   use_cases: [],
 };
 
+let loggedOut = false;
+
 function configure(authenticated: boolean, roles: string[] = []): void {
+  TestBed.resetTestingModule();
+  loggedOut = false;
   TestBed.configureTestingModule({
     imports: [App],
     providers: [
       provideRouter([]),
       {
         provide: AuthService,
-        useValue: { isAuthenticated: () => authenticated, logout: () => {} },
+        useValue: {
+          isAuthenticated: () => authenticated,
+          logout: () => {
+            loggedOut = true;
+          },
+        },
       },
       { provide: MeService, useValue: { get: () => of({ ...baseMe, roles }) } },
     ],
@@ -49,6 +58,20 @@ describe('App', () => {
     expect(el.querySelector('[data-role="it-security"]')).not.toBeNull();
     expect(el.querySelector('[data-role="global-admin"]')).not.toBeNull();
     expect(el.querySelector('[data-role="it-steuerung"]')).toBeNull();
+  });
+
+  it('signs the user out from the header', async () => {
+    configure(true);
+    const fixture = TestBed.createComponent(App);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+    const button = (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>(
+      '.aira-user button',
+    );
+    expect(button?.textContent).toContain('Logout');
+    button?.click();
+    expect(loggedOut).toBe(true);
   });
 
   it('does not load the profile when unauthenticated', async () => {

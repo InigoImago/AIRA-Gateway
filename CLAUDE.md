@@ -35,8 +35,15 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
 
 ## 3. Engineering conventions
 - **Test-first / high coverage**: near-100% unit-test coverage is a hard goal; CI enforces a
-  coverage gate. Every feature ships with tests. No feature is "done" without tests.
+  coverage gate — Python via `pytest --cov-fail-under`, Angular via `coverageThresholds` in
+  `angular.json`. Every feature ships with tests. No feature is "done" without tests. Frontend
+  tests assert the **rendered DOM and real interactions**, not just component methods.
 - **Typed code**: Python type hints (mypy), TypeScript strict mode.
+- **Angular is zoneless**: all mutable component state must be a `signal`. A plain property
+  changed from code schedules no re-render, so `[(ngModel)]` is written as
+  `[ngModel]="x()" (ngModelChange)="x.set($event)"`. See FRD-203 §4.
+- **No silent failures in the UI**: every load and mutation reports its outcome through
+  `core/api/error-message.ts`, which surfaces the backend's error envelope.
 - **Lint/format**: Python (ruff + black), Angular (eslint + prettier). CI blocks on violations.
 - **API contracts**: OpenAPI for HTTP; explicit, versioned schemas for Kafka events.
 - **Config over code**: behavior driven by use-case configuration, not hard-coded branches.
@@ -148,6 +155,14 @@ use-case selector; pipeline-config bounds + **nested-quantifier regexes rejected
 `requireHttps: 'remoteOnly'`, CSP, encoded URL segments, bearer scoped to `/api` + `/gw`. Keycloak dev
 realm: pinned redirect URIs/web origins, password grant off. **The SPA's dry-run/consumption views now
 need `AIRA_OIDC_ENABLED` on the gateway** (see `.env.example`); both degrade gracefully without it.
+**Management UI pass** (2026-08-05, no new screens): fixed two zoneless re-render bugs (forms kept
+submitted text; scope-dependent fields never appeared) by moving all form state to signals; every
+load/mutation now surfaces the backend error envelope (`core/api/error-message.ts`) instead of
+failing silently; loading vs. empty states; confirmations on destructive actions; inline validation;
+width-overflow fixes throughout (scrollable tables/nav/tabs, `min-width:0`, long-identifier
+breaking, capped sticky inspector, wide builder ≥1200px); accessibility (tablist semantics, labels,
+accessible names, focus rings); deep-linkable tabs. Frontend coverage **53.8% → 92.3%** statements
+(30 → **134** tests) with a gate in `angular.json`.
 Next candidates: Phase 5 (anomaly/IT-Security), `FRD-307` (model catalog), `FRD-106` (OpenAI surface),
 per-caller rate limiting. See `docs/DEVLOG.md`.
 

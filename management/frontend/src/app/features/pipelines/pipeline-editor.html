@@ -8,14 +8,25 @@
     </div>
     <div class="row">
       @if (saved()) {
-        <span class="badge badge--success">Saved ✓</span>
+        <span class="badge badge--success" role="status">Saved ✓</span>
+      } @else if (dirty()) {
+        <span class="badge badge--warning" role="status">Unsaved changes</span>
       }
-      <button type="button" class="btn btn--primary" (click)="save()">Save pipeline</button>
+      <button type="button" class="btn btn--primary" [disabled]="saving()" (click)="save()">
+        {{ saving() ? 'Saving…' : 'Save pipeline' }}
+      </button>
     </div>
   </div>
 
   @if (error(); as message) {
     <p class="callout callout--danger" role="alert">{{ message }}</p>
+  }
+
+  @if (loading()) {
+    <p class="loading">
+      <span class="spinner" aria-hidden="true"></span>
+      Loading pipeline…
+    </p>
   }
 
   <div class="pipe">
@@ -30,24 +41,44 @@
           [class.is-selected]="selectedIndex() === $index"
           (click)="select($index)"
           (keydown.enter)="select($index)"
+          (keydown.space)="select($index); $event.preventDefault()"
           tabindex="0"
           role="button"
+          [attr.aria-pressed]="selectedIndex() === $index"
+          [attr.aria-label]="'Step ' + ($index + 1) + ': ' + label(step.type) + '. Configure.'"
         >
           <div class="node__body">
-            <span class="node__index">{{ $index + 1 }}</span>
-            <div>
+            <span class="node__index" aria-hidden="true">{{ $index + 1 }}</span>
+            <div class="node__text">
               <div class="node__title">{{ label(step.type) }}</div>
               <div class="node__meta muted">{{ summarize(step) }}</div>
             </div>
           </div>
           <div class="node__controls" (click)="$event.stopPropagation()">
-            <button type="button" class="btn btn--sm btn--ghost" (click)="moveStep($index, -1)">
+            <button
+              type="button"
+              class="btn btn--sm btn--ghost"
+              [disabled]="!canMove($index, -1)"
+              [attr.aria-label]="'Move ' + label(step.type) + ' up'"
+              (click)="moveStep($index, -1)"
+            >
               ↑
             </button>
-            <button type="button" class="btn btn--sm btn--ghost" (click)="moveStep($index, 1)">
+            <button
+              type="button"
+              class="btn btn--sm btn--ghost"
+              [disabled]="!canMove($index, 1)"
+              [attr.aria-label]="'Move ' + label(step.type) + ' down'"
+              (click)="moveStep($index, 1)"
+            >
               ↓
             </button>
-            <button type="button" class="btn btn--sm btn--danger" (click)="removeStep($index)">
+            <button
+              type="button"
+              class="btn btn--sm btn--danger"
+              [attr.aria-label]="'Remove ' + label(step.type)"
+              (click)="removeStep($index)"
+            >
               ✕
             </button>
           </div>
@@ -63,8 +94,10 @@
           class="node node--fallback"
           (click)="select('fallback')"
           (keydown.enter)="select('fallback')"
+          (keydown.space)="select('fallback'); $event.preventDefault()"
           tabindex="0"
           role="button"
+          aria-label="Configure the fallback chain"
         >
           fallback → <code>{{ model }}</code>
         </div>
@@ -75,8 +108,10 @@
           class="node node--fallback node--muted"
           (click)="select('fallback')"
           (keydown.enter)="select('fallback')"
+          (keydown.space)="select('fallback'); $event.preventDefault()"
           tabindex="0"
           role="button"
+          aria-label="Add a fallback model"
         >
           + add fallback
         </div>
@@ -100,8 +135,9 @@
 
         @if (step.type === 'injection_filter') {
           <div class="field">
-            <label>Detection mode</label>
+            <label for="insp-mode">Detection mode</label>
             <select
+              id="insp-mode"
               [ngModel]="step.config.mode || 'heuristic'"
               (ngModelChange)="setStepField(selectedIndex(), 'mode', $event)"
             >
@@ -110,8 +146,9 @@
             </select>
           </div>
           <div class="field">
-            <label>On detection</label>
+            <label for="insp-action">On detection</label>
             <select
+              id="insp-action"
               [ngModel]="step.config.action || 'block'"
               (ngModelChange)="setStepField(selectedIndex(), 'action', $event)"
             >
@@ -120,8 +157,9 @@
             </select>
           </div>
           <div class="field">
-            <label>Scan</label>
+            <label for="insp-scope">Scan</label>
             <select
+              id="insp-scope"
               [ngModel]="step.config.scope || 'user'"
               (ngModelChange)="setStepField(selectedIndex(), 'scope', $event)"
             >
@@ -132,16 +170,18 @@
 
           @if (step.config.mode === 'llm') {
             <div class="field">
-              <label>Classifier model</label>
+              <label for="insp-filter-model">Classifier model</label>
               <input
+                id="insp-filter-model"
                 [ngModel]="step.config.model || ''"
                 (ngModelChange)="setStepField(selectedIndex(), 'model', $event)"
                 placeholder="defaults to first available model"
               />
             </div>
             <div class="field">
-              <label>Instruction to the classifier (optional)</label>
+              <label for="insp-instruction">Instruction to the classifier (optional)</label>
               <textarea
+                id="insp-instruction"
                 rows="3"
                 [ngModel]="step.config.instruction || ''"
                 (ngModelChange)="setStepField(selectedIndex(), 'instruction', $event)"
@@ -169,8 +209,9 @@
               </ul>
             </details>
             <div class="field">
-              <label>Custom patterns (one per line — keyword or regex)</label>
+              <label for="insp-patterns">Custom patterns (one per line — keyword or regex)</label>
               <textarea
+                id="insp-patterns"
                 rows="3"
                 [ngModel]="(step.config.patterns || []).join('\n')"
                 (ngModelChange)="setListField(selectedIndex(), 'patterns', $event)"
@@ -180,8 +221,9 @@
           }
         } @else if (step.type === 'allow_check') {
           <div class="field">
-            <label>Allowed models (comma-separated)</label>
+            <label for="insp-allowed">Allowed models (comma-separated)</label>
             <input
+              id="insp-allowed"
               [ngModel]="(step.config.models || []).join(', ')"
               (ngModelChange)="setListField(selectedIndex(), 'models', $event)"
               placeholder="gemini-2.0-flash, mock-1"
@@ -190,8 +232,9 @@
           <p class="muted">Requests for any other model are rejected with 403.</p>
         } @else if (step.type === 'model_route') {
           <div class="field">
-            <label>Classifier model</label>
+            <label for="insp-route-model">Classifier model</label>
             <input
+              id="insp-route-model"
               [ngModel]="step.config.model || ''"
               (ngModelChange)="setStepField(selectedIndex(), 'model', $event)"
               placeholder="defaults to first available model"
@@ -207,16 +250,19 @@
                   [ngModel]="cat.name"
                   (ngModelChange)="setCategoryField(selectedIndex(), $index, 'name', $event)"
                   placeholder="category, e.g. code"
+                  [attr.aria-label]="'Category ' + ($index + 1) + ' name'"
                 />
                 <input
                   class="grow"
                   [ngModel]="cat.model"
                   (ngModelChange)="setCategoryField(selectedIndex(), $index, 'model', $event)"
                   placeholder="→ model, e.g. strong-1"
+                  [attr.aria-label]="'Category ' + ($index + 1) + ' target model'"
                 />
                 <button
                   type="button"
                   class="btn btn--sm btn--danger"
+                  [attr.aria-label]="'Remove category ' + ($index + 1)"
                   (click)="removeCategory(selectedIndex(), $index)"
                 >
                   ✕
@@ -226,6 +272,7 @@
                 [ngModel]="cat.description || ''"
                 (ngModelChange)="setCategoryField(selectedIndex(), $index, 'description', $event)"
                 placeholder="when to pick this (helps the classifier)"
+                [attr.aria-label]="'Category ' + ($index + 1) + ' description'"
               />
             </div>
           }
@@ -234,8 +281,9 @@
           </button>
 
           <div class="field" style="margin-top: 0.75rem">
-            <label>Default model (when nothing matches)</label>
+            <label for="insp-default-model">Default model (when nothing matches)</label>
             <input
+              id="insp-default-model"
               [ngModel]="step.config.default_model || ''"
               (ngModelChange)="setStepField(selectedIndex(), 'default_model', $event)"
               placeholder="e.g. mock-1"
@@ -245,8 +293,9 @@
       } @else if (selected() === 'fallback') {
         <h3 class="section-title">Fallback chain</h3>
         <div class="field">
-          <label>Fallback models (comma-separated, in order)</label>
+          <label for="insp-fallback">Fallback models (comma-separated, in order)</label>
           <input
+            id="insp-fallback"
             [ngModel]="config().fallback_models.join(', ')"
             (ngModelChange)="setFallback($event)"
             placeholder="gemini-1.5-flash, mock-1"
@@ -263,8 +312,9 @@
   <div class="card stack">
     <h3 class="section-title" style="margin: 0">Test this pipeline</h3>
     <div class="field">
-      <label>Sample system prompt</label>
+      <label for="sample-system">Sample system prompt</label>
       <textarea
+        id="sample-system"
         rows="2"
         [ngModel]="sampleSystem()"
         (ngModelChange)="sampleSystem.set($event)"
@@ -272,8 +322,9 @@
       ></textarea>
     </div>
     <div class="field">
-      <label>Sample user message</label>
+      <label for="sample-user">Sample user message</label>
       <textarea
+        id="sample-user"
         rows="2"
         [ngModel]="sampleUser()"
         (ngModelChange)="sampleUser.set($event)"
@@ -300,8 +351,13 @@
       <div>
         <div class="spread" style="margin-bottom: 0.4rem">
           <span class="muted" style="font-weight: 600">Dry-run (full, incl. LLM steps)</span>
-          <button type="button" class="btn btn--sm btn--primary" (click)="runDryRun()">
-            Run dry-run
+          <button
+            type="button"
+            class="btn btn--sm btn--primary"
+            [disabled]="dryRunning()"
+            (click)="runDryRun()"
+          >
+            {{ dryRunning() ? 'Running…' : 'Run dry-run' }}
           </button>
         </div>
         @if (dryRunError(); as message) {

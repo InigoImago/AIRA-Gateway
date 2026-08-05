@@ -29,9 +29,7 @@
                 "input": "public"
               }
             ],
-            "styles": [
-              "src/styles.scss"
-            ]
+            "styles": ["src/styles.scss"]
           },
           "configurations": {
             "production": {
@@ -70,7 +68,18 @@
           "defaultConfiguration": "development"
         },
         "test": {
-          "builder": "@angular/build:unit-test"
+          "builder": "@angular/build:unit-test",
+          "options": {
+            "coverage": true,
+            "coverageReporters": ["text-summary"],
+            "coverageExclude": ["src/main.ts", "src/**/*.spec.ts"],
+            "coverageThresholds": {
+              "statements": 90,
+              "branches": 92,
+              "lines": 93,
+              "functions": 75
+            }
+          }
         }
       }
     }

@@ -5,6 +5,41 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-05 — Management UI: usability, layout, and a frontend coverage gate
+No new screens — a pass over the existing SPA for the things that made it feel unfinished.
+
+- **Two silent-failure bugs (zoneless).** The app runs without zone.js, so a plain component
+  property changed from *code* schedules no re-render. Clearing the create-use-case form and the
+  member/key/budget forms from their success callbacks therefore left the submitted text sitting
+  in the inputs, and switching a budget to member scope did not reveal the username field. All
+  form state moved to **signals** with explicit `[ngModel]`/`(ngModelChange)` binding; regression
+  tests assert the DOM, not just the model.
+- **Nothing failed silently any more.** Every load and every mutation now reports its outcome:
+  a new `errorMessage()` helper unwraps the shared `{"error": {...}}` envelope (including DRF's
+  per-field `details`) so the server's own wording is shown. This mattered most right after the
+  ADR-0007 pass: a use-case viewer clicking "Issue key" got a 403 and *no feedback at all* — the
+  button looked broken. Loading states replace the misleading "No use cases yet." shown while the
+  request was still open, and forms stay open (keeping input) when the server rejects them.
+- **Width overflow.** Wide tables now scroll inside their card (`.table-wrap`) instead of dragging
+  the page sideways; `min-width: 0` on flex items stops one long name from widening the layout;
+  long identifiers break; header username truncates; nav and tab strips scroll on a phone; inputs
+  no longer overflow narrow columns; forms stack below 640px.
+- **The builder.** The sticky inspector had no height cap — taller than the viewport, it pinned
+  its top and left the lower fields (e.g. "Default model" with several categories) permanently
+  unreachable. It now caps and scrolls, and is only sticky where there is a second column. On
+  ≥1200px screens the builder breaks out of the 960px reading column.
+- **Destructive actions ask first** (remove member, revoke key, delete budget, delete step) via a
+  stub-able `ConfirmService`; invalid submits are disabled with the reason shown inline instead of
+  doing nothing; the clipboard fallback explains itself when the browser blocks the write.
+- **Accessibility**: tablist/tab/tabpanel semantics with `aria-selected`, a label for every
+  control, accessible names on icon-only buttons, `aria-expanded` on disclosures, progressbar
+  roles on the budget bars, Space as well as Enter on graph nodes, visible focus rings.
+- **Tabs are deep-linkable** (`?tab=keys`) and survive a reload.
+- **Coverage gate**: frontend coverage went **53.8% → 92.3% statements (95.6% lines)** across
+  30 → **134** tests, and `angular.json` now enforces 90/92/93/75 — verified to fail when unmet.
+
+---
+
 ## 2026-08-04 — ADR-0007: security hardening pass (gateway, management, frontend)
 Full-codebase security review with no new features — see **ADR-0007** for the findings, the
 options weighed, and the trade-offs.

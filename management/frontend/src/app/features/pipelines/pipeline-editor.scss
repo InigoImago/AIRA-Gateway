@@ -4,12 +4,20 @@
 
 .pipe {
   display: grid;
-  grid-template-columns: minmax(280px, 1fr) minmax(280px, 1.1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
   gap: 1.25rem;
   align-items: start;
 
-  @media (max-width: 720px) {
+  @media (max-width: 860px) {
     grid-template-columns: 1fr;
+  }
+
+  /* The builder needs more room than a reading column: graph and inspector side by side in
+   * ~900px leaves each barely 430px, and the category editor (two inputs + a delete button on
+   * one row) does not fit. On a wide screen, break out of the 960px content column. */
+  @media (min-width: 1200px) {
+    width: min(1240px, calc(100vw - 4rem));
+    margin-left: calc((100% - min(1240px, calc(100vw - 4rem))) / 2);
   }
 }
 
@@ -19,11 +27,13 @@
   display: flex;
   flex-direction: column;
   align-items: center;
+  min-width: 0;
 }
 
 .node {
   width: 100%;
-  max-width: 340px;
+  max-width: 380px;
+  min-width: 0;
   border: 1px solid var(--aira-border-strong);
   border-radius: var(--aira-radius);
   padding: 0.65rem 0.85rem;
@@ -68,6 +78,10 @@
   display: flex;
   align-items: center;
   gap: 0.6rem;
+  min-width: 0;
+}
+.node__text {
+  min-width: 0;
 }
 .node__index {
   display: grid;
@@ -84,9 +98,11 @@
 .node__title {
   font-weight: 600;
   font-size: 0.9rem;
+  overflow-wrap: anywhere;
 }
 .node__meta {
   font-size: 0.78rem;
+  overflow-wrap: anywhere;
 }
 .node__controls {
   display: flex;
@@ -98,6 +114,7 @@
   cursor: pointer;
   font-size: 0.85rem;
   border-style: dashed;
+  overflow-wrap: anywhere;
 
   &:hover {
     border-color: var(--aira-brand);
@@ -135,31 +152,27 @@
 /* ---- inspector ------------------------------------------------------------------ */
 
 .pipe__inspector {
-  position: sticky;
-  top: 1rem;
   display: flex;
   flex-direction: column;
   gap: 0.85rem;
+  min-width: 0;
+
+  /* Sticky only where there is a second column to stay beside. The height cap matters: a
+   * sticky element taller than the viewport pins its top and leaves its lower half
+   * permanently unreachable — with many routing categories the "Default model" field was
+   * simply unscrollable. */
+  @media (min-width: 861px) {
+    position: sticky;
+    top: 1rem;
+    max-height: calc(100vh - 2rem);
+    overflow-y: auto;
+  }
 }
 
 .rule {
   display: flex;
   align-items: flex-end;
   gap: 0.5rem;
-}
-
-textarea {
-  font: inherit;
-  padding: 0.5rem 0.65rem;
-  color: var(--aira-text);
-  background: var(--aira-surface);
-  border: 1px solid var(--aira-border-strong);
-  border-radius: var(--aira-radius-sm);
-  resize: vertical;
-}
-textarea:focus {
-  outline: 2px solid var(--aira-brand);
-  border-color: var(--aira-brand);
 }
 
 .pattern-list {
@@ -182,7 +195,7 @@ textarea:focus {
 
 .test-cols {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 1.25rem;
 
   @media (max-width: 640px) {
@@ -194,9 +207,11 @@ textarea:focus {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  flex-wrap: wrap;
   padding: 0.35rem 0;
   border-bottom: 1px solid var(--aira-border);
   font-size: 0.85rem;
+  overflow-wrap: anywhere;
 }
 .trace-row:last-child {
   border-bottom: none;

@@ -8,6 +8,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
+  flex-wrap: wrap;
   padding: 0.85rem 1.75rem;
   background: var(--aira-surface);
   border-bottom: 1px solid var(--aira-border);
@@ -17,12 +18,17 @@
     display: flex;
     align-items: center;
     gap: 0.75rem;
+    min-width: 0;
   }
 
   h1 {
     margin: 0;
     font-size: 1.15rem;
     letter-spacing: -0.01em;
+  }
+
+  @media (max-width: 640px) {
+    padding: 0.75rem 1rem;
   }
 }
 
@@ -48,10 +54,17 @@
   display: flex;
   align-items: center;
   gap: 0.75rem;
+  min-width: 0;
 
+  /* Usernames come from Keycloak and can be an e-mail address or a disambiguated
+   * "name-<sub>" — long enough to push the logout button off screen. Truncate instead. */
   &__name {
     font-weight: 600;
     font-size: 0.9rem;
+    max-width: 22ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 }
 
@@ -62,8 +75,17 @@
   padding: 0 1.75rem;
   background: var(--aira-surface);
   border-bottom: 1px solid var(--aira-border);
+  /* More nav items than fit a phone: scroll the bar, never the page. */
+  overflow-x: auto;
+  scrollbar-width: thin;
+
+  @media (max-width: 640px) {
+    padding: 0 1rem;
+  }
 
   &__item {
+    flex: none;
+    white-space: nowrap;
     padding: 0.7rem 0.85rem;
     font-weight: 600;
     font-size: 0.9rem;
@@ -80,6 +102,11 @@
       border-bottom-color: var(--aira-brand);
     }
 
+    &:focus-visible {
+      outline: 2px solid var(--aira-brand);
+      outline-offset: -2px;
+    }
+
     &.is-disabled {
       color: #9ca3af;
       cursor: not-allowed;
@@ -88,7 +115,11 @@
 }
 
 .aira-main {
-  max-width: 960px;
+  max-width: var(--aira-content-max, 960px);
   margin: 0 auto;
   padding: 1.75rem;
+
+  @media (max-width: 640px) {
+    padding: 1rem;
+  }
 }

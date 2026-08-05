@@ -25,14 +25,30 @@ and the first real screens — a use-case list/detail with membership management
 - **FR-3 Nav**: sidebar/menu items shown by role (from `me` roles).
 - **FR-4 Use-case screens**: list (scoped), detail, create/edit form, member add/remove.
 - **FR-5 UX**: loading/empty/error states; forms validate against backend rules.
+  *Delivered in full on 2026-08-05* (see DEVLOG): every load and mutation reports its outcome via
+  the shared `errorMessage()` unwrapper, loading states are distinct from empty ones, invalid
+  submits are disabled with the reason inline, and destructive actions confirm first.
+- **FR-6 Accessibility & layout** (added 2026-08-05): tablist/tabpanel semantics, a label for
+  every control, accessible names on icon-only buttons, visible focus rings; no horizontal page
+  overflow — wide tables scroll inside their card, long identifiers break, nav/tab strips scroll
+  on small screens.
 
 ## 4. Design & Architecture
-- `core/auth` (OIDC config, guard, interceptor), `core/api` (typed clients), `features/use-cases`
-  (list/detail/form components). Standalone components + signals (Angular 22).
+- `core/auth` (OIDC config, guard, interceptor), `core/api` (typed clients + `errorMessage`),
+  `core/ui` (`ConfirmService`), `features/use-cases` (list/detail/form components). Standalone
+  components + signals (Angular 22).
+- **All mutable component state is a signal.** The app runs *zoneless* (no zone.js), so a plain
+  property changed from code — resetting a form in an HTTP callback, switching a form's scope —
+  schedules no re-render and the UI silently keeps the old value. Two-way `[(ngModel)]` is
+  therefore written as `[ngModel]="x()" (ngModelChange)="x.set($event)"`.
 
 ## 5. Testing & Acceptance
 - Vitest unit tests (browserless): guard redirects unauthenticated; interceptor adds the header;
   use-case list renders scoped data (mocked API); nav reflects roles. Keep green.
+- **Coverage gate** (2026-08-05): `angular.json` enforces 90% statements / 92% branches / 93%
+  lines / 75% functions, mirroring the Python gate. Tests exercise the rendered DOM and real
+  click/keyboard interactions, not just component methods — that is what catches the zoneless
+  re-render bugs described below.
 - **Acceptance**: log in via Keycloak, see role-appropriate nav, create a use case and add a member.
 
 ## 6. Dependencies & Risks

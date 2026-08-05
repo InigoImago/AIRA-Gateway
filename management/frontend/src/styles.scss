@@ -52,6 +52,10 @@ body {
   background: var(--aira-bg);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  /* Server-supplied values (use-case names, usernames, labels, model ids) can be long and
+   * unbroken. Breaking them is what keeps a card — and with it the page — from growing wider
+   * than the viewport. */
+  overflow-wrap: break-word;
 }
 
 h1,
@@ -73,6 +77,8 @@ code,
 .mono {
   font-family: var(--aira-mono);
   font-size: 0.85em;
+  /* Identifiers have no spaces to break at, so allow a break anywhere inside them. */
+  overflow-wrap: anywhere;
 }
 
 /* ---- layout helpers -------------------------------------------------------------- */
@@ -93,12 +99,33 @@ code,
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
+  flex-wrap: wrap;
+}
+/* A flex item defaults to min-width:auto, i.e. it refuses to shrink below its content. That is
+ * the single most common source of "the page is wider than the screen": one long name in a
+ * .spread or .grow pushes the whole layout. Opting into shrinking fixes it everywhere. */
+.spread > * {
+  min-width: 0;
 }
 .muted {
   color: var(--aira-text-muted);
 }
+/* Visible to screen readers only — used for column headers that are visually empty (an
+ * actions column) and for labels a sighted user infers from context. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
 .grow {
   flex: 1;
+  min-width: 0;
 }
 
 /* ---- card ------------------------------------------------------------------------ */
@@ -193,19 +220,47 @@ code,
   color: var(--aira-text-muted);
 }
 input,
-select {
+select,
+textarea {
   font: inherit;
   padding: 0.5rem 0.65rem;
   color: var(--aira-text);
   background: var(--aira-surface);
   border: 1px solid var(--aira-border-strong);
   border-radius: var(--aira-radius-sm);
+  /* Inputs have a default intrinsic width (~20 chars) that ignores its container; without
+   * these two they overflow every narrow column and flex row they are placed in. */
+  min-width: 0;
+  max-width: 100%;
+}
+textarea {
+  width: 100%;
+  resize: vertical;
 }
 input:focus,
-select:focus {
+select:focus,
+textarea:focus {
   outline: 2px solid var(--aira-brand);
   outline-offset: 0;
   border-color: var(--aira-brand);
+}
+input[type='checkbox'] {
+  min-width: auto;
+  width: auto;
+}
+input:disabled,
+select:disabled,
+textarea:disabled {
+  background: #f9fafb;
+  color: var(--aira-text-muted);
+  cursor: not-allowed;
+}
+.field__hint {
+  font-size: 0.75rem;
+  color: var(--aira-text-muted);
+}
+.field__hint--error {
+  color: var(--aira-danger);
 }
 input::placeholder {
   color: #9ca3af;
@@ -219,6 +274,15 @@ input::placeholder {
 
 /* ---- table ----------------------------------------------------------------------- */
 
+/* A table is the one element that genuinely cannot shrink past its content. Give it its own
+ * scroll container so a wide table scrolls *inside the card* instead of dragging the whole
+ * page sideways. */
+.table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
 .table {
   width: 100%;
   border-collapse: collapse;
@@ -229,6 +293,14 @@ input::placeholder {
   text-align: left;
   padding: 0.6rem 0.75rem;
   border-bottom: 1px solid var(--aira-border);
+}
+.table td {
+  overflow-wrap: anywhere;
+}
+/* Keep action buttons on one line so the column does not collapse into a stack. */
+.table .table__actions {
+  text-align: right;
+  white-space: nowrap;
 }
 .table th {
   font-size: 0.75rem;
@@ -309,8 +381,13 @@ input::placeholder {
   display: flex;
   gap: 0.25rem;
   border-bottom: 1px solid var(--aira-border);
+  /* Four tabs do not fit a phone: scroll the strip rather than the page. */
+  overflow-x: auto;
+  scrollbar-width: thin;
 }
 .tab {
+  flex: none;
+  white-space: nowrap;
   padding: 0.55rem 0.9rem;
   font: inherit;
   font-weight: 600;
@@ -323,6 +400,10 @@ input::placeholder {
 
   &:hover {
     color: var(--aira-text);
+  }
+  &:focus-visible {
+    outline: 2px solid var(--aira-brand);
+    outline-offset: -2px;
   }
   &.is-active {
     color: var(--aira-brand-strong);
@@ -383,4 +464,61 @@ input::placeholder {
 }
 .progress__bar.is-full {
   background: var(--aira-danger);
+}
+
+/* ---- loading + empty states ------------------------------------------------------ */
+
+/* A list that is still loading must not render as "there is nothing here" — that reads as a
+ * fact about the data rather than about the request. */
+.loading {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--aira-text-muted);
+  font-size: 0.9rem;
+}
+.spinner {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  border: 2px solid var(--aira-border-strong);
+  border-top-color: var(--aira-brand);
+  border-radius: 50%;
+  animation: aira-spin 0.7s linear infinite;
+}
+@keyframes aira-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation-duration: 2.5s;
+  }
+  .progress__bar {
+    transition: none;
+  }
+}
+
+.empty {
+  padding: 1.25rem 0.25rem;
+  text-align: center;
+  color: var(--aira-text-muted);
+  font-size: 0.9rem;
+}
+
+/* ---- small screens --------------------------------------------------------------- */
+
+@media (max-width: 640px) {
+  .card {
+    padding: 1rem;
+  }
+  .form-inline {
+    /* Side-by-side fields become unusable slivers well before they wrap; stack them. */
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .form-inline .btn {
+    justify-content: center;
+  }
 }

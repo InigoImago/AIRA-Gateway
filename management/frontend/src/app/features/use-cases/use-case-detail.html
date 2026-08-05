@@ -1,7 +1,19 @@
 <div class="stack">
   <a routerLink="/use-cases" class="muted">&larr; All use cases</a>
 
-  @if (useCase(); as useCase) {
+  @if (error(); as message) {
+    <p class="callout callout--danger" role="alert">{{ message }}</p>
+  }
+  @if (notice(); as message) {
+    <p class="callout" role="status">{{ message }}</p>
+  }
+
+  @if (loading()) {
+    <p class="loading">
+      <span class="spinner" aria-hidden="true"></span>
+      Loading use case…
+    </p>
+  } @else if (useCase(); as useCase) {
     <div class="card">
       <div class="spread">
         <div>
@@ -15,36 +27,48 @@
     </div>
   }
 
-  <div class="tabs">
+  <div class="tabs" role="tablist" aria-label="Use-case sections">
     <button
       type="button"
       class="tab"
+      role="tab"
+      id="tab-overview"
+      [attr.aria-selected]="tab() === 'overview'"
       [class.is-active]="tab() === 'overview'"
-      (click)="tab.set('overview')"
+      (click)="selectTab('overview')"
     >
       Overview
     </button>
     <button
       type="button"
       class="tab"
+      role="tab"
+      id="tab-members"
+      [attr.aria-selected]="tab() === 'members'"
       [class.is-active]="tab() === 'members'"
-      (click)="tab.set('members')"
+      (click)="selectTab('members')"
     >
       Members <span class="tab__count">{{ members().length }}</span>
     </button>
     <button
       type="button"
       class="tab"
+      role="tab"
+      id="tab-keys"
+      [attr.aria-selected]="tab() === 'keys'"
       [class.is-active]="tab() === 'keys'"
-      (click)="tab.set('keys')"
+      (click)="selectTab('keys')"
     >
       API keys <span class="tab__count">{{ apiKeys().length }}</span>
     </button>
     <button
       type="button"
       class="tab"
+      role="tab"
+      id="tab-budgets"
+      [attr.aria-selected]="tab() === 'budgets'"
       [class.is-active]="tab() === 'budgets'"
-      (click)="tab.set('budgets')"
+      (click)="selectTab('budgets')"
     >
       Budgets <span class="tab__count">{{ budgets().length }}</span>
     </button>
@@ -52,7 +76,7 @@
 
   <!-- Overview -->
   @if (tab() === 'overview') {
-    <div class="card stack">
+    <div class="card stack" role="tabpanel" aria-labelledby="tab-overview">
       @if (useCase(); as useCase) {
         <p style="margin: 0">{{ useCase.description || 'No description.' }}</p>
         @if (useCase.processing_notes) {
@@ -70,85 +94,109 @@
           <div class="tile__value">{{ apiKeys().length }}</div>
           <div class="tile__label">API keys</div>
         </div>
+        <div class="tile">
+          <div class="tile__value">{{ budgets().length }}</div>
+          <div class="tile__label">Budgets</div>
+        </div>
       </div>
     </div>
   }
 
   <!-- Members -->
   @if (tab() === 'members') {
-    <div class="card">
+    <div class="card" role="tabpanel" aria-labelledby="tab-members">
       <div class="spread">
         <h3 class="section-title" style="margin: 0">Members</h3>
-        <button type="button" class="btn btn--sm" (click)="showAddMember.set(!showAddMember())">
+        <button
+          type="button"
+          class="btn btn--sm"
+          [attr.aria-expanded]="showAddMember()"
+          (click)="showAddMember.set(!showAddMember())"
+        >
           {{ showAddMember() ? 'Cancel' : '+ Add member' }}
         </button>
       </div>
 
       @if (showAddMember()) {
-        <form class="form-inline disclosure" (ngSubmit)="addMember(); showAddMember.set(false)">
+        <form class="form-inline disclosure" (ngSubmit)="addMember()">
           <div class="field grow">
             <label for="member-user">Username</label>
             <input
               id="member-user"
               name="username"
-              [(ngModel)]="memberUsername"
+              [ngModel]="memberUsername()"
+              (ngModelChange)="memberUsername.set($event)"
               placeholder="username"
+              autocomplete="off"
             />
+            <span class="field__hint"
+              >Must already exist — users appear after their first login.</span
+            >
           </div>
           <div class="field">
             <label for="member-role">Role</label>
-            <select id="member-role" name="role" [(ngModel)]="memberRole">
+            <select
+              id="member-role"
+              name="role"
+              [ngModel]="memberRole()"
+              (ngModelChange)="memberRole.set($event)"
+            >
               <option value="user">user</option>
               <option value="admin">admin</option>
             </select>
           </div>
-          <button type="submit" class="btn btn--primary">Add</button>
+          <button type="submit" class="btn btn--primary" [disabled]="!canAddMember()">Add</button>
         </form>
       }
 
-      <table class="table" style="margin-top: 1rem">
-        <thead>
-          <tr>
-            <th>User</th>
-            <th>Role</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          @for (member of members(); track member.username) {
+      <div class="table-wrap" style="margin-top: 1rem">
+        <table class="table">
+          <thead>
             <tr>
-              <td>{{ member.username }}</td>
-              <td>
-                <span class="badge badge--muted">{{ member.role }}</span>
-              </td>
-              <td style="text-align: right">
-                <button
-                  type="button"
-                  class="btn btn--sm btn--danger"
-                  (click)="removeMember(member.username)"
-                >
-                  Remove
-                </button>
-              </td>
+              <th scope="col">User</th>
+              <th scope="col">Role</th>
+              <th scope="col"><span class="sr-only">Actions</span></th>
             </tr>
-          } @empty {
-            <tr>
-              <td class="table__empty" colspan="3">No members yet.</td>
-            </tr>
-          }
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            @for (member of members(); track member.username) {
+              <tr>
+                <td>{{ member.username }}</td>
+                <td>
+                  <span class="badge badge--muted">{{ member.role }}</span>
+                </td>
+                <td class="table__actions">
+                  <button
+                    type="button"
+                    class="btn btn--sm btn--danger"
+                    [disabled]="busy()"
+                    [attr.aria-label]="'Remove ' + member.username"
+                    (click)="removeMember(member.username)"
+                  >
+                    Remove
+                  </button>
+                </td>
+              </tr>
+            } @empty {
+              <tr>
+                <td class="table__empty" colspan="3">No members yet.</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
     </div>
   }
 
   <!-- API keys -->
   @if (tab() === 'keys') {
-    <div class="card">
+    <div class="card" role="tabpanel" aria-labelledby="tab-keys">
       <div class="spread">
         <h3 class="section-title" style="margin: 0">API keys</h3>
         <button
           type="button"
           class="btn btn--sm btn--primary"
+          [attr.aria-expanded]="showIssueKey()"
           (click)="showIssueKey.set(!showIssueKey())"
         >
           {{ showIssueKey() ? 'Cancel' : '+ Issue key' }}
@@ -156,25 +204,31 @@
       </div>
       <p class="muted" style="margin: 0.25rem 0 0">
         Keys are bound to this use case — requests made with them are attributed here automatically.
+        Only members of the use case can issue one.
       </p>
 
       @if (showIssueKey()) {
-        <form class="form-inline disclosure" (ngSubmit)="issueKey(); showIssueKey.set(false)">
+        <form class="form-inline disclosure" (ngSubmit)="issueKey()">
           <div class="field grow">
             <label for="key-label">Label (optional)</label>
             <input
               id="key-label"
               name="label"
-              [(ngModel)]="keyLabel"
+              [ngModel]="keyLabel()"
+              (ngModelChange)="keyLabel.set($event)"
               placeholder="e.g. opencode laptop"
+              autocomplete="off"
             />
+            <span class="field__hint">Helps you tell keys apart later — it is not a secret.</span>
           </div>
-          <button type="submit" class="btn btn--primary">Issue</button>
+          <button type="submit" class="btn btn--primary" [disabled]="busy()">
+            {{ busy() ? 'Issuing…' : 'Issue' }}
+          </button>
         </form>
       }
 
       @if (issued(); as key) {
-        <div class="callout callout--warning stack" style="margin-top: 1rem">
+        <div class="callout callout--warning stack" style="margin-top: 1rem" role="alert">
           <strong>Copy this key now — it is shown only once.</strong>
           <code class="secret">{{ key.api_key }}</code>
           <div class="row">
@@ -185,64 +239,75 @@
               Done
             </button>
           </div>
+          @if (copyFailed()) {
+            <span class="field__hint field__hint--error">
+              This browser would not let the page write to the clipboard — select the key above and
+              copy it manually.
+            </span>
+          }
         </div>
       }
 
-      <table class="table" style="margin-top: 1rem">
-        <thead>
-          <tr>
-            <th>Prefix</th>
-            <th>Label</th>
-            <th>Owner</th>
-            <th>Status</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          @for (key of apiKeys(); track key.prefix) {
+      <div class="table-wrap" style="margin-top: 1rem">
+        <table class="table">
+          <thead>
             <tr>
-              <td>
-                <code>aira_{{ key.prefix }}_…</code>
-              </td>
-              <td>{{ key.label || '—' }}</td>
-              <td>{{ key.owner }}</td>
-              <td>
-                @if (key.is_active) {
-                  <span class="badge badge--success">active</span>
-                } @else {
-                  <span class="badge badge--danger">revoked</span>
-                }
-              </td>
-              <td style="text-align: right">
-                @if (key.is_active) {
-                  <button
-                    type="button"
-                    class="btn btn--sm btn--danger"
-                    (click)="revokeKey(key.prefix)"
-                  >
-                    Revoke
-                  </button>
-                }
-              </td>
+              <th scope="col">Prefix</th>
+              <th scope="col">Label</th>
+              <th scope="col">Owner</th>
+              <th scope="col">Status</th>
+              <th scope="col"><span class="sr-only">Actions</span></th>
             </tr>
-          } @empty {
-            <tr>
-              <td class="table__empty" colspan="5">No keys issued yet.</td>
-            </tr>
-          }
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            @for (key of apiKeys(); track key.prefix) {
+              <tr>
+                <td>
+                  <code>aira_{{ key.prefix }}_…</code>
+                </td>
+                <td>{{ key.label || '—' }}</td>
+                <td>{{ key.owner }}</td>
+                <td>
+                  @if (key.is_active) {
+                    <span class="badge badge--success">active</span>
+                  } @else {
+                    <span class="badge badge--danger">revoked</span>
+                  }
+                </td>
+                <td class="table__actions">
+                  @if (key.is_active) {
+                    <button
+                      type="button"
+                      class="btn btn--sm btn--danger"
+                      [disabled]="busy()"
+                      [attr.aria-label]="'Revoke key ' + key.prefix"
+                      (click)="revokeKey(key.prefix)"
+                    >
+                      Revoke
+                    </button>
+                  }
+                </td>
+              </tr>
+            } @empty {
+              <tr>
+                <td class="table__empty" colspan="5">No keys issued yet.</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
     </div>
   }
 
   <!-- Budgets -->
   @if (tab() === 'budgets') {
-    <div class="card">
+    <div class="card" role="tabpanel" aria-labelledby="tab-budgets">
       <div class="spread">
         <h3 class="section-title" style="margin: 0">Budgets</h3>
         <button
           type="button"
           class="btn btn--sm btn--primary"
+          [attr.aria-expanded]="showAddBudget()"
           (click)="showAddBudget.set(!showAddBudget())"
         >
           {{ showAddBudget() ? 'Cancel' : '+ Add budget' }}
@@ -255,48 +320,93 @@
       @if (showAddBudget()) {
         <form class="form-inline disclosure" (ngSubmit)="addBudget()">
           <div class="field">
-            <label>Scope</label>
-            <select name="scope" [(ngModel)]="budgetScope">
+            <label for="budget-scope">Scope</label>
+            <select
+              id="budget-scope"
+              name="scope"
+              [ngModel]="budgetScope()"
+              (ngModelChange)="budgetScope.set($event)"
+            >
               <option value="use_case">Whole use case</option>
               <option value="member">Member</option>
             </select>
           </div>
-          @if (budgetScope === 'member') {
+          @if (budgetScope() === 'member') {
             <div class="field">
-              <label>Member username</label>
-              <input name="subject" [(ngModel)]="budgetSubject" placeholder="username" />
+              <label for="budget-subject">Member username</label>
+              <input
+                id="budget-subject"
+                name="subject"
+                [ngModel]="budgetSubject()"
+                (ngModelChange)="budgetSubject.set($event)"
+                placeholder="username"
+                autocomplete="off"
+              />
             </div>
           }
           <div class="field">
-            <label>Period</label>
-            <select name="period" [(ngModel)]="budgetPeriod">
+            <label for="budget-period">Period</label>
+            <select
+              id="budget-period"
+              name="period"
+              [ngModel]="budgetPeriod()"
+              (ngModelChange)="budgetPeriod.set($event)"
+            >
               <option value="day">Daily</option>
               <option value="month">Monthly</option>
             </select>
           </div>
           <div class="field">
-            <label>Token limit</label>
-            <input type="number" name="tokens" [(ngModel)]="budgetTokens" placeholder="—" />
+            <label for="budget-tokens">Token limit</label>
+            <input
+              id="budget-tokens"
+              type="number"
+              min="1"
+              name="tokens"
+              [ngModel]="budgetTokens()"
+              (ngModelChange)="budgetTokens.set($event)"
+              placeholder="—"
+            />
           </div>
           <div class="field">
-            <label>Request limit</label>
-            <input type="number" name="requests" [(ngModel)]="budgetRequests" placeholder="—" />
+            <label for="budget-requests">Request limit</label>
+            <input
+              id="budget-requests"
+              type="number"
+              min="1"
+              name="requests"
+              [ngModel]="budgetRequests()"
+              (ngModelChange)="budgetRequests.set($event)"
+              placeholder="—"
+            />
           </div>
-          <button type="submit" class="btn btn--primary">Add</button>
+          <button type="submit" class="btn btn--primary" [disabled]="!canAddBudget()">Add</button>
+          @if (budgetError(); as message) {
+            <span class="field__hint field__hint--error">{{ message }}</span>
+          }
         </form>
+      }
+
+      @if (usageUnavailable() && budgets().length) {
+        <p class="callout callout--warning" style="margin-top: 1rem">
+          Consumption is unavailable — the gateway could not be reached (or did not accept this
+          login). The configured limits below are still in force.
+        </p>
       }
 
       <div class="stack" style="margin-top: 1rem">
         @for (budget of budgets(); track budget.id) {
           <div class="card" style="padding: 0.9rem 1rem">
             <div class="spread">
-              <div>
-                <strong>{{ budget.scope === 'member' ? budget.subject : 'Whole use case' }}</strong>
+              <div class="row">
+                <strong>{{ budgetLabel(budget) }}</strong>
                 <span class="badge badge--muted">{{ budget.period }}</span>
               </div>
               <button
                 type="button"
                 class="btn btn--sm btn--danger"
+                [disabled]="busy()"
+                [attr.aria-label]="'Remove budget for ' + budgetLabel(budget)"
                 (click)="removeBudget(budget.id)"
               >
                 Remove
@@ -309,7 +419,14 @@
                   <span class="muted">Requests</span>
                   <span>{{ usedFor(budget).used_requests }} / {{ budget.limit_requests }}</span>
                 </div>
-                <div class="progress">
+                <div
+                  class="progress"
+                  role="progressbar"
+                  [attr.aria-valuenow]="pct(usedFor(budget).used_requests, budget.limit_requests)"
+                  aria-valuemin="0"
+                  aria-valuemax="100"
+                  [attr.aria-label]="'Request budget for ' + budgetLabel(budget)"
+                >
                   <div
                     class="progress__bar"
                     [class.is-warn]="
@@ -329,7 +446,14 @@
                   <span class="muted">Tokens</span>
                   <span>{{ usedFor(budget).used_tokens }} / {{ budget.limit_tokens }}</span>
                 </div>
-                <div class="progress">
+                <div
+                  class="progress"
+                  role="progressbar"
+                  [attr.aria-valuenow]="pct(usedFor(budget).used_tokens, budget.limit_tokens)"
+                  aria-valuemin="0"
+                  aria-valuemax="100"
+                  [attr.aria-label]="'Token budget for ' + budgetLabel(budget)"
+                >
                   <div
                     class="progress__bar"
                     [class.is-warn]="pct(usedFor(budget).used_tokens, budget.limit_tokens) >= 80"
@@ -341,7 +465,7 @@
             }
           </div>
         } @empty {
-          <p class="muted">No budgets yet.</p>
+          <p class="empty">No budgets yet — requests are unlimited for this use case.</p>
         }
       </div>
     </div>

@@ -6,30 +6,37 @@
   }
 
   <div class="card" style="padding: 0">
-    <table class="table">
-      <thead>
-        <tr>
-          <th>Name</th>
-          <th>Slug</th>
-        </tr>
-      </thead>
-      <tbody>
-        @for (useCase of useCases(); track useCase.slug) {
-          <tr>
-            <td>
-              <a [routerLink]="['/use-cases', useCase.slug]">{{ useCase.name }}</a>
-            </td>
-            <td>
-              <code>{{ useCase.slug }}</code>
-            </td>
-          </tr>
-        } @empty {
-          <tr>
-            <td class="table__empty" colspan="2">No use cases yet.</td>
-          </tr>
-        }
-      </tbody>
-    </table>
+    @if (loading()) {
+      <p class="loading" style="padding: 1rem">
+        <span class="spinner" aria-hidden="true"></span>
+        Loading use cases…
+      </p>
+    } @else if (isEmpty()) {
+      <p class="empty">No use cases yet — create the first one below.</p>
+    } @else {
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th scope="col">Name</th>
+              <th scope="col">Slug</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (useCase of useCases(); track useCase.slug) {
+              <tr>
+                <td>
+                  <a [routerLink]="['/use-cases', useCase.slug]">{{ useCase.name }}</a>
+                </td>
+                <td>
+                  <code>{{ useCase.slug }}</code>
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    }
   </div>
 
   <div class="card">
@@ -37,13 +44,37 @@
     <form class="form-inline" (ngSubmit)="create()">
       <div class="field">
         <label for="uc-slug">Slug</label>
-        <input id="uc-slug" name="slug" [(ngModel)]="slug" placeholder="a-z0-9-" />
+        <input
+          id="uc-slug"
+          name="slug"
+          [ngModel]="slug()"
+          (ngModelChange)="slug.set($event)"
+          placeholder="a-z0-9-"
+          autocomplete="off"
+          [attr.aria-invalid]="slugError() ? 'true' : null"
+          [attr.aria-describedby]="slugError() ? 'uc-slug-error' : 'uc-slug-hint'"
+        />
+        @if (slugError(); as message) {
+          <span id="uc-slug-error" class="field__hint field__hint--error">{{ message }}</span>
+        } @else {
+          <span id="uc-slug-hint" class="field__hint"
+            >Used in the gateway URL and in API keys.</span
+          >
+        }
       </div>
       <div class="field grow">
         <label for="uc-name">Name</label>
-        <input id="uc-name" name="name" [(ngModel)]="name" placeholder="Human-readable name" />
+        <input
+          id="uc-name"
+          name="name"
+          [ngModel]="name()"
+          (ngModelChange)="name.set($event)"
+          placeholder="Human-readable name"
+        />
       </div>
-      <button type="submit" class="btn btn--primary">Create</button>
+      <button type="submit" class="btn btn--primary" [disabled]="!canCreate()">
+        {{ creating() ? 'Creating…' : 'Create' }}
+      </button>
     </form>
   </div>
 </div>

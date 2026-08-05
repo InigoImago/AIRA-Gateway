@@ -1,8 +1,10 @@
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
+import { errorMessage } from '../../core/api/error-message';
 import { DryRunResult, PipelineConfig, PipelineStep, StepType } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
+import { ConfirmService } from '../../core/ui/confirm.service';
 
 const STEP_LABELS: Record<StepType, string> = {
   injection_filter: 'Injection Filter',
@@ -55,11 +57,20 @@ function defaultConfig(type: StepType): PipelineStep['config'] {
   }
 }
 
+/**
+ * The live preview compiles operator-authored patterns in the browser. A pathological regex
+ * would block the UI thread outright, so the preview bounds both how much text it scans and
+ * how many patterns it runs — the saved config is validated server-side as well (ADR-0007).
+ */
+const PREVIEW_MAX_CHARS = 4_000;
+const PREVIEW_MAX_PATTERNS = 64;
+
 function matches(pattern: string, text: string): boolean {
+  const sample = text.slice(0, PREVIEW_MAX_CHARS);
   try {
-    return new RegExp(pattern, 'i').test(text);
+    return new RegExp(pattern, 'i').test(sample);
   } catch {
-    return text.toLowerCase().includes(pattern.toLowerCase());
+    return sample.toLowerCase().includes(pattern.toLowerCase());
   }
 }
 
@@ -78,11 +89,16 @@ interface PreviewRow {
 export class PipelineEditor implements OnInit {
   private readonly route = inject(ActivatedRoute);
   private readonly service = inject(UseCaseService);
+  private readonly confirmService = inject(ConfirmService);
 
   protected readonly config = signal<PipelineConfig>({ steps: [], fallback_models: [] });
   protected readonly selected = signal<number | 'fallback' | null>(null);
   protected readonly saved = signal(false);
+  protected readonly saving = signal(false);
+  protected readonly loading = signal(true);
+  protected readonly dirty = signal(false);
   protected readonly error = signal<string | null>(null);
+  protected readonly dryRunning = signal(false);
   protected slug = '';
 
   protected readonly stepTypes: StepType[] = ['injection_filter', 'allow_check', 'model_route'];
@@ -145,7 +161,7 @@ export class PipelineEditor implements OnInit {
         const patterns = [
           ...(step.config.use_builtins !== false ? BUILTIN_REGEXES : []),
           ...(step.config.patterns ?? []),
-        ];
+        ].slice(0, PREVIEW_MAX_PATTERNS);
         const hit = patterns.some((p) => matches(p, text));
         const action = hit ? (step.config.action === 'flag' ? 'flagged' : 'blocked') : 'passed';
         if (action === 'blocked') blocked = true;
@@ -165,7 +181,16 @@ export class PipelineEditor implements OnInit {
 
   ngOnInit(): void {
     this.slug = this.route.snapshot.paramMap.get('slug') ?? '';
-    this.service.getPipeline(this.slug).subscribe((config) => this.config.set(config));
+    this.service.getPipeline(this.slug).subscribe({
+      next: (config) => {
+        this.config.set(config);
+        this.loading.set(false);
+      },
+      error: (response: unknown) => {
+        this.error.set(errorMessage(response, 'Could not load the pipeline.'));
+        this.loading.set(false);
+      },
+    });
   }
 
   private update(mutator: (config: PipelineConfig) => void): void {
@@ -173,6 +198,9 @@ export class PipelineEditor implements OnInit {
     mutator(next);
     this.config.set(next);
     this.saved.set(false);
+    // The graph is edited locally and only reaches the gateway on save; say so, so nobody
+    // navigates away believing a change is live.
+    this.dirty.set(true);
   }
 
   protected select(index: number | 'fallback'): void {
@@ -185,8 +213,17 @@ export class PipelineEditor implements OnInit {
   }
 
   protected removeStep(index: number): void {
+    const step = this.config().steps[index];
+    if (!this.confirmService.ask(`Remove the "${this.label(step.type)}" step?`)) {
+      return;
+    }
     this.update((c) => c.steps.splice(index, 1));
     this.selected.set(null);
+  }
+
+  protected canMove(index: number, delta: number): boolean {
+    const target = index + delta;
+    return target >= 0 && target < this.config().steps.length;
   }
 
   protected moveStep(index: number, delta: number): void {
@@ -229,19 +266,26 @@ export class PipelineEditor implements OnInit {
   }
 
   protected save(): void {
+    this.saving.set(true);
     this.service.savePipeline(this.slug, this.config()).subscribe({
       next: (config) => {
         this.config.set(config);
         this.saved.set(true);
+        this.dirty.set(false);
+        this.saving.set(false);
         this.error.set(null);
       },
-      error: () => this.error.set('Could not save the pipeline.'),
+      error: (response: unknown) => {
+        this.saving.set(false);
+        this.error.set(errorMessage(response, 'Could not save the pipeline.'));
+      },
     });
   }
 
   protected runDryRun(): void {
     this.dryRunError.set(null);
     this.dryRun.set(null);
+    this.dryRunning.set(true);
     this.service
       .dryRunPipeline({
         system: this.sampleSystem(),
@@ -249,9 +293,21 @@ export class PipelineEditor implements OnInit {
         pipeline: this.config(),
       })
       .subscribe({
-        next: (result) => this.dryRun.set(result),
-        error: () =>
-          this.dryRunError.set('Dry-run failed — is the gateway running and reachable on /gw?'),
+        next: (result) => {
+          this.dryRun.set(result);
+          this.dryRunning.set(false);
+        },
+        error: (response: { status?: number }) => {
+          this.dryRunning.set(false);
+          this.dryRunError.set(
+            response?.status === 401 || response?.status === 403
+              ? 'Dry-run rejected — the gateway did not accept your login. Enable OIDC on the gateway (AIRA_OIDC_ENABLED) so it can verify the same Keycloak token.'
+              : errorMessage(
+                  response,
+                  'Dry-run failed — is the gateway running and reachable on /gw?',
+                ),
+          );
+        },
       });
   }
 
