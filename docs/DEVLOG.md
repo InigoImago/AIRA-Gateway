@@ -5,6 +5,44 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-05 — FRD-404: stored prompts now expire, per use case, a week by default
+The least defensible property this product had: FRD-103 stored every request and response body,
+`store_payloads` is on by default, the redaction hook is a no-op — and **nothing ever deleted
+them**. Prompts routinely contain personal data.
+
+- **`UseCase.retention_days`**, 1–3650, **default 7**, editable by a use-case admin and shown on
+  the use-case overview so it is visible to whoever is accountable rather than buried in config.
+  Distributed with the existing `usecase.upserted` event.
+- **`python -m aira_gateway.retention`** (`make prune`) applies it; the reference stack runs it
+  hourly in a container. It is a one-shot process like the relay: **if nothing schedules it,
+  nothing is deleted** and the period in the UI is a promise nobody keeps.
+- Requests with no use case follow `AIRA_DEFAULT_RETENTION_DAYS` (7) — not exempt just because
+  nobody claimed them.
+
+**Two clocks, deliberately.** Payload retention (per use case, 7 days) removes the request and
+response bodies; the row and its metadata stay. A seven-day *row* retention was the obvious first
+design and is wrong: `request_logs` is where per-request cost lives (FRD-403), so it would leave
+the spend reporting able to see one week and no further. Whole-row deletion is a separate,
+installation-wide switch (`AIRA_LOG_RETENTION_DAYS`), **off by default** because the reporting
+horizon is an organisational decision, not something a release makes silently.
+
+**A bug the idempotency test caught.** SQLAlchemy's `JSON` type writes `None` as the JSON value
+`null`, not SQL `NULL`. "Has no payload" and "has a payload that is null" were therefore
+indistinguishable, so the pruner rewrote the same rows on every run and its reported count meant
+nothing. Columns are now `JSON(none_as_null=True)`; migration 0008 normalises existing rows and
+adds the `(use_case, created_at)` index the scan needs.
+
+**Verified on the live stack**: rows aged 10 and 2 days on a use case with the default period →
+the older payload gone, the fresher kept, both rows retaining tokens and cost; a second run
+cleared nothing; lowering the period to 1 day then removed the second payload too.
+
+**Still open, and stated in the FRD**: content redaction. Retention decides *when* a payload
+goes; nothing yet masks sensitive values *inside* one while it is kept.
+
+**Gates**: 448 unit + 14 integration + 31 e2e + 171 frontend tests green.
+
+---
+
 ## 2026-08-05 — CI: the gates are enforced, not merely available
 `.github/workflows/ci.yml`. Until now every quality gate — three test layers, two coverage
 thresholds, ruff, mypy, Prettier — only ran when somebody remembered, while `CLAUDE.md` claimed

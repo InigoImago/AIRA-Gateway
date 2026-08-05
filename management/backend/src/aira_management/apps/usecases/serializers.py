@@ -12,7 +12,15 @@ from aira_management.apps.usecases.models import UseCase, UseCaseMembership
 class UseCaseSerializer(serializers.ModelSerializer[UseCase]):
     class Meta:
         model = UseCase
-        fields = ["slug", "name", "description", "processing_notes", "created_at", "updated_at"]
+        fields = [
+            "slug",
+            "name",
+            "description",
+            "processing_notes",
+            "retention_days",
+            "created_at",
+            "updated_at",
+        ]
         read_only_fields = ["created_at", "updated_at"]
 
 

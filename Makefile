@@ -17,7 +17,7 @@ ENV_EXAMPLE := $(COMPOSE_DIR)/.env.example
 .PHONY: help up up-core down destroy ps logs restart env sync test test-py test-frontend \
         test-integration test-e2e e2e lint lint-py lint-frontend fmt seed seed-reset \
         migrate-gateway kafka-topics relay consume run-gateway run-gateway-oidc run-backend \
-        run-frontend up-full down-full logs-apps build-images ci wait-healthy
+        run-frontend up-full down-full logs-apps build-images ci wait-healthy prune
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -147,6 +147,9 @@ kafka-topics: ## Create the compacted config-distribution topics (idempotent)
 			--bootstrap-server localhost:9092 --partitions 1 --replication-factor 1 \
 			--config cleanup.policy=compact; \
 	done
+
+prune: ## Apply the retention periods (removes stored payloads past their period)
+	uv run python -m aira_gateway.retention
 
 relay: ## Publish pending management outbox events to Kafka
 	cd management/backend && uv run python manage.py relay

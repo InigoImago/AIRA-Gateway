@@ -98,6 +98,39 @@
           <div class="tile__value">{{ budgets().length }}</div>
           <div class="tile__label">Budgets</div>
         </div>
+        <div class="tile">
+          <div class="tile__value">{{ useCase()?.retention_days ?? '—' }}</div>
+          <div class="tile__label">Days of payload retention</div>
+        </div>
+      </div>
+
+      <div class="disclosure">
+        <h3 class="section-title" style="margin-bottom: 0.25rem">Data retention</h3>
+        <p class="muted" style="margin: 0 0 0.75rem">
+          Prompts and responses sent through this use case are stored so incidents can be
+          investigated. They are <strong>deleted after this many days</strong>. The metadata — who,
+          when, which model, how many tokens, what it cost — is kept for reporting.
+        </p>
+        <form class="form-inline" (ngSubmit)="saveRetention()">
+          <div class="field">
+            <label for="retention-days">Keep payloads for (days)</label>
+            <input
+              id="retention-days"
+              name="retention_days"
+              type="number"
+              min="1"
+              max="3650"
+              [ngModel]="retentionDays()"
+              (ngModelChange)="retentionDays.set($event)"
+            />
+          </div>
+          <button type="submit" class="btn btn--primary" [disabled]="!canSaveRetention()">
+            {{ busy() ? 'Saving…' : 'Save' }}
+          </button>
+          @if (retentionError(); as message) {
+            <span class="field__hint field__hint--error">{{ message }}</span>
+          }
+        </form>
       </div>
     </div>
   }

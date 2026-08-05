@@ -36,6 +36,14 @@ class GatewaySettings(BaseAiraSettings):
     # Persist request/response payloads (FRD-103). When False, only metadata is stored.
     store_payloads: bool = True
 
+    # Retention for stored payloads of requests that carry no use case, in days (FRD-404).
+    # Use-case traffic follows the period configured on its use case.
+    default_retention_days: int = 7
+
+    # Delete whole request_log rows older than this many days. 0 keeps them forever, which is
+    # the historical behaviour and what the cost reporting reads — opt in deliberately.
+    log_retention_days: int = 0
+
     # Enforce use-case/member usage budgets pre-dispatch (FRD-401).
     enforce_budgets: bool = True
 

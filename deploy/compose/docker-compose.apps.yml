@@ -187,6 +187,25 @@ services:
     networks: [aira]
     restart: unless-stopped
 
+  # Stored prompts and responses are personal data; nothing removes them unless something runs
+  # this. Hourly here — in a real deployment use a cron job, a systemd timer or a Kubernetes
+  # CronJob, the same as the relay (docs/DEPLOYMENT.md §6).
+  gateway-retention:
+    image: aira-gateway:${AIRA_IMAGE_TAG:-dev}
+    container_name: aira-gateway-retention
+    command:
+      - /bin/sh
+      - -c
+      - 'while true; do python -m aira_gateway.retention || true; sleep ${AIRA_RETENTION_INTERVAL:-3600}; done'
+    healthcheck:
+      disable: true
+    environment: *gateway-env
+    depends_on:
+      gateway-migrate:
+        condition: service_completed_successfully
+    networks: [aira]
+    restart: unless-stopped
+
   frontend:
     image: aira-frontend:${AIRA_IMAGE_TAG:-dev}
     build:

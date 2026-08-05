@@ -1,5 +1,8 @@
 # FRD-103 — Request/response persistence
 
+> **Extended by [FRD-404](FRD-404-retention.md) (2026-08-05)**: stored payloads now have a
+> retention period per use case, one week by default. Until then nothing ever deleted them.
+
 > Phase: 1 · Status: **Draft** · Owner: Vadim Scheibe · Last updated: 2026-08-04
 > Related: `docs/PRD.md` §5 (FR-GW-7), §9; `docs/ROADMAP.md` Phase 1; builds on FRD-100/101/102
 

@@ -20,6 +20,7 @@ from aira_gateway.db.models import (
     UseCaseMemberRead,
     UseCaseRead,
 )
+from aira_gateway.retention import DEFAULT_RETENTION_DAYS
 
 
 def _price_nanos(value: object) -> int | None:
@@ -60,19 +61,18 @@ async def apply_event(session: AsyncSession, event_type: str, payload: dict[str,
 
 async def _upsert_usecase(session: AsyncSession, payload: dict[str, Any]) -> None:
     existing = await session.get(UseCaseRead, payload["slug"])
+    fields = {
+        "name": payload.get("name", ""),
+        "description": payload.get("description", ""),
+        "processing_notes": payload.get("processing_notes", ""),
+        # Older Management versions do not send it; the default keeps the promise conservative.
+        "retention_days": int(payload.get("retention_days") or DEFAULT_RETENTION_DAYS),
+    }
     if existing is None:
-        session.add(
-            UseCaseRead(
-                slug=payload["slug"],
-                name=payload.get("name", ""),
-                description=payload.get("description", ""),
-                processing_notes=payload.get("processing_notes", ""),
-            )
-        )
+        session.add(UseCaseRead(slug=payload["slug"], **fields))
     else:
-        existing.name = payload.get("name", "")
-        existing.description = payload.get("description", "")
-        existing.processing_notes = payload.get("processing_notes", "")
+        for key, value in fields.items():
+            setattr(existing, key, value)
 
 
 async def _delete_usecase(session: AsyncSession, slug: str) -> None:

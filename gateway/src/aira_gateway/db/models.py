@@ -73,9 +73,18 @@ class RequestLog(Base):
     # had no price on file — deliberately distinct from a genuine zero (FRD-403).
     cost_nanos: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
-    # payloads (redacted; nullable when store_payloads is off)
-    request_payload: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
-    response_payload: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    # Payloads (redacted; absent when store_payloads is off, and removed once the use case's
+    # retention period has passed — FRD-404).
+    #
+    # `none_as_null` matters: without it SQLAlchemy writes the JSON value `null` instead of SQL
+    # NULL, so "has no payload" and "has a payload that is null" become indistinguishable and
+    # the retention pruner rewrites the same rows forever.
+    request_payload: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON(none_as_null=True), nullable=True
+    )
+    response_payload: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON(none_as_null=True), nullable=True
+    )
 
 
 class UseCaseRead(Base):
@@ -87,6 +96,8 @@ class UseCaseRead(Base):
     name: Mapped[str] = mapped_column(String(255))
     description: Mapped[str] = mapped_column(String(2000), default="")
     processing_notes: Mapped[str] = mapped_column(String(2000), default="")
+    # How long stored prompts/responses are kept for this use case (FRD-404).
+    retention_days: Mapped[int] = mapped_column(Integer, default=7)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

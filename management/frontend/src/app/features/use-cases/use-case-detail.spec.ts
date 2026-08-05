@@ -11,11 +11,13 @@ const USE_CASE: UseCase = {
   name: 'Demo',
   description: 'A demo use case',
   processing_notes: '',
+  retention_days: 7,
 };
 
 /** Only the members the tests touch; the rest of the surface is stubbed with empty results. */
 interface Overrides {
   get?: Observable<UseCase>;
+  update?: Observable<UseCase>;
   members?: Observable<Membership[]>;
   apiKeys?: Observable<ApiKey[]>;
   budgets?: Observable<Budget[]>;
@@ -38,6 +40,12 @@ interface Detail {
   notice: () => string | null;
   usageUnavailable: () => boolean;
   usageRefused: () => boolean;
+  retentionDays: { set: (v: number | null) => void; (): number | null };
+  retentionError: () => string | null;
+  retentionChanged: () => boolean;
+  canSaveRetention: () => boolean;
+  saveRetention: () => void;
+  useCase: () => UseCase | null;
   showAddMember: { set: (v: boolean) => void; (): boolean };
   showIssueKey: { set: (v: boolean) => void; (): boolean };
   showAddBudget: { set: (v: boolean) => void; (): boolean };
@@ -76,6 +84,10 @@ function setup(overrides: Overrides = {}, confirmAnswer = true, queryTab: string
   const calls: string[] = [];
   const service = {
     get: () => overrides.get ?? of(USE_CASE),
+    update: (_s: string, changes: Partial<UseCase>) => {
+      calls.push(`update:${JSON.stringify(changes)}`);
+      return overrides.update ?? of({ ...USE_CASE, ...changes });
+    },
     members: () => overrides.members ?? of([]),
     apiKeys: () => overrides.apiKeys ?? of([]),
     budgets: () => overrides.budgets ?? of([]),
@@ -761,5 +773,69 @@ describe('UseCaseDetail cost budgets', () => {
     expect(harness.component.unpricedRequests()).toBe(3);
     expect(harness.text()).toContain('no price on file');
     expect(harness.text()).toContain('unknown, not zero');
+  });
+});
+
+describe('UseCaseDetail retention', () => {
+  it('shows the period the use case currently keeps payloads for', () => {
+    const harness = setup();
+    expect(harness.component.retentionDays()).toBe(7);
+    expect(harness.text()).toContain('Days of payload retention');
+    expect(harness.text()).toContain('deleted after this many days');
+  });
+
+  it('does not offer to save an unchanged period', () => {
+    const { component } = setup();
+    expect(component.retentionChanged()).toBe(false);
+    expect(component.canSaveRetention()).toBe(false);
+  });
+
+  it('refuses a period outside the allowed range', () => {
+    const { component } = setup();
+    component.retentionDays.set(0);
+    expect(component.retentionError()).toContain('Between 1 and 3650');
+    component.retentionDays.set(4000);
+    expect(component.retentionError()).toContain('Between 1 and 3650');
+    component.retentionDays.set(null);
+    expect(component.retentionError()).toContain('Set how many days');
+    expect(component.canSaveRetention()).toBe(false);
+  });
+
+  it('saves a new period and says what it means', () => {
+    const { component, calls } = setup();
+    component.retentionDays.set(1);
+    expect(component.canSaveRetention()).toBe(true);
+
+    component.saveRetention();
+    expect(calls).toContain('update:{"retention_days":1}');
+    expect(component.notice()).toContain('kept for 1 day(s)');
+    expect(component.useCase()?.retention_days).toBe(1);
+  });
+
+  it('reports a refused change instead of appearing to succeed', () => {
+    const { component } = setup({
+      update: throwError(() => ({
+        status: 403,
+        error: { error: { message: 'You are not an admin of this use case.' } },
+      })),
+    });
+    component.retentionDays.set(30);
+    component.saveRetention();
+    expect(component.error()).toBe('You are not an admin of this use case.');
+    expect(component.useCase()?.retention_days).toBe(7);
+  });
+
+  it('saves from the form in the DOM', () => {
+    const harness = setup();
+    harness.component.retentionDays.set(14);
+    harness.fixture.detectChanges();
+
+    const html = harness.fixture.nativeElement as HTMLElement;
+    expect(html.querySelector('label[for="retention-days"]')).not.toBeNull();
+    const forms = html.querySelectorAll('form');
+    forms[forms.length - 1].dispatchEvent(new Event('submit'));
+    harness.fixture.detectChanges();
+
+    expect(harness.calls).toContain('update:{"retention_days":14}');
   });
 });

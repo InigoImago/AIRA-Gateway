@@ -208,3 +208,43 @@ def test_unsubscribe_not_present_is_noop() -> None:
         return None
 
     events.unsubscribe(never_subscribed)  # no error, no-op
+
+
+# ---- retention (FRD-404) -------------------------------------------------------------------
+
+
+def test_a_new_use_case_keeps_payloads_for_a_week_by_default() -> None:
+    admin = _user("admin1", "use-case-admin")
+    resp = _create(_client(admin), "demo-uc", "Demo")
+    assert resp.json()["retention_days"] == 7
+
+
+def test_an_admin_can_shorten_or_extend_the_period() -> None:
+    admin = _user("admin1", "use-case-admin")
+    _create(_client(admin), "demo-uc", "Demo")
+
+    resp = _client(admin).patch(f"{BASE}demo-uc/", {"retention_days": 1}, format="json")
+    assert resp.status_code == 200
+    assert resp.json()["retention_days"] == 1
+
+    resp = _client(admin).patch(f"{BASE}demo-uc/", {"retention_days": 90}, format="json")
+    assert resp.json()["retention_days"] == 90
+
+
+def test_a_period_outside_the_allowed_range_is_refused() -> None:
+    admin = _user("admin1", "use-case-admin")
+    _create(_client(admin), "demo-uc", "Demo")
+    # Zero would mean "delete immediately", which is a mistake, not a policy.
+    client = _client(admin)
+    for invalid in (0, 99999):
+        response = client.patch(f"{BASE}demo-uc/", {"retention_days": invalid}, format="json")
+        assert response.status_code == 400, invalid
+
+
+def test_the_period_is_published_to_the_gateway(captured_events) -> None:
+    admin = _user("admin1", "use-case-admin")
+    _create(_client(admin), "demo-uc", "Demo")
+    _client(admin).patch(f"{BASE}demo-uc/", {"retention_days": 14}, format="json")
+
+    published = [p for t, p in captured_events if t == "usecase.upserted"]
+    assert published[-1]["retention_days"] == 14

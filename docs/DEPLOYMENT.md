@@ -25,6 +25,7 @@ workers and a static bundle.
 | 2 | **Management API** (control plane) | ASGI `aira_management.config.asgi:application` | HTTP :8002 | yes |
 | 3 | **Config consumer** | `python -m aira_gateway.consumer.worker` | — | yes, if the SPA is used |
 | 4 | **Outbox relay** | `python manage.py relay` | — | yes, if the SPA is used |
+| 4b | **Retention pruner** | `python -m aira_gateway.retention` | — | **yes** — nothing deletes stored prompts otherwise |
 | 5 | **Management SPA** | static bundle from `ng build` | served by any web server | yes, for the UI |
 
 Infrastructure:
@@ -42,7 +43,7 @@ All five run from **three images**, built from this repository:
 
 | Image | Dockerfile | Runs |
 |---|---|---|
-| `aira-gateway` | `gateway/Dockerfile` | the gateway, the config consumer, and `alembic upgrade head` |
+| `aira-gateway` | `gateway/Dockerfile` | the gateway, the config consumer, the retention pruner, and `alembic upgrade head` |
 | `aira-management` | `management/backend/Dockerfile` | the API, `manage.py migrate`, and the outbox relay |
 | `aira-frontend` | `management/frontend/Dockerfile` | the built SPA behind nginx, which also proxies `/api` and `/gw` |
 
@@ -343,6 +344,8 @@ file in the **process working directory** (see `aira_common.config.BaseAiraSetti
 | `AIRA_AUTH_REQUIRED` | `true` | `false` opens all API routes with a synthetic `demo` principal. Demo only. |
 | `AIRA_REQUIRE_USE_CASE` | `false` | Reject authenticated requests that carry no use-case selector |
 | `AIRA_STORE_PAYLOADS` | `true` | Persist request/response bodies in `request_logs` (subject to the redaction hook) |
+| `AIRA_DEFAULT_RETENTION_DAYS` | `7` | Payload retention for requests that carry **no** use case. Use-case traffic follows the period set on its use case (FRD-404). |
+| `AIRA_LOG_RETENTION_DAYS` | `0` | Delete whole `request_logs` rows older than this. `0` keeps them forever — the cost reporting reads them, so opt in deliberately. |
 | `AIRA_ENFORCE_BUDGETS` | `true` | Reject over-budget requests with 429 |
 | `AIRA_TRUST_FORWARDED_FOR` | `false` | Honour `X-Forwarded-For` for the recorded source IP |
 | `AIRA_MAX_REQUEST_BYTES` | `8388608` (8 MiB) | Hard ceiling on a request body; larger bodies get 413 before being buffered |
@@ -474,15 +477,20 @@ Operations:
 - [ ] Both migration commands run on every deploy
 - [ ] All five Kafka topics exist and are **compacted**
 - [ ] The consumer runs as a long-lived process and is restarted on failure
+- [ ] **The retention pruner is scheduled.** `python -m aira_gateway.retention` does one pass and
+      exits. If nothing runs it, **nothing is ever deleted** and the period configured per use
+      case is a promise nobody keeps. The reference stack runs it hourly in a container; outside
+      Compose use cron, a systemd timer or a CronJob.
 - [ ] **The relay is scheduled.** `manage.py relay` publishes pending rows once and exits — a cron
       job, systemd timer or Kubernetes CronJob every minute is the intended shape. Without it,
       nothing a user configures in the UI ever reaches the gateway.
 - [ ] Prices on file for every model in use — check the unpriced warning on **Models & prices**;
       unpriced traffic is excluded from every spend figure (FRD-403)
 - [ ] `AIRA_STORE_PAYLOADS` reviewed against your data-protection rules — with it on, full prompts
-      and responses are written to `request_logs`, and the redaction hook is a no-op by default
-      (`aira_gateway.persistence.redaction.NoOpRedactor`)
-- [ ] Retention/pruning for `request_logs` — nothing deletes rows today
+      and responses are written to `request_logs`. They are deleted after each use case's
+      retention period (default **7 days**, FRD-404), but the *content* redaction hook is still a
+      no-op (`aira_gateway.persistence.redaction.NoOpRedactor`): nothing is masked before storage
+- [ ] Retention periods reviewed with whoever is accountable for each use case
 - [ ] `/healthz` (liveness) and `/readyz` (readiness) wired into your orchestrator on both services
 
 ---
@@ -502,4 +510,4 @@ Stated plainly, because a deployment guide that hides them wastes your time:
 | **The relay is not a daemon** | Must be scheduled externally, or configuration never propagates | By design (transactional outbox), but unscheduled by default |
 | **Membership is split** between Management and Keycloak groups | Consumption views and data-plane access need the Keycloak group; the UI membership alone is not enough | ADR-0007 addendum, follow-up recorded |
 | **No rate limiting** | Budgets cap tokens and requests per period, but nothing throttles a caller per second | Follow-up in ADR-0007 |
-| **No retention** for `request_logs` | The table grows without bound | Not implemented |
+| **No content redaction** | Payloads are stored verbatim until their retention period expires; nothing masks sensitive values inside them | `NoOpRedactor`; retention itself is done (FRD-404) |

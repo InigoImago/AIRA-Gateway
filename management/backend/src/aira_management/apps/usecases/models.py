@@ -7,8 +7,12 @@ Keycloak group ``/use-cases/<slug>``, so it is restricted to the same charset.
 from __future__ import annotations
 
 from django.conf import settings
-from django.core.validators import RegexValidator
+from django.core.validators import MaxValueValidator, MinValueValidator, RegexValidator
 from django.db import models
+
+# One week. Long enough to investigate an incident, short enough that a prompt someone typed
+# last month is simply not there any more (FRD-404).
+DEFAULT_RETENTION_DAYS = 7
 
 slug_validator = RegexValidator(
     regex=r"^[a-z0-9-]+$",
@@ -21,6 +25,11 @@ class UseCase(models.Model):
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True)
     processing_notes = models.TextField(blank=True)
+    retention_days = models.PositiveSmallIntegerField(
+        default=DEFAULT_RETENTION_DAYS,
+        validators=[MinValueValidator(1), MaxValueValidator(3650)],
+        help_text="Days that stored prompts and responses are kept. Metadata is retained.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

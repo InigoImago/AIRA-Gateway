@@ -66,6 +66,8 @@ export class UseCaseDetail implements OnInit {
   protected readonly budgetRequests = signal<number | null>(null);
   /** Kept as text: a spend limit must not round-trip through a JS number. */
   protected readonly budgetCost = signal('');
+  /** Retention period being edited on the overview tab (FRD-404). */
+  protected readonly retentionDays = signal<number | null>(null);
 
   ngOnInit(): void {
     this.slug = this.route.snapshot.paramMap.get('slug') ?? '';
@@ -89,6 +91,7 @@ export class UseCaseDetail implements OnInit {
     this.service.get(this.slug).subscribe({
       next: (useCase) => {
         this.useCase.set(useCase);
+        this.retentionDays.set(useCase.retention_days ?? null);
         this.loading.set(false);
       },
       error: (response: unknown) => {
@@ -321,6 +324,42 @@ export class UseCaseDetail implements OnInit {
 
   protected budgetLabel(budget: Budget): string {
     return budget.scope === 'member' ? budget.subject || 'member' : 'Whole use case';
+  }
+
+  // -- retention -----------------------------------------------------------------------
+
+  protected retentionError(): string | null {
+    const days = this.retentionDays();
+    if (days == null) return 'Set how many days payloads are kept.';
+    if (!Number.isInteger(days) || days < 1 || days > 3650) {
+      return 'Between 1 and 3650 days.';
+    }
+    return null;
+  }
+
+  protected retentionChanged(): boolean {
+    return this.retentionDays() !== (this.useCase()?.retention_days ?? null);
+  }
+
+  protected canSaveRetention(): boolean {
+    return !this.retentionError() && this.retentionChanged() && !this.busy();
+  }
+
+  protected saveRetention(): void {
+    if (!this.canSaveRetention()) {
+      return;
+    }
+    const days = this.retentionDays();
+    this.run(this.service.update(this.slug, { retention_days: days ?? undefined }), {
+      failure: 'Could not change the retention period.',
+      success: (useCase: UseCase) => {
+        this.useCase.set(useCase);
+        this.retentionDays.set(useCase.retention_days ?? null);
+        this.notice.set(
+          `Prompts and responses are now kept for ${days} day(s). Anything already past that is removed on the next run.`,
+        );
+      },
+    });
   }
 
   // -- shared mutation plumbing ---------------------------------------------------------
