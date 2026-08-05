@@ -17,6 +17,7 @@ from aira_common.kafka import (
     MEMBERSHIP_TOPIC,
     MODEL_TOPIC,
     PIPELINE_TOPIC,
+    RATE_LIMIT_TOPIC,
     USECASE_TOPIC,
 )
 from aira_gateway.config import GatewaySettings
@@ -45,6 +46,7 @@ async def run_consumer(settings: GatewaySettings) -> None:  # pragma: no cover
         API_KEY_TOPIC,
         PIPELINE_TOPIC,
         BUDGET_TOPIC,
+        RATE_LIMIT_TOPIC,
         MODEL_TOPIC,
         bootstrap_servers=settings.kafka_bootstrap_servers,
         group_id="aira-gateway",

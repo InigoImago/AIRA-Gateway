@@ -15,6 +15,7 @@ from aira_common.kafka import (
     MEMBERSHIP_TOPIC,
     MODEL_TOPIC,
     PIPELINE_TOPIC,
+    RATE_LIMIT_TOPIC,
     USECASE_TOPIC,
 )
 from aira_management.apps.outbox.models import OutboxEvent
@@ -30,6 +31,8 @@ _TOPIC_FOR = {
     "pipeline.deleted": PIPELINE_TOPIC,
     "budget.upserted": BUDGET_TOPIC,
     "budget.deleted": BUDGET_TOPIC,
+    "ratelimit.upserted": RATE_LIMIT_TOPIC,
+    "ratelimit.deleted": RATE_LIMIT_TOPIC,
     "model.upserted": MODEL_TOPIC,
     "model.deleted": MODEL_TOPIC,
 }

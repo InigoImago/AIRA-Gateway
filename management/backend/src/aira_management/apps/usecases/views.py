@@ -30,6 +30,8 @@ from aira_management.apps.budgets.models import Budget
 from aira_management.apps.budgets.serializers import BudgetSerializer
 from aira_management.apps.pipelines.models import PipelineConfig
 from aira_management.apps.pipelines.serializers import PipelineConfigSerializer
+from aira_management.apps.ratelimits.models import RateLimit
+from aira_management.apps.ratelimits.serializers import RateLimitSerializer
 from aira_management.apps.usecases.events import emit
 from aira_management.apps.usecases.models import UseCase, UseCaseMembership
 from aira_management.apps.usecases.serializers import (
@@ -87,6 +89,18 @@ def _budget_payload(budget: Budget, slug: str) -> dict[str, Any]:
         "limit_tokens": budget.limit_tokens,
         "limit_requests": budget.limit_requests,
         "enabled": budget.enabled,
+    }
+
+
+def _rate_limit_payload(limit: RateLimit, slug: str) -> dict[str, Any]:
+    return {
+        "id": limit.pk,
+        "use_case": slug,
+        "scope": limit.scope,
+        "subject": limit.subject,
+        "limit_rpm": limit.limit_rpm,
+        "burst": limit.burst,
+        "enabled": limit.enabled,
     }
 
 
@@ -313,6 +327,56 @@ class UseCaseViewSet(viewsets.ModelViewSet[UseCase]):
             )
             emit("budget.upserted", _budget_payload(budget, usecase.slug))
         return Response(BudgetSerializer(budget).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["get", "post"], url_path="rate-limits")
+    def rate_limits(self, request: Request, slug: str | None = None) -> Response:
+        """List or upsert request-rate limits for this use case (FRD-405).
+
+        Members read; admins define. POST upserts on (scope, subject) and publishes
+        `ratelimit.upserted` to the gateway.
+        """
+        usecase = self.get_object()
+        if request.method == "GET":
+            limits = RateLimit.objects.filter(use_case=usecase)
+            return Response(RateLimitSerializer(limits, many=True).data)
+
+        if not self._may_manage(usecase):
+            raise PermissionDenied("You cannot edit rate limits of this use case.")
+        serializer = RateLimitSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        with transaction.atomic():
+            limit, _created = RateLimit.objects.update_or_create(
+                use_case=usecase,
+                scope=data["scope"],
+                subject=data["subject"],
+                defaults={
+                    "limit_rpm": data["limit_rpm"],
+                    "burst": data.get("burst", 0),
+                    "enabled": data.get("enabled", True),
+                },
+            )
+            emit("ratelimit.upserted", _rate_limit_payload(limit, usecase.slug))
+        return Response(RateLimitSerializer(limit).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["delete"], url_path="rate-limits/(?P<limit_id>[0-9]+)")
+    def delete_rate_limit(
+        self, request: Request, slug: str | None = None, limit_id: str | None = None
+    ) -> Response:
+        usecase = self.get_object()
+        if not self._may_manage(usecase):
+            raise PermissionDenied("You cannot edit rate limits of this use case.")
+        assert limit_id is not None  # the URL route guarantees a numeric id
+        limit = RateLimit.objects.filter(use_case=usecase, pk=int(limit_id)).first()
+        if limit is None:
+            raise ValidationError(
+                {"rate_limit": [f"No rate limit '{limit_id}' for this use case."]}
+            )
+        with transaction.atomic():
+            limit_pk = limit.pk
+            limit.delete()
+            emit("ratelimit.deleted", {"id": limit_pk, "use_case": usecase.slug})
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
     @action(detail=True, methods=["delete"], url_path="budgets/(?P<budget_id>[0-9]+)")
     def delete_budget(

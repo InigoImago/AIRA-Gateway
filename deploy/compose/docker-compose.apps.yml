@@ -28,6 +28,9 @@ services:
       AIRA_POSTGRES_USER: ${POSTGRES_USER:-aira}
       AIRA_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aira-local}
       AIRA_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      # Shared counters for rate limits and budget reservations (ADR-0008). Empty disables
+      # them: limits then hold per process and budgets use the racy read-then-book path.
+      AIRA_REDIS_URL: ${AIRA_REDIS_URL:-redis://redis:6379/0}
       AIRA_OIDC_ENABLED: "true"
       # The issuer is what the *browser* obtained the token from, so it must match the token's
       # `iss` claim exactly. The JWKS URI is fetched by this container, which cannot reach
@@ -104,7 +107,7 @@ services:
     command:
       - |
         set -e
-        for t in aira.usecases aira.memberships aira.api-keys aira.pipelines aira.budgets aira.models; do
+        for t in aira.usecases aira.memberships aira.api-keys aira.pipelines aira.budgets aira.rate-limits aira.models; do
           /opt/kafka/bin/kafka-topics.sh --create --if-not-exists --topic "$$t" --bootstrap-server kafka:9092 --partitions 1 --replication-factor 1 --config cleanup.policy=compact
         done
     depends_on:
@@ -128,6 +131,11 @@ services:
       gateway-migrate:
         condition: service_completed_successfully
       keycloak:
+        condition: service_healthy
+      # Not strictly required -- the gateway degrades rather than failing without it (ADR-0008)
+      # -- but starting in the degraded state on every boot would make the fallback the normal
+      # case and hide a real outage when one happens.
+      redis:
         condition: service_healthy
     networks: [aira]
     restart: unless-stopped
