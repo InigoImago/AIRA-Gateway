@@ -5,6 +5,29 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-05 — Inline forms were a staircase
+Reported from looking at the running app: the hint under the slug field ("Used in the gateway URL
+and in API keys.") pushed that input upwards, so the controls in the row no longer lined up.
+
+`.form-inline` was `align-items: flex-end`. Bottom alignment looks right only while every field
+is equally tall — the moment one carries a hint under its input, that field grows and its control
+rises. Measured before the fix: the slug input started at y=371 and the name input at y=394, a 23
+pixel step. Four of the five inline forms in the app were affected.
+
+The row now aligns at the **top**, every label reserves exactly one line, and children that are
+not fields (the submit button, an inline error) skip the label row explicitly. Verified across all
+five forms and at a width where the budget form wraps: every control in a row starts within a
+pixel of its neighbours.
+
+`expectFormControlsAligned()` in the e2e suite now groups a form's controls by the row they landed
+in and fails on a step of more than 2px. Confirmed by putting the old CSS back: it reports
+"row 10 is a staircase — uc-name@394, button@397". Neither the unit tests nor a DOM assertion can
+see this — jsdom has no layout at all.
+
+**Gates**: 454 unit + 14 integration + 36 e2e + 177 frontend tests green.
+
+---
+
 ## 2026-08-05 — Payload storage can be switched off per use case
 Follow-on to FRD-404. Retention answers "how long"; this answers "at all". Until now the only
 control was the installation-wide `AIRA_STORE_PAYLOADS` env var — not per use case, not in the

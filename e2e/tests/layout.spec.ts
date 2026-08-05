@@ -1,5 +1,12 @@
 import { expect, test } from '@playwright/test';
-import { USERS, createUseCase, expectNoHorizontalOverflow, login, uniqueSlug } from './support';
+import {
+  USERS,
+  createUseCase,
+  expectFormControlsAligned,
+  expectNoHorizontalOverflow,
+  login,
+  uniqueSlug,
+} from './support';
 
 /**
  * The objective form of "the page overflows".
@@ -152,5 +159,50 @@ test.describe('Layout', () => {
     });
     expect(capped, 'the sticky inspector must cap its height and scroll').toBe(true);
     await expectNoHorizontalOverflow(page, 'pipeline builder with many categories');
+  });
+});
+
+test.describe('Form alignment', () => {
+  // Regression: `.form-inline` was bottom-aligned, so a field carrying a hint under its input
+  // grew and pushed its control upwards — the row became a staircase of uneven inputs.
+  test('every inline form lines its controls up', async ({ page }) => {
+    await login(page, USERS.useCaseAdmin);
+    const slug = uniqueSlug('align');
+
+    await page.goto('/use-cases');
+    await expectFormControlsAligned(page, 'create use case');
+
+    await createUseCase(page, slug, 'Alignment probe');
+
+    await page.goto(`/use-cases/${slug}?tab=members`);
+    await page.click('button:has-text("Add member")');
+    await expectFormControlsAligned(page, 'add member');
+
+    await page.goto(`/use-cases/${slug}?tab=keys`);
+    await page.click('button:has-text("Issue key")');
+    await expectFormControlsAligned(page, 'issue key');
+
+    await page.goto(`/use-cases/${slug}?tab=budgets`);
+    await page.click('button:has-text("Add budget")');
+    await expectFormControlsAligned(page, 'add budget');
+  });
+
+  test('the model catalog form lines up too', async ({ page }) => {
+    await login(page, USERS.globalAdmin);
+    await page.goto('/models');
+    await page.click('button:has-text("Add model")');
+    await expectFormControlsAligned(page, 'add model');
+  });
+
+  test('forms stay aligned when they wrap on a narrow screen', async ({ page }) => {
+    await login(page, USERS.useCaseAdmin);
+    const slug = uniqueSlug('wrap');
+    await createUseCase(page, slug, 'Wrap probe');
+
+    await page.setViewportSize({ width: 900, height: 800 });
+    await page.goto(`/use-cases/${slug}?tab=budgets`);
+    await page.click('button:has-text("Add budget")');
+    await expectFormControlsAligned(page, 'add budget @ 900px');
+    await expectNoHorizontalOverflow(page, 'add budget @ 900px');
   });
 });

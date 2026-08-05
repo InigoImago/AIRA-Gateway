@@ -93,3 +93,41 @@ export async function createUseCase(page: Page, slug: string, name: string) {
 export function uniqueSlug(prefix: string) {
   return `${prefix}-${Math.random().toString(36).slice(2, 8)}`;
 }
+
+/**
+ * Assert that the controls of an inline form line up.
+ *
+ * A row of fields is bottom-aligned only as long as every field is equally tall. As soon as one
+ * carries a hint under its input it grows, its control is pushed up, and the row turns into a
+ * staircase — visible at a glance to a person, invisible to a DOM assertion and to jsdom, which
+ * has no layout at all. Controls are grouped by the row they landed in, since these forms wrap.
+ */
+export async function expectFormControlsAligned(page: Page, context: string) {
+  const rows = await page.evaluate(() => {
+    const out: { form: number; rows: Record<string, string[]> }[] = [];
+    document.querySelectorAll('form.form-inline').forEach((form, index) => {
+      const grouped: Record<string, string[]> = {};
+      form.querySelectorAll('input:not([type=checkbox]), select, button').forEach((element) => {
+        const rect = element.getBoundingClientRect();
+        if (rect.width === 0) return;
+        // Group by the row band the control sits in; the forms wrap on purpose.
+        const band = String(Math.round(rect.top / 40));
+        const id = (element as HTMLElement).id || element.tagName.toLowerCase();
+        (grouped[band] ??= []).push(`${id}@${Math.round(rect.top)}`);
+      });
+      out.push({ form: index, rows: grouped });
+    });
+    return out;
+  });
+
+  for (const { form, rows: bands } of rows) {
+    for (const [band, controls] of Object.entries(bands)) {
+      const tops = controls.map((c) => Number(c.split('@')[1]));
+      const spread = Math.max(...tops) - Math.min(...tops);
+      expect(
+        spread,
+        `${context}: form ${form}, row ${band} is a staircase — ${controls.join(', ')}`,
+      ).toBeLessThanOrEqual(2);
+    }
+  }
+}

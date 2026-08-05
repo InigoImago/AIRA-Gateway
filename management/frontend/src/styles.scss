@@ -265,11 +265,34 @@ textarea:disabled {
 input::placeholder {
   color: #9ca3af;
 }
+/* Height of one label line, so a row of fields can reserve exactly that much and line their
+ * controls up regardless of what sits underneath them. */
+$field-label-height: 1.2rem;
+$field-label-gap: 0.3rem;
+
 .form-inline {
   display: flex;
-  align-items: flex-end;
+  /* Aligned at the TOP, not the bottom. Bottom alignment looks right only while every field is
+   * equally tall — the moment one carries a hint underneath its input, that field grows and its
+   * control is pushed up, producing a staircase across the row. */
+  align-items: flex-start;
   gap: 0.6rem;
   flex-wrap: wrap;
+}
+
+/* Every label occupies the same single line, so the controls below them start at the same y. */
+.form-inline .field > label {
+  display: flex;
+  align-items: flex-end;
+  min-height: $field-label-height;
+  white-space: nowrap;
+}
+
+/* Children that are not fields — the submit button, an inline error — belong on the control
+ * row, so they skip the label row explicitly instead of floating to the top. */
+.form-inline > .btn,
+.form-inline > .field__hint {
+  margin-top: calc(#{$field-label-height} + #{$field-label-gap});
 }
 
 /* ---- table ----------------------------------------------------------------------- */
