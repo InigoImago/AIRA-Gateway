@@ -12,9 +12,23 @@ demo mode. It is driven from the repo root via the `Makefile` (preferred), or di
 | keycloak | `quay.io/keycloak/keycloak:26.1` | 8080, 9000 | SSO / OIDC (admin console on 8080, health on 9000) |
 | kafka | `apache/kafka:3.9.0` (KRaft) | 29092 | Event bus. In-network: `kafka:9092`; from host: `localhost:29092` |
 | schema-registry | `confluentinc/cp-schema-registry:7.8.0` | 8081 | Event schema registry |
-| vault | `hashicorp/vault:1.18` (dev) | 8200 | Secrets (dev root token `root`) |
+| vault | `hashicorp/vault:1.18` (dev) | 8200 | Secrets (dev root token `root`) — **not read by any code yet** |
+| otel-collector | `otel/opentelemetry-collector-contrib` | 4317, 4318 | OTLP ingest (profile `observability`) |
+| otel-lgtm | `grafana/otel-lgtm` | 3000 | Grafana + Tempo + Prometheus + Loki (profile `observability`) |
 
-> Image tags are pinned per `ADR-0003`. Observability (OTel Collector + SigNoz) is added in `FRD-001`.
+> Image tags are pinned per `ADR-0003`. Observability is Grafana `otel-lgtm` per **ADR-0004**,
+> which supersedes the SigNoz choice in ADR-0002. `make up` includes the `observability` profile;
+> `make up-core` starts infrastructure only.
+
+## This stack is infrastructure only
+
+The Gateway and the Management backend are **not** part of it — there is no container image for
+them yet. They run from source (`make run-gateway-oidc`, `make run-backend`), as does the SPA
+(`make run-frontend`). See [`docs/DEPLOYMENT.md`](../../docs/DEPLOYMENT.md) for the full picture,
+including which of these services are actually used by the code:
+
+- **Vault** and the **Schema Registry** run here but no code reads from them today. Secrets come
+  from environment variables; Kafka events are plain JSON with an `event_type` header.
 
 ## Usage
 
@@ -36,9 +50,11 @@ docker compose ps
 ```
 
 ## Notes
-- `.env` is git-ignored and holds **local-only** dev credentials. Real secrets belong in Vault.
-- Keycloak imports realms from `keycloak/realms/` on startup (empty until Phase 2 / `FRD-201`).
-- Kafka runs in single-node KRaft mode (no ZooKeeper).
+- `.env` is git-ignored and holds **local-only** dev credentials. Real secrets belong in a secret
+  store — note that the Vault integration is not implemented yet (see above).
+- Keycloak imports the `aira` realm from `keycloak/realms/` on first startup — see below.
+- Kafka runs in single-node KRaft mode (no ZooKeeper). Topic auto-creation is **off**, so
+  `make kafka-topics` is required; it creates all five compacted config topics.
 
 
 ## Changing the Keycloak realm

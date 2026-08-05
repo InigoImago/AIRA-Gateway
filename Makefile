@@ -16,9 +16,9 @@ ENV_EXAMPLE := $(COMPOSE_DIR)/.env.example
         run-frontend
 
 help: ## Show this help
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
+	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
 		| sort \
-		| awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-12s\033[0m %s\n", $$1, $$2}'
+		| awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-18s\033[0m %s\n", $$1, $$2}'
 
 env: ## Create deploy/compose/.env from the example if missing
 	@if [ ! -f "$(ENV_FILE)" ]; then \
@@ -66,8 +66,10 @@ test-frontend: ## Run Angular unit tests (Vitest, single run) with the coverage 
 test-integration: ## Run server-side integration tests (needs the live stack; see tests/integration)
 	uv run pytest -m integration --no-cov
 
-test-e2e e2e: ## Run browser end-to-end tests (needs the stack + all services; see e2e/README.md)
+test-e2e: ## Run browser end-to-end tests (needs the stack + all services; see e2e/README.md)
 	cd e2e && npm install --silent && npx playwright test
+
+e2e: test-e2e
 
 lint: lint-py lint-frontend ## Run all linters/type-checks (check mode)
 

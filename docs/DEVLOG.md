@@ -5,6 +5,32 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-05 — Deployment documentation (`docs/DEPLOYMENT.md`)
+Written from the code, not from intent — every variable and command in it was read out of the
+settings classes and the Makefile, and the setup sequence was re-run against the live stack.
+
+- **New `docs/DEPLOYMENT.md`**: what actually runs (five processes, not two), the standalone
+  quickstart, integration with an existing Postgres / Keycloak / Kafka / OTel collector / upstream
+  provider / reverse proxy, a complete reference of all **28 gateway and 21 management settings**,
+  what has to be prepared in Keycloak (client, the five realm roles, the groups mapper, the
+  `/use-cases/<slug>` groups), and a production checklist.
+- **Root README** no longer claims "Planning phase" — Phases 0–4 are delivered. It now carries a
+  quickstart that matches reality and links the deployment guide.
+- **`deploy/compose/README.md`** corrected: it still advertised SigNoz (superseded by ADR-0004),
+  described the realm directory as "empty until Phase 2", and did not mention that topic
+  auto-creation is off.
+- **`make help` was hiding targets**: its grep had no digits in the target-name character class,
+  so `test-e2e` never appeared. Fixed, and `e2e` demoted to a plain alias.
+
+**Stated plainly in §7 rather than glossed over**: there are no container images for the two
+services (Compose is infrastructure only); Vault and the Schema Registry run in the reference
+stack but **no code reads from them**; the SPA's issuer and client id are compiled in, so
+retargeting it needs an edit and a rebuild; Kafka has no auth/TLS settings; the relay is a
+one-shot command that must be scheduled or configuration never propagates; `request_logs` has no
+retention; there is still no CI.
+
+---
+
 ## 2026-08-05 — Verified against the live stack: e2e (Playwright) + integration tests
 Point 1 of the plan: stop trusting the hermetic suites and actually run the thing. Three defects
 surfaced that no unit test could have caught — two of them in the security pass itself.
