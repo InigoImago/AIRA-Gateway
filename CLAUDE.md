@@ -188,8 +188,9 @@ Note: Keycloak imports a realm only if it does not exist — recreate it after e
 format/build/tests, and the full containerised stack with integration + Playwright e2e). The
 workflow is a thin wrapper around `make` targets so CI and a local run cannot drift; `make ci`
 reproduces the hermetic half. Node is now pinned per ADR-0003 (`.nvmrc` + `engines`).
-**Retention (`FRD-404`, 2026-08-05)**: stored prompts/responses expire per use case, **default 7
-days**, enforced by `python -m aira_gateway.retention` (hourly container; **schedule it or nothing
+**Storage & retention (`FRD-404`, 2026-08-05)**: payload storage is switchable **per use case**
+(`store_payloads`, default on; `AIRA_STORE_PAYLOADS` is a kill switch above it) and stored
+prompts/responses expire per use case, **default 7 days**, enforced by `python -m aira_gateway.retention` (hourly container; **schedule it or nothing
 is deleted**). Payload retention and record retention are separate clocks — whole-row deletion is
 off by default so the cost reporting (FRD-403) keeps its horizon.
 Next candidates: content redaction (the `Redactor` hook is still a no-op), per-caller rate

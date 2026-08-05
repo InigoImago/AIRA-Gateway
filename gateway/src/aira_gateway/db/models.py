@@ -96,7 +96,9 @@ class UseCaseRead(Base):
     name: Mapped[str] = mapped_column(String(255))
     description: Mapped[str] = mapped_column(String(2000), default="")
     processing_notes: Mapped[str] = mapped_column(String(2000), default="")
-    # How long stored prompts/responses are kept for this use case (FRD-404).
+    # Whether prompts/responses are written at all for this use case, and for how long they are
+    # kept once written (FRD-404).
+    store_payloads: Mapped[bool] = mapped_column(Boolean, default=True)
     retention_days: Mapped[int] = mapped_column(Integer, default=7)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

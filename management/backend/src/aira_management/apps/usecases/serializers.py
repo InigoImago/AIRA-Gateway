@@ -17,6 +17,7 @@ class UseCaseSerializer(serializers.ModelSerializer[UseCase]):
             "name",
             "description",
             "processing_notes",
+            "store_payloads",
             "retention_days",
             "created_at",
             "updated_at",

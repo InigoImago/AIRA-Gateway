@@ -12,6 +12,7 @@ const USE_CASE: UseCase = {
   description: 'A demo use case',
   processing_notes: '',
   retention_days: 7,
+  store_payloads: true,
 };
 
 /** Only the members the tests touch; the rest of the surface is stubbed with empty results. */
@@ -41,6 +42,7 @@ interface Detail {
   usageUnavailable: () => boolean;
   usageRefused: () => boolean;
   retentionDays: { set: (v: number | null) => void; (): number | null };
+  storePayloads: { set: (v: boolean) => void; (): boolean };
   retentionError: () => string | null;
   retentionChanged: () => boolean;
   canSaveRetention: () => boolean;
@@ -781,7 +783,7 @@ describe('UseCaseDetail retention', () => {
     const harness = setup();
     expect(harness.component.retentionDays()).toBe(7);
     expect(harness.text()).toContain('Days of payload retention');
-    expect(harness.text()).toContain('deleted after this many days');
+    expect(harness.text()).toContain('Deleted automatically once the period has passed');
   });
 
   it('does not offer to save an unchanged period', () => {
@@ -807,7 +809,7 @@ describe('UseCaseDetail retention', () => {
     expect(component.canSaveRetention()).toBe(true);
 
     component.saveRetention();
-    expect(calls).toContain('update:{"retention_days":1}');
+    expect(calls).toContain('update:{"store_payloads":true,"retention_days":1}');
     expect(component.notice()).toContain('kept for 1 day(s)');
     expect(component.useCase()?.retention_days).toBe(1);
   });
@@ -836,6 +838,78 @@ describe('UseCaseDetail retention', () => {
     forms[forms.length - 1].dispatchEvent(new Event('submit'));
     harness.fixture.detectChanges();
 
-    expect(harness.calls).toContain('update:{"retention_days":14}');
+    expect(harness.calls).toContain('update:{"store_payloads":true,"retention_days":14}');
+  });
+});
+
+describe('UseCaseDetail payload storage', () => {
+  it('does not render the settings before the use case has loaded', () => {
+    // Regression: the form was editable while the GET was in flight, so unchecking the box was
+    // silently undone by the arriving response — the switch appeared not to work at all.
+    const harness = setup({ get: new Observable<UseCase>(() => undefined) });
+    const html = harness.fixture.nativeElement as HTMLElement;
+    expect(harness.component.loading()).toBe(true);
+    expect(html.querySelector('#store-payloads')).toBeNull();
+    expect(html.querySelector('#retention-days')).toBeNull();
+  });
+
+  it('offers a switch that turns storage off entirely', () => {
+    const harness = setup();
+    expect(harness.component.storePayloads()).toBe(true);
+    expect(harness.text()).toContain('Store prompts and responses');
+    expect(harness.fixture.nativeElement.querySelector('#retention-days')).not.toBeNull();
+  });
+
+  it('the checkbox in the DOM actually toggles the setting', () => {
+    // Regression: a one-way ngModel binding on a checkbox inside an NgForm wrote the old value
+    // straight back, so the box sprang back and the switch could not be operated at all —
+    // invisible to a test that only sets the signal.
+    const harness = setup();
+    const box = (harness.fixture.nativeElement as HTMLElement).querySelector<HTMLInputElement>(
+      '#store-payloads',
+    );
+    expect(box).not.toBeNull();
+    expect(box!.checked).toBe(true);
+
+    box!.click();
+    harness.fixture.detectChanges();
+
+    expect(harness.component.storePayloads()).toBe(false);
+    expect(box!.checked).toBe(false);
+    expect(harness.fixture.nativeElement.querySelector('#retention-days')).toBeNull();
+
+    box!.click();
+    harness.fixture.detectChanges();
+    expect(harness.component.storePayloads()).toBe(true);
+  });
+
+  it('hides the period and explains the consequence when storage is off', () => {
+    const harness = setup();
+    harness.component.storePayloads.set(false);
+    harness.fixture.detectChanges();
+
+    // Nothing is kept, so there is no period to ask for.
+    expect(harness.fixture.nativeElement.querySelector('#retention-days')).toBeNull();
+    expect(harness.component.retentionError()).toBeNull();
+    expect(harness.text()).toContain('Nothing a caller sends or receives is written');
+    expect(harness.text()).toContain('only be traced through the metadata');
+  });
+
+  it('saves the switch and says what changed', () => {
+    const { component, calls } = setup();
+    component.storePayloads.set(false);
+    expect(component.retentionChanged()).toBe(true);
+
+    component.saveRetention();
+    expect(calls).toContain('update:{"store_payloads":false}');
+    expect(component.notice()).toContain('no longer stored');
+    expect(component.notice()).toContain('removed on the next run');
+  });
+
+  it('shows storage as off in the overview tile', () => {
+    const harness = setup({ get: of({ ...USE_CASE, store_payloads: false }) });
+    harness.fixture.detectChanges();
+    expect(harness.text()).toContain('Payload storage');
+    expect(harness.text()).toContain('off');
   });
 });

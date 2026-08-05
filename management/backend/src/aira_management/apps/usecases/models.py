@@ -25,6 +25,10 @@ class UseCase(models.Model):
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True)
     processing_notes = models.TextField(blank=True)
+    store_payloads = models.BooleanField(
+        default=True,
+        help_text="Store prompts and responses at all. Off means nothing is written.",
+    )
     retention_days = models.PositiveSmallIntegerField(
         default=DEFAULT_RETENTION_DAYS,
         validators=[MinValueValidator(1), MaxValueValidator(3650)],

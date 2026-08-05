@@ -65,7 +65,9 @@ async def _upsert_usecase(session: AsyncSession, payload: dict[str, Any]) -> Non
         "name": payload.get("name", ""),
         "description": payload.get("description", ""),
         "processing_notes": payload.get("processing_notes", ""),
-        # Older Management versions do not send it; the default keeps the promise conservative.
+        # Older Management versions do not send these; the defaults keep today's behaviour for
+        # storage and the conservative promise for retention.
+        "store_payloads": bool(payload.get("store_payloads", True)),
         "retention_days": int(payload.get("retention_days") or DEFAULT_RETENTION_DAYS),
     }
     if existing is None:

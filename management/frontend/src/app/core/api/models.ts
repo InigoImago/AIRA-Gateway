@@ -11,6 +11,8 @@ export interface UseCase {
   name: string;
   description: string;
   processing_notes: string;
+  /** Whether prompts and responses are stored at all (FRD-404). */
+  store_payloads?: boolean;
   /** How long stored prompts and responses are kept, in days (FRD-404). */
   retention_days?: number;
   created_at?: string;

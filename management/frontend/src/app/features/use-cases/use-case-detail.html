@@ -75,7 +75,10 @@
   </div>
 
   <!-- Overview -->
-  @if (tab() === 'overview') {
+  @if (tab() === 'overview' && !loading()) {
+    <!-- Gated on the load: the settings below are editable, and a form rendered before its data
+         has arrived lets a change be silently overwritten by the response — the same race the
+         pipeline builder had. -->
     <div class="card stack" role="tabpanel" aria-labelledby="tab-overview">
       @if (useCase(); as useCase) {
         <p style="margin: 0">{{ useCase.description || 'No description.' }}</p>
@@ -99,37 +102,74 @@
           <div class="tile__label">Budgets</div>
         </div>
         <div class="tile">
-          <div class="tile__value">{{ useCase()?.retention_days ?? '—' }}</div>
-          <div class="tile__label">Days of payload retention</div>
+          <div class="tile__value">
+            {{ useCase()?.store_payloads === false ? 'off' : (useCase()?.retention_days ?? '—') }}
+          </div>
+          <div class="tile__label">
+            {{
+              useCase()?.store_payloads === false ? 'Payload storage' : 'Days of payload retention'
+            }}
+          </div>
         </div>
       </div>
 
       <div class="disclosure">
-        <h3 class="section-title" style="margin-bottom: 0.25rem">Data retention</h3>
+        <h3 class="section-title" style="margin-bottom: 0.25rem">Data protection</h3>
         <p class="muted" style="margin: 0 0 0.75rem">
-          Prompts and responses sent through this use case are stored so incidents can be
-          investigated. They are <strong>deleted after this many days</strong>. The metadata — who,
-          when, which model, how many tokens, what it cost — is kept for reporting.
+          Prompts and responses sent through this use case can be stored so incidents can be
+          investigated. Either way the metadata — who, when, which model, how many tokens, what it
+          cost — is kept for reporting.
         </p>
-        <form class="form-inline" (ngSubmit)="saveRetention()">
-          <div class="field">
-            <label for="retention-days">Keep payloads for (days)</label>
+        <form class="stack" (ngSubmit)="saveRetention()">
+          <!-- No `for`: the input is nested, so the label is already associated with it. Adding
+               `for` as well makes a real browser forward the click a second time — the box
+               toggles twice and the switch looks dead. jsdom does not reproduce it. -->
+          <label class="row" style="gap: 0.5rem">
+            <!-- Plain [checked]/(change) rather than ngModel: a one-way ngModel binding on a
+                 checkbox inside an NgForm writes the old value straight back, so the box springs
+                 back and the switch cannot be operated. -->
             <input
-              id="retention-days"
-              name="retention_days"
-              type="number"
-              min="1"
-              max="3650"
-              [ngModel]="retentionDays()"
-              (ngModelChange)="retentionDays.set($event)"
+              type="checkbox"
+              id="store-payloads"
+              name="store_payloads"
+              [checked]="storePayloads()"
+              (change)="storePayloads.set($any($event.target).checked)"
             />
-          </div>
-          <button type="submit" class="btn btn--primary" [disabled]="!canSaveRetention()">
-            {{ busy() ? 'Saving…' : 'Save' }}
-          </button>
-          @if (retentionError(); as message) {
-            <span class="field__hint field__hint--error">{{ message }}</span>
+            Store prompts and responses
+          </label>
+
+          @if (storePayloads()) {
+            <div class="form-inline">
+              <div class="field">
+                <label for="retention-days">Keep them for (days)</label>
+                <input
+                  id="retention-days"
+                  name="retention_days"
+                  type="number"
+                  min="1"
+                  max="3650"
+                  [ngModel]="retentionDays()"
+                  (ngModelChange)="retentionDays.set($event)"
+                />
+                <span class="field__hint">Deleted automatically once the period has passed.</span>
+              </div>
+            </div>
+          } @else {
+            <p class="callout callout--warning" style="margin: 0">
+              Nothing a caller sends or receives is written for this use case. Anything already
+              stored is removed on the next retention run. Incidents can then only be traced through
+              the metadata.
+            </p>
           }
+
+          <div class="row">
+            <button type="submit" class="btn btn--primary" [disabled]="!canSaveRetention()">
+              {{ busy() ? 'Saving…' : 'Save' }}
+            </button>
+            @if (retentionError(); as message) {
+              <span class="field__hint field__hint--error">{{ message }}</span>
+            }
+          </div>
         </form>
       </div>
     </div>

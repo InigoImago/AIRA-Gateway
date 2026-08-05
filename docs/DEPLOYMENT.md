@@ -343,7 +343,7 @@ file in the **process working directory** (see `aira_common.config.BaseAiraSetti
 | `AIRA_OIDC_ENABLED` | `false` | Accept OIDC bearer tokens. **Required for the SPA's dry-run and consumption views.** Without it only API keys are accepted. |
 | `AIRA_AUTH_REQUIRED` | `true` | `false` opens all API routes with a synthetic `demo` principal. Demo only. |
 | `AIRA_REQUIRE_USE_CASE` | `false` | Reject authenticated requests that carry no use-case selector |
-| `AIRA_STORE_PAYLOADS` | `true` | Persist request/response bodies in `request_logs` (subject to the redaction hook) |
+| `AIRA_STORE_PAYLOADS` | `true` | Persist request/response bodies in `request_logs`. **Kill switch**: `false` here means no use case can store them, whatever its own setting says (FRD-404). |
 | `AIRA_DEFAULT_RETENTION_DAYS` | `7` | Payload retention for requests that carry **no** use case. Use-case traffic follows the period set on its use case (FRD-404). |
 | `AIRA_LOG_RETENTION_DAYS` | `0` | Delete whole `request_logs` rows older than this. `0` keeps them forever — the cost reporting reads them, so opt in deliberately. |
 | `AIRA_ENFORCE_BUDGETS` | `true` | Reject over-budget requests with 429 |
@@ -490,7 +490,8 @@ Operations:
       and responses are written to `request_logs`. They are deleted after each use case's
       retention period (default **7 days**, FRD-404), but the *content* redaction hook is still a
       no-op (`aira_gateway.persistence.redaction.NoOpRedactor`): nothing is masked before storage
-- [ ] Retention periods reviewed with whoever is accountable for each use case
+- [ ] Retention periods reviewed with whoever is accountable for each use case, and payload
+      storage switched **off** for any use case whose data must not be persisted at all
 - [ ] `/healthz` (liveness) and `/readyz` (readiness) wired into your orchestrator on both services
 
 ---

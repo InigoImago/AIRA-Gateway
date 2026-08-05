@@ -63,6 +63,7 @@ def _snapshot(usecase: UseCase) -> dict[str, Any]:
         "name": usecase.name,
         "description": usecase.description,
         "processing_notes": usecase.processing_notes,
+        "store_payloads": usecase.store_payloads,
         "retention_days": usecase.retention_days,
     }
 

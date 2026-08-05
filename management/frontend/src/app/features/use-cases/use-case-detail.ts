@@ -66,8 +66,9 @@ export class UseCaseDetail implements OnInit {
   protected readonly budgetRequests = signal<number | null>(null);
   /** Kept as text: a spend limit must not round-trip through a JS number. */
   protected readonly budgetCost = signal('');
-  /** Retention period being edited on the overview tab (FRD-404). */
+  /** Data-protection settings being edited on the overview tab (FRD-404). */
   protected readonly retentionDays = signal<number | null>(null);
+  protected readonly storePayloads = signal(true);
 
   ngOnInit(): void {
     this.slug = this.route.snapshot.paramMap.get('slug') ?? '';
@@ -92,6 +93,7 @@ export class UseCaseDetail implements OnInit {
       next: (useCase) => {
         this.useCase.set(useCase);
         this.retentionDays.set(useCase.retention_days ?? null);
+        this.storePayloads.set(useCase.store_payloads ?? true);
         this.loading.set(false);
       },
       error: (response: unknown) => {
@@ -329,6 +331,8 @@ export class UseCaseDetail implements OnInit {
   // -- retention -----------------------------------------------------------------------
 
   protected retentionError(): string | null {
+    // With storage off there is nothing to keep, so the period is not asked for.
+    if (!this.storePayloads()) return null;
     const days = this.retentionDays();
     if (days == null) return 'Set how many days payloads are kept.';
     if (!Number.isInteger(days) || days < 1 || days > 3650) {
@@ -338,7 +342,10 @@ export class UseCaseDetail implements OnInit {
   }
 
   protected retentionChanged(): boolean {
-    return this.retentionDays() !== (this.useCase()?.retention_days ?? null);
+    return (
+      this.retentionDays() !== (this.useCase()?.retention_days ?? null) ||
+      this.storePayloads() !== (this.useCase()?.store_payloads ?? true)
+    );
   }
 
   protected canSaveRetention(): boolean {
@@ -350,16 +357,26 @@ export class UseCaseDetail implements OnInit {
       return;
     }
     const days = this.retentionDays();
-    this.run(this.service.update(this.slug, { retention_days: days ?? undefined }), {
-      failure: 'Could not change the retention period.',
-      success: (useCase: UseCase) => {
-        this.useCase.set(useCase);
-        this.retentionDays.set(useCase.retention_days ?? null);
-        this.notice.set(
-          `Prompts and responses are now kept for ${days} day(s). Anything already past that is removed on the next run.`,
-        );
+    const store = this.storePayloads();
+    this.run(
+      this.service.update(this.slug, {
+        store_payloads: store,
+        ...(store && days != null ? { retention_days: days } : {}),
+      }),
+      {
+        failure: 'Could not change the data-protection settings.',
+        success: (useCase: UseCase) => {
+          this.useCase.set(useCase);
+          this.retentionDays.set(useCase.retention_days ?? null);
+          this.storePayloads.set(useCase.store_payloads ?? true);
+          this.notice.set(
+            store
+              ? `Prompts and responses are now kept for ${days} day(s). Anything already past that is removed on the next run.`
+              : 'Prompts and responses are no longer stored for this use case. Anything already stored is removed on the next run.',
+          );
+        },
       },
-    });
+    );
   }
 
   // -- shared mutation plumbing ---------------------------------------------------------

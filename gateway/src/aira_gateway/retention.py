@@ -67,14 +67,20 @@ class RetentionService:
         self._log_retention_days = max(0, log_retention_days)
 
     async def prune(self, now: datetime | None = None) -> PruneResult:
-        """Remove payloads past their retention, and rows past the record retention."""
+        """Remove payloads past their retention, and rows past the record retention.
+
+        A use case that has switched storage off is treated as a period of zero: turning the
+        toggle off means "do not keep prompts", so whatever is already there goes on the next
+        run rather than lingering for the remainder of the old period.
+        """
         now = now or datetime.now(UTC)
         async with self._sessionmaker() as session:
             periods = await self._periods(session)
 
             cleared = 0
             for use_case, days in periods.items():
-                cleared += await self._clear_payloads(session, use_case, now - timedelta(days=days))
+                cutoff = now if days is None else now - timedelta(days=days)
+                cleared += await self._clear_payloads(session, use_case, cutoff)
 
             # Requests that carry no use case (unbound break-glass keys, demo traffic) follow the
             # installation default — they are not exempt just because nobody claimed them.
@@ -102,10 +108,15 @@ class RetentionService:
         )
         return outcome
 
-    async def _periods(self, session: AsyncSession) -> dict[str, int]:
-        """Retention period per use case, from the read-model Management feeds."""
-        result = await session.execute(select(UseCaseRead.slug, UseCaseRead.retention_days))
-        return {slug: max(1, days or self._default_retention_days) for slug, days in result.all()}
+    async def _periods(self, session: AsyncSession) -> dict[str, int | None]:
+        """Retention period per use case; ``None`` where storage is switched off entirely."""
+        result = await session.execute(
+            select(UseCaseRead.slug, UseCaseRead.retention_days, UseCaseRead.store_payloads)
+        )
+        return {
+            slug: (None if not store else max(1, days or self._default_retention_days))
+            for slug, days, store in result.all()
+        }
 
     async def _clear_payloads(
         self, session: AsyncSession, use_case: str | None, cutoff: datetime

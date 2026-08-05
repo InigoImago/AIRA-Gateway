@@ -9,11 +9,30 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import Request
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from aira_common.observability import set_span_attributes, trace_context_fields
 from aira_gateway.core.canonical import CanonicalUsage
+from aira_gateway.db.models import UseCaseRead
 from aira_gateway.persistence.redaction import Redactor
 from aira_gateway.persistence.service import RequestLogService
+
+
+async def _may_store_payloads(session: AsyncSession, settings: Any, use_case: str | None) -> bool:
+    """Whether this request's bodies may be written at all (FRD-404).
+
+    Two levels, and the installation wins: ``AIRA_STORE_PAYLOADS`` is an operator kill switch, so
+    a use-case admin can decline storage but cannot re-enable it where the operator forbade it.
+    Requests without a use case fall back to the installation setting.
+    """
+    if not settings.store_payloads:
+        return False
+    if use_case is None:
+        return True
+    record = await session.get(UseCaseRead, use_case)
+    # A use case the gateway has not heard of yet: store, matching the previous behaviour, and
+    # the retention pruner still applies the default period to it.
+    return True if record is None else bool(record.store_payloads)
 
 
 def client_ip(request: Request) -> str | None:
@@ -50,11 +69,6 @@ async def record_request(
     settings = request.app.state.settings
     redactor: Redactor = request.app.state.redactor
 
-    def _maybe(payload: dict[str, Any] | None) -> dict[str, Any] | None:
-        if not settings.store_payloads or payload is None:
-            return None
-        return redactor.redact(payload)
-
     source_ip = client_ip(request)
     set_span_attributes(
         {
@@ -69,6 +83,13 @@ async def record_request(
 
     sessionmaker = request.app.state.db_sessionmaker
     async with sessionmaker() as session:
+        store = await _may_store_payloads(session, settings, attribution.use_case)
+
+        def _maybe(payload: dict[str, Any] | None) -> dict[str, Any] | None:
+            if not store or payload is None:
+                return None
+            return redactor.redact(payload)
+
         await RequestLogService(session).record(
             subject=attribution.subject,
             auth_method=attribution.method,

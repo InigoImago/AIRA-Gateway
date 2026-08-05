@@ -1,4 +1,4 @@
-# FRD-404 — Payload retention (per use case, one week by default)
+# FRD-404 — Payload storage and retention (per use case, one week by default)
 
 > Phase: 4 · Status: **Done** · Owner: Vadim Scheibe · Last updated: 2026-08-05
 > Builds on FRD-103 (request/response persistence). Closes the retention gap listed in
@@ -31,6 +31,13 @@ sold to a governance function in Germany, that is the single least defensible pr
 
 ## 3. Functional Requirements
 
+- **FR-0 Storage at all**: `UseCase.store_payloads`, default **on** (today's behaviour). Off means
+  no prompt or response is written for that use case — the only control that helps for data which
+  must not be persisted in the first place. The installation-wide `AIRA_STORE_PAYLOADS` is a
+  **kill switch above it**: a use-case admin may decline storage but cannot re-enable it where the
+  operator forbade it.
+- **FR-0a Switching off purges**: turning storage off is treated as a retention period of zero, so
+  what is already stored goes on the next pruner run rather than lingering for the old period.
 - **FR-1 Per use case**: `UseCase.retention_days`, 1–3650, default **7**. Editable by a use-case
   admin, distributed to the gateway with the existing `usecase.upserted` event.
 - **FR-2 Default on upgrade**: the gateway column defaults to 7, so an installation that
@@ -49,10 +56,11 @@ sold to a governance function in Germany, that is the single least defensible pr
 
 ### 4.1 Two clocks, on purpose
 
-| | Clock | Default | Removes |
+| | Control | Default | Effect |
 |---|---|---|---|
-| Payload retention | per use case | **7 days** | request/response bodies |
-| Record retention | installation-wide | off | the whole row |
+| Storage | per use case (`store_payloads`) | **on** | whether bodies are written at all |
+| Payload retention | per use case (`retention_days`) | **7 days** | when written bodies are removed |
+| Record retention | installation-wide (`AIRA_LOG_RETENTION_DAYS`) | off | when the whole row is removed |
 
 Deleting whole rows on the short clock was the obvious first design and is wrong: `request_logs`
 is where per-request **cost** lives (FRD-403), so a seven-day row retention would leave the spend
@@ -90,7 +98,13 @@ nothing is deleted** — the period configured in the UI is a promise that only 
   database. Plus: the index exists.
 - **Frontend**: the period shown, range validation, saving, and a refused change reported rather
   than silently appearing to work.
-- **Acceptance** (verified on the live stack): two rows aged 10 and 2 days on a use case with the
+- **Storage switch**: declined storage writes no payload but still accounts the request; the
+  installation kill switch overrides a use case that wants storage; requests without a use case
+  follow the installation setting; an unknown use case keeps the previous behaviour; switching
+  off removes what was already stored even though the period has not passed.
+- **Acceptance** (verified on the live stack): with storage off for `demo-uc`, a request
+  containing a personnel number returned 200, its tokens and cost were recorded, and the number
+  appeared **nowhere** in `request_logs`. Separately: two rows aged 10 and 2 days on a use case with the
   default period → the older payload removed, the fresher one kept, both rows retaining tokens
   and cost; a second run cleared nothing; lowering the period to 1 day then removed the second
   payload as well.
@@ -101,6 +115,8 @@ nothing is deleted** — the period configured in the UI is a promise that only 
   first time. That is the intended behaviour and worth announcing before an upgrade.
 - The UI states the period on the use-case overview, so it is visible to whoever is accountable
   rather than buried in configuration.
+- Switching storage off does not affect requests already in flight, and the purge happens on the
+  next pruner run rather than immediately.
 - **Follow-ups**: content redaction (the `Redactor` hook is still a no-op); a retention period for
   the management database's own records; exporting or archiving before deletion for use cases
   with a statutory retention duty; surfacing "payload removed" distinctly from "never stored" in

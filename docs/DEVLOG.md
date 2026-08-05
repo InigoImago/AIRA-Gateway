@@ -5,6 +5,40 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-05 — Payload storage can be switched off per use case
+Follow-on to FRD-404. Retention answers "how long"; this answers "at all". Until now the only
+control was the installation-wide `AIRA_STORE_PAYLOADS` env var — not per use case, not in the
+database, not in the UI.
+
+- **`UseCase.store_payloads`**, default on, next to the retention period on the use-case
+  overview. Off means no prompt or response is written for that use case.
+- **The installation setting is a kill switch above it**: a use-case admin may decline storage,
+  but cannot re-enable it where the operator forbade it.
+- **Switching off purges**: it is treated as a period of zero, so what is already stored goes on
+  the next pruner run instead of lingering for the remainder of the old period.
+- Requests without a use case follow the installation setting; a use case the gateway has not
+  heard of yet keeps the previous behaviour rather than silently dropping the audit payload.
+
+**Verified on the live stack**: with storage off for `demo-uc`, a request containing a personnel
+number returned 200, its tokens and cost were recorded — and the number appears **nowhere** in
+`request_logs`.
+
+**Two UI bugs the browser tests found, neither visible in jsdom.**
+
+1. A `<label for="x">` that also *wraps* its input makes a real browser forward the click twice:
+   the box toggled back instantly and the switch looked dead. jsdom does not reproduce label
+   forwarding, so the unit test was green.
+2. Then the same race as the pipeline builder: the settings form was interactive while the GET was
+   still in flight, so the arriving response reset the switch. It intermittently appeared to work.
+   The overview panel now renders only once the use case has loaded, and a unit test asserts it.
+
+A one-way `[ngModel]` on a checkbox inside an `NgForm` also writes the old value straight back;
+the switch uses plain `[checked]`/`(change)` instead.
+
+**Gates**: 454 unit + 14 integration + 33 e2e + 177 frontend tests green.
+
+---
+
 ## 2026-08-05 — FRD-404: stored prompts now expire, per use case, a week by default
 The least defensible property this product had: FRD-103 stored every request and response body,
 `store_payloads` is on by default, the redaction hook is a no-op — and **nothing ever deleted
