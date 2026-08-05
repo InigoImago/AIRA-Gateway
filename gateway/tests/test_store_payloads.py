@@ -20,8 +20,16 @@ URL = "/v1beta/models/mock-1:generateContent"
 
 
 def _app(*, store_payloads: bool = True):
+    # log_queue_size=0 keeps the audit write on the request path, so a row is readable the moment
+    # the response returns. These tests are about *what* gets stored, not when; the queued path
+    # has its own tests in test_log_writer.py.
     return create_app(
-        GatewaySettings(auth_required=False, store_payloads=store_payloads, enforce_budgets=False)
+        GatewaySettings(
+            auth_required=False,
+            store_payloads=store_payloads,
+            enforce_budgets=False,
+            log_queue_size=0,
+        )
     )
 
 

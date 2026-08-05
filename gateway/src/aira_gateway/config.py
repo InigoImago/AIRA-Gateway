@@ -63,7 +63,9 @@ class GatewaySettings(BaseAiraSettings):
     budget_estimate_output_tokens: int = 1024
 
     # Requests buffered for the off-path request-log writer (FRD-405 §4.4). A full queue makes
-    # the write happen inline rather than dropping the record.
+    # the write happen inline rather than dropping the record. **0 writes every record on the
+    # request path**, which is the pre-FRD-405 behaviour — available for installations that need
+    # a request durably logged before its response goes out, at the latency cost that implies.
     log_queue_size: int = 512
 
     # Trust ``X-Forwarded-For`` for the recorded source IP. Only enable when the gateway sits

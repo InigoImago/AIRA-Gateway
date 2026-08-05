@@ -40,6 +40,7 @@ from aira_gateway.middleware import (
     UseCasePathMiddleware,
 )
 from aira_gateway.persistence.redaction import NoOpRedactor
+from aira_gateway.persistence.writer import RequestLogWriter
 from aira_gateway.pipeline.engine import PipelineEngine
 from aira_gateway.pipeline.store import PipelineStore
 from aira_gateway.pricing import PricingService
@@ -78,12 +79,15 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
     counters = build_runner(settings.redis_url)
 
     @asynccontextmanager
-    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    async def lifespan(app_: FastAPI) -> AsyncIterator[None]:
         await create_all(engine)
         if settings.demo_mode:
             async with sessionmaker() as session:
                 await ApiKeyService(session).ensure_demo_key()
+        await app_.state.log_writer.start()
         yield
+        # Drained, not dropped: a redeploy must not discard audit rows still in the queue.
+        await app_.state.log_writer.stop()
         await counters.close()
         await engine.dispose()
 
@@ -112,6 +116,11 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
     app.state.db_sessionmaker = sessionmaker
     app.state.oidc_validator = build_oidc_validator(settings)
     app.state.redactor = NoOpRedactor()
+    # The audit write happens after the response goes out (FRD-405 §4.4); CLAUDE.md requires
+    # persistence to stay off the request path and this is what makes that true.
+    app.state.log_writer = RequestLogWriter(
+        sessionmaker, settings, app.state.redactor, max_queue=settings.log_queue_size
+    )
 
     if otel_enabled:
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor

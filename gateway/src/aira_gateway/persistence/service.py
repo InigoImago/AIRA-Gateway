@@ -54,5 +54,8 @@ class RequestLogService:
         )
         self._session.add(entry)
         await self._session.commit()
-        await self._session.refresh(entry)
+        # No refresh: the sessionmaker uses expire_on_commit=False, so everything a caller reads
+        # from the returned entry is already populated. Re-selecting the row would be an extra
+        # query per logged request for nothing — and on a shared connection it is not merely
+        # wasteful but a source of spurious failures.
         return entry
