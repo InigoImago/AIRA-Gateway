@@ -1,0 +1,19 @@
+# Keep build contexts small and reproducible: never ship local state or secrets into an image.
+.git
+.venv
+**/node_modules
+**/dist
+**/.angular
+**/__pycache__
+**/*.py[cod]
+.mypy_cache
+.pytest_cache
+.ruff_cache
+.coverage
+htmlcov
+e2e/test-results
+e2e/playwright-report
+deploy/compose/data
+.env
+.env.*
+!.env.example

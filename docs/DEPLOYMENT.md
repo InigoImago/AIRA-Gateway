@@ -38,9 +38,16 @@ Infrastructure:
 | HashiCorp Vault | **not used by any code today** | see [Known gaps](#7-known-gaps) |
 | Schema Registry | **not used by any code today** | events are plain JSON with an `event_type` header |
 
-> **The two Python services have no container image yet.** There is no `Dockerfile` in this
-> repository; `deploy/compose` starts *infrastructure only*. Today they run from source via `uv`.
-> See [Known gaps](#7-known-gaps).
+All five run from **three images**, built from this repository:
+
+| Image | Dockerfile | Runs |
+|---|---|---|
+| `aira-gateway` | `gateway/Dockerfile` | the gateway, the config consumer, and `alembic upgrade head` |
+| `aira-management` | `management/backend/Dockerfile` | the API, `manage.py migrate`, and the outbox relay |
+| `aira-frontend` | `management/frontend/Dockerfile` | the built SPA behind nginx, which also proxies `/api` and `/gw` |
+
+Both Python images are multi-stage (build with `uv`, ship only the resolved virtualenv), run as a
+non-root user (uid 10001) and carry a `HEALTHCHECK`.
 
 ### How the two planes talk
 
@@ -70,7 +77,29 @@ development and demo setup, and it is what the `Makefile` targets automate.
 - Python **3.14** and [`uv`](https://docs.astral.sh/uv/)
 - Node **26** (for the SPA)
 
-### Steps
+### Everything in containers (one command)
+
+```bash
+make up-full
+```
+
+That builds the three images and starts infrastructure plus all five application processes, in
+the right order: migrations and topic creation run to completion before the services that depend
+on them. Then open <http://localhost:4200> and log in as `ucadmin` / `demo-password`.
+
+```bash
+make logs-apps     # tail only the application containers
+make down-full     # stop everything (volumes are kept)
+make build-images  # build the images without starting anything
+```
+
+The relay runs as a loop container (`AIRA_RELAY_INTERVAL`, default 10s) so configuration
+propagates on its own — see the note in [§6](#6-production-checklist) about scheduling it
+properly outside of Compose.
+
+### From source (for development)
+
+Use this when you are editing code and want reload-on-save.
 
 ```bash
 # 1. dependencies
@@ -229,7 +258,11 @@ query parameter to the upstream and is never logged or exported.
 
 ### 3.6 Reverse proxy and TLS
 
-Neither service terminates TLS. Put your proxy in front and route:
+The `aira-frontend` image already contains an nginx that serves the SPA and proxies `/api` and
+`/gw` (upstreams configurable via `AIRA_MANAGEMENT_UPSTREAM` and `AIRA_GATEWAY_UPSTREAM`). It
+listens on **8080** and terminates no TLS — put your own proxy in front of it.
+
+If you serve the SPA yourself instead, route:
 
 | Path | To |
 |---|---|
@@ -445,8 +478,8 @@ Stated plainly, because a deployment guide that hides them wastes your time:
 
 | Gap | Consequence | Status |
 |---|---|---|
-| **No container images** for gateway and management | You run them from source with `uv`, or build your own image | No `Dockerfile` in the repo |
-| **No Kubernetes/Helm** | Compose covers infrastructure only | Planned (see `docs/ROADMAP.md`) |
+| **No Kubernetes/Helm** | Compose only; no manifests or charts | Planned (see `docs/ROADMAP.md`) |
+| **Images are not published** | `make up-full` builds them locally; there is no registry push or tagging scheme beyond `AIRA_IMAGE_TAG` | — |
 | **Vault is not used by any code** | It runs in the reference stack but nothing reads from it; secrets come from environment variables | PRD §9 intends Vault; not implemented |
 | **Schema Registry is not used** | Events are plain JSON with an `event_type` header | Runs in the stack, unused |
 | **SPA configuration is build-time** | Changing issuer or client id requires editing `auth.config.ts` and rebuilding | No runtime config file yet |

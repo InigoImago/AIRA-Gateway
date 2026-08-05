@@ -5,6 +5,46 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-05 — Containerised: `make up-full` brings the whole system up
+Three images (`gateway/Dockerfile`, `management/backend/Dockerfile`,
+`management/frontend/Dockerfile`) and a compose overlay
+(`deploy/compose/docker-compose.apps.yml`). A cold start — volumes removed — reaches a working
+demo in **42 seconds**, with all 23 e2e tests green against it.
+
+- **One image per component, several roles each.** The gateway image also runs the config
+  consumer and `alembic upgrade head`; the management image also runs `manage.py migrate`, the
+  outbox relay and (in the `demo` profile) `seed_demo`. Both are multi-stage, ship only the
+  resolved virtualenv, run as uid 10001 and carry a healthcheck. The SPA is served by nginx,
+  which takes over the `/api` and `/gw` proxying the dev server does in development.
+- **Ordering is expressed, not slept on**: migrations and topic creation run to completion before
+  the services that need them (`service_completed_successfully`).
+- **The relay runs as a loop container** (`AIRA_RELAY_INTERVAL`, default 10s), so configuration
+  propagates without anyone remembering `make relay`.
+
+**Three defects the containers exposed**, none of which could show up in the dev setup:
+
+1. **The CSP broke the production stylesheet.** Angular's build defers the global stylesheet with
+   `<link media="print" onload="this.media='all'">`; that inline handler is script, and the CSP
+   added in ADR-0007 allows scripts from `'self'` only — so it never ran and **the entire design
+   system was missing from any production build**. The dev server injects styles differently, so
+   everything looked right locally. Fixed by disabling `inlineCritical`; a new e2e test asserts
+   no stylesheet is left deferred and that `.card` actually paints.
+2. **`aira_common` did not declare PyJWT.** `aira_common.oidc` imports `jwt`, but the dependency
+   was declared on *aira-gateway*. The shared dev virtualenv hid it; the isolated management
+   image failed to import at startup. Declared where the import is.
+3. **`up-full` produced an empty demo.** The Keycloak realm has the five accounts, but their
+   Django counterparts only appear on first login, so "add member ucuser" had nobody to add.
+   Seeding now runs in a `demo` profile — a real deployment omits it, and `seed_demo` refuses
+   outside local/demo mode anyway.
+
+Also: management had **no production-capable server** — only Django's `runserver`, which Django
+itself excludes for production. `uvicorn` is now a declared dependency and serves the ASGI app.
+
+Docs: `docs/DEPLOYMENT.md` §1/§2 rewritten around the images, "no container images" removed from
+the gaps table, README and the compose README updated.
+
+---
+
 ## 2026-08-05 — Deployment documentation (`docs/DEPLOYMENT.md`)
 Written from the code, not from intent — every variable and command in it was read out of the
 settings classes and the Makefile, and the setup sequence was re-run against the live stack.

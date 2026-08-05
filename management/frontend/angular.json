@@ -29,7 +29,9 @@
                 "input": "public"
               }
             ],
-            "styles": ["src/styles.scss"]
+            "styles": [
+              "src/styles.scss"
+            ]
           },
           "configurations": {
             "production": {
@@ -45,7 +47,15 @@
                   "maximumError": "8kB"
                 }
               ],
-              "outputHashing": "all"
+              "outputHashing": "all",
+              "optimization": {
+                "scripts": true,
+                "styles": {
+                  "minify": true,
+                  "inlineCritical": false
+                },
+                "fonts": true
+              }
             },
             "development": {
               "optimization": false,
@@ -71,8 +81,13 @@
           "builder": "@angular/build:unit-test",
           "options": {
             "coverage": true,
-            "coverageReporters": ["text-summary"],
-            "coverageExclude": ["src/main.ts", "src/**/*.spec.ts"],
+            "coverageReporters": [
+              "text-summary"
+            ],
+            "coverageExclude": [
+              "src/main.ts",
+              "src/**/*.spec.ts"
+            ],
             "coverageThresholds": {
               "statements": 90,
               "branches": 92,

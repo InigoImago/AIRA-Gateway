@@ -10,6 +10,9 @@ dependencies = [
     "psycopg[binary]>=3.2",
     "django-guardian>=2.4",
     "opentelemetry-instrumentation-django>=0.50b0",
+    # Django ships only `runserver`, which is explicitly not for production. The ASGI app in
+    # config/asgi.py needs a real server to be deployable at all.
+    "uvicorn[standard]>=0.32",
 ]
 
 [build-system]

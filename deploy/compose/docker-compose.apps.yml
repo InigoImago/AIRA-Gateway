@@ -1,0 +1,207 @@
+# AIRA applications — overlay on top of docker-compose.yml (infrastructure).
+#
+#   docker compose -f docker-compose.yml -f docker-compose.apps.yml up -d --build
+#   # or, from the repo root:  make up-full
+#
+# The infrastructure file stays usable on its own for the "run the services from source"
+# workflow; this file adds the five application processes on top of it.
+#
+# Startup order is expressed with conditions rather than sleeps: migrations run to completion
+# before the services that need the schema, and the topic creation runs before the consumer.
+
+services:
+  # ---- one-shot setup ----------------------------------------------------------------------
+
+  gateway-migrate:
+    image: aira-gateway:${AIRA_IMAGE_TAG:-dev}
+    build:
+      context: ../..
+      dockerfile: gateway/Dockerfile
+    container_name: aira-gateway-migrate
+    working_dir: /app/gateway
+    command: ["alembic", "upgrade", "head"]
+    environment: &gateway-env
+      AIRA_ENVIRONMENT: ${AIRA_ENVIRONMENT:-local}
+      AIRA_POSTGRES_HOST: postgres
+      AIRA_POSTGRES_PORT: "5432"
+      AIRA_POSTGRES_DB: aira_gateway
+      AIRA_POSTGRES_USER: ${POSTGRES_USER:-aira}
+      AIRA_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aira-local}
+      AIRA_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      AIRA_OIDC_ENABLED: "true"
+      # The issuer is what the *browser* obtained the token from, so it must match the token's
+      # `iss` claim exactly. The JWKS URI is fetched by this container, which cannot reach
+      # "localhost:8080" — hence the in-network override. This split is exactly what
+      # AIRA_OIDC_JWKS_URI exists for.
+      AIRA_OIDC_ISSUER: ${AIRA_OIDC_ISSUER:-http://localhost:8080/realms/aira}
+      AIRA_OIDC_JWKS_URI: ${AIRA_OIDC_JWKS_URI:-http://keycloak:8080/realms/aira/protocol/openid-connect/certs}
+      AIRA_OIDC_AUDIENCE: ${AIRA_OIDC_AUDIENCE:-}
+      AIRA_GOOGLE_API_KEY: ${AIRA_GOOGLE_API_KEY:-}
+      AIRA_OTEL_ENABLED: ${AIRA_OTEL_ENABLED:-false}
+      AIRA_OTEL_ENDPOINT: http://otel-collector:4318
+      AIRA_LOG_JSON: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [aira]
+    restart: "no"
+
+  management-migrate:
+    image: aira-management:${AIRA_IMAGE_TAG:-dev}
+    build:
+      context: ../..
+      dockerfile: management/backend/Dockerfile
+    container_name: aira-management-migrate
+    command: ["python", "manage.py", "migrate", "--noinput"]
+    environment: &management-env
+      AIRA_ENVIRONMENT: ${AIRA_ENVIRONMENT:-local}
+      AIRA_SECRET_KEY: ${AIRA_SECRET_KEY:-dev-insecure-secret-key-change-me}
+      AIRA_DEBUG: ${AIRA_DEBUG:-true}
+      AIRA_ALLOWED_HOSTS: ${AIRA_ALLOWED_HOSTS:-*}
+      AIRA_POSTGRES_HOST: postgres
+      AIRA_POSTGRES_PORT: "5432"
+      AIRA_POSTGRES_DB: aira_mgmt
+      AIRA_POSTGRES_USER: ${POSTGRES_USER:-aira}
+      AIRA_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aira-local}
+      AIRA_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      AIRA_OIDC_ISSUER: ${AIRA_OIDC_ISSUER:-http://localhost:8080/realms/aira}
+      AIRA_OIDC_JWKS_URI: ${AIRA_OIDC_JWKS_URI:-http://keycloak:8080/realms/aira/protocol/openid-connect/certs}
+      AIRA_OIDC_AUDIENCE: ${AIRA_OIDC_AUDIENCE:-}
+      AIRA_OTEL_ENABLED: ${AIRA_OTEL_ENABLED:-false}
+      AIRA_OTEL_ENDPOINT: http://otel-collector:4318
+      AIRA_LOG_JSON: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [aira]
+    restart: "no"
+
+  # Demo data (the five role accounts) — only in the `demo` profile. `seed_demo` creates
+  # well-known accounts with a fixed password and refuses to run outside local/demo mode
+  # (ADR-0007), so a real deployment simply omits this profile.
+  management-seed:
+    image: aira-management:${AIRA_IMAGE_TAG:-dev}
+    container_name: aira-management-seed
+    profiles: ["demo"]
+    command: ["python", "manage.py", "seed_demo"]
+    environment:
+      <<: *management-env
+      AIRA_DEMO_MODE: "true"
+    depends_on:
+      management-migrate:
+        condition: service_completed_successfully
+    networks: [aira]
+    restart: "no"
+
+  # Auto-creation is off on the broker, and the config topics must be compacted — the gateway
+  # rebuilds its read-model by replaying them.
+  kafka-topics:
+    image: apache/kafka:3.9.0
+    container_name: aira-kafka-topics
+    entrypoint: ["/bin/sh", "-c"]
+    # One physical line per command: a folded scalar would turn the continuations into arguments
+    # of their own, which the topic tool then rejects.
+    command:
+      - |
+        set -e
+        for t in aira.usecases aira.memberships aira.api-keys aira.pipelines aira.budgets; do
+          /opt/kafka/bin/kafka-topics.sh --create --if-not-exists --topic "$$t" --bootstrap-server kafka:9092 --partitions 1 --replication-factor 1 --config cleanup.policy=compact
+        done
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks: [aira]
+    restart: "no"
+
+  # ---- long-running services ---------------------------------------------------------------
+
+  gateway:
+    image: aira-gateway:${AIRA_IMAGE_TAG:-dev}
+    build:
+      context: ../..
+      dockerfile: gateway/Dockerfile
+    container_name: aira-gateway
+    environment: *gateway-env
+    ports:
+      - "${AIRA_GATEWAY_PORT:-8001}:8001"
+    depends_on:
+      gateway-migrate:
+        condition: service_completed_successfully
+      keycloak:
+        condition: service_healthy
+    networks: [aira]
+    restart: unless-stopped
+
+  # Same image, second process: applies the config events into the gateway's read-model.
+  gateway-consumer:
+    image: aira-gateway:${AIRA_IMAGE_TAG:-dev}
+    container_name: aira-gateway-consumer
+    command: ["python", "-m", "aira_gateway.consumer.worker"]
+    # A worker, not a server — the image's HTTP healthcheck would never pass.
+    healthcheck:
+      disable: true
+    environment: *gateway-env
+    depends_on:
+      gateway-migrate:
+        condition: service_completed_successfully
+      kafka-topics:
+        condition: service_completed_successfully
+    networks: [aira]
+    restart: unless-stopped
+
+  management:
+    image: aira-management:${AIRA_IMAGE_TAG:-dev}
+    build:
+      context: ../..
+      dockerfile: management/backend/Dockerfile
+    container_name: aira-management
+    environment: *management-env
+    ports:
+      - "${AIRA_MANAGEMENT_PORT:-8002}:8002"
+    depends_on:
+      management-migrate:
+        condition: service_completed_successfully
+      keycloak:
+        condition: service_healthy
+    networks: [aira]
+    restart: unless-stopped
+
+  # `manage.py relay` publishes the pending outbox rows once and exits — it is not a daemon.
+  # This loop is the development-grade scheduler; in a real deployment use a cron job, a systemd
+  # timer or a Kubernetes CronJob (docs/DEPLOYMENT.md §6).
+  management-relay:
+    image: aira-management:${AIRA_IMAGE_TAG:-dev}
+    container_name: aira-management-relay
+    command:
+      - /bin/sh
+      - -c
+      - 'while true; do python manage.py relay || true; sleep ${AIRA_RELAY_INTERVAL:-10}; done'
+    healthcheck:
+      disable: true
+    environment: *management-env
+    depends_on:
+      management-migrate:
+        condition: service_completed_successfully
+      kafka-topics:
+        condition: service_completed_successfully
+    networks: [aira]
+    restart: unless-stopped
+
+  frontend:
+    image: aira-frontend:${AIRA_IMAGE_TAG:-dev}
+    build:
+      context: ../../management/frontend
+      dockerfile: Dockerfile
+    container_name: aira-frontend
+    environment:
+      AIRA_MANAGEMENT_UPSTREAM: http://management:8002
+      AIRA_GATEWAY_UPSTREAM: http://gateway:8001
+    # 4200 on the host because the Keycloak realm pins its redirect URIs to
+    # http://localhost:4200 — see deploy/compose/keycloak/realms/aira-realm.json.
+    ports:
+      - "${AIRA_FRONTEND_PORT:-4200}:8080"
+    depends_on:
+      - management
+      - gateway
+    networks: [aira]
+    restart: unless-stopped

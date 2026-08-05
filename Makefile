@@ -5,6 +5,10 @@ COMPOSE_DIR := deploy/compose
 # Include the observability profile (OTel Collector + Grafana otel-lgtm) by default.
 COMPOSE := docker compose -f $(COMPOSE_DIR)/docker-compose.yml --profile observability
 COMPOSE_CORE := docker compose -f $(COMPOSE_DIR)/docker-compose.yml
+# Infrastructure + the five application processes, all in containers.
+COMPOSE_FULL := docker compose -f $(COMPOSE_DIR)/docker-compose.yml \
+                -f $(COMPOSE_DIR)/docker-compose.apps.yml \
+                --profile observability --profile demo
 ENV_FILE := $(COMPOSE_DIR)/.env
 ENV_EXAMPLE := $(COMPOSE_DIR)/.env.example
 
@@ -13,7 +17,7 @@ ENV_EXAMPLE := $(COMPOSE_DIR)/.env.example
 .PHONY: help up up-core down destroy ps logs restart env sync test test-py test-frontend \
         test-integration test-e2e e2e lint lint-py lint-frontend fmt seed seed-reset \
         migrate-gateway kafka-topics relay consume run-gateway run-gateway-oidc run-backend \
-        run-frontend
+        run-frontend up-full down-full logs-apps build-images
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -33,6 +37,19 @@ up: env ## Start the full stack (infra + observability)
 
 up-core: env ## Start only core infra (no observability backend)
 	$(COMPOSE_CORE) up -d
+
+up-full: env ## Start EVERYTHING in containers (infra + gateway, management, consumer, relay, SPA)
+	$(COMPOSE_FULL) up -d --build
+	@echo "SPA: http://localhost:4200   (login ucadmin / demo-password)"
+
+down-full: ## Stop the full containerised stack (keeps volumes)
+	$(COMPOSE_FULL) down
+
+logs-apps: ## Tail logs of the application containers only
+	$(COMPOSE_FULL) logs -f --tail=100 gateway gateway-consumer management management-relay frontend
+
+build-images: ## Build the three application images without starting anything
+	$(COMPOSE_FULL) build gateway management frontend
 
 down: ## Stop the stack (keep volumes)
 	$(COMPOSE) down

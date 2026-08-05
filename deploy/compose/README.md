@@ -20,12 +20,20 @@ demo mode. It is driven from the repo root via the `Makefile` (preferred), or di
 > which supersedes the SigNoz choice in ADR-0002. `make up` includes the `observability` profile;
 > `make up-core` starts infrastructure only.
 
-## This stack is infrastructure only
+## Two layers
 
-The Gateway and the Management backend are **not** part of it — there is no container image for
-them yet. They run from source (`make run-gateway-oidc`, `make run-backend`), as does the SPA
-(`make run-frontend`). See [`docs/DEPLOYMENT.md`](../../docs/DEPLOYMENT.md) for the full picture,
-including which of these services are actually used by the code:
+`docker-compose.yml` is **infrastructure only**. The applications live in the overlay
+`docker-compose.apps.yml` — gateway, config consumer, management API, outbox relay and the SPA
+behind nginx, built from `gateway/Dockerfile`, `management/backend/Dockerfile` and
+`management/frontend/Dockerfile`.
+
+```bash
+make up        # infrastructure only — for running the apps from source
+make up-full   # infrastructure + all five application containers
+```
+
+See [`docs/DEPLOYMENT.md`](../../docs/DEPLOYMENT.md) for the full picture, including which of
+these services are actually used by the code:
 
 - **Vault** and the **Schema Registry** run here but no code reads from them today. Secrets come
   from environment variables; Kafka events are plain JSON with an `event_type` header.

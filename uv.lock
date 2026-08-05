@@ -65,6 +65,7 @@ dependencies = [
     { name = "opentelemetry-sdk" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
+    { name = "pyjwt", extra = ["crypto"] },
     { name = "structlog" },
 ]
 
@@ -75,6 +76,7 @@ requires-dist = [
     { name = "opentelemetry-sdk", specifier = ">=1.29" },
     { name = "pydantic", specifier = ">=2.10" },
     { name = "pydantic-settings", specifier = ">=2.7" },
+    { name = "pyjwt", extras = ["crypto"], specifier = ">=2.9" },
     { name = "structlog", specifier = ">=24.4" },
 ]
 
@@ -118,6 +120,7 @@ dependencies = [
     { name = "djangorestframework" },
     { name = "opentelemetry-instrumentation-django" },
     { name = "psycopg", extra = ["binary"] },
+    { name = "uvicorn", extra = ["standard"] },
 ]
 
 [package.metadata]
@@ -128,6 +131,7 @@ requires-dist = [
     { name = "djangorestframework", specifier = ">=3.15" },
     { name = "opentelemetry-instrumentation-django", specifier = ">=0.50b0" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.32" },
 ]
 
 [[package]]

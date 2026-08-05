@@ -1,0 +1,54 @@
+# nginx configuration for the management SPA.
+#
+# In development the Angular dev server proxies /api and /gw (proxy.conf.json). In a container
+# there is no dev server, so nginx takes over that job — the SPA must keep calling same-origin
+# paths, otherwise every request becomes a cross-origin one and the bearer token would have to
+# be sent to a third origin.
+#
+# Upstreams are substituted from the environment at container start (the official nginx image
+# renders /etc/nginx/templates/*.template with envsubst).
+
+server {
+    listen       8080;
+    server_name  _;
+
+    root  /usr/share/nginx/html;
+    index index.html;
+
+    # The bundle is content-hashed, so it can be cached hard.
+    location ~* \.(js|css|woff2?|png|svg|ico)$ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+        try_files $uri =404;
+    }
+
+    # index.html must never be cached: it names the current hashed bundles.
+    location = /index.html {
+        add_header Cache-Control "no-store";
+        try_files $uri =404;
+    }
+
+    location /api/ {
+        proxy_pass       ${AIRA_MANAGEMENT_UPSTREAM};
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # The gateway is mounted under /gw for the SPA; strip the prefix before forwarding.
+    location /gw/ {
+        proxy_pass       ${AIRA_GATEWAY_UPSTREAM}/;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # Dry-runs can reach an upstream LLM; give them more than the 60s default.
+        proxy_read_timeout 120s;
+    }
+
+    # Angular owns the routing: anything else is a client-side route.
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}

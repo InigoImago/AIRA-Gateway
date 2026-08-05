@@ -17,11 +17,23 @@ infrastructure runs via **Docker Compose**; Kubernetes/Helm is planned.
 
 ## Quickstart
 
-Prerequisites: Docker + Compose, Python **3.14** with [`uv`](https://docs.astral.sh/uv/), Node **26**.
+Everything in containers — infrastructure plus all five application processes:
+
+```bash
+make up-full
+```
+
+Then open <http://localhost:4200> and log in as `ucadmin` / `demo-password`.
+Only Docker is required for this; `make down-full` stops it again.
+
+### Running from source instead
+
+For development with reload-on-save you also need Python **3.14** with
+[`uv`](https://docs.astral.sh/uv/) and Node **26**:
 
 ```bash
 make sync              # dependencies (Python + frontend)
-make up                # infrastructure: postgres, keycloak, kafka, otel-lgtm, …
+make up                # infrastructure only
 make seed              # management DB: migrate + demo roles/users
 make migrate-gateway   # gateway DB: alembic migrations
 make kafka-topics      # the five compacted config topics
@@ -36,10 +48,9 @@ make consume           # config consumer    (long-running)
 make run-frontend      # SPA                :4200
 ```
 
-Open <http://localhost:4200> and log in as `ucadmin` / `demo-password`.
-
-After changing members, API keys, pipelines or budgets in the UI, run `make relay` — it publishes
-the pending outbox rows to Kafka, which is how the gateway learns about them.
+In this mode the outbox relay is not running, so after changing members, API keys, pipelines or
+budgets in the UI, run `make relay` — that is how the gateway learns about them. (`make up-full`
+runs it in a loop for you.)
 
 **→ Full deployment guide, configuration reference and integration notes:
 [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)**

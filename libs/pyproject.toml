@@ -10,6 +10,10 @@ dependencies = [
     "opentelemetry-sdk>=1.29",
     "opentelemetry-exporter-otlp-proto-http>=1.29",
     "aiokafka>=0.12",
+    # aira_common.oidc verifies JWTs and fetches JWKS; it was only ever resolvable because the
+    # gateway happened to declare pyjwt and the dev environment installs the whole workspace.
+    # An isolated management image has no gateway, and failed to import at startup.
+    "pyjwt[crypto]>=2.9",
 ]
 
 [build-system]

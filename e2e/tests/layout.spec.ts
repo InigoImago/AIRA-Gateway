@@ -15,6 +15,31 @@ const VIEWPORTS = [
 ];
 
 test.describe('Layout', () => {
+  test('the global stylesheet actually applies in the served build', async ({ page }) => {
+    // Regression: Angular's production build defers the global stylesheet with
+    // <link media="print" onload="this.media='all'">. That inline handler is script, and the
+    // CSP (ADR-0007) allows scripts from 'self' only — so it never ran and the entire design
+    // system was missing in the container build while looking fine in the dev server.
+    await login(page, USERS.useCaseAdmin);
+    await page.goto('/use-cases');
+
+    const applied = await page.evaluate(() => {
+      const sheets = Array.from(document.querySelectorAll('link[rel=stylesheet]'));
+      const card = document.querySelector('.card');
+      return {
+        deferred: sheets.filter((l) => l.getAttribute('media') === 'print').length,
+        cardBackground: card ? getComputedStyle(card).backgroundColor : null,
+      };
+    });
+
+    expect(
+      applied.deferred,
+      'a stylesheet is still deferred behind an inline onload handler the CSP will block',
+    ).toBe(0);
+    // .card paints a surface colour; an unstyled div would be transparent.
+    expect(applied.cardBackground).not.toBe('rgba(0, 0, 0, 0)');
+  });
+
   test('no route overflows its viewport at any width', async ({ page }) => {
     await login(page, USERS.useCaseAdmin);
     const slug = uniqueSlug('layout');
