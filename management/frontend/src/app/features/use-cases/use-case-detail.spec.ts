@@ -39,9 +39,7 @@ interface Detail {
   tab: () => string;
   selectTab: (tab: string) => void;
   loading: () => boolean;
-  busy: () => boolean;
-  error: () => string | null;
-  notice: () => string | null;
+  feedback: { error: () => string | null; notice: () => string | null; busy: () => boolean };
   usageUnavailable: () => boolean;
   usageRefused: () => boolean;
   retentionDays: { set: (v: number | null) => void; (): number | null };
@@ -81,18 +79,6 @@ interface Detail {
   usedFor: (b: Budget) => BudgetUsage;
   pct: (used: number, limit: number | null | undefined) => number;
   budgetLabel: (b: Budget) => string;
-  rateLimits: () => RateLimit[];
-  showAddRateLimit: { set: (v: boolean) => void; (): boolean };
-  rlScope: { set: (v: 'use_case' | 'member') => void; (): string };
-  rlSubject: { set: (v: string) => void; (): string };
-  rlRpm: { set: (v: number | null) => void; (): number | null };
-  rlBurst: { set: (v: number | null) => void; (): number | null };
-  rateLimitError: () => string | null;
-  canAddRateLimit: () => boolean;
-  addRateLimit: () => void;
-  removeRateLimit: (id: number | undefined) => void;
-  rateLimitLabel: (l: RateLimit) => string;
-  effectiveBurst: (l: RateLimit) => number;
 }
 
 function setup(overrides: Overrides = {}, confirmAnswer = true, queryTab: string | null = null) {
@@ -215,18 +201,18 @@ describe('UseCaseDetail', () => {
   it('reports a failed load instead of showing an empty page', () => {
     const { component, text } = setup({ get: httpError(403, 'You may not see this use case.') });
     expect(component.loading()).toBe(false);
-    expect(component.error()).toBe('You may not see this use case.');
+    expect(component.feedback.error()).toBe('You may not see this use case.');
     expect(text()).toContain('You may not see this use case.');
   });
 
   it('reports failures of the secondary loads', () => {
-    expect(setup({ members: httpError(500) }).component.error()).toBe(
+    expect(setup({ members: httpError(500) }).component.feedback.error()).toBe(
       'Could not load the members.',
     );
-    expect(setup({ apiKeys: httpError(500) }).component.error()).toBe(
+    expect(setup({ apiKeys: httpError(500) }).component.feedback.error()).toBe(
       'Could not load the API keys.',
     );
-    expect(setup({ budgets: httpError(500) }).component.error()).toBe(
+    expect(setup({ budgets: httpError(500) }).component.feedback.error()).toBe(
       'Could not load the budgets.',
     );
   });
@@ -238,7 +224,7 @@ describe('UseCaseDetail', () => {
     component.memberUsername.set('  bob  ');
     component.addMember();
     expect(calls).toContain('addMember:bob');
-    expect(component.notice()).toBe('bob was added.');
+    expect(component.feedback.notice()).toBe('bob was added.');
   });
 
   it('refuses to submit an empty member form', () => {
@@ -254,7 +240,7 @@ describe('UseCaseDetail', () => {
     component.showAddMember.set(true);
     component.memberUsername.set('bob');
     component.addMember();
-    expect(component.error()).toBe("Unknown user 'bob'.");
+    expect(component.feedback.error()).toBe("Unknown user 'bob'.");
     expect(component.showAddMember()).toBe(true);
     expect(component.memberUsername()).toBe('bob');
   });
@@ -269,7 +255,7 @@ describe('UseCaseDetail', () => {
     const { component, calls } = setup();
     component.removeMember('bob');
     expect(calls).toContain('removeMember:bob');
-    expect(component.notice()).toBe('bob was removed.');
+    expect(component.feedback.notice()).toBe('bob was removed.');
   });
 
   // ---- API keys --------------------------------------------------------------------
@@ -295,7 +281,7 @@ describe('UseCaseDetail', () => {
     });
     component.issueKey();
     fixture.detectChanges();
-    expect(component.error()).toBe('Only members of this use case may issue API keys.');
+    expect(component.feedback.error()).toBe('Only members of this use case may issue API keys.');
     expect(text()).toContain('Only members of this use case may issue API keys.');
     expect(component.issued()).toBeNull();
   });
@@ -308,7 +294,7 @@ describe('UseCaseDetail', () => {
     const accepted = setup();
     accepted.component.revokeKey('ab12');
     expect(accepted.calls).toContain('revokeApiKey:ab12');
-    expect(accepted.component.notice()).toBe('The key was revoked.');
+    expect(accepted.component.feedback.notice()).toBe('The key was revoked.');
   });
 
   it('confirms a successful clipboard copy', async () => {
@@ -354,125 +340,15 @@ describe('UseCaseDetail', () => {
 
   // ---- budgets ---------------------------------------------------------------------
 
-  it('requires a username for a member budget', () => {
-    const { component, calls } = setup();
-    component.budgetScope.set('member');
-    component.budgetSubject.set('  ');
-    component.budgetTokens.set(100);
-    expect(component.budgetError()).toBe('A member budget needs a username.');
-    expect(component.canAddBudget()).toBe(false);
-    component.addBudget();
-    expect(calls).toEqual([]);
-  });
-
-  it('requires at least one limit', () => {
-    const { component } = setup();
-    component.budgetScope.set('use_case');
-    expect(component.budgetError()).toBe('Set a spend limit, a token limit, or a request limit.');
-  });
-
-  it('creates a valid budget and resets the form', () => {
-    const { component, calls } = setup();
-    component.budgetScope.set('member');
-    component.budgetSubject.set(' bob ');
-    component.budgetTokens.set(1000);
-    component.addBudget();
-    expect(calls).toContain('createBudget:member:bob');
-    expect(component.notice()).toBe('Budget saved.');
-    expect(component.budgetSubject()).toBe('');
-    expect(component.budgetTokens()).toBeNull();
-  });
-
-  it('asks before removing a budget and ignores a missing id', () => {
-    const declined = setup({}, false);
-    declined.component.removeBudget(1);
-    expect(declined.calls).toEqual([]);
-
-    const missing = setup();
-    missing.component.removeBudget(undefined);
-    expect(missing.calls).toEqual([]);
-
-    const accepted = setup();
-    accepted.component.removeBudget(7);
-    expect(accepted.calls).toContain('deleteBudget:7');
-  });
-
-  it('renders consumption against the configured limits', () => {
-    const { text, component, fixture } = setup({
-      budgets: of([
-        { id: 1, scope: 'use_case', period: 'month', limit_tokens: 1000, limit_requests: 10 },
-      ]),
-      budgetUsage: of({
-        usage: [
-          {
-            id: 1,
-            used_tokens: 900,
-            used_requests: 5,
-            used_cost_nanos: 0,
-            used_cost: '0.00',
-            unpriced_requests: 0,
-          },
-        ],
-      }),
-    });
-    component.selectTab('budgets');
-    fixture.detectChanges();
-    expect(text()).toContain('900 / 1000');
-    expect(text()).toContain('5 / 10');
-  });
-
-  it('keeps showing the limits when the gateway cannot supply consumption', () => {
-    const { component, text, fixture } = setup({
-      budgets: of([{ id: 1, scope: 'use_case', period: 'month', limit_tokens: 1000 }]),
-      budgetUsage: throwError(() => ({ status: 0 })),
-    });
-    component.selectTab('budgets');
-    fixture.detectChanges();
-    expect(component.usageUnavailable()).toBe(true);
-    expect(text()).toContain('Consumption is unavailable');
-    expect(text()).toContain('0 / 1000');
-  });
-
-  it('distinguishes a refused consumption read from an unreachable gateway', () => {
-    const refused = setup({ budgetUsage: throwError(() => ({ status: 403 })) });
-    expect(refused.component.usageUnavailable()).toBe(true);
-    expect(refused.component.usageRefused()).toBe(true);
-
-    const unreachable = setup({ budgetUsage: throwError(() => ({ status: 0 })) });
-    expect(unreachable.component.usageUnavailable()).toBe(true);
-    expect(unreachable.component.usageRefused()).toBe(false);
-  });
-
-  it('computes usage percentages defensively', () => {
-    const { component } = setup();
-    expect(component.pct(5, 10)).toBe(50);
-    expect(component.pct(50, 10)).toBe(100); // never overflows the bar
-    expect(component.pct(5, null)).toBe(0);
-    expect(component.pct(5, 0)).toBe(0);
-    expect(component.usedFor({ scope: 'use_case', period: 'day' })).toEqual({
-      id: 0,
-      used_tokens: 0,
-      used_requests: 0,
-      used_cost_nanos: 0,
-      used_cost: '0.00',
-      unpriced_requests: 0,
-    });
-  });
-
-  it('labels budgets by their scope', () => {
-    const { component } = setup();
-    expect(component.budgetLabel({ scope: 'use_case', period: 'day' })).toBe('Whole use case');
-    expect(component.budgetLabel({ scope: 'member', subject: 'bob', period: 'day' })).toBe('bob');
-    expect(component.budgetLabel({ scope: 'member', period: 'day' })).toBe('member');
-  });
-
   it('blocks concurrent mutations while one is in flight', () => {
+    // The busy flag lives on the shared PageFeedback now, so one panel's mutation
+    // disables the controls of every panel on the page — which is the intent: two
+    // saves racing against the same use case is not something to make easy.
     const { component } = setup({ addMember: new Observable<Membership>(() => undefined) });
     component.memberUsername.set('bob');
     component.addMember();
-    expect(component.busy()).toBe(true);
+    expect(component.feedback.busy()).toBe(true);
     expect(component.canAddMember()).toBe(false);
-    expect(component.canAddBudget()).toBe(false);
   });
 });
 
@@ -540,50 +416,6 @@ describe('UseCaseDetail rendering', () => {
     harness.component.copyKey('aira_ab_cd');
     harness.fixture.detectChanges();
     expect(harness.text()).toContain('copy it manually');
-  });
-
-  it('renders both budget bars with their warning states', () => {
-    const { html } = render(
-      {
-        budgets: of([
-          { id: 1, scope: 'use_case', period: 'month', limit_tokens: 1000, limit_requests: 10 },
-        ]),
-        budgetUsage: of({
-          usage: [
-            {
-              id: 1,
-              used_tokens: 900,
-              used_requests: 10,
-              used_cost_nanos: 0,
-              used_cost: '0.00',
-              unpriced_requests: 0,
-            },
-          ],
-        }),
-      },
-      'budgets',
-    );
-    const bars = html().querySelectorAll('.progress__bar');
-    expect(bars.length).toBe(2);
-    expect(bars[0].classList.contains('is-full')).toBe(true); // requests at 100%
-    expect(bars[1].classList.contains('is-warn')).toBe(true); // tokens at 90%
-    expect(html().querySelectorAll('[role="progressbar"]').length).toBe(2);
-  });
-
-  it('shows the member-username field only for a member-scoped budget', () => {
-    const harness = render({}, 'budgets');
-    harness.component.showAddBudget.set(true);
-    harness.fixture.detectChanges();
-    expect(harness.html().querySelector('#budget-subject')).toBeNull();
-
-    harness.component.budgetScope.set('member');
-    harness.fixture.detectChanges();
-    expect(harness.html().querySelector('#budget-subject')).not.toBeNull();
-    expect(harness.text()).toContain('A member budget needs a username.');
-  });
-
-  it('says what an empty budget list means', () => {
-    expect(render({}, 'budgets').text()).toContain('requests are unlimited');
   });
 
   it('renders processing notes on the overview when present', () => {
@@ -669,139 +501,6 @@ describe('UseCaseDetail interactions', () => {
     click(harness.fixture, '.callout--warning .btn--ghost');
     expect(harness.component.issued()).toBeNull();
   });
-
-  it('removes a budget from its card button', () => {
-    const harness = setup({
-      budgets: of([{ id: 3, scope: 'use_case', period: 'day', limit_requests: 5 }]),
-    });
-    harness.component.selectTab('budgets');
-    harness.fixture.detectChanges();
-    click(harness.fixture, '[aria-label="Remove budget for Whole use case"]');
-    expect(harness.calls).toContain('deleteBudget:3');
-  });
-});
-
-describe('UseCaseDetail consumption messaging', () => {
-  it('names the Keycloak group when the gateway refuses the read', () => {
-    const harness = setup({
-      budgets: of([{ id: 1, scope: 'use_case', period: 'day', limit_requests: 5 }]),
-      budgetUsage: throwError(() => ({ status: 403 })),
-    });
-    harness.component.selectTab('budgets');
-    harness.fixture.detectChanges();
-    expect(harness.text()).toContain('does not count you as a member');
-    expect(harness.text()).toContain('/use-cases/demo-uc');
-  });
-
-  it('says the gateway is unreachable for anything else', () => {
-    const harness = setup({
-      budgets: of([{ id: 1, scope: 'use_case', period: 'day', limit_requests: 5 }]),
-      budgetUsage: throwError(() => ({ status: 0 })),
-    });
-    harness.component.selectTab('budgets');
-    harness.fixture.detectChanges();
-    expect(harness.text()).toContain('could not be reached');
-  });
-});
-
-describe('UseCaseDetail cost budgets', () => {
-  const COST_BUDGET: Budget = {
-    id: 1,
-    scope: 'use_case',
-    period: 'month',
-    limit_cost: '250.00',
-  };
-
-  it('requires at least one limit, and accepts a spend limit alone', () => {
-    const { component, calls } = setup();
-    expect(component.budgetError()).toContain('Set a spend limit');
-
-    component.budgetCost.set('250.00');
-    expect(component.budgetError()).toBeNull();
-    component.addBudget();
-    expect(calls).toContain('createBudget:use_case:');
-  });
-
-  it('rejects a spend limit that is not an amount', () => {
-    const { component } = setup();
-    component.budgetCost.set('viel');
-    expect(component.budgetError()).toContain('must be an amount');
-    expect(component.canAddBudget()).toBe(false);
-  });
-
-  it('accepts a comma as the decimal separator', () => {
-    const { component } = setup();
-    component.budgetCost.set('250,50');
-    expect(component.budgetError()).toBeNull();
-  });
-
-  it('computes the spend bar from nano-units, not from the decimal string', () => {
-    const { component } = setup({
-      budgets: of([COST_BUDGET]),
-      budgetUsage: of({
-        usage: [
-          {
-            id: 1,
-            used_tokens: 0,
-            used_requests: 0,
-            used_cost_nanos: 200_000_000_000, // 200.00
-            used_cost: '200.00',
-            unpriced_requests: 0,
-          },
-        ],
-      }),
-    });
-    expect(component.costPct(COST_BUDGET)).toBe(80);
-    expect(component.costPct({ scope: 'use_case', period: 'day' })).toBe(0);
-  });
-
-  it('renders the spend bar with the consumed and the limit amount', () => {
-    const harness = setup({
-      budgets: of([COST_BUDGET]),
-      budgetUsage: of({
-        usage: [
-          {
-            id: 1,
-            used_tokens: 0,
-            used_requests: 0,
-            used_cost_nanos: 250_000_000_000,
-            used_cost: '250.00',
-            unpriced_requests: 0,
-          },
-        ],
-      }),
-    });
-    harness.component.selectTab('budgets');
-    harness.fixture.detectChanges();
-
-    expect(harness.text()).toContain('250.00 / 250.00');
-    const bar = (harness.fixture.nativeElement as HTMLElement).querySelector('.progress__bar');
-    expect(bar?.classList.contains('is-full')).toBe(true);
-  });
-
-  it('says when consumption could not be costed instead of implying it was free', () => {
-    const harness = setup({
-      budgets: of([COST_BUDGET]),
-      budgetUsage: of({
-        usage: [
-          {
-            id: 1,
-            used_tokens: 5000,
-            used_requests: 3,
-            used_cost_nanos: 0,
-            used_cost: '0.00',
-            unpriced_requests: 3,
-          },
-        ],
-      }),
-    });
-    harness.component.selectTab('budgets');
-    harness.fixture.detectChanges();
-
-    expect(harness.component.unpricedRequests()).toBe(3);
-    expect(harness.text()).toContain('no price on file');
-    expect(harness.text()).toContain('unknown, not zero');
-  });
 });
 
 describe('UseCaseDetail retention', () => {
@@ -836,7 +535,7 @@ describe('UseCaseDetail retention', () => {
 
     component.saveRetention();
     expect(calls).toContain('update:{"store_payloads":true,"retention_days":1}');
-    expect(component.notice()).toContain('kept for 1 day(s)');
+    expect(component.feedback.notice()).toContain('kept for 1 day(s)');
     expect(component.useCase()?.retention_days).toBe(1);
   });
 
@@ -849,7 +548,7 @@ describe('UseCaseDetail retention', () => {
     });
     component.retentionDays.set(30);
     component.saveRetention();
-    expect(component.error()).toBe('You are not an admin of this use case.');
+    expect(component.feedback.error()).toBe('You are not an admin of this use case.');
     expect(component.useCase()?.retention_days).toBe(7);
   });
 
@@ -928,8 +627,24 @@ describe('UseCaseDetail payload storage', () => {
 
     component.saveRetention();
     expect(calls).toContain('update:{"store_payloads":false}');
-    expect(component.notice()).toContain('no longer stored');
-    expect(component.notice()).toContain('removed on the next run');
+    expect(component.feedback.notice()).toContain('no longer stored');
+    expect(component.feedback.notice()).toContain('removed on the next run');
+  });
+
+  it('opens the rate-limit tab from the URL', () => {
+    expect(setup({}, true, 'rate-limits').component.tab()).toBe('rate-limits');
+  });
+
+  it('renders the rate-limit panel and its count without owning either', () => {
+    // The parent keeps the counts, because the tab bar shows them before any tab is opened;
+    // what the panel owns is the form and the mutations.
+    const harness = setup({ rateLimits: of([{ id: 1, scope: 'use_case', limit_rpm: 90 }]) });
+    harness.fixture.detectChanges();
+    expect(harness.text()).toContain('Rate limits');
+
+    harness.component.selectTab('rate-limits');
+    harness.fixture.detectChanges();
+    expect(harness.text()).toContain('90');
   });
 
   it('shows storage as off in the overview tile', () => {
@@ -937,151 +652,5 @@ describe('UseCaseDetail payload storage', () => {
     harness.fixture.detectChanges();
     expect(harness.text()).toContain('Payload storage');
     expect(harness.text()).toContain('off');
-  });
-
-  // ---- rate limits -----------------------------------------------------------------
-
-  it('reports a failed rate-limit load instead of showing an empty tab', () => {
-    expect(setup({ rateLimits: httpError(500) }).component.error()).toBe(
-      'Could not load the rate limits.',
-    );
-  });
-
-  it('requires a username for a member rate limit', () => {
-    const { component } = setup();
-    component.rlScope.set('member');
-    component.rlRpm.set(60);
-    component.rlSubject.set('  ');
-    expect(component.rateLimitError()).toBe('A member limit needs a username.');
-    expect(component.canAddRateLimit()).toBe(false);
-  });
-
-  it('requires a rate to be given at all', () => {
-    const { component } = setup();
-    expect(component.rateLimitError()).toBe('Set how many requests per minute are allowed.');
-  });
-
-  it('refuses a rate of zero rather than silently switching the use case off', () => {
-    const { component } = setup();
-    component.rlRpm.set(0);
-    expect(component.rateLimitError()).toBe('At least 1 request per minute.');
-  });
-
-  it('refuses a burst below one', () => {
-    const { component } = setup();
-    component.rlRpm.set(60);
-    component.rlBurst.set(0);
-    expect(component.rateLimitError()).toBe('A burst must be at least 1, or left empty.');
-  });
-
-  it('saves a rate limit and clears the form', () => {
-    const { component, calls } = setup();
-    component.rlRpm.set(120);
-    component.rlBurst.set(20);
-    component.addRateLimit();
-
-    expect(calls).toContain('createRateLimit:use_case::120:20');
-    expect(component.notice()).toBe('Rate limit saved.');
-    expect(component.rlRpm()).toBeNull();
-    expect(component.showAddRateLimit()).toBe(false);
-  });
-
-  it('does not submit an invalid rate limit', () => {
-    const { component, calls } = setup();
-    component.addRateLimit();
-    expect(calls.filter((c) => c.startsWith('createRateLimit'))).toEqual([]);
-  });
-
-  it('surfaces a refused rate limit rather than appearing to have saved it', () => {
-    const { component } = setup({ createRateLimit: httpError(403) });
-    component.rlRpm.set(60);
-    component.addRateLimit();
-    expect(component.error()).toBeTruthy();
-    expect(component.notice()).toBeNull();
-  });
-
-  it('asks before removing a rate limit and does nothing when declined', () => {
-    const declined = setup({}, false);
-    declined.component.removeRateLimit(3);
-    expect(declined.calls).toEqual([]);
-
-    const accepted = setup({}, true);
-    accepted.component.removeRateLimit(3);
-    expect(accepted.calls).toContain('deleteRateLimit:3');
-    expect(accepted.component.notice()).toBe('Rate limit removed.');
-  });
-
-  it('treats an unset burst as the per-minute figure', () => {
-    const { component } = setup();
-    expect(component.effectiveBurst({ scope: 'use_case', limit_rpm: 60 })).toBe(60);
-    expect(component.effectiveBurst({ scope: 'use_case', limit_rpm: 60, burst: 5 })).toBe(5);
-  });
-
-  it('names who a limit applies to', () => {
-    const { component } = setup();
-    expect(component.rateLimitLabel({ scope: 'use_case', limit_rpm: 60 })).toBe('Whole use case');
-    expect(component.rateLimitLabel({ scope: 'member', subject: 'alice', limit_rpm: 60 })).toBe(
-      'alice',
-    );
-  });
-
-  it('renders the configured limits in the tab', () => {
-    const harness = setup({
-      rateLimits: of([{ id: 1, scope: 'member', subject: 'alice', limit_rpm: 90, burst: 9 }]),
-    });
-    harness.component.selectTab('rate-limits');
-    harness.fixture.detectChanges();
-
-    const text = harness.text();
-    expect(text).toContain('alice');
-    expect(text).toContain('90');
-    expect(text).toContain('9');
-  });
-
-  it('says plainly that no limit means no throttling', () => {
-    const harness = setup();
-    harness.component.selectTab('rate-limits');
-    harness.fixture.detectChanges();
-    expect(harness.text()).toContain('may send as fast as it likes');
-  });
-
-  it('opens the rate-limit tab from the URL', () => {
-    expect(setup({}, true, 'rate-limits').component.tab()).toBe('rate-limits');
-  });
-
-  it('falls back to a generic label for a member limit with no username', () => {
-    const { component } = setup();
-    expect(component.rateLimitLabel({ scope: 'member', limit_rpm: 60 })).toBe('member');
-  });
-
-  it('ignores a remove with no id', () => {
-    const { component, calls } = setup();
-    component.removeRateLimit(undefined);
-    expect(calls).toEqual([]);
-  });
-
-  it('reveals the member field and the validation hint when the form is opened', () => {
-    const harness = setup();
-    harness.component.selectTab('rate-limits');
-    harness.component.showAddRateLimit.set(true);
-    harness.component.rlScope.set('member');
-    harness.fixture.detectChanges();
-
-    const html = harness.fixture.nativeElement as HTMLElement;
-    expect(html.querySelector('#rl-subject')).toBeTruthy();
-    expect(html.querySelector('#rl-rpm')).toBeTruthy();
-    expect(harness.text()).toContain('Cancel');
-    // The form must say why it will not submit rather than just disabling the button.
-    expect(harness.text()).toContain('A member limit needs a username.');
-  });
-
-  it('marks a disabled limit as such instead of showing it as active', () => {
-    const harness = setup({
-      rateLimits: of([{ id: 2, scope: 'use_case', limit_rpm: 30, enabled: false }]),
-    });
-    harness.component.selectTab('rate-limits');
-    harness.fixture.detectChanges();
-    expect(harness.text()).toContain('Disabled');
-    expect(harness.text()).not.toContain('Active');
   });
 });

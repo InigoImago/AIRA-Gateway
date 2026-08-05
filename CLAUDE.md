@@ -54,6 +54,13 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
   → `e2e/` (real browser, `make test-e2e`). Anything needing a user token belongs in `e2e/`: the
   dev realm has the password grant disabled, so a token only comes from the real code flow.
 - **Typed code**: Python type hints (mypy), TypeScript strict mode.
+- **A page is a parent plus panels.** `use-case-detail` grew to 1238 lines and six concerns
+  before it was split: the parent loads and owns the tab bar (whose counts must exist before any
+  tab is opened, which is why loading stays there), and each panel is a child owning its form
+  state and mutations. A new tab is a new child, never another block in the parent. Outcomes go
+  through the page's single `PageFeedback` — one banner per page, not one per panel.
+  In a child, an `input()` is a **signal**: `{{ slug }}` renders the function, `{{ slug() }}`
+  renders the value, and only a browser will show you the difference.
 - **Angular is zoneless**: all mutable component state must be a `signal`. A plain property
   changed from code schedules no re-render, so `[(ngModel)]` is written as
   `[ngModel]="x()" (ngModelChange)="x.set($event)"`. See FRD-203 §4.

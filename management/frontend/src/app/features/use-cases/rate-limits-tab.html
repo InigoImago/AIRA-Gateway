@@ -1,0 +1,132 @@
+<div class="card" role="tabpanel" aria-labelledby="tab-rate-limits">
+  <div class="spread">
+    <h3 class="section-title" style="margin: 0">Rate limits</h3>
+    <button
+      type="button"
+      class="btn btn--sm btn--primary"
+      [attr.aria-expanded]="showForm()"
+      (click)="showForm.set(!showForm())"
+    >
+      {{ showForm() ? 'Cancel' : '+ Add rate limit' }}
+    </button>
+  </div>
+  <p class="muted" style="margin: 0.25rem 0 0">
+    A budget says how much may be spent; this says how fast. Without one, a client stuck in a retry
+    loop can burn a month's budget in an afternoon and slow down every other use case while doing
+    it. Over the limit the gateway answers 429 with a <code>Retry-After</code>.
+  </p>
+
+  @if (showForm()) {
+    <form class="form-inline disclosure" (ngSubmit)="add()">
+      <div class="field">
+        <label for="rl-scope">Scope</label>
+        <select
+          id="rl-scope"
+          name="rl-scope"
+          [ngModel]="rlScope()"
+          (ngModelChange)="rlScope.set($event)"
+        >
+          <option value="use_case">Whole use case</option>
+          <option value="member">Member</option>
+        </select>
+      </div>
+      @if (rlScope() === 'member') {
+        <div class="field">
+          <label for="rl-subject">Member username</label>
+          <input
+            id="rl-subject"
+            name="rl-subject"
+            [ngModel]="rlSubject()"
+            (ngModelChange)="rlSubject.set($event)"
+            placeholder="username"
+            autocomplete="off"
+          />
+        </div>
+      }
+      <div class="field">
+        <label for="rl-rpm">Requests per minute</label>
+        <input
+          id="rl-rpm"
+          type="number"
+          min="1"
+          name="rl-rpm"
+          [ngModel]="rlRpm()"
+          (ngModelChange)="rlRpm.set($event)"
+          placeholder="e.g. 60"
+        />
+        <span class="field__hint">The sustained rate this caller may keep up.</span>
+      </div>
+      <div class="field">
+        <label for="rl-burst">Burst</label>
+        <input
+          id="rl-burst"
+          type="number"
+          min="1"
+          name="rl-burst"
+          [ngModel]="rlBurst()"
+          (ngModelChange)="rlBurst.set($event)"
+          placeholder="—"
+        />
+        <span class="field__hint">
+          How many may arrive at once. Empty uses the per-minute figure.
+        </span>
+      </div>
+      <button type="submit" class="btn btn--primary" [disabled]="!canAdd()">Add</button>
+      @if (validationError(); as message) {
+        <span class="field__hint field__hint--error">{{ message }}</span>
+      }
+    </form>
+  }
+
+  <div class="table-wrap" style="margin-top: 1rem">
+    <table class="table">
+      <caption class="sr-only">
+        Configured request-rate limits for this use case
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Applies to</th>
+          <th scope="col">Requests / minute</th>
+          <th scope="col">At once</th>
+          <th scope="col">Status</th>
+          <th scope="col"><span class="sr-only">Actions</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        @for (limit of limits(); track limit.id) {
+          <tr>
+            <td class="break-anywhere">{{ labelFor(limit) }}</td>
+            <td>{{ limit.limit_rpm }}</td>
+            <td>{{ effectiveBurst(limit) }}</td>
+            <td>
+              @if (limit.enabled === false) {
+                <span class="badge">Disabled</span>
+              } @else {
+                <span class="badge badge--ok">Active</span>
+              }
+            </td>
+            <td class="right">
+              <button
+                type="button"
+                class="btn btn--sm btn--danger"
+                [disabled]="feedback.busy()"
+                [attr.aria-label]="'Remove the rate limit for ' + labelFor(limit)"
+                (click)="remove(limit.id)"
+              >
+                Remove
+              </button>
+            </td>
+          </tr>
+        } @empty {
+          <tr>
+            <td colspan="5">
+              <p class="empty" style="margin: 0">
+                No rate limits — this use case may send as fast as it likes.
+              </p>
+            </td>
+          </tr>
+        }
+      </tbody>
+    </table>
+  </div>
+</div>

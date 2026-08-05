@@ -1,10 +1,10 @@
 <div class="stack">
   <a routerLink="/use-cases" class="muted">&larr; All use cases</a>
 
-  @if (error(); as message) {
+  @if (feedback.error(); as message) {
     <p class="callout callout--danger" role="alert">{{ message }}</p>
   }
-  @if (notice(); as message) {
+  @if (feedback.notice(); as message) {
     <p class="callout" role="status">{{ message }}</p>
   }
 
@@ -175,7 +175,7 @@
 
           <div class="row">
             <button type="submit" class="btn btn--primary" [disabled]="!canSaveRetention()">
-              {{ busy() ? 'Saving…' : 'Save' }}
+              {{ feedback.busy() ? 'Saving…' : 'Save' }}
             </button>
             @if (retentionError(); as message) {
               <span class="field__hint field__hint--error">{{ message }}</span>
@@ -253,7 +253,7 @@
                   <button
                     type="button"
                     class="btn btn--sm btn--danger"
-                    [disabled]="busy()"
+                    [disabled]="feedback.busy()"
                     [attr.aria-label]="'Remove ' + member.username"
                     (click)="removeMember(member.username)"
                   >
@@ -305,8 +305,8 @@
             />
             <span class="field__hint">Helps you tell keys apart later — it is not a secret.</span>
           </div>
-          <button type="submit" class="btn btn--primary" [disabled]="busy()">
-            {{ busy() ? 'Issuing…' : 'Issue' }}
+          <button type="submit" class="btn btn--primary" [disabled]="feedback.busy()">
+            {{ feedback.busy() ? 'Issuing…' : 'Issue' }}
           </button>
         </form>
       }
@@ -363,7 +363,7 @@
                     <button
                       type="button"
                       class="btn btn--sm btn--danger"
-                      [disabled]="busy()"
+                      [disabled]="feedback.busy()"
                       [attr.aria-label]="'Revoke key ' + key.prefix"
                       (click)="revokeKey(key.prefix)"
                     >
@@ -385,363 +385,18 @@
 
   <!-- Budgets -->
   @if (tab() === 'budgets') {
-    <div class="card" role="tabpanel" aria-labelledby="tab-budgets">
-      <div class="spread">
-        <h3 class="section-title" style="margin: 0">Budgets</h3>
-        <button
-          type="button"
-          class="btn btn--sm btn--primary"
-          [attr.aria-expanded]="showAddBudget()"
-          (click)="showAddBudget.set(!showAddBudget())"
-        >
-          {{ showAddBudget() ? 'Cancel' : '+ Add budget' }}
-        </button>
-      </div>
-      <p class="muted" style="margin: 0.25rem 0 0">
-        Token / request limits per period. The gateway rejects requests over budget with 429.
-      </p>
-
-      @if (showAddBudget()) {
-        <form class="form-inline disclosure" (ngSubmit)="addBudget()">
-          <div class="field">
-            <label for="budget-scope">Scope</label>
-            <select
-              id="budget-scope"
-              name="scope"
-              [ngModel]="budgetScope()"
-              (ngModelChange)="budgetScope.set($event)"
-            >
-              <option value="use_case">Whole use case</option>
-              <option value="member">Member</option>
-            </select>
-          </div>
-          @if (budgetScope() === 'member') {
-            <div class="field">
-              <label for="budget-subject">Member username</label>
-              <input
-                id="budget-subject"
-                name="subject"
-                [ngModel]="budgetSubject()"
-                (ngModelChange)="budgetSubject.set($event)"
-                placeholder="username"
-                autocomplete="off"
-              />
-            </div>
-          }
-          <div class="field">
-            <label for="budget-period">Period</label>
-            <select
-              id="budget-period"
-              name="period"
-              [ngModel]="budgetPeriod()"
-              (ngModelChange)="budgetPeriod.set($event)"
-            >
-              <option value="day">Daily</option>
-              <option value="month">Monthly</option>
-            </select>
-          </div>
-          <div class="field">
-            <label for="budget-cost">Spend limit</label>
-            <input
-              id="budget-cost"
-              name="cost"
-              inputmode="decimal"
-              [ngModel]="budgetCost()"
-              (ngModelChange)="budgetCost.set($event)"
-              placeholder="e.g. 250.00"
-              autocomplete="off"
-            />
-            <span class="field__hint"
-              >What this may cost per period — the limit most people mean.</span
-            >
-          </div>
-          <div class="field">
-            <label for="budget-tokens">Token limit</label>
-            <input
-              id="budget-tokens"
-              type="number"
-              min="1"
-              name="tokens"
-              [ngModel]="budgetTokens()"
-              (ngModelChange)="budgetTokens.set($event)"
-              placeholder="—"
-            />
-          </div>
-          <div class="field">
-            <label for="budget-requests">Request limit</label>
-            <input
-              id="budget-requests"
-              type="number"
-              min="1"
-              name="requests"
-              [ngModel]="budgetRequests()"
-              (ngModelChange)="budgetRequests.set($event)"
-              placeholder="—"
-            />
-          </div>
-          <button type="submit" class="btn btn--primary" [disabled]="!canAddBudget()">Add</button>
-          @if (budgetError(); as message) {
-            <span class="field__hint field__hint--error">{{ message }}</span>
-          }
-        </form>
-      }
-
-      @if (unpricedRequests() > 0) {
-        <p class="callout callout--warning" style="margin-top: 1rem">
-          {{ unpricedRequests() }} request(s) this period used a model with no price on file — their
-          cost is unknown, not zero, and is therefore not included in the spend figures above. A
-          Global Administrator can add the missing prices under <a routerLink="/models">Models</a>.
-        </p>
-      }
-
-      @if (usageUnavailable() && budgets().length) {
-        <p class="callout callout--warning" style="margin-top: 1rem">
-          @if (usageRefused()) {
-            Consumption is hidden because the gateway does not count you as a member of this use
-            case. Membership for the data plane comes from the Keycloak group
-            <code>/use-cases/{{ slug }}</code> — ask an administrator to add you there.
-          } @else {
-            Consumption is unavailable — the gateway could not be reached. The configured limits
-            below are still in force.
-          }
-        </p>
-      }
-
-      <div class="stack" style="margin-top: 1rem">
-        @for (budget of budgets(); track budget.id) {
-          <div class="card" style="padding: 0.9rem 1rem">
-            <div class="spread">
-              <div class="row">
-                <strong>{{ budgetLabel(budget) }}</strong>
-                <span class="badge badge--muted">{{ budget.period }}</span>
-              </div>
-              <button
-                type="button"
-                class="btn btn--sm btn--danger"
-                [disabled]="busy()"
-                [attr.aria-label]="'Remove budget for ' + budgetLabel(budget)"
-                (click)="removeBudget(budget.id)"
-              >
-                Remove
-              </button>
-            </div>
-
-            @if (budget.limit_cost) {
-              <div style="margin-top: 0.6rem">
-                <div class="spread" style="font-size: 0.82rem">
-                  <span class="muted">Spend</span>
-                  <span>{{ usedFor(budget).used_cost }} / {{ budget.limit_cost }}</span>
-                </div>
-                <div
-                  class="progress"
-                  role="progressbar"
-                  [attr.aria-valuenow]="costPct(budget)"
-                  aria-valuemin="0"
-                  aria-valuemax="100"
-                  [attr.aria-label]="'Spend budget for ' + budgetLabel(budget)"
-                >
-                  <div
-                    class="progress__bar"
-                    [class.is-warn]="costPct(budget) >= 80"
-                    [class.is-full]="costPct(budget) >= 100"
-                    [style.width.%]="costPct(budget)"
-                  ></div>
-                </div>
-              </div>
-            }
-            @if (budget.limit_requests != null) {
-              <div style="margin-top: 0.6rem">
-                <div class="spread" style="font-size: 0.82rem">
-                  <span class="muted">Requests</span>
-                  <span>{{ usedFor(budget).used_requests }} / {{ budget.limit_requests }}</span>
-                </div>
-                <div
-                  class="progress"
-                  role="progressbar"
-                  [attr.aria-valuenow]="pct(usedFor(budget).used_requests, budget.limit_requests)"
-                  aria-valuemin="0"
-                  aria-valuemax="100"
-                  [attr.aria-label]="'Request budget for ' + budgetLabel(budget)"
-                >
-                  <div
-                    class="progress__bar"
-                    [class.is-warn]="
-                      pct(usedFor(budget).used_requests, budget.limit_requests) >= 80
-                    "
-                    [class.is-full]="
-                      pct(usedFor(budget).used_requests, budget.limit_requests) >= 100
-                    "
-                    [style.width.%]="pct(usedFor(budget).used_requests, budget.limit_requests)"
-                  ></div>
-                </div>
-              </div>
-            }
-            @if (budget.limit_tokens != null) {
-              <div style="margin-top: 0.6rem">
-                <div class="spread" style="font-size: 0.82rem">
-                  <span class="muted">Tokens</span>
-                  <span>{{ usedFor(budget).used_tokens }} / {{ budget.limit_tokens }}</span>
-                </div>
-                <div
-                  class="progress"
-                  role="progressbar"
-                  [attr.aria-valuenow]="pct(usedFor(budget).used_tokens, budget.limit_tokens)"
-                  aria-valuemin="0"
-                  aria-valuemax="100"
-                  [attr.aria-label]="'Token budget for ' + budgetLabel(budget)"
-                >
-                  <div
-                    class="progress__bar"
-                    [class.is-warn]="pct(usedFor(budget).used_tokens, budget.limit_tokens) >= 80"
-                    [class.is-full]="pct(usedFor(budget).used_tokens, budget.limit_tokens) >= 100"
-                    [style.width.%]="pct(usedFor(budget).used_tokens, budget.limit_tokens)"
-                  ></div>
-                </div>
-              </div>
-            }
-          </div>
-        } @empty {
-          <p class="empty">No budgets yet — requests are unlimited for this use case.</p>
-        }
-      </div>
-    </div>
+    <app-budgets-tab
+      [slug]="slug"
+      [budgets]="budgets()"
+      [usage]="usage()"
+      [usageUnavailable]="usageUnavailable()"
+      [usageRefused]="usageRefused()"
+      (changed)="loadBudgets()"
+    />
   }
 
   <!-- Rate limits (FRD-405) -->
   @if (tab() === 'rate-limits') {
-    <div class="card" role="tabpanel" aria-labelledby="tab-rate-limits">
-      <div class="spread">
-        <h3 class="section-title" style="margin: 0">Rate limits</h3>
-        <button
-          type="button"
-          class="btn btn--sm btn--primary"
-          [attr.aria-expanded]="showAddRateLimit()"
-          (click)="showAddRateLimit.set(!showAddRateLimit())"
-        >
-          {{ showAddRateLimit() ? 'Cancel' : '+ Add rate limit' }}
-        </button>
-      </div>
-      <p class="muted" style="margin: 0.25rem 0 0">
-        A budget says how much may be spent; this says how fast. Without one, a client stuck in a
-        retry loop can burn a month's budget in an afternoon and slow down every other use case
-        while doing it. Over the limit the gateway answers 429 with a <code>Retry-After</code>.
-      </p>
-
-      @if (showAddRateLimit()) {
-        <form class="form-inline disclosure" (ngSubmit)="addRateLimit()">
-          <div class="field">
-            <label for="rl-scope">Scope</label>
-            <select
-              id="rl-scope"
-              name="rl-scope"
-              [ngModel]="rlScope()"
-              (ngModelChange)="rlScope.set($event)"
-            >
-              <option value="use_case">Whole use case</option>
-              <option value="member">Member</option>
-            </select>
-          </div>
-          @if (rlScope() === 'member') {
-            <div class="field">
-              <label for="rl-subject">Member username</label>
-              <input
-                id="rl-subject"
-                name="rl-subject"
-                [ngModel]="rlSubject()"
-                (ngModelChange)="rlSubject.set($event)"
-                placeholder="username"
-                autocomplete="off"
-              />
-            </div>
-          }
-          <div class="field">
-            <label for="rl-rpm">Requests per minute</label>
-            <input
-              id="rl-rpm"
-              type="number"
-              min="1"
-              name="rl-rpm"
-              [ngModel]="rlRpm()"
-              (ngModelChange)="rlRpm.set($event)"
-              placeholder="e.g. 60"
-            />
-            <span class="field__hint">The sustained rate this caller may keep up.</span>
-          </div>
-          <div class="field">
-            <label for="rl-burst">Burst</label>
-            <input
-              id="rl-burst"
-              type="number"
-              min="1"
-              name="rl-burst"
-              [ngModel]="rlBurst()"
-              (ngModelChange)="rlBurst.set($event)"
-              placeholder="—"
-            />
-            <span class="field__hint">
-              How many may arrive at once. Empty uses the per-minute figure.
-            </span>
-          </div>
-          <button type="submit" class="btn btn--primary" [disabled]="!canAddRateLimit()">
-            Add
-          </button>
-          @if (rateLimitError(); as message) {
-            <span class="field__hint field__hint--error">{{ message }}</span>
-          }
-        </form>
-      }
-
-      <div class="table-wrap" style="margin-top: 1rem">
-        <table class="table">
-          <caption class="sr-only">
-            Configured request-rate limits for this use case
-          </caption>
-          <thead>
-            <tr>
-              <th scope="col">Applies to</th>
-              <th scope="col">Requests / minute</th>
-              <th scope="col">At once</th>
-              <th scope="col">Status</th>
-              <th scope="col"><span class="sr-only">Actions</span></th>
-            </tr>
-          </thead>
-          <tbody>
-            @for (limit of rateLimits(); track limit.id) {
-              <tr>
-                <td class="break-anywhere">{{ rateLimitLabel(limit) }}</td>
-                <td>{{ limit.limit_rpm }}</td>
-                <td>{{ effectiveBurst(limit) }}</td>
-                <td>
-                  @if (limit.enabled === false) {
-                    <span class="badge">Disabled</span>
-                  } @else {
-                    <span class="badge badge--ok">Active</span>
-                  }
-                </td>
-                <td class="right">
-                  <button
-                    type="button"
-                    class="btn btn--sm btn--danger"
-                    [disabled]="busy()"
-                    [attr.aria-label]="'Remove the rate limit for ' + rateLimitLabel(limit)"
-                    (click)="removeRateLimit(limit.id)"
-                  >
-                    Remove
-                  </button>
-                </td>
-              </tr>
-            } @empty {
-              <tr>
-                <td colspan="5">
-                  <p class="empty" style="margin: 0">
-                    No rate limits — this use case may send as fast as it likes.
-                  </p>
-                </td>
-              </tr>
-            }
-          </tbody>
-        </table>
-      </div>
-    </div>
+    <app-rate-limits-tab [slug]="slug" [limits]="rateLimits()" (changed)="loadRateLimits()" />
   }
 </div>

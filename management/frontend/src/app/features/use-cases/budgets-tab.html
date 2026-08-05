@@ -1,0 +1,214 @@
+<div class="card" role="tabpanel" aria-labelledby="tab-budgets">
+  <div class="spread">
+    <h3 class="section-title" style="margin: 0">Budgets</h3>
+    <button
+      type="button"
+      class="btn btn--sm btn--primary"
+      [attr.aria-expanded]="showForm()"
+      (click)="showForm.set(!showForm())"
+    >
+      {{ showForm() ? 'Cancel' : '+ Add budget' }}
+    </button>
+  </div>
+  <p class="muted" style="margin: 0.25rem 0 0">
+    Token / request limits per period. The gateway rejects requests over budget with 429.
+  </p>
+
+  @if (showForm()) {
+    <form class="form-inline disclosure" (ngSubmit)="add()">
+      <div class="field">
+        <label for="budget-scope">Scope</label>
+        <select
+          id="budget-scope"
+          name="scope"
+          [ngModel]="budgetScope()"
+          (ngModelChange)="budgetScope.set($event)"
+        >
+          <option value="use_case">Whole use case</option>
+          <option value="member">Member</option>
+        </select>
+      </div>
+      @if (budgetScope() === 'member') {
+        <div class="field">
+          <label for="budget-subject">Member username</label>
+          <input
+            id="budget-subject"
+            name="subject"
+            [ngModel]="budgetSubject()"
+            (ngModelChange)="budgetSubject.set($event)"
+            placeholder="username"
+            autocomplete="off"
+          />
+        </div>
+      }
+      <div class="field">
+        <label for="budget-period">Period</label>
+        <select
+          id="budget-period"
+          name="period"
+          [ngModel]="budgetPeriod()"
+          (ngModelChange)="budgetPeriod.set($event)"
+        >
+          <option value="day">Daily</option>
+          <option value="month">Monthly</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="budget-cost">Spend limit</label>
+        <input
+          id="budget-cost"
+          name="cost"
+          inputmode="decimal"
+          [ngModel]="budgetCost()"
+          (ngModelChange)="budgetCost.set($event)"
+          placeholder="e.g. 250.00"
+          autocomplete="off"
+        />
+        <span class="field__hint">What this may cost per period — the limit most people mean.</span>
+      </div>
+      <div class="field">
+        <label for="budget-tokens">Token limit</label>
+        <input
+          id="budget-tokens"
+          type="number"
+          min="1"
+          name="tokens"
+          [ngModel]="budgetTokens()"
+          (ngModelChange)="budgetTokens.set($event)"
+          placeholder="—"
+        />
+      </div>
+      <div class="field">
+        <label for="budget-requests">Request limit</label>
+        <input
+          id="budget-requests"
+          type="number"
+          min="1"
+          name="requests"
+          [ngModel]="budgetRequests()"
+          (ngModelChange)="budgetRequests.set($event)"
+          placeholder="—"
+        />
+      </div>
+      <button type="submit" class="btn btn--primary" [disabled]="!canAdd()">Add</button>
+      @if (validationError(); as message) {
+        <span class="field__hint field__hint--error">{{ message }}</span>
+      }
+    </form>
+  }
+
+  @if (unpricedRequests() > 0) {
+    <p class="callout callout--warning" style="margin-top: 1rem">
+      {{ unpricedRequests() }} request(s) this period used a model with no price on file — their
+      cost is unknown, not zero, and is therefore not included in the spend figures above. A Global
+      Administrator can add the missing prices under <a routerLink="/models">Models</a>.
+    </p>
+  }
+
+  @if (usageUnavailable() && budgets().length) {
+    <p class="callout callout--warning" style="margin-top: 1rem">
+      @if (usageRefused()) {
+        Consumption is hidden because the gateway does not count you as a member of this use case.
+        Membership for the data plane comes from the Keycloak group
+        <code>/use-cases/{{ slug() }}</code> — ask an administrator to add you there.
+      } @else {
+        Consumption is unavailable — the gateway could not be reached. The configured limits below
+        are still in force.
+      }
+    </p>
+  }
+
+  <div class="stack" style="margin-top: 1rem">
+    @for (budget of budgets(); track budget.id) {
+      <div class="card" style="padding: 0.9rem 1rem">
+        <div class="spread">
+          <div class="row">
+            <strong>{{ labelFor(budget) }}</strong>
+            <span class="badge badge--muted">{{ budget.period }}</span>
+          </div>
+          <button
+            type="button"
+            class="btn btn--sm btn--danger"
+            [disabled]="feedback.busy()"
+            [attr.aria-label]="'Remove budget for ' + labelFor(budget)"
+            (click)="remove(budget.id)"
+          >
+            Remove
+          </button>
+        </div>
+
+        @if (budget.limit_cost) {
+          <div style="margin-top: 0.6rem">
+            <div class="spread" style="font-size: 0.82rem">
+              <span class="muted">Spend</span>
+              <span>{{ usedFor(budget).used_cost }} / {{ budget.limit_cost }}</span>
+            </div>
+            <div
+              class="progress"
+              role="progressbar"
+              [attr.aria-valuenow]="costPct(budget)"
+              aria-valuemin="0"
+              aria-valuemax="100"
+              [attr.aria-label]="'Spend budget for ' + labelFor(budget)"
+            >
+              <div
+                class="progress__bar"
+                [class.is-warn]="costPct(budget) >= 80"
+                [class.is-full]="costPct(budget) >= 100"
+                [style.width.%]="costPct(budget)"
+              ></div>
+            </div>
+          </div>
+        }
+        @if (budget.limit_requests != null) {
+          <div style="margin-top: 0.6rem">
+            <div class="spread" style="font-size: 0.82rem">
+              <span class="muted">Requests</span>
+              <span>{{ usedFor(budget).used_requests }} / {{ budget.limit_requests }}</span>
+            </div>
+            <div
+              class="progress"
+              role="progressbar"
+              [attr.aria-valuenow]="pct(usedFor(budget).used_requests, budget.limit_requests)"
+              aria-valuemin="0"
+              aria-valuemax="100"
+              [attr.aria-label]="'Request budget for ' + labelFor(budget)"
+            >
+              <div
+                class="progress__bar"
+                [class.is-warn]="pct(usedFor(budget).used_requests, budget.limit_requests) >= 80"
+                [class.is-full]="pct(usedFor(budget).used_requests, budget.limit_requests) >= 100"
+                [style.width.%]="pct(usedFor(budget).used_requests, budget.limit_requests)"
+              ></div>
+            </div>
+          </div>
+        }
+        @if (budget.limit_tokens != null) {
+          <div style="margin-top: 0.6rem">
+            <div class="spread" style="font-size: 0.82rem">
+              <span class="muted">Tokens</span>
+              <span>{{ usedFor(budget).used_tokens }} / {{ budget.limit_tokens }}</span>
+            </div>
+            <div
+              class="progress"
+              role="progressbar"
+              [attr.aria-valuenow]="pct(usedFor(budget).used_tokens, budget.limit_tokens)"
+              aria-valuemin="0"
+              aria-valuemax="100"
+              [attr.aria-label]="'Token budget for ' + labelFor(budget)"
+            >
+              <div
+                class="progress__bar"
+                [class.is-warn]="pct(usedFor(budget).used_tokens, budget.limit_tokens) >= 80"
+                [class.is-full]="pct(usedFor(budget).used_tokens, budget.limit_tokens) >= 100"
+                [style.width.%]="pct(usedFor(budget).used_tokens, budget.limit_tokens)"
+              ></div>
+            </div>
+          </div>
+        }
+      </div>
+    } @empty {
+      <p class="empty">No budgets yet — requests are unlimited for this use case.</p>
+    }
+  </div>
+</div>
