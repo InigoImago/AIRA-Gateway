@@ -89,6 +89,10 @@ usable, and `FRD-113` cannot tell a supported task type from a typo.
   per type. `FRD-110` intersects its own allow-list with this one, and `FRD-110` §5.3's reservation
   reads the estimates — the two vendors tokenise images and documents differently, so a global
   figure would be wrong for one of them by construction.
+- **FR-4b Hosting.** `managed` or `self_deployed` (`ADR-0012` §5). Not a curiosity: a self-deployed
+  endpoint can cold-start for minutes and answers 429 for capacity rather than quota, so the
+  dispatch timeout, the retry decision and the readiness probe all read it. Declaring it wrong makes
+  a chain wait instead of failing over.
 - **FR-5 Deprecation.** A `deprecated` flag. It **warns, it does not block**: requests succeed and
   carry a `Warning` response header, the model is marked in the SPA, and reporting can show who is
   still using it. Blocking is what `FRD-307`'s revocation is for, and conflating the two removes
@@ -164,6 +168,7 @@ Management `Model` gains (all nullable, so existing rows stay valid):
 | `attachments` | JSON? | accepted media types and their token estimates (FR-4a) |
 | `thinking` | JSON? | modes, `min_tokens`, `max_tokens`, default, level→budget map |
 | `embedding` | JSON? | `task_types`, `supports_batch`, `dimensions[]`, default |
+| `hosting` | string? | `managed` \| `self_deployed` — timeout, retry and probe policy (FR-4b) |
 | `deprecated` | bool | default false |
 | `numeric_id` | int? | unique when set; FR-6 |
 

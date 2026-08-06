@@ -48,7 +48,8 @@ either dialect exists, and keeps the dialect work free of authentication concern
 - The Gemini Enterprise platform's **agent** surface (data stores, grounding, orchestration). We
   consume *models* through Model Garden; if the agent surface is ever wanted it is a separate
   upstream with a separate decision. See §11.
-- Tuning, batch prediction, non-Anthropic third-party Model Garden vendors.
+- Tuning and batch prediction. (Third-party Model Garden vendors *are* in scope where they speak a
+  dialect we have — see FR-2a.)
 - Reading the credential from Vault — `FRD-116`.
 
 ## 3. User Stories
@@ -67,6 +68,10 @@ either dialect exists, and keeps the dialect work free of authentication concern
 - **FR-2 Publisher-dependent method and dialect.** `publishers/google` → `:generateContent` /
   `:streamGenerateContent` / `:embedContent`, Gemini body. `publishers/anthropic` → `:rawPredict` /
   `:streamRawPredict`, Anthropic body (`FRD-119`).
+- **FR-2a Self-deployed endpoints.** Models deployed from Model Garden onto our own capacity
+  (Nemotron and similar NIM containers) are addressed by endpoint id and speak the **OpenAI**
+  dialect. Same transport, same credential, different addressing and different failure modes
+  (§5.3a).
 - **FR-3 Service-account auth.** RS256-signed JWT assertion exchanged for an access token; cached
   and refreshed **before** expiry, not on failure. One credential for both publishers.
 - **FR-4 Region per model**, not per process. Configuration carries region *and* publisher with
@@ -128,6 +133,28 @@ segment.
 
 So: the allowed model-name character set is defined once, `@` is in it, and the URL segment is
 encoded on the way out. Asserted by a test using a real Anthropic model name, not a placeholder.
+
+### 5.3a Model Garden also hosts models we deploy ourselves
+
+Model Garden is two things under one name, and the second one changes the addressing.
+**Publisher-managed** models (Gemini, Claude) are `publishers/{vendor}/models/{model}`.
+**Self-deployed** models — NVIDIA NIM containers such as Nemotron, and anything else deployed from
+the Garden — run on capacity in our own project and are addressed by a **numeric endpoint id**.
+They also typically expose an **OpenAI-compatible** API.
+
+Two consequences, both larger than they look:
+
+- **The transport × dialect grid is a matrix, not a diagonal** (`ADR-0012`). The OpenAI dialect is
+  needed on *this* transport, not only on Foundry — so `ADR-0011`'s separation starts paying before
+  the third platform exists.
+- **Hosting is a declared property, because the failure modes differ.** A self-deployed endpoint
+  scaled to zero takes minutes to serve its first request: a budget reservation stays open that
+  whole time, a rate-limit token is already spent, and a fallback chain burns its primary timeout
+  waiting rather than failing over. And a 429 means quota on a managed model but *no free replica*
+  on a self-deployed one, where retrying the same endpoint cannot help. So self-deployed models
+  carry their own timeout and retry policy, and `FRD-117`'s readiness probe **must not wake a
+  scaled-to-zero endpoint** — probing it would spend GPU minutes to answer a question about
+  availability. `FRD-114` declares `hosting`; the dispatch chain and the probe read it.
 
 ### 5.4 Two adapters, one model name — refuse to start
 

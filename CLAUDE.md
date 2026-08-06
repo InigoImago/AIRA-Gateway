@@ -266,8 +266,18 @@ quietly incomplete). Credential acquisition is **one shared `TokenSource`** with
 implementations, not three refresh races. Capability flags say **whether, never how** — three
 vendors now do structured output by three unrelated mechanisms. Note: the **OpenAI dialect arrives
 as an upstream regardless of `FRD-106`**, which makes that deferred surface much cheaper later.
-Fourteen documents: `ADR-0010`, `ADR-0011` + `FRD-107`, `FRD-110`–`FRD-120`, `FRD-602` (ROADMAP
-Phase 8). **One decision open** (`ADR-0010`): does AIRA serve the predecessor's wire contract, so
+**Four model families under one gateway (`ADR-0012`)**: Gemini, Claude, GPT, and Nemotron from
+Model Garden's **self-deploy** side. One namespace, one capability vocabulary — flags say *whether*,
+never *how*; **undeclared means unsupported**. Governing principle: **hide the plumbing, declare the
+semantics** — a difference that changes the *answer* is never hidden. The case that matters:
+**Gemini and Claude read PDFs natively, GPT and a NIM-hosted Nemotron cannot**, so a fallback chain
+**skips** an incapable candidate rather than dropping the attachment, and fails if none qualifies —
+a stripped-attachment fallback returns a confident answer about a document the model never saw, with
+a 200. Optional, opt-in, never-silent conversion is `FRD-121` (recommendation: do not build first).
+Self-deployed models also mean **cold starts of minutes and capacity-shaped 429s**, so `hosting` is a
+declared property that the dispatch timeout, the retry decision and the readiness probe read — and
+the probe must **not** wake a scaled-to-zero endpoint. Sixteen documents: `ADR-0010`–`ADR-0012` +
+`FRD-107`, `FRD-110`–`FRD-121`, `FRD-602` (ROADMAP Phase 8). **One decision open** (`ADR-0010`): does AIRA serve the predecessor's wire contract, so
 clients migrate by changing a URL, or do the clients move to the Gemini surface? Recommendation:
 compatibility surface **with a sunset date and its usage in reporting** — everything except
 `FRD-107` is contract-independent and can start now. Three deviations from the predecessor are

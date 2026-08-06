@@ -2,6 +2,7 @@
 
 > Phase: 8 (KIRA parity) · Status: **Draft** · Owner: Vadim Scheibe · Last updated: 2026-08-06
 > Origin: `kira_api.md` §4.1–4.2 (`RequestContent`, `DocumentMimeTypeEnum`), programme: `ADR-0010`.
+> Multi-vendor consequences governed by **`ADR-0012`** (documents are not uniformly supported).
 > Touches: `FRD-100` (Gemini surface), `FRD-103` (persistence), `FRD-300` (pipeline),
 > `FRD-401`/`FRD-405` (budgets), `FRD-404` (retention), `FRD-406` (redaction, deferred).
 
@@ -44,8 +45,10 @@ question is about.
 - **Files by reference** (a URL, a GCS URI, the Gemini Files API). Inline data only, which is what
   the predecessor does. A reference-based upload changes the security model — the gateway would
   fetch a caller-supplied URL — and deserves its own decision.
-- **Content extraction.** The gateway does not parse a PDF; it forwards it. Everything downstream
-  that wants to read inside a document (see FR-9) is out of scope here.
+- **Content extraction.** The gateway does not parse a PDF; it forwards it — deliberately, because
+  a PDF parser is a large attack surface on caller-supplied bytes and this process holds the cloud
+  credentials. Everything downstream that wants to read inside a document (see FR-9) is out of scope
+  here, and the opt-in conversion path (`FRD-121`) keeps the parser out of this process too.
 - **Audio and video.** Not in the predecessor's list; the allow-list is easy to extend later.
 - **Multimodal *output*.** Models answer with text.
 
@@ -85,6 +88,12 @@ question is about.
 - **FR-8 Every verb behaves the same.** `generateContent`, `streamGenerateContent` and the
   pipeline's dry-run all accept the same parts. `embedContent` does not — embedding a document is
   a different operation and is not in scope (`FRD-113`).
+- **FR-8a A chain may not degrade a document request silently** (`ADR-0012` §3). A fallback
+  candidate that cannot read the attachment is **skipped**, never used with the attachment dropped;
+  if no candidate qualifies, the request **fails**. Falling back to a text-only model produces a
+  fluent, confident answer about a document the model never saw, returned with a 200 and
+  indistinguishable from a correct one. Failing is recoverable; being quietly wrong is not. An
+  opt-in conversion path exists (`FRD-121`) and is never implicit.
 - **FR-9 The text-only controls declare their blind spot.** The injection filter and the routing
   classifier read text. A prompt injection inside a PDF is invisible to them. The gateway does not
   pretend otherwise: the limitation is documented in the pipeline builder's inline help, and the

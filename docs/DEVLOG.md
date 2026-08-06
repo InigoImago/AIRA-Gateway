@@ -5,6 +5,60 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-06 — Four model families, and the one thing that does not generalise
+Bringing Gemini Enterprise / Model Garden and Microsoft Foundry together over Gemini, Claude, GPT and
+Nemotron. Two findings while thinking it through, and the second is the one that matters.
+
+**The transport × dialect grid is a matrix, not a diagonal.** Model Garden is two things under one
+name: publisher-managed models (Gemini, Claude) addressed as `publishers/{vendor}/models/{model}`,
+and **self-deployed** models — NIM containers such as Nemotron — running on our own capacity,
+addressed by a **numeric endpoint id** and speaking an **OpenAI-compatible** API. So the OpenAI
+dialect is needed on the *Vertex* transport, not only on Foundry. `ADR-0011`'s separation starts
+paying for itself before the third platform is built, and `ADR-0011` rule 2 (the caller names a
+model, the catalog holds the addressing) turns out to have been necessary rather than prudent — a
+fourth addressing mode arrived within a day.
+
+Self-deployment also brings failure modes that managed models do not have, and treating them alike
+would produce two surprises rather than one: an endpoint scaled to zero **cold-starts for minutes**
+(a budget reservation held open that whole time, a rate-limit token already spent, a fallback chain
+burning its primary timeout instead of failing over), and its **429 means no free replica**, not
+quota — so retrying the same endpoint cannot help. `hosting` becomes a declared property that the
+dispatch timeout, the retry decision and the readiness probe read; and the probe must **not** wake a
+scaled-to-zero endpoint, or it spends GPU minutes to answer a question about availability.
+
+**Documents are where unification would do real harm.** The predecessor's callers send PDFs — "here
+is a document, answer questions about it" is a large share of what KIRA is used for. Across the four
+families that capability is genuinely not uniform: **Gemini and Claude read PDFs natively, including
+layout; a text-only GPT deployment and a NIM-hosted Nemotron cannot see one at all.**
+
+The tempting behaviour is to let a fallback chain drop the attachment and carry on. It must not.
+Dropping it does not produce an error — it produces a fluent, confident answer about a document the
+model never saw, returned with a **200**, indistinguishable from a correct answer to everyone
+including the caller. So `ADR-0012` §3: a chain **skips** a candidate that cannot read the
+attachment, and **fails** if none qualifies. Failing is recoverable; being quietly wrong is not.
+
+The practical shape is better than it sounds: Gemini and Claude are both document-capable and both
+sit on the same transport and the same credential, so a document-capable chain with a genuine
+fallback already exists without any conversion at all.
+
+`ADR-0012` also fixes the governing principle for all of this, which was implicit until now:
+**hide the plumbing, declare the semantics.** Clouds, credentials, URL shapes, streaming vocabularies
+and structured-output mechanisms are plumbing and belong behind the canonical core. Anything that
+changes *what comes back* — an attachment a model cannot see, a thinking mode it cannot honour, a
+schema it cannot enforce — is declared, visible in the builder, and enforced after routing.
+
+`FRD-121` specifies the opt-in conversion path (extract text or render pages) for the cases where
+capability gating is genuinely too strict. Three constraints decided up front: never default, never
+silent, and **never in the gateway process** — a PDF parser is a large attack surface on
+caller-supplied bytes and this process holds the cloud credentials, so it belongs behind a managed
+document service or an isolated worker. The recommendation in its own §11 is to **not build it
+first**; ship the gating, run with it, and let a concrete blocked use case justify it.
+
+`ADR-0012` and `FRD-121` written; `FRD-110` (chain homogeneity), `FRD-114` (`hosting`) and `FRD-115`
+(self-deployed endpoints, the matrix) amended.
+
+---
+
 ## 2026-08-06 — A third platform decides the shape of the second
 Microsoft Foundry is wanted for the future: Azure OpenAI models and Microsoft's own. Not urgent —
 and precisely because it is not urgent, it is the right moment to let it settle the upstream

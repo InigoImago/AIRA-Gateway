@@ -159,6 +159,17 @@ specifies Foundry against it. One planning consequence worth noting: the **OpenA
 arrives as an upstream regardless of `FRD-106`**, so the deferred OpenAI *surface* becomes
 materially cheaper once the dialect exists.
 
+**Four model families, and documents are the thing that does not generalise.** Gemini, Claude, GPT
+and (from Model Garden's self-deploy side) Nemotron. `ADR-0012` unifies them under one namespace and
+one capability vocabulary — and settles the one place where unification would do harm: **Gemini and
+Claude read PDFs natively, GPT and a NIM-hosted Nemotron cannot.** A fallback chain therefore may
+not silently drop an attachment to reach a text-only model; it skips it, and if nothing qualifies the
+request fails. Falling back would return a fluent, confident answer about a document the model never
+saw, with a 200 — failing is recoverable, being quietly wrong is not. Model Garden's self-deployed
+side also makes the transport × dialect grid a real **matrix** (the OpenAI dialect is needed on
+Vertex, not only on Foundry) and introduces **cold starts and capacity-shaped 429s**, which the
+dispatch timeout and the readiness probe must treat differently from quota.
+
 `ADR-0010` frames the programme and holds the one open decision: whether AIRA also serves the
 predecessor's **wire contract** (clients migrate by changing a URL) or whether the clients move to
 the Gemini surface. Everything except `FRD-107` is needed either way and can start now.
@@ -173,6 +184,7 @@ the Gemini surface. Everything except `FRD-107` is needed either way and can sta
 | `FRD-115` | Vertex AI / Model Garden in the EU | **required — residency confirmed** |
 | `FRD-119` | Anthropic models on Vertex: the second dialect | needs `FRD-115` + `FRD-114` |
 | `FRD-120` | Microsoft Foundry (Azure OpenAI + Microsoft's own) | **planned, not scheduled** — see `ADR-0011` |
+| `FRD-121` | Document conversion for models that cannot read documents | **optional — probably do not build first**, see `ADR-0012` §4 |
 | `FRD-116` | Secrets actually read from Vault | policy and implementation have been apart since Phase 0 |
 | `FRD-117` | Version info, upstream health, CORS, OpenAPI 3.0, trace header | independent; makes the rest operable |
 | `FRD-118` | Several Keycloak backends, groups from UserInfo | **requirement unconfirmed — see its §11** |
