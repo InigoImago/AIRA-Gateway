@@ -264,8 +264,10 @@ observation (§10).
 
 - **`FRD-119`** for the Anthropic dialect; **`FRD-116`** for the credential source; **`FRD-114`**
   so a model's publisher and capabilities are declared rather than inferred.
-- **Open — which surface of "Gemini Enterprise" do we call?** Two readings, and they lead to
-  different adapters:
+- **Closed 2026-08-06 (`ADR-0013`) — direct model access.** We call the Vertex publisher and
+  endpoint APIs; the platform's agent surface is out of scope, because an answer produced inside a
+  service we do not see cannot be attributed, priced or evidenced — which is the whole point of the
+  gateway. The two readings that were open were:
   1. **Model Garden raw model access** (assumed here): the platform is the procurement and
      governance vehicle; we call the Vertex publisher endpoints directly. Everything above is
      written for this.
@@ -273,10 +275,7 @@ observation (§10).
      model API and would be a different upstream with different semantics — grounding citations,
      server-side conversation state — none of which the canonical core models today.
 
-  The phrasing "to access the Gemini and Anthropic models" reads as (1), which is why this FRD
-  assumes it. **Confirm before implementation** — one authenticated `curl` against the project's
-  `publishers/anthropic` endpoint settles it in a minute, and getting it wrong is a rewrite rather
-  than a correction.
+  (1) is confirmed and is what this FRD specifies.
 - **Risk — clock skew** breaks JWT assertions and presents as an unexplained 401. Small leeway
   plus an error message that names skew as a likely cause.
 - **Risk — Model Garden requires per-model enablement** in the project. A model that is configured

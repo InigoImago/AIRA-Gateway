@@ -184,7 +184,8 @@ the Gemini surface. Everything except `FRD-107` is needed either way and can sta
 | `FRD-115` | Vertex AI / Model Garden in the EU | **required — residency confirmed** |
 | `FRD-119` | Anthropic models on Vertex: the second dialect | needs `FRD-115` + `FRD-114` |
 | `FRD-120` | Microsoft Foundry (Azure OpenAI + Microsoft's own) | **planned, not scheduled** — see `ADR-0011` |
-| `FRD-121` | Document conversion for models that cannot read documents | **optional — probably do not build first**, see `ADR-0012` §4 |
+| `FRD-121` | Document conversion for models that cannot read documents | **optional — probably do not build first**, `ADR-0012` §4 / `ADR-0013` |
+| `FRD-122` | A complete audit trail — refusals, asked-vs-served, decisions, degradation | **`ADR-0013` makes this the honesty test of the whole thing** |
 | `FRD-116` | Secrets actually read from Vault | policy and implementation have been apart since Phase 0 |
 | `FRD-117` | Version info, upstream health, CORS, OpenAPI 3.0, trace header | independent; makes the rest operable |
 | `FRD-118` | Several Keycloak backends, groups from UserInfo | **requirement unconfirmed — see its §11** |

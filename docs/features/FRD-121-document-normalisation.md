@@ -4,6 +4,9 @@
 > Owner: Vadim Scheibe · Last updated: 2026-08-06
 > Governed by `ADR-0012` §4. Requires `FRD-110` (attachments) and `FRD-114` (capabilities).
 
+> **`ADR-0013` places this on the far side of the gateway's scope line** — it is content
+> understanding, not governed model access. That is not a veto, it is why the recommendation below
+> is what it is.
 > Read §2 and §11 before scheduling this. It exists so the option is specified rather than
 > improvised, and the honest recommendation is to ship `ADR-0012` §3's capability gating first, run
 > with it, and build this only if a concrete use case is actually blocked by it.

@@ -22,6 +22,18 @@ IT security have full visibility and control.
 > A governed, observable, and secure single point of entry for all enterprise AI usage — with
 > self-service for teams and strong central control for IT security and governance.
 
+### Scope, in one sentence (ADR-0013)
+> The gateway's job is to provide **auditable brains** for AI use cases.
+
+Auditable is the operative word and the differentiator: not merely access to models, but access
+that is attributed, bounded, priced, and evidenced — who asked, whether it was allowed, which brain
+answered and where it ran, what it cost, and what happened.
+
+The sentence is also a boundary. The gateway does **not** think for the use case: no agent
+surfaces, no retrieval or vector storage, no conversation state, no tool execution, no workflow
+orchestration. The test for any future request is in `ADR-0013` — *does this make model access
+better governed and better evidenced, or does it make the gateway think for the use case?*
+
 ---
 
 ## 2. Goals & Non-Goals

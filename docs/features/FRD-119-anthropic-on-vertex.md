@@ -254,9 +254,8 @@ distinctly. Thinking token counts are recorded; thinking *content* is not.
   `FRD-115` §10 is the tripwire.
 - **Risk — `anthropic_version` and available models on Vertex change.** Both are configuration
   (`FRD-114`, `FRD-115` §5.6), not code.
-- **Open** — whether the Gemini Enterprise platform fronts these endpoints or whether we call
-  Vertex publisher endpoints directly (`FRD-115` §11). Everything in §5 assumes the latter and
-  would need review under the former.
+- **Closed 2026-08-06 (`ADR-0013`)** — direct model access against the Vertex publisher endpoints,
+  which is what §5 assumes throughout. The platform's agent surface is out of scope.
 
 ## 12. Rollout / Demo
 

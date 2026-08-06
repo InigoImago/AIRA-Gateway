@@ -276,8 +276,17 @@ a stripped-attachment fallback returns a confident answer about a document the m
 a 200. Optional, opt-in, never-silent conversion is `FRD-121` (recommendation: do not build first).
 Self-deployed models also mean **cold starts of minutes and capacity-shaped 429s**, so `hosting` is a
 declared property that the dispatch timeout, the retry decision and the readiness probe read — and
-the probe must **not** wake a scaled-to-zero endpoint. Sixteen documents: `ADR-0010`–`ADR-0012` +
-`FRD-107`, `FRD-110`–`FRD-121`, `FRD-602` (ROADMAP Phase 8). **One decision open** (`ADR-0010`): does AIRA serve the predecessor's wire contract, so
+the probe must **not** wake a scaled-to-zero endpoint. **Scope, settled (`ADR-0013`, 2026-08-06): direct model access — the gateway provides *auditable
+brains* for AI use cases.** Not agents: no platform agent surfaces, no retrieval or vector storage,
+no conversation state, no tool execution, no workflow orchestration. The test for any future
+request: *does this make model access better governed and better evidenced, or does it make the
+gateway think for the use case?* A review against that word found four audit gaps — most
+importantly that a **refused request leaves no row at all** (rate-limited, over budget, unknown
+model, invalid: the log records what was *served*, not what was *asked*), plus served-vs-requested
+model invisible after fallback, pipeline decisions only on a **sampled** span, and degradation
+global rather than per-request. `FRD-122` closes them; until then "auditable" is a claim the data
+does not fully support. Eighteen documents: `ADR-0010`–`ADR-0013` + `FRD-107`, `FRD-110`–`FRD-122`,
+`FRD-602` (ROADMAP Phase 8). **One decision open** (`ADR-0010`): does AIRA serve the predecessor's wire contract, so
 clients migrate by changing a URL, or do the clients move to the Gemini surface? Recommendation:
 compatibility surface **with a sunset date and its usage in reporting** — everything except
 `FRD-107` is contract-independent and can start now. Three deviations from the predecessor are

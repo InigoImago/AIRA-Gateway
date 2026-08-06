@@ -23,3 +23,4 @@ Each ADR is immutable once **Accepted** — to change a decision, add a new ADR 
 | 0010 | [KIRA parity: bring the contract along, or move the clients?](ADR-0010-kira-parity-and-the-api-contract.md) | **Proposed — decision open** | 2026-08-06 |
 | 0011 | [Upstreams: platform, dialect, and what a model name means](ADR-0011-upstreams-platform-dialect-identity.md) | Accepted | 2026-08-06 |
 | 0012 | [One catalog over many platforms, and what "supports documents" then means](ADR-0012-one-catalog-many-platforms.md) | Accepted | 2026-08-06 |
+| 0013 | [The gateway provides auditable model access, not agents](ADR-0013-auditable-model-access-not-agents.md) | Accepted | 2026-08-06 |

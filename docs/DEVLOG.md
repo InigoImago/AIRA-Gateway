@@ -5,6 +5,59 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-06 — "Auditierbares Hirn": a scope sentence, and four places we do not earn it yet
+Direct model access confirmed — the Vertex publisher and endpoint APIs, not the platform's agent
+surface. That closes the last open question in `FRD-115` §11 and `FRD-119` §11.
+
+What came with it is worth more than the answer: *the gateway's job is to provide **auditable
+brains** for AI use cases.* That is a scope sentence, and it settles questions that had not been
+asked yet. `ADR-0013` records it with a test for future requests — **does this make model access
+better governed and better evidenced, or does it make the gateway think for the use case?** The
+second kind always arrives disguised as the first ("just let the gateway keep conversation history,
+every team is reimplementing it"), individually reasonable and collectively turning a control point
+into an application platform.
+
+Out, explicitly: agent surfaces, retrieval and vector storage, conversation state, tool execution,
+workflow orchestration, content understanding. `FRD-121`'s document conversion sits on the far side
+of that line and is now marked as such — which is the reason its own recommendation is to not build
+it first.
+
+**Then I took the word "auditable" literally and reviewed against it.** Four gaps, and the first is
+not small:
+
+1. **A refused request leaves no record at all.** Rate-limited, over budget, unknown model, failed
+   validation — the route returns before `record_request` is ever reached. `request_logs` therefore
+   contains **what was served, not what was asked**. So "who was throttled, how often, starting
+   when, and was that why the application misbehaved on Tuesday" is unanswerable from the audit
+   trail, and `FRD-601`'s `failed_requests` can only ever show upstream failures — a use case
+   hitting its budget wall all day reports as perfectly healthy. A control that leaves no trace
+   when it fires is a control nobody can review.
+2. **Only the served model is recorded, never the requested one.** With cross-vendor fallback
+   (`ADR-0012`) a request asking for Gemini can be answered by Claude and nothing durable says a
+   substitution happened. "Why did the Anthropic spend triple" has no answer in the data.
+3. **Pipeline decisions live on a span, not on the row.** `aira.pipeline.model` is a span
+   attribute — and spans are **sampled**. So *why* a model was chosen, for the one component that
+   makes a judgement about a caller's prompt, is durably recorded nowhere.
+4. **Degradation is global, not per-request.** `DegradationLog` says what is broken *now*; an audit
+   needs what was broken *then*. A request budgeted on the racy Postgres fallback is
+   indistinguishable from one with the atomic guarantee.
+
+`FRD-122` closes all four: one recording site at the route's exception boundary (not one per
+`return _error(...)` — that is the shape that let `:embedContent` bypass the pre-dispatch gate);
+`requested_model` alongside `model` so existing reports and indexes keep their meaning; decisions
+but **never the classifier's reasoning text**, which is model output about a caller's prompt and
+inherits every question the prompt has; and the degraded set frozen onto the row.
+
+One thing decided rather than deferred: recording refusals means a caller in a retry loop writes a
+row per attempt. That is the right increase — a retry storm is *precisely* the event the audit
+trail should show. If a deployment finds it excessive, the answer is a shorter retention for
+refusal rows, not recording nothing.
+
+Until `FRD-122` ships, "auditable" is a claim the data does not fully support. Worth saying plainly
+in the DEVLOG rather than only in an FRD.
+
+---
+
 ## 2026-08-06 — Four model families, and the one thing that does not generalise
 Bringing Gemini Enterprise / Model Garden and Microsoft Foundry together over Gemini, Claude, GPT and
 Nemotron. Two findings while thinking it through, and the second is the one that matters.
