@@ -99,8 +99,17 @@ Deliverables:
   visibility (payload redaction), dedicated IT Security role.
 - **Incident response** engine: configurable **throttle / alert / block** per rule.
 
+- **Model smoke tests and jailbreak batteries** — `FRD-504`, written 2026-08-06: evidence about how
+  the *models* behave, run through the gateway's own path in two modes (through the pipeline: does
+  our filter catch it; direct: does the model resist it). Reports a **rate over repeated attempts**,
+  never a verdict, because a model that refuses nine times out of ten is the finding.
+
 FRDs: `FRD-500-anomaly-rules`, `FRD-501-anomaly-detection-engine`, `FRD-502-it-security-console`,
-`FRD-503-incident-response`.
+`FRD-503-incident-response`, [`FRD-504`](features/FRD-504-model-smoke-tests.md).
+
+**Phase 5 carries three of the owner's seventeen central features** (PRD §1.1): incident response,
+dangerous-request blocking beyond the injection filter, and anomaly detection. Together with
+`FRD-122` they are the *evidence* half of the product — the governance half is largely built.
 
 ---
 
@@ -170,9 +179,10 @@ side also makes the transport × dialect grid a real **matrix** (the OpenAI dial
 Vertex, not only on Foundry) and introduces **cold starts and capacity-shaped 429s**, which the
 dispatch timeout and the readiness probe must treat differently from quota.
 
-`ADR-0010` frames the programme and holds the one open decision: whether AIRA also serves the
-predecessor's **wire contract** (clients migrate by changing a URL) or whether the clients move to
-the Gemini surface. Everything except `FRD-107` is needed either way and can start now.
+`ADR-0010` framed the programme and its one open decision — whether AIRA also serves the
+predecessor's **wire contract** — and is now **accepted (Option C)**: the owner's feature definition
+(PRD §1.1) names KIRA-API compatibility as central, so the compatibility surface is built, with a
+sunset date and its usage visible in reporting.
 
 | FRD | What | Blocking? |
 |---|---|---|
@@ -190,7 +200,7 @@ the Gemini surface. Everything except `FRD-107` is needed either way and can sta
 | `FRD-117` | Version info, upstream health, CORS, OpenAPI 3.0, trace header | independent; makes the rest operable |
 | `FRD-118` | Several Keycloak backends, groups from UserInfo | **requirement unconfirmed — see its §11** |
 | `FRD-602` | CSV export of the usage report | follows `FRD-601` ✓ |
-| `FRD-107` | The KIRA wire format itself | **blocked on `ADR-0010`** |
+| `FRD-107` | The KIRA wire format itself | **unblocked** — `ADR-0010` accepted (Option C) |
 
 **Out of scope for now:** the OpenAI-compatible surface (`FRD-106`) — deferred by decision on
 2026-08-06 so the parity programme is not competing with a second new contract.

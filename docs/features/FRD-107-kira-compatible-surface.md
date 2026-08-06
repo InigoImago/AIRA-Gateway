@@ -1,12 +1,13 @@
 # FRD-107 — A KIRA-compatible API surface
 
-> Phase: 8 (KIRA parity) · Status: **Blocked — waiting on `ADR-0010`** · Owner: Vadim Scheibe
+> Phase: 8 (KIRA parity) · Status: **Draft — unblocked 2026-08-06** · Owner: Vadim Scheibe
 > Last updated: 2026-08-06
 > Origin: `kira_api.md` §2, §6, §12. Depends on `FRD-110`–`FRD-114`.
 
-> **Do not start this before `ADR-0010` is decided.** If the decision is to move the clients to the
-> Gemini surface, this FRD is dropped entirely and `FRD-114`'s numeric alias goes with it. Every
-> other FRD in the programme is needed either way.
+> **`ADR-0010` is decided (Option C).** The owner's feature definition names KIRA-API compatibility
+> as a central feature (PRD §1.1, item 3), so this surface is built — **with a sunset date and its
+> usage visible in reporting** (§5.6), which is the half of the decision that keeps a compatibility
+> layer from becoming permanent. `FRD-114`'s numeric alias stays.
 
 ## 1. Problem
 

@@ -1,7 +1,8 @@
 # FRD-122 — A complete audit trail: what was asked, what was decided, what was served
 
 > Phase: 8 · Status: **Draft** · Owner: Vadim Scheibe · Last updated: 2026-08-06
-> Origin: a review against `ADR-0013`'s "auditable brains" standard, 2026-08-06.
+> Origin: a review against `ADR-0013`'s "auditable brains" standard, 2026-08-06, and against the owner's feature definition
+> (PRD §1.1) — *"welches System wann was womit aufgerufen hat"*.
 > Extends `FRD-103` (request log). Touches `FRD-300`, `FRD-405`, `FRD-601`, `FRD-115`.
 
 ## 1. Problem
@@ -34,7 +35,19 @@ kept for days; the request log is the record of truth and is kept for as long as
 is durably recorded nowhere. For the one component that makes a judgement about a caller's prompt,
 that is the wrong way round.
 
-**4. Degradation is a global state, not a per-request fact.**
+**4. The calling *system* is not identifiable.**
+An API key carries a `prefix` (its identity) and a `subject` (the person who issued it). The audit
+row records the subject and never the prefix. So five keys issued for one use case by one
+administrator produce five indistinguishable identities in the log, and the question the owner's
+own definition puts first — *which system called what, when, with which model* — cannot be answered
+about the system.
+
+The consequence is sharpest exactly when it matters most: a leaked key can be revoked, but the
+blast radius cannot be assessed. Which requests came from it, what they asked, what they got back,
+over what period — none of it is reconstructable, because the log cannot separate that key's
+traffic from its siblings'.
+
+**5. Degradation is a global state, not a per-request fact.**
 `DegradationLog` tells `/readyz` that rate limiting is on its per-instance fallback or that budgets
 are on the racy Postgres path (`FRD-405`). It says nothing about *which requests* were handled that
 way. A request budgeted without the atomic guarantee is indistinguishable from one with it, so
@@ -75,14 +88,19 @@ way. A request budgeted without the atomic guarantee is indistinguishable from o
   answered), and — where they differ — why: routing decision or fallback position.
 - **FR-4 Pipeline decisions on the row.** Which steps ran, and each one's verdict, in a compact
   form. Not the reasoning text, not the classifier's prompt: the decision.
-- **FR-5 Degradation on the row.** Which controls were operating on a fallback when this request
+- **FR-5 The calling system is identified.** For an API-key principal the row records the key's
+  **prefix** — the key's identity, never any part of its secret. For an OIDC principal it records
+  the client id where the token carries one. `subject` keeps its meaning (who the credential
+  belongs to); this answers *which credential was used*, which is a different question and the one
+  incident response asks first.
+- **FR-6 Degradation on the row.** Which controls were operating on a fallback when this request
   was handled.
-- **FR-6 Recording never fails a request.** The writer is already off the hot path with a bounded
+- **FR-7 Recording never fails a request.** The writer is already off the hot path with a bounded
   queue (`FRD-405`); a refusal row goes through the same path and inherits the same guarantee. A
   full queue must not turn a 429 into a 500.
-- **FR-7 Reporting shows it.** `FRD-601` gains a breakdown by outcome, and the Reporting screen
+- **FR-8 Reporting shows it.** `FRD-601` gains a breakdown by outcome, and the Reporting screen
   shows refusals beside successes. A wall being hit is a *number*, not a log search.
-- **FR-8 No new payload exposure.** Refusal rows follow the same `store_payloads` and retention
+- **FR-9 No new payload exposure.** Refusal rows follow the same `store_payloads` and retention
   rules as any other.
 
 ## 5. Design & Architecture
@@ -147,7 +165,8 @@ served ones — a configuration change, not a reason to record nothing.
 | `requested_model` | string(128)? | what the caller named (FR-3) |
 | `model_selection` | string(32)? | `direct` / `route` / `fallback:N` |
 | `pipeline_decisions` | JSON? | step → verdict (FR-4) |
-| `degraded` | JSON? | features on a fallback at the time (FR-5) |
+| `credential` | string(64)? | API-key prefix or OIDC client id — *which system called* (FR-5) |
+| `degraded` | JSON? | features on a fallback at the time (FR-6) |
 
 `model` keeps its meaning — what answered — so nothing downstream changes.
 
@@ -158,7 +177,7 @@ counts; the Reporting screen shows them.
 
 ## 8. Security & Privacy
 
-- FR-8: refusal rows carry no more payload than any other row and obey the same retention.
+- FR-9: refusal rows carry no more payload than any other row and obey the same retention.
 - §5.3: decisions, never reasoning — the one place this feature could have quietly widened what is
   stored about a caller's prompt.
 - Positive for security: **refusals become reviewable.** Today a caller probing for an unrestricted
@@ -181,7 +200,10 @@ sampled, detailed, short-lived; the row is unsampled, compact and kept.
   (asserted on the row's contents, §5.3).
 - **Unit** — a request handled while a feature is degraded records it; a healthy one records an
   empty set.
-- **Unit (FR-6)** — with the writer queue full, a rate-limited request still returns **429** and
+- **Unit (FR-5)** — two keys of the same use case issued by the same person produce **different**
+  `credential` values on their rows, and the value is the prefix and never any part of the secret.
+  Written to fail first against today's code, where the two are indistinguishable.
+- **Unit (FR-7)** — with the writer queue full, a rate-limited request still returns **429** and
   not 500. The audit must never become a way to fail a request that was correctly refused.
 - **Integration** — a real throttled request appears in the report's refusal count.
 - **Mutation** — the refusal path actually records (mutate the boundary away and the tests go red);
@@ -193,6 +215,9 @@ sampled, detailed, short-lived; the row is unsampled, compact and kept.
   shows 50 refusals with reason `budget_exceeded`, and no upstream call was made.
 - *Given* a chain `[gemini-…, claude-…]` whose primary is unavailable, *when* a request is served
   by the fallback, *then* the row records both models and `fallback:1`.
+- *Given* a use case with two API keys, *when* one is reported compromised, *then* every request
+  made with **that** key can be listed — with its model, time and outcome — and the other key's
+  traffic is not in the list.
 
 ## 11. Dependencies & Risks
 

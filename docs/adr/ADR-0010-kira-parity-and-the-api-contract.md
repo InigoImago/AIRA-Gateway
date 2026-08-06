@@ -1,7 +1,7 @@
 # ADR-0010 — KIRA parity: bring the contract along, or move the clients?
 
-- **Status:** Proposed — **the contract question below needs a decision before `FRD-107` starts.**
-  Everything else in the parity programme is contract-independent and may proceed.
+- **Status:** **Accepted (Option C)** — decided 2026-08-06, when the owner named *"Kompatibilität
+  mit KIRA API"* as one of AIRA's central features (PRD §1.1, item 3). `FRD-107` is unblocked.
 - **Date:** 2026-08-06
 - **Deciders:** Vadim Scheibe
 
@@ -96,8 +96,9 @@ What Option A gets wrong is only ever the ending: a compatibility surface with n
 is a permanent one. So the surface ships with a sunset date and with its own usage visible in
 reporting, and the decision to remove it is made against a number rather than a feeling.
 
-**This is a recommendation, not yet a decision.** It is written down so the choice is explicit;
-`FRD-107` stays in *Blocked* until it is made.
+**Decided 2026-08-06.** The owner's feature definition (PRD §1.1) lists KIRA-API compatibility
+among the central features of the product, which settles it: the compatibility surface is built,
+with a sunset date and its usage visible in reporting. `FRD-107` moves from *Blocked* to *Draft*.
 
 ## Consequences
 

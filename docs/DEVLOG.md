@@ -5,6 +5,53 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-06 — The feature list, and what it makes visible
+The owner restated what AIRA Gateway *is*, as seventeen features. It now sits in **PRD §1.1** with an
+honest status column, because a list like that is only useful if the gaps are in it too.
+
+Three things the table makes visible that prose was hiding:
+
+**The governance features are largely built; the evidence features are not.** Budgets, limits,
+routing, fallback, self-service pipelines, roles — done. Auditability, incident response, anomaly
+detection, model smoke tests — missing. Those four are what make a governed system *defensible after
+the fact*, which is the half you need on the day something goes wrong.
+
+**Feature 5 is more specific than "store requests and responses".** *"Welches System wann was womit
+aufgerufen hat"* — and checked against the code, the **system** is exactly the part we cannot
+answer. An API key has a `prefix` (its identity) and a `subject` (the person who issued it); the
+audit row records the subject and never the prefix. Five keys issued for one use case by one
+administrator are one identity in the log. The consequence lands precisely where it hurts most: a
+leaked key can be revoked, but the blast radius cannot be assessed — which requests came from it,
+what they asked, over what period, none of it separable from its siblings' traffic. Added to
+`FRD-122` as FR-5.
+
+**Feature 3 settles `ADR-0010`.** Naming KIRA-API compatibility as a *central feature* is the
+decision that ADR was waiting for. Accepted as Option C — the compatibility surface is built, with a
+sunset date and its usage visible in reporting, because that is the half that keeps a compatibility
+layer from becoming permanent. `FRD-107` is unblocked.
+
+New: **`FRD-504` — model smoke tests and jailbreak batteries.** IT Security's question is not "was
+this request allowed" but "does the model we approved for the whole organisation still refuse what
+it should". Two design points I want to keep visible:
+
+- **A rate, not a verdict.** Models are sampled: the same jailbreak prompt can be refused nine times
+  and answered on the tenth, and *that is the finding*. A single-run boolean would show green nine
+  times out of ten and the tenth would look like a flake to re-run away. So each case runs *n* times
+  and the result is "3 of 20", never "failed".
+- **Two modes, because the pipeline would block the test.** `FRD-300`'s injection filter exists to
+  block exactly the prompts a jailbreak battery sends — run through it, most cases never reach a
+  model and the run says nothing about the model. So: *through the pipeline* (does our filter catch
+  it — the first honest measurement of whether that filter earns its place) and *direct to the
+  model* (does the model resist it), reported side by side. The interesting cell is the one where
+  the filter misses **and** the model answers.
+
+Runs go through the gateway's own path under a dedicated internal use case, so their spend is
+attributed and bounded rather than exempt — and the result page states that it is one battery on one
+day and not a safety statement, for the same reason unpriced traffic is counted apart: a figure that
+reads as complete when it is not causes worse decisions than an absent one.
+
+---
+
 ## 2026-08-06 — "Auditierbares Hirn": a scope sentence, and four places we do not earn it yet
 Direct model access confirmed — the Vertex publisher and endpoint APIs, not the platform's agent
 surface. That closes the last open question in `FRD-115` §11 and `FRD-119` §11.

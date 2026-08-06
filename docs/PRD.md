@@ -34,6 +34,44 @@ surfaces, no retrieval or vector storage, no conversation state, no tool executi
 orchestration. The test for any future request is in `ADR-0013` — *does this make model access
 better governed and better evidenced, or does it make the gateway think for the use case?*
 
+### 1.1 The central features (owner's definition, 2026-08-06)
+
+Stated by the owner as what AIRA Gateway *is*. This table is the reference the rest of the document
+serves, and the **Stand** column is deliberately honest — a feature named here and not built is a
+gap, not an aspiration.
+
+| # | Feature | Stand | Where |
+|--:|---|---|---|
+| 1 | Einheitliche Bereitstellung von Modellen | **teilweise** — eine Oberfläche und ein kanonischer Kern stehen; nur ein echter Anbieter ist angebunden | `FRD-100`, `FRD-115`/`119`/`120` offen |
+| 2 | Rollenzuweisung | **fertig** | `FRD-201`, `ADR-0009` |
+| 3 | Kompatibilität mit der KIRA-API | **spezifiziert** — durch diese Liste als zentral bestätigt, `ADR-0010` damit entschieden | `FRD-107` + `FRD-110`–`114` |
+| 4 | Auditierbarkeit | **teilweise** — fünf Lücken gefunden | `FRD-122` |
+| 5 | Speicherung von Requests/Responses: *welches System wann was womit* | **teilweise** — gespeichert ✓, aber das **aufrufende System** ist nicht unterscheidbar, und Ablehnungen erzeugen keine Zeile | `FRD-103` ✓, `FRD-122` |
+| 6 | Incident Response | **fehlt** | `FRD-503` (Phase 5) |
+| 7 | Blockierung gefährlicher Anfragen | **teilweise** — Prompt-Injection-Filter ✓; kein Betriebs-Kill-Switch, keine weiteren Kategorien | `FRD-300` ✓, `FRD-503` |
+| 8 | Model Routing anhand der Definition | **fertig** | `FRD-300`, `FRD-306` |
+| 9 | Modell-Fallback | **fertig** — muss noch capability-homogen werden | `FRD-302` ✓, `ADR-0012` §3 |
+| 10 | Unabhängigkeit von Google / Microsoft | **Architektur steht, Adapter fehlen** | `ADR-0011`, `ADR-0012`; `FRD-115`/`119`/`120` |
+| 11 | Übersicht über alle Use Cases | **teilweise** — Liste ✓, Governance-Sicht auf die Verarbeitungslogik fehlt | `FRD-202` ✓, `FRD-600` |
+| 12 | Self-Service: Filter- und Routing-Pipeline | **fertig** | `FRD-303`, `FRD-306` |
+| 13 | Zugelassene Modelle je Use Case | **teilweise** — `allow_check` ✓, genehmigter Katalog fehlt | `FRD-300` ✓, `FRD-307` |
+| 14 | IT-Security-Unterstützung: Modell-Smoke-Tests und Jailbreak-Versuche | **fehlt** | `FRD-504` |
+| 15 | Budgetübersicht und Budgetgrenze | **fertig** | `FRD-400`–`403`, `FRD-601` |
+| 16 | Anomalieerkennung | **fehlt** | `FRD-500`/`501` (Phase 5) |
+| 17 | Zentrale Übersicht über alle Use Cases | siehe 11 | `FRD-600`, `FRD-601` ✓ |
+
+Three observations the table makes visible and prose would hide:
+
+- **The governance features are largely built; the evidence features are not.** Budgets, limits,
+  routing, self-service and roles work. Auditability, incident response and anomaly detection —
+  the three that make a governed system *defensible after the fact* — are the gaps.
+- **Feature 5 is more specific than "store requests".** *Which system* called is not answerable
+  today: an API key's identity (its prefix) never reaches the audit row, only the person who issued
+  it. Five keys of one use case are one identity in the log, which is precisely the wrong shape for
+  a leaked credential.
+- **Feature 3 settles `ADR-0010`.** Naming KIRA compatibility as a central feature is the decision
+  that ADR was waiting for.
+
 ---
 
 ## 2. Goals & Non-Goals

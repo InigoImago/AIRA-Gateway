@@ -285,8 +285,15 @@ importantly that a **refused request leaves no row at all** (rate-limited, over 
 model, invalid: the log records what was *served*, not what was *asked*), plus served-vs-requested
 model invisible after fallback, pipeline decisions only on a **sampled** span, and degradation
 global rather than per-request. `FRD-122` closes them; until then "auditable" is a claim the data
-does not fully support. Eighteen documents: `ADR-0010`–`ADR-0013` + `FRD-107`, `FRD-110`–`FRD-122`,
-`FRD-602` (ROADMAP Phase 8). **One decision open** (`ADR-0010`): does AIRA serve the predecessor's wire contract, so
+does not fully support. Nineteen documents: `ADR-0010`–`ADR-0013` + `FRD-107`, `FRD-110`–`FRD-122`, `FRD-504`,
+`FRD-602` (ROADMAP Phase 8 / 5).
+**The owner's canonical feature list is PRD §1.1** (17 items, 2026-08-06) — read it before planning
+anything. What it makes visible: **the governance features are largely built, the evidence features
+are not.** Budgets, limits, routing, self-service and roles work; auditability (`FRD-122`), incident
+response (`FRD-503`), anomaly detection (`FRD-500`/`501`) and model smoke tests (`FRD-504`) are the
+gaps — and they are what make a governed system defensible *after* the fact. The list also settled
+`ADR-0010`: **KIRA compatibility is a central feature, so `FRD-107` is unblocked (Option C — with a
+sunset date and its usage in reporting).** **One decision open** (`ADR-0010`): does AIRA serve the predecessor's wire contract, so
 clients migrate by changing a URL, or do the clients move to the Gemini surface? Recommendation:
 compatibility surface **with a sunset date and its usage in reporting** — everything except
 `FRD-107` is contract-independent and can start now. Three deviations from the predecessor are
