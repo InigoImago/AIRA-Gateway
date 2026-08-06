@@ -189,6 +189,39 @@ spend anomaly is otherwise untraceable to the deployment that caused it.
 - *Given* an Azure deployment renamed on the vendor's side, *when* the catalog entry is updated,
   *then* no use-case configuration changes and pricing is unaffected.
 
+## 10a. What was built (2026-08-06)
+
+`FoundryTransport` (endpoint, credential, api-version) × the **unchanged** OpenAI dialect ×
+`AzureRoutes`. The dialect gained nothing, the mappers gained nothing, and the one genuinely
+missing piece was the routing axis — which §5.1 predicted and is the reason this FRD was cheap.
+
+**`ADR-0011` was the thing under test, and it holds.** The claim is that transport × dialect ×
+model identity is enough structure for a third vendor; a change reaching into the canonical core,
+the pipeline or a surface would have falsified it. The diff does not leave `upstreams/`. The
+architecture assertion in `test_vertex.py` now also refuses the word "azure" above the platform
+packages — and caught the first draft, where `AzureRoutes` had been written into the *dialect's*
+package. A dialect that names a platform is one the next platform cannot reuse, so it moved.
+
+One deliberate exemption was added to that assertion and is worth stating: `residency.py` names
+every cloud's regions on purpose (`ADR-0012` §6). A list that could not name Azure's would be the
+per-cloud list that decision rejected, and a per-cloud audit with it.
+
+Two decisions inside:
+
+- **One adapter per region**, not one adapter carrying a region. Provenance is recorded per model
+  (`FRD-115` FR-10), so a deployment fleet spread across two regions must not be flattened into
+  whichever was declared first — that would put a residency claim on the audit row the request did
+  not satisfy, which is worse than recording none.
+- **The credential is fetched, not captured.** `headers()` became async so an Entra token can be
+  minted and refreshed through the shared `TokenSource`. Reading it once at construction is the
+  version that works for an hour and then fails for the life of the process — a failure that only
+  appears in a long-running deployment.
+
+Not verified against a real subscription, and that is stated rather than implied: there is no Azure
+to point at here. 18 hermetic tests, mutations **F1**–**F6**. `F1` is the one with money in it —
+a deployment name has no price, and unpriced traffic is counted apart rather than as zero, so
+getting the attribution wrong would not *fail*, the spend figure would quietly stop being complete.
+
 ## 11. Dependencies & Risks
 
 - **`ADR-0011`** (the shape), **`FRD-114`** (addressing, capabilities), **`FRD-115`** (shared

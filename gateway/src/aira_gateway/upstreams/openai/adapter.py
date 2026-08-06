@@ -12,6 +12,7 @@ adapter packages; a change here that reached beyond them would fail it.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from typing import Any
 
 from aira_gateway.core.canonical import (
     CanonicalChunk,
@@ -28,13 +29,11 @@ from aira_gateway.upstreams.openai.mapping import (
     openai_to_canonical,
     parse_sse_line,
 )
+from aira_gateway.upstreams.openai.routes import Routes, StandardRoutes
 from aira_gateway.upstreams.openai.transport import OpenAITransport
 
 CHAT_METHODS = ("generateContent", "streamGenerateContent")
 EMBED_METHODS = ("embedContent", "batchEmbedContents")
-
-CHAT_PATH = "/v1/chat/completions"
-EMBED_PATH = "/v1/embeddings"
 
 
 class OpenAIAdapter:
@@ -55,8 +54,12 @@ class OpenAIAdapter:
         provider: str = "openai-compatible",
         publisher: str = "",
         region: str = "",
+        routes: Routes | None = None,
     ) -> None:
         self._transport = transport
+        # How this platform addresses a model (`ADR-0011`'s third axis). The default is the plain
+        # form; Azure puts the deployment in the path and omits the model from the body.
+        self._routes: Routes = routes or StandardRoutes()
         self._provider = provider
         self._publisher = publisher
         # Declared rather than left empty even for a local endpoint: a self-hosted model is the
@@ -75,13 +78,28 @@ class OpenAIAdapter:
             for name in self._embedding
         ]
 
+    def _named(self, body: dict[str, Any], model: str) -> dict[str, Any]:
+        """Put the model field the *platform* wants into a body the dialect already wrote.
+
+        The dialect always writes one; a platform that addresses by path takes it back out. Doing
+        it here rather than in the mapper is what keeps the dialect platform-free, which is the
+        property `FRD-120` §5.1 depends on to reuse it unchanged.
+        """
+        named = self._routes.body_model(model)
+        if named is None:
+            body.pop("model", None)
+        else:
+            body["model"] = named
+        return body
+
     async def generate(self, request: CanonicalRequest) -> CanonicalResponse:
-        data = await self._transport.post(CHAT_PATH, canonical_to_openai(request))
+        body = self._named(canonical_to_openai(request), request.model)
+        data = await self._transport.post(self._routes.chat(request.model), body)
         return openai_to_canonical(data, request.model)
 
     async def stream_generate(self, request: CanonicalRequest) -> AsyncIterator[CanonicalChunk]:
-        body = canonical_to_openai(request, stream=True)
-        async with self._transport.stream(CHAT_PATH, body) as response:
+        body = self._named(canonical_to_openai(request, stream=True), request.model)
+        async with self._transport.stream(self._routes.chat(request.model), body) as response:
             async for line in response.aiter_lines():
                 payload = parse_sse_line(line)
                 if payload is None:
@@ -91,5 +109,6 @@ class OpenAIAdapter:
                     yield chunk
 
     async def embed(self, request: CanonicalEmbeddingRequest) -> list[list[float]]:
-        data = await self._transport.post(EMBED_PATH, canonical_to_openai_embedding(request))
+        body = self._named(canonical_to_openai_embedding(request), request.model)
+        data = await self._transport.post(self._routes.embed(request.model), body)
         return embedding_values(data)

@@ -199,7 +199,7 @@ order below serves the priorities rather than restating them.
 | **4** ✅ | ~~`FRD-107` Stage A — KIRA-Fläche~~ **fertig 2026-08-06**, inkl. Dokumenten | Priorität 1, so früh wie ehrlich möglich. Nicht unterstützte Felder werden **abgewiesen**, nie ignoriert (`FRD-107` §5.2). Einfache Clients migrieren hier. |
 | **5** ✅ | ~~`FRD-111`, `FRD-112`, `FRD-113`~~ **fertig 2026-08-06** | Thinking, strukturierte Ausgabe, Embedding-Optionen. |
 | **6** ✅ | ~~`FRD-107` Stage B~~ **fertig 2026-08-06** | Dieselben Felder wurden von abgewiesen zu bedient — **Vertrag unverändert**, direkt mit Stufe 5 ausgeliefert, weil eine Fähigkeit zu bauen und sie an der Kompatibilitätsfläche weiter abzuweisen niemandem nützt. |
-| **7** | `FRD-120` — Microsoft Foundry | Priorität 2, zweite Hälfte. Beweist zugleich Feature 19 (Erweiterbarkeit) — der Diff darf `upstreams/` nicht verlassen. |
+| **7** ✅ | ~~`FRD-120` — Microsoft Foundry~~ **fertig 2026-08-06** | Priorität 2, zweite Hälfte. **Der Diff hat `upstreams/` nicht verlassen** — Feature 19 damit belegt, nicht behauptet. Hermetisch getestet; es gibt hier keine Azure-Subscription. |
 | **8** | `FRD-116`, `FRD-117`, `FRD-602`, `FRD-406` | Vault, Diagnostik, Export, Maskierung. |
 | **9** | `FRD-504`, `FRD-500`/`501`/`503` | IT-Security: Smoke-Tests, Anomalien, Incident Response. |
 

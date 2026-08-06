@@ -141,6 +141,21 @@ class GatewaySettings(BaseAiraSettings):
     #: that as an outage is the first way to get `ADR-0012` §5 wrong.
     ollama_timeout_seconds: float = 300.0
 
+    # Microsoft Foundry / Azure OpenAI (FRD-120). Registered only when the endpoint, a credential
+    # and at least one deployment are all present — half a configuration is a gateway that starts
+    # and answers 401 for everything, which reads as a broken credential rather than a missing one.
+    #
+    # A deployment name is chosen by whoever created the resource and says nothing reliable about
+    # the model, so the mapping is declared rather than inferred (`ADR-0011` rule 2):
+    #   model=deployment[|region][|embed], entries separated by ';'
+    foundry_endpoint: str = ""
+    foundry_api_key: str = ""
+    foundry_deployments: str = ""
+    #: Pinned rather than "latest": a version that moves on its own changes response shapes with no
+    #: deploy, and the first sign is a mapper reading a field that stopped being sent.
+    foundry_api_version: str = "2024-10-21"
+    foundry_timeout_seconds: float = 120.0
+
     #: The KIRA compatibility surface's stated end date, RFC 8594 (`ADR-0010` Option C). Empty
     #: means "announced as deprecated, no date yet" — a layer with no date is a permanent one, so
     #: this should be set the day a migration plan exists.

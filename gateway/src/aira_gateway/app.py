@@ -59,6 +59,7 @@ from aira_gateway.ratelimit.service import RateLimitService
 from aira_gateway.reporting.service import ReportingService
 from aira_gateway.routes.health import router as health_router
 from aira_gateway.upstreams.base import ProviderRegistry, Upstream
+from aira_gateway.upstreams.foundry import build_foundry_upstreams
 from aira_gateway.upstreams.gemini import build_gemini_upstream
 from aira_gateway.upstreams.mock import MockProvider
 from aira_gateway.upstreams.openai import build_openai_upstreams
@@ -118,6 +119,9 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
     # they pass the same pre-dispatch gate, pipeline, dispatch chain and audit writer: a
     # self-hosted upstream is governed exactly like a cloud one, or it is a hole beside it.
     providers.extend(build_openai_upstreams(settings))
+    # Microsoft Foundry (FRD-120). The third platform, and the test of `ADR-0011`: it reuses the
+    # OpenAI dialect unchanged and differs only in transport and addressing.
+    providers.extend(build_foundry_upstreams(settings))
     registry = ProviderRegistry(providers)
     app.state.providers = registry
     app.state.pipeline_engine = PipelineEngine(registry)

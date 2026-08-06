@@ -413,6 +413,17 @@ content was served and billed, though `FRD-113` FR-7 had refused the same thing 
 along. Routing errors now use each surface's own envelope. One mutation (`X3`) was **removed rather
 than kept**: the fix is doubly enforced, so no single-line edit reproduces it — a property guarded
 twice cannot be a mutation, and that is not a reason to weaken the guard.
+**`FRD-120` done (2026-08-06) — Microsoft Foundry, and the test `ADR-0011` was really making.**
+`FoundryTransport` × the **unchanged** OpenAI dialect × `AzureRoutes`; the one missing piece was
+the routing axis. **The diff does not leave `upstreams/`**, which is the claim — and the
+architecture assertion caught the first draft, where `AzureRoutes` sat in the *dialect's* package
+(a dialect that names a platform is one the next platform cannot reuse). It now refuses "azure"
+above the platform packages, exempting `residency.py`, which names every cloud's regions on
+purpose. The addressing is the part with money in it: an Azure **deployment** name has no price, so
+attributing a response to it would not fail — the spend figure would quietly stop being complete.
+One adapter **per region** (provenance is per model), and `headers()` is async so an Entra token is
+minted rather than captured once. No Azure subscription here, so it is hermetic only, and that is
+stated rather than implied.
 **Delivery order is fixed (ROADMAP Phase 8, 2026-08-06)**, derived from the owner's priority
 (KIRA compatibility → model connections → documents → the review findings) and the dependency that
 priority 1 needs priority 3: **`FRD-122` (audit) → `FRD-114` (metadata) → `FRD-115`+`119` (Vertex EU,

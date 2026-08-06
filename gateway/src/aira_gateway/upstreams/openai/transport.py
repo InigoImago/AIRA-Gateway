@@ -33,16 +33,19 @@ class OpenAITransport:
         self._api_key = api_key
         self._timeout = timeout or DEFAULT_TIMEOUT_SECONDS
 
-    def _headers(self) -> dict[str, str]:
-        # A local endpoint needs none. Some compatible servers reject a request without the header
-        # regardless of its value, so it is sent whenever one is configured and omitted otherwise —
-        # never a placeholder, which would look like a credential in a log.
+    async def headers(self) -> dict[str, str]:
+        """The credential, if there is one.
+
+        Async because a subclass may have to *fetch* it — an Entra token is minted and refreshed,
+        not read off an attribute (`FRD-120`). A local endpoint needs none, and none is sent rather
+        than a placeholder, which would look like a credential in a log.
+        """
         return {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
 
     async def post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
         try:
             response = await self._client.post(
-                path, json=body, headers=self._headers(), timeout=self._timeout
+                path, json=body, headers=await self.headers(), timeout=self._timeout
             )
         except httpx.HTTPError as exc:
             raise UpstreamError(f"Upstream error: {type(exc).__name__}.") from exc
@@ -82,7 +85,7 @@ class _StreamContext:
             "POST",
             self._path,
             json=self._body,
-            headers=self._transport._headers(),
+            headers=await self._transport.headers(),
             timeout=self._transport._timeout,
         )
         try:

@@ -5,6 +5,39 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-06 — Foundry, and the claim ADR-0011 was making
+The third platform, and it cost a routing axis. `FoundryTransport` (endpoint, credential,
+api-version) × the **unchanged** OpenAI dialect × `AzureRoutes`. The dialect gained nothing; the
+mappers gained nothing.
+
+`ADR-0011` claims transport × dialect × model identity is enough structure for a third vendor.
+**The diff does not leave `upstreams/`**, so the claim survives its first real test — and the
+architecture assertion caught the first draft, in which `AzureRoutes` had been written into the
+*dialect's* package. A dialect that names a platform is one the next platform cannot reuse, so it
+moved to `upstreams/foundry/`. The assertion now refuses "azure" above the platform packages, with
+one stated exemption: `residency.py` names every cloud's regions on purpose, because a list that
+could not name Azure's would be the per-cloud list `ADR-0012` §6 rejected.
+
+The addressing is the part with money in it. Azure puts a **deployment** in the path — a name
+chosen by whoever created the resource, saying nothing reliable about the model. If that name were
+allowed to be the model name, every use case's pipeline config would embed Azure resource naming,
+and pricing would break *quietly*: `FRD-403` prices by model, a deployment called `production` has
+no price, and unpriced traffic is counted apart rather than as zero. Nothing would fail; the spend
+figure would simply stop being complete. So the response is attributed to the model the caller
+named, and `F1` is the mutation that says so.
+
+Two smaller decisions. **One adapter per region** rather than one adapter carrying a region:
+provenance is per model, and flattening a fleet would put a residency claim on a row the request
+did not satisfy — worse than recording none. And `headers()` became **async**, so an Entra token
+can be minted and refreshed rather than read once at construction; the captured version works for
+an hour and then fails for the life of the process, which is a failure only a long-running
+deployment ever sees.
+
+Not verified against a real subscription — there is none here, and saying so is the honest half of
+"done". 18 hermetic tests, mutations `F1`–`F6`.
+
+---
+
 ## 2026-08-06 — 174 edge cases against the running API, and four defects
 A sweep of everything a caller can get wrong: malformed bodies, unusual text, every shape of bad
 credential, impossible options, attachments that are not what they claim, both surfaces' error

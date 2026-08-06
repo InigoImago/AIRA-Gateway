@@ -466,7 +466,12 @@ def test_no_code_above_the_adapters_knows_the_vendor() -> None:
     offenders: list[str] = []
 
     for path in source_root.rglob("*.py"):
-        if "upstreams/vertex" in path.as_posix():
+        # The platform packages, and one deliberate exception: `residency.py` holds the region
+        # allow-list, which names **every** cloud's regions on purpose (`ADR-0012` §6). "Which
+        # regions may we use" is one policy question, and a list that could not name Azure's
+        # would be the per-cloud list that decision rejected — and a per-cloud audit with it.
+        exempt = ("upstreams/vertex", "upstreams/foundry", "residency.py")
+        if any(part in path.as_posix() for part in exempt):
             continue
         tree = ast.parse(path.read_text())
         # Docstrings are documentation, not behaviour — stripped along with comments.
@@ -474,7 +479,11 @@ def test_no_code_above_the_adapters_knows_the_vendor() -> None:
             if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant):
                 node.value.value = ""
         code = ast.unparse(tree).lower()
-        for vendor in ("anthropic", "rawpredict", "claude"):
+        # `azure` joins the list with `FRD-120`: the OpenAI *dialect* is deliberately
+        # platform-free — that is what let Foundry reuse it unchanged — so the word belongs only in
+        # the transport that reaches it. `openai` is **not** on this list, and the distinction is
+        # the point: it names a wire format three platforms speak, not a vendor.
+        for vendor in ("anthropic", "rawpredict", "claude", "azure", "deployments/"):
             if vendor in code:
                 offenders.append(f"{path.relative_to(source_root)}: {vendor}")
 

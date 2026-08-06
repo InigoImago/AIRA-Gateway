@@ -101,6 +101,7 @@ TOKENS = "libs/tests/test_tokens.py"
 CATALOG_DECLARATION = "management/backend/tests/test_catalog_declaration.py"
 OPENAI_DIALECT = "gateway/tests/test_openai_dialect.py"
 EDGE = "gateway/tests/test_edge_cases.py"
+FOUNDRY = "gateway/tests/test_foundry.py"
 THINKING = "gateway/tests/test_thinking.py gateway/tests/test_serving_options.py"
 RESPONSE_SCHEMA = "gateway/tests/test_response_schema.py gateway/tests/test_serving_options.py"
 EMBEDDING = "gateway/tests/test_embedding_options.py gateway/tests/test_serving_options.py"
@@ -1544,6 +1545,59 @@ MUTATIONS = [
         "        if not server.serves_anything:",
         "        if False:",
         OPENAI_DIALECT,
+    ),
+    # ---- the third platform (FRD-120) ---------------------------------------------------------
+    #
+    # F1 is the one with money in it: a deployment name has no price, and unpriced traffic is
+    # counted apart rather than as zero — so getting it wrong would not fail, the spend figure
+    # would quietly stop being complete.
+    Mutation(
+        "F1",
+        "a response is attributed to the model the caller named, not to the deployment",
+        "gateway/src/aira_gateway/upstreams/foundry/routes.py",
+        "        return None",
+        "        return model",
+        f"{FOUNDRY} {OPENAI_DIALECT}",
+    ),
+    Mutation(
+        "F2",
+        "a model with no deployment is named, rather than reaching a 404 that reads as missing",
+        "gateway/src/aira_gateway/upstreams/foundry/routes.py",
+        "            raise UnknownDeployment(",
+        "            return model  # noqa\n        if False:\n            raise UnknownDeployment(",
+        FOUNDRY,
+    ),
+    Mutation(
+        "F3",
+        "the Azure credential goes in its own header, not in Authorization",
+        "gateway/src/aira_gateway/upstreams/foundry/__init__.py",
+        '            return {"api-key": self._azure_key}',
+        '            return {"Authorization": f"Bearer {self._azure_key}"}',
+        FOUNDRY,
+    ),
+    Mutation(
+        "F4",
+        "an endpoint configured without a credential refuses to start",
+        "gateway/src/aira_gateway/upstreams/foundry/__init__.py",
+        "    if not settings.foundry_api_key:",
+        "    if False:",
+        FOUNDRY,
+    ),
+    Mutation(
+        "F5",
+        "deployments in two regions become two adapters, so provenance is not flattened",
+        "gateway/src/aira_gateway/upstreams/foundry/__init__.py",
+        "        by_region.setdefault(entry.region, []).append(entry)",
+        '        by_region.setdefault("", []).append(entry)',
+        FOUNDRY,
+    ),
+    Mutation(
+        "F6",
+        "a declared region is checked against the one allow-list every cloud shares",
+        "gateway/src/aira_gateway/upstreams/foundry/__init__.py",
+        "            check_region(entry.region, allowed)",
+        "            pass",
+        FOUNDRY,
     ),
     # ---- what an edge-case sweep against the running API found (FRD-123) ---------------------
     #
