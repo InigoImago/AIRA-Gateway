@@ -62,6 +62,7 @@ version = "0.1.0"
 source = { editable = "libs" }
 dependencies = [
     { name = "aiokafka" },
+    { name = "httpx" },
     { name = "opentelemetry-exporter-otlp-proto-http" },
     { name = "opentelemetry-sdk" },
     { name = "pydantic" },
@@ -74,6 +75,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "aiokafka", specifier = ">=0.12" },
+    { name = "httpx", specifier = ">=0.28" },
     { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.29" },
     { name = "opentelemetry-sdk", specifier = ">=1.29" },
     { name = "pydantic", specifier = ">=2.10" },

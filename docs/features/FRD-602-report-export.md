@@ -1,6 +1,6 @@
 # FRD-602 — Exporting the usage report
 
-> Phase: 8 (KIRA parity) · Status: **Draft** · Owner: Vadim Scheibe · Last updated: 2026-08-06
+> Phase: 8 (KIRA parity) · Status: **Done (2026-08-06)** · Owner: Vadim Scheibe · Last updated: 2026-08-06
 > Origin: `kira_api.md` §2.7 (content negotiation, CSV), programme: `ADR-0010`.
 > Follows `FRD-601` (delivered 2026-08-06).
 
@@ -130,6 +130,30 @@ maintaining it.
   spreadsheet with correct umlauts and figures matching the screen.
 - *Given* a use-case user, *when* they download the same period, *then* the file contains only
   their use cases.
+
+## 10a. What was built (2026-08-06)
+
+A **renderer on the existing endpoint**, chosen by `Accept`, exactly as §5.3 requires — the scope
+decision happens once, in the code that already has mutations guarding it, and the format is picked
+afterwards. A test asserts by source inspection that `visible_scope` is resolved exactly once and
+that the CSV path grew no query of its own, because the failure being guarded against is an export
+that returns more than the screen: a governance failure delivered as a file, forwarded, saved and
+impossible to recall.
+
+The scope test asserts on **the file's bytes**, not on the service call. A test that checked the
+arguments would pass against a renderer that ignored them.
+
+BOM, CRLF, RFC 4180 commas, quoted keys, money formatted for people (the exact integer stays in the
+JSON, which is what a script should read), the unpriced caveat as a trailing comment row, and a
+filename that sorts. Verified live against the real database, umlauts and all.
+
+The SPA downloads via a blob rather than an `<a href>`, because the endpoint needs the bearer token
+and a link that 401s looks like a broken export rather than like a browser that cannot
+authenticate. The object URL is revoked immediately — a dozen exports would otherwise pin a dozen
+blobs for the life of the page. The download panel says in one line that Excel may ask about the
+separator, which §5.2 asks for and is the honest alternative to picking the other surprise.
+
+Mutations **E9**–**E13**; 29 hermetic tests and 6 in the SPA.
 
 ## 11. Dependencies & Risks
 `FRD-601`, delivered. No new dependencies. Risk is confined to §5.3, which is why it is a test

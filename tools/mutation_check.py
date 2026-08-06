@@ -104,6 +104,7 @@ EDGE = "gateway/tests/test_edge_cases.py"
 FOUNDRY = "gateway/tests/test_foundry.py"
 SECRETS = "libs/tests/test_secrets.py"
 DIAGNOSTICS = "gateway/tests/test_diagnostics.py"
+CSV_EXPORT = "gateway/tests/test_csv_export.py"
 THINKING = "gateway/tests/test_thinking.py gateway/tests/test_serving_options.py"
 RESPONSE_SCHEMA = "gateway/tests/test_response_schema.py gateway/tests/test_serving_options.py"
 EMBEDDING = "gateway/tests/test_embedding_options.py gateway/tests/test_serving_options.py"
@@ -1704,6 +1705,50 @@ MUTATIONS = [
         "            detail = await asyncio.wait_for(ping(), timeout=self.timeout)",
         "            detail = await ping()",
         DIAGNOSTICS,
+    ),
+    # ---- export (FRD-602) ----------------------------------------------------------------------
+    #
+    # E9 is the security one: an export that returned more than the screen would be a governance
+    # failure delivered as a file — forwarded, saved, and impossible to recall.
+    Mutation(
+        "E9",
+        "the export is rendered from the scoped report, not from an unscoped second query",
+        "gateway/src/aira_gateway/api/reporting.py",
+        "    report = await service.report(scope, window_start, window_end)",
+        "    report = await service.report(None, window_start, window_end)",
+        f"{CSV_EXPORT} gateway/tests/test_reporting.py",
+    ),
+    Mutation(
+        "E10",
+        "a format this endpoint does not serve is refused rather than answered in another",
+        "gateway/src/aira_gateway/api/reporting.py",
+        "    raise GeminiHTTPError(\n        406,",
+        "    return \"json\"\n    raise GeminiHTTPError(\n        406,",
+        CSV_EXPORT,
+    ),
+    Mutation(
+        "E11",
+        "unpriced traffic keeps its caveat in the file, not only on the screen",
+        "gateway/src/aira_gateway/reporting/csv_export.py",
+        "    if unpriced:",
+        "    if False:",
+        CSV_EXPORT,
+    ),
+    Mutation(
+        "E12",
+        "the file carries a byte-order mark, so Excel reads it as UTF-8",
+        "gateway/src/aira_gateway/reporting/csv_export.py",
+        "    return BOM + buffer.getvalue()",
+        "    return buffer.getvalue()",
+        CSV_EXPORT,
+    ),
+    Mutation(
+        "E13",
+        "an unknown breakdown is named rather than quietly rendering one of the others",
+        "gateway/src/aira_gateway/reporting/csv_export.py",
+        "    if breakdown not in BREAKDOWNS:",
+        "    if False:",
+        CSV_EXPORT,
     ),
     # ---- what an edge-case sweep against the running API found (FRD-123) ---------------------
     #

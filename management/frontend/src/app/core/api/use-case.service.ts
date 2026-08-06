@@ -136,6 +136,21 @@ export class UseCaseService {
     return this.http.get<Report>('/gw/v1beta/reporting', { params: { from, to } });
   }
 
+  /**
+   * The same report as a spreadsheet (FRD-602).
+   *
+   * A blob rather than a plain link, because the endpoint needs the bearer token and an `<a href>`
+   * carries no Authorization header — a download link that 401s is worse than no link, since it
+   * looks like the export is broken rather than like the browser cannot authenticate.
+   */
+  reportCsv(from: string, to: string, breakdown: string): Observable<Blob> {
+    return this.http.get('/gw/v1beta/reporting', {
+      params: { from, to, breakdown },
+      headers: { Accept: 'text/csv' },
+      responseType: 'blob',
+    });
+  }
+
   /** Current-period consumption per budget, from the gateway. */
   budgetUsage(slug: string): Observable<{ usage: BudgetUsage[] }> {
     return this.http.get<{ usage: BudgetUsage[] }>(`/gw/v1beta/usage/${seg(slug)}`);

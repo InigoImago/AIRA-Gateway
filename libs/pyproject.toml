@@ -14,6 +14,12 @@ dependencies = [
     # gateway happened to declare pyjwt and the dev environment installs the whole workspace.
     # An isolated management image has no gateway, and failed to import at startup.
     "pyjwt[crypto]>=2.9",
+    # aira_common.secrets reads Vault over HTTP (FRD-116). Declared for exactly the reason above,
+    # and the second time this project has learned it: the management image failed to import at
+    # startup because `httpx` happened to be a *gateway* dependency and the dev environment
+    # installs the whole workspace. `test_declared_dependencies.py` now checks it instead of
+    # waiting for a container to say so.
+    "httpx>=0.28",
     # aira_common.counters — shared atomic counters for rate limits and budget
     # reservations (ADR-0008).
     "redis>=5.2",

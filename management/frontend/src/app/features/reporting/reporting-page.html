@@ -121,6 +121,42 @@
       }
     </div>
 
+    <section class="panel" data-testid="export">
+      <h3>Export</h3>
+      <p class="hint">
+        The same figures as a spreadsheet, for the period above and the caller's own scope — a
+        download shows exactly what this screen shows, never more.
+      </p>
+      <div class="form-row">
+        <label for="export-breakdown">Table</label>
+        <select
+          id="export-breakdown"
+          [ngModel]="exportBreakdown()"
+          (ngModelChange)="exportBreakdown.set($event)"
+          data-testid="export-breakdown"
+        >
+          <option value="use_case">By use case</option>
+          <option value="model">By model</option>
+          <option value="member">By member</option>
+        </select>
+        <button
+          type="button"
+          class="button"
+          (click)="download()"
+          [disabled]="exporting() || !canLoad()"
+          data-testid="export-download"
+        >
+          {{ exporting() ? 'Preparing…' : 'Download CSV' }}
+        </button>
+      </div>
+      <!-- Said rather than discovered. The file is RFC 4180 so every tool and script reads it;
+           a German Excel will ask which separator to use, and being told beforehand is the
+           difference between a quirk and a bug report. -->
+      <p class="hint">
+        UTF-8, comma-separated (RFC 4180). Excel may ask you to confirm the separator.
+      </p>
+    </section>
+
     <app-breakdown-table
       label="Use case"
       [rows]="report.by_use_case"

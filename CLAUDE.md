@@ -447,6 +447,19 @@ a scaled-to-zero model); one without it reports `probed: false`. **Stale counts 
 `degraded: true`, cleared on recovery. `x-trace-id` is pure ASGI mounted outermost (BaseHTTPMiddleware
 loses the span context, and the failing responses are the ones worth correlating). CORS refuses
 `*`+credentials at startup. FR-7 (a second OpenAPI 3.0 doc) is **not built** and said so.
+**`FRD-602` done (2026-08-06) — the usage export.** CSV is a **renderer on the existing reporting
+endpoint**, chosen by `Accept`, never its own endpoint: `visible_scope` is one function and a second
+entry point is a second chance to forget it — which is how an export comes to return more than the
+screen, as a *file* that gets forwarded and cannot be recalled. Asserted on the file's bytes. BOM,
+CRLF, RFC 4180, quoted keys (a use case named `vertrieb, süd` would otherwise shift every figure one
+column left), the unpriced caveat as a trailing row. The SPA downloads via a blob, because a plain
+link carries no bearer token and a 401 reads as a broken export.
+**A lesson this project has now learned twice**: `aira_common.secrets` imported `httpx` without
+declaring it, and the management image died on `ModuleNotFoundError` — the same failure the `pyjwt`
+comment beside it already documents. **A shared library's dependencies cannot be validated by any
+environment that also installs its consumers**, and this repo's dev env, test runner and coverage
+gate are all such an environment. `libs/tests/test_declared_dependencies.py` now parses every module
+and checks; shown to fail with the declaration removed.
 **Delivery order is fixed (ROADMAP Phase 8, 2026-08-06)**, derived from the owner's priority
 (KIRA compatibility → model connections → documents → the review findings) and the dependency that
 priority 1 needs priority 3: **`FRD-122` (audit) → `FRD-114` (metadata) → `FRD-115`+`119` (Vertex EU,

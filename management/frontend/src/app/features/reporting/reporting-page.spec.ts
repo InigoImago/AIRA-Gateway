@@ -44,15 +44,23 @@ interface Page {
   validationError: () => string | null;
   canLoad: () => boolean;
   inclusiveEnd: () => string;
+  exportBreakdown: { set: (v: string) => void; (): string };
+  exporting: () => boolean;
+  download: () => void;
 }
 
-function setup(response: Observable<Report> = of(report())) {
+function setup(response: Observable<Report> = of(report()), csv?: Observable<Blob>) {
   TestBed.resetTestingModule();
   const calls: Array<{ from: string; to: string }> = [];
+  const exports: Array<{ from: string; to: string; breakdown: string }> = [];
   const service = {
     report: (from: string, to: string) => {
       calls.push({ from, to });
       return response;
+    },
+    reportCsv: (from: string, to: string, breakdown: string) => {
+      exports.push({ from, to, breakdown });
+      return csv ?? of(new Blob(['key,requests\n'], { type: 'text/csv' }));
     },
   };
   TestBed.configureTestingModule({
@@ -65,6 +73,7 @@ function setup(response: Observable<Report> = of(report())) {
   return {
     fixture,
     calls,
+    exports,
     element,
     component: fixture.componentInstance as unknown as Page,
     text: () => element.textContent ?? '',
@@ -208,6 +217,125 @@ describe('ReportingPage', () => {
     const asked = page.calls[page.calls.length - 1];
     expect(asked.from).toBe(page.component.from());
     expect(asked.to).toBe(page.component.to());
+  });
+
+  describe('the CSV export (FRD-602)', () => {
+    /**
+     * The download needs the bearer token, so it is a fetch plus an object URL rather than a
+     * plain `<a href>` — a link that 401s looks like a broken export rather than like a browser
+     * that cannot authenticate.
+     */
+    function captureDownload() {
+      const clicks: Array<{ download: string; href: string }> = [];
+      const created: string[] = [];
+      const revoked: string[] = [];
+      const realCreate = URL.createObjectURL;
+      const realRevoke = URL.revokeObjectURL;
+      const realClick = HTMLAnchorElement.prototype.click;
+
+      URL.createObjectURL = ((blob: Blob) => {
+        const url = `blob:test/${created.length}`;
+        created.push(url);
+        void blob;
+        return url;
+      }) as typeof URL.createObjectURL;
+      URL.revokeObjectURL = ((url: string) => revoked.push(url)) as typeof URL.revokeObjectURL;
+      HTMLAnchorElement.prototype.click = function (this: HTMLAnchorElement) {
+        clicks.push({ download: this.download, href: this.href });
+      };
+
+      return {
+        clicks,
+        created,
+        revoked,
+        restore: () => {
+          URL.createObjectURL = realCreate;
+          URL.revokeObjectURL = realRevoke;
+          HTMLAnchorElement.prototype.click = realClick;
+        },
+      };
+    }
+
+    it('downloads the period on screen, for the table the user chose', () => {
+      const capture = captureDownload();
+      try {
+        const { component, exports } = setup();
+        component.exportBreakdown.set('model');
+        component.download();
+
+        expect(exports.length).toBe(1);
+        expect(exports[0].breakdown).toBe('model');
+        // The same window as the screen — an export of a *different* period than the one being
+        // looked at is the kind of thing nobody notices until the numbers are in a meeting.
+        expect(exports[0].from).toBe(component.from());
+        expect(exports[0].to).toBe(component.to());
+      } finally {
+        capture.restore();
+      }
+    });
+
+    it('names the file so it says what it contains and sorts', () => {
+      const capture = captureDownload();
+      try {
+        const { component } = setup();
+        component.download();
+
+        expect(capture.clicks.length).toBe(1);
+        expect(capture.clicks[0].download).toContain('aira-usage_use_case_');
+        expect(capture.clicks[0].download.endsWith('.csv')).toBe(true);
+      } finally {
+        capture.restore();
+      }
+    });
+
+    it('releases the object URL, so a dozen exports do not pin a dozen blobs in memory', () => {
+      const capture = captureDownload();
+      try {
+        setup().component.download();
+        expect(capture.revoked).toEqual(capture.created);
+      } finally {
+        capture.restore();
+      }
+    });
+
+    it('reports a failed export instead of appearing to do nothing', () => {
+      const capture = captureDownload();
+      try {
+        const failing = throwError(() => ({ status: 500 }));
+        const { component, text, fixture } = setup(of(report()), failing as Observable<Blob>);
+        component.download();
+        // Zoneless: the banner is a signal, and a signal changed from code renders on the next
+        // pass. Asserting without one is how a component "has no error message" in a test while
+        // showing one perfectly well in a browser.
+        fixture.detectChanges();
+
+        expect(component.exporting()).toBe(false);
+        expect(text()).toContain('Could not export');
+      } finally {
+        capture.restore();
+      }
+    });
+
+    it('does not start a second export while one is running', () => {
+      const capture = captureDownload();
+      try {
+        // An observable that never emits: the first export is still in flight.
+        const pending = new Observable<Blob>(() => {});
+        const { component, exports } = setup(of(report()), pending);
+        component.download();
+        component.download();
+
+        expect(exports.length).toBe(1);
+      } finally {
+        capture.restore();
+      }
+    });
+
+    it('says that Excel may ask about the separator, rather than letting it surprise somebody', () => {
+      // RFC 4180 is right for every tool and script; German Excel will still ask. Being told
+      // beforehand is the difference between a quirk and a bug report.
+      expect(setup().text()).toContain('separator');
+    });
   });
 });
 

@@ -137,6 +137,33 @@ export class ReportingPage implements OnInit {
     });
   }
 
+  /** Which table the spreadsheet contains. A CSV is one table, so it is chosen, not guessed. */
+  protected readonly exportBreakdown = signal<'use_case' | 'model' | 'member'>('use_case');
+  protected readonly exporting = signal(false);
+
+  protected download(): void {
+    if (this.validationError() || this.exporting()) return;
+    this.exporting.set(true);
+    this.feedback.clear();
+    this.service.reportCsv(this.from(), this.to(), this.exportBreakdown()).subscribe({
+      next: (blob) => {
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `aira-usage_${this.exportBreakdown()}_${this.from()}_${this.to()}.csv`;
+        link.click();
+        // Released immediately: an object URL held open pins the blob in memory for the life of
+        // the page, and somebody exporting a dozen periods would keep every one of them.
+        URL.revokeObjectURL(url);
+        this.exporting.set(false);
+      },
+      error: (response: unknown) => {
+        this.feedback.fail(response, 'Could not export the report.');
+        this.exporting.set(false);
+      },
+    });
+  }
+
   /** The end date as a person reads it: the last day included, not the exclusive bound. */
   protected inclusiveEnd(): string {
     if (!this.to()) return '';

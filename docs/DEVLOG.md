@@ -5,6 +5,37 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-06 — the usage export, and the same dependency lesson twice
+`FRD-602`. CSV is a **renderer on the existing reporting endpoint**, chosen by `Accept` — never its
+own endpoint, because `FRD-601`'s visibility rule is one function and a second entry point is a
+second chance to forget it. That is how an export comes to return more than the screen: a
+governance failure delivered as a *file*, forwarded, saved, impossible to recall. The test asserts
+on the file's bytes, and a second one checks by source inspection that `visible_scope` is resolved
+exactly once.
+
+The format details are small and none of them are obscure: a BOM so Excel reads `süd` as a name,
+CRLF because RFC 4180 says so, quoted keys because a use case called `vertrieb, süd` would
+otherwise shift every figure on its row one column left — a spreadsheet that is *wrong* rather than
+broken. Commas rather than semicolons, and the download panel says Excel may ask about the
+separator, which is the honest alternative to picking the other surprise.
+
+### The lesson this project has now learned twice
+
+`aira_common.secrets` imports `httpx`. Every hermetic test passed, a live Vault read worked, and
+the **management migration container died on `ModuleNotFoundError`** — because `httpx` was a
+*gateway* dependency and a workspace `uv sync` installs everything into one environment.
+
+The line directly above it in `libs/pyproject.toml` is a comment explaining that `pyjwt` was added
+for exactly this reason, after exactly this failure. **A shared library's dependencies cannot be
+validated by any environment that also installs its consumers** — and this repository's dev
+environment, its test runner and its coverage gate are all such an environment.
+
+So `libs/tests/test_declared_dependencies.py` now parses every module in `aira_common` and fails on
+any third-party import the package does not declare. Shown to fail with the declaration removed. It
+costs milliseconds and replaces a failure that costs a deploy.
+
+---
+
 ## 2026-08-06 — diagnostics, and a probe that would have proved nothing
 `FRD-117` FR-1 to FR-6. The design centre is one sentence from §5.2: **a health check must not be
 able to take down a healthy service.** The predecessor's `/health` probes every registered model on

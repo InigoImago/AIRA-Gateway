@@ -20,12 +20,13 @@ from __future__ import annotations
 import calendar
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import JSONResponse
 
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.auth.dependencies import require_principal
 from aira_gateway.auth.principal import Principal
+from aira_gateway.reporting.csv_export import BREAKDOWNS, filename, render
 from aira_gateway.reporting.service import ReportingService, Scope
 
 router = APIRouter(tags=["reporting"])
@@ -69,14 +70,40 @@ def _parse(value: str, field: str) -> datetime:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
+def _negotiate(accept: str) -> str:
+    """JSON or CSV, and **406 for anything else** (`FRD-602` FR-1).
+
+    A caller asking for XML is better told no than handed JSON: the second answer looks like it
+    worked, and the mismatch surfaces in their parser rather than in ours. `*/*` and an absent
+    header mean JSON, because that is what every browser and every HTTP client sends by default.
+    """
+    wanted = accept.lower()
+    if "text/csv" in wanted:
+        return "csv"
+    if not wanted.strip() or "application/json" in wanted or "*/*" in wanted:
+        return "json"
+    raise GeminiHTTPError(
+        406,
+        f"This endpoint serves application/json or text/csv, not '{accept}'.",
+        "INVALID_ARGUMENT",
+    )
+
+
 @router.get("/v1beta/reporting")
 async def reporting(
     request: Request,
     principal: Principal = Depends(require_principal),
     start: str | None = Query(default=None, alias="from"),
     end: str | None = Query(default=None, alias="to"),
-) -> JSONResponse:
-    """Spend and usage over a window, defaulting to the current calendar month."""
+    breakdown: str = Query(default="use_case"),
+) -> Response:
+    """Spend and usage over a window, defaulting to the current calendar month.
+
+    CSV is a **rendering of this same result**, chosen by `Accept`, and deliberately not its own
+    endpoint (`FRD-602` §5.3). The visibility rule below is one function guarded by its own
+    mutations; a second entry point would be a second chance to forget it, and the way an export
+    comes to return more than the screen does.
+    """
     now = datetime.now(UTC)
     default_start, default_end = _month_window(now)
     window_start = _parse(start, "from") if start else default_start
@@ -89,7 +116,29 @@ async def reporting(
             400, f"A reporting window may span at most {MAX_WINDOW_DAYS} days.", "INVALID_ARGUMENT"
         )
 
+    fmt = _negotiate(request.headers.get("accept", ""))
+    if fmt == "csv" and breakdown not in BREAKDOWNS:
+        raise GeminiHTTPError(
+            400,
+            f"'{breakdown}' is not a breakdown. Available: {', '.join(BREAKDOWNS)}.",
+            "INVALID_ARGUMENT",
+        )
+
     service: ReportingService = request.app.state.reporting
-    report = await service.report(visible_scope(principal), window_start, window_end)
-    report["scope"] = "all" if visible_scope(principal) is None else "use_cases"
-    return JSONResponse(report)
+    scope = visible_scope(principal)
+    report = await service.report(scope, window_start, window_end)
+    report["scope"] = "all" if scope is None else "use_cases"
+
+    if fmt == "json":
+        return JSONResponse(report)
+
+    settings = request.app.state.settings
+    body = render(report, breakdown, settings.currency)
+    name = filename(breakdown, window_start.isoformat(), window_end.isoformat())
+    return Response(
+        content=body,
+        # The charset is declared even though the BOM says it too: a consumer that trusts the
+        # header and one that sniffs the bytes must reach the same conclusion.
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{name}"'},
+    )
