@@ -1,6 +1,6 @@
 # FRD-107 — A KIRA-compatible API surface
 
-> Phase: 8 (KIRA parity) · Status: **Draft — unblocked 2026-08-06** · Owner: Vadim Scheibe
+> Phase: 8 (KIRA parity) · Status: **Stage A done (2026-08-06)** · Owner: Vadim Scheibe
 > Last updated: 2026-08-06
 > Origin: `kira_api.md` §2, §6, §12. Depends on `FRD-110`–`FRD-114`.
 
@@ -202,6 +202,50 @@ per code.
   traffic appears in AIRA's reporting under its use case.
 - *Given* a caller whose identity belongs to two use cases and who sends no header, *when* they
   call `/chat`, *then* they receive a 403 naming both, and nothing was dispatched.
+
+## 10a. What Stage A actually shipped (2026-08-06)
+
+`/kira/api/external` with `chat`, `streaming-chat`, `embed`, `models`, `health`, `version-info` and
+`ki-usage`; the predecessor's `{code, message, details?}` envelope and its error codes; integer
+model ids resolved through `FRD-114`'s alias; attribution per §5.3; `Deprecation` on every response
+and `Sunset` where configured.
+
+**Stage A carries documents.** The plan had attachments arriving in Stage B, and `FRD-110` landed
+first — refusing a capability we have would be silly. Only `thinking` and `responseSchema` are
+refused, plus one case §5.2 singled out and which turned out to be real: **a model whose catalog
+entry declares a non-`disabled` default thinking mode is refused**, because the predecessor applies
+that default and serving the model with no thinking at all would answer differently for a reason
+nobody could see. A model with no thinking declaration, or one whose default is `disabled`, is
+unaffected — sending nothing *is* what it asked for.
+
+`/embed` refuses a list and a `task_type` by name rather than approximating: embedding a batch one
+at a time would silently cost N requests of quota against a limit of one, and the wrong
+optimisation type produces vectors that retrieve measurably worse with nothing in the response to
+show it. Both arrive with `FRD-113`.
+
+### The extraction the FRD asked for
+
+§5.1 says the surface shares *"the pre-dispatch gate, the pipeline, the dispatch chain, the audit
+writer"*. Sharing them means **extracting** them, and that is `api/serving.py`: the controls now
+live outside any surface and both routers use them. Duplicating instead would have been the
+`:embedContent` failure in a larger costume — a gate that lived inside one branch rather than on
+the path every branch takes, except the branch is now a whole API.
+
+`test_a_kira_request_is_audited_exactly_like_a_gemini_one` is what holds it: it sends one request
+through each surface and compares the resulting audit rows, which is the only way to be sure no
+step was skipped rather than merely present.
+
+Coverage: 28 contract tests (shape, error codes and refusals, field by field against
+`kira_api.md`), 5 integration tests, mutations **K1–K8**, each verified to be caught. Seven existing
+mutation anchors followed their functions into `api/serving.py` and were repaired — a mutation whose
+anchor has moved protects nothing, which is why the harness reports them rather than skipping.
+
+### Not in Stage A
+
+`ki-usage` reports per **user**, with a model id of `0`. The predecessor keys usage by (user,
+model); `FRD-601` aggregates the two dimensions separately, and inventing a cross-tabulation would
+be a fabricated figure. Stated in the migration guide rather than approximated. CSV negotiation
+arrives with `FRD-602`.
 
 ## 11. Dependencies & Risks
 

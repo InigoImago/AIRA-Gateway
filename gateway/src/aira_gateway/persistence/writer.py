@@ -64,6 +64,7 @@ class PendingLog:
     provider: str | None = None
     publisher: str | None = None
     region: str | None = None
+    api: str = "gemini"
 
 
 class RequestLogWriter:
@@ -190,6 +191,7 @@ class RequestLogWriter:
                 provider=entry.provider,
                 publisher=entry.publisher,
                 region=entry.region,
+                api=entry.api,
             )
 
     async def _may_store_payloads(self, session: AsyncSession, use_case: str | None) -> bool:

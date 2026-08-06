@@ -19,6 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from aira_common.models import BASELINE_CAPABILITIES, Capability, Hosting, parse_capabilities
@@ -42,6 +43,8 @@ class ModelDeclaration:
     platform: str = ""
     hosting: str = ""
     deprecated: bool = False
+    #: The KIRA-style integer alias, when one is assigned (`FRD-114` FR-6, `FRD-107` FR-4).
+    numeric_id: int | None = None
 
     def can(self, capability: Capability) -> bool:
         return capability in self.capabilities
@@ -105,6 +108,19 @@ class ModelCatalog:
             return ModelDeclaration(name=model)
         return _from_record(model, record)
 
+    async def by_numeric_id(self, numeric_id: int) -> str | None:
+        """The model a KIRA-style integer id refers to (`FRD-114` FR-6).
+
+        Exists only for `FRD-107`. If `ADR-0010` is ever revisited toward moving the clients
+        instead, this and the column go together — an unused numeric alias left in a catalog reads
+        as though it meant something.
+        """
+        async with self._sessionmaker() as session:
+            result = await session.execute(
+                select(ModelRead.model).where(ModelRead.numeric_id == numeric_id)
+            )
+            return result.scalar_one_or_none()
+
     async def exceeds_output_cap(self, model: str, requested: int | None) -> int | None:
         """The model's cap if ``requested`` is above it, else ``None``.
 
@@ -137,4 +153,5 @@ def _from_record(model: str, record: ModelRead) -> ModelDeclaration:
         platform=record.platform or "",
         hosting=record.hosting or "",
         deprecated=bool(record.deprecated),
+        numeric_id=record.numeric_id,
     )

@@ -83,6 +83,7 @@ MODEL_CATALOG = "gateway/tests/test_model_catalog.py"
 VERTEX = "gateway/tests/test_vertex.py"
 REQUIREMENTS = "gateway/tests/test_dispatch_requirements.py"
 ATTACHMENTS = "gateway/tests/test_attachments.py"
+KIRA = "gateway/tests/test_kira_surface.py"
 TOKENS = "libs/tests/test_tokens.py"
 CATALOG_DECLARATION = "management/backend/tests/test_catalog_declaration.py"
 
@@ -591,14 +592,14 @@ MUTATIONS = [
         "M23",
         "every verb passes the pre-dispatch controls, not only the generate ones",
         "gateway/src/aira_gateway/api/gemini/routes.py",
-        "    reservation = await _enforce_pre_dispatch(",
-        "    reservation = Reservation() if embed_request else await _enforce_pre_dispatch(",
+        "    reservation = await enforce_pre_dispatch(",
+        "    reservation = Reservation() if embed_request else await enforce_pre_dispatch(",
         RATELIMIT_ROUTES,
     ),
     Mutation(
         "M24",
         "the reservation uses the caller's own output bound where it gave one",
-        "gateway/src/aira_gateway/api/gemini/routes.py",
+        "gateway/src/aira_gateway/api/serving.py",
         "    tokens = declaration.output_cap(max_output_tokens) or settings.budget_estimate_output_tokens",
         "    tokens = settings.budget_estimate_output_tokens",
         f"{RATELIMIT_ROUTES} gateway/tests/test_cost_budgets.py {BUDGET_ROUTES}",
@@ -773,6 +774,71 @@ MUTATIONS = [
         "DEFAULT_ALLOWED_REGIONS = EU_REGIONS_GOOGLE",
         REQUIREMENTS,
     ),
+    # ---- the KIRA compatibility surface (FRD-107 Stage A) -----------------------------------
+    Mutation(
+        "K1",
+        "a field this gateway cannot honour is refused, never accepted and ignored",
+        "gateway/src/aira_gateway/api/kira/mapping.py",
+        "    if request.thinking is not None:",
+        "    if False:",
+        KIRA,
+    ),
+    Mutation(
+        "K2",
+        "a model whose declared thinking default we cannot apply is refused, not approximated",
+        "gateway/src/aira_gateway/api/kira/mapping.py",
+        '    if mode is not None and mode != "disabled":',
+        "    if False:",
+        KIRA,
+    ),
+    Mutation(
+        "K3",
+        "the error envelope is the predecessor's, not ours",
+        "gateway/src/aira_gateway/api/kira/errors.py",
+        '    body: dict[str, Any] = {"code": code, "message": message}',
+        '    body: dict[str, Any] = {"error": {"code": code, "message": message}}',
+        KIRA,
+    ),
+    Mutation(
+        "K4",
+        "an integer model id addresses a model, and an unknown one is refused",
+        "gateway/src/aira_gateway/api/kira/routes.py",
+        "    if name is None:",
+        "    if False:",
+        KIRA,
+    ),
+    Mutation(
+        "K5",
+        "the surface announces that it is transitional, on every response",
+        "gateway/src/aira_gateway/api/kira/routes.py",
+        '    "Deprecation": "true",',
+        '    "X-Not-Deprecation": "true",',
+        KIRA,
+    ),
+    Mutation(
+        "K6",
+        "a request on this surface passes the same pre-dispatch controls as any other",
+        "gateway/src/aira_gateway/api/kira/routes.py",
+        "        reservation = await enforce_pre_dispatch(\n            request,\n            model=canonical.model,\n            max_output_tokens=canonical.max_output_tokens,\n            attachments=[part.media_type for part in canonical.attachments],\n        )\n        async with request.app.state.budgets.hold(reservation):",
+        "        reservation = Reservation()\n        async with request.app.state.budgets.hold(reservation):",
+        KIRA,
+    ),
+    Mutation(
+        "K7",
+        "conversation history is placed before the current turn, oldest first",
+        "gateway/src/aira_gateway/api/kira/mapping.py",
+        "    parts = _parts(request.request, limits, counted)\n    messages.append(CanonicalMessage(role=Role.USER, parts=parts))",
+        "    parts = _parts(request.request, limits, counted)\n    messages.insert(0, CanonicalMessage(role=Role.USER, parts=parts))",
+        KIRA,
+    ),
+    Mutation(
+        "K8",
+        "a refusal on this surface reaches the audit trail like any other",
+        "gateway/src/aira_gateway/api/kira/routes.py",
+        '    if getattr(request.state, "attribution", None) is not None:',
+        "    if False:",
+        KIRA,
+    ),
     # ---- documents and images (FRD-110) ----------------------------------------------------
     Mutation(
         "F1",
@@ -793,7 +859,7 @@ MUTATIONS = [
     Mutation(
         "F3",
         "the attachment requirement is applied to the request that carries one",
-        "gateway/src/aira_gateway/api/gemini/routes.py",
+        "gateway/src/aira_gateway/api/serving.py",
         "    if canonical is not None and canonical.media_types:",
         "    if False:",
         ATTACHMENTS,
@@ -833,7 +899,7 @@ MUTATIONS = [
     Mutation(
         "F8",
         "the reservation counts the attachment rather than treating it as free",
-        "gateway/src/aira_gateway/api/gemini/routes.py",
+        "gateway/src/aira_gateway/api/serving.py",
         "    tokens += declaration.attachment_tokens(attachments or [])",
         "    tokens += 0",
         ATTACHMENTS,
@@ -1028,7 +1094,7 @@ MUTATIONS = [
     Mutation(
         "C3",
         "a request above the declared output cap is refused rather than passed upstream",
-        "gateway/src/aira_gateway/api/gemini/routes.py",
+        "gateway/src/aira_gateway/api/serving.py",
         "    if requested is not None and cap is not None and requested > cap:",
         "    if requested is not None and cap is not None and False:",
         MODEL_CATALOG,
@@ -1036,7 +1102,7 @@ MUTATIONS = [
     Mutation(
         "C4",
         "a model that declares no embedding refuses one before dispatch",
-        "gateway/src/aira_gateway/api/gemini/routes.py",
+        "gateway/src/aira_gateway/api/serving.py",
         '    if method == "embedContent" and not declaration.can(Capability.EMBED):',
         '    if method == "embedContent" and False:',
         MODEL_CATALOG,
@@ -1044,7 +1110,7 @@ MUTATIONS = [
     Mutation(
         "C5",
         "deprecation warns and does not block, so a retirement can be announced first",
-        "gateway/src/aira_gateway/api/gemini/routes.py",
+        "gateway/src/aira_gateway/api/serving.py",
         "    if not declaration.deprecated:\n        return {}",
         "    if declaration.deprecated or True:\n        return {}",
         MODEL_CATALOG,

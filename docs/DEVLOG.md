@@ -5,6 +5,47 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-06 — Stufe 4: the predecessor's contract, served by AIRA
+`FRD-107` Stage A. `/kira/api/external` with `chat`, `streaming-chat`, `embed`, `models`, `health`,
+`version-info` and `ki-usage`; the predecessor's error envelope and codes; integer model ids;
+attribution; deprecation headers on every response including the refusals.
+
+**Stage A carries documents.** The plan had attachments in Stage B, `FRD-110` landed first, and
+refusing a capability we have would be silly. Only `thinking` and `responseSchema` are refused —
+plus one case the FRD singled out that turned out to matter: **a model whose catalog declares a
+non-`disabled` default thinking mode is refused**, because the predecessor *applies* that default.
+Serving such a model with no thinking at all would answer differently for a reason nobody could
+see, which is the same failure as a dropped attachment one level up. A model with no thinking
+declaration, or one whose default is `disabled`, is unaffected — sending nothing is what it asked
+for.
+
+`/embed` refuses a list and a `task_type` by name rather than approximating: embedding a batch one
+at a time would silently cost N requests of quota against a limit of one, and the wrong task type
+produces vectors that retrieve measurably worse with nothing in the response to show it.
+
+**The real work was the extraction.** §5.1 says the surface shares the pre-dispatch gate, the
+pipeline, the dispatch chain and the audit writer. Sharing them means extracting them, so they now
+live in `api/serving.py` outside any surface and both routers use it. The alternative — a second
+copy — is the `:embedContent` failure in a larger costume: a control that lives inside one branch
+instead of on the path every branch takes, except the branch is now a whole API.
+
+What holds that is one test: send a request through each surface, compare the audit rows. Same
+outcome, same model, same tokens, same latency recorded, same degradation snapshot. It is the only
+way to be sure no step was *skipped* rather than merely present.
+
+Seven existing mutation anchors followed their functions into the new module and were repaired.
+A mutation whose anchor has moved protects nothing, which is exactly why the harness reports a
+missing anchor instead of skipping it — one of them (`M23`, "every verb passes the pre-dispatch
+controls") also had to have its *text* corrected, and it briefly survived until it did.
+
+Not in Stage A, and said rather than approximated: `ki-usage` reports per **user** with a model id
+of `0`. The predecessor keys usage by (user, model); `FRD-601` aggregates the two separately, and
+inventing a cross-tabulation would be a fabricated figure.
+
+143/143 mutations, 766 hermetic tests, 78 integration, 46 browser.
+
+---
+
 ## 2026-08-06 — Stufe 3: documents, and the rule that a refusal beats a fluent wrong answer
 `FRD-110`. `CanonicalMessage` carries ordered parts; the Gemini surface takes `inlineData`; both
 dialects map it; the mock sees it; the reservation counts it; the audit row keeps a description.

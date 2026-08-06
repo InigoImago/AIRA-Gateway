@@ -17,9 +17,6 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import ValidationError
 
 from aira_common.logging import get_logger
-from aira_common.models import Capability
-from aira_common.money import cost_nanos
-from aira_common.observability import set_span_attributes
 from aira_gateway.api.gemini import schemas
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.api.gemini.errors import gemini_error_response as _error
@@ -28,33 +25,33 @@ from aira_gateway.api.gemini.mapping import (
     gemini_to_canonical,
     upstream_model_to_gemini,
 )
+from aira_gateway.api.serving import (
+    REFUSALS,
+    UPSTREAM_STATUS_MAP,
+    catalog_of,
+    check_declaration,
+    deprecation_headers,
+    elapsed_ms,
+    enforce_pre_dispatch,
+    provenance,
+    refusal_outcome,
+    registry_of,
+    requirements_for,
+    run_pipeline,
+    upstream_error,
+)
 from aira_gateway.attachments import AttachmentRejected
 from aira_gateway.audit import AuditTrail, Outcome, decision_summary
 from aira_gateway.budgets.errors import BudgetExceeded
-from aira_gateway.budgets.ledger import Amounts
 from aira_gateway.budgets.service import Reservation
-from aira_gateway.catalog import ModelCatalog, ModelDeclaration
 from aira_gateway.core.canonical import CanonicalChunk, CanonicalRequest, CanonicalUsage
 from aira_gateway.persistence.recorder import record_request
-from aira_gateway.pipeline.dispatch import NoCapableModel, Permits, dispatch_with_fallback
-from aira_gateway.pipeline.engine import PipelineEngine
+from aira_gateway.pipeline.dispatch import NoCapableModel, dispatch_with_fallback
 from aira_gateway.pipeline.errors import PipelineRejected
-from aira_gateway.pipeline.store import PipelineStore
 from aira_gateway.ratelimit.errors import RateLimited
-from aira_gateway.requirements import (
-    MediaTypesSupported,
-    RegionAllowed,
-    Requirement,
-    permits,
-)
-from aira_gateway.residency import parse_allowed
-from aira_gateway.upstreams.base import ProviderRegistry, Upstream, UpstreamError
+from aira_gateway.upstreams.base import Upstream, UpstreamError
 
 _log = get_logger("aira_gateway")
-
-
-def _elapsed_ms(started: float) -> int:
-    return int((time.monotonic() - started) * 1000)
 
 
 router = APIRouter(tags=["gemini"])
@@ -66,209 +63,9 @@ def _first_error(exc: ValidationError) -> str:
     return f"{location}: {first.get('msg', 'invalid')}".strip(": ")
 
 
-# Pass meaningful upstream statuses (rate limit / unavailable / timeout) through to the client;
-# everything else — upstream 4xx caused by *our* key/config, upstream 5xx, or a transport failure
-# (status_code is None) — is surfaced as a generic 502, so a broken upstream is never mistaken for a
-# client mistake.
-_UPSTREAM_STATUS_MAP: dict[int, tuple[int, str]] = {
-    429: (429, "RESOURCE_EXHAUSTED"),
-    503: (503, "UNAVAILABLE"),
-    504: (504, "DEADLINE_EXCEEDED"),
-}
-
-
-async def _enforce_pre_dispatch(
-    request: Request,
-    *,
-    model: str,
-    max_output_tokens: int | None,
-    attachments: list[str] | None = None,
-) -> Reservation:
-    """Every control a request must clear before anything expensive happens.
-
-    Rate limiting comes first: the whole point of a limit is that the upstream call never
-    happens. The budget then reserves what the request is expected to consume, so requests in
-    flight are visible to each other's check instead of all passing the same stale figure.
-    """
-    attribution = getattr(request.state, "attribution", None)
-    use_case = getattr(attribution, "use_case", None)
-    subject = getattr(attribution, "subject", None)
-
-    await request.app.state.rate_limits.check(use_case, subject)
-    estimate = await _estimate(
-        request, model=model, max_output_tokens=max_output_tokens, attachments=attachments
-    )
-    # `app.state` is untyped, so the annotation is what states the contract the route relies on.
-    reservation: Reservation = await request.app.state.budgets.guard(
-        use_case, subject, estimated=estimate
-    )
-    return reservation
-
-
-async def _estimate(
-    request: Request,
-    *,
-    model: str,
-    max_output_tokens: int | None,
-    attachments: list[str] | None = None,
-) -> Amounts:
-    """What this request is expected to consume, for the pre-dispatch reservation (FRD-405).
-
-    The real cost is unknowable before the model answers, so the estimate is deliberately
-    conservative: the caller's own ``maxOutputTokens`` where it bounded the response, a
-    configured default otherwise, and priced entirely at the **output** rate, which every
-    provider charges several times higher than input. Over-reserving briefly is the safe
-    direction for a spend limit, and the figure is corrected the moment the response arrives.
-
-    An unpriced model estimates zero cost — the same "unknown is not zero" rule as everywhere
-    else: it is not counted as free, it simply cannot constrain a cost limit.
-    """
-    settings = request.app.state.settings
-    # The model's own default before the installation-wide one: a per-model figure is a better
-    # estimate for every vendor, and it is the same number the request will actually carry.
-    declaration = await _catalog(request).declaration(model)
-    tokens = declaration.output_cap(max_output_tokens) or settings.budget_estimate_output_tokens
-    # Attachments are input, and input a character count cannot predict (FRD-110 §5.3). Priced at
-    # the output rate along with everything else: over-reserving briefly is the safe direction for
-    # a spend limit, and the figure is corrected the moment the response arrives.
-    tokens += declaration.attachment_tokens(attachments or [])
-    price = await request.app.state.pricing.price_for(model)
-    cost = 0 if price is None else cost_nanos(tokens, price.output_per_million_nanos)
-    return Amounts(tokens=tokens, requests=1, cost_nanos=cost)
-
-
-def _upstream_error(exc: UpstreamError) -> JSONResponse:
-    code, status = _UPSTREAM_STATUS_MAP.get(exc.status_code or 0, (502, "UNAVAILABLE"))
-    return _error(code, exc.message, status)
-
-
-def _registry(request: Request) -> ProviderRegistry:
-    registry: ProviderRegistry = request.app.state.providers
-    return registry
-
-
-def _provenance(request: Request, model: str) -> tuple[str, str, str] | None:
-    """Where the request was processed, from the adapter that serves the model.
-
-    Read from the registry rather than the catalog: the catalog says where a model is *configured*
-    to run, the registry says which adapter actually holds it. Under a residency requirement the
-    second is the one worth recording.
-    """
-    described = _registry(request).get_model(model)
-    if described is None or not described.provider:
-        return None
-    return (described.provider, described.publisher, described.region)
-
-
-def _requirements(request: Request, canonical: CanonicalRequest | None) -> Permits:
-    """What a candidate must satisfy to serve this request (`ADR-0012` §3).
-
-    Assembled per request because the answer depends on the request: residency always, and the
-    attachment media types only when the caller actually sent one.
-    """
-    settings = request.app.state.settings
-    # One list, every transport (`ADR-0012` §6) — reading a Vertex-named setting here would make
-    # the first Azure model fail a check named after Google.
-    checks: list[Requirement] = [
-        RegionAllowed(_registry(request), parse_allowed(settings.allowed_regions))
-    ]
-    if canonical is not None and canonical.media_types:
-        checks.append(MediaTypesSupported(_catalog(request), canonical.media_types))
-    return permits(checks)
-
-
-def _catalog(request: Request) -> ModelCatalog:
-    catalog: ModelCatalog = request.app.state.catalog
-    return catalog
-
-
-async def _check_declaration(
-    request: Request, *, model: str, method: str, requested: int | None
-) -> ModelDeclaration:
-    """Every rule the catalog decides, before anything expensive happens (FRD-114).
-
-    Returns the declaration, so the caller can act on ``deprecated`` without a second lookup.
-    """
-    declaration = await _catalog(request).declaration(model)
-
-    if method == "embedContent" and not declaration.can(Capability.EMBED):
-        # Refused *before* dispatch rather than by an adapter raising deep in the stack: with
-        # cross-vendor routing (ADR-0012) a chain can send an embedding to a model that has no
-        # embedding endpoint at all, and the useful error names the model (FRD-113 FR-6a).
-        raise GeminiHTTPError(
-            400,
-            f"Model '{model}' does not support embedding.",
-            "INVALID_ARGUMENT",
-        )
-    if method != "embedContent" and not declaration.can(Capability.GENERATE):
-        raise GeminiHTTPError(
-            400, f"Model '{model}' does not support generation.", "INVALID_ARGUMENT"
-        )
-
-    cap = declaration.max_output_tokens
-    if requested is not None and cap is not None and requested > cap:
-        raise GeminiHTTPError(
-            400,
-            f"maxOutputTokens {requested} exceeds the {cap} this model accepts.",
-            "INVALID_ARGUMENT",
-        )
-    return declaration
-
-
-def _deprecation_headers(declaration: ModelDeclaration) -> dict[str, str]:
-    """A ``Warning`` header for a deprecated model (FRD-114 FR-5).
-
-    It **warns, it does not block**. Blocking is what `FRD-307`'s revocation is for, and conflating
-    the two removes the ability to announce a retirement before performing one — which is the whole
-    point of having a deprecation flag rather than just deleting the row.
-    """
-    if not declaration.deprecated:
-        return {}
-    return {
-        "Warning": f'299 - "Model {declaration.name} is deprecated and will be withdrawn."',
-    }
-
-
-async def _run_pipeline(
-    request: Request, canonical: CanonicalRequest, trail: AuditTrail
-) -> tuple[CanonicalRequest, tuple[str, ...]]:
-    """Apply the use case's pre-dispatch pipeline (FRD-300). Pass-through when none is configured.
-
-    Returns the effective request (possibly re-routed) and the dispatch fallback chain. May raise
-    ``PipelineRejected`` when a filter/allow-check blocks the request — and the decisions taken up
-    to that point are on the trail by then, so a blocked request records *why* rather than only
-    *that* (FRD-122 FR-4).
-    """
-    store: PipelineStore = request.app.state.pipeline_store
-    engine: PipelineEngine = request.app.state.pipeline_engine
-    use_case = getattr(getattr(request.state, "attribution", None), "use_case", None)
-    pipeline = await store.get(use_case)
-    if pipeline is None:
-        return canonical, ()
-    # The engine appends into the trail's list, so a step that blocks still leaves behind the
-    # decisions taken before it — including the routing that sent the request to the step that
-    # refused it.
-    outcome = await engine.run(pipeline, canonical, decisions=trail.decisions)
-    trail.routed_to(outcome.request.model)
-    if outcome.decisions:
-        set_span_attributes(
-            {
-                "aira.pipeline.decisions": len(outcome.decisions),
-                "aira.pipeline.model": outcome.request.model,
-            }
-        )
-        _log.info(
-            "pipeline_applied",
-            use_case=use_case,
-            model=outcome.request.model,
-            decisions=outcome.decisions,
-        )
-    return outcome.request, outcome.fallback_models
-
-
 async def _described(request: Request, model: schemas.GeminiModel) -> schemas.GeminiModel:
     """Attach what the catalog declares, so the list says what each model may be asked to do."""
-    declaration = await _catalog(request).declaration(model.name.removeprefix("models/"))
+    declaration = await catalog_of(request).declaration(model.name.removeprefix("models/"))
     return model.model_copy(
         update={
             "airaCapabilities": sorted(str(c) for c in declaration.capabilities),
@@ -284,14 +81,15 @@ async def _described(request: Request, model: schemas.GeminiModel) -> schemas.Ge
 @router.get("/v1beta/models")
 async def list_models(request: Request) -> JSONResponse:
     models = [
-        await _described(request, upstream_model_to_gemini(m)) for m in _registry(request).models()
+        await _described(request, upstream_model_to_gemini(m))
+        for m in registry_of(request).models()
     ]
     return JSONResponse(schemas.ListModelsResponse(models=models).model_dump())
 
 
 @router.get("/v1beta/models/{model}")
 async def get_model(model: str, request: Request) -> Response:
-    upstream_model = _registry(request).get_model(model)
+    upstream_model = registry_of(request).get_model(model)
     if upstream_model is None:
         return _error(404, f"Model '{model}' not found.", "NOT_FOUND")
     described = await _described(request, upstream_model_to_gemini(upstream_model))
@@ -300,29 +98,6 @@ async def get_model(model: str, request: Request) -> Response:
 
 #: How a refusal maps onto the closed outcome vocabulary. Anything unmapped is a bug in this
 #: table, not a reason to record nothing — see ``_refusal_outcome``.
-_REFUSAL_OUTCOMES: dict[int, Outcome] = {
-    404: Outcome.MODEL_NOT_FOUND,
-    400: Outcome.INVALID_REQUEST,
-    403: Outcome.BLOCKED_BY_PIPELINE,
-}
-
-
-def _refusal_outcome(exc: Exception) -> Outcome:
-    if isinstance(exc, AttachmentRejected):
-        return Outcome.INVALID_REQUEST
-    if isinstance(exc, NoCapableModel):
-        return Outcome.NO_CAPABLE_MODEL
-    if isinstance(exc, RateLimited):
-        return Outcome.RATE_LIMITED
-    if isinstance(exc, BudgetExceeded):
-        return Outcome.BUDGET_EXCEEDED
-    if isinstance(exc, PipelineRejected):
-        return Outcome.BLOCKED_BY_PIPELINE
-    if isinstance(exc, UpstreamError):
-        return Outcome.UPSTREAM_ERROR
-    if isinstance(exc, GeminiHTTPError):
-        return _REFUSAL_OUTCOMES.get(exc.code, Outcome.INVALID_REQUEST)
-    return Outcome.INVALID_REQUEST
 
 
 def _refusal_response(exc: Exception) -> JSONResponse:
@@ -342,7 +117,7 @@ def _refusal_response(exc: Exception) -> JSONResponse:
     if isinstance(exc, PipelineRejected):
         return _error(exc.code, exc.message, exc.status)
     if isinstance(exc, UpstreamError):
-        return _upstream_error(exc)
+        return upstream_error(exc)
     assert isinstance(exc, GeminiHTTPError)
     return exc.to_response()
 
@@ -362,15 +137,7 @@ async def generate(resource: str, request: Request) -> Response:
     started = time.monotonic()
     try:
         return await _generate(resource, request, trail)
-    except (
-        AttachmentRejected,
-        RateLimited,
-        BudgetExceeded,
-        PipelineRejected,
-        NoCapableModel,
-        UpstreamError,
-        GeminiHTTPError,
-    ) as exc:
+    except REFUSALS as exc:
         response = _refusal_response(exc)
         await _record_refusal(request, trail, exc, status=response.status_code, started=started)
         return response
@@ -406,7 +173,7 @@ async def _record_refusal(
             operation=trail.operation,
             model=trail.served_model,
             status=status,
-            outcome=str(_refusal_outcome(exc)),
+            outcome=str(refusal_outcome(exc)),
             exc_info=True,
         )
 
@@ -420,14 +187,14 @@ async def _write_refusal(
         model=trail.served_model,
         status=status,
         usage=None,
-        latency_ms=_elapsed_ms(started),
+        latency_ms=elapsed_ms(started),
         request_payload=trail.body,
         response_payload=None,
-        outcome=_refusal_outcome(exc),
+        outcome=refusal_outcome(exc),
         requested_model=trail.requested_model,
         model_selection=trail.selection,
         pipeline_decisions=decision_summary(trail.decisions),
-        provenance=_provenance(request, trail.served_model),
+        provenance=provenance(request, trail.served_model),
     )
 
 
@@ -438,7 +205,7 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
             400, f"Missing method in '{resource}' (expected model:method).", "INVALID_ARGUMENT"
         )
 
-    provider = _registry(request).provider_for(model)
+    provider = registry_of(request).provider_for(model)
     if provider is None:
         raise GeminiHTTPError(404, f"Model '{model}' not found.", "NOT_FOUND")
 
@@ -460,10 +227,10 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
             raise GeminiHTTPError(400, _first_error(exc), "INVALID_ARGUMENT") from exc
         canonical = gemini_to_canonical(model, gemini_request)
 
-        canonical, fallbacks = await _run_pipeline(request, canonical, trail)
+        canonical, fallbacks = await run_pipeline(request, canonical, trail)
 
         # Routing may have changed the model — resolve the effective provider.
-        provider = _registry(request).provider_for(canonical.model)
+        provider = registry_of(request).provider_for(canonical.model)
         if provider is None:
             raise GeminiHTTPError(404, f"Model '{canonical.model}' not found.", "NOT_FOUND")
     elif method == "embedContent":
@@ -480,10 +247,10 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
     # by accident, so there is exactly one place to add the next one.
     effective_model = canonical.model if canonical is not None else model
     requested_output = canonical.max_output_tokens if canonical is not None else None
-    declaration = await _check_declaration(
+    declaration = await check_declaration(
         request, model=effective_model, method=method, requested=requested_output
     )
-    reservation = await _enforce_pre_dispatch(
+    reservation = await enforce_pre_dispatch(
         request,
         model=effective_model,
         max_output_tokens=requested_output,
@@ -498,10 +265,10 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
             async with request.app.state.budgets.hold(reservation):
                 started = time.monotonic()
                 dispatched = await dispatch_with_fallback(
-                    _registry(request),
+                    registry_of(request),
                     canonical,
                     fallbacks,
-                    permits=_requirements(request, canonical),
+                    permits=requirements_for(request, canonical),
                 )
                 canonical_response = dispatched.response
                 trail.served_by(canonical_response.model, dispatched.candidate_index)
@@ -521,16 +288,16 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
                     model=canonical_response.model,
                     status=200,
                     usage=canonical_response.usage,
-                    latency_ms=_elapsed_ms(started),
+                    latency_ms=elapsed_ms(started),
                     request_payload=body,
                     response_payload=payload,
                     cost_nanos=cost,
                     requested_model=trail.requested_model,
                     model_selection=trail.selection,
                     pipeline_decisions=decision_summary(trail.decisions),
-                    provenance=_provenance(request, canonical_response.model),
+                    provenance=provenance(request, canonical_response.model),
                 )
-                return JSONResponse(payload, headers=_deprecation_headers(declaration))
+                return JSONResponse(payload, headers=deprecation_headers(declaration))
         sse = request.query_params.get("alt") == "sse"
         return _stream_response(
             request,
@@ -540,7 +307,7 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
             reservation,
             trail,
             sse=sse,
-            headers=_deprecation_headers(declaration),
+            headers=deprecation_headers(declaration),
         )
 
     assert embed_request is not None  # the method dispatch above guarantees it
@@ -569,13 +336,13 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
             model=model,
             status=200,
             usage=None,
-            latency_ms=_elapsed_ms(started),
+            latency_ms=elapsed_ms(started),
             request_payload=body,
             response_payload=payload,
             requested_model=trail.requested_model,
-            provenance=_provenance(request, model),
+            provenance=provenance(request, model),
         )
-        return JSONResponse(payload, headers=_deprecation_headers(declaration))
+        return JSONResponse(payload, headers=deprecation_headers(declaration))
 
 
 def _chunk_to_gemini(chunk: CanonicalChunk, model: str) -> schemas.GenerateContentResponse:
@@ -638,7 +405,7 @@ def _stream_response(
                             separator = ","
                 except UpstreamError as exc:
                     # Headers are already sent; log and terminate the stream cleanly.
-                    status = _UPSTREAM_STATUS_MAP.get(exc.status_code or 0, (502, "UNAVAILABLE"))[0]
+                    status = UPSTREAM_STATUS_MAP.get(exc.status_code or 0, (502, "UNAVAILABLE"))[0]
                     _log.error(
                         "upstream_stream_error",
                         error=exc.message,
@@ -710,7 +477,7 @@ async def _finish_stream(
         model=model,
         status=status,
         usage=usage,
-        latency_ms=_elapsed_ms(started),
+        latency_ms=elapsed_ms(started),
         request_payload=body,
         response_payload={"text": text},
         cost_nanos=cost,
@@ -721,5 +488,5 @@ async def _finish_stream(
         requested_model=trail.requested_model,
         model_selection=trail.selection,
         pipeline_decisions=decision_summary(trail.decisions),
-        provenance=_provenance(request, trail.served_model),
+        provenance=provenance(request, trail.served_model),
     )

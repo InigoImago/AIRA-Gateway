@@ -101,6 +101,16 @@ class GatewaySettings(BaseAiraSettings):
     #: Backstop for Anthropic's required ``max_tokens`` when the catalog declares no default.
     vertex_default_max_tokens: int = 4096
 
+    #: The KIRA compatibility surface's stated end date, RFC 8594 (`ADR-0010` Option C). Empty
+    #: means "announced as deprecated, no date yet" — a layer with no date is a permanent one, so
+    #: this should be set the day a migration plan exists.
+    kira_sunset: str = ""
+    #: Build metadata for `/version-info`. Absent is a valid state, not an error.
+    build_number: int = 0
+    build_time: str = ""
+    git_commit: str = ""
+    git_branch: str = ""
+
     # OIDC bearer validation (Keycloak). When disabled, only API keys are accepted.
     oidc_enabled: bool = False
     oidc_issuer: str = ""

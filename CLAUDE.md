@@ -347,6 +347,19 @@ lost the settle and the audit row — in-process `aclose()` raises `GeneratorExi
 which is why the hermetic test passed. Now `asyncio.shield`ed, and deliberately given **no**
 mutation entry, because no hermetic test can tell the two apart and a harness that claims otherwise
 is worse than none.
+**`FRD-107` Stage A done (2026-08-06) — the KIRA surface.** `/kira/api/external` with the
+predecessor's shapes, error envelope and codes, integer model ids, attribution (one membership, or
+an `X-AIRA-Use-Case` header, else **403 naming the candidates** — never an unattributed bucket), and
+`Deprecation`/`Sunset` on every response. **It carries documents**, because `FRD-110` landed first.
+`thinking` and `responseSchema` are **refused by name**, and so is a model whose catalog declares a
+non-`disabled` default thinking mode — the predecessor applies that default, so serving it with no
+thinking would answer differently for a reason nobody could see. `/embed` likewise refuses a list
+and a `task_type` rather than approximating.
+**The controls are now extracted, not copied**: `api/serving.py` holds the pre-dispatch gate,
+pipeline, dispatch chain and audit writer, and both surfaces use it — a second copy would be the
+`:embedContent` failure with a whole API to hide in. `test_a_kira_request_is_audited_exactly_like_
+a_gemini_one` compares the audit rows the two produce, which is the only way to be sure no step was
+skipped rather than merely present.
 **Delivery order is fixed (ROADMAP Phase 8, 2026-08-06)**, derived from the owner's priority
 (KIRA compatibility → model connections → documents → the review findings) and the dependency that
 priority 1 needs priority 3: **`FRD-122` (audit) → `FRD-114` (metadata) → `FRD-115`+`119` (Vertex EU,

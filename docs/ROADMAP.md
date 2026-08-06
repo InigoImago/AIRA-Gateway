@@ -196,7 +196,7 @@ order below serves the priorities rather than restating them.
 | **1** ✅ | ~~`FRD-114` — Modell-Metadaten~~ **fertig 2026-08-06** | Voraussetzung für alles: Publisher, Capabilities, Default-Cap, Adressierung, Hosting. |
 | **2** ✅ | ~~`FRD-115` + `FRD-119` — Vertex EU, Gemini + Anthropic~~ **fertig 2026-08-06** | Priorität 2, erste Hälfte. Erst danach ist überhaupt ein produktionsfähiges (EU-)Modell erreichbar. |
 | **3** ✅ | ~~`FRD-110` — Dokumente~~ **fertig 2026-08-06** | Priorität 3. Bewusst **nach** Stufe 2: ohne dokumentenfähiges Modell in der EU wären Dokumente nur gegen den Mock nutzbar. |
-| **4** | `FRD-107` Stage A — KIRA-Fläche, Textvertrag | Priorität 1, so früh wie ehrlich möglich. Nicht unterstützte Felder werden **abgewiesen**, nie ignoriert (`FRD-107` §5.2). Einfache Clients migrieren hier. |
+| **4** ✅ | ~~`FRD-107` Stage A — KIRA-Fläche~~ **fertig 2026-08-06**, inkl. Dokumenten | Priorität 1, so früh wie ehrlich möglich. Nicht unterstützte Felder werden **abgewiesen**, nie ignoriert (`FRD-107` §5.2). Einfache Clients migrieren hier. |
 | **5** | `FRD-111`, `FRD-112`, `FRD-113` | Thinking, strukturierte Ausgabe, Embedding-Optionen. |
 | **6** | `FRD-107` Stage B | Dieselben Felder werden von abgewiesen zu bedient. Vertrag unverändert. |
 | **7** | `FRD-120` — Microsoft Foundry | Priorität 2, zweite Hälfte. Beweist zugleich Feature 19 (Erweiterbarkeit) — der Diff darf `upstreams/` nicht verlassen. |
@@ -229,7 +229,7 @@ overruled rather than discovered:
 | `FRD-117` | Version info, upstream health, CORS, OpenAPI 3.0, trace header | independent; makes the rest operable |
 | `FRD-118` | Several Keycloak backends, groups from UserInfo | **requirement unconfirmed — see its §11** |
 | `FRD-602` | CSV export of the usage report | follows `FRD-601` ✓ |
-| `FRD-107` | The KIRA wire format itself | **unblocked** — `ADR-0010` accepted (Option C) |
+| `FRD-107` | The KIRA wire format itself | **Stage A done (2026-08-06)**, and it carries documents because `FRD-110` landed first. Stage B (thinking, structured output, embedding options) follows those FRDs. |
 
 **Out of scope for now:** the OpenAI-compatible surface (`FRD-106`) — deferred by decision on
 2026-08-06 so the parity programme is not competing with a second new contract.

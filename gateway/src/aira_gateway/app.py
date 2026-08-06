@@ -25,6 +25,7 @@ from aira_common.observability import (
 from aira_gateway import __version__
 from aira_gateway.api.gemini.errors import GeminiHTTPError, gemini_error_response
 from aira_gateway.api.gemini.routes import router as gemini_router
+from aira_gateway.api.kira.routes import router as kira_router
 from aira_gateway.api.pipeline import router as pipeline_router
 from aira_gateway.api.reporting import router as reporting_router
 from aira_gateway.api.usage import router as usage_router
@@ -152,6 +153,9 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
     app.include_router(pipeline_router)
     app.include_router(usage_router)
     app.include_router(reporting_router)
+    # The KIRA surface resolves its own attribution (FRD-107 §5.3): the predecessor has no
+    # use-case selector, so the rule is "one membership, or a header" rather than a dependency.
+    app.include_router(kira_router)
     app.include_router(gemini_router, dependencies=[Depends(require_attribution)])
     _register_exception_handlers(app)
     return app

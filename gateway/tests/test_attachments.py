@@ -372,7 +372,7 @@ def test_stripping_leaves_a_text_only_payload_untouched() -> None:
 async def test_the_reservation_counts_the_attachment() -> None:
     """Without this the pre-dispatch reservation treats a request carrying a 20 000-token document
     as a sentence — reopening under documents the race `FRD-405` closed for text."""
-    from aira_gateway.api.gemini.routes import _estimate
+    from aira_gateway.api.serving import estimate
 
     app = _app()
     with TestClient(app) as client:
@@ -383,8 +383,8 @@ async def test_the_reservation_counts_the_attachment() -> None:
             app_ = app
 
         request = type("R", (), {"app": app})()
-        without = await _estimate(request, model="mock-1", max_output_tokens=100)
-        with_pdf = await _estimate(
+        without = await estimate(request, model="mock-1", max_output_tokens=100)
+        with_pdf = await estimate(
             request, model="mock-1", max_output_tokens=100, attachments=["application/pdf"]
         )
 

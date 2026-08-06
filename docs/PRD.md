@@ -44,7 +44,7 @@ gap, not an aspiration.
 |--:|---|---|---|
 | 1 | Einheitliche Bereitstellung von Modellen | **weitgehend** — Gemini **und** Anthropic über Vertex in der EU (`FRD-115`/`119` ✅); Microsoft Foundry offen | `FRD-100` ✓, `FRD-120` offen |
 | 2 | Rollenzuweisung | **fertig** | `FRD-201`, `ADR-0009` |
-| 3 | Kompatibilität mit der KIRA-API | **spezifiziert** — durch diese Liste als zentral bestätigt, `ADR-0010` damit entschieden | `FRD-107` + `FRD-110`–`114` |
+| 3 | Kompatibilität mit der KIRA-API | **Stage A fertig (2026-08-06)** — Textvertrag **und Dokumente**; `thinking`/`responseSchema` werden **abgewiesen, nie ignoriert** | `FRD-107` ✅ (Stage B mit `FRD-111`–`113`) |
 | 4 | Auditierbarkeit | **fertig (2026-08-06)** — alle fünf Lücken geschlossen | `FRD-122` ✅ |
 | 5 | Speicherung von Requests/Responses: *welches System wann was womit* | **fertig (2026-08-06)** — das aufrufende System ist über den Key-Prefix unterscheidbar, Ablehnungen erzeugen eine Zeile | `FRD-103` ✓, `FRD-122` ✅ |
 | 6 | Incident Response | **fehlt** | `FRD-503` (Phase 5) |

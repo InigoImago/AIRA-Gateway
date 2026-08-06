@@ -71,6 +71,7 @@ async def record_request(
     model_selection: str | None = None,
     pipeline_decisions: list[dict[str, Any]] | None = None,
     provenance: tuple[str, str, str] | None = None,
+    api: str = "gemini",
 ) -> None:
     """Queue a request/response record with its attribution for persistence.
 
@@ -120,5 +121,6 @@ async def record_request(
             provider=provenance[0] if provenance else None,
             publisher=provenance[1] if provenance else None,
             region=provenance[2] if provenance else None,
+            api=api,
         )
     )
