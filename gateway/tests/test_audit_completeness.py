@@ -39,7 +39,7 @@ async def _rows(app) -> list[RequestLog]:  # noqa: ANN001
 
 
 class _AlwaysLimited:
-    async def check(self, use_case, subject):  # noqa: ANN001, ANN201
+    async def check(self, use_case, subject, units=1):  # noqa: ANN001, ANN201
         raise RateLimited("Request rate limit exceeded for use case.", retry_after="7")
 
 
@@ -59,7 +59,7 @@ class _FailingProvider:
         raise UpstreamError("upstream failure", 503)
         yield  # pragma: no cover
 
-    async def embed(self, model, text):  # noqa: ANN001, ANN201
+    async def embed(self, request):  # noqa: ANN001, ANN201
         raise UpstreamError("upstream failure", 503)
 
 
@@ -173,7 +173,7 @@ class _PrimaryDownProvider:
         raise UpstreamError("not used", 503)
         yield  # pragma: no cover
 
-    async def embed(self, model, text):  # noqa: ANN001, ANN201
+    async def embed(self, request):  # noqa: ANN001, ANN201
         raise UpstreamError("not used", 503)
 
 
@@ -229,7 +229,7 @@ class _RoutedThenFailing:
         raise UpstreamError("not used", 503)
         yield  # pragma: no cover
 
-    async def embed(self, model, text):  # noqa: ANN001, ANN201
+    async def embed(self, request):  # noqa: ANN001, ANN201
         raise UpstreamError("not used", 503)
 
 

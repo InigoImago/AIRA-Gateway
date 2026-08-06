@@ -21,6 +21,9 @@ from typing import Any
 
 from pydantic import BaseModel, computed_field, model_validator
 
+from aira_common.models import ThinkingMode
+from aira_gateway.core.schema import ResponseSchema
+
 
 class Role(StrEnum):
     SYSTEM = "system"
@@ -84,11 +87,33 @@ class CanonicalMessage(BaseModel):
         return [part for part in self.parts if isinstance(part, DataPart)]
 
 
+class Thinking(BaseModel):
+    """How much reasoning effort a request asks for (`FRD-111` §5.1).
+
+    ``mode`` plus an optional token count, taken from the predecessor's vocabulary — and it turned
+    out to cover three vendors it was not written for: Google takes a budget, Anthropic a budget
+    drawn from ``max_tokens``, Azure an abstract effort level with no budget at all.
+
+    A request carries the **caller's** setting until :mod:`aira_gateway.thinking` resolves it
+    against the model that will serve it; after that ``tokens`` holds the number actually sent,
+    which is also the number the pre-dispatch reservation is made against. Those two must be the
+    same figure or the budget is reserving for a request that was never made.
+    """
+
+    mode: ThinkingMode
+    tokens: int | None = None
+
+
 class CanonicalRequest(BaseModel):
     model: str
     messages: list[CanonicalMessage]
     temperature: float | None = None
     max_output_tokens: int | None = None
+    thinking: Thinking | None = None
+    #: A schema the answer must conform to (`FRD-112`). Parsed and bounded at the surface, then
+    #: **forwarded, never executed** — re-validating the response would mean running
+    #: caller-supplied regexes over provider output on the hot path.
+    response_schema: ResponseSchema | None = None
 
     def last_user_text(self) -> str:
         for message in reversed(self.messages):
@@ -105,6 +130,27 @@ class CanonicalRequest(BaseModel):
     def media_types(self) -> frozenset[str]:
         """The distinct media types this request carries. What a model must be able to read."""
         return frozenset(part.media_type for part in self.attachments)
+
+
+class CanonicalEmbeddingRequest(BaseModel):
+    """One embedding call, however many texts it carries (`FRD-113` §5.1).
+
+    A single text is a list of one. Two code paths — one for a string, one for a list — is how a
+    batch ends up metered as a single request, and a batch that costs one token of a rate limit is
+    that limit with a hole in it.
+    """
+
+    model: str
+    texts: list[str]
+    #: What the vectors are optimised for. Indexing a corpus with ``RETRIEVAL_QUERY`` instead of
+    #: ``RETRIEVAL_DOCUMENT`` produces vectors that work, sit in the right space, and retrieve
+    #: measurably worse — which is why this is an enum validated against the model, not a string.
+    task_type: str | None = None
+    dimensions: int | None = None
+
+    @property
+    def size(self) -> int:
+        return len(self.texts)
 
 
 class CanonicalUsage(BaseModel):

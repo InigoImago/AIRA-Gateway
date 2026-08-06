@@ -1,13 +1,17 @@
-"""The predecessor's endpoints, served by AIRA (FRD-107 Stage A).
+"""The predecessor's endpoints, served by AIRA (FRD-107, Stage A + B).
 
 Under ``/kira/api/external``, so a migrating consumer changes a base URL and nothing else. This
 module maps one wire format; **everything below the surface is shared** with the Gemini routes via
 ``api/serving`` — the pre-dispatch gate, the pipeline, the dispatch chain, the audit writer. A
 second copy of those controls is the `:embedContent` failure with an extra hundred lines to hide in.
 
-Stage A serves text **and documents** (`FRD-110` landed first), and **refuses** thinking and
-`responseSchema` by name. Refusing is the contract: a field accepted and ignored produces an answer
-that is wrong for a reason the caller cannot see.
+Stage B (2026-08-06) serves the whole contract: text, documents, **thinking**, **structured
+output** and **batch embedding with task types**. Nothing about the wire format changed — the
+fields Stage A refused by name are now honoured, which is the migration `ADR-0010` promised.
+
+Where a model cannot honour one, the request is still **refused** rather than served differently.
+A field accepted and quietly ignored produces an answer that is wrong for a reason the caller
+cannot see, and that is true whether the reason is "not built yet" or "this model cannot".
 """
 
 from __future__ import annotations
@@ -28,34 +32,44 @@ from aira_gateway.api.kira import errors, schemas
 from aira_gateway.api.kira.attribution import resolve as resolve_attribution
 from aira_gateway.api.kira.mapping import (
     completed_event,
-    refuse_unsupported,
     to_canonical,
     to_chat_response,
+    to_embedding,
 )
 from aira_gateway.api.serving import (
     REFUSALS,
     UPSTREAM_STATUS_MAP,
     catalog_of,
     check_declaration,
+    check_structured_result,
     elapsed_ms,
+    embedding_bounds,
     enforce_pre_dispatch,
     provenance,
     refusal_outcome,
     registry_of,
     requirements_for,
     run_pipeline,
+    schema_bounds,
 )
 from aira_gateway.attachments import AttachmentRejected
 from aira_gateway.audit import AuditTrail, Outcome, decision_summary
 from aira_gateway.auth.dependencies import require_principal
 from aira_gateway.auth.principal import Principal
 from aira_gateway.budgets.errors import BudgetExceeded
+from aira_gateway.catalog import ModelDeclaration
 from aira_gateway.core.canonical import CanonicalRequest, CanonicalResponse
+from aira_gateway.core.schema import SchemaRejected
+from aira_gateway.embedding import DEFAULT_TASK_TYPE, EmbeddingRejected
+from aira_gateway.embedding import estimated_tokens as embedding_tokens
+from aira_gateway.embedding import validate as validate_embedding
 from aira_gateway.persistence.recorder import record_request
 from aira_gateway.pipeline.dispatch import NoCapableModel, dispatch_with_fallback
 from aira_gateway.pipeline.errors import PipelineRejected
 from aira_gateway.ratelimit.errors import RateLimited
 from aira_gateway.reporting.service import ReportingService
+from aira_gateway.thinking import ThinkingRejected, reserved_tokens
+from aira_gateway.thinking import resolve as resolve_thinking
 from aira_gateway.upstreams.base import UpstreamError
 
 BASE = "/kira/api/external"
@@ -85,7 +99,12 @@ def _error_response(request: Request, exc: Exception) -> JSONResponse:
     """Every refusal, in the predecessor's vocabulary (`kira_api.md` §6.2)."""
     if isinstance(exc, errors.KiraError):
         response = exc.to_response()
-    elif isinstance(exc, AttachmentRejected):
+    elif isinstance(exc, ThinkingRejected | EmbeddingRejected):
+        # These carry the predecessor's own codes (`kira_api.md` §6.2) — `INVALID_THINKING_MODE`,
+        # `THINKING_TOKEN_COUNT_TOO_HIGH`, `EMBEDDING_AGGREGATION_NOT_SUPPORTED` and the rest — so
+        # a migrating client's error handling keeps switching on the same strings it always did.
+        response = errors.kira_error_response(422, exc.code, exc.message)
+    elif isinstance(exc, AttachmentRejected | SchemaRejected):
         response = errors.kira_error_response(400, errors.VALIDATION_ERROR, str(exc))
     elif isinstance(exc, RateLimited | BudgetExceeded):
         response = errors.kira_error_response(
@@ -108,6 +127,29 @@ def _error_response(request: Request, exc: Exception) -> JSONResponse:
     for key, value in _sunset(request).items():
         response.headers[key] = value
     return response
+
+
+def _thinking_config(declaration: ModelDeclaration) -> schemas.ThinkingConfig | None:
+    """What the predecessor's `/models` says about a model's thinking (`kira_api.md` §2.4).
+
+    ``None`` for a model that declares none — rather than an empty config, which would read as
+    "thinking exists here and nothing is allowed" instead of "nobody has said".
+    """
+    modes = declaration.thinking_modes
+    if not modes:
+        return None
+    minimum, maximum = declaration.thinking_bounds
+    default = declaration.thinking_default
+    return schemas.ThinkingConfig(
+        mode=sorted(str(mode) for mode in modes),
+        minTokens=minimum,
+        maxTokens=maximum,
+        defaultThinking=(
+            schemas.ThinkingSetting(mode=str(default.get("mode")), tokens=default.get("tokens"))
+            if default and default.get("mode")
+            else None
+        ),
+    )
 
 
 async def _resolve_model(request: Request, model_id: int) -> str:
@@ -154,12 +196,16 @@ async def _prepare(
             f"maxTokens {parsed.max_tokens} exceeds the {cap} this model accepts.",
         )
 
-    refuse_unsupported(parsed, declaration)
-
-    canonical = to_canonical(parsed, model)
+    canonical = to_canonical(parsed, model, bounds=schema_bounds(request))
     canonical, fallbacks = await run_pipeline(request, canonical, trail)
-    await check_declaration(
+    routed = await check_declaration(
         request, model=canonical.model, method="generateContent", requested=parsed.max_tokens
+    )
+    # Resolved against the model that will actually serve this, **after** routing: a pipeline can
+    # send the request somewhere else, and a thinking budget validated against the model the caller
+    # named would be validated against a model that never sees it.
+    canonical = canonical.model_copy(
+        update={"thinking": resolve_thinking(canonical.thinking, routed)}
     )
     return canonical, fallbacks, trail, parsed
 
@@ -212,6 +258,7 @@ async def chat(request: Request, principal: Principal = Depends(require_principa
             model=canonical.model,
             max_output_tokens=canonical.max_output_tokens,
             attachments=[part.media_type for part in canonical.attachments],
+            extra_tokens=reserved_tokens(canonical.thinking),
         )
         async with request.app.state.budgets.hold(reservation):
             dispatched = await dispatch_with_fallback(
@@ -222,6 +269,7 @@ async def chat(request: Request, principal: Principal = Depends(require_principa
             )
             trail.served_by(dispatched.response.model, dispatched.candidate_index)
             trail.passed_over(dispatched.skipped)
+            check_structured_result(canonical, dispatched.response)
             cost = await request.app.state.pricing.cost_nanos(
                 dispatched.response.model, dispatched.response.usage
             )
@@ -270,6 +318,7 @@ async def streaming_chat(
             model=canonical.model,
             max_output_tokens=canonical.max_output_tokens,
             attachments=[part.media_type for part in canonical.attachments],
+            extra_tokens=reserved_tokens(canonical.thinking),
         )
     except KIRA_REFUSALS as exc:
         return await _refused(
@@ -285,6 +334,12 @@ async def streaming_chat(
                     fallbacks,
                     permits=requirements_for(request, canonical),
                 )
+                # Inside the same `try`, deliberately. This surface's "stream" delivers one
+                # terminal event carrying the whole answer, so an incomplete document would arrive
+                # looking exactly like complete data — and a refusal raised *outside* the handler
+                # would escape the generator as a 500 with no audit row rather than being recorded
+                # as the refusal it is.
+                check_structured_result(canonical, dispatched.response)
             except KIRA_REFUSALS as exc:
                 # Headers are already sent, so the failure cannot change the status. It is still
                 # accounted for and logged, which is what keeps a failed stream out of the "served"
@@ -345,47 +400,44 @@ async def embed(request: Request, principal: Principal = Depends(require_princip
                 exc.errors(include_url=False),
             ) from exc
 
-        texts = [parsed.text] if isinstance(parsed.text, str) else list(parsed.text)
-        if not texts or any(not text.strip() for text in texts):
-            raise errors.KiraError(
-                422, errors.VALIDATION_ERROR, "text must be a non-empty string or list of them."
-            )
-        if len(texts) > 1:
-            # `FRD-113` brings batching, task types and the metering that stops a batch being a
-            # way around a rate limit. Refused until then rather than embedded one at a time,
-            # which would silently cost N requests' worth of quota against a limit of one.
-            raise errors.KiraError(
-                422,
-                errors.NOT_YET_SUPPORTED,
-                "List embedding is not yet available on this gateway.",
-            )
-        if parsed.task_type is not None:
-            raise errors.KiraError(
-                422,
-                errors.NOT_YET_SUPPORTED,
-                "'task_type' is not yet available on this gateway. It is refused rather than "
-                "ignored: the wrong optimisation type produces vectors that retrieve measurably "
-                "worse, and nothing about the response would show it.",
-            )
-
         model = await _resolve_model(request, parsed.model_id)
         trail.requested_model = model
         declaration = await catalog_of(request).declaration(model)
-        if not declaration.can(Capability.EMBED):
-            raise errors.KiraError(
-                422,
-                errors.NO_EMBEDDING_CAPABILITIES,
-                f"Model '{model}' does not support embedding.",
-            )
 
-        reservation = await enforce_pre_dispatch(request, model=model, max_output_tokens=None)
+        # Every rule about *what may be embedded* is the shared validator's, so the two surfaces
+        # cannot disagree about whether a batch is allowed or a task type is declared. What this
+        # surface owns is the predecessor's default task type, applied in `to_embedding`.
+        embed_request = validate_embedding(
+            to_embedding(parsed, model),
+            declaration,
+            embedding_bounds(request),
+            # The predecessor defaults to `RETRIEVAL_QUERY` when the caller says nothing, so its
+            # callers keep getting it — where the model declares it.
+            default_task_type=DEFAULT_TASK_TYPE,
+        )
+
+        reservation = await enforce_pre_dispatch(
+            request,
+            model=model,
+            max_output_tokens=None,
+            # A batch of n is n requests against the limits, not one (`FRD-113` FR-6). Admitting
+            # it as one would let a caller limited to 10 requests a minute embed thousands.
+            units=embed_request.size,
+            extra_tokens=embedding_tokens(embed_request),
+        )
         async with request.app.state.budgets.hold(reservation):
             provider = registry_of(request).provider_for(model)
             if provider is None:
                 raise errors.KiraError(404, errors.MODEL_NOT_FOUND, f"Model '{model}' not found.")
-            vector = await provider.embed(model, texts[0])
-            await request.app.state.budgets.settle(reservation, 0, cost_nanos=None)
-            payload = schemas.EmbeddingResponse(vector=vector).model_dump()
+            vectors = await provider.embed(embed_request)
+            await request.app.state.budgets.settle(
+                reservation, 0, cost_nanos=None, requests=embed_request.size
+            )
+            payload = (
+                schemas.BatchEmbeddingResponse(vectors=vectors).model_dump()
+                if isinstance(parsed.text, list)
+                else schemas.EmbeddingResponse(vector=vectors[0] if vectors else []).model_dump()
+            )
             trail.model = model
             await _record(
                 request,
@@ -431,6 +483,16 @@ async def models(request: Request, principal: Principal = Depends(require_princi
                 capabilities=capabilities,
                 deprecated=declaration.deprecated,
                 max_output_tokens=declaration.max_output_tokens,
+                # Stage B. A client reads this list to decide what to *ask for*, so a surface that
+                # now serves thinking and task types while still reporting neither would have every
+                # caller conclude the models support none of it — the capability would exist and be
+                # unreachable, which is indistinguishable from not having built it.
+                thinkingConfig=_thinking_config(declaration),
+                embedding_dimensions=declaration.default_dimensions,
+                task_types=sorted(declaration.embedding_task_types) or None,
+                supports_aggregation=(
+                    declaration.supports_batch if declaration.can(Capability.EMBED) else None
+                ),
             )
         )
     return JSONResponse(

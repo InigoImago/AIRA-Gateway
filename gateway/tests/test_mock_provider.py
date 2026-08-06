@@ -1,4 +1,9 @@
-from aira_gateway.core.canonical import CanonicalMessage, CanonicalRequest, Role
+from aira_gateway.core.canonical import (
+    CanonicalEmbeddingRequest,
+    CanonicalMessage,
+    CanonicalRequest,
+    Role,
+)
 from aira_gateway.upstreams.mock import MockProvider
 
 
@@ -82,5 +87,7 @@ async def test_stream_propagates_max_tokens_finish_reason() -> None:
 
 async def test_embed_is_deterministic_and_sized() -> None:
     provider = MockProvider()
-    assert await provider.embed("mock-1", "abc") == await provider.embed("mock-1", "abc")
-    assert len(await provider.embed("mock-1", "abc")) == 8
+    request = CanonicalEmbeddingRequest(model="mock-1", texts=["abc"])
+    assert await provider.embed(request) == await provider.embed(request)
+    assert len(await provider.embed(request)) == 1
+    assert len((await provider.embed(request))[0]) == 8

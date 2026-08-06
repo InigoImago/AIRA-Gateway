@@ -360,6 +360,21 @@ pipeline, dispatch chain and audit writer, and both surfaces use it — a second
 `:embedContent` failure with a whole API to hide in. `test_a_kira_request_is_audited_exactly_like_
 a_gemini_one` compares the audit rows the two produce, which is the only way to be sure no step was
 skipped rather than merely present.
+**`FRD-111`/`112`/`113` + `FRD-107` Stage B done (2026-08-06).** Thinking, structured output and
+embedding options — and the KIRA surface serves them, since building a capability and continuing to
+refuse it at the compatibility layer helps nobody. The wire format did not change.
+Three rules came out of it that generalise:
+- **`None` and "off" are different answers.** A model whose catalog declares a default thinking
+  mode applies it; a request asking for `disabled` must say so *explicitly* or the default wins.
+- **One flag, three mechanisms** (`ADR-0011` rule 3). `structured_output` says whether a model can
+  return a document; Gemini uses a schema parameter, Anthropic a forced tool call, Azure a third.
+  The catalog never learns how. The schema is parsed (so an unknown field is an error **naming the
+  field**) and then **forwarded, never executed** — re-validating would run caller-supplied regexes
+  over provider output on the hot path.
+- **A batch weighs what it is.** `FRD-405`'s bucket now takes a `cost`: a batch of n takes n, or
+  the limit is intact on paper and gone in practice. Same for the budget's request count.
+Capability checks for thinking and schemas run **per hop** of the dispatch chain, for the same
+reason attachments do — a chain that quietly answers with less than was asked for returns a 200.
 **Delivery order is fixed (ROADMAP Phase 8, 2026-08-06)**, derived from the owner's priority
 (KIRA compatibility → model connections → documents → the review findings) and the dependency that
 priority 1 needs priority 3: **`FRD-122` (audit) → `FRD-114` (metadata) → `FRD-115`+`119` (Vertex EU,

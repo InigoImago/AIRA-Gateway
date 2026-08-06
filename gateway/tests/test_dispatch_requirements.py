@@ -61,7 +61,7 @@ class _Provider:
         raise NotImplementedError
         yield  # pragma: no cover
 
-    async def embed(self, model, text):  # noqa: ANN001, ANN201
+    async def embed(self, request):  # noqa: ANN001, ANN201
         raise NotImplementedError
 
 

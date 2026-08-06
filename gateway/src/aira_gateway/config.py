@@ -77,6 +77,20 @@ class GatewaySettings(BaseAiraSettings):
     # they are buffered (ADR-0007).
     max_request_bytes: int = 8 * 1024 * 1024
 
+    # A response schema is caller-supplied *structure* whose recursion is caller-controlled
+    # (FRD-112 FR-3). The schema is forwarded and never executed, so these bounds are the whole
+    # of the gateway's exposure to it — and counting, unlike a regex, cannot backtrack.
+    max_response_schema_bytes: int = 32 * 1024
+    max_response_schema_depth: int = 8
+    max_response_schema_properties: int = 256
+
+    # Embedding batch bounds (FRD-113 FR-5). Chosen **with the default rate limits in view**: a
+    # batch bound larger than any configured bucket would make large batches fail permanently,
+    # since the request is admissible here and refused a moment later by a limit it can never
+    # satisfy. The refusal names which of the two said no.
+    max_embedding_batch: int = 256
+    max_embedding_chars: int = 1_000_000
+
     # Real Google Gemini upstream (FRD-304). Registered only when an API key is present.
     google_api_key: str = ""
     gemini_models: str = "gemini-2.0-flash,gemini-1.5-flash"

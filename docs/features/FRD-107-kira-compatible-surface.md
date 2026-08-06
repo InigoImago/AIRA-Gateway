@@ -1,6 +1,6 @@
 # FRD-107 — A KIRA-compatible API surface
 
-> Phase: 8 (KIRA parity) · Status: **Stage A done (2026-08-06)** · Owner: Vadim Scheibe
+> Phase: 8 (KIRA parity) · Status: **Done — Stage A + B (2026-08-06)** · Owner: Vadim Scheibe
 > Last updated: 2026-08-06
 > Origin: `kira_api.md` §2, §6, §12. Depends on `FRD-110`–`FRD-114`.
 
@@ -246,6 +246,30 @@ anchor has moved protects nothing, which is why the harness reports them rather 
 model); `FRD-601` aggregates the two dimensions separately, and inventing a cross-tabulation would
 be a fabricated figure. Stated in the migration guide rather than approximated. CSV negotiation
 arrives with `FRD-602`.
+
+## 10b. Stage B (2026-08-06) — the refusals become service
+
+`FRD-111`, `FRD-112` and `FRD-113` landed, and every field Stage A refused by name is now honoured.
+**The wire format did not change**, which is the whole point of having staged it: a client written
+against Stage A keeps working and simply stops receiving `NOT_YET_SUPPORTED`.
+
+- `thinking` — validated against the model, refused with the predecessor's own codes
+  (`INVALID_THINKING_MODE`, `MISSING_THINKING_TOKEN_COUNT`, `THINKING_TOKEN_COUNT_TOO_LOW`/`_HIGH`).
+- A model whose declared default thinking is not `disabled` — the case Stage A singled out and
+  refused — now has that default **applied**, which is what closes the difference from the
+  predecessor rather than papering over it.
+- `responseSchema` — served, and refused with a named field when the schema is one we do not
+  understand, or with a capability refusal when no dispatchable model can honour it.
+- `/embed` — lists, task types (defaulting to `RETRIEVAL_QUERY` as the predecessor does, where the
+  model declares it), and per-model dimensionality.
+
+Two things Stage B does *not* pretend to have settled, both stated in the wire format rather than
+in a comment: a batch answers under **`vectors`** (`FRD-113` §11's open question), and `ki-usage`
+still reports per user with a model id of `0` (`FRD-601` aggregates the two dimensions separately;
+a cross-tabulation would be a fabricated figure).
+
+The refusal rule survives the change and only moves. "Not built yet" is gone; **"this model cannot"
+is not**, and it fails exactly as loudly.
 
 ## 11. Dependencies & Risks
 

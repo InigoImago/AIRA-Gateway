@@ -1,6 +1,6 @@
 # FRD-112 — Structured output (`responseSchema`)
 
-> Phase: 8 (KIRA parity) · Status: **Draft** · Owner: Vadim Scheibe · Last updated: 2026-08-06
+> Phase: 8 (KIRA parity) · Status: **Done (2026-08-06)** · Owner: Vadim Scheibe · Last updated: 2026-08-06
 > Origin: `kira_api.md` §4.5 (`responseSchema`), programme: `ADR-0010`.
 > Touches: `FRD-100` (surface), `FRD-300` (pipeline routing), `FRD-114` (model capabilities).
 
@@ -185,6 +185,32 @@ requests are slower / more expensive" is answerable without storing schemas.
   parses as JSON matching that shape and the audit row records the digest and not the schema.
 - *Given* a use case whose fallback chain contains one model without `structured_output`, *when*
   the primary fails, *then* that candidate is skipped rather than answering in free text.
+
+## 10a. What was built (2026-08-06)
+
+`core/schema.py`: a recursive model over FR-2's vocabulary with `extra="forbid"`, so an unknown
+field is an error **naming the field** rather than a silent drop; bounds on size, depth and total
+property count, each counted across the whole tree. Forwarded, never executed.
+
+Two mechanisms behind one flag, as §5.2 requires: Gemini gets `responseMimeType` +
+`responseSchema` (always together — the schema alone is *ignored* by the API, which would return
+prose to a caller expecting a document, produced by our own request body); Anthropic gets a forced
+tool call whose `input_schema` is the caller's schema translated to JSON Schema. Only
+`propertyOrdering` and `example` are dropped in that translation and neither constrains a value.
+
+**§5.3 is the design this feature turns on**, and its test is written to fail against the naive
+version: a chain whose primary declares the capability and whose fallback does not would, under a
+"check the requested model" implementation, answer in prose — the failure surfaces as a parse error
+in someone else's code, days later. `StructuredOutputSupported` runs per hop instead.
+
+FR-6 is real rather than defensive: `check_structured_result` refuses an answer that did not finish
+normally, and the mock truncates a document at the output cap so that path is exercised at all.
+
+Not built: the audit **digest**. `ResponseSchema.digest()` exists and is tested; wiring it onto the
+row needs a migration, and it was left out rather than half-done. Stated here so it is a task and
+not an assumption.
+
+Mutations **S1–S7**.
 
 ## 11. Dependencies & Risks
 

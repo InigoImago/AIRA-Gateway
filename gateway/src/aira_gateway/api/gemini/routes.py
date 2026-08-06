@@ -23,6 +23,7 @@ from aira_gateway.api.gemini.errors import gemini_error_response as _error
 from aira_gateway.api.gemini.mapping import (
     canonical_to_gemini,
     gemini_to_canonical,
+    gemini_to_embedding,
     upstream_model_to_gemini,
 )
 from aira_gateway.api.serving import (
@@ -30,25 +31,39 @@ from aira_gateway.api.serving import (
     UPSTREAM_STATUS_MAP,
     catalog_of,
     check_declaration,
+    check_structured_result,
     deprecation_headers,
     elapsed_ms,
+    embedding_bounds,
     enforce_pre_dispatch,
     provenance,
     refusal_outcome,
     registry_of,
     requirements_for,
     run_pipeline,
+    schema_bounds,
     upstream_error,
 )
 from aira_gateway.attachments import AttachmentRejected
 from aira_gateway.audit import AuditTrail, Outcome, decision_summary
 from aira_gateway.budgets.errors import BudgetExceeded
 from aira_gateway.budgets.service import Reservation
-from aira_gateway.core.canonical import CanonicalChunk, CanonicalRequest, CanonicalUsage
+from aira_gateway.core.canonical import (
+    CanonicalChunk,
+    CanonicalEmbeddingRequest,
+    CanonicalRequest,
+    CanonicalUsage,
+)
+from aira_gateway.core.schema import SchemaRejected
+from aira_gateway.embedding import EmbeddingRejected
+from aira_gateway.embedding import estimated_tokens as embedding_tokens
+from aira_gateway.embedding import validate as validate_embedding
 from aira_gateway.persistence.recorder import record_request
 from aira_gateway.pipeline.dispatch import NoCapableModel, dispatch_with_fallback
 from aira_gateway.pipeline.errors import PipelineRejected
 from aira_gateway.ratelimit.errors import RateLimited
+from aira_gateway.thinking import ThinkingRejected, reserved_tokens
+from aira_gateway.thinking import resolve as resolve_thinking
 from aira_gateway.upstreams.base import Upstream, UpstreamError
 
 _log = get_logger("aira_gateway")
@@ -101,8 +116,13 @@ async def get_model(model: str, request: Request) -> Response:
 
 
 def _refusal_response(exc: Exception) -> JSONResponse:
-    if isinstance(exc, AttachmentRejected):
+    if isinstance(exc, AttachmentRejected | SchemaRejected):
         return _error(400, str(exc), "INVALID_ARGUMENT")
+    if isinstance(exc, ThinkingRejected | EmbeddingRejected):
+        # The code the predecessor uses travels in the message, because Google's envelope has no
+        # field for it and inventing one would make this surface non-Gemini. The KIRA surface,
+        # whose clients switch on the code, renders it as the code (`FRD-107`).
+        return _error(400, f"{exc.code}: {exc.message}", "INVALID_ARGUMENT")
     if isinstance(exc, NoCapableModel):
         # A 400, not the 502 this used to be. "Every candidate was excluded" is a configuration or
         # capability problem somebody can fix; an upstream outage is not, and reporting them as the
@@ -218,14 +238,14 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
     # Parse and prepare per method, then run the pre-dispatch controls once for all of them.
     canonical: CanonicalRequest | None = None
     fallbacks: tuple[str, ...] = ()
-    embed_request: schemas.EmbedContentRequest | None = None
+    embed_request: CanonicalEmbeddingRequest | None = None
 
     if method in ("generateContent", "streamGenerateContent"):
         try:
             gemini_request = schemas.GenerateContentRequest.model_validate(body)
         except ValidationError as exc:
             raise GeminiHTTPError(400, _first_error(exc), "INVALID_ARGUMENT") from exc
-        canonical = gemini_to_canonical(model, gemini_request)
+        canonical = gemini_to_canonical(model, gemini_request, bounds=schema_bounds(request))
 
         canonical, fallbacks = await run_pipeline(request, canonical, trail)
 
@@ -233,11 +253,16 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
         provider = registry_of(request).provider_for(canonical.model)
         if provider is None:
             raise GeminiHTTPError(404, f"Model '{canonical.model}' not found.", "NOT_FOUND")
-    elif method == "embedContent":
+    elif method in ("embedContent", "batchEmbedContents"):
         try:
-            embed_request = schemas.EmbedContentRequest.model_validate(body)
+            entries = (
+                [schemas.EmbedContentRequest.model_validate(body)]
+                if method == "embedContent"
+                else schemas.BatchEmbedContentsRequest.model_validate(body).requests
+            )
         except ValidationError as exc:
             raise GeminiHTTPError(400, _first_error(exc), "INVALID_ARGUMENT") from exc
+        embed_request = gemini_to_embedding(model, entries)
     else:
         raise GeminiHTTPError(400, f"Unknown method '{method}'.", "INVALID_ARGUMENT")
 
@@ -250,11 +275,32 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
     declaration = await check_declaration(
         request, model=effective_model, method=method, requested=requested_output
     )
+
+    if canonical is not None:
+        # Resolved against the model that will actually serve this — after routing, before the
+        # reservation. The order is load-bearing: the number sent upstream and the number reserved
+        # against the budget have to be the same one, or the limit is bounding a different request
+        # than the one that was made (`FRD-111` §5.3).
+        canonical = canonical.model_copy(
+            update={"thinking": resolve_thinking(canonical.thinking, declaration)}
+        )
+    if embed_request is not None:
+        embed_request = validate_embedding(embed_request, declaration, embedding_bounds(request))
+
+    units = embed_request.size if embed_request is not None else 1
     reservation = await enforce_pre_dispatch(
         request,
         model=effective_model,
         max_output_tokens=requested_output,
         attachments=[part.media_type for part in canonical.attachments] if canonical else None,
+        units=units,
+        extra_tokens=(
+            reserved_tokens(canonical.thinking)
+            if canonical is not None
+            else embedding_tokens(embed_request)
+            if embed_request is not None
+            else 0
+        ),
     )
 
     if canonical is not None:
@@ -273,6 +319,9 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
                 canonical_response = dispatched.response
                 trail.served_by(canonical_response.model, dispatched.candidate_index)
                 trail.passed_over(dispatched.skipped)
+                # A truncated or unsatisfied document is not data (FRD-112 FR-6). Checked before
+                # the reservation is settled, so a refused answer is released rather than booked.
+                check_structured_result(canonical, canonical_response)
                 # Priced once, then shared: the budget counters and the audit trail must not be
                 # able to disagree about what a request cost (FRD-403).
                 cost = await request.app.state.pricing.cost_nanos(
@@ -313,26 +362,25 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
     assert embed_request is not None  # the method dispatch above guarantees it
     async with request.app.state.budgets.hold(reservation):
         started = time.monotonic()
-        # Embedding takes text only. `FRD-113` is explicit that embedding a document means
-        # chunking it, which is the consumer's decision — so an attachment here is refused rather
-        # than quietly ignored, which would embed the prompt and not the file.
-        if any(part.inlineData is not None for part in embed_request.content.parts):
-            raise GeminiHTTPError(
-                400,
-                "Embedding takes text only; send the document to a generate verb instead.",
-                "INVALID_ARGUMENT",
-            )
-        text = "".join(part.text or "" for part in embed_request.content.parts)
-        values = await provider.embed(model, text)
-        payload = schemas.EmbedContentResponse(
-            embedding=schemas.ContentEmbedding(values=values)
-        ).model_dump()
-        # Embeddings report no token usage, so there is nothing to price. The request still
-        # counts against a request-limited budget, which is what settling with zero tokens does.
-        await request.app.state.budgets.settle(reservation, 0, cost_nanos=None)
+        vectors = await provider.embed(embed_request)
+        payload = (
+            schemas.BatchEmbedContentsResponse(
+                embeddings=[schemas.ContentEmbedding(values=values) for values in vectors]
+            ).model_dump()
+            if method == "batchEmbedContents"
+            else schemas.EmbedContentResponse(
+                embedding=schemas.ContentEmbedding(values=vectors[0] if vectors else [])
+            ).model_dump()
+        )
+        # Embeddings report no token usage, so there is nothing to price. The batch still counts
+        # as the *many* requests it is against a request-limited budget — settling it as one would
+        # hand back everything the reservation took and leave batched traffic invisible.
+        await request.app.state.budgets.settle(
+            reservation, 0, cost_nanos=None, requests=embed_request.size
+        )
         await record_request(
             request,
-            operation="embedContent",
+            operation=method,
             model=model,
             status=200,
             usage=None,

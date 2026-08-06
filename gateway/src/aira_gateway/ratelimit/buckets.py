@@ -1,7 +1,9 @@
 """Token buckets for rate limiting (FRD-405 §4.1).
 
-A bucket holds ``capacity`` tokens and refills at ``refill_per_second``. A request takes one
-token; an empty bucket means the caller is over its limit. Refill is computed from elapsed time
+A bucket holds ``capacity`` tokens and refills at ``refill_per_second``. A request takes
+``cost`` tokens — one for an ordinary call, and **one per text for an embedding batch**, because a
+batch of 500 admitted as a single request turns a limit of 10 per minute into 5 000 texts per
+minute: intact on paper, gone in practice (`FRD-113` §5.3). Refill is computed from elapsed time
 on each check, so there is no timer and an idle bucket costs nothing.
 
 Why a token bucket rather than a counter per fixed window: a fixed window lets twice the limit
@@ -48,14 +50,15 @@ _TAKE_TOKENS = """
 local clock = redis.call('TIME')
 local now = tonumber(clock[1]) + tonumber(clock[2]) / 1000000.0
 
+local cost = tonumber(ARGV[1])
 local tokens = {}
 local allowed = 1
 local retry_ms = 0
 local refused = 0
 
 for i = 1, #KEYS do
-  local capacity = tonumber(ARGV[(i - 1) * 2 + 1])
-  local refill = tonumber(ARGV[(i - 1) * 2 + 2])
+  local capacity = tonumber(ARGV[(i - 1) * 2 + 2])
+  local refill = tonumber(ARGV[(i - 1) * 2 + 3])
 
   local state = redis.call('HMGET', KEYS[i], 'tokens', 'ts')
   local available = tonumber(state[1])
@@ -70,8 +73,8 @@ for i = 1, #KEYS do
   available = math.min(capacity, available + elapsed * refill)
   tokens[i] = available
 
-  if available < 1 then
-    local wait = math.ceil((1 - available) / refill * 1000)
+  if available < cost then
+    local wait = math.ceil((cost - available) / refill * 1000)
     if allowed == 1 then refused = i end
     allowed = 0
     if wait > retry_ms then retry_ms = wait end
@@ -81,10 +84,10 @@ end
 -- The accrued refill is written back either way: time passed regardless of the decision. Only
 -- the debit is conditional.
 for i = 1, #KEYS do
-  local capacity = tonumber(ARGV[(i - 1) * 2 + 1])
-  local refill = tonumber(ARGV[(i - 1) * 2 + 2])
+  local capacity = tonumber(ARGV[(i - 1) * 2 + 2])
+  local refill = tonumber(ARGV[(i - 1) * 2 + 3])
   local available = tokens[i]
-  if allowed == 1 then available = available - 1 end
+  if allowed == 1 then available = available - cost end
   redis.call('HSET', KEYS[i], 'tokens', tostring(available), 'ts', tostring(now))
   redis.call('EXPIRE', KEYS[i], math.max(60, math.ceil(capacity / refill) + 1))
 end
@@ -122,8 +125,8 @@ ALLOWED = BucketDecision(allowed=True)
 
 
 class TokenBucket(Protocol):
-    async def take(self, requests: Sequence[BucketRequest]) -> BucketDecision:
-        """Take one token from **every** bucket, or from none of them."""
+    async def take(self, requests: Sequence[BucketRequest], cost: int = 1) -> BucketDecision:
+        """Take ``cost`` tokens from **every** bucket, or from none of them."""
         ...
 
 
@@ -133,15 +136,15 @@ class RedisTokenBucket:
     def __init__(self, runner: ScriptRunner) -> None:
         self._runner = runner
 
-    async def take(self, requests: Sequence[BucketRequest]) -> BucketDecision:
-        """Take a token from each bucket, or report how long until one is available.
+    async def take(self, requests: Sequence[BucketRequest], cost: int = 1) -> BucketDecision:
+        """Take ``cost`` tokens from each bucket, or report how long until they are available.
 
         Raises :class:`CountersUnavailable` when Redis cannot be reached — the caller falls back
         to the in-memory bucket rather than letting the request through (FRD-405 §4.3).
         """
         if not requests:
             return ALLOWED
-        args: list[str | int | float] = []
+        args: list[str | int | float] = [cost]
         for request in requests:
             args.extend((request.capacity, request.refill_per_second))
         allowed, retry_ms, refused = await self._runner.run(
@@ -166,7 +169,7 @@ class InMemoryTokenBucket:
         self._state: dict[str, tuple[float, float]] = {}
         self._clock = clock or time.monotonic
 
-    async def take(self, requests: Sequence[BucketRequest]) -> BucketDecision:
+    async def take(self, requests: Sequence[BucketRequest], cost: int = 1) -> BucketDecision:
         if not requests:
             return ALLOWED
         now = float(self._clock())  # type: ignore[operator]
@@ -182,16 +185,16 @@ class InMemoryTokenBucket:
                 tokens + max(0.0, now - ts) * request.refill_per_second,
             )
             available.append(tokens)
-            if tokens < 1 and decision.allowed:
+            if tokens < cost and decision.allowed:
                 wait = (
-                    (1 - tokens) / request.refill_per_second
+                    (cost - tokens) / request.refill_per_second
                     if request.refill_per_second > 0
                     else float("inf")
                 )
                 decision = BucketDecision(allowed=False, retry_after_seconds=wait, refused=request)
 
         for request, tokens in zip(requests, available, strict=True):
-            self._state[request.key] = (tokens - 1 if decision.allowed else tokens, now)
+            self._state[request.key] = (tokens - cost if decision.allowed else tokens, now)
         return decision
 
 
@@ -220,13 +223,13 @@ class FallbackTokenBucket:
     def degraded(self) -> bool:
         return self.FEATURE in self._degradation.features
 
-    async def take(self, requests: Sequence[BucketRequest]) -> BucketDecision:
+    async def take(self, requests: Sequence[BucketRequest], cost: int = 1) -> BucketDecision:
         try:
-            decision = await self._shared.take(requests)
+            decision = await self._shared.take(requests, cost)
         except CountersUnavailable:
             self._degradation.degraded(
                 self.FEATURE, "per-instance buckets; N instances allow N x the limit"
             )
-            return await self._local.take(requests)
+            return await self._local.take(requests, cost)
         self._degradation.working(self.FEATURE)
         return decision

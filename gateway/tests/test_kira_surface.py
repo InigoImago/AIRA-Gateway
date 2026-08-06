@@ -1,12 +1,14 @@
-"""The predecessor's contract, served by AIRA (FRD-107 Stage A).
+"""The predecessor's contract, served by AIRA (FRD-107, Stage A + B).
 
 These are **contract tests**: they assert the response shape field by field against `kira_api.md`,
 because "compatible" has to be a fact rather than a claim. A migrating consumer changes a base URL
 and nothing else, and the only thing that makes that true is checking it.
 
-The second theme is the one Stage A exists for: **a field this gateway cannot yet honour is
-refused, never ignored.** A dropped field produces an answer that is wrong for a reason the caller
-cannot see — the same failure documents have one level up.
+Stage B turned the fields Stage A refused — thinking, `responseSchema`, batch embedding and task
+types — into fields it serves, without touching the wire format. The second theme therefore
+survives the change and only moves: **a field this gateway cannot honour is refused, never
+ignored.** What changed is the reason. "Not built yet" is gone; "this model does not offer it" is
+not, and it fails exactly as loudly, with the predecessor's own error codes.
 """
 
 from __future__ import annotations
@@ -173,48 +175,130 @@ async def test_a_model_without_chat_capability_is_refused_with_its_own_code() ->
 # == refused, never ignored ======================================================================
 
 
-async def test_thinking_is_refused_by_name_rather_than_dropped() -> None:
-    """The whole reason Stage A exists as a stage. A caller who asked for a thinking budget and
-    silently got none would see an answer that is worse for a reason nothing reveals."""
-    app = _app()
-    with TestClient(app) as client:
-        await _catalogue(app)
-        response = client.post(f"{BASE}/chat", json=_chat(thinking={"mode": "medium"}))
-
-    assert response.status_code == 422
-    assert response.json()["code"] == "NOT_YET_SUPPORTED"
-    assert "thinking" in response.json()["message"]
-
-
-async def test_a_response_schema_is_refused_by_name() -> None:
-    app = _app()
-    with TestClient(app) as client:
-        await _catalogue(app)
-        response = client.post(f"{BASE}/chat", json=_chat(responseSchema={"type": "OBJECT"}))
-
-    assert response.status_code == 422
-    assert response.json()["code"] == "NOT_YET_SUPPORTED"
-    assert "responseSchema" in response.json()["message"]
-
-
-async def test_a_model_with_a_declared_thinking_default_is_refused_rather_than_approximated() -> (
-    None
-):
-    """The subtle one the FRD singled out. The predecessor applies a model's declared default
-    thinking when the caller sends none. Serving such a model with no thinking at all would give a
-    different answer for a reason nobody could see — so it is refused until `FRD-111` lands."""
+async def test_thinking_reaches_the_model_it_was_asked_for() -> None:
+    """Stage B. The mock reports the setting it received, which is how a resolution that silently
+    dropped the field would be caught rather than merely believed."""
     app = _app()
     with TestClient(app) as client:
         await _catalogue(
             app,
             capabilities=["generate", "thinking"],
-            thinking={"modes": ["auto", "medium"], "default": {"mode": "medium"}},
+            thinking={"modes": ["medium", "auto"], "levels": {"medium": 2048}},
+        )
+        response = client.post(f"{BASE}/chat", json=_chat(thinking={"mode": "medium"}))
+
+    assert response.status_code == 200, response.text
+    # The level was translated to this model's own budget for it — the catalog's table, not a
+    # constant in our code, which is what keeps a new model from being a code change.
+    assert "thinking:medium budget=2048" in response.json()["parts"][0]["text"]
+
+
+async def test_a_thinking_mode_the_model_does_not_offer_keeps_its_own_code() -> None:
+    app = _app()
+    with TestClient(app) as client:
+        await _catalogue(app, capabilities=["generate", "thinking"], thinking={"modes": ["auto"]})
+        response = client.post(f"{BASE}/chat", json=_chat(thinking={"mode": "high"}))
+
+    assert response.status_code == 422
+    assert response.json()["code"] == "INVALID_THINKING_MODE"
+
+
+@pytest.mark.parametrize(
+    ("tokens", "code"),
+    [
+        (None, "MISSING_THINKING_TOKEN_COUNT"),
+        (64, "THINKING_TOKEN_COUNT_TOO_LOW"),
+        (99_999, "THINKING_TOKEN_COUNT_TOO_HIGH"),
+    ],
+)
+async def test_each_budget_failure_has_its_own_code(tokens: int | None, code: str) -> None:
+    """`kira_api.md` §6.2 gives these three separate codes, and the separation is the point: a
+    client that cannot tell "you forgot the count" from "the count is too high" can fix neither."""
+    app = _app()
+    with TestClient(app) as client:
+        await _catalogue(
+            app,
+            capabilities=["generate", "thinking"],
+            max_output_tokens=64_000,
+            thinking={"modes": ["limited"], "min_tokens": 128, "max_tokens": 24_576},
+        )
+        setting: dict[str, Any] = {"mode": "limited"}
+        if tokens is not None:
+            setting["tokens"] = tokens
+        response = client.post(f"{BASE}/chat", json=_chat(thinking=setting))
+
+    assert response.status_code == 422
+    assert response.json()["code"] == code
+
+
+async def test_a_response_schema_produces_a_document_of_that_shape() -> None:
+    """Stage B. `kira_api.md` §4.5's example, and the answer has to parse as what was asked for."""
+    app = _app()
+    schema = {
+        "type": "ARRAY",
+        "items": {
+            "type": "OBJECT",
+            "properties": {
+                "recipeName": {"type": "STRING"},
+                "ingredients": {"type": "ARRAY", "items": {"type": "STRING"}},
+            },
+            "propertyOrdering": ["recipeName", "ingredients"],
+        },
+    }
+    with TestClient(app) as client:
+        await _catalogue(app, capabilities=["generate", "structured_output"])
+        response = client.post(f"{BASE}/chat", json=_chat(responseSchema=schema))
+
+    assert response.status_code == 200, response.text
+    document = json.loads(response.json()["parts"][0]["text"])
+    assert isinstance(document, list)
+    assert set(document[0]) == {"recipeName", "ingredients"}
+    assert isinstance(document[0]["ingredients"], list)
+
+
+async def test_a_model_without_structured_output_refuses_rather_than_answering_in_prose() -> None:
+    """The failure this capability check exists for. Prose returned to a caller that will call
+    `JSON.parse` on it surfaces as a bug in *their* code, days later, with nothing pointing here."""
+    app = _app()
+    with TestClient(app) as client:
+        await _catalogue(app, capabilities=["generate"])
+        response = client.post(f"{BASE}/chat", json=_chat(responseSchema={"type": "OBJECT"}))
+
+    assert response.status_code == 400
+    assert "structured output" in response.json()["message"]
+
+
+async def test_an_unknown_schema_field_is_named_rather_than_dropped() -> None:
+    app = _app()
+    with TestClient(app) as client:
+        await _catalogue(app, capabilities=["generate", "structured_output"])
+        response = client.post(
+            f"{BASE}/chat",
+            json=_chat(responseSchema={"type": "OBJECT", "additionalProperties": False}),
+        )
+
+    assert response.status_code == 400
+    assert "additionalProperties" in response.json()["message"]
+
+
+async def test_a_declared_thinking_default_is_now_applied_rather_than_refused() -> None:
+    """The case Stage A singled out and refused: the predecessor applies a model's declared default
+    when the caller sends none. Stage B applies it too, which is what closes the difference."""
+    app = _app()
+    with TestClient(app) as client:
+        await _catalogue(
+            app,
+            capabilities=["generate", "thinking"],
+            thinking={
+                "modes": ["auto", "medium"],
+                "default": {"mode": "medium"},
+                "levels": {"medium": 1024},
+            },
         )
         response = client.post(f"{BASE}/chat", json=_chat())
 
-    assert response.status_code == 422
-    assert response.json()["code"] == "NOT_YET_SUPPORTED"
-    assert "medium" in response.json()["message"]
+    assert response.status_code == 200, response.text
+    assert "thinking:medium budget=1024" in response.json()["parts"][0]["text"]
 
 
 async def test_a_model_whose_default_is_disabled_is_served_normally() -> None:
@@ -340,20 +424,54 @@ async def test_empty_embedding_input_is_refused(text: Any) -> None:
     assert response.status_code == 422
 
 
-async def test_a_list_and_a_task_type_are_refused_by_name_until_frd_113() -> None:
-    """Embedding one at a time would silently cost N requests of quota against a limit of one, and
-    the wrong task type produces vectors that retrieve measurably worse with nothing to show it."""
+async def test_a_batch_returns_one_vector_per_text_in_order() -> None:
+    """Stage B. The singular `vector` cannot express n vectors, so a list answers under `vectors`
+    — an extension, stated rather than smuggled (`FRD-113` §11 has the open question)."""
     app = _app()
     with TestClient(app) as client:
-        await _catalogue(app)
-        batch = client.post(f"{BASE}/embed", json={"text": ["a", "b"], "model_id": 1004})
-        task = client.post(
+        await _catalogue(app, embedding={"supports_batch": True})
+        response = client.post(f"{BASE}/embed", json={"text": ["a", "bb"], "model_id": 1004})
+
+    assert response.status_code == 200, response.text
+    vectors = response.json()["vectors"]
+    assert len(vectors) == 2
+    # Order is the contract, and two different texts must not produce the same vector — otherwise
+    # "in the order submitted" would be unfalsifiable.
+    assert vectors[0] != vectors[1]
+
+
+async def test_a_model_without_batch_support_keeps_the_predecessors_code() -> None:
+    app = _app()
+    with TestClient(app) as client:
+        await _catalogue(app, embedding={"supports_batch": False})
+        response = client.post(f"{BASE}/embed", json={"text": ["a", "b"], "model_id": 1004})
+
+    assert response.status_code == 422
+    assert response.json()["code"] == "EMBEDDING_AGGREGATION_NOT_SUPPORTED"
+
+
+async def test_a_declared_task_type_is_honoured_and_an_undeclared_one_is_refused() -> None:
+    """The whole value of the field is that the wrong one fails loudly instead of producing
+    quietly worse vectors, so both halves are asserted together."""
+    app = _app()
+    with TestClient(app) as client:
+        await _catalogue(app, embedding={"task_types": ["RETRIEVAL_QUERY", "RETRIEVAL_DOCUMENT"]})
+        good = client.post(
             f"{BASE}/embed",
             json={"text": "a", "model_id": 1004, "task_type": "RETRIEVAL_DOCUMENT"},
         )
+        bad = client.post(
+            f"{BASE}/embed", json={"text": "a", "model_id": 1004, "task_type": "CLUSTERING"}
+        )
+        default = client.post(f"{BASE}/embed", json={"text": "a", "model_id": 1004})
 
-    assert batch.json()["code"] == "NOT_YET_SUPPORTED"
-    assert task.json()["code"] == "NOT_YET_SUPPORTED"
+    assert good.status_code == 200, good.text
+    assert bad.status_code == 422
+    assert bad.json()["code"] == "INVALID_EMBEDDING_TASK_TYPE"
+    # The predecessor's default is applied here, in the compatibility layer — so the same text
+    # optimised two different ways gives two different vectors, which is what makes it real.
+    assert default.status_code == 200
+    assert default.json()["vector"] != good.json()["vector"]
 
 
 async def test_a_model_without_embedding_capability_is_refused_with_its_own_code() -> None:
@@ -452,3 +570,71 @@ async def test_a_refusal_on_this_surface_is_recorded_too() -> None:
     assert rows[0].api == "kira"
     assert rows[0].outcome == "invalid_request"
     assert rows[0].status == 422
+
+
+async def test_models_reports_what_a_client_needs_to_ask_for_the_features() -> None:
+    """`kira_api.md` §2.4. A client reads this list to decide what to *request* — so a surface
+    that serves thinking and task types while reporting neither leaves every caller concluding the
+    models support none of it. The capability would exist and be unreachable, which from the
+    outside is indistinguishable from not having built it."""
+    app = _app()
+    with TestClient(app) as client:
+        await _catalogue(
+            app,
+            capabilities=["generate", "embed", "thinking"],
+            max_output_tokens=65_536,
+            thinking={
+                "modes": ["auto", "limited", "disabled"],
+                "min_tokens": 128,
+                "max_tokens": 24_576,
+                "default": {"mode": "disabled"},
+            },
+            embedding={
+                "supports_batch": True,
+                "task_types": ["RETRIEVAL_QUERY", "RETRIEVAL_DOCUMENT"],
+                "dimensions": [768, 3072],
+                "default": 768,
+            },
+        )
+        listed = client.get(f"{BASE}/models").json()[0]
+
+    assert listed["thinkingConfig"]["mode"] == ["auto", "disabled", "limited"]
+    assert listed["thinkingConfig"]["minTokens"] == 128
+    assert listed["thinkingConfig"]["maxTokens"] == 24_576
+    assert listed["thinkingConfig"]["defaultThinking"]["mode"] == "disabled"
+    assert listed["embedding_dimensions"] == 768
+    assert listed["task_types"] == ["RETRIEVAL_DOCUMENT", "RETRIEVAL_QUERY"]
+    assert listed["supports_aggregation"] is True
+
+
+async def test_a_model_that_declares_no_thinking_reports_none_rather_than_an_empty_config() -> None:
+    """ "Nobody has said" and "thinking exists here and nothing is allowed" are different answers,
+    and an empty config would be the second."""
+    app = _app()
+    with TestClient(app) as client:
+        await _catalogue(app, capabilities=["generate"])
+        listed = client.get(f"{BASE}/models").json()[0]
+
+    assert "thinkingConfig" not in listed
+
+
+async def test_a_truncated_document_is_refused_on_the_streaming_path_too() -> None:
+    """This surface's "stream" delivers one terminal event carrying the whole answer, so an
+    incomplete document would arrive looking exactly like complete data. The check belongs on both
+    paths or on neither."""
+    app = _app()
+    with TestClient(app) as client:
+        await _catalogue(app, capabilities=["generate", "structured_output"], max_output_tokens=64)
+        with client.stream(
+            "POST",
+            f"{BASE}/streaming-chat",
+            json=_chat(
+                responseSchema={"type": "OBJECT", "properties": {"a": {"type": "STRING"}}},
+                maxTokens=1,
+            ),
+        ) as response:
+            body = response.read().decode()
+
+    # The failure cannot change the status — headers are already sent — so what is asserted is
+    # that no `completed` event carrying the truncated document was emitted.
+    assert "completed" not in body

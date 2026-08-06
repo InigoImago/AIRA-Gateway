@@ -32,8 +32,8 @@ class _Provider:
         raise NotImplementedError
         yield  # pragma: no cover
 
-    async def embed(self, model: str, text: str) -> list[float]:
-        return [0.0]
+    async def embed(self, request: object) -> list[list[float]]:
+        return [[0.0]]
 
 
 def _request(model: str) -> CanonicalRequest:

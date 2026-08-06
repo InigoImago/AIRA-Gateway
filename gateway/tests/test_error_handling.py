@@ -18,7 +18,7 @@ class _BoomProvider:
         raise RuntimeError("boom")
         yield  # pragma: no cover  (make this an async generator)
 
-    async def embed(self, model, text):  # noqa: ANN001, ANN201
+    async def embed(self, request):  # noqa: ANN001, ANN201
         raise RuntimeError("boom")
 
 
@@ -52,7 +52,7 @@ class _RaisingProvider:
         raise UpstreamError("upstream failure", self._status)
         yield  # pragma: no cover  (make this an async generator)
 
-    async def embed(self, model, text):  # noqa: ANN001, ANN201
+    async def embed(self, request):  # noqa: ANN001, ANN201
         raise UpstreamError("upstream failure", self._status)
 
 

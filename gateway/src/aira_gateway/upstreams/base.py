@@ -11,7 +11,12 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-from aira_gateway.core.canonical import CanonicalChunk, CanonicalRequest, CanonicalResponse
+from aira_gateway.core.canonical import (
+    CanonicalChunk,
+    CanonicalEmbeddingRequest,
+    CanonicalRequest,
+    CanonicalResponse,
+)
 
 
 class UpstreamError(Exception):
@@ -55,7 +60,14 @@ class Upstream(Protocol):
 
     def stream_generate(self, request: CanonicalRequest) -> AsyncIterator[CanonicalChunk]: ...
 
-    async def embed(self, model: str, text: str) -> list[float]: ...
+    async def embed(self, request: CanonicalEmbeddingRequest) -> list[list[float]]: ...
+
+    """One call, one vector per submitted text, in the order submitted (`FRD-113` §5.1).
+
+    A single text is a list of one. Adding a second method for batches instead would mean two code
+    paths, and a batch metered on the single-text path is a rate limit with a hole in it — so the
+    breaking change to this protocol was taken once, deliberately, rather than avoided.
+    """
 
 
 class AmbiguousModel(Exception):

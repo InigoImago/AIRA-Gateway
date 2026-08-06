@@ -14,9 +14,17 @@ from typing import Any
 import httpx
 import pytest
 
+from aira_common.models import ThinkingMode
 from aira_common.tokens import StaticTokenSource
 from aira_gateway.config import GatewaySettings
-from aira_gateway.core.canonical import CanonicalMessage, CanonicalRequest, Role
+from aira_gateway.core.canonical import (
+    CanonicalEmbeddingRequest,
+    CanonicalMessage,
+    CanonicalRequest,
+    Role,
+    Thinking,
+)
+from aira_gateway.core.schema import parse as parse_schema
 from aira_gateway.residency import RegionNotAllowed
 from aira_gateway.upstreams.base import (
     AmbiguousModel,
@@ -31,6 +39,8 @@ from aira_gateway.upstreams.vertex.adapters import (
     VertexModel,
 )
 from aira_gateway.upstreams.vertex.anthropic_mapping import (
+    SCHEMA_UNSATISFIED,
+    STRUCTURED_TOOL,
     StreamAssembler,
     answer_text,
     anthropic_to_canonical,
@@ -158,7 +168,7 @@ class _Offering:
 
     async def generate(self, request): ...  # noqa: ANN001, ANN201
     async def stream_generate(self, request): ...  # noqa: ANN001, ANN201
-    async def embed(self, model, text): ...  # noqa: ANN001, ANN201
+    async def embed(self, request): ...  # noqa: ANN001, ANN201
 
 
 def test_two_providers_offering_one_model_refuse_to_start() -> None:
@@ -414,7 +424,7 @@ async def test_anthropic_has_no_embedding_endpoint() -> None:
     )
 
     with pytest.raises(UpstreamError):
-        await adapter.embed("claude-1", "text")
+        await adapter.embed(CanonicalEmbeddingRequest(model="claude-1", texts=["text"]))
 
 
 # -- provenance ---------------------------------------------------------------------------------
@@ -472,3 +482,92 @@ def test_no_code_above_the_adapters_knows_the_vendor() -> None:
         "a vendor reached above its adapter — the canonical core is vendor-shaped:\n"
         + "\n".join(offenders)
     )
+
+
+# == the second dialect's answers to the same two features (FRD-111, FRD-112) ====================
+
+
+def test_thinking_becomes_anthropics_enabled_block() -> None:
+    request = _request().model_copy(
+        update={"thinking": Thinking(mode=ThinkingMode.LIMITED, tokens=2048)}
+    )
+    body = canonical_to_anthropic(request, max_tokens=8192)
+    assert body["thinking"] == {"type": "enabled", "budget_tokens": 2048}
+
+
+def test_disabled_thinking_sends_no_block_at_all() -> None:
+    """Anthropic has no "off" value — the absence of the parameter *is* off. Sending
+    `budget_tokens: 0` would be an error rather than an instruction."""
+    request = _request().model_copy(
+        update={"thinking": Thinking(mode=ThinkingMode.DISABLED, tokens=0)}
+    )
+    assert "thinking" not in canonical_to_anthropic(request, max_tokens=8192)
+
+
+def test_a_budget_that_does_not_fit_the_output_allowance_is_refused() -> None:
+    """FR-3a: Anthropic draws thinking tokens *from* `max_tokens`, so a budget at or above it
+    describes a request that can never answer. The catalog cannot hold that combination, and this
+    is the backstop for a caller whose own cap is lower than the declaration anticipated."""
+    request = _request().model_copy(
+        update={"thinking": Thinking(mode=ThinkingMode.LIMITED, tokens=4096)}
+    )
+    with pytest.raises(ValueError, match="drawn from it"):
+        canonical_to_anthropic(request, max_tokens=4096)
+
+
+def test_a_schema_becomes_a_forced_tool_call() -> None:
+    """The vendor has no schema parameter at all. One capability, three mechanisms — and the
+    mechanism stays here, in the dialect, rather than in a catalog every plane reads."""
+    schema = parse_schema({"type": "OBJECT", "properties": {"a": {"type": "STRING"}}})
+    body = canonical_to_anthropic(
+        _request().model_copy(update={"response_schema": schema}), max_tokens=1024
+    )
+
+    assert body["tool_choice"] == {"type": "tool", "name": STRUCTURED_TOOL}
+    assert body["tools"][0]["input_schema"]["properties"]["a"]["type"] == "string"
+
+
+def test_the_document_is_read_back_out_of_the_tool_call() -> None:
+    payload = {
+        "content": [{"type": "tool_use", "name": STRUCTURED_TOOL, "input": {"a": "x"}}],
+        "stop_reason": "tool_use",
+        "usage": {"input_tokens": 1, "output_tokens": 2},
+    }
+    response = anthropic_to_canonical(payload, "claude-1", structured=True)
+
+    assert json.loads(response.text) == {"a": "x"}
+    # `tool_use` is this mechanism's *success*; reporting it verbatim would make every structured
+    # answer look abnormal to the finish-reason check that refuses truncated documents.
+    assert response.finish_reason == "stop"
+
+
+def test_a_model_that_answered_in_prose_did_not_satisfy_the_schema() -> None:
+    """A real path with this mechanism, not a defensive one — and returning the prose as though it
+    were the document is precisely what `FRD-112` FR-6 exists to prevent."""
+    payload = {
+        "content": [{"type": "text", "text": "Sure! Here is your JSON..."}],
+        "stop_reason": "end_turn",
+        "usage": {"input_tokens": 1, "output_tokens": 2},
+    }
+    response = anthropic_to_canonical(payload, "claude-1", structured=True)
+
+    assert response.text == ""
+    assert response.finish_reason == SCHEMA_UNSATISFIED
+
+
+def test_a_tool_call_that_is_not_ours_is_not_the_document() -> None:
+    payload = {
+        "content": [{"type": "tool_use", "name": "something_else", "input": {"a": "x"}}],
+        "stop_reason": "tool_use",
+        "usage": {},
+    }
+    assert anthropic_to_canonical(payload, "c", structured=True).finish_reason == SCHEMA_UNSATISFIED
+
+
+def test_an_ordinary_answer_is_unaffected_by_the_structured_path() -> None:
+    payload = {
+        "content": [{"type": "text", "text": "hello"}],
+        "stop_reason": "end_turn",
+        "usage": {"input_tokens": 1, "output_tokens": 1},
+    }
+    assert anthropic_to_canonical(payload, "claude-1").text == "hello"

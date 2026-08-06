@@ -67,8 +67,9 @@ class ChatRequest(BaseModel):
     )
     max_tokens: int | None = Field(default=None, alias="maxTokens")
     temperature: float = 1.0
-    #: Accepted so the surface can **refuse** it by name rather than ignore it (`FRD-107` FR-2a).
-    #: A field that is silently dropped is worse than one that is rejected: the caller cannot tell.
+    #: Served since Stage B (`FRD-111`). Validated against what the model declares, and the
+    #: refusals carry the predecessor's own codes so a migrating client's error handling still
+    #: switches on the same strings.
     thinking: ThinkingSetting | None = None
     response_schema: dict[str, Any] | None = Field(default=None, alias="responseSchema")
 
@@ -92,7 +93,25 @@ class EmbeddingRequest(BaseModel):
 
 
 class EmbeddingResponse(BaseModel):
+    """One text in, one vector out — the predecessor's documented shape (`kira_api.md` §2.3)."""
+
     vector: list[float]
+
+
+class BatchEmbeddingResponse(BaseModel):
+    """Many texts in, one vector each, in the order submitted.
+
+    **An extension, and deliberately a visible one.** The predecessor documents a *singular*
+    ``vector`` for an input that may be a list, which reads two ways: a list yields one vector per
+    text, or a list is reduced to a single vector. `FRD-113` §11 records the ambiguity and assumes
+    the first — it is what the provider API offers and what a chunk-indexing consumer needs.
+
+    Returning n vectors under the singular key would be a lie about the shape; returning only the
+    first would be a silent data loss. A distinct key makes the assumption checkable by whoever
+    confirms it against the running predecessor, instead of burying it.
+    """
+
+    vectors: list[list[float]]
 
 
 class ThinkingConfig(BaseModel):

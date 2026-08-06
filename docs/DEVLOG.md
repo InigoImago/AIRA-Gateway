@@ -5,6 +5,89 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-06 — Stufe 5+6: thinking, structured output, embedding options
+`FRD-111`, `FRD-112`, `FRD-113` — and, in the same change, `FRD-107` **Stage B**, because building
+a capability and then continuing to refuse it at the compatibility surface helps nobody. The KIRA
+wire format did not move; the fields Stage A refused by name are simply served.
+
+**Thinking** is the one with money in it. Budgets reach 32 768 tokens, billed as output, which is
+an order of magnitude more than a typical answer — so the resolution and the reservation have to
+produce the *same number*, and they do: resolved after routing against the model that will serve
+the request, then handed to `enforce_pre_dispatch` as `extra_tokens`. `None` and `disabled` stayed
+distinct on purpose: the first means the model was never going to think, the second means it
+*would have* and this request is switching it off, and collapsing them lets a declared default
+quietly win over a caller who asked for none.
+
+**Structured output** turned out to be the clearest case of `ADR-0011` rule 3. One flag,
+`structured_output`, over three unrelated mechanisms: Gemini has a schema parameter, Anthropic has
+none and needs a forced tool call read back out of a `tool_use` block, Azure has a third. The flag
+says *whether*; the dialect owns *how*. The schema itself is parsed rather than passed through, so
+an unknown field is an error **naming the field** — and then forwarded, never executed, because
+re-validating would mean running caller-supplied regexes over provider output on the hot path,
+which is the exposure `ADR-0007` already refused by a different door.
+
+§5.3 is the part that justifies the design and it is the test that had to be written to fail first:
+with a fallback chain, checking the capability against the model the *caller named* protects
+nothing. The primary declares it, the primary fails, the fallback answers in prose, and a caller
+calls `JSON.parse` on it — surfacing days later as a bug in somebody else's code.
+
+**Embedding** carried a control bypass. `FRD-405`'s bucket took one token per request, so a batch
+of 500 admitted as one request would have turned a limit of 10 per minute into 5 000 texts per
+minute: intact on paper, gone in practice. The bucket now takes a `cost`, in the same all-or-
+nothing Lua pass, and the budget books n requests. A batch too large for the bucket's *capacity* is
+refused with a message naming which of the two said no, rather than a `Retry-After` that would
+still be wrong an hour later.
+
+### Three things the tests found
+
+The suite caught a **regression in my own design**: the plan had the predecessor's default task
+type filled in by the mapper, which meant every embedding against a model nobody had declared task
+types for was refused as though the caller had asked for something impossible. The default is a
+*surface's*, applied only where the model declares it — and an explicit undeclared type is still
+refused. Naming a type we cannot verify is a request; naming none is not.
+
+`check_declaration` compared `method == "embedContent"`, so the new batch verb demanded the
+*generation* capability — refusing every batch against an embedding-only model and accepting one
+against a model that cannot embed at all. The same shape as the `:embedContent` bypass, one verb
+later, and now a `frozenset` for exactly that reason.
+
+The mock never truncated a schema-constrained document, so FR-6 — refuse an incomplete document
+rather than return it as data — was exercised by nothing. A mock that always finishes cleanly is a
+mock that makes a check look tested.
+
+Eleven test doubles implemented the old `embed(model, text)` signature. They were widened rather
+than left permissive: a stand-in more permissive than the thing it replaces is how a real defect
+hid behind a green suite here before.
+
+### And two the mutation harness produced
+
+Fourteen mutations survived the first run. Nine were **anchors that had moved with the refactor** —
+a mutation whose anchor no longer applies protects nothing, which is why the harness reports one
+rather than skipping it. Repairing them is not bookkeeping: `M1`, `M2` and `M7` all describe the
+rate limiter, and all three had quietly stopped being checked the moment the bucket learned to take
+a cost.
+
+Two were real, and both are worth stating:
+
+**`C4` survived because the rule was enforced twice.** "A model that declares no embedding refuses
+one before dispatch" lived in `check_declaration` *and* in `embedding.validate`, so removing either
+changed nothing observable. That is what redundancy looks like from the outside, and it is a defect
+in the making — two places deciding one rule drift, and the one that drifts is whichever is not
+under test. The duplicate is gone; `validate` owns it.
+
+**Two survived only because their test selection was too narrow** (`T10`, `E8`). The harness's own
+docstring already warns about this and it has now cost time twice, so the warning has earned a
+second sentence.
+
+Mutations **T5–T10, S1–S7, E1–E8** — 21 new, 164 total, all defended. 896 hermetic tests, 96% coverage.
+
+**Owed, and said rather than assumed:** `FRD-112`'s audit digest (the function exists and is
+tested; the column needs a migration) and `FRD-111` FR-6's verification against a real upstream —
+whether the provider folds thinking into reported output tokens or reports it apart is not
+knowable hermetically, and the recorded cost is understated if we guessed.
+
+---
+
 ## 2026-08-06 — Stufe 4: the predecessor's contract, served by AIRA
 `FRD-107` Stage A. `/kira/api/external` with `chat`, `streaming-chat`, `embed`, `models`, `health`,
 `version-info` and `ki-usage`; the predecessor's error envelope and codes; integer model ids;

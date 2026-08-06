@@ -13,10 +13,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from aira_gateway.api.kira import errors, schemas
+from aira_common.models import ThinkingMode
+from aira_gateway.api.kira import schemas
 from aira_gateway.attachments import Limits, check_media_type, check_signature, decode
-from aira_gateway.catalog import ModelDeclaration
 from aira_gateway.core.canonical import (
+    CanonicalEmbeddingRequest,
     CanonicalMessage,
     CanonicalPart,
     CanonicalRequest,
@@ -24,7 +25,11 @@ from aira_gateway.core.canonical import (
     DataPart,
     Role,
     TextPart,
+    Thinking,
 )
+from aira_gateway.core.schema import SchemaBounds
+from aira_gateway.core.schema import parse as parse_schema
+from aira_gateway.thinking import INVALID_THINKING_MODE, ThinkingRejected
 
 
 def _parts(content: schemas.RequestContent, limits: Limits, offset: int) -> list[CanonicalPart]:
@@ -42,48 +47,29 @@ def _parts(content: schemas.RequestContent, limits: Limits, offset: int) -> list
     return parts
 
 
-def refuse_unsupported(request: schemas.ChatRequest, declaration: ModelDeclaration) -> None:
-    """Refuse what Stage A cannot yet honour — by name, never by silence (`FRD-107` FR-2a).
+def thinking_of(setting: schemas.ThinkingSetting | None) -> Thinking | None:
+    """The predecessor's ``{mode, tokens}`` onto the canonical one (`FRD-111` §5.1).
 
-    Two of these are fields the caller sent. The third is subtler and is the one the FRD singled
-    out: the predecessor applies a model's **declared default thinking** when the caller sends
-    none. A Stage A that sent no thinking at all would give a different answer for a reason nobody
-    could see — the exact failure this surface exists to avoid. So a model whose declared default
-    is anything other than *disabled* is not served here until `FRD-111` lands, and the refusal
-    says so rather than quietly answering.
-
-    A model with no thinking declaration, or one whose default is ``disabled``, is unaffected:
-    sending nothing *is* what it asked for.
+    An unknown mode is refused with the predecessor's own code rather than with a validation
+    error about an enum, because a migrating client's error handling switches on that string.
     """
-    if request.thinking is not None:
-        raise errors.KiraError(
-            422,
-            errors.NOT_YET_SUPPORTED,
-            "'thinking' is not yet available on this gateway. It is refused rather than ignored, "
-            "because an answer computed without it would differ for a reason you could not see.",
-        )
-    if request.response_schema is not None:
-        raise errors.KiraError(
-            422,
-            errors.NOT_YET_SUPPORTED,
-            "'responseSchema' is not yet available on this gateway. It is refused rather than "
-            "ignored, because the response would not be the shape you asked for.",
-        )
-
-    default = (declaration.thinking or {}).get("default")
-    mode = default.get("mode") if isinstance(default, dict) else None
-    if mode is not None and mode != "disabled":
-        raise errors.KiraError(
-            422,
-            errors.NOT_YET_SUPPORTED,
-            f"Model '{declaration.name}' declares a default thinking mode of '{mode}', which this "
-            "gateway cannot yet apply. Serving it would answer with no thinking at all and look "
-            "identical to a correct answer.",
-        )
+    if setting is None:
+        return None
+    try:
+        return Thinking(mode=ThinkingMode(setting.mode.strip().lower()), tokens=setting.tokens)
+    except ValueError as exc:
+        raise ThinkingRejected(
+            INVALID_THINKING_MODE,
+            f"'{setting.mode}' is not a thinking mode. "
+            f"Known: {sorted(str(m) for m in ThinkingMode)}.",
+        ) from exc
 
 
 def to_canonical(
-    request: schemas.ChatRequest, model: str, limits: Limits | None = None
+    request: schemas.ChatRequest,
+    model: str,
+    limits: Limits | None = None,
+    bounds: SchemaBounds | None = None,
 ) -> CanonicalRequest:
     """Map a KIRA chat request onto the canonical one.
 
@@ -114,6 +100,12 @@ def to_canonical(
         messages=messages,
         temperature=request.temperature,
         max_output_tokens=request.max_tokens,
+        thinking=thinking_of(request.thinking),
+        response_schema=(
+            parse_schema(request.response_schema, bounds)
+            if request.response_schema is not None
+            else None
+        ),
     )
 
 
@@ -134,3 +126,20 @@ def completed_event(response: CanonicalResponse) -> dict[str, Any]:
 
 def update_event(message: str) -> dict[str, Any]:
     return {"status": "update", "data": message}
+
+
+def to_embedding(request: schemas.EmbeddingRequest, model: str) -> CanonicalEmbeddingRequest:
+    """The predecessor's embedding request onto the canonical one.
+
+    The predecessor's default task type is **the route's** to pass, not this mapper's: it applies
+    only where the model declares that type, so it is a decision the validator makes with the
+    declaration in hand. Filling it in blindly here would refuse every embedding against a model
+    nobody has declared task types for — the compatibility default failing as though the caller
+    had asked for something impossible.
+
+    Dimensionality is not a field here — the predecessor makes it part of the model's *identity*
+    (two ids for one model, differing only in width). Each id is its own catalog row, and the row's
+    declared default is what the validator applies.
+    """
+    texts = [request.text] if isinstance(request.text, str) else list(request.text)
+    return CanonicalEmbeddingRequest(model=model, texts=texts, task_type=request.task_type)

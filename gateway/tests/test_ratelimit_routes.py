@@ -48,7 +48,7 @@ def _stream_request(app) -> Request:  # noqa: ANN001
 
 
 class _AlwaysLimited:
-    async def check(self, use_case, subject):  # noqa: ANN001, ANN201
+    async def check(self, use_case, subject, units=1):  # noqa: ANN001, ANN201
         raise RateLimited("Request rate limit exceeded for use case.", retry_after="7")
 
 
@@ -63,7 +63,7 @@ class _FailingProvider:
         raise UpstreamError("upstream failure", 503)
         yield  # pragma: no cover  (make this an async generator)
 
-    async def embed(self, model, text):  # noqa: ANN001, ANN201
+    async def embed(self, request):  # noqa: ANN001, ANN201
         raise UpstreamError("upstream failure", 503)
 
 
@@ -75,7 +75,7 @@ class _TrackingBudgets:
     async def guard(self, use_case, subject, *, estimated=None):  # noqa: ANN001, ANN201
         return Reservation()
 
-    async def settle(self, reservation, tokens, *, cost_nanos=None, now=None):  # noqa: ANN001, ANN201
+    async def settle(self, reservation, tokens, *, cost_nanos=None, now=None, requests=1):  # noqa: ANN001, ANN201, E501
         reservation.resolved = True
         self.settled += 1
 
@@ -146,7 +146,7 @@ class _BoomProvider:
         raise RuntimeError("a defect nobody anticipated")
         yield  # pragma: no cover  (make this an async generator)
 
-    async def embed(self, model, text):  # noqa: ANN001, ANN201
+    async def embed(self, request):  # noqa: ANN001, ANN201
         raise RuntimeError("a defect nobody anticipated")
 
 
@@ -228,7 +228,7 @@ class _BlockingBudgets:
     async def guard(self, use_case, subject, *, estimated=None):  # noqa: ANN001, ANN201
         raise BudgetExceeded("Cost budget exhausted for use_case (month).")
 
-    async def settle(self, reservation, tokens, *, cost_nanos=None, now=None):  # noqa: ANN001, ANN201
+    async def settle(self, reservation, tokens, *, cost_nanos=None, now=None, requests=1):  # noqa: ANN001, ANN201, E501
         reservation.resolved = True
 
     async def release(self, reservation):  # noqa: ANN001, ANN201

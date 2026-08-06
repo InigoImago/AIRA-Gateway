@@ -208,8 +208,8 @@ def test_stream_error_is_recorded_with_the_real_status() -> None:
             yield CanonicalChunk(text_delta="partial")
             raise UpstreamError("upstream went away", 503)
 
-        async def embed(self, model: str, text: str) -> list[float]:
-            return [0.0]
+        async def embed(self, request: object) -> list[list[float]]:
+            return [[0.0]]
 
     app = create_app(GatewaySettings(auth_required=False))
     app.state.providers = ProviderRegistry([_Failing()])

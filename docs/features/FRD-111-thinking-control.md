@@ -1,6 +1,6 @@
 # FRD-111 — Thinking control
 
-> Phase: 8 (KIRA parity) · Status: **Draft** · Owner: Vadim Scheibe · Last updated: 2026-08-06
+> Phase: 8 (KIRA parity) · Status: **Done (2026-08-06)** · Owner: Vadim Scheibe · Last updated: 2026-08-06
 > Origin: `kira_api.md` §4.3 (`ThinkingSetting` / `ThinkingConfig`), programme: `ADR-0010`.
 > Depends on: `FRD-114` (a model must declare what it allows). Touches `FRD-401`/`FRD-403`/`FRD-405`.
 
@@ -201,6 +201,33 @@ audit row — otherwise "why did this month cost twice as much" is unanswerable 
 - *Given* the same model, *when* a caller asks for `limited` with 999 999 tokens, *then* the
   request is refused with `THINKING_TOKEN_COUNT_TOO_HIGH` naming the maximum, and nothing was
   dispatched or reserved.
+
+## 10a. What was built (2026-08-06)
+
+`aira_gateway/thinking.py` resolves and validates; both surfaces call it, and the four codes are
+the predecessor's. The Gemini surface accepts Google's `thinkingBudget` **and** the canonical
+`mode`/`tokens` (both at once is a 400, not a precedence rule); the KIRA surface accepts the
+predecessor's `ThinkingSetting`. Adapters translate: Gemini a budget with `0`/`-1` as the two
+sentinels, Anthropic a `thinking{type:"enabled",budget_tokens}` block bounded by FR-3a.
+
+Three decisions worth keeping:
+
+- **`None` and `disabled` are different answers.** The first means the model was never going to
+  think; the second means it *would have* and this request is switching it off. Collapsing them
+  lets a model whose declared default is `auto` silently ignore a caller asking for none.
+- **Resolution happens after routing, before the reservation.** The number sent upstream and the
+  number reserved against are then the same one. Resolving before the pipeline would validate a
+  budget against a model that never sees the request.
+- **A candidate that cannot honour the resolved setting is skipped** (`ThinkingHonoured`), for the
+  same reason a chain may not drop an attachment: less reasoning than was asked for is not an
+  error, it is a worse answer with a 200 on it.
+
+FR-6's verification is still owed — whether the provider folds thinking into the reported output
+tokens or reports it apart can only be learned against the real upstream, and the recorded cost is
+understated if we guessed. The mock reports them as output tokens, which is the assumption.
+
+Mutations **T5–T10**; unit and route tests including the reservation pair (a 20 000-token budget
+reserves exactly 20 000 more than the same request without one).
 
 ## 11. Dependencies & Risks
 

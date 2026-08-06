@@ -1,6 +1,6 @@
 # FRD-113 — Embedding: task types, batches and dimensions
 
-> Phase: 8 (KIRA parity) · Status: **Draft** · Owner: Vadim Scheibe · Last updated: 2026-08-06
+> Phase: 8 (KIRA parity) · Status: **Done (2026-08-06)** · Owner: Vadim Scheibe · Last updated: 2026-08-06
 > Origin: `kira_api.md` §2.3, §4.4, §5.2, programme: `ADR-0010`.
 > Depends on: `FRD-114`. Touches `FRD-401`/`FRD-405` (a batch is one request and many tokens).
 
@@ -168,6 +168,36 @@ and batch size on the audit row.
   is refused with 429 and `Retry-After`, and no upstream call was made.
 - *Given* a model declaring 768 and 3072, *when* a caller requests 768, *then* the returned vectors
   have 768 components.
+
+## 10a. What was built (2026-08-06)
+
+The `Upstream.embed` protocol now takes a request and returns one vector per text; a single text is
+a list of one, so there is one code path. The Gemini surface gains `batchEmbedContents`; the KIRA
+surface accepts a list.
+
+**§5.3, the control bypass, is the requirement with teeth** and it is implemented as a `cost` on the
+token bucket rather than as a loop: `take(buckets, n)` debits n from every applicable bucket or from
+none, in the same Lua pass that was already all-or-nothing across scopes. The budget reservation and
+settlement count n requests likewise. Its test is written to fail against the one-token version.
+
+The two bounds and the configured limits interact, so a batch larger than a bucket's *capacity* is
+refused with a message naming which of the two said no — rather than a `Retry-After` that would
+still be wrong an hour later (§11's risk, closed).
+
+One correction to this FRD's plan, found by a test: **the predecessor's default task type is a
+surface's, not the validator's.** Filling it in unconditionally refuses every embedding against a
+model nobody has declared task types for, and starting to send `RETRIEVAL_QUERY` where AIRA has
+always sent nothing would move every existing consumer's vectors. So `validate` takes
+`default_task_type`, applies it only where the model declares it, and an *explicit* undeclared type
+is still refused. The asymmetry is deliberate: naming a type we cannot verify is a request, naming
+none is not.
+
+§11's open question is unresolved and is now **visible in the wire format**: a list answers under
+`vectors` on the KIRA surface, since the documented singular `vector` cannot express n of them.
+Returning only the first would be silent data loss; a distinct key makes the assumption checkable
+by whoever confirms it against the running predecessor.
+
+Mutations **E1–E8**.
 
 ## 11. Dependencies & Risks
 

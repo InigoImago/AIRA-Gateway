@@ -22,7 +22,13 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from aira_common.models import BASELINE_CAPABILITIES, Capability, Hosting, parse_capabilities
+from aira_common.models import (
+    BASELINE_CAPABILITIES,
+    Capability,
+    Hosting,
+    ThinkingMode,
+    parse_capabilities,
+)
 from aira_gateway.db.models import ModelRead
 
 
@@ -84,6 +90,79 @@ class ModelDeclaration:
             if isinstance(spec, dict):
                 total += int(spec.get("tokens", 0) or 0)
         return total
+
+    # -- thinking (FRD-111) ---------------------------------------------------------------
+    #
+    # Read off the declaration rather than parsed into a dataclass at construction: the block is
+    # authored in Management and validated *there* (`FRD-114` FR-3), so a second parser here would
+    # be a second opinion about the same JSON — and the two would drift in whichever plane was not
+    # under test.
+
+    @property
+    def thinking_modes(self) -> frozenset[ThinkingMode]:
+        modes = (self.thinking or {}).get("modes")
+        if not isinstance(modes, list):
+            return frozenset()
+        known = {member.value for member in ThinkingMode}
+        return frozenset(ThinkingMode(mode) for mode in modes if mode in known)
+
+    @property
+    def thinking_bounds(self) -> tuple[int | None, int | None]:
+        """``(min_tokens, max_tokens)`` for a ``limited`` budget."""
+        block = self.thinking or {}
+        minimum = block.get("min_tokens")
+        maximum = block.get("max_tokens")
+        return (
+            minimum if isinstance(minimum, int) and not isinstance(minimum, bool) else None,
+            maximum if isinstance(maximum, int) and not isinstance(maximum, bool) else None,
+        )
+
+    @property
+    def thinking_default(self) -> dict[str, Any] | None:
+        """What the model does when the caller says nothing (`FRD-111` FR-4).
+
+        Not the provider's default and not *none*: the predecessor applies a per-model default,
+        and a gateway that quietly sent no thinking where the predecessor sent some would answer
+        differently for a reason nobody could see.
+        """
+        default = (self.thinking or {}).get("default")
+        return default if isinstance(default, dict) else None
+
+    def thinking_level_tokens(self, mode: ThinkingMode) -> int | None:
+        """The budget this model attaches to an abstract level.
+
+        ``high``/``medium``/``low``/``minimal`` mean nothing to an HTTP call; the level→budget
+        table is per model and lives in the catalog, which is what keeps a new model from being a
+        code change (`FRD-111` §5.2).
+        """
+        levels = (self.thinking or {}).get("levels")
+        if not isinstance(levels, dict):
+            return None
+        value = levels.get(str(mode))
+        return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+    # -- embedding (FRD-113) --------------------------------------------------------------
+
+    @property
+    def embedding_task_types(self) -> frozenset[str]:
+        types = (self.embedding or {}).get("task_types")
+        return frozenset(str(value) for value in types) if isinstance(types, list) else frozenset()
+
+    @property
+    def supports_batch(self) -> bool:
+        return bool((self.embedding or {}).get("supports_batch"))
+
+    @property
+    def embedding_dimensions(self) -> frozenset[int]:
+        values = (self.embedding or {}).get("dimensions")
+        if not isinstance(values, list):
+            return frozenset()
+        return frozenset(v for v in values if isinstance(v, int) and not isinstance(v, bool))
+
+    @property
+    def default_dimensions(self) -> int | None:
+        value = (self.embedding or {}).get("default")
+        return value if isinstance(value, int) and not isinstance(value, bool) else None
 
     def output_cap(self, requested: int | None) -> int | None:
         """The output token cap to send upstream: the caller's, else the model's default.

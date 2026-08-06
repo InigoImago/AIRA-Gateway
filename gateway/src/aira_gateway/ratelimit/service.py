@@ -50,17 +50,36 @@ class RateLimitService:
         self._clock = clock
         self._cache: dict[str, tuple[float, list[RateLimitRead]]] = {}
 
-    async def check(self, use_case: str | None, subject: str | None) -> None:
-        """Raise :class:`RateLimited` if the caller is over its configured rate."""
+    async def check(self, use_case: str | None, subject: str | None, units: int = 1) -> None:
+        """Raise :class:`RateLimited` if the caller is over its configured rate.
+
+        ``units`` is what the request weighs — one for an ordinary call, one per text for an
+        embedding batch (`FRD-113` FR-6). Admitting a batch of 500 as a single request would leave
+        a limit of 10 per minute allowing 5 000 texts per minute; the limit would be intact on
+        paper and gone in practice, which is a control bypass rather than an inaccuracy.
+        """
         if not self._enforce or not use_case:
             return
         buckets = self._applicable(await self._config(use_case), use_case, subject)
         if not buckets:
             return
 
+        # A batch larger than the bucket itself can never be admitted, however long the caller
+        # waits — so it is refused with a message that says so instead of a `Retry-After` that
+        # would still be wrong an hour later. `FRD-113` §11: the batch bound and the configured
+        # limits interact, and the failure has to name which of the two refused.
+        for bucket in buckets:
+            if units > bucket.capacity:
+                raise RateLimited(
+                    f"A request weighing {units} cannot fit the {bucket.capacity}-request "
+                    f"allowance of the {bucket.label}. Send it in smaller batches, or raise the "
+                    "limit.",
+                    retry_after="1",
+                )
+
         # One call, all or nothing: a refused request must not have debited the buckets that
         # would have granted it (FRD-405 FR-4).
-        decision = await self._bucket.take(buckets)
+        decision = await self._bucket.take(buckets, units)
         if decision.allowed:
             return
 

@@ -6,9 +6,13 @@ operator can act on, and is checked against the model **about to be dispatched t
 the caller named: with routing and cross-vendor fallback those are different models, and the
 check that runs before routing protects nothing.
 
-Region is the first requirement. Media types follow with `FRD-110`, structured output with
-`FRD-112`. They share this mechanism rather than each inventing one, which is the point of putting
-it here before there are three of them.
+Region came first, media types with `FRD-110`, structured output and thinking with `FRD-112` and
+`FRD-111`. Four now share this mechanism rather than each inventing one, which is the point of
+having put it here when there was one.
+
+They all guard the same failure: **a chain must not be able to degrade a request silently.** Every
+one of these properties changes what comes back without changing the status code, so a candidate
+that cannot meet one is skipped rather than served.
 """
 
 from __future__ import annotations
@@ -18,6 +22,8 @@ from typing import Protocol
 
 from aira_common.models import Capability
 from aira_gateway.catalog import ModelCatalog
+from aira_gateway.core.canonical import Thinking
+from aira_gateway.thinking import permitted_by
 from aira_gateway.upstreams.base import ProviderRegistry
 
 
@@ -103,6 +109,50 @@ class MediaTypesSupported:
         if unreadable:
             return f"cannot read {sorted(unreadable)}; it accepts {sorted(declaration.media_types)}"
         return None
+
+
+class StructuredOutputSupported:
+    """The model must be able to constrain its answer to the caller's schema (`FRD-112` §5.3).
+
+    **This is the requirement the whole feature turns on, and it has to run after routing.** A use
+    case with a fallback chain could otherwise accept a schema request, have the primary fail, fall
+    back to a model without structured output, and return prose to a caller that will call
+    ``JSON.parse`` on it. The failure surfaces as a parse error in someone else's application,
+    days later, with nothing pointing back here.
+
+    Which *mechanism* the model uses is not this check's business — Gemini has a schema parameter,
+    Anthropic a forced tool call, Azure a `json_schema` response format. One flag over three
+    unrelated mechanisms is `ADR-0011` rule 3, and it is what stops the catalog from having to know
+    how any of them work.
+    """
+
+    def __init__(self, catalog: ModelCatalog) -> None:
+        self._catalog = catalog
+
+    async def refusal(self, model: str) -> str | None:
+        declaration = await self._catalog.declaration(model)
+        if declaration.can(Capability.STRUCTURED_OUTPUT):
+            return None
+        missing = "declares no structured output" if declaration.declared else "is undeclared"
+        return f"{missing}, so it cannot return a document matching the schema this request sent"
+
+
+class ThinkingHonoured:
+    """The model must offer the thinking this request resolved to (`FRD-111`).
+
+    Same shape and same reason as the two above: a candidate that cannot think as much as was
+    asked does not fail, it answers *less well*, with a 200, in a way only the person reading the
+    answer would ever notice.
+    """
+
+    def __init__(self, catalog: ModelCatalog, setting: Thinking | None) -> None:
+        self._catalog = catalog
+        self._setting = setting
+
+    async def refusal(self, model: str) -> str | None:
+        if self._setting is None:
+            return None
+        return permitted_by(self._setting, await self._catalog.declaration(model))
 
 
 def permits(requirements: Sequence[Requirement]) -> Callable[[str], Awaitable[str | None]]:

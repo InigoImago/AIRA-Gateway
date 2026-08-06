@@ -394,6 +394,27 @@ Redis restart costs the in-flight reservations and never the period's accounting
 a Compose network and not fine anywhere else. Use `rediss://user:password@host:6379/0` and give it
 its own instance or database — the keys are namespaced (`rl:*`, `budget:*`) but not isolated.
 
+#### Response schemas and embedding batches (FRD-112, FRD-113)
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `AIRA_MAX_RESPONSE_SCHEMA_BYTES` | `32768` | Largest `responseSchema` accepted, measured on the submitted document. |
+| `AIRA_MAX_RESPONSE_SCHEMA_DEPTH` | `8` | Deepest nesting accepted. |
+| `AIRA_MAX_RESPONSE_SCHEMA_PROPERTIES` | `256` | Total properties, counted across the whole tree. |
+| `AIRA_MAX_EMBEDDING_BATCH` | `256` | Most texts in one embedding call. |
+| `AIRA_MAX_EMBEDDING_CHARS` | `1000000` | Most characters across a batch. |
+
+The schema bounds are the gateway's **entire** exposure to a caller-supplied schema: it is
+forwarded to the provider and never executed here, so there is no expression evaluation to attack
+and the defaults only need to be generous enough for real schemas.
+
+**The batch bound interacts with your rate limits, and they have to be chosen together.** A batch
+of *n* texts weighs *n* against a use case's bucket — otherwise a limit of 10 requests per minute
+would allow 5 000 texts per minute, intact on paper and gone in practice. So a batch larger than a
+bucket's capacity can never be admitted, however long the caller waits: it is refused immediately
+with a message naming which of the two said no. If you set `AIRA_MAX_EMBEDDING_BATCH` above your
+smallest configured per-minute limit, large batches will fail permanently by design.
+
 ### Management only
 
 | Variable | Default | Meaning |

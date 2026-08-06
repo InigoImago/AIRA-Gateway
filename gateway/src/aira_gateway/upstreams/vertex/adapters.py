@@ -16,10 +16,18 @@ import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
-from aira_gateway.core.canonical import CanonicalChunk, CanonicalRequest, CanonicalResponse
+from aira_gateway.core.canonical import (
+    CanonicalChunk,
+    CanonicalEmbeddingRequest,
+    CanonicalRequest,
+    CanonicalResponse,
+)
 from aira_gateway.upstreams.base import UpstreamError, UpstreamModel
 from aira_gateway.upstreams.gemini_mapping import (
+    batch_embedding_body,
+    canonical_to_gemini_embedding,
     canonical_to_gemini_request,
+    embedding_values,
     gemini_chunk_to_canonical,
     gemini_response_to_canonical,
 )
@@ -88,11 +96,22 @@ class VertexGeminiAdapter:
                 if line.startswith("data: "):
                     yield gemini_chunk_to_canonical(json.loads(line[len("data: ") :]))
 
-    async def embed(self, model: str, text: str) -> list[float]:
-        data = await self._transport.post(
-            self._url(model, "embedContent"), {"content": {"parts": [{"text": text}]}}
-        )
-        return [float(value) for value in data.get("embedding", {}).get("values", [])]
+    async def embed(self, request: CanonicalEmbeddingRequest) -> list[list[float]]:
+        """A list goes to `batchEmbedContents`, a single text to `embedContent`.
+
+        Not premature: the single-item endpoint has materially lower latency, and the overwhelming
+        majority of embedding traffic is one text at a time.
+        """
+        if request.size > 1:
+            data = await self._transport.post(
+                self._url(request.model, "batchEmbedContents"),
+                batch_embedding_body(request, request.model),
+            )
+        else:
+            data = await self._transport.post(
+                self._url(request.model, "embedContent"), canonical_to_gemini_embedding(request)
+            )
+        return embedding_values(data)
 
 
 class VertexAnthropicAdapter:
@@ -134,7 +153,12 @@ class VertexAnthropicAdapter:
         data = await self._transport.post(
             self._url(request.model, "rawPredict"), self._body(request)
         )
-        return anthropic_to_canonical(data, request.model)
+        # The mapper has to be told a schema was asked for: with this vendor the document arrives
+        # in a tool-call block that an ordinary answer would never contain, and reading it back as
+        # text is the difference between a document and prose about one.
+        return anthropic_to_canonical(
+            data, request.model, structured=request.response_schema is not None
+        )
 
     async def stream_generate(self, request: CanonicalRequest) -> AsyncIterator[CanonicalChunk]:
         body = {**self._body(request), "stream": True}
@@ -147,8 +171,8 @@ class VertexAnthropicAdapter:
                 if chunk is not None:
                     yield chunk
 
-    async def embed(self, model: str, text: str) -> list[float]:
+    async def embed(self, request: CanonicalEmbeddingRequest) -> list[list[float]]:
         # Unreachable in the normal path: `FRD-114`'s declaration refuses an embedding request for
         # a model that does not declare the capability. This is a backstop for a misconfigured
         # catalog, not the mechanism.
-        raise UpstreamError(f"Model '{model}' has no embedding endpoint.", 400)
+        raise UpstreamError(f"Model '{request.model}' has no embedding endpoint.", 400)

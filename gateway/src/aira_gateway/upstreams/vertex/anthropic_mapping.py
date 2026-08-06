@@ -17,8 +17,10 @@ Every difference from Gemini is a mapping this file owns:
 from __future__ import annotations
 
 import base64
+import json
 from typing import Any
 
+from aira_common.models import ThinkingMode
 from aira_gateway.core.canonical import (
     CanonicalChunk,
     CanonicalMessage,
@@ -28,6 +30,12 @@ from aira_gateway.core.canonical import (
     Role,
     TextPart,
 )
+from aira_gateway.core.schema import ResponseSchema
+
+#: The finish reason for "the model answered, but not with the document that was asked for".
+#: Its own value rather than an error, so it travels through the same path every other abnormal
+#: finish takes and is refused in one place (`FRD-112` FR-6).
+SCHEMA_UNSATISFIED = "schema_unsatisfied"
 
 #: Vertex requires this in the body rather than as a header.
 ANTHROPIC_VERSION = "vertex-2023-10-16"
@@ -76,7 +84,92 @@ def canonical_to_anthropic(request: CanonicalRequest, *, max_tokens: int) -> dic
         body["system"] = "\n\n".join(system_parts)
     if request.temperature is not None:
         body["temperature"] = request.temperature
+    if request.thinking is not None and request.thinking.mode is not ThinkingMode.DISABLED:
+        budget = request.thinking.tokens
+        if budget is not None:
+            # Anthropic draws thinking tokens from `max_tokens`, so a budget at or above it
+            # describes a request that can never answer. `FRD-114`'s catalog validation refuses
+            # that combination where it is authored; this is the backstop for a request whose cap
+            # is lower than the declaration anticipated.
+            if budget >= max_tokens:
+                raise ValueError(
+                    f"A thinking budget of {budget} does not fit inside a {max_tokens}-token "
+                    "output allowance — the budget is drawn from it."
+                )
+            body["thinking"] = {"type": "enabled", "budget_tokens": budget}
+    if request.response_schema is not None:
+        # Anthropic has **no schema parameter**. The equivalent is a forced tool call: one tool
+        # whose input schema is the caller's, `tool_choice` pinned to it, and the model's tool
+        # input read back as the document. One capability, three mechanisms (`ADR-0011` rule 3).
+        body["tools"] = [
+            {
+                "name": STRUCTURED_TOOL,
+                "description": "Return the answer as a document matching this schema.",
+                "input_schema": to_json_schema(request.response_schema),
+            }
+        ]
+        body["tool_choice"] = {"type": "tool", "name": STRUCTURED_TOOL}
     return body
+
+
+#: The single tool a structured request pins the model to. Named rather than anonymous so the
+#: response mapper can tell "the model used our tool" from "the model called something else".
+STRUCTURED_TOOL = "aira_structured_output"
+
+#: Our vocabulary is OpenAPI-3.0-flavoured; Anthropic's `input_schema` is JSON Schema. Every field
+#: below exists in both with the same meaning, so the translation is faithful rather than
+#: best-effort — which is the condition `FRD-112` §5.2 sets for translating at all.
+_JSON_SCHEMA_FIELDS = (
+    "description",
+    "title",
+    "pattern",
+    "default",
+    "minimum",
+    "maximum",
+    "enum",
+    "required",
+)
+_JSON_SCHEMA_ALIASES = {
+    "min_length": "minLength",
+    "max_length": "maxLength",
+    "min_items": "minItems",
+    "max_items": "maxItems",
+    "min_properties": "minProperties",
+    "max_properties": "maxProperties",
+}
+
+
+def to_json_schema(schema: ResponseSchema) -> dict[str, Any]:
+    """OpenAPI 3.0 subset → JSON Schema, faithfully.
+
+    Two fields are deliberately **not** carried and neither is a lost constraint: ``example`` is
+    documentation, and ``propertyOrdering`` is a rendering hint about key order in a format where
+    key order carries no meaning. Everything that constrains a *value* is translated, because a
+    caller who bounded a field and quietly got an unbounded answer has been misled.
+    """
+    out: dict[str, Any] = {"type": str(schema.type).lower()}
+    if schema.nullable:
+        # JSON Schema expresses nullability as a type union, not as a flag.
+        out["type"] = [out["type"], "null"]
+    if schema.format:
+        out["format"] = schema.format
+    for field in _JSON_SCHEMA_FIELDS:
+        value = getattr(schema, field)
+        if value is not None:
+            out[field] = value
+    for field, alias in _JSON_SCHEMA_ALIASES.items():
+        value = getattr(schema, field)
+        if value is not None:
+            out[alias] = value
+    if schema.properties:
+        out["properties"] = {
+            name: to_json_schema(child) for name, child in schema.properties.items()
+        }
+    if schema.items is not None:
+        out["items"] = to_json_schema(schema.items)
+    if schema.any_of:
+        out["anyOf"] = [to_json_schema(variant) for variant in schema.any_of]
+    return out
 
 
 #: Anthropic distinguishes an image from a document, and the type is not interchangeable — an
@@ -144,12 +237,49 @@ def finish_reason(stop_reason: Any) -> str:
     return _STOP_REASONS.get(str(stop_reason), "stop")
 
 
-def anthropic_to_canonical(data: dict[str, Any], model: str) -> CanonicalResponse:
+def structured_document(content: Any) -> str | None:
+    """The document the forced tool call carries, or ``None`` if the model did not call it.
+
+    ``None`` is a real path with this mechanism rather than a defensive one: a model that answers
+    with prose instead of calling the tool **has not satisfied the schema**, and returning its
+    prose as though it were the document is exactly the failure `FRD-112` FR-6 is about.
+    """
+    if not isinstance(content, list):
+        return None
+    for block in content:
+        if (
+            isinstance(block, dict)
+            and block.get("type") == "tool_use"
+            and (block.get("name") == STRUCTURED_TOOL)
+        ):
+            return json.dumps(block.get("input"), separators=(",", ":"))
+    return None
+
+
+def anthropic_to_canonical(
+    data: dict[str, Any], model: str, *, structured: bool = False
+) -> CanonicalResponse:
+    text = answer_text(data.get("content"))
+    reason = finish_reason(data.get("stop_reason"))
+
+    if structured:
+        document = structured_document(data.get("content"))
+        if document is None:
+            # Surfaced as an abnormal finish reason rather than as text, so the surface refuses it
+            # instead of handing the caller prose that will fail to parse in their code.
+            return CanonicalResponse(
+                model=model,
+                text="",
+                finish_reason=SCHEMA_UNSATISFIED,
+                usage=usage_of(data.get("usage")),
+            )
+        text = document
+        # `tool_use` is the *success* stop reason for this mechanism; reporting it as-is would
+        # make every structured answer look abnormal to FR-6's check.
+        reason = "stop" if reason == "tool_use" else reason
+
     return CanonicalResponse(
-        model=model,
-        text=answer_text(data.get("content")),
-        finish_reason=finish_reason(data.get("stop_reason")),
-        usage=usage_of(data.get("usage")),
+        model=model, text=text, finish_reason=reason, usage=usage_of(data.get("usage"))
     )
 
 

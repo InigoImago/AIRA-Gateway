@@ -9,14 +9,17 @@ from __future__ import annotations
 import base64
 from typing import Any
 
+from aira_common.models import ThinkingMode
 from aira_gateway.core.canonical import (
     CanonicalChunk,
+    CanonicalEmbeddingRequest,
     CanonicalMessage,
     CanonicalRequest,
     CanonicalResponse,
     CanonicalUsage,
     Role,
     TextPart,
+    Thinking,
 )
 
 
@@ -63,9 +66,68 @@ def canonical_to_gemini_request(request: CanonicalRequest) -> dict[str, Any]:
         generation_config["temperature"] = request.temperature
     if request.max_output_tokens is not None:
         generation_config["maxOutputTokens"] = request.max_output_tokens
+    if request.thinking is not None:
+        generation_config["thinkingConfig"] = {"thinkingBudget": thinking_budget(request.thinking)}
+    if request.response_schema is not None:
+        # Both fields, always together: `responseSchema` without `responseMimeType` is ignored by
+        # the API, which would return prose to a caller expecting a document — the silent-wrong
+        # answer this feature exists to prevent, produced by our own request body.
+        generation_config["responseMimeType"] = "application/json"
+        generation_config["responseSchema"] = request.response_schema.to_wire()
     if generation_config:
         body["generationConfig"] = generation_config
     return body
+
+
+def thinking_budget(setting: Thinking) -> int:
+    """Google's ``thinkingBudget``: ``0`` off, ``-1`` model's choice, otherwise a token count.
+
+    The abstract levels never reach here as levels — :mod:`aira_gateway.thinking` has already
+    turned them into the budget the model's own catalog entry attaches to them, because
+    "high" means nothing to an HTTP call and the mapping differs per model.
+    """
+    if setting.mode is ThinkingMode.DISABLED:
+        return 0
+    if setting.mode is ThinkingMode.AUTO:
+        return -1
+    return setting.tokens or -1
+
+
+def canonical_to_gemini_embedding(request: CanonicalEmbeddingRequest) -> dict[str, Any]:
+    """One text → an ``embedContent`` body. Batches wrap these in ``requests``."""
+    body: dict[str, Any] = {"content": {"parts": [{"text": request.texts[0]}]}}
+    if request.task_type is not None:
+        body["taskType"] = request.task_type
+    if request.dimensions is not None:
+        body["outputDimensionality"] = request.dimensions
+    return body
+
+
+def batch_embedding_body(request: CanonicalEmbeddingRequest, model: str) -> dict[str, Any]:
+    """A ``batchEmbedContents`` body: one entry per text, each naming the model as Google requires.
+
+    The order of ``requests`` is the order of the returned embeddings, which is the contract
+    `FRD-113` FR-1 makes to the caller — so this must never reorder or deduplicate.
+    """
+    return {
+        "requests": [
+            {
+                "model": f"models/{model}",
+                **canonical_to_gemini_embedding(request.model_copy(update={"texts": [text]})),
+            }
+            for text in request.texts
+        ]
+    }
+
+
+def embedding_values(data: dict[str, Any]) -> list[list[float]]:
+    """Read vectors from either shape Google answers with."""
+    if "embeddings" in data:
+        return [
+            [float(value) for value in entry.get("values", [])]
+            for entry in data.get("embeddings") or []
+        ]
+    return [[float(value) for value in (data.get("embedding") or {}).get("values", [])]]
 
 
 def _text_of(candidate: dict[str, Any]) -> str:

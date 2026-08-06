@@ -25,7 +25,13 @@ Notes for whoever extends this:
   test_request_path.py` instead. A mutation that survives here would be a false claim, and a
   harness that makes one is worse than no harness.
 - Keep the test selection **wide enough**. A too-narrow selection reports a false gap: M25 was
-  first reported as surviving only because the test that catches it lives in another file.
+  first reported as surviving only because the test that catches it lives in another file, and
+  T10/E8 repeated the mistake later. When a mutation survives, check *which files run* before
+  concluding the property is undefended — the wrong conclusion costs a test nobody needed.
+- **A mutation that survives may mean the rule is enforced twice.** C4 survived because the
+  embedding capability was checked in two places, so removing either changed nothing observable.
+  That is not a missing test; it is redundancy, and the fix is to delete one of the copies. Two
+  places deciding one rule drift, and the one that drifts is whichever is not under test.
 - The anchor text must be unique in the file; a missing anchor is reported rather than skipped
   silently, because a mutation that no longer applies is a mutation that stopped protecting
   anything.
@@ -86,6 +92,13 @@ ATTACHMENTS = "gateway/tests/test_attachments.py"
 KIRA = "gateway/tests/test_kira_surface.py"
 TOKENS = "libs/tests/test_tokens.py"
 CATALOG_DECLARATION = "management/backend/tests/test_catalog_declaration.py"
+THINKING = "gateway/tests/test_thinking.py gateway/tests/test_serving_options.py"
+RESPONSE_SCHEMA = "gateway/tests/test_response_schema.py gateway/tests/test_serving_options.py"
+EMBEDDING = "gateway/tests/test_embedding_options.py gateway/tests/test_serving_options.py"
+SERVING_OPTIONS = (
+    "gateway/tests/test_serving_options.py gateway/tests/test_kira_surface.py "
+    "gateway/tests/test_vertex.py gateway/tests/test_gemini_upstream.py"
+)
 
 MUTATIONS = [
     # ---- authentication and the tenant boundary (FRD-101/102, ADR-0006/0007) -------------
@@ -279,7 +292,7 @@ MUTATIONS = [
         "B3",
         "a request of unknown cost is counted apart, not summed as zero",
         "gateway/src/aira_gateway/budgets/service.py",
-        "                    record.unpriced_requests += 1",
+        "                    record.unpriced_requests += requests",
         "                    record.cost_nanos += 0",
         f"{COST} gateway/tests/test_budget_service.py",
     ),
@@ -457,16 +470,16 @@ MUTATIONS = [
         "M1",
         "a refused request debits no bucket at all",
         "gateway/src/aira_gateway/ratelimit/buckets.py",
-        "            self._state[request.key] = (tokens - 1 if decision.allowed else tokens, now)",
-        "            self._state[request.key] = (tokens - 1, now)",
+        "            self._state[request.key] = (tokens - cost if decision.allowed else tokens, now)",
+        "            self._state[request.key] = (tokens - cost, now)",
         RATELIMIT,
     ),
     Mutation(
         "M2",
         "every applicable scope is checked, not just the first",
         "gateway/src/aira_gateway/ratelimit/service.py",
-        "        decision = await self._bucket.take(buckets)",
-        "        decision = await self._bucket.take(buckets[:1])",
+        "        decision = await self._bucket.take(buckets, units)",
+        "        decision = await self._bucket.take(buckets[:1], units)",
         RATELIMIT,
     ),
     Mutation(
@@ -505,7 +518,7 @@ MUTATIONS = [
         "M7",
         "losing Redis degrades the limit, it does not remove it",
         "gateway/src/aira_gateway/ratelimit/buckets.py",
-        "            return await self._local.take(requests)",
+        "            return await self._local.take(requests, cost)",
         "            return ALLOWED",
         RATELIMIT,
     ),
@@ -777,18 +790,18 @@ MUTATIONS = [
     # ---- the KIRA compatibility surface (FRD-107 Stage A) -----------------------------------
     Mutation(
         "K1",
-        "a field this gateway cannot honour is refused, never accepted and ignored",
+        "a field the caller sent reaches the model rather than being dropped in the mapping",
         "gateway/src/aira_gateway/api/kira/mapping.py",
-        "    if request.thinking is not None:",
-        "    if False:",
+        "        thinking=thinking_of(request.thinking),",
+        "        thinking=None,",
         KIRA,
     ),
     Mutation(
         "K2",
-        "a model whose declared thinking default we cannot apply is refused, not approximated",
+        "a response schema is forwarded rather than silently dropped",
         "gateway/src/aira_gateway/api/kira/mapping.py",
-        '    if mode is not None and mode != "disabled":',
-        "    if False:",
+        "            parse_schema(request.response_schema, bounds)",
+        "            None",
         KIRA,
     ),
     Mutation(
@@ -819,7 +832,7 @@ MUTATIONS = [
         "K6",
         "a request on this surface passes the same pre-dispatch controls as any other",
         "gateway/src/aira_gateway/api/kira/routes.py",
-        "        reservation = await enforce_pre_dispatch(\n            request,\n            model=canonical.model,\n            max_output_tokens=canonical.max_output_tokens,\n            attachments=[part.media_type for part in canonical.attachments],\n        )\n        async with request.app.state.budgets.hold(reservation):",
+        "        reservation = await enforce_pre_dispatch(\n            request,\n            model=canonical.model,\n            max_output_tokens=canonical.max_output_tokens,\n            attachments=[part.media_type for part in canonical.attachments],\n            extra_tokens=reserved_tokens(canonical.thinking),\n        )\n        async with request.app.state.budgets.hold(reservation):",
         "        reservation = Reservation()\n        async with request.app.state.budgets.hold(reservation):",
         KIRA,
     ),
@@ -923,8 +936,8 @@ MUTATIONS = [
     Mutation(
         "F11",
         "embedding refuses an attachment rather than embedding the prompt without it",
-        "gateway/src/aira_gateway/api/gemini/routes.py",
-        "        if any(part.inlineData is not None for part in embed_request.content.parts):",
+        "gateway/src/aira_gateway/api/gemini/mapping.py",
+        "        if any(part.inlineData is not None for part in entry.content.parts):",
         "        if False:",
         ATTACHMENTS,
     ),
@@ -1102,10 +1115,10 @@ MUTATIONS = [
     Mutation(
         "C4",
         "a model that declares no embedding refuses one before dispatch",
-        "gateway/src/aira_gateway/api/serving.py",
-        '    if method == "embedContent" and not declaration.can(Capability.EMBED):',
-        '    if method == "embedContent" and False:',
-        MODEL_CATALOG,
+        "gateway/src/aira_gateway/embedding.py",
+        "    if not declaration.can(Capability.EMBED):",
+        "    if False:",
+        f"{MODEL_CATALOG} {EMBEDDING}",
     ),
     Mutation(
         "C5",
@@ -1269,6 +1282,183 @@ MUTATIONS = [
         "            raise CountersUnavailable(str(exc)) from exc",
         "            raise",
         COUNTERS,
+    ),
+# ---- thinking (FRD-111) -----------------------------------------------------------------
+    #
+    # The expensive knob on a request: budgets reach 32 768 tokens, billed as output. Three of
+    # these are about *money* rather than correctness, which is why they are here at all.
+    Mutation(
+        "T5",
+        "a thinking budget below the model's minimum is refused",
+        "gateway/src/aira_gateway/thinking.py",
+        "    if minimum is not None and tokens < minimum:",
+        "    if minimum is not None and tokens < 0:",
+        THINKING,
+    ),
+    Mutation(
+        "T6",
+        "a thinking budget above the model's maximum is refused",
+        "gateway/src/aira_gateway/thinking.py",
+        "    if maximum is not None and tokens > maximum:",
+        "    if maximum is not None and tokens > maximum * 1000:",
+        THINKING,
+    ),
+    Mutation(
+        "T7",
+        "a model's declared default thinking is applied when the caller sends none",
+        "gateway/src/aira_gateway/thinking.py",
+        "    if requested is None:\n        return _default_for(declaration)",
+        "    if requested is None:\n        return None",
+        THINKING,
+    ),
+    Mutation(
+        "T8",
+        "the pre-dispatch reservation includes the resolved thinking budget",
+        "gateway/src/aira_gateway/thinking.py",
+        "    return setting.tokens or 0",
+        "    return 0",
+        THINKING,
+    ),
+    Mutation(
+        "T9",
+        "an abstract level is translated by the model's own level table, not by a constant",
+        "gateway/src/aira_gateway/thinking.py",
+        "        mode=setting.mode, tokens=declaration.thinking_level_tokens(setting.mode) or maximum",
+        "        mode=setting.mode, tokens=maximum",
+        THINKING,
+    ),
+    Mutation(
+        "T10",
+        "a fallback candidate that cannot honour the thinking is skipped, not served",
+        "gateway/src/aira_gateway/thinking.py",
+        "    if not declaration.can(Capability.THINKING) or setting.mode not in declaration.thinking_modes:",  # noqa: E501
+        "    if False:",
+        f"{THINKING} {SERVING_OPTIONS}",
+    ),
+    # ---- structured output (FRD-112) ---------------------------------------------------------
+    Mutation(
+        "S1",
+        "an unknown schema field is refused rather than dropped",
+        "gateway/src/aira_gateway/core/schema.py",
+        'model_config = ConfigDict(populate_by_name=True, extra="forbid")',
+        'model_config = ConfigDict(populate_by_name=True, extra="ignore")',
+        RESPONSE_SCHEMA,
+    ),
+    Mutation(
+        "S2",
+        "the schema's nesting depth is bounded",
+        "gateway/src/aira_gateway/core/schema.py",
+        "    if depth > bounds.max_depth:",
+        "    if depth > bounds.max_depth * 1000:",
+        RESPONSE_SCHEMA,
+    ),
+    Mutation(
+        "S3",
+        "the schema's total property count is bounded across the whole tree",
+        "gateway/src/aira_gateway/core/schema.py",
+        "    if properties > bounds.max_properties:",
+        "    if properties > bounds.max_properties * 1000:",
+        RESPONSE_SCHEMA,
+    ),
+    Mutation(
+        "S4",
+        "the capability is checked against the model dispatched to, not the one requested",
+        "gateway/src/aira_gateway/requirements.py",
+        "        if declaration.can(Capability.STRUCTURED_OUTPUT):\n            return None",
+        "        if True:\n            return None",
+        SERVING_OPTIONS,
+    ),
+    Mutation(
+        "S5",
+        "a schema always travels with the media type that makes the provider honour it",
+        "gateway/src/aira_gateway/upstreams/gemini_mapping.py",
+        '        generation_config["responseMimeType"] = "application/json"',
+        '        generation_config.pop("responseMimeType", None)',
+        SERVING_OPTIONS,
+    ),
+    Mutation(
+        "S6",
+        "an incomplete document is refused rather than returned as data",
+        "gateway/src/aira_gateway/api/serving.py",
+        '    if canonical.response_schema is None or response.finish_reason == "stop":',
+        "    if True:",
+        SERVING_OPTIONS,
+    ),
+    Mutation(
+        "S7",
+        "an Anthropic model that answered in prose has not satisfied the schema",
+        "gateway/src/aira_gateway/upstreams/vertex/anthropic_mapping.py",
+        "        if document is None:",
+        "        if False:",
+        VERTEX,
+    ),
+    # ---- embedding options (FRD-113) ---------------------------------------------------------
+    #
+    # E1 is the control bypass: a batch admitted as one request turns a limit of 10 per minute
+    # into 5 000 texts per minute. Intact on paper, gone in practice.
+    Mutation(
+        "E1",
+        "a batch of n weighs n against the rate limit, not one",
+        "gateway/src/aira_gateway/api/serving.py",
+        "    await request.app.state.rate_limits.check(use_case, subject, units)",
+        "    await request.app.state.rate_limits.check(use_case, subject, 1)",
+        EMBEDDING,
+    ),
+    Mutation(
+        "E2",
+        "the bucket debits what the request weighs",
+        "gateway/src/aira_gateway/ratelimit/buckets.py",
+        "            if tokens < cost and decision.allowed:",
+        "            if tokens < 1 and decision.allowed:",
+        EMBEDDING,
+    ),
+    Mutation(
+        "E3",
+        "a batch is booked against the budget as the many requests it is",
+        "gateway/src/aira_gateway/api/serving.py",
+        "    return Amounts(tokens=tokens, requests=units, cost_nanos=cost)",
+        "    return Amounts(tokens=tokens, requests=1, cost_nanos=cost)",
+        EMBEDDING,
+    ),
+    Mutation(
+        "E4",
+        "a model that does not declare batch support refuses a list",
+        "gateway/src/aira_gateway/embedding.py",
+        "    if len(texts) > 1 and not declaration.supports_batch:",
+        "    if False:",
+        EMBEDDING,
+    ),
+    Mutation(
+        "E5",
+        "a task type the model does not declare is refused rather than passed through",
+        "gateway/src/aira_gateway/embedding.py",
+        "    if normalised not in declared:",
+        "    if False:",
+        EMBEDDING,
+    ),
+    Mutation(
+        "E6",
+        "a compatibility default is applied only where the model declares it",
+        "gateway/src/aira_gateway/embedding.py",
+        "        return default if default is not None and default in declared else None",
+        "        return default",
+        EMBEDDING,
+    ),
+    Mutation(
+        "E7",
+        "every embedding verb is checked for the embedding capability, not the generation one",
+        "gateway/src/aira_gateway/api/serving.py",
+        "    if method not in EMBEDDING_METHODS and not declaration.can(Capability.GENERATE):",
+        '    if method != "embedContent" and not declaration.can(Capability.GENERATE):',
+        SERVING_OPTIONS,
+    ),
+    Mutation(
+        "E8",
+        "a batch that cannot fit the bucket at all is refused rather than told to retry forever",
+        "gateway/src/aira_gateway/ratelimit/service.py",
+        "            if units > bucket.capacity:",
+        "            if False:",
+        f"{RATELIMIT} {EMBEDDING}",
     ),
 ]
 

@@ -193,6 +193,34 @@ async def test_the_configured_limit_is_enforced(sessionmaker) -> None:
     assert exc.value.retry_after == "1"
 
 
+async def test_a_weighted_request_takes_what_it_weighs(sessionmaker) -> None:
+    """`FRD-113` FR-6 through the service rather than the bucket: an embedding batch of n is n
+    requests, so it must exhaust an allowance of n in one call."""
+    await _limit(sessionmaker, limit_rpm=60, burst=5)
+    service = RateLimitService(sessionmaker, InMemoryTokenBucket(FakeClock()))
+
+    await service.check("uc", "alice", 5)
+    with pytest.raises(RateLimited):
+        await service.check("uc", "alice")
+
+
+async def test_a_request_too_heavy_for_the_bucket_says_so_rather_than_stalling(
+    sessionmaker,
+) -> None:
+    """A batch larger than the bucket's *capacity* can never be admitted, however long the caller
+    waits. A `Retry-After` would still be wrong an hour later, so the refusal names the bound and
+    which of the two — the batch limit or the rate limit — said no (`FRD-113` §11)."""
+    await _limit(sessionmaker, limit_rpm=60, burst=5)
+    service = RateLimitService(sessionmaker, InMemoryTokenBucket(FakeClock()))
+
+    with pytest.raises(RateLimited) as exc:
+        await service.check("uc", "alice", 50)
+    assert "cannot fit" in exc.value.message
+    assert "5" in exc.value.message
+    # And it did not debit on the way out: the allowance is intact for requests that do fit.
+    await service.check("uc", "alice", 5)
+
+
 async def test_a_use_case_limit_is_shared_by_all_its_members(sessionmaker) -> None:
     await _limit(sessionmaker, limit_rpm=60, burst=2)
     service = RateLimitService(sessionmaker, InMemoryTokenBucket(FakeClock()))

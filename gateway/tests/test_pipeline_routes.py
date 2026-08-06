@@ -47,8 +47,8 @@ class _Echo:
         raise NotImplementedError
         yield  # pragma: no cover
 
-    async def embed(self, model: str, text: str) -> list[float]:
-        return [0.0]
+    async def embed(self, request: object) -> list[list[float]]:
+        return [[0.0]]
 
 
 class _Classifier:
@@ -72,8 +72,8 @@ class _Classifier:
         raise NotImplementedError
         yield  # pragma: no cover
 
-    async def embed(self, model: str, text: str) -> list[float]:
-        return [0.0]
+    async def embed(self, request: object) -> list[list[float]]:
+        return [[0.0]]
 
 
 def _client(pipeline: Pipeline, *providers: object) -> TestClient:

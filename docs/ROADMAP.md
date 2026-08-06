@@ -197,8 +197,8 @@ order below serves the priorities rather than restating them.
 | **2** ✅ | ~~`FRD-115` + `FRD-119` — Vertex EU, Gemini + Anthropic~~ **fertig 2026-08-06** | Priorität 2, erste Hälfte. Erst danach ist überhaupt ein produktionsfähiges (EU-)Modell erreichbar. |
 | **3** ✅ | ~~`FRD-110` — Dokumente~~ **fertig 2026-08-06** | Priorität 3. Bewusst **nach** Stufe 2: ohne dokumentenfähiges Modell in der EU wären Dokumente nur gegen den Mock nutzbar. |
 | **4** ✅ | ~~`FRD-107` Stage A — KIRA-Fläche~~ **fertig 2026-08-06**, inkl. Dokumenten | Priorität 1, so früh wie ehrlich möglich. Nicht unterstützte Felder werden **abgewiesen**, nie ignoriert (`FRD-107` §5.2). Einfache Clients migrieren hier. |
-| **5** | `FRD-111`, `FRD-112`, `FRD-113` | Thinking, strukturierte Ausgabe, Embedding-Optionen. |
-| **6** | `FRD-107` Stage B | Dieselben Felder werden von abgewiesen zu bedient. Vertrag unverändert. |
+| **5** ✅ | ~~`FRD-111`, `FRD-112`, `FRD-113`~~ **fertig 2026-08-06** | Thinking, strukturierte Ausgabe, Embedding-Optionen. |
+| **6** ✅ | ~~`FRD-107` Stage B~~ **fertig 2026-08-06** | Dieselben Felder wurden von abgewiesen zu bedient — **Vertrag unverändert**, direkt mit Stufe 5 ausgeliefert, weil eine Fähigkeit zu bauen und sie an der Kompatibilitätsfläche weiter abzuweisen niemandem nützt. |
 | **7** | `FRD-120` — Microsoft Foundry | Priorität 2, zweite Hälfte. Beweist zugleich Feature 19 (Erweiterbarkeit) — der Diff darf `upstreams/` nicht verlassen. |
 | **8** | `FRD-116`, `FRD-117`, `FRD-602`, `FRD-406` | Vault, Diagnostik, Export, Maskierung. |
 | **9** | `FRD-504`, `FRD-500`/`501`/`503` | IT-Security: Smoke-Tests, Anomalien, Incident Response. |
@@ -216,9 +216,9 @@ overruled rather than discovered:
 | FRD | What | Blocking? |
 |---|---|---|
 | ~~`FRD-110`~~ | Documents and images in a request | **Done (2026-08-06).** Ordered parts, allow-list + signature check + bounds, per-model media types checked after routing, reservation counts them, audit keeps a description not the bytes. A model that cannot read it **refuses**. |
-| `FRD-111` | Thinking modes and budgets | needs `FRD-114` |
-| `FRD-112` | `responseSchema` — forced JSON output | — |
-| `FRD-113` | Embedding task types, batches, dimensions | needs `FRD-114` |
+| ~~`FRD-111`~~ | Thinking modes and budgets | **Done (2026-08-06).** Sieben Modi, pro Modell validiert, Level→Budget aus dem Katalog; die Reservierung enthält das Budget, und eine Kette überspringt einen Kandidaten, der es nicht kann. Gedanken werden nie zurückgegeben. |
+| ~~`FRD-112`~~ | `responseSchema` — forced JSON output | **Done (2026-08-06).** Ein Feld, das wir nicht kennen, wird **benannt** abgelehnt; Grenzen für Größe/Tiefe/Anzahl; Gemini per Parameter, Anthropic per erzwungenem Tool-Call; die Fähigkeitsprüfung läuft **pro Hop**. |
+| ~~`FRD-113`~~ | Embedding task types, batches, dimensions | **Done (2026-08-06).** Ein Batch von n wiegt **n** gegen Limit und Budget — sonst wäre das Limit auf dem Papier intakt und in der Praxis weg. |
 | ~~`FRD-114`~~ | Model capability metadata | **Done (2026-08-06).** Capabilities, publisher/platform/addressing, output caps, thinking/embedding/attachment declarations, hosting, deprecation. Undeclared = baseline only. |
 | ~~`FRD-115`~~ | Vertex AI / Model Garden in the EU | **Done (2026-08-06).** Shared `TokenSource`, region allow-list enforced at startup, ambiguous routing table refuses to boot, provenance on every audit row. |
 | ~~`FRD-119`~~ | Anthropic models on Vertex: the second dialect | **Done (2026-08-06)** for what the canonical core carries today. Thinking / structured output / attachments land with `FRD-111`/`112`/`110`. |

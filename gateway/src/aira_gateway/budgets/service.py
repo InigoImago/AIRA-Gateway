@@ -254,20 +254,28 @@ class BudgetService:
         *,
         cost_nanos: int | None = None,
         now: datetime | None = None,
+        requests: int = 1,
     ) -> None:
         """Book the real figure: correct the reservation and persist it.
 
         Postgres receives the actual consumption; the shared counter is moved by the difference
         between what was reserved and what was really used, so it converges on the same total.
+
+        ``requests`` is what the call weighed — one for an ordinary request, and one **per text**
+        for an embedding batch (`FRD-113` FR-6). Settling a batch of 500 as a single request would
+        hand back 499 of the reservation and leave a request-count budget unable to see batched
+        traffic at all.
         """
         reservation.resolved = True
         if not reservation.budgets:
             return
         now = now or datetime.now(UTC)
-        await self.record(reservation.budgets, tokens, cost_nanos=cost_nanos, now=now)
+        await self.record(
+            reservation.budgets, tokens, cost_nanos=cost_nanos, now=now, requests=requests
+        )
         if not reservation.atomic or self._ledger is None:
             return
-        actual = Amounts(tokens=tokens, requests=1, cost_nanos=cost_nanos or 0)
+        actual = Amounts(tokens=tokens, requests=requests, cost_nanos=cost_nanos or 0)
         correction = Amounts(
             tokens=actual.tokens - reservation.reserved.tokens,
             requests=actual.requests - reservation.reserved.requests,
@@ -308,8 +316,9 @@ class BudgetService:
         *,
         cost_nanos: int | None = None,
         now: datetime | None = None,
+        requests: int = 1,
     ) -> None:
-        """Book one request against every applicable budget.
+        """Book a request — or a batch counted as the many it is — against every budget.
 
         Both extra arguments are keyword-only on purpose: an amount of money and a timestamp
         next to each other as positionals is exactly how a caller ends up booking the wrong
@@ -338,9 +347,9 @@ class BudgetService:
                     )
                     session.add(record)
                 record.tokens += tokens
-                record.requests += 1
+                record.requests += requests
                 if cost_nanos is None:
-                    record.unpriced_requests += 1
+                    record.unpriced_requests += requests
                 else:
                     record.cost_nanos += cost_nanos
             await session.commit()

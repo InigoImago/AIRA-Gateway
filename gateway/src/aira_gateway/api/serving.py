@@ -32,7 +32,9 @@ from aira_gateway.budgets.errors import BudgetExceeded
 from aira_gateway.budgets.ledger import Amounts
 from aira_gateway.budgets.service import Reservation
 from aira_gateway.catalog import ModelCatalog, ModelDeclaration
-from aira_gateway.core.canonical import CanonicalRequest
+from aira_gateway.core.canonical import CanonicalRequest, CanonicalResponse
+from aira_gateway.core.schema import SchemaBounds, SchemaRejected
+from aira_gateway.embedding import EmbeddingBounds, EmbeddingRejected
 from aira_gateway.pipeline.dispatch import NoCapableModel, Permits
 from aira_gateway.pipeline.engine import PipelineEngine
 from aira_gateway.pipeline.errors import PipelineRejected
@@ -42,9 +44,12 @@ from aira_gateway.requirements import (
     MediaTypesSupported,
     RegionAllowed,
     Requirement,
+    StructuredOutputSupported,
+    ThinkingHonoured,
     permits,
 )
 from aira_gateway.residency import parse_allowed
+from aira_gateway.thinking import ThinkingRejected
 from aira_gateway.upstreams.base import ProviderRegistry, UpstreamError
 
 _log = get_logger("aira_gateway")
@@ -53,6 +58,9 @@ _log = get_logger("aira_gateway")
 #: so a new control cannot be caught by one surface and escape the other.
 REFUSALS = (
     AttachmentRejected,
+    ThinkingRejected,
+    SchemaRejected,
+    EmbeddingRejected,
     RateLimited,
     BudgetExceeded,
     PipelineRejected,
@@ -60,6 +68,14 @@ REFUSALS = (
     UpstreamError,
     GeminiHTTPError,
 )
+
+
+#: Every verb that embeds. A **set**, not a comparison against one name: `FRD-113` added the batch
+#: verb, and a capability check written as ``method == "embedContent"`` would have demanded the
+#: *generation* capability of it — refusing every batch against an embedding-only model, and
+#: accepting one against a model that cannot embed at all. The same shape as the `:embedContent`
+#: bypass, one verb later.
+EMBEDDING_METHODS = frozenset({"embedContent", "batchEmbedContents"})
 
 
 def elapsed_ms(started: float) -> int:
@@ -79,20 +95,32 @@ async def enforce_pre_dispatch(
     model: str,
     max_output_tokens: int | None,
     attachments: list[str] | None = None,
+    units: int = 1,
+    extra_tokens: int = 0,
 ) -> Reservation:
     """Every control a request must clear before anything expensive happens.
 
     Rate limiting comes first: the whole point of a limit is that the upstream call never
     happens. The budget then reserves what the request is expected to consume, so requests in
     flight are visible to each other's check instead of all passing the same stale figure.
+
+    ``units`` is how many requests this call *is* — one, except for an embedding batch, which is
+    one per text (`FRD-113` FR-6). ``extra_tokens`` is consumption no property of the body
+    predicts: today a thinking budget (`FRD-111` FR-5), which can be an order of magnitude larger
+    than the answer and is billed at the output rate.
     """
     attribution = getattr(request.state, "attribution", None)
     use_case = getattr(attribution, "use_case", None)
     subject = getattr(attribution, "subject", None)
 
-    await request.app.state.rate_limits.check(use_case, subject)
+    await request.app.state.rate_limits.check(use_case, subject, units)
     expected = await estimate(
-        request, model=model, max_output_tokens=max_output_tokens, attachments=attachments
+        request,
+        model=model,
+        max_output_tokens=max_output_tokens,
+        attachments=attachments,
+        units=units,
+        extra_tokens=extra_tokens,
     )
     # `app.state` is untyped, so the annotation is what states the contract the route relies on.
     reservation: Reservation = await request.app.state.budgets.guard(
@@ -107,6 +135,8 @@ async def estimate(
     model: str,
     max_output_tokens: int | None,
     attachments: list[str] | None = None,
+    units: int = 1,
+    extra_tokens: int = 0,
 ) -> Amounts:
     """What this request is expected to consume, for the pre-dispatch reservation (FRD-405).
 
@@ -128,9 +158,13 @@ async def estimate(
     # the output rate along with everything else: over-reserving briefly is the safe direction for
     # a spend limit, and the figure is corrected the moment the response arrives.
     tokens += declaration.attachment_tokens(attachments or [])
+    # A thinking budget is the largest single number on a request that uses it, and it is billed
+    # as output. Reserving without it would leave the most expensive knob on the request invisible
+    # to the limit that exists to bound spend.
+    tokens += extra_tokens
     price = await request.app.state.pricing.price_for(model)
     cost = 0 if price is None else cost_nanos(tokens, price.output_per_million_nanos)
-    return Amounts(tokens=tokens, requests=1, cost_nanos=cost)
+    return Amounts(tokens=tokens, requests=units, cost_nanos=cost)
 
 
 def upstream_error(exc: UpstreamError) -> JSONResponse:
@@ -163,7 +197,48 @@ def requirements_for(request: Request, canonical: CanonicalRequest | None) -> Pe
     ]
     if canonical is not None and canonical.media_types:
         checks.append(MediaTypesSupported(catalog_of(request), canonical.media_types))
+    if canonical is not None and canonical.response_schema is not None:
+        checks.append(StructuredOutputSupported(catalog_of(request)))
+    if canonical is not None and canonical.thinking is not None:
+        checks.append(ThinkingHonoured(catalog_of(request), canonical.thinking))
     return permits(checks)
+
+
+def schema_bounds(request: Request) -> SchemaBounds:
+    settings = request.app.state.settings
+    return SchemaBounds(
+        max_bytes=settings.max_response_schema_bytes,
+        max_depth=settings.max_response_schema_depth,
+        max_properties=settings.max_response_schema_properties,
+    )
+
+
+def embedding_bounds(request: Request) -> EmbeddingBounds:
+    settings = request.app.state.settings
+    return EmbeddingBounds(
+        max_batch=settings.max_embedding_batch,
+        max_total_chars=settings.max_embedding_chars,
+    )
+
+
+def check_structured_result(canonical: CanonicalRequest, response: CanonicalResponse) -> None:
+    """A schema-constrained answer that did not finish normally is not data (`FRD-112` FR-6).
+
+    Providers differ in how faithfully they honour a schema, and the two ways it goes wrong look
+    identical from the outside: a document truncated at the output cap is still valid-looking JSON
+    right up to where it stops, and an Anthropic model that answered in prose instead of calling
+    the forced tool produced no document at all. Returning either as though it were the requested
+    shape hands a parse error — or worse, a *successful* parse of half the data — to somebody
+    else's application.
+    """
+    if canonical.response_schema is None or response.finish_reason == "stop":
+        return
+    raise GeminiHTTPError(
+        502,
+        f"The model did not return a complete document matching the requested schema "
+        f"(it stopped with '{response.finish_reason}').",
+        "FAILED_PRECONDITION",
+    )
 
 
 def provenance(request: Request, model: str) -> tuple[str, str, str] | None:
@@ -193,16 +268,12 @@ async def check_declaration(
     """
     declaration = await catalog_of(request).declaration(model)
 
-    if method == "embedContent" and not declaration.can(Capability.EMBED):
-        # Refused *before* dispatch rather than by an adapter raising deep in the stack: with
-        # cross-vendor routing (ADR-0012) a chain can send an embedding to a model that has no
-        # embedding endpoint at all, and the useful error names the model (FRD-113 FR-6a).
-        raise GeminiHTTPError(
-            400,
-            f"Model '{model}' does not support embedding.",
-            "INVALID_ARGUMENT",
-        )
-    if method != "embedContent" and not declaration.can(Capability.GENERATE):
+    # Whether a model may *embed* is decided by `embedding.validate`, which both surfaces call —
+    # not here as well. The check lived in both for a while and the mutation harness caught it:
+    # removing either copy changed nothing observable, which is what redundancy looks like from
+    # the outside and is a defect in the making. Two places deciding one rule drift, and the one
+    # that drifts is whichever is not under test.
+    if method not in EMBEDDING_METHODS and not declaration.can(Capability.GENERATE):
         raise GeminiHTTPError(
             400, f"Model '{model}' does not support generation.", "INVALID_ARGUMENT"
         )
@@ -276,7 +347,7 @@ _REFUSAL_OUTCOMES: dict[int, Outcome] = {
 
 
 def refusal_outcome(exc: Exception) -> Outcome:
-    if isinstance(exc, AttachmentRejected):
+    if isinstance(exc, AttachmentRejected | ThinkingRejected | SchemaRejected | EmbeddingRejected):
         return Outcome.INVALID_REQUEST
     if isinstance(exc, NoCapableModel):
         return Outcome.NO_CAPABLE_MODEL

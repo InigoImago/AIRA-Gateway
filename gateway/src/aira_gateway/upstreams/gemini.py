@@ -14,15 +14,28 @@ from typing import Any
 import httpx
 
 from aira_gateway.config import GatewaySettings
-from aira_gateway.core.canonical import CanonicalChunk, CanonicalRequest, CanonicalResponse
+from aira_gateway.core.canonical import (
+    CanonicalChunk,
+    CanonicalEmbeddingRequest,
+    CanonicalRequest,
+    CanonicalResponse,
+)
 from aira_gateway.upstreams.base import UpstreamError, UpstreamModel
 from aira_gateway.upstreams.gemini_mapping import (
+    batch_embedding_body,
+    canonical_to_gemini_embedding,
     canonical_to_gemini_request,
+    embedding_values,
     gemini_chunk_to_canonical,
     gemini_response_to_canonical,
 )
 
-_METHODS = ("generateContent", "streamGenerateContent", "embedContent")
+_METHODS = (
+    "generateContent",
+    "streamGenerateContent",
+    "embedContent",
+    "batchEmbedContents",
+)
 
 
 class GeminiUpstream:
@@ -43,11 +56,17 @@ class GeminiUpstream:
         )
         return gemini_response_to_canonical(data, request.model)
 
-    async def embed(self, model: str, text: str) -> list[float]:
-        data = await self._post(
-            f"/models/{model}:embedContent", {"content": {"parts": [{"text": text}]}}
-        )
-        return [float(value) for value in data.get("embedding", {}).get("values", [])]
+    async def embed(self, request: CanonicalEmbeddingRequest) -> list[list[float]]:
+        if request.size > 1:
+            data = await self._post(
+                f"/models/{request.model}:batchEmbedContents",
+                batch_embedding_body(request, request.model),
+            )
+        else:
+            data = await self._post(
+                f"/models/{request.model}:embedContent", canonical_to_gemini_embedding(request)
+            )
+        return embedding_values(data)
 
     async def stream_generate(self, request: CanonicalRequest) -> AsyncIterator[CanonicalChunk]:
         body = canonical_to_gemini_request(request)
