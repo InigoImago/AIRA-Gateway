@@ -83,6 +83,19 @@ class AuditTrail:
             self.selection = SELECTION_ROUTE
         self.model = model
 
+    def passed_over(self, skipped: list[Any]) -> None:
+        """Record the candidates the chain declined, and why.
+
+        Kept with the pipeline decisions rather than in a column of its own: it is the same kind
+        of fact — a decision the gateway took about this request — and a fallback that skipped
+        three models for three different reasons is exactly what somebody needs to see when they
+        ask why an answer came from the model it did.
+        """
+        for entry in skipped:
+            self.decisions.append(
+                {"step": "dispatch", "action": "skipped", "to": entry.model, "why": entry.reason}
+            )
+
     def served_by(self, model: str, candidate_index: int) -> None:
         """Record which candidate of the dispatch chain answered."""
         self.model = model
@@ -93,7 +106,7 @@ class AuditTrail:
 #: What may be kept from a pipeline decision. An **allow-list**, not a deny-list: a future step
 #: that records the classifier's explanation would otherwise start persisting model output about a
 #: caller's prompt the day it is added, silently, in a column redaction cannot process.
-SAFE_DECISION_KEYS = frozenset({"step", "action", "flagged", "category", "from", "to"})
+SAFE_DECISION_KEYS = frozenset({"step", "action", "flagged", "category", "from", "to", "why"})
 
 
 def decision_summary(decisions: list[dict[str, Any]]) -> list[dict[str, Any]] | None:

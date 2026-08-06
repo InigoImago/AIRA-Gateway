@@ -34,11 +34,12 @@ from aira_gateway.budgets.service import Reservation
 from aira_gateway.catalog import ModelCatalog, ModelDeclaration
 from aira_gateway.core.canonical import CanonicalChunk, CanonicalRequest, CanonicalUsage
 from aira_gateway.persistence.recorder import record_request
-from aira_gateway.pipeline.dispatch import dispatch_with_fallback
+from aira_gateway.pipeline.dispatch import NoCapableModel, Permits, dispatch_with_fallback
 from aira_gateway.pipeline.engine import PipelineEngine
 from aira_gateway.pipeline.errors import PipelineRejected
 from aira_gateway.pipeline.store import PipelineStore
 from aira_gateway.ratelimit.errors import RateLimited
+from aira_gateway.requirements import RegionAllowed, permits
 from aira_gateway.upstreams.base import ProviderRegistry, Upstream, UpstreamError
 
 _log = get_logger("aira_gateway")
@@ -133,6 +134,19 @@ def _provenance(request: Request, model: str) -> tuple[str, str, str] | None:
     if described is None or not described.provider:
         return None
     return (described.provider, described.publisher, described.region)
+
+
+def _requirements(request: Request) -> Permits:
+    """What a candidate must satisfy to serve this request (`ADR-0012` §3).
+
+    Assembled per request because the answer depends on the request: today only residency, and
+    `FRD-110` adds the attachment media types the caller actually sent.
+    """
+    settings = request.app.state.settings
+    allowed = tuple(
+        region.strip() for region in settings.vertex_allowed_regions.split(",") if region.strip()
+    )
+    return permits([RegionAllowed(_registry(request), allowed)])
 
 
 def _catalog(request: Request) -> ModelCatalog:
@@ -266,6 +280,8 @@ _REFUSAL_OUTCOMES: dict[int, Outcome] = {
 
 
 def _refusal_outcome(exc: Exception) -> Outcome:
+    if isinstance(exc, NoCapableModel):
+        return Outcome.NO_CAPABLE_MODEL
     if isinstance(exc, RateLimited):
         return Outcome.RATE_LIMITED
     if isinstance(exc, BudgetExceeded):
@@ -280,6 +296,11 @@ def _refusal_outcome(exc: Exception) -> Outcome:
 
 
 def _refusal_response(exc: Exception) -> JSONResponse:
+    if isinstance(exc, NoCapableModel):
+        # A 400, not the 502 this used to be. "Every candidate was excluded" is a configuration or
+        # capability problem somebody can fix; an upstream outage is not, and reporting them as the
+        # same status sends whoever reads it to the wrong place.
+        return _error(400, str(exc), "FAILED_PRECONDITION")
     if isinstance(exc, RateLimited):
         return _error(
             429, exc.message, "RESOURCE_EXHAUSTED", headers={"Retry-After": exc.retry_after}
@@ -309,7 +330,14 @@ async def generate(resource: str, request: Request) -> Response:
     started = time.monotonic()
     try:
         return await _generate(resource, request, trail)
-    except (RateLimited, BudgetExceeded, PipelineRejected, UpstreamError, GeminiHTTPError) as exc:
+    except (
+        RateLimited,
+        BudgetExceeded,
+        PipelineRejected,
+        NoCapableModel,
+        UpstreamError,
+        GeminiHTTPError,
+    ) as exc:
         response = _refusal_response(exc)
         await _record_refusal(request, trail, exc, status=response.status_code, started=started)
         return response
@@ -435,9 +463,15 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
             # budget consumed by a request that produced nothing (FRD-405 FR-5).
             async with request.app.state.budgets.hold(reservation):
                 started = time.monotonic()
-                dispatched = await dispatch_with_fallback(_registry(request), canonical, fallbacks)
+                dispatched = await dispatch_with_fallback(
+                    _registry(request),
+                    canonical,
+                    fallbacks,
+                    permits=_requirements(request),
+                )
                 canonical_response = dispatched.response
                 trail.served_by(canonical_response.model, dispatched.candidate_index)
+                trail.passed_over(dispatched.skipped)
                 # Priced once, then shared: the budget counters and the audit trail must not be
                 # able to disagree about what a request cost (FRD-403).
                 cost = await request.app.state.pricing.cost_nanos(

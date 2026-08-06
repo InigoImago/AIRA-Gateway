@@ -75,6 +75,7 @@ PIPELINE = "gateway/tests/test_pipeline_engine.py gateway/tests/test_pipeline_ro
 RETENTION = "gateway/tests/test_retention.py gateway/tests/test_store_payloads.py"
 MODEL_CATALOG = "gateway/tests/test_model_catalog.py"
 VERTEX = "gateway/tests/test_vertex.py"
+REQUIREMENTS = "gateway/tests/test_dispatch_requirements.py"
 TOKENS = "libs/tests/test_tokens.py"
 CATALOG_DECLARATION = "management/backend/tests/test_catalog_declaration.py"
 
@@ -748,6 +749,55 @@ MUTATIONS = [
         "            roles=realm_roles(claims),",
         "            roles=(),",
         "gateway/tests/test_attribution.py gateway/tests/test_auth_oidc.py",
+    ),
+    # ---- the dispatch chain may not degrade silently (ADR-0012 §3) -------------------------
+    Mutation(
+        "D1",
+        "a candidate that fails a condition is skipped, never used anyway",
+        "gateway/src/aira_gateway/pipeline/dispatch.py",
+        "            if refusal is not None:\n                skipped.append(Skipped(model, refusal))\n                continue",
+        "            if refusal is not None:\n                skipped.append(Skipped(model, refusal))",
+        REQUIREMENTS,
+    ),
+    Mutation(
+        "D2",
+        "a model outside the permitted regions is refused",
+        "gateway/src/aira_gateway/requirements.py",
+        "        if described.region not in self._allowed:",
+        "        if False:",
+        REQUIREMENTS,
+    ),
+    Mutation(
+        "D3",
+        "an exhausted chain is a precondition failure, not an upstream outage",
+        "gateway/src/aira_gateway/pipeline/dispatch.py",
+        "    raise NoCapableModel(skipped)",
+        '    raise UpstreamError("No provider available.")',
+        REQUIREMENTS,
+    ),
+    Mutation(
+        "D4",
+        "an upstream that was tried and failed is still reported as an outage",
+        "gateway/src/aira_gateway/pipeline/dispatch.py",
+        "    if last_error is not None:\n        raise last_error",
+        "    if False:\n        raise last_error",
+        f"{REQUIREMENTS} gateway/tests/test_pipeline_dispatch.py",
+    ),
+    Mutation(
+        "D5",
+        "a model no provider serves is named in the failure rather than silently passed over",
+        "gateway/src/aira_gateway/pipeline/dispatch.py",
+        '            skipped.append(Skipped(model, "no provider serves this model"))',
+        "            pass",
+        REQUIREMENTS,
+    ),
+    Mutation(
+        "D6",
+        "the candidates a chain passed over reach the audit trail",
+        "gateway/src/aira_gateway/api/gemini/routes.py",
+        "                trail.passed_over(dispatched.skipped)",
+        "                pass",
+        REQUIREMENTS,
     ),
     # ---- Vertex EU and the second dialect (FRD-115, FRD-119) -------------------------------
     Mutation(

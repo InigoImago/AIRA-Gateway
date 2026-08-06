@@ -43,7 +43,7 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
   inevitably do when both were written from the same mental model — and line coverage cannot see
   a *missing requirement*: on 2026-08-05 a review found seven real defects behind a green suite at
   99% coverage. So: **prove a test can fail.** Break the property, watch it go red, restore.
-  `make mutants` (`tools/mutation_check.py`) does this for **116 properties** across auth, budgets,
+  `make mutants` (`tools/mutation_check.py`) does this for **122 properties** across auth, budgets,
   pipeline, retention, the management control plane and the gateway's counters; when
   you fix a bug, add the mutation that reintroduces it. Two traps that cost real defects here:
   a stand-in that is more permissive than the thing it replaces (reuse the real method where you
@@ -319,6 +319,15 @@ specifics: `max_tokens` always sent, **thinking blocks dropped**, cache tokens c
 streamed usage **accumulated** across `message_start` and `message_delta`, no embedding.
 **The architecture assertion is a test**: `test_no_code_above_the_adapters_knows_the_vendor` parses
 every module outside `upstreams/vertex/` and fails if a vendor appears in code. It passes.
+**The dispatch chain now takes conditions (2026-08-06, `ADR-0012` §3 implemented).** A candidate
+that fails one is **skipped with its reason kept**; an exhausted chain raises `NoCapableModel` →
+**400 FAILED_PRECONDITION**, not the 502 it used to be — "every candidate was excluded" is fixable
+by an operator, an outage is not. **Residency is the first condition**, media types (`FRD-110`) and
+the schema capability (`FRD-112`) are the next two, and they share the mechanism rather than each
+inventing one. Two present-day defects fell out: a model no provider served was a **silent
+`continue`** (a typo in a fallback chain was invisible), and the candidates a chain passed over now
+reach the audit row. Residency is still **deployment-wide** — per-use-case regions are a governance
+extension, not a bug fix, and are not built.
 **Delivery order is fixed (ROADMAP Phase 8, 2026-08-06)**, derived from the owner's priority
 (KIRA compatibility → model connections → documents → the review findings) and the dependency that
 priority 1 needs priority 3: **`FRD-122` (audit) → `FRD-114` (metadata) → `FRD-115`+`119` (Vertex EU,

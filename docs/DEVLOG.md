@@ -5,6 +5,50 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-06 — The fallback chain learns to say no
+A question from the owner — *is the region set for the whole gateway, or can it be bound to a use
+case?* — turned into a smaller and more urgent finding than the one it asked about.
+
+**The honest answer to the question:** deployment-wide. The allow-list is global and the region is
+a property of the model; a use case can only influence it indirectly, through `allow_check`, which
+it configures itself and can therefore widen. That is self-service, not governance. Per-use-case
+residency is a real requirement and a **governance extension** — it is not built, and it should be
+its own FRD rather than smuggled in here.
+
+**What was actually broken** is one level down: `dispatch_with_fallback` had no notion of a
+condition at all. It tried candidates in order and returned the first success. Nothing could
+express "not that one", so nothing could enforce it — not residency, and not the attachment rule
+`ADR-0012` §3 already states for documents.
+
+So the mechanism is built now, before the feature that needs it: the chain takes conditions, a
+candidate that fails one is **skipped with its reason kept**, and an exhausted chain fails. The
+reasons are on the audit row, which is what somebody actually needs when they ask why an answer
+came from the model it did.
+
+Two present-day defects fell out of it:
+
+- **A model no provider serves was a silent `continue`.** A typo in a fallback chain was
+  invisible: the chain simply behaved as though the entry were not there, and nothing said so.
+- **An exhausted chain raised `UpstreamError`**, which the route mapped to a **502**. So a
+  configuration mistake read as "the provider is down" and sent whoever looked at it to the wrong
+  place. It is now `NoCapableModel` → **400 FAILED_PRECONDITION**, naming each candidate and why it
+  was excluded. `Outcome.NO_CAPABLE_MODEL` — declared in `FRD-122` and until now unreachable —
+  finally has a producer.
+
+Residency is the first condition. It cannot refuse anything a correctly configured gateway offers
+today, since every model was already checked against the allow-list at startup — and it is built
+anyway, because the *per-hop* check is the part that would otherwise be got wrong when residency
+becomes a per-use-case property. Media types (`FRD-110`) and the schema capability (`FRD-112`) plug
+into the same mechanism.
+
+One existing test had to change, and the change is the point: it asserted that an exhausted chain
+raises `UpstreamError` — it encoded the misleading behaviour. It now pins both halves: a chain with
+nothing to offer is not an outage, and an upstream that *was* tried and failed still is.
+
+122/122 mutations, 710 hermetic tests, 69 integration, 46 browser.
+
+---
+
 ## 2026-08-06 — Stufe 2: the EU, and the first vendor that does not speak Google
 `FRD-115` and `FRD-119`. One `VertexTransport` — URL, OAuth, region, error mapping — with two
 dialects above it: Gemini bodies unchanged from `FRD-304`, and the Anthropic Messages API.

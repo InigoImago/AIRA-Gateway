@@ -7,7 +7,7 @@ from aira_gateway.core.canonical import (
     CanonicalUsage,
     Role,
 )
-from aira_gateway.pipeline.dispatch import dispatch_with_fallback
+from aira_gateway.pipeline.dispatch import NoCapableModel, dispatch_with_fallback
 from aira_gateway.upstreams.base import ProviderRegistry, UpstreamError, UpstreamModel
 
 
@@ -64,7 +64,25 @@ async def test_all_fail_raises_last_error() -> None:
         await dispatch_with_fallback(registry, _request("a"), ("b",))
 
 
-async def test_no_provider_raises() -> None:
+async def test_a_chain_with_nothing_to_offer_is_not_reported_as_an_outage() -> None:
+    """This used to raise ``UpstreamError``, which the route mapped to a 502 — so a configuration
+    mistake read as "the provider is down" and sent whoever looked at it to the wrong place.
+
+    "Every candidate was excluded" is something an operator can fix; an outage is not.
+    """
     registry = ProviderRegistry([_Provider("a")])
-    with pytest.raises(UpstreamError, match="No provider available"):
+
+    with pytest.raises(NoCapableModel) as caught:
         await dispatch_with_fallback(registry, _request("ghost"), ())
+
+    assert not isinstance(caught.value, UpstreamError)
+    assert "ghost" in str(caught.value), "the failure has to name what it could not use"
+
+
+async def test_a_tried_upstream_that_failed_is_still_an_outage() -> None:
+    """The counterpart: a provider that was actually called and failed is an outage, and the
+    caller may usefully retry. Collapsing both into one error would lose that."""
+    registry = ProviderRegistry([_Provider("a", fail=True)])
+
+    with pytest.raises(UpstreamError):
+        await dispatch_with_fallback(registry, _request("a"), ())

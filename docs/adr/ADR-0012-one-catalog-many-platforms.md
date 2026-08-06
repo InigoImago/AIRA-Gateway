@@ -104,6 +104,19 @@ confident answer about a document the model never saw, returned with a 200, indi
 correct answer to everyone including the caller. Compared with that, an error is a good outcome:
 **failing is recoverable, being quietly wrong is not.**
 
+**Implemented 2026-08-06**, before the documents that motivated it: `dispatch_with_fallback` takes
+conditions, a candidate that fails one is skipped with its reason kept, and an exhausted chain
+raises `NoCapableModel` — a **400 FAILED_PRECONDITION**, not the 502 it used to be, because "every
+candidate was excluded" is something an operator can fix and an outage is not. Residency is the
+first condition; media types are the second (`FRD-110`) and the schema capability the third
+(`FRD-112`). They share the mechanism rather than each inventing one, which is the point of
+building it while there is only one of them.
+
+Two present-day defects fell out of it. A model no provider serves used to be a silent `continue`,
+so a typo in a fallback chain was invisible — the chain behaved as though the entry were not there.
+And the candidates a chain passed over are now on the audit row, which is what somebody actually
+needs when they ask why an answer came from the model it did.
+
 The practical consequence for operators: a use case that accepts documents needs a chain of
 document-capable models (today: Gemini and Claude — conveniently both on the same transport and
 credential), and a chain mixing capable and incapable models degrades to the capable subset for
