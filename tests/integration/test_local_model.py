@@ -60,24 +60,34 @@ async def _require(model: str) -> None:
 
 
 async def _latest_row(
-    engine: AsyncEngine, model: str, *, wait: float = 15.0
+    engine: AsyncEngine, model: str, *, use_case: str, operation: str = "", wait: float = 20.0
 ) -> dict[str, object] | None:
-    """The most recent row for this model, waiting for it to appear.
+    """This test's most recent row, waiting for it to appear.
 
-    The audit write is deliberately **off the request path** (`FRD-405`), so reading immediately
-    after a 200 is a race — and this test had it: one run passed, the next failed on a row that
-    simply had not been written yet. A flaky assertion about a *missing audit row* is the worst
+    Two isolation rules, both learned the hard way in one session.
+
+    **Wait for it.** The audit write is deliberately off the request path (`FRD-405`), so reading
+    immediately after a 200 is a race. A flaky assertion about a *missing audit row* is the worst
     kind, because the failure it imitates is one of the most serious the system has.
+
+    **Scope it to this test's use case, and to the verb it is asking about.** Filtering only by
+    model looked sufficient — each test has its own use case and cleans up after itself — and it is
+    not, for a reason that is the feature working correctly: the writer can flush a row *after* the
+    fixture teardown has deleted rows, leaving an orphan that the next test then reads as its own.
+    That produced a failure in the full suite which did not reproduce when the file was run alone,
+    which is the signature of exactly this kind of bleed.
     """
     deadline = asyncio.get_running_loop().time() + wait
     while True:
-        row = await _query_row(engine, model)
-        if row is not None or asyncio.get_running_loop().time() > deadline:
+        row = await _query_row(engine, model, use_case)
+        if row is not None and (not operation or row["operation"] == operation):
+            return row
+        if asyncio.get_running_loop().time() > deadline:
             return row
         await asyncio.sleep(0.3)
 
 
-async def _query_row(engine: AsyncEngine, model: str) -> dict[str, object] | None:
+async def _query_row(engine: AsyncEngine, model: str, use_case: str) -> dict[str, object] | None:
     async with engine.connect() as connection:
         row = (
             await connection.execute(
@@ -85,10 +95,10 @@ async def _query_row(engine: AsyncEngine, model: str) -> dict[str, object] | Non
                     "SELECT operation, status, outcome, model, prompt_tokens, completion_tokens,"
                     " total_tokens, cost_nanos, latency_ms, request_payload, response_payload,"
                     " subject, use_case, provider, region"
-                    " FROM request_logs WHERE model = :model"
+                    " FROM request_logs WHERE model = :model AND use_case = :use_case"
                     " ORDER BY created_at DESC LIMIT 1"
                 ),
-                {"model": model},
+                {"model": model, "use_case": use_case},
             )
         ).first()
     return dict(row._mapping) if row is not None else None
@@ -118,7 +128,7 @@ async def test_a_real_answer_is_stored_exactly_as_it_was_sent(
         pytest.skip(f"'{CHAT_MODEL}' is not registered — set AIRA_OLLAMA_MODELS")
     assert response.status_code == 200, response.text
 
-    row = await _latest_row(engine, CHAT_MODEL)
+    row = await _latest_row(engine, CHAT_MODEL, use_case=fixture.slug)
     assert row is not None, "a served request left no audit row"
 
     # The prompt, byte for byte. A redaction or a truncation that silently altered it would be
@@ -161,7 +171,7 @@ async def test_the_recorded_cost_is_the_declared_price_applied_to_the_real_count
     if response.status_code != 200:
         pytest.skip(f"the model did not serve this request ({response.status_code})")
 
-    row = await _latest_row(engine, CHAT_MODEL)
+    row = await _latest_row(engine, CHAT_MODEL, use_case=fixture.slug)
     assert row is not None
     cost = row["cost_nanos"]
     if cost is None:
@@ -211,7 +221,9 @@ async def test_a_streamed_answer_is_accounted_for_like_a_whole_one(
 
     assert body.strip(), "the stream produced nothing at all"
 
-    row = await _latest_row(engine, CHAT_MODEL)
+    row = await _latest_row(
+        engine, CHAT_MODEL, use_case=fixture.slug, operation="streamGenerateContent"
+    )
     assert row is not None
     assert row["operation"] == "streamGenerateContent"
     assert int(row["prompt_tokens"] or 0) > 0, "a streamed request was recorded as costing nothing"
@@ -245,7 +257,7 @@ async def test_a_real_batch_returns_one_vector_per_text(
     assert embeddings[0]["values"] != embeddings[1]["values"]
     assert len(embeddings[0]["values"]) == len(embeddings[1]["values"])
 
-    row = await _latest_row(engine, EMBED_MODEL)
+    row = await _latest_row(engine, EMBED_MODEL, use_case=fixture.slug)
     assert row is not None and row["operation"] == "batchEmbedContents"
 
 
@@ -339,7 +351,7 @@ async def test_thinking_is_billed_as_output_and_never_returned(
     # The billed output is far larger than the answer: that *is* the thinking, counted as output.
     assert reported > max(1, len(answer)), "thinking does not appear in the output token count"
 
-    row = await _latest_row(engine, CHAT_MODEL)
+    row = await _latest_row(engine, CHAT_MODEL, use_case=fixture.slug)
     assert row is not None
     stored = str(row["response_payload"])
     # A chain of thought in a persisted column is a data-protection problem, not a feature.

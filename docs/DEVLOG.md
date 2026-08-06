@@ -50,6 +50,23 @@ A third, smaller one: a test asserted `provider == "ollama"`. It went red the mo
 were renamed for the fallback fixture, because it was asserting somebody's `.env` rather than the
 system's behaviour. What matters is *that* a machine is identified.
 
+**A fourth test mistake, and the most instructive.** The full integration run — which finishes
+long after a file run does — failed on the streaming case that passed in isolation. The helper
+looked up its audit row by **model** and not by use case, which seemed sufficient because each test
+has its own use case and cleans up after itself.
+
+It is not sufficient, for a reason that is the system working correctly. The audit writer runs
+beside the request path, so it can flush a row *after* the fixture teardown has deleted rows. The
+row survives as an orphan — 493 of them in this database — and the next test reads it as its own.
+Those orphans are **right**: an audit row must not vanish because somebody deleted a use case, and
+that is `ADR-0013`'s whole point. The test had assumed the opposite of a deliberate property.
+
+All four of this session's test mistakes had the same shape: **a test failure that looks exactly
+like a system failure**. For a missing audit row that is the most expensive confusion this project
+can have, which is why they are written down rather than quietly fixed. Scoping the query to the
+test's own use case also cut the suite from 11 minutes to 94 seconds — the old version spent its
+time waiting for rows that were never going to be its own.
+
 **173 mutations, all defended.** The nine added this round (`O1`–`O8`, `B8`) were caught on their
 first run — and one *older* entry surfaced as undefended: `B3`, "unknown cost is counted apart, not
 summed as zero", whose anchor had been absorbed into the new upsert. Repointed at the line that now
