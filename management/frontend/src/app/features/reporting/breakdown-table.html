@@ -1,0 +1,66 @@
+<div class="card">
+  <h3 class="section-title" style="margin: 0 0 0.5rem">By {{ label().toLowerCase() }}</h3>
+
+  @if (rows().length === 0) {
+    <p class="table__empty">{{ emptyText() }}</p>
+  } @else {
+    <div class="table-wrap">
+      <table class="table">
+        <caption class="sr-only">
+          Spend and usage by
+          {{
+            label().toLowerCase()
+          }}
+        </caption>
+        <thead>
+          <tr>
+            <th scope="col">{{ label() }}</th>
+            <th scope="col">Spend</th>
+            <th scope="col">Requests</th>
+            <th scope="col">Prompt / completion tokens</th>
+            <th scope="col">Latency (avg / max)</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (row of rows(); track row.key) {
+            <tr>
+              <th scope="row">
+                <code>{{ row.key }}</code>
+              </th>
+              <td>
+                <strong>{{ row.cost }}</strong>
+                @if (incomplete(row)) {
+                  <span
+                    class="muted"
+                    [title]="
+                      row.unpriced_requests +
+                      ' request(s) ran on a model with no price on file. Their cost is unknown, not zero.'
+                    "
+                    >+ {{ row.unpriced_requests }} unpriced</span
+                  >
+                }
+                <div class="progress" aria-hidden="true">
+                  <div class="progress__bar" [style.width.%]="share(row)"></div>
+                </div>
+              </td>
+              <td>
+                {{ row.requests }}
+                @if (row.failed_requests > 0) {
+                  <span class="muted">({{ row.failed_requests }} failed)</span>
+                }
+              </td>
+              <td>{{ row.prompt_tokens }} / {{ row.completion_tokens }}</td>
+              <td>
+                @if (row.avg_latency_ms === null) {
+                  <span class="muted">—</span>
+                } @else {
+                  {{ row.avg_latency_ms }} ms / {{ row.max_latency_ms }} ms
+                }
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  }
+</div>

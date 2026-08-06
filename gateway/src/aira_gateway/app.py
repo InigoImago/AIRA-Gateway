@@ -26,6 +26,7 @@ from aira_gateway import __version__
 from aira_gateway.api.gemini.errors import GeminiHTTPError, gemini_error_response
 from aira_gateway.api.gemini.routes import router as gemini_router
 from aira_gateway.api.pipeline import router as pipeline_router
+from aira_gateway.api.reporting import router as reporting_router
 from aira_gateway.api.usage import router as usage_router
 from aira_gateway.auth.dependencies import require_attribution
 from aira_gateway.auth.oidc import build_oidc_validator
@@ -50,6 +51,7 @@ from aira_gateway.ratelimit.buckets import (
     RedisTokenBucket,
 )
 from aira_gateway.ratelimit.service import RateLimitService
+from aira_gateway.reporting.service import ReportingService
 from aira_gateway.routes.health import router as health_router
 from aira_gateway.upstreams.base import ProviderRegistry, Upstream
 from aira_gateway.upstreams.gemini import build_gemini_upstream
@@ -119,6 +121,7 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
         enforce=settings.enforce_rate_limits,
     )
     app.state.pricing = PricingService(sessionmaker)
+    app.state.reporting = ReportingService(sessionmaker)
     app.state.db_engine = engine
     app.state.db_sessionmaker = sessionmaker
     app.state.oidc_validator = build_oidc_validator(settings)
@@ -142,6 +145,7 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
     app.include_router(health_router)
     app.include_router(pipeline_router)
     app.include_router(usage_router)
+    app.include_router(reporting_router)
     app.include_router(gemini_router, dependencies=[Depends(require_attribution)])
     _register_exception_handlers(app)
     return app

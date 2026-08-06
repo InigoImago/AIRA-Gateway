@@ -545,3 +545,33 @@ $field-label-gap: 0.3rem;
     justify-content: center;
   }
 }
+
+/* ---- stat row (reporting totals) ------------------------------------------------- */
+
+/* A handful of headline figures. `auto-fit` rather than a fixed column count so the row
+ * reflows on a narrow screen instead of pushing the page sideways. */
+.stat-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 0.75rem;
+  margin: 0.75rem 0 0;
+}
+.stat {
+  min-width: 0;
+  padding: 0.75rem;
+  border: 1px solid var(--aira-border);
+  border-radius: var(--aira-radius-sm);
+  background: var(--aira-surface-muted, transparent);
+}
+.stat dt {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--aira-text-muted);
+}
+.stat dd {
+  margin: 0.25rem 0 0;
+  font-size: 1.15rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}

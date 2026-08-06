@@ -11,6 +11,7 @@ import {
   IssuedApiKey,
   Membership,
   PipelineConfig,
+  Report,
   UseCase,
 } from './models';
 
@@ -123,6 +124,16 @@ export class UseCaseService {
 
   removeModel(name: string): Observable<void> {
     return this.http.delete<void>(`/api/v1/models/${seg(name)}/`);
+  }
+
+  /**
+   * Spend and usage over a window, from the gateway (FRD-601).
+   *
+   * The window is half-open — `to` is excluded — so two adjacent periods never both contain the
+   * same request. What the caller is shown is decided by their token, not by this call.
+   */
+  report(from: string, to: string): Observable<Report> {
+    return this.http.get<Report>('/gw/v1beta/reporting', { params: { from, to } });
   }
 
   /** Current-period consumption per budget, from the gateway. */

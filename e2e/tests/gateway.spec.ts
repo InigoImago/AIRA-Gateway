@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { USERS, createUseCase, login, uniqueSlug } from './support';
+import { USERS, createUseCase, ensureUseCase, login, uniqueSlug } from './support';
 
 /**
  * The SPA talking to the *gateway* (not just the control plane).
@@ -71,10 +71,7 @@ test.describe('Gateway integration', () => {
     // usage endpoint follows the same rule (ADR-0007). `demo-uc` is the slug the demo realm
     // puts ucadmin into, so this is the path where the numbers are visible.
     await login(page, USERS.useCaseAdmin);
-    await page.goto('/use-cases');
-    if ((await page.locator('code:has-text("demo-uc")').count()) === 0) {
-      await createUseCase(page, 'demo-uc', 'Demo use case');
-    }
+    await ensureUseCase(page, 'demo-uc', 'Demo use case');
 
     await page.goto('/use-cases/demo-uc?tab=budgets');
     if ((await page.locator('[role="progressbar"]').count()) === 0) {

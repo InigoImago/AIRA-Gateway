@@ -137,3 +137,33 @@ export interface CatalogModel {
   is_priced?: boolean;
   updated_at?: string;
 }
+
+/** One row of a report: a group, and what happened in it (FRD-601). */
+export interface ReportRow {
+  /** The use case, model or member this row is about. */
+  key: string;
+  requests: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  /** Spend in nano-units — integer, safe to divide for a bar. */
+  cost_nanos: number;
+  /** The same amount as an exact decimal string, which is what a human reads. */
+  cost: string;
+  /** Requests on a model with no price. Their cost is unknown, not zero. */
+  unpriced_requests: number;
+  failed_requests: number;
+  avg_latency_ms: number | null;
+  max_latency_ms: number | null;
+}
+
+export interface Report {
+  from: string;
+  to: string;
+  /** `all` when the caller holds a governance role, otherwise their own use cases. */
+  scope: 'all' | 'use_cases';
+  totals: ReportRow;
+  by_use_case: ReportRow[];
+  by_model: ReportRow[];
+  by_member: ReportRow[];
+}

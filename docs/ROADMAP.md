@@ -109,10 +109,13 @@ FRDs: `FRD-500-anomaly-rules`, `FRD-501-anomaly-detection-engine`, `FRD-502-it-s
 
 Deliverables:
 - **IT Steuerung views**: all use cases with descriptions + processing logic (read-only), aggregate
-  statistics and cost/usage analytics.
+  statistics and cost/usage analytics. — **`FRD-601` done (2026-08-06)**: spend and usage
+  reporting, scoped so governance sees every use case and everyone else sees their own.
 - Global monitoring dashboards.
+- Still open here: charts, export, per-request browsing (blocked on `FRD-406` redaction — see
+  ADR-0009), and the read-only "processing logic" view of every use case.
 
-FRDs: `FRD-600-governance-views`, `FRD-601-analytics-dashboards`.
+FRDs: `FRD-600-governance-views`, `FRD-601-spend-and-usage-reporting`.
 
 ---
 
@@ -138,7 +141,7 @@ product owner; the reason for the order is recorded so it is not re-litigated la
 |---|---|---|
 | ~~Per-caller rate limiting + the budget guard/record race~~ | `FRD-405` | **Done (2026-08-05).** Token buckets and atomic budget reservations over Redis (ADR-0008); the audit write also moved off the request path. |
 | **Content redaction** — masking sensitive values *inside* a stored payload | `FRD-406` | **Deferred by decision (2026-08-05), to be done later.** The `Redactor` hook is still a `NoOpRedactor`. Two mitigations already exist: a per-use-case retention period (7 days, FRD-404) and switching payload storage off entirely. Neither masks anything in a payload that *is* kept — redaction remains genuinely open, it is only not urgent. |
-| Request-log and spend reporting UI | `FRD-601` | Data is recorded (incl. per-request cost); nothing displays it beyond the budget bars. |
+| ~~Spend and usage reporting~~ | `FRD-601` | **Done (2026-08-06).** Gateway `GET /v1beta/reporting` + a **Reporting** screen: totals and breakdowns by use case, model and member over a chosen period, scoped by the caller's role (ADR-0009). Per-request *browsing* still waits for `FRD-406`. |
 | Budget threshold alerting | `FRD-402` follow-up | Today a breach is a 429 and nothing else — nobody is told before the wall is hit. |
 | Membership reconciliation (Keycloak groups ↔ Management) | — | The two sources can drift; nothing detects it. |
 | Pagination | — | No list endpoint or screen paginates. |

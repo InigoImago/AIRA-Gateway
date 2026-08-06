@@ -131,3 +131,23 @@ export async function expectFormControlsAligned(page: Page, context: string) {
     }
   }
 }
+
+/**
+ * Make sure a use case exists, creating it only if it really is absent.
+ *
+ * Deliberately not `if ((await locator.count()) === 0) create(...)`: the list loads
+ * asynchronously, so that count is taken while the table is still a spinner and answers 0 for
+ * every slug. The create then fails on the unique constraint and the test blames the wrong
+ * thing. Wait for the list to have finished loading first, then decide.
+ */
+export async function ensureUseCase(page: Page, slug: string, name: string) {
+  await page.goto('/use-cases');
+  // Either rows or the empty state — both mean the request came back.
+  await expect(page.locator('table.table').or(page.locator('.empty')).first()).toBeVisible({
+    timeout: 30_000,
+  });
+  if ((await page.locator(`code:has-text("${slug}")`).count()) === 0) {
+    await createUseCase(page, slug, name);
+  }
+  return slug;
+}

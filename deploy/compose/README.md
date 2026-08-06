@@ -102,3 +102,12 @@ Two things to watch when editing it:
   Django seed (`admin`, `itsec`, `itgov`, `ucadmin`, `ucuser`, all with `demo-password`).
   Keycloak is the source of truth for roles (FRD-201), so a role missing here means the user has
   it nowhere.
+- **Recreating the realm orphans the Management users.** Management binds a Django user to the
+  token's `sub`, not to its username (ADR-0007) — deliberately, so a renamed Keycloak account
+  cannot take over an existing one. A new realm mints new `sub`s, the old rows keep the plain
+  usernames, and the returning users are provisioned as `ucadmin-dedf235d` and the like. The
+  symptom is an e2e login failing on a username it has never seen, or a demo user suddenly
+  seeing none of their use cases. The fix is to drop the stale rows, never to loosen the
+  binding — with the Management DB kept, delete the users whose `OidcIdentity.subject` is no
+  longer in the realm and rename the suffixed survivors back; or simply `make destroy && make up`
+  and reseed, which is what the demo data is for.

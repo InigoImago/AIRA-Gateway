@@ -1,0 +1,136 @@
+<div class="stack">
+  <div class="spread">
+    <div>
+      <h2 class="card__title" style="margin: 0">Reporting</h2>
+      <p class="muted" style="margin: 0.25rem 0 0">
+        What was spent and used over a period. Aggregates only — no prompts or responses are shown.
+      </p>
+    </div>
+  </div>
+
+  @if (feedback.error(); as message) {
+    <p class="callout callout--danger" role="alert">{{ message }}</p>
+  }
+
+  <div class="card">
+    <form class="form-inline" (ngSubmit)="load()">
+      <div class="field">
+        <label for="report-preset">Period</label>
+        <select
+          id="report-preset"
+          name="preset"
+          [ngModel]="preset()"
+          (ngModelChange)="applyPreset($event)"
+        >
+          <option value="this-month">This month</option>
+          <option value="last-month">Last month</option>
+          <option value="last-7-days">Last 7 days</option>
+          <option value="last-30-days">Last 30 days</option>
+          <option value="custom">Custom…</option>
+        </select>
+      </div>
+      @if (preset() === 'custom') {
+        <div class="field">
+          <label for="report-from">From</label>
+          <input
+            id="report-from"
+            type="date"
+            name="from"
+            [ngModel]="from()"
+            (ngModelChange)="from.set($event)"
+          />
+        </div>
+        <div class="field">
+          <label for="report-to">To (exclusive)</label>
+          <input
+            id="report-to"
+            type="date"
+            name="to"
+            [ngModel]="to()"
+            (ngModelChange)="to.set($event)"
+          />
+          <span class="field__hint">
+            Not counted itself, so the period ends on {{ inclusiveEnd() || '—' }}.
+          </span>
+        </div>
+        <button type="submit" class="btn btn--primary" [disabled]="!canLoad()">Show</button>
+      }
+    </form>
+    @if (validationError(); as message) {
+      <p class="field__hint field__hint--error" role="alert">{{ message }}</p>
+    }
+  </div>
+
+  @if (loading()) {
+    <p class="loading">
+      <span class="spinner" aria-hidden="true"></span>
+      Loading the report…
+    </p>
+  } @else if (report(); as report) {
+    <div class="card">
+      <div class="spread">
+        <h3 class="section-title" style="margin: 0">Totals</h3>
+        <span class="muted" data-testid="scope">
+          @if (seesEverything()) {
+            Every use case
+          } @else {
+            Your use cases only
+          }
+        </span>
+      </div>
+
+      <dl class="stat-row">
+        <div class="stat">
+          <dt>Spend</dt>
+          <dd data-testid="total-cost">{{ report.totals.cost }}</dd>
+        </div>
+        <div class="stat">
+          <dt>Requests</dt>
+          <dd data-testid="total-requests">{{ report.totals.requests }}</dd>
+        </div>
+        <div class="stat">
+          <dt>Failed</dt>
+          <dd data-testid="total-failed">{{ report.totals.failed_requests }}</dd>
+        </div>
+        <div class="stat">
+          <dt>Tokens (prompt / completion)</dt>
+          <dd>{{ report.totals.prompt_tokens }} / {{ report.totals.completion_tokens }}</dd>
+        </div>
+        <div class="stat">
+          <dt>Latency (avg / max)</dt>
+          <dd>
+            @if (report.totals.avg_latency_ms === null) {
+              —
+            } @else {
+              {{ report.totals.avg_latency_ms }} ms / {{ report.totals.max_latency_ms }} ms
+            }
+          </dd>
+        </div>
+      </dl>
+
+      @if (unpriced() > 0) {
+        <p class="callout callout--warning" role="status" data-testid="unpriced-caveat">
+          {{ unpriced() }} request(s) ran on a model with no price on file. Their cost is
+          <strong>unknown, not zero</strong>, so the spend above is a lower bound. Add the price in
+          Models &amp; prices to account for them.
+        </p>
+      }
+    </div>
+
+    <app-breakdown-table
+      label="Use case"
+      [rows]="report.by_use_case"
+      emptyText="No traffic from any use case in this period."
+    />
+    <app-breakdown-table
+      label="Model"
+      [rows]="report.by_model"
+      emptyText="No model was called in this period."
+    />
+    <app-breakdown-table
+      label="Member"
+      [rows]="report.by_member"
+      emptyText="Nobody made a request in this period."
+    />
+  }
+</div>

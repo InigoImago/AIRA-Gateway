@@ -43,7 +43,7 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
   inevitably do when both were written from the same mental model — and line coverage cannot see
   a *missing requirement*: on 2026-08-05 a review found seven real defects behind a green suite at
   99% coverage. So: **prove a test can fail.** Break the property, watch it go red, restore.
-  `make mutants` (`tools/mutation_check.py`) does this for **74 properties** across auth, budgets,
+  `make mutants` (`tools/mutation_check.py`) does this for **88 properties** across auth, budgets,
   pipeline, retention, the management control plane and the gateway's counters; when
   you fix a bug, add the mutation that reintroduces it. Two traps that cost real defects here:
   a stand-in that is more permissive than the thing it replaces (reuse the real method where you
@@ -234,8 +234,18 @@ counters expire in **five minutes** and rebuild from Postgres so drift cannot ou
 and the audit writer dropped rows submitted during shutdown. `DEPLOYMENT.md` had also kept "No
 rate limiting" as a known gap and omitted `aira.rate-limits` from its topic list — a **silent**
 failure, since a missing topic produces no error anywhere.
+**Spend and usage reporting (`FRD-601`, 2026-08-06)**: the request log has been collected since
+Phase 1 and priced since `FRD-403`, and nothing read it. The gateway now serves
+`GET /v1beta/reporting?from=&to=` — totals plus breakdowns by use case, model and member — and the
+SPA gains a **Reporting** screen. The visibility rule sits at the edge in one function: governance
+sees every use case, anyone else sees the ones their token puts them in, and a caller with neither
+gets an **empty report rather than a refusal** (`None` = everything and `()` = nothing are distinct
+values on purpose). Latency is an **average and a maximum**, and is called that — `percentile_cont`
+is Postgres-only and the hermetic tests run on SQLite. Unpriced traffic stays counted apart, and
+the screen says the spend is a lower bound whenever there is any. Per-request *browsing* waits for
+`FRD-406` (ADR-0009).
 Next candidates: **content redaction** (`FRD-406`, the `Redactor` hook is still a no-op —
-deliberately deferred, see the ROADMAP backlog), request-log and spend reporting UI, budget
+deliberately deferred, see the ROADMAP backlog), budget
 threshold alerting, Phase 5 (anomaly/IT-Security), `FRD-307` (model catalog), `FRD-106` (OpenAI
 surface). See `docs/DEVLOG.md`.
 

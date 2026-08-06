@@ -5,6 +5,57 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-06 — Reporting: the data has been collected since Phase 1, and is finally readable
+Every dispatched request has been recorded since `FRD-103` and priced since `FRD-403`. Nothing
+showed any of it. The only figures anywhere were the consumption bars beside a budget — one use
+case, the current period, three numbers — so "what did last month cost, and which use case is
+responsible" was a question answerable only with `psql`. That is most acute for **IT Steuerung**,
+the role the PRD defines around exactly this oversight and which until today had a read-only list.
+
+`FRD-601` closes it: `GET /v1beta/reporting?from=&to=` on the gateway (the request log lives in
+its database), and a **Reporting** screen in the SPA. Totals plus breakdowns by use case, by model
+and by member — requests, the prompt/completion token split, spend, failures, latency.
+
+Three things were decided rather than defaulted:
+
+- **The visibility rule lives at the edge, in one function.** Governance sees every use case;
+  anyone else sees the use cases their token puts them in; a caller with neither gets an **empty
+  report, not a refusal** — having nothing to see is not a failure. `None` (everything) and `()`
+  (nothing) are deliberately distinct values rather than one falsy scope, because confusing them
+  is the single mistake here that would show an installation's whole spend to somebody entitled
+  to one use case. Both halves are pinned by mutations `N1`/`N2` and by the browser test.
+- **Latency is an average and a maximum, and is called that.** A percentile is the figure an
+  operator actually wants, but `percentile_cont` is Postgres-only and the hermetic tests run on
+  SQLite. A dialect-dependent query would leave the production expression exercised only by the
+  integration suite — precisely the shape of thing that breaks quietly. The compromise is
+  documented in the FRD rather than papered over by calling an average a median.
+- **Unpriced stays unpriced.** A request on a model with no price counts toward
+  `unpriced_requests` and toward nothing else, in every breakdown row, and the screen says the
+  spend is a lower bound whenever there is any. Same rule as the budget bars, same reason.
+
+The index assertion is against `pg_indexes`, not `EXPLAIN`: on a test database of a few hundred
+rows the planner correctly prefers a sequential scan whatever the schema says, so an `EXPLAIN`
+here would have been measuring how much traffic the stack happened to have.
+
+**What the layers caught, again in that order.** The unit and mutation passes were green before
+anything else ran. The e2e layer then failed on two things that had nothing to do with reporting:
+a helper that decided "this use case does not exist" from a `count()` taken while the list was
+still a spinner — latent in an existing test since it was written, and only exposed once the row
+it looked for actually existed — and `demo-uc`, which another test deliberately caps at five
+requests a month, answering **429** to the traffic this test wanted to generate. The first was a
+real race and is fixed in `support.ts`; the second was a bad fixture choice, and the visibility
+test now makes its contrast on the same screen and the same period with two different users
+instead of borrowing a use case another test owns.
+
+Also, an environment trap worth writing down: recreating the Keycloak realm gives every user a
+new `sub`, and Management binds users to `sub` (ADR-0007). The old rows keep the plain usernames,
+so the new identities get provisioned as `ucadmin-dedf235d` and the e2e login assertion fails on a
+name it has never seen. That is the binding working exactly as designed — but it means **a realm
+recreation orphans the Management users**, and the fix is to drop the stale rows, not to loosen
+the binding. Noted in `deploy/compose/README.md` next to the realm-import caveat.
+
+---
+
 ## 2026-08-05 — The browser layer finally ran, and immediately earned its keep
 The Playwright download had been blocked by network policy since the e2e suite was written, so
 36 browser tests had never executed here. Allowed at last: **38 passed, 4 failed**, all four in
