@@ -5,6 +5,50 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-06 — Vault, finally reading from the thing that was already running
+`CLAUDE.md` §2 has said "secrets only in HashiCorp Vault" since Phase 0, and Vault has been in the
+Compose stack for as long — with **no code reading from it**. Every credential this system holds
+was an environment variable, which is exactly the state the policy exists to prevent.
+
+`aira_common.secrets` does the AppRole login and the KV-v2 read; a pydantic `VaultSource` puts it
+above the environment for both planes. **A settings source rather than an injection into
+`os.environ`**, and that is the security half rather than a style choice: values in the environment
+are readable from `/proc`, inherited by every subprocess, and reach any library that dumps the
+environment on a crash.
+
+Fail closed is the whole design. A configured Vault that cannot be reached stops the process,
+because the alternative turns a broken secret store into a *silent downgrade* — the environment in
+that scenario usually holds a stale or development value, so the service starts, looks healthy, and
+is wrong. `ADR-0007` established the principle for `SECRET_KEY`; this extends it to every
+credential. "Vault is down" and "nobody wrote that key" are **different exceptions**, because they
+call for different actions by different people.
+
+Tested against the Vault in the stack, with a **real AppRole** the suite creates — its own policy,
+scoped to its own path, removed afterwards. That is what makes the least-privilege case rest on
+Vault's decision rather than on our mock: the same credential that reads this test's path must fail
+on another one, and it does.
+
+### The test that could not fail
+
+"No value ever reaches a log" was written first with pytest's `caplog`. It passed. It would also
+have passed against a loader that printed every secret in full — these logs go through structlog
+and never reach the stdlib handler `caplog` watches. For the one property whose failure is a
+career-ending incident, a green that means nothing is worse than no test at all. It captures
+through `structlog.testing.capture_logs` now, and the same trap is worth remembering anywhere else
+this project asserts on log output.
+
+One mutation survived and it was **my test's fault, not the code's**: `V5` says a secret-id file
+that cannot be read is *named* rather than fallen through, and the assertion matched only on the
+variable's name — which the "no secret-id anywhere" message also contains. It passed against a
+version that silently gave up. Matching on what *distinguishes* the two messages catches it, and
+the harness earned its keep again by pointing at an assertion rather than at a line of code.
+
+Rotation is a restart, and that is written down as a decision rather than left as a gap: live
+re-reading needs a refresh loop, lease renewal and a story for in-flight work, and it would put
+back exactly the availability dependency FR-5 removes.
+
+---
+
 ## 2026-08-06 — Foundry, and the claim ADR-0011 was making
 The third platform, and it cost a routing axis. `FoundryTransport` (endpoint, credential,
 api-version) × the **unchanged** OpenAI dialect × `AzureRoutes`. The dialect gained nothing; the

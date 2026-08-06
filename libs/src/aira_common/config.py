@@ -7,7 +7,60 @@ Settings are read from environment variables (prefixed ``AIRA_``) and an optiona
 
 from __future__ import annotations
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from typing import Any
+
+from pydantic.fields import FieldInfo
+from pydantic_settings import (
+    BaseSettings,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+)
+
+from aira_common.secrets import load_secrets
+
+
+class VaultSource(PydanticBaseSettingsSource):
+    """Settings read from Vault, ranked above the environment (`FRD-116` FR-3).
+
+    A settings *source* rather than an injection into ``os.environ``, and the distinction is the
+    security half of the feature: values placed in the environment are readable from `/proc`, are
+    inherited by every subprocess, and reach any library that dumps the environment on a crash.
+    Here they exist only inside the settings object.
+
+    Loaded **once**, on first construction, and cached — reading Vault per settings object would
+    make the number of calls depend on how often somebody happens to construct one, and `FRD-116`
+    FR-5 is explicit that Vault is a startup dependency and never a request-path one.
+    """
+
+    _cache: dict[str, str] | None = None
+
+    @classmethod
+    def reset(cls) -> None:
+        """Forget the loaded secrets. For tests, which must not share a cache across cases."""
+        cls._cache = None
+
+    def _secrets(self) -> dict[str, str]:
+        if VaultSource._cache is None:
+            # Whatever this raises is a boot failure by design: a configured Vault that cannot be
+            # read must not degrade into "carry on with the environment" (`FRD-116` §5.3).
+            VaultSource._cache = load_secrets()
+        return VaultSource._cache
+
+    def get_field_value(self, field: FieldInfo, field_name: str) -> tuple[Any, str, bool]:
+        prefix = self.config.get("env_prefix", "")
+        secrets = self._secrets()
+        for candidate in (f"{prefix}{field_name}".upper(), field_name.upper()):
+            if candidate in secrets:
+                return secrets[candidate], field_name, False
+        return None, field_name, False
+
+    def __call__(self) -> dict[str, Any]:
+        values: dict[str, Any] = {}
+        for field_name, field in self.settings_cls.model_fields.items():
+            value, key, complex_value = self.get_field_value(field, field_name)
+            if value is not None:
+                values[key] = self.prepare_field_value(field_name, field, value, complex_value)
+        return values
 
 
 class BaseAiraSettings(BaseSettings):
@@ -19,6 +72,30 @@ class BaseAiraSettings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
     )
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        """Explicit arguments still win, then **Vault**, then the environment.
+
+        Init arguments stay first because that is how the tests construct settings, and a test
+        that could not override a value would be testing the deployment rather than the code.
+        Vault above the environment is FR-3: a key present in Vault wins, a key absent from it
+        falls back — and there is no third source.
+        """
+        return (
+            init_settings,
+            VaultSource(settings_cls),
+            env_settings,
+            dotenv_settings,
+            file_secret_settings,
+        )
 
     app_name: str = "aira"
     """Human-readable service name; also used as the OTel ``service.name``."""

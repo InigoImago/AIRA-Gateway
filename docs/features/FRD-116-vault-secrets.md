@@ -1,6 +1,6 @@
 # FRD-116 — Secrets actually read from Vault
 
-> Phase: 8 (KIRA parity) · Status: **Draft** · Owner: Vadim Scheibe · Last updated: 2026-08-06
+> Phase: 8 (KIRA parity) · Status: **Done (2026-08-06)** · Owner: Vadim Scheibe · Last updated: 2026-08-06
 > Origin: `kira_api.md` §10 (Vault AppRole), programme: `ADR-0010`. Extends `ADR-0007`.
 
 ## 1. Problem
@@ -157,6 +157,34 @@ questions a misconfiguration produces, and contains nothing sensitive.
   `database_url: vault`.
 - *Given* the same configuration with Vault stopped, *when* the gateway starts, *then* it exits
   with a message naming Vault as unreachable, and does not start on the environment value.
+
+## 10a. What was built (2026-08-06)
+
+`aira_common.secrets` — AppRole login, KV-v2 read, and the precedence — plus a pydantic
+`VaultSource` that both planes inherit through `BaseAiraSettings`.
+
+**A settings source, not an injection into `os.environ`**, and that is the security half of the
+feature rather than a style choice. Values placed in the environment are readable from `/proc`,
+inherited by every subprocess, and reach any library that dumps the environment on a crash. Here
+they exist only inside the settings object.
+
+The source is loaded **once** and cached. Reading Vault per settings object would make the number
+of calls depend on how often somebody happens to construct one, and FR-5 is explicit that Vault is
+a startup dependency and never a request-path one. An integration test asserts the count, because
+"once" is the kind of property that quietly becomes "per request" during a refactor.
+
+Verified against the Vault in the stack, including a **real AppRole** the test creates with a
+policy scoped to its own path and removes afterwards — so the case that matters most (a credential
+that may read one path and not another) rests on Vault's own decision rather than on ours. 33
+hermetic tests, 13 integration, mutations **V1**–**V6**.
+
+### One thing worth recording about the tests
+
+The first version of "no value ever reaches a log" used pytest's `caplog`. It passed — and it
+would have passed against a loader that printed every secret in full, because these logs go through
+structlog and never reach the stdlib handler `caplog` watches. A test that cannot fail is the most
+expensive kind here, since the thing it claims to guard is the one that ends careers. It captures
+through `structlog.testing.capture_logs` now.
 
 ## 11. Dependencies & Risks
 

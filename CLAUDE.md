@@ -424,6 +424,18 @@ attributing a response to it would not fail — the spend figure would quietly s
 One adapter **per region** (provenance is per model), and `headers()` is async so an Entra token is
 minted rather than captured once. No Azure subscription here, so it is hermetic only, and that is
 stated rather than implied.
+**`FRD-116` done (2026-08-06) — Vault is finally read.** §2 has required it since Phase 0 while
+every credential was an environment variable. `aira_common.secrets` does AppRole + KV-v2; a
+pydantic `VaultSource` ranks it above the environment for both planes — **a settings source, not an
+injection into `os.environ`**, because values placed there are readable from `/proc`, inherited by
+every subprocess, and dumped by any library that panics. **Fail closed**: a configured Vault that
+cannot be reached stops the process, since falling back turns a broken secret store into a service
+that starts, looks healthy and runs on a stale value. "Vault is down" and "nobody wrote that key"
+are different exceptions. Rotation is a restart, recorded as a decision. Verified against the
+stack's Vault with a **real AppRole** the suite creates, scopes to its own path and removes.
+**Two test lessons worth carrying:** `caplog` cannot see structlog, so "no secret reaches a log"
+was green against a loader that printed everything — use `structlog.testing.capture_logs`; and an
+assertion matching a string that appears in *both* the right and the wrong message proves nothing.
 **Delivery order is fixed (ROADMAP Phase 8, 2026-08-06)**, derived from the owner's priority
 (KIRA compatibility → model connections → documents → the review findings) and the dependency that
 priority 1 needs priority 3: **`FRD-122` (audit) → `FRD-114` (metadata) → `FRD-115`+`119` (Vertex EU,

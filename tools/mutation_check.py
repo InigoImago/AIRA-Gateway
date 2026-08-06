@@ -102,6 +102,7 @@ CATALOG_DECLARATION = "management/backend/tests/test_catalog_declaration.py"
 OPENAI_DIALECT = "gateway/tests/test_openai_dialect.py"
 EDGE = "gateway/tests/test_edge_cases.py"
 FOUNDRY = "gateway/tests/test_foundry.py"
+SECRETS = "libs/tests/test_secrets.py"
 THINKING = "gateway/tests/test_thinking.py gateway/tests/test_serving_options.py"
 RESPONSE_SCHEMA = "gateway/tests/test_response_schema.py gateway/tests/test_serving_options.py"
 EMBEDDING = "gateway/tests/test_embedding_options.py gateway/tests/test_serving_options.py"
@@ -1598,6 +1599,59 @@ MUTATIONS = [
         "            check_region(entry.region, allowed)",
         "            pass",
         FOUNDRY,
+    ),
+    # ---- secrets (FRD-116) ---------------------------------------------------------------------
+    #
+    # V1 is the whole feature. Falling back to the environment turns a broken secret store into a
+    # service that starts, looks healthy, and runs on a stale value — the failure `ADR-0007`
+    # established the principle against, extended to every credential.
+    Mutation(
+        "V1",
+        "a configured Vault that cannot be read stops the process rather than falling back",
+        "libs/src/aira_common/secrets.py",
+        "            raise VaultUnavailable(\n                f\"Vault at {self._config.address} is unreachable ({type(exc).__name__}).\"\n            ) from exc\n\n        if response.status_code != httpx.codes.OK:",  # noqa: E501
+        "            return \"\"\n\n        if False:",
+        SECRETS,
+    ),
+    Mutation(
+        "V2",
+        "a Vault value wins over the environment",
+        "libs/src/aira_common/secrets.py",
+        "        merged[name if name.startswith(env_prefix) else f\"{env_prefix}{name}\"] = value",
+        "        merged.setdefault(name, value)",
+        SECRETS,
+    ),
+    Mutation(
+        "V3",
+        "a key present but spelled differently is still found",
+        "libs/src/aira_common/secrets.py",
+        "        name = key.strip().upper()",
+        "        name = key",
+        SECRETS,
+    ),
+    Mutation(
+        "V4",
+        "a null value is absent rather than the string 'None'",
+        "libs/src/aira_common/secrets.py",
+        "        return {str(key): str(value) for key, value in data.items() if value is not None}",
+        "        return {str(key): str(value) for key, value in data.items()}",
+        SECRETS,
+    ),
+    Mutation(
+        "V5",
+        "a secret-id file that cannot be read is named rather than falling through",
+        "libs/src/aira_common/secrets.py",
+        "            raise VaultUnavailable(\n                f\"{SECRET_ID_FILE_ENV} points at '{path}', which cannot be read \"",  # noqa: E501
+        "            return \"\", \"\"\n        if False:\n            raise VaultUnavailable(\n                f\"{SECRET_ID_FILE_ENV} points at '{path}', which cannot be read \"",  # noqa: E501
+        SECRETS,
+    ),
+    Mutation(
+        "V6",
+        "authenticating with no secret-id at all is refused",
+        "libs/src/aira_common/secrets.py",
+        "        if not secret_id:",
+        "        if False:",
+        SECRETS,
     ),
     # ---- what an edge-case sweep against the running API found (FRD-123) ---------------------
     #
