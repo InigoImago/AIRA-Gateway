@@ -390,6 +390,20 @@ was that `to_json_schema` was never vendor-specific and now lives in `core/schem
 — the adapter is hermetically tested (38 tests), the five integration tests skip with a reason, and
 the seed declares **neither** thinking nor structured output for local models, because absence of
 information is not permission. Local prices are **invented and say so in their display name**.
+**Verified against a running model (2026-08-06).** Ollama is attached as **named servers**
+(`AIRA_OPENAI_SERVERS`, `name=url|models|embeddings|region`) — a self-hosted fleet is several
+machines and each is audited under its own name. Live suites now cover the governed path (14
+cases), the real model (8), and fallback/limits/retention/KIRA (11). What they found:
+**a model name may contain a colon** (`qwen3:0.6b` split at the first one produced "Model 'qwen3'
+not found"); **a comment claimed a rule the system did not have** (a local region *is* checked, so
+a server now declares none unless the operator names one, and naming one is a startup check);
+and **the budget counter was racy in two ways**, one of them silent — read-then-write lost
+increments under load, and the system of record drifted below the truth in the direction that
+spends money. Closed with an upsert; both tests shown to fail against the old code first (`B8`).
+**Two open questions are now measured, not assumed**: thinking is billed **inside**
+`completion_tokens` (`FRD-111` FR-6 — pricing needs no special case), and the reasoning comes back
+in **its own field**, which is a third shape of the "never return thoughts" obligation and the
+easiest to miss. Local prices are invented and say so in their display name.
 **Delivery order is fixed (ROADMAP Phase 8, 2026-08-06)**, derived from the owner's priority
 (KIRA compatibility → model connections → documents → the review findings) and the dependency that
 priority 1 needs priority 3: **`FRD-122` (audit) → `FRD-114` (metadata) → `FRD-115`+`119` (Vertex EU,

@@ -5,6 +5,53 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-06 — fallback, limits, retention and KIRA, against the running thing
+Eleven more live cases (`tests/integration/test_controls_live.py`), and the fixture for the first
+group is worth stating: **two named servers against one endpoint**, `gpu-a` offering a model that
+is not pulled and `gpu-b` offering one that is. `gpu-a` therefore returns a real 404 over a real
+socket, so the chain crosses two adapters and two transports to reach an answer. It is the closest
+a single machine gets to a second one, and it exercises the part that matters.
+
+What that showed: a dead candidate is passed over and the next one answers; the audit keeps
+`requested_model` beside `model` with `model_selection = fallback:1`, and the **provenance follows
+the model that answered** — `gpu-b`, not the server that failed. Without that pair, "why did the
+spend on that box triple" has no answer in any report.
+
+Retention runs as what it is — a `docker exec` into the separate process, not an in-thread call —
+and the property is the one the feature turns on: the **content** expires and the **evidence**
+does not. The payloads become NULL, the row and its token counts stay. The other half is tested
+too, because a pruner that cannot tell "expired" from "recent" deletes everything the first time it
+runs and nothing about the run says so.
+
+The KIRA surface reaches the same real model through an integer id, in the predecessor's shape,
+with `Deprecation` on the response — and `test_both_surfaces_record_the_same_request_the_same_way`
+sends one request through each and compares what the audit kept. Same outcome, model, provider,
+tokens, use case, credential. That is the only way to know the shared controls were *run* rather
+than merely present. A KIRA caller meets the same budget and gets the 429 in the predecessor's
+vocabulary (`EXTERNAL_KI_API_TOO_MANY_REQUEST`), which is exactly what a compatibility surface
+should do: same control, its own words.
+
+**Two mistakes of mine, each made more than once, worth recording because they are the failure
+modes of this *kind* of test rather than of this system.**
+
+A helper asked `/v1beta/models` without a credential, got a 401, read it as "nothing is
+registered", and skipped the suite — silently. A skip that fires for the wrong reason is worse than
+a failure, because the summary line reads the same whether the system works or the test never
+looked. Both helpers assert on the status now instead of shrugging at it.
+
+And three separate times I read the audit table too early. The write is deliberately off the
+request path, so a test that sends two requests and then queries once will sometimes see one row.
+Every one of those failures reads exactly like a **lost audit row** — one of the most serious
+things this system could do — which is precisely why the imitation is intolerable. The helper now
+waits for the number of rows the test actually expects, which is the only version that cannot lie
+in either direction.
+
+A third, smaller one: a test asserted `provider == "ollama"`. It went red the moment the servers
+were renamed for the fallback fixture, because it was asserting somebody's `.env` rather than the
+system's behaviour. What matters is *that* a machine is identified.
+
+---
+
 ## 2026-08-06 — the first real requests, and three defects
 Ollama attached as **systems, plural** — `AIRA_OPENAI_SERVERS` takes a list of named servers, each
 with its own URL, models and region, because a self-hosted fleet is several machines and "which box
