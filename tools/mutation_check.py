@@ -18,6 +18,11 @@ add the mutation that reintroduces it: that is what stops it coming back silentl
 Notes for whoever extends this:
 
 - The baseline suite must be green first, or every mutation looks "caught" for the wrong reason.
+- **A property enforced twice cannot live here either, and that is not a reason to weaken it.**
+  "A validation detail carries nothing unserialisable" is guarded by a flag *and* by a
+  comprehension that copies two named fields — either alone is sufficient, so no single-line edit
+  reproduces the 500 it fixed. It was written as a mutation, observed not to fail, and removed
+  rather than kept as a claim. Its two hermetic tests in `test_edge_cases.py` are the record.
 - **Some properties cannot live here, and saying so is part of being honest.** "A client dropping
   a real socket still leaves its request settled and logged" is one: closing a generator in-process
   raises `GeneratorExit` and a bare `await` in a `finally` runs fine, so no hermetic test can tell
@@ -26,7 +31,9 @@ Notes for whoever extends this:
   harness that makes one is worse than no harness.
 - Keep the test selection **wide enough**. A too-narrow selection reports a false gap: M25 was
   first reported as surviving only because the test that catches it lives in another file, and
-  T10/E8 repeated the mistake later. When a mutation survives, check *which files run* before
+  T10/E8/X3/X4 repeated the mistake three more times. **The rule that would have prevented all of
+  them: when you add a mutation, name every file whose tests you expect to fail — not the file the
+  code lives beside.** The two are unrelated, and the second is the one that comes to mind. When a mutation survives, check *which files run* before
   concluding the property is undefended — the wrong conclusion costs a test nobody needed.
 - **A mutation that survives may mean the rule is enforced twice.** C4 survived because the
   embedding capability was checked in two places, so removing either changed nothing observable.
@@ -93,6 +100,7 @@ KIRA = "gateway/tests/test_kira_surface.py"
 TOKENS = "libs/tests/test_tokens.py"
 CATALOG_DECLARATION = "management/backend/tests/test_catalog_declaration.py"
 OPENAI_DIALECT = "gateway/tests/test_openai_dialect.py"
+EDGE = "gateway/tests/test_edge_cases.py"
 THINKING = "gateway/tests/test_thinking.py gateway/tests/test_serving_options.py"
 RESPONSE_SCHEMA = "gateway/tests/test_response_schema.py gateway/tests/test_serving_options.py"
 EMBEDDING = "gateway/tests/test_embedding_options.py gateway/tests/test_serving_options.py"
@@ -1536,6 +1544,34 @@ MUTATIONS = [
         "        if not server.serves_anything:",
         "        if False:",
         OPENAI_DIALECT,
+    ),
+    # ---- what an edge-case sweep against the running API found (FRD-123) ---------------------
+    #
+    # All four reached a deployed gateway. None was visible to a suite that only sends requests it
+    # already believes in.
+    Mutation(
+        "X1",
+        "a request that asks nothing is refused rather than billed for an answer to nothing",
+        "gateway/src/aira_gateway/api/serving.py",
+        "    if canonical.is_empty:",
+        "    if False:",
+        f"{EDGE} {KIRA}",
+    ),
+    Mutation(
+        "X2",
+        "a non-positive output cap is refused, not silently applied as a slice",
+        "gateway/src/aira_gateway/api/serving.py",
+        "    if requested is not None and requested <= 0:",
+        "    if False:",
+        f"{EDGE} {MODEL_CATALOG}",
+    ),
+    Mutation(
+        "X4",
+        "a shared control's refusal is rendered in the surface's own vocabulary, not as a 500",
+        "gateway/src/aira_gateway/api/kira/routes.py",
+        "    elif isinstance(exc, GeminiHTTPError):",
+        "    elif False:",
+        f"{EDGE} {KIRA}",
     ),
 ]
 

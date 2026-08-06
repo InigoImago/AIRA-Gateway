@@ -259,6 +259,20 @@ def catalog_of(request: Request) -> ModelCatalog:
     return catalog
 
 
+def check_not_empty(canonical: CanonicalRequest) -> None:
+    """Refuse a request that asks nothing (`FRD-113` FR-7's rule, applied to generation).
+
+    Both surfaces call it, because a no-op that costs money is a no-op on either of them.
+    """
+    if canonical.is_empty:
+        raise GeminiHTTPError(
+            400,
+            "The request carries no text and no attachment. It would be billed for an answer to "
+            "nothing.",
+            "INVALID_ARGUMENT",
+        )
+
+
 async def check_declaration(
     request: Request, *, model: str, method: str, requested: int | None
 ) -> ModelDeclaration:
@@ -276,6 +290,17 @@ async def check_declaration(
     if method not in EMBEDDING_METHODS and not declaration.can(Capability.GENERATE):
         raise GeminiHTTPError(
             400, f"Model '{model}' does not support generation.", "INVALID_ARGUMENT"
+        )
+
+    if requested is not None and requested <= 0:
+        # Found live. A negative cap was accepted, and `words[:limit]` with a negative limit does
+        # not mean "no limit" — it silently drops the end of the answer. A real vendor rejects it
+        # with a message about a field the caller cannot map back to their own request, so it is
+        # refused here where the name still matches what they sent.
+        raise GeminiHTTPError(
+            400,
+            f"maxOutputTokens must be a positive number of tokens, not {requested}.",
+            "INVALID_ARGUMENT",
         )
 
     cap = declaration.max_output_tokens

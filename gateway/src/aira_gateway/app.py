@@ -13,6 +13,7 @@ from typing import Any
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from aira_common.counters import DegradationLog, build_runner
 from aira_common.errors import AiraError, ErrorDetail, ErrorResponse
@@ -25,6 +26,8 @@ from aira_common.observability import (
 from aira_gateway import __version__
 from aira_gateway.api.gemini.errors import GeminiHTTPError, gemini_error_response
 from aira_gateway.api.gemini.routes import router as gemini_router
+from aira_gateway.api.kira.errors import kira_error_response
+from aira_gateway.api.kira.routes import BASE as KIRA_BASE
 from aira_gateway.api.kira.routes import router as kira_router
 from aira_gateway.api.pipeline import router as pipeline_router
 from aira_gateway.api.reporting import router as reporting_router
@@ -201,6 +204,25 @@ def _register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(GeminiHTTPError)
     async def _handle_gemini_error(_request: Request, exc: GeminiHTTPError) -> JSONResponse:
         return exc.to_response()
+
+    @app.exception_handler(StarletteHTTPException)
+    async def _handle_routing_error(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+        """A wrong URL or a wrong method, in the envelope of the surface it was aimed at.
+
+        Without this, an unroutable path answered with the framework's own ``{"detail": "Not
+        Found"}`` — a different shape from every other error the same API produces, for the caller
+        least equipped to deal with one, since by definition they have not found the right route
+        yet. Found by an edge case that asked what a percent-encoded path traversal returns: the
+        status was right and the body was somebody else's.
+        """
+        detail = str(exc.detail) if exc.detail else "Not found."
+        if request.url.path.startswith(KIRA_BASE):
+            return kira_error_response(exc.status_code, "NOT_FOUND", detail)
+        if request.url.path.startswith("/v1beta"):
+            status = "NOT_FOUND" if exc.status_code == 404 else "INVALID_ARGUMENT"
+            return gemini_error_response(exc.status_code, detail, status)
+        envelope = ErrorResponse(error=ErrorDetail(code="not_found", message=detail))
+        return JSONResponse(status_code=exc.status_code, content=envelope.model_dump())
 
     @app.exception_handler(Exception)
     async def _handle_unexpected(request: Request, exc: Exception) -> JSONResponse:

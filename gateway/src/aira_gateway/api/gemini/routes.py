@@ -31,6 +31,7 @@ from aira_gateway.api.serving import (
     UPSTREAM_STATUS_MAP,
     catalog_of,
     check_declaration,
+    check_not_empty,
     check_structured_result,
     deprecation_headers,
     elapsed_ms,
@@ -264,6 +265,7 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
         except ValidationError as exc:
             raise GeminiHTTPError(400, _first_error(exc), "INVALID_ARGUMENT") from exc
         canonical = gemini_to_canonical(model, gemini_request, bounds=schema_bounds(request))
+        check_not_empty(canonical)
 
         canonical, fallbacks = await run_pipeline(request, canonical, trail)
 

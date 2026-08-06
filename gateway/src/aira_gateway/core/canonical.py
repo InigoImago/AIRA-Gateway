@@ -131,6 +131,20 @@ class CanonicalRequest(BaseModel):
         """The distinct media types this request carries. What a model must be able to read."""
         return frozenset(part.media_type for part in self.attachments)
 
+    @property
+    def is_empty(self) -> bool:
+        """Whether this request asks anything at all.
+
+        `FRD-113` FR-7 already refuses an empty embedding input, and names the reason: it prevents
+        a class of accidental **no-op billing**. The same argument holds for generation and was
+        simply never applied — a request whose parts are all empty was served, charged, and
+        answered with whatever a model says to nothing. Found by sending `parts: []`.
+
+        Whitespace counts as empty on purpose: a caller whose template rendered to a newline has
+        the same bug as one that rendered to nothing.
+        """
+        return not any(message.text.strip() for message in self.messages) and not self.attachments
+
 
 class CanonicalEmbeddingRequest(BaseModel):
     """One embedding call, however many texts it carries (`FRD-113` §5.1).

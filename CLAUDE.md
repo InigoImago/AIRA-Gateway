@@ -404,6 +404,15 @@ spends money. Closed with an upsert; both tests shown to fail against the old co
 `completion_tokens` (`FRD-111` FR-6 — pricing needs no special case), and the reasoning comes back
 in **its own field**, which is a third shape of the "never return thoughts" obligation and the
 easiest to miss. Local prices are invented and say so in their display name.
+**174 edge cases against the running API (2026-08-06)** — every case asserts **never a 500**, an
+actionable status, and a message that *names* the problem. Four defects, all live-only: a custom
+validator's error carried an unserialisable `ValueError` into the KIRA `details` (500 for a
+malformed body); that surface had **no branch for a shared control's refusal**, so every one became
+a 500; `maxOutputTokens: -1` was accepted and silently truncated the answer; and a request with no
+content was served and billed, though `FRD-113` FR-7 had refused the same thing for embeddings all
+along. Routing errors now use each surface's own envelope. One mutation (`X3`) was **removed rather
+than kept**: the fix is doubly enforced, so no single-line edit reproduces it — a property guarded
+twice cannot be a mutation, and that is not a reason to weaken the guard.
 **Delivery order is fixed (ROADMAP Phase 8, 2026-08-06)**, derived from the owner's priority
 (KIRA compatibility → model connections → documents → the review findings) and the dependency that
 priority 1 needs priority 3: **`FRD-122` (audit) → `FRD-114` (metadata) → `FRD-115`+`119` (Vertex EU,

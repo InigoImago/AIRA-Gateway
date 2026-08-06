@@ -5,6 +5,59 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-06 — 174 edge cases against the running API, and four defects
+A sweep of everything a caller can get wrong: malformed bodies, unusual text, every shape of bad
+credential, impossible options, attachments that are not what they claim, both surfaces' error
+vocabularies, wrong HTTP methods, a burst of fifty bad requests at once. Each case asserts three
+things rather than one — **never a 500**, a status a caller can act on, and a message that *names*
+the problem. The third is the half most suites skip, and it is what "understandable" means in
+practice: "validation failed" is a correct answer and a useless one.
+
+Four defects, all reaching a deployed gateway, none visible to a suite that only sends requests it
+already believes in.
+
+**A malformed body became a 500 on the KIRA surface.** Its `details` array is pydantic's
+`errors()`, and whenever a *custom* validator raised — ours does, for "a part carries either text
+or data" — that list carried the original `ValueError` **object** in `ctx`. Not JSON serialisable,
+so rendering the refusal raised, and the framework turned the caller's mistake into our error, on
+the one surface whose contract *is* its error shape.
+
+**The same surface could not render a shared control's refusal at all.** `api/serving` is
+deliberately surface-agnostic and raises its own error type; the KIRA renderer had no branch for
+it, so every one of those refusals fell through the catch-all and became a 500. A control that
+works but cannot be *reported* on one of the surfaces it protects.
+
+**A non-positive output cap was accepted.** `maxOutputTokens: -1` returned 200 — and `words[:limit]`
+with a negative limit does not mean "no limit", it drops the end of the answer. A truncated
+response, a 200, and no explanation.
+
+**A request that asks nothing was served and billed.** `parts: []` → 200. `FRD-113` FR-7 already
+refuses an empty *embedding* input and names the reason — it prevents a class of accidental no-op
+billing — and the argument had simply never been applied to generation.
+
+Plus a consistency finding: an unroutable path answered with the framework's own
+`{"detail": "Not Found"}`, a different shape from every other error the same API produces, handed
+to the caller least equipped to deal with one. Each surface now renders routing errors in its own
+envelope.
+
+### And one thing the harness would not let me claim
+
+`X3` — "a validation detail carries nothing unserialisable" — was written as a mutation and never
+went red. The reason is that the fix is **doubly enforced**: a flag on `errors()` *and* a
+comprehension that copies two named fields, either sufficient alone. No single-line edit reproduces
+the 500. So it was removed rather than kept, and the harness's notes gained the rule: a property
+guarded twice cannot be expressed as a mutation, and that is not a reason to weaken the guard.
+
+The other two survivors (`X4`, and `T10`/`E8` before them) were the same too-narrow test selection
+for the third and fourth time. That warning has earned a concrete rule now: **name the files whose
+tests you expect to fail, not the file the code lives beside.** They are unrelated, and the second
+is the one that comes to mind.
+
+18 hermetic tests hold the four defects, because a defect found at the outer layer belongs in the
+innermost one that can hold it.
+
+---
+
 ## 2026-08-06 — fallback, limits, retention and KIRA, against the running thing
 Eleven more live cases (`tests/integration/test_controls_live.py`), and the fixture for the first
 group is worth stating: **two named servers against one endpoint**, `gpu-a` offering a model that

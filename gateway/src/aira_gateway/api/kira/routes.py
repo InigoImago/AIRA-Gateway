@@ -28,6 +28,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import ValidationError
 
 from aira_common.models import Capability
+from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.api.kira import errors, schemas
 from aira_gateway.api.kira.attribution import resolve as resolve_attribution
 from aira_gateway.api.kira.mapping import (
@@ -41,6 +42,7 @@ from aira_gateway.api.serving import (
     UPSTREAM_STATUS_MAP,
     catalog_of,
     check_declaration,
+    check_not_empty,
     check_structured_result,
     elapsed_ms,
     embedding_bounds,
@@ -95,6 +97,16 @@ def _sunset(request: Request) -> dict[str, str]:
     return {**SUNSET_HEADERS, **({"Sunset": configured} if configured else {})}
 
 
+#: A shared control's HTTP status, in the predecessor's error vocabulary (`kira_api.md` §6.2).
+#: Anything unmapped is a validation error, which is what a 4xx from a pre-dispatch check is.
+_KIRA_CODE_FOR = {
+    404: errors.MODEL_NOT_FOUND,
+    403: errors.STANDARD_USER_PERMISSION_REQUIRED,
+    429: errors.EXTERNAL_KI_API_TOO_MANY_REQUEST,
+    502: errors.EXTERNAL_KI_API_ERROR,
+}
+
+
 def _error_response(request: Request, exc: Exception) -> JSONResponse:
     """Every refusal, in the predecessor's vocabulary (`kira_api.md` §6.2)."""
     if isinstance(exc, errors.KiraError):
@@ -106,6 +118,15 @@ def _error_response(request: Request, exc: Exception) -> JSONResponse:
         response = errors.kira_error_response(422, exc.code, exc.message)
     elif isinstance(exc, AttachmentRejected | SchemaRejected):
         response = errors.kira_error_response(400, errors.VALIDATION_ERROR, str(exc))
+    elif isinstance(exc, GeminiHTTPError):
+        # The shared controls in `api/serving` raise this — they are surface-agnostic by design,
+        # and this surface has to put their refusals into the predecessor's vocabulary. Without
+        # this branch every one of them fell through to the `else` and became a **500**, which is
+        # the exact failure the shared module exists to prevent, arriving from the other side: a
+        # control that works but cannot be *reported* on one of the surfaces it protects.
+        response = errors.kira_error_response(
+            exc.code, _KIRA_CODE_FOR.get(exc.code, errors.VALIDATION_ERROR), exc.message
+        )
     elif isinstance(exc, RateLimited | BudgetExceeded):
         response = errors.kira_error_response(
             429, errors.EXTERNAL_KI_API_TOO_MANY_REQUEST, exc.message
@@ -127,6 +148,30 @@ def _error_response(request: Request, exc: Exception) -> JSONResponse:
     for key, value in _sunset(request).items():
         response.headers[key] = value
     return response
+
+
+def _details(exc: ValidationError) -> list[dict[str, Any]]:
+    """The predecessor's ``details`` array, and **only things that serialise**.
+
+    ``errors()`` carries a ``ctx`` holding the original exception object whenever a *custom*
+    validator raised — and ours do, for "a part carries either text or data". Rendering that as
+    JSON raised `TypeError` inside the response, which the framework turned into a **500**: a
+    caller's malformed body became our server error, with the generic envelope rather than the
+    predecessor's, on the one surface whose contract is its error shape.
+
+    ``include_input`` is off for a second reason. Echoing the offending value back is a habit that
+    eventually reflects a prompt, or a credential somebody put in the wrong field, into a response
+    and from there into whatever logs it.
+
+    **What actually enforces both is the comprehension**, which takes two named fields and nothing
+    else; the flags are the belt to its braces. Worth stating because the mutation for this
+    property was first pointed at the flags and survived — they were already redundant, so removing
+    them changed nothing, and a mutation that cannot fail is a claim rather than a test.
+    """
+    return [
+        {"loc": [str(part) for part in error.get("loc", ())], "msg": str(error.get("msg", ""))}
+        for error in exc.errors(include_url=False, include_context=False, include_input=False)
+    ]
 
 
 def _thinking_config(declaration: ModelDeclaration) -> schemas.ThinkingConfig | None:
@@ -172,10 +217,7 @@ async def _prepare(
         parsed = schemas.ChatRequest.model_validate(body)
     except ValidationError as exc:
         raise errors.KiraError(
-            422,
-            errors.VALIDATION_ERROR,
-            "Request validation failed.",
-            exc.errors(include_url=False),
+            422, errors.VALIDATION_ERROR, "Request validation failed.", _details(exc)
         ) from exc
 
     model = await _resolve_model(request, parsed.model_id)
@@ -197,6 +239,7 @@ async def _prepare(
         )
 
     canonical = to_canonical(parsed, model, bounds=schema_bounds(request))
+    check_not_empty(canonical)
     canonical, fallbacks = await run_pipeline(request, canonical, trail)
     routed = await check_declaration(
         request, model=canonical.model, method="generateContent", requested=parsed.max_tokens
@@ -394,10 +437,7 @@ async def embed(request: Request, principal: Principal = Depends(require_princip
             parsed = schemas.EmbeddingRequest.model_validate(body)
         except ValidationError as exc:
             raise errors.KiraError(
-                422,
-                errors.VALIDATION_ERROR,
-                "Request validation failed.",
-                exc.errors(include_url=False),
+                422, errors.VALIDATION_ERROR, "Request validation failed.", _details(exc)
             ) from exc
 
         model = await _resolve_model(request, parsed.model_id)
