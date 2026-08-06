@@ -82,6 +82,13 @@ class GatewaySettings(BaseAiraSettings):
     gemini_models: str = "gemini-2.0-flash,gemini-1.5-flash"
     gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
 
+    #: Where requests may be processed — **one list for every cloud** (`ADR-0012` §6). Google says
+    #: `europe-west1`, Azure says `westeurope`; the names differ and the policy does not, so a
+    #: per-cloud setting would mean a per-cloud audit. Empty falls back to the EU regions of every
+    #: supported cloud, because a residency constraint that must be switched on is one that will
+    #: be found switched off.
+    allowed_regions: str = ""
+
     # Vertex AI / Model Garden (FRD-115). Registered only when a project and credentials are
     # configured; a laptop keeps working on the Generative Language adapter above.
     vertex_project: str = ""
@@ -90,9 +97,6 @@ class GatewaySettings(BaseAiraSettings):
     vertex_credentials: str = ""
     #: ``region/publisher/model`` per entry. The three things the URL and the dialect need.
     vertex_models: str = ""
-    #: Residency, enforced: a model outside this set refuses to start. Empty falls back to the EU
-    #: defaults, so a deployment cannot leave the EU by forgetting to configure something.
-    vertex_allowed_regions: str = ""
     vertex_timeout_seconds: float = 120.0
     #: Backstop for Anthropic's required ``max_tokens`` when the catalog declares no default.
     vertex_default_max_tokens: int = 4096

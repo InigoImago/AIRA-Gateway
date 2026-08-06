@@ -17,13 +17,14 @@ import pytest
 from aira_common.tokens import StaticTokenSource
 from aira_gateway.config import GatewaySettings
 from aira_gateway.core.canonical import CanonicalMessage, CanonicalRequest, Role
+from aira_gateway.residency import RegionNotAllowed
 from aira_gateway.upstreams.base import (
     AmbiguousModel,
     ProviderRegistry,
     UpstreamError,
     UpstreamModel,
 )
-from aira_gateway.upstreams.vertex import RegionNotAllowed, build_vertex_upstreams
+from aira_gateway.upstreams.vertex import build_vertex_upstreams
 from aira_gateway.upstreams.vertex.adapters import (
     VertexAnthropicAdapter,
     VertexGeminiAdapter,

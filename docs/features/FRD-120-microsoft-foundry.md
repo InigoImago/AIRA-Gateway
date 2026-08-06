@@ -59,7 +59,9 @@ Foundry brings three things the first two did not:
 - **FR-3 Caller-facing names, catalog addressing.** The caller says `gpt-5`; the catalog resolves
   transport, resource, deployment and the **underlying model for pricing** (`ADR-0011` rule 2).
   A pipeline configuration never contains a deployment name.
-- **FR-4 Region allow-list**, using `FRD-115`'s mechanism unchanged.
+- **FR-4 Region allow-list**, using the shared policy unchanged — `AIRA_ALLOWED_REGIONS`
+  already carries Azure's EU regions, so a Foundry model in `westeurope` is permitted by the
+  default and one outside the EU refuses to start, with no new setting.
 - **FR-5 Reasoning maps to effort levels.** §5.3.
 - **FR-6 Structured output via `response_format: json_schema` with `strict`.** A schema field with
   no faithful equivalent is a refusal, not a silent drop — the rule `FRD-119` §5.5 established.

@@ -5,6 +5,7 @@ from __future__ import annotations
 import httpx
 
 from aira_gateway.config import GatewaySettings
+from aira_gateway.residency import RegionNotAllowed, check_region, parse_allowed
 from aira_gateway.upstreams.base import Upstream
 from aira_gateway.upstreams.vertex.adapters import (
     VertexAnthropicAdapter,
@@ -12,12 +13,7 @@ from aira_gateway.upstreams.vertex.adapters import (
     VertexModel,
 )
 from aira_gateway.upstreams.vertex.auth import CredentialsInvalid, build_token_source
-from aira_gateway.upstreams.vertex.transport import (
-    DEFAULT_ALLOWED_REGIONS,
-    RegionNotAllowed,
-    VertexTransport,
-    check_region,
-)
+from aira_gateway.upstreams.vertex.transport import VertexTransport
 
 __all__ = [
     "CredentialsInvalid",
@@ -43,14 +39,7 @@ def build_vertex_upstreams(settings: GatewaySettings) -> list[Upstream]:
 
     specs = [spec.strip() for spec in settings.vertex_models.split(",") if spec.strip()]
     models = [VertexModel.parse(spec) for spec in specs]
-    allowed = (
-        tuple(
-            region.strip()
-            for region in settings.vertex_allowed_regions.split(",")
-            if region.strip()
-        )
-        or DEFAULT_ALLOWED_REGIONS
-    )
+    allowed = parse_allowed(settings.allowed_regions)
     for model in models:
         check_region(model.region, allowed)
 

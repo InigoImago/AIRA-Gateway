@@ -180,9 +180,7 @@ async def test_a_model_no_provider_serves_appears_in_the_failure() -> None:
 
 async def test_the_route_reports_a_precondition_failure_rather_than_an_outage() -> None:
     """502 said "the provider is down" for what is a configuration problem. 400 says which."""
-    app = create_app(
-        GatewaySettings(auth_required=False, log_queue_size=0, vertex_allowed_regions="eu")
-    )
+    app = create_app(GatewaySettings(auth_required=False, log_queue_size=0, allowed_regions="eu"))
     app.state.providers = ProviderRegistry([_Provider(("elsewhere-1", "us-central1"))])
 
     with TestClient(app) as client:
@@ -201,9 +199,7 @@ async def test_the_route_reports_a_precondition_failure_rather_than_an_outage() 
 async def test_the_audit_row_records_which_candidates_were_passed_over_and_why() -> None:
     """A fallback that skipped three models for three reasons is exactly what somebody needs to
     see when they ask why the answer came from the model it did."""
-    app = create_app(
-        GatewaySettings(auth_required=False, log_queue_size=0, vertex_allowed_regions="eu")
-    )
+    app = create_app(GatewaySettings(auth_required=False, log_queue_size=0, allowed_regions="eu"))
     app.state.providers = ProviderRegistry(
         [_Provider(("primary-1", "us-central1"), ("backup-1", "eu"))]
     )
@@ -230,3 +226,68 @@ async def test_the_audit_row_records_which_candidates_were_passed_over_and_why()
     # And the substitution itself is still recorded, so asked-vs-served stays answerable.
     assert rows[0].requested_model == "primary-1"
     assert rows[0].model == "backup-1"
+
+
+# -- one policy, every cloud (ADR-0012 §6) -----------------------------------------------------
+
+
+async def test_an_azure_region_passes_the_same_check_as_a_google_one() -> None:
+    """The mechanism was always generic — it reads whatever the adapter declares — but the
+    *configuration* was not: the allow-list lived behind a `vertex_`-named setting with Google-only
+    defaults. The first Azure model would then have failed a check named after Google.
+
+    "Which regions may we use" is one question with a vendor-specific vocabulary.
+    """
+    registry = ProviderRegistry([_Provider(("gpt-5", "westeurope"), ("gemini", "europe-west1"))])
+    allowed = ("westeurope", "europe-west1")
+
+    for model in ("gpt-5", "gemini"):
+        dispatched = await dispatch_with_fallback(
+            registry, _request(model), (), permits=permits([RegionAllowed(registry, allowed)])
+        )
+        assert dispatched.response.model == model
+
+
+async def test_an_azure_region_outside_the_policy_is_refused_like_any_other() -> None:
+    registry = ProviderRegistry([_Provider(("gpt-5", "eastus"))])
+
+    with pytest.raises(NoCapableModel) as caught:
+        await dispatch_with_fallback(
+            registry,
+            _request("gpt-5"),
+            (),
+            permits=permits([RegionAllowed(registry, ("westeurope",))]),
+        )
+
+    assert "eastus" in str(caught.value)
+
+
+def test_the_default_policy_covers_the_eu_regions_of_every_supported_cloud() -> None:
+    """Listed before Microsoft Foundry exists, on purpose: the alternative is that the first Azure
+    model added is silently refused by a default nobody thought to widen — which is a bad way to
+    learn that a policy list was written for one cloud."""
+    from aira_gateway.residency import DEFAULT_ALLOWED_REGIONS, parse_allowed
+
+    assert "europe-west1" in DEFAULT_ALLOWED_REGIONS  # Google
+    assert "eu" in DEFAULT_ALLOWED_REGIONS  # Google multi-region
+    assert "westeurope" in DEFAULT_ALLOWED_REGIONS  # Azure
+    assert "germanywestcentral" in DEFAULT_ALLOWED_REGIONS  # Azure
+
+    # And nothing outside the EU sneaks into the default.
+    assert not {"us-central1", "eastus", "us-east-1"} & set(DEFAULT_ALLOWED_REGIONS)
+
+    # An empty setting means "the EU defaults", never "no constraint": a residency rule that has
+    # to be switched on is one that will be found switched off.
+    assert parse_allowed("") == DEFAULT_ALLOWED_REGIONS
+    assert parse_allowed("westeurope") == ("westeurope",)
+
+
+def test_the_residency_setting_is_not_named_after_one_cloud() -> None:
+    """A per-cloud setting means a per-cloud audit, and the one added last is the one nobody
+    remembers to check."""
+    fields = set(GatewaySettings.model_fields)
+
+    assert "allowed_regions" in fields
+    assert not any(
+        name.endswith("allowed_regions") and name != "allowed_regions" for name in fields
+    )

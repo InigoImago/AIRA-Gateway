@@ -458,7 +458,7 @@ where one is required.
 ```bash
 AIRA_VERTEX_PROJECT=my-gcp-project
 AIRA_VERTEX_CREDENTIALS='{"client_email":"…","private_key":"…"}'   # FRD-116 moves this to Vault
-AIRA_VERTEX_ALLOWED_REGIONS=eu,europe-west1        # empty → the EU defaults
+AIRA_ALLOWED_REGIONS=eu,europe-west1               # empty → the EU regions of every cloud
 AIRA_VERTEX_MODELS=eu/google/gemini-2.5-pro,eu/anthropic/claude-sonnet-4-5@20250929
 ```
 
@@ -470,10 +470,16 @@ region is worse than one that will not start at all.
 
 | Refused at boot | Because |
 |---|---|
-| A model in a region outside `ALLOWED_REGIONS` | residency is a configuration claim, and this is what makes it hold |
+| A model in a region outside `AIRA_ALLOWED_REGIONS` | residency is a configuration claim, and this is what makes it hold |
 | Credentials that are not a usable service-account key | a credential problem must not present as an upstream problem |
 | A model spec that is not `region/publisher/model` | a typo here would otherwise become a 404 per request |
 | The same model name on two adapters | otherwise the region and credential that served a request are a silent choice |
+
+**`AIRA_ALLOWED_REGIONS` is not Vertex's list.** It is the deployment's residency policy and every
+transport is measured against it — Google's `europe-west1` and Azure's `westeurope` sit in the same
+setting, because "which regions may we use" is one question with a vendor-specific vocabulary. A
+per-cloud list would mean a per-cloud audit, and the one added last is the one nobody remembers to
+check. Left empty it means the EU regions of every supported cloud, never "no constraint".
 
 **Provenance.** Every request records `provider`, `publisher` and `region`; reporting can break
 down by them. That is what turns "we are in the EU" from an assertion into something an auditor can

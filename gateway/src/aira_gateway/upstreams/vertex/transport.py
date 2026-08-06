@@ -9,6 +9,10 @@ mapping in the transport and adding a third vendor rewrites it.
 configuration in which somebody eventually adds one — because that is where a preview model
 launched — and nothing objects. So the allowed regions are a list, a model outside it refuses to
 start, and every request records where it went.
+
+The list itself is **not** Vertex's: it lives in :mod:`aira_gateway.residency` and every transport
+is measured against the same one. "Which regions may we use" is one policy question with a
+vendor-specific vocabulary, and a per-cloud list would mean a per-cloud audit (`ADR-0012` §6).
 """
 
 from __future__ import annotations
@@ -18,32 +22,15 @@ from typing import Any
 import httpx
 
 from aira_common.tokens import TokenSource, TokenUnavailable
+from aira_gateway.residency import DEFAULT_ALLOWED_REGIONS, check_region
 from aira_gateway.upstreams.base import UpstreamError
-
-#: The EU regions and multi-regions a default deployment may use. An organisation that deliberately
-#: wants another changes one setting and thereby makes an explicit decision — which is the point.
-DEFAULT_ALLOWED_REGIONS = ("eu", "europe-west1", "europe-west4", "europe-west3", "europe-north1")
 
 #: The multi-region endpoint has its own host rather than a `{region}-` prefix.
 _MULTI_REGION_HOSTS = {"eu": "aiplatform.eu.rep.googleapis.com"}
 
 
-class RegionNotAllowed(Exception):
-    """A model is configured in a region this deployment does not permit. Raised at startup:
-    failing to boot is the correct response to a configuration that cannot honour its own
-    residency claim, and a running gateway that sometimes leaves the EU is not."""
-
-
 def host_for(region: str) -> str:
     return _MULTI_REGION_HOSTS.get(region, f"{region}-aiplatform.googleapis.com")
-
-
-def check_region(region: str, allowed: tuple[str, ...]) -> None:
-    if region not in allowed:
-        raise RegionNotAllowed(
-            f"Region '{region}' is not in the allowed set {sorted(allowed)}. "
-            "Residency is enforced by configuration; widen it deliberately if that is intended."
-        )
 
 
 class VertexTransport:

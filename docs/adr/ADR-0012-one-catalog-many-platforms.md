@@ -159,8 +159,12 @@ timeouts and the probe policy read it.
 
 ### 6. Two clouds means one mechanism and two legal positions
 
-Residency is enforced by one allowed-region list across every transport (`FRD-115` §5.5) — one
-control to implement and audit rather than one per vendor. But an EU region on GCP and an EU region
+Residency is enforced by one allowed-region list across every transport (`aira_gateway.residency`,
+`AIRA_ALLOWED_REGIONS`) — one control to implement and audit rather than one per vendor. The list
+holds vendor-specific *names* (`eu`, `europe-west1`, `westeurope`) because that is the vocabulary
+regions come in; what is shared is the policy, not the spelling. Implemented 2026-08-06, after a
+first attempt scoped it to Vertex and would have made the first Azure model fail a check named
+after Google. But an EU region on GCP and an EU region
 on Azure are two different contractual and data-protection positions, and self-deployed models add a
 third (our own capacity in our own project).
 

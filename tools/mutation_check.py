@@ -750,6 +750,22 @@ MUTATIONS = [
         "            roles=(),",
         "gateway/tests/test_attribution.py gateway/tests/test_auth_oidc.py",
     ),
+    Mutation(
+        "D7",
+        "the residency policy is one list for every cloud, defaulting to the EU",
+        "gateway/src/aira_gateway/residency.py",
+        "    return regions or DEFAULT_ALLOWED_REGIONS",
+        "    return regions",
+        REQUIREMENTS,
+    ),
+    Mutation(
+        "D8",
+        "the default policy covers Azure's EU regions, not only Google's",
+        "gateway/src/aira_gateway/residency.py",
+        "DEFAULT_ALLOWED_REGIONS = EU_REGIONS_GOOGLE + EU_REGIONS_AZURE",
+        "DEFAULT_ALLOWED_REGIONS = EU_REGIONS_GOOGLE",
+        REQUIREMENTS,
+    ),
     # ---- the dispatch chain may not degrade silently (ADR-0012 §3) -------------------------
     Mutation(
         "D1",
@@ -803,7 +819,7 @@ MUTATIONS = [
     Mutation(
         "V1",
         "residency is enforced: a model outside the allowed regions refuses to start",
-        "gateway/src/aira_gateway/upstreams/vertex/transport.py",
+        "gateway/src/aira_gateway/residency.py",
         "    if region not in allowed:",
         "    if False:",
         VERTEX,

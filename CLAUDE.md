@@ -43,7 +43,7 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
   inevitably do when both were written from the same mental model — and line coverage cannot see
   a *missing requirement*: on 2026-08-05 a review found seven real defects behind a green suite at
   99% coverage. So: **prove a test can fail.** Break the property, watch it go red, restore.
-  `make mutants` (`tools/mutation_check.py`) does this for **122 properties** across auth, budgets,
+  `make mutants` (`tools/mutation_check.py`) does this for **124 properties** across auth, budgets,
   pipeline, retention, the management control plane and the gateway's counters; when
   you fix a bug, add the mutation that reintroduces it. Two traps that cost real defects here:
   a stand-in that is more permissive than the thing it replaces (reuse the real method where you
@@ -326,8 +326,10 @@ by an operator, an outage is not. **Residency is the first condition**, media ty
 the schema capability (`FRD-112`) are the next two, and they share the mechanism rather than each
 inventing one. Two present-day defects fell out: a model no provider served was a **silent
 `continue`** (a typo in a fallback chain was invisible), and the candidates a chain passed over now
-reach the audit row. Residency is still **deployment-wide** — per-use-case regions are a governance
-extension, not a bug fix, and are not built.
+reach the audit row. Residency is **one policy for every cloud** (`aira_gateway.residency`, `AIRA_ALLOWED_REGIONS`):
+Google's `europe-west1` and Azure's `westeurope` in one list, defaulting to the EU regions of every
+supported cloud — a per-cloud setting would mean a per-cloud audit. It is still **deployment-wide**;
+per-use-case regions are a governance extension, not a bug fix, and are not built.
 **Delivery order is fixed (ROADMAP Phase 8, 2026-08-06)**, derived from the owner's priority
 (KIRA compatibility → model connections → documents → the review findings) and the dependency that
 priority 1 needs priority 3: **`FRD-122` (audit) → `FRD-114` (metadata) → `FRD-115`+`119` (Vertex EU,

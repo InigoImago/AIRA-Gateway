@@ -181,16 +181,21 @@ request carries evidence of where it went.
 An organisation that deliberately wants a non-EU region changes one setting and thereby makes an
 explicit decision — which is the point.
 
-The mechanism is **not Google-specific**: Azure regions carry the same requirement and use the same
-allow-list (`FRD-120` FR-4). One residency control for every platform, rather than one per vendor
-that each has to be found and audited separately.
+The mechanism is **not Google-specific**, and neither is the configuration: the policy lives in
+`aira_gateway.residency`, the setting is `AIRA_ALLOWED_REGIONS`, and the default covers the EU
+regions of **every** supported cloud — Google's `europe-west1` beside Azure's `westeurope`.
+
+That was got wrong first. The list initially sat behind a `vertex_`-named setting with Google-only
+defaults, which would have made the first Azure model fail a check named after Google. One
+residency control for every platform, rather than one per vendor that each has to be found and
+audited separately (`ADR-0012` §6).
 
 ### 5.6 Configuration
 
 ```
 AIRA_VERTEX_PROJECT=my-project
 AIRA_VERTEX_CREDENTIALS=<service-account JSON>     # FRD-116 replaces this source
-AIRA_VERTEX_ALLOWED_REGIONS=eu,europe-west1,europe-west4
+AIRA_ALLOWED_REGIONS=eu,europe-west1,westeurope    # one list, every cloud (ADR-0012 §6)
 AIRA_VERTEX_MODELS=eu/google/gemini-2.5-pro,eu/anthropic/claude-sonnet-4-5@20250929
 ```
 

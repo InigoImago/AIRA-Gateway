@@ -45,7 +45,23 @@ One existing test had to change, and the change is the point: it asserted that a
 raises `UpstreamError` — it encoded the misleading behaviour. It now pins both halves: a chain with
 nothing to offer is not an outage, and an upstream that *was* tried and failed still is.
 
-122/122 mutations, 710 hermetic tests, 69 integration, 46 browser.
+**A follow-up question found the real version of the same mistake.** *"Wird es auch für Azure
+`westeurope` funktionieren?"* — and the honest answer was: the mechanism yes, the configuration no.
+`RegionAllowed` was always generic (it reads whatever the adapter declares), but the allow-list sat
+behind a **`vertex_`-named setting with Google-only defaults**. The first Azure model would have
+failed a check named after Google, and an operator widening `AIRA_VERTEX_ALLOWED_REGIONS` to admit
+`westeurope` would have had a setting named after one cloud governing two.
+
+`ADR-0012` §6 had already decided "one allowed-region list across every transport". The
+implementation had quietly not done that. Moved to `aira_gateway.residency` with
+`AIRA_ALLOWED_REGIONS`, and the default now covers the EU regions of **both** clouds — Azure's
+listed before Foundry exists, on purpose, because the alternative is learning that a policy list was
+written for one cloud by watching the first model of the other be refused.
+
+The names stay flat (`eu`, `europe-west1`, `westeurope`) rather than qualified per provider: they do
+not collide, and an operator thinks in "which EU regions may we use", not in a matrix.
+
+124/124 mutations, 714 hermetic tests, 69 integration, 46 browser.
 
 ---
 

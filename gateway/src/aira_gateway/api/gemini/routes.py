@@ -40,6 +40,7 @@ from aira_gateway.pipeline.errors import PipelineRejected
 from aira_gateway.pipeline.store import PipelineStore
 from aira_gateway.ratelimit.errors import RateLimited
 from aira_gateway.requirements import RegionAllowed, permits
+from aira_gateway.residency import parse_allowed
 from aira_gateway.upstreams.base import ProviderRegistry, Upstream, UpstreamError
 
 _log = get_logger("aira_gateway")
@@ -143,10 +144,9 @@ def _requirements(request: Request) -> Permits:
     `FRD-110` adds the attachment media types the caller actually sent.
     """
     settings = request.app.state.settings
-    allowed = tuple(
-        region.strip() for region in settings.vertex_allowed_regions.split(",") if region.strip()
-    )
-    return permits([RegionAllowed(_registry(request), allowed)])
+    # One list, every transport (`ADR-0012` §6) — reading a Vertex-named setting here would make
+    # the first Azure model fail a check named after Google.
+    return permits([RegionAllowed(_registry(request), parse_allowed(settings.allowed_regions))])
 
 
 def _catalog(request: Request) -> ModelCatalog:
