@@ -1848,6 +1848,30 @@ MUTATIONS = [
         '_STRICT_ALIASED = ConfigDict(populate_by_name=True, extra="ignore")',
         NO_SILENT_DROP,
     ),
+    Mutation(
+        "Y9",
+        "a request refused on size is audited, not answered 413 and forgotten",
+        "gateway/src/aira_gateway/middleware.py",
+        "            await record_oversized(scope, self.max_bytes)\n            await self._reject(send)",
+        "            await self._reject(send)",
+        HARDENING,
+    ),
+    Mutation(
+        "Y10",
+        "the streamed oversize exit records the same row as the declared one",
+        "gateway/src/aira_gateway/middleware.py",
+        "                    await record_oversized(scope, self.max_bytes)\n                    raise RequestTooLarge",
+        "                    raise RequestTooLarge",
+        HARDENING,
+    ),
+    Mutation(
+        "Y11",
+        "a size refusal records no identity it could not verify",
+        "gateway/src/aira_gateway/middleware.py",
+        '                subject="",\n                auth_method="",',
+        '                subject="unverified",\n                auth_method="unverified",',
+        HARDENING,
+    ),
 ]
 
 

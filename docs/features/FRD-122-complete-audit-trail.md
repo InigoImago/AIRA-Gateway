@@ -257,3 +257,38 @@ raising — which is the mutation harness doing its job.
 
 Demo mode gains a use case with a deliberately tiny limit, so the Reporting screen shows refusals
 beside successes out of the box — which is also the fastest way to see that the feature works.
+
+
+## 12. Extension (2026-08-06) — the refusal that ran before the boundary
+
+`FR-1` says the log records what was **asked**, not only what was served, and it was closed at the
+route's exception boundary: one site, because a fact repeated at every exit is a fact eventually
+forgotten at one of them. One refusal never reaches that boundary. The request-body ceiling is pure
+ASGI middleware and answers **before any route runs**, so a 20 MB body was refused with a 413 and
+left no trace whatsoever.
+
+Found by posting one at a running gateway and counting rows — not by reading the code, which is
+consistent about this rule everywhere it can be read.
+
+Both exits from that decision (a declared `Content-Length` over the ceiling, and a body that
+declared none and was cut off mid-read) now record through **one** function, `record_oversized`.
+The row carries a new closed-vocabulary outcome, `request_too_large`, rather than reusing
+`invalid_request`: "somebody keeps posting 20 MB" and "somebody sent malformed JSON" are different
+operational facts, and a shared bucket hides the first inside the second.
+
+**The row is deliberately unattributed.** The credential in the header has not been verified at
+that point, and recording it would let anybody write another system's identity into the audit trail
+by sending one oversized request. An unverifiable claim is not evidence; the source IP, the target
+and the outcome are. Same rule as "unpriced is not free" and "undeclared is not permitted", applied
+to identity. The body is not stored either — it is over the ceiling, and keeping what we refused to
+read would undo the reason for refusing it.
+
+### What is still not recorded, and why
+
+**Authentication failures.** A 401 leaves no row. That is a decision, not an oversight: a request
+that never presented a valid credential is a *security* event, and it belongs with anomaly detection
+and incident response (`FRD-500`/`FRD-501`/`FRD-503`) rather than in the usage log, where it would
+appear in spend reports as a refusal attributed to nobody. Recorded here so that whoever builds
+those features finds the question already asked.
+
+Mutations `Y9`–`Y11`.

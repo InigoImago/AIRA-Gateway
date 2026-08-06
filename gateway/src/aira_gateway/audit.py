@@ -38,6 +38,10 @@ class Outcome(StrEnum):
     #: No candidate model could serve the request — e.g. none can read the attachment it carries
     #: (`ADR-0012` §3). Reachable once `FRD-110` lands; declared here so the vocabulary is complete.
     NO_CAPABLE_MODEL = "no_capable_model"
+    #: Refused on size, before any route ran. Its own value rather than `invalid_request`:
+    #: "somebody keeps posting 20 MB" and "somebody sent malformed JSON" are different operational
+    #: facts, and a shared bucket would hide the first inside the second.
+    REQUEST_TOO_LARGE = "request_too_large"
 
 
 #: How the served model was arrived at. ``fallback:N`` names the candidate's position in the chain.

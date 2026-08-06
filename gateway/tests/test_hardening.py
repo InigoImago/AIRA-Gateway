@@ -50,6 +50,89 @@ def test_streamed_oversized_body_is_rejected() -> None:
     assert resp.status_code == 413
 
 
+async def _outcomes(app) -> list[tuple[str | None, int, str | None]]:
+    from sqlalchemy import select
+
+    from aira_gateway.db.models import RequestLog
+
+    async with app.state.db_sessionmaker() as session:
+        rows = list((await session.execute(select(RequestLog))).scalars())
+    return [(row.outcome, row.status, row.use_case) for row in rows]
+
+
+async def test_a_request_refused_on_size_is_still_audited() -> None:
+    """`FRD-122`'s rule reaches the one refusal that used to escape it.
+
+    The rule is that the log records what was **asked**, not only what was served, and it was
+    closed at the route's exception boundary. This refusal happens in pure ASGI *before* any
+    route, so the boundary never ran and a 20 MB body left no trace at all — found by posting one
+    at a running gateway and counting rows, not by reading the code.
+    """
+    app = create_app(GatewaySettings(auth_required=False, max_request_bytes=100, log_queue_size=0))
+    with TestClient(app) as client:
+        assert client.post(_URL, json={"contents": [{"parts": [{"text": "x" * 500}]}]}).status_code
+        # Inside the context: the in-memory database lives for the lifespan and no longer.
+        rows = await _outcomes(app)
+
+    assert rows == [("request_too_large", 413, None)]
+
+
+async def test_a_streamed_oversized_body_is_audited_by_the_same_path() -> None:
+    """The other exit from one decision. A body that declares no length is refused mid-read, and
+    a fact recorded at one exit and not the other is the shape of every gap in this file."""
+    app = create_app(GatewaySettings(auth_required=False, max_request_bytes=100, log_queue_size=0))
+
+    def chunks() -> Iterator[bytes]:
+        yield b'{"contents":[{"parts":[{"text":"'
+        yield b"x" * 500
+        yield b'"}]}]}'
+
+    with TestClient(app) as client:
+        client.post(_URL, content=chunks(), headers={"content-type": "application/json"})
+        rows = await _outcomes(app)
+
+    assert [row[0] for row in rows] == ["request_too_large"]
+
+
+async def test_the_size_refusal_records_no_identity_it_could_not_verify() -> None:
+    """The credential in the header has not been checked at this point. Recording it would let
+    anybody write another system's name into the audit trail by sending one oversized request —
+    an unverifiable claim is not evidence, which is the same rule as "unpriced is not free"."""
+    app = create_app(GatewaySettings(auth_required=False, max_request_bytes=100, log_queue_size=0))
+    with TestClient(app) as client:
+        client.post(
+            _URL,
+            json={"contents": [{"parts": [{"text": "x" * 500}]}]},
+            headers={"x-goog-api-key": "aira_victim_secret"},
+        )
+
+        from sqlalchemy import select
+
+        from aira_gateway.db.models import RequestLog
+
+        async with app.state.db_sessionmaker() as session:
+            row = (await session.execute(select(RequestLog))).scalars().one()
+
+    assert not row.subject
+    assert not row.credential
+    assert row.source_ip
+    # And the body is not kept either: it is over the ceiling, and storing what we refused to read
+    # would undo the reason for refusing it.
+    assert row.request_payload is None
+
+
+def test_the_refused_target_is_named_where_the_path_says_it_and_unknown_where_it_does_not() -> None:
+    from aira_gateway.middleware import describe_target
+
+    assert describe_target("/v1beta/models/qwen3:0.6b:generateContent") == (
+        "gemini",
+        "qwen3:0.6b",
+        "generateContent",
+    )
+    assert describe_target("/kira/api/external/chat") == ("kira", "unknown", "unknown")
+    assert describe_target("/v1beta/models/bare-name") == ("gemini", "bare-name", "unknown")
+
+
 def test_body_within_limit_passes() -> None:
     app = create_app(GatewaySettings(auth_required=False, max_request_bytes=8192))
     with TestClient(app) as client:

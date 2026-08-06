@@ -137,6 +137,12 @@ The KIRA surface refuses unknown fields with **422** and `VALIDATION_ERROR`, its
   600 tokens of hidden reasoning. Neither claim can be established by inspecting a dict, which is
   precisely how the thinking defect survived a hermetic suite that "tested" it.
 
+## 8a. What the same round found next
+
+Counting audit rows for every kind of refusal showed that all of them are recorded except three:
+the body-size ceiling (closed — see `FRD-122` §12) and the two authentication failures (a decision,
+also recorded there).
+
 ## 9. Rollout
 
 Breaking for any client that was sending a field AIRA ignored — deliberately, since that client is

@@ -11,6 +11,8 @@ sequence truncates the output or it does not. Neither can be established by insp
 
 from __future__ import annotations
 
+import asyncio
+
 import httpx
 import pytest
 from tests.integration.conftest import GATEWAY_URL
@@ -148,3 +150,61 @@ async def test_a_refused_request_still_leaves_an_audit_row(fixture) -> None:
     rows = await fixture.rows()
     assert rows, "a refused request left no trace at all"
     assert any(row["status"] == 400 for row in rows)
+
+
+async def test_a_body_over_the_ceiling_is_refused_and_recorded(fixture, engine) -> None:
+    """The gap `FRD-122` left open, found by counting rows rather than by reading code.
+
+    The size check runs in pure ASGI **before** any route, so the exception boundary that records
+    every other refusal never ran: a 20 MB body was answered 413 and left no trace at all. The row
+    is deliberately **unattributed** — the credential in the header has not been verified at that
+    point, and recording it would let anybody write another system's name into the audit trail by
+    sending one oversized request.
+    """
+    from sqlalchemy import text
+
+    async def count() -> int:
+        async with engine.connect() as connection:
+            return int(
+                (
+                    await connection.execute(
+                        text("SELECT count(*) FROM request_logs WHERE outcome='request_too_large'")
+                    )
+                ).scalar()
+                or 0
+            )
+
+    before = await count()
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        response = await client.post(
+            f"{GATEWAY_URL}/v1beta/models/{MODEL}:generateContent",
+            headers=fixture.headers(),
+            json={"contents": [{"role": "user", "parts": [{"text": "x" * (9 * 1024 * 1024)}]}]},
+        )
+
+    assert response.status_code == 413
+    await asyncio.sleep(2.0)
+    assert await count() == before + 1
+
+    async with engine.connect() as connection:
+        row = (
+            (
+                await connection.execute(
+                    text(
+                        "SELECT subject, credential, source_ip, model, operation,"
+                        " request_payload IS NULL AS no_body FROM request_logs"
+                        " WHERE outcome='request_too_large' ORDER BY created_at DESC LIMIT 1"
+                    )
+                )
+            )
+            .mappings()
+            .one()
+        )
+
+    assert row["model"] == MODEL, "the row names what was asked for"
+    assert row["operation"] == "generateContent"
+    assert row["source_ip"]
+    assert not row["subject"] and not row["credential"]
+    # The body is not kept: it is over the ceiling, and storing what we refused to read would undo
+    # the reason for refusing it.
+    assert row["no_body"]

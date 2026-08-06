@@ -486,6 +486,19 @@ the route's wiring undefended (a mutation proved it) — **the same shape as the
 the same day**, both invisible to coverage; and integration tests here assert **behaviour, not wire
 bodies** (a seed makes three requests return one answer), because inspecting a dict is exactly how
 the thinking defect survived a suite that appeared to test it.
+**The same live round found the refusal that ran before the boundary (`FRD-122` §12).** `FRD-122`
+closed "the log records what was served, not what was asked" at the route's **exception boundary**
+— one site, deliberately. The **body-size ceiling is pure ASGI and answers before any route**, so a
+20 MB body was refused 413 and left **no trace at all**; found by posting one and counting rows, not
+by reading code that is consistent about the rule everywhere it can be read. Both exits (declared
+`Content-Length`, and a body cut off mid-read) now record through **one** function, under a new
+closed outcome `request_too_large` — folding it into `invalid_request` would hide "somebody keeps
+posting 20 MB" inside "somebody sent malformed JSON". **The row carries no identity**: the
+credential was never verified there, and recording it would let anyone write another system's name
+into the audit trail with one oversized request — an unverifiable claim is not evidence, the same
+rule as "unpriced is not free". The body is not stored either. **A 401 still leaves no row, and that
+is a decision**: an unauthenticated request is a *security* event for `FRD-500`/`501`/`503`, not a
+usage row attributed to nobody — written into `FRD-122` so the question is already asked.
 **Delivery order is fixed (ROADMAP Phase 8, 2026-08-06)**, derived from the owner's priority
 (KIRA compatibility → model connections → documents → the review findings) and the dependency that
 priority 1 needs priority 3: **`FRD-122` (audit) → `FRD-114` (metadata) → `FRD-115`+`119` (Vertex EU,

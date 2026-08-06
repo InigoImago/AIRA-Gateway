@@ -5,6 +5,40 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-06 — the refusal that ran before the boundary
+
+Same live round, second finding. `FRD-122` §12.
+
+`FRD-122`'s rule is that the audit log records what was **asked**, not only what was served, and it
+was closed at the route's exception boundary — one site, deliberately. One refusal never reaches
+that boundary: the request-body ceiling is pure ASGI middleware and answers **before any route
+runs**. A 20 MB body was refused with a 413 and left no trace at all.
+
+Found by posting one and counting rows. Not by reading the code, which is entirely consistent about
+this rule everywhere the code can be read — the gap is in a place the rule was never applied.
+
+The fix is small and its shape is the point: both exits from the decision (a declared
+`Content-Length` over the ceiling, and a body that declared none and was cut off mid-read) record
+through **one** function. A new closed-vocabulary outcome, `request_too_large`, rather than folding
+it into `invalid_request`: "somebody keeps posting 20 MB" and "somebody sent malformed JSON" are
+different operational facts and a shared bucket hides the first inside the second.
+
+**The row carries no identity.** The credential in the header has not been verified at that point,
+and recording it would let anybody write another system's name into the audit trail by sending one
+oversized request. An unverifiable claim is not evidence — the same rule as "unpriced is not free"
+and "undeclared is not permitted", pointed at identity. The body is not stored either: it is over
+the ceiling, and keeping what we refused to read would undo the reason for refusing it.
+
+And what stays unrecorded, said out loud rather than left to be discovered: **a 401 leaves no row**.
+That is a decision. A request that never presented a valid credential is a security event and
+belongs with anomaly detection and incident response (`FRD-500`/`501`/`503`), not in a usage log
+where it would surface in spend reports as a refusal attributed to nobody. Written into `FRD-122`
+so whoever builds those finds the question already asked.
+
+Mutations `Y9`–`Y11`. **210 properties defended.**
+
+---
+
 ## 2026-08-06 — twelve fields, eleven silences
 
 A local model made this findable. `FRD-124`.
