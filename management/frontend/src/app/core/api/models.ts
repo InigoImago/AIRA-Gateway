@@ -127,7 +127,18 @@ export interface BudgetUsage {
   unpriced_requests: number;
 }
 
-/** A model in the catalog, with what it costs (FRD-403). */
+/** What a model may be asked to do (FRD-114). Flags say *whether*, never *how*. */
+export type Capability = 'generate' | 'embed' | 'structured_output' | 'thinking' | 'attachments';
+
+export const CAPABILITIES: readonly Capability[] = [
+  'generate',
+  'embed',
+  'structured_output',
+  'thinking',
+  'attachments',
+];
+
+/** A model in the catalog: what it costs, what it can do, how it is reached (FRD-403, FRD-114). */
 export interface CatalogModel {
   name: string;
   display_name?: string;
@@ -136,6 +147,28 @@ export interface CatalogModel {
   output_price_per_million?: string | null;
   is_priced?: boolean;
   updated_at?: string;
+
+  capabilities?: Capability[];
+  /** Which vendor's API shape it speaks — selects the upstream dialect (ADR-0011). */
+  publisher?: string;
+  /** Which transport reaches it (`vertex`, `foundry`, …). */
+  platform?: string;
+  /** Platform addressing. Never edited from a use case; see ADR-0011 rule 2. */
+  addressing?: Record<string, unknown> | null;
+  /** What the price attaches to when the caller-facing name is not the vendor's. */
+  underlying_model?: string;
+  max_output_tokens?: number | null;
+  /** Applied when the caller sets no cap — Anthropic requires one on every request. */
+  default_max_output_tokens?: number | null;
+  thinking?: Record<string, unknown> | null;
+  embedding?: Record<string, unknown> | null;
+  attachments?: Record<string, unknown> | null;
+  hosting?: '' | 'managed' | 'self_deployed';
+  /** Warns, never blocks — blocking is what revocation is for. */
+  deprecated?: boolean;
+  numeric_id?: number | null;
+  /** Whether anyone has said what this model can do. Undeclared means the baseline only. */
+  is_declared?: boolean;
 }
 
 /** One row of a report: a group, and what happened in it (FRD-601). */

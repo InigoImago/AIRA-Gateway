@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import ValidationError
 
 from aira_common.logging import get_logger
+from aira_common.models import Capability
 from aira_common.money import cost_nanos
 from aira_common.observability import set_span_attributes
 from aira_gateway.api.gemini import schemas
@@ -30,6 +31,7 @@ from aira_gateway.audit import AuditTrail, Outcome, decision_summary
 from aira_gateway.budgets.errors import BudgetExceeded
 from aira_gateway.budgets.ledger import Amounts
 from aira_gateway.budgets.service import Reservation
+from aira_gateway.catalog import ModelCatalog, ModelDeclaration
 from aira_gateway.core.canonical import CanonicalChunk, CanonicalRequest, CanonicalUsage
 from aira_gateway.persistence.recorder import record_request
 from aira_gateway.pipeline.dispatch import dispatch_with_fallback
@@ -101,7 +103,10 @@ async def _estimate(request: Request, *, model: str, max_output_tokens: int | No
     else: it is not counted as free, it simply cannot constrain a cost limit.
     """
     settings = request.app.state.settings
-    tokens = max_output_tokens or settings.budget_estimate_output_tokens
+    # The model's own default before the installation-wide one: a per-model figure is a better
+    # estimate for every vendor, and it is the same number the request will actually carry.
+    declaration = await _catalog(request).declaration(model)
+    tokens = declaration.output_cap(max_output_tokens) or settings.budget_estimate_output_tokens
     price = await request.app.state.pricing.price_for(model)
     cost = 0 if price is None else cost_nanos(tokens, price.output_per_million_nanos)
     return Amounts(tokens=tokens, requests=1, cost_nanos=cost)
@@ -115,6 +120,58 @@ def _upstream_error(exc: UpstreamError) -> JSONResponse:
 def _registry(request: Request) -> ProviderRegistry:
     registry: ProviderRegistry = request.app.state.providers
     return registry
+
+
+def _catalog(request: Request) -> ModelCatalog:
+    catalog: ModelCatalog = request.app.state.catalog
+    return catalog
+
+
+async def _check_declaration(
+    request: Request, *, model: str, method: str, requested: int | None
+) -> ModelDeclaration:
+    """Every rule the catalog decides, before anything expensive happens (FRD-114).
+
+    Returns the declaration, so the caller can act on ``deprecated`` without a second lookup.
+    """
+    declaration = await _catalog(request).declaration(model)
+
+    if method == "embedContent" and not declaration.can(Capability.EMBED):
+        # Refused *before* dispatch rather than by an adapter raising deep in the stack: with
+        # cross-vendor routing (ADR-0012) a chain can send an embedding to a model that has no
+        # embedding endpoint at all, and the useful error names the model (FRD-113 FR-6a).
+        raise GeminiHTTPError(
+            400,
+            f"Model '{model}' does not support embedding.",
+            "INVALID_ARGUMENT",
+        )
+    if method != "embedContent" and not declaration.can(Capability.GENERATE):
+        raise GeminiHTTPError(
+            400, f"Model '{model}' does not support generation.", "INVALID_ARGUMENT"
+        )
+
+    cap = declaration.max_output_tokens
+    if requested is not None and cap is not None and requested > cap:
+        raise GeminiHTTPError(
+            400,
+            f"maxOutputTokens {requested} exceeds the {cap} this model accepts.",
+            "INVALID_ARGUMENT",
+        )
+    return declaration
+
+
+def _deprecation_headers(declaration: ModelDeclaration) -> dict[str, str]:
+    """A ``Warning`` header for a deprecated model (FRD-114 FR-5).
+
+    It **warns, it does not block**. Blocking is what `FRD-307`'s revocation is for, and conflating
+    the two removes the ability to announce a retirement before performing one — which is the whole
+    point of having a deprecation flag rather than just deleting the row.
+    """
+    if not declaration.deprecated:
+        return {}
+    return {
+        "Warning": f'299 - "Model {declaration.name} is deprecated and will be withdrawn."',
+    }
 
 
 async def _run_pipeline(
@@ -154,9 +211,26 @@ async def _run_pipeline(
     return outcome.request, outcome.fallback_models
 
 
+async def _described(request: Request, model: schemas.GeminiModel) -> schemas.GeminiModel:
+    """Attach what the catalog declares, so the list says what each model may be asked to do."""
+    declaration = await _catalog(request).declaration(model.name.removeprefix("models/"))
+    return model.model_copy(
+        update={
+            "airaCapabilities": sorted(str(c) for c in declaration.capabilities),
+            "airaMaxOutputTokens": declaration.max_output_tokens,
+            "airaDeprecated": declaration.deprecated,
+            # Surfaced the same way an unpriced model is: visibly incomplete rather than absent,
+            # because an undeclared model silently does less than the list suggests.
+            "airaDeclared": declaration.declared,
+        }
+    )
+
+
 @router.get("/v1beta/models")
 async def list_models(request: Request) -> JSONResponse:
-    models = [upstream_model_to_gemini(m) for m in _registry(request).models()]
+    models = [
+        await _described(request, upstream_model_to_gemini(m)) for m in _registry(request).models()
+    ]
     return JSONResponse(schemas.ListModelsResponse(models=models).model_dump())
 
 
@@ -165,7 +239,8 @@ async def get_model(model: str, request: Request) -> Response:
     upstream_model = _registry(request).get_model(model)
     if upstream_model is None:
         return _error(404, f"Model '{model}' not found.", "NOT_FOUND")
-    return JSONResponse(upstream_model_to_gemini(upstream_model).model_dump())
+    described = await _described(request, upstream_model_to_gemini(upstream_model))
+    return JSONResponse(described.model_dump())
 
 
 #: How a refusal maps onto the closed outcome vocabulary. Anything unmapped is a bug in this
@@ -329,6 +404,10 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
     # verb. A control that applies to some verbs and not others has to be impossible to write
     # by accident, so there is exactly one place to add the next one.
     effective_model = canonical.model if canonical is not None else model
+    requested_output = canonical.max_output_tokens if canonical is not None else None
+    declaration = await _check_declaration(
+        request, model=effective_model, method=method, requested=requested_output
+    )
     reservation = await _enforce_pre_dispatch(
         request,
         model=effective_model,
@@ -368,9 +447,18 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
                     model_selection=trail.selection,
                     pipeline_decisions=decision_summary(trail.decisions),
                 )
-                return JSONResponse(payload)
+                return JSONResponse(payload, headers=_deprecation_headers(declaration))
         sse = request.query_params.get("alt") == "sse"
-        return _stream_response(request, provider, canonical, body, reservation, trail, sse=sse)
+        return _stream_response(
+            request,
+            provider,
+            canonical,
+            body,
+            reservation,
+            trail,
+            sse=sse,
+            headers=_deprecation_headers(declaration),
+        )
 
     assert embed_request is not None  # the method dispatch above guarantees it
     async with request.app.state.budgets.hold(reservation):
@@ -394,7 +482,7 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
             response_payload=payload,
             requested_model=trail.requested_model,
         )
-        return JSONResponse(payload)
+        return JSONResponse(payload, headers=_deprecation_headers(declaration))
 
 
 def _chunk_to_gemini(chunk: CanonicalChunk, model: str) -> schemas.GenerateContentResponse:
@@ -425,6 +513,7 @@ def _stream_response(
     trail: AuditTrail,
     *,
     sse: bool,
+    headers: dict[str, str] | None = None,
 ) -> StreamingResponse:
     """Stream chunks as SSE (`?alt=sse`, for the google-genai SDK) or a JSON array (Gemini REST)."""
 
@@ -481,7 +570,7 @@ def _stream_response(
                 )
 
     media_type = "text/event-stream" if sse else "application/json"
-    return StreamingResponse(generate_chunks(), media_type=media_type)
+    return StreamingResponse(generate_chunks(), media_type=media_type, headers=headers)
 
 
 async def _finish_stream(

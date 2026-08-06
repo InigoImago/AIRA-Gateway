@@ -537,6 +537,31 @@ Operations:
 
 ---
 
+## 6a. Upgrading: deploy every component, or a migration can be undone
+
+The gateway and its consumer call `create_all` at startup — a development convenience that
+predates Alembic and is still there. It has one consequence that only shows up during an upgrade:
+
+> **A container running the previous image can recreate a table the new migration renamed or
+> dropped**, and will then fail every event against it.
+
+Observed on 2026-08-06, upgrading to `0013_model_capabilities`, which renames `model_prices` to
+`model_catalog`. The gateway and Management were rebuilt; the *consumer* was not, and its
+`create_all` recreated the empty `model_prices` — after which every model event failed against a
+table Alembic had already renamed. Nothing crashed: the consumer logged and the declarations simply
+never arrived, which presents as "the feature does not work".
+
+So, when a release contains a migration that renames or drops:
+
+1. Run the migration.
+2. Deploy **every** component that opens the database — gateway, consumer, retention — not only the
+   one whose feature changed.
+3. Check for a resurrected table (`\dt`) before assuming the migration held.
+
+The durable fix is to stop calling `create_all` outside tests. It is on the backlog rather than in
+this release, because doing it needs the demo and CI paths to build their schema from migrations
+instead — which is a change worth making deliberately.
+
 ## 7. Known gaps
 
 Stated plainly, because a deployment guide that hides them wastes your time:

@@ -55,8 +55,13 @@ test.describe('Cost budgets', () => {
     const unpriced = uniqueSlug('unpriced');
     await page.fill('#model-name', unpriced);
     await page.click('form button[type="submit"]');
-    await expect(page.locator('.badge--warning').first()).toContainText('no price');
-    await expect(page.locator('.callout--warning')).toContainText('left out of every spend figure');
+    // Targeted by text rather than by position: the catalog now also flags models nobody has
+    // *declared* (FRD-114), so `.first()` would assert about whichever badge happens to render
+    // earlier — which is a fact about the column order, not about pricing.
+    await expect(page.locator('.badge--warning', { hasText: 'no price' }).first()).toBeVisible();
+    await expect(
+      page.locator('.callout--warning', { hasText: 'left out of every spend figure' }),
+    ).toBeVisible();
   });
 
   test('a one-sided price is refused before it can distort a figure', async ({ page }) => {

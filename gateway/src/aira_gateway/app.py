@@ -33,6 +33,7 @@ from aira_gateway.auth.oidc import build_oidc_validator
 from aira_gateway.auth.service import ApiKeyService
 from aira_gateway.budgets.ledger import BudgetLedger
 from aira_gateway.budgets.service import BudgetService
+from aira_gateway.catalog import ModelCatalog
 from aira_gateway.config import GatewaySettings
 from aira_gateway.db.base import build_engine, build_sessionmaker, create_all
 from aira_gateway.middleware import (
@@ -121,6 +122,7 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
         enforce=settings.enforce_rate_limits,
     )
     app.state.pricing = PricingService(sessionmaker)
+    app.state.catalog = ModelCatalog(sessionmaker)
     app.state.reporting = ReportingService(sessionmaker)
     app.state.db_engine = engine
     app.state.db_sessionmaker = sessionmaker

@@ -575,3 +575,26 @@ $field-label-gap: 0.3rem;
   font-weight: 600;
   overflow-wrap: anywhere;
 }
+
+/* ---- checkbox line + fieldset legend (model declarations) ------------------------- */
+
+/* A checkbox and its label belong on one baseline; without this the box sits above the text
+ * and a column of them reads as a staircase. */
+.checkline {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+.checkline input {
+  margin: 0;
+}
+
+.field__legend {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--aira-text-muted);
+  margin-bottom: 0.3rem;
+}

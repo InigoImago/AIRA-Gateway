@@ -193,7 +193,7 @@ order below serves the priorities rather than restating them.
 | Stufe | Was | Warum hier |
 |---|---|---|
 | **0** ✅ | ~~`FRD-122` — vollständiger Audit-Trail~~ **fertig 2026-08-06** | Klein, additiv, kein Eingriff in den Request-Pfad — und **jede spätere Stufe wird dagegen getestet**. Ablehnungen, das aufrufende System und `requested_model` vs. `model` sind genau das, was man bei Fallback über zwei Anbieter und einer zweiten API-Fläche braucht. Zuerst, weil es danach mühsamer nachzurüsten ist als jetzt. |
-| **1** | `FRD-114` — Modell-Metadaten | Voraussetzung für alles: Publisher, Capabilities, Default-Cap, Adressierung, Hosting. |
+| **1** ✅ | ~~`FRD-114` — Modell-Metadaten~~ **fertig 2026-08-06** | Voraussetzung für alles: Publisher, Capabilities, Default-Cap, Adressierung, Hosting. |
 | **2** | `FRD-115` + `FRD-119` — Vertex EU, Gemini + Anthropic | Priorität 2, erste Hälfte. Erst danach ist überhaupt ein produktionsfähiges (EU-)Modell erreichbar. |
 | **3** | `FRD-110` — Dokumente | Priorität 3. Bewusst **nach** Stufe 2: ohne dokumentenfähiges Modell in der EU wären Dokumente nur gegen den Mock nutzbar. |
 | **4** | `FRD-107` Stage A — KIRA-Fläche, Textvertrag | Priorität 1, so früh wie ehrlich möglich. Nicht unterstützte Felder werden **abgewiesen**, nie ignoriert (`FRD-107` §5.2). Einfache Clients migrieren hier. |
@@ -219,7 +219,7 @@ overruled rather than discovered:
 | `FRD-111` | Thinking modes and budgets | needs `FRD-114` |
 | `FRD-112` | `responseSchema` — forced JSON output | — |
 | `FRD-113` | Embedding task types, batches, dimensions | needs `FRD-114` |
-| `FRD-114` | Model capability metadata | prerequisite for 111/112/113 |
+| ~~`FRD-114`~~ | Model capability metadata | **Done (2026-08-06).** Capabilities, publisher/platform/addressing, output caps, thinking/embedding/attachment declarations, hosting, deprecation. Undeclared = baseline only. |
 | `FRD-115` | Vertex AI / Model Garden in the EU | **required — residency confirmed** |
 | `FRD-119` | Anthropic models on Vertex: the second dialect | needs `FRD-115` + `FRD-114` |
 | `FRD-120` | Microsoft Foundry (Azure OpenAI + Microsoft's own) | **planned, not scheduled** — see `ADR-0011` |

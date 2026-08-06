@@ -1,4 +1,4 @@
-"""Model catalog API (FRD-403).
+"""Model catalog API (FRD-403, FRD-114).
 
 Prices are a fact about the provider contract, not a per-use-case setting, so they are
 maintained centrally: every authenticated user may read the catalog (the budget views need it to
@@ -38,6 +38,21 @@ def _payload(model: Model) -> dict[str, Any]:
             if model.output_price_per_million is not None
             else None
         ),
+        # FRD-114. The gateway reads its own read-model on the request path and never calls
+        # Management (FR-8), so everything validation needs has to travel with the event.
+        "capabilities": list(model.capabilities or []),
+        "publisher": model.publisher,
+        "platform": model.platform,
+        "addressing": model.addressing,
+        "underlying_model": model.underlying_model,
+        "max_output_tokens": model.max_output_tokens,
+        "default_max_output_tokens": model.default_max_output_tokens,
+        "thinking": model.thinking,
+        "embedding": model.embedding,
+        "attachments": model.attachments,
+        "hosting": model.hosting,
+        "deprecated": model.deprecated,
+        "numeric_id": model.numeric_id,
     }
 
 

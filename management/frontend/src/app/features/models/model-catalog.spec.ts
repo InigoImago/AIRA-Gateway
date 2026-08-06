@@ -1,7 +1,7 @@
 import { TestBed } from '@angular/core/testing';
 import { Observable, of, throwError } from 'rxjs';
 import { MeService } from '../../core/api/me.service';
-import { CatalogModel, Me } from '../../core/api/models';
+import { Capability, CatalogModel, Me } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { ConfirmService } from '../../core/ui/confirm.service';
 import { ModelCatalog } from './model-catalog';
@@ -15,6 +15,19 @@ const FLASH: CatalogModel = {
   is_priced: true,
 };
 const UNPRICED: CatalogModel = { name: 'mystery-1', is_priced: false };
+const DECLARED: CatalogModel = {
+  name: 'claude-sonnet-4-5@20250929',
+  provider: 'anthropic',
+  is_priced: true,
+  is_declared: true,
+  capabilities: ['generate', 'thinking'],
+  publisher: 'anthropic',
+  platform: 'vertex',
+  hosting: 'managed',
+  max_output_tokens: 64000,
+  default_max_output_tokens: 4096,
+  deprecated: true,
+};
 
 interface Catalog {
   models: () => CatalogModel[];
@@ -23,6 +36,15 @@ interface Catalog {
   notice: () => string | null;
   canEdit: () => boolean;
   unpriced: () => CatalogModel[];
+  undeclared: () => CatalogModel[];
+  capabilities: { set: (v: Capability[]) => void; (): Capability[] };
+  hasCapability: (c: Capability) => boolean;
+  toggleCapability: (c: Capability, on: boolean) => void;
+  publisher: { set: (v: string) => void; (): string };
+  hosting: { set: (v: string) => void; (): string };
+  maxOutput: { set: (v: number | null) => void; (): number | null };
+  defaultOutput: { set: (v: number | null) => void; (): number | null };
+  deprecated: { set: (v: boolean) => void; (): boolean };
   showAdd: { set: (v: boolean) => void; (): boolean };
   name: { set: (v: string) => void; (): string };
   inputPrice: { set: (v: string) => void; (): string };
@@ -260,5 +282,82 @@ describe('ModelCatalog interactions', () => {
     const { text } = setup({ models: of([FLASH, UNPRICED]) });
     expect(text()).toContain('Flash');
     expect(text()).toContain('—');
+  });
+});
+
+describe('ModelCatalog — declarations (FRD-114)', () => {
+  it('marks a model nobody has described, because it quietly does less than the list suggests', () => {
+    const { html, text } = setup({ models: of([UNPRICED, DECLARED]) });
+
+    expect(html().querySelector('[data-testid="undeclared-caveat"]')).not.toBeNull();
+    expect(text()).toContain('absence of information is not permission');
+    expect(text()).toContain('undeclared');
+  });
+
+  it('says nothing about declarations when every model has one', () => {
+    const { html } = setup({ models: of([DECLARED]) });
+
+    expect(html().querySelector('[data-testid="undeclared-caveat"]')).toBeNull();
+  });
+
+  it('shows a deprecated model as deprecated rather than hiding or removing it', () => {
+    // Warning, not blocking — that is what makes it possible to announce a retirement before
+    // performing one.
+    const { text } = setup({ models: of([DECLARED]) });
+
+    expect(text()).toContain('deprecated');
+    expect(text()).toContain('claude-sonnet-4-5@20250929');
+  });
+
+  it('sends the declaration with the price', () => {
+    const page = setup();
+    page.component.showAdd.set(true);
+    page.component.name.set('claude-1');
+    page.component.toggleCapability('thinking', true);
+    page.component.toggleCapability('generate', true);
+    page.component.publisher.set('anthropic');
+    page.component.hosting.set('managed');
+    page.component.maxOutput.set(64000);
+    page.component.defaultOutput.set(4096);
+    page.component.deprecated.set(true);
+    page.component.save();
+
+    const sent = page.saved[page.saved.length - 1];
+    expect(sent.capabilities?.sort()).toEqual(['generate', 'thinking']);
+    expect(sent.publisher).toBe('anthropic');
+    expect(sent.hosting).toBe('managed');
+    expect(sent.max_output_tokens).toBe(64000);
+    expect(sent.default_max_output_tokens).toBe(4096);
+    expect(sent.deprecated).toBe(true);
+  });
+
+  it('refuses a default output cap above the maximum before sending it', () => {
+    const page = setup();
+    page.component.showAdd.set(true);
+    page.component.name.set('impossible-1');
+    page.component.maxOutput.set(1024);
+    page.component.defaultOutput.set(4096);
+
+    expect(page.component.formError()).toContain('cannot exceed the maximum');
+    expect(page.component.canSave()).toBe(false);
+  });
+
+  it('loads a declaration into the form so it can be corrected in place', () => {
+    const page = setup({ models: of([DECLARED]) });
+    page.component.edit(DECLARED);
+
+    expect(page.component.hasCapability('thinking')).toBe(true);
+    expect(page.component.hasCapability('embed')).toBe(false);
+    expect(page.component.publisher()).toBe('anthropic');
+    expect(page.component.maxOutput()).toBe(64000);
+    expect(page.component.deprecated()).toBe(true);
+  });
+
+  it('unticking a capability removes it rather than leaving it in the list', () => {
+    const page = setup();
+    page.component.capabilities.set(['generate', 'thinking']);
+    page.component.toggleCapability('thinking', false);
+
+    expect(page.component.capabilities()).toEqual(['generate']);
   });
 });

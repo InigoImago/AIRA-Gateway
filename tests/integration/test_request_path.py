@@ -58,7 +58,7 @@ async def _price(engine: AsyncEngine, model: str, inp: str, out: str) -> None:
     async with engine.begin() as connection:
         await connection.execute(
             text(
-                "INSERT INTO model_prices (model, display_name, provider,"
+                "INSERT INTO model_catalog (model, display_name, provider,"
                 " input_price_per_million_nanos, output_price_per_million_nanos)"
                 " VALUES (:m, :m, 'mock', :i, :o)"
                 " ON CONFLICT (model) DO UPDATE SET"
@@ -134,7 +134,7 @@ async def test_an_unpriced_model_records_no_cost_rather_than_zero(engine: AsyncE
     slug = f"itest-{uuid.uuid4().hex[:8]}"
     key = await _use_case_with_key(engine, slug)
     async with engine.begin() as connection:
-        await connection.execute(text("DELETE FROM model_prices WHERE model = 'mock-1'"))
+        await connection.execute(text("DELETE FROM model_catalog WHERE model = 'mock-1'"))
 
     async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=20.0) as client:
         assert (

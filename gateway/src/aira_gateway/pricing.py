@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from aira_common.money import request_cost_nanos
 from aira_gateway.core.canonical import CanonicalUsage
-from aira_gateway.db.models import ModelPriceRead
+from aira_gateway.db.models import ModelRead
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,7 +37,7 @@ class PricingService:
     async def price_for(self, model: str) -> Price | None:
         """The price on file for ``model``, or None if it has none."""
         async with self._sessionmaker() as session:
-            record = await session.get(ModelPriceRead, model)
+            record = await session.get(ModelRead, model)
         if (
             record is None
             or record.input_price_per_million_nanos is None

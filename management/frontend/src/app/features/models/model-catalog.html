@@ -18,6 +18,13 @@
       their cost is unknown and is left out of every spend figure.
     </p>
   }
+  @if (!loading() && undeclared().length) {
+    <p class="callout callout--warning" data-testid="undeclared-caveat">
+      {{ undeclared().length }} model(s) have no capability declaration. The gateway serves them at
+      the baseline — generation and embedding — and refuses thinking, structured output and
+      attachments, because absence of information is not permission.
+    </p>
+  }
 
   <div class="card" style="padding: 0">
     @if (loading()) {
@@ -34,6 +41,7 @@
             <tr>
               <th scope="col">Model</th>
               <th scope="col">Provider</th>
+              <th scope="col">Capabilities</th>
               <th scope="col">Input / 1M</th>
               <th scope="col">Output / 1M</th>
               <th scope="col"><span class="sr-only">Actions</span></th>
@@ -49,6 +57,18 @@
                   }
                 </td>
                 <td>{{ model.provider || '—' }}</td>
+                <td>
+                  @if (model.is_declared) {
+                    <span class="muted" style="font-size: 0.8rem">{{
+                      (model.capabilities ?? []).join(', ')
+                    }}</span>
+                  } @else {
+                    <span class="badge badge--warning">undeclared</span>
+                  }
+                  @if (model.deprecated) {
+                    <span class="badge badge--danger">deprecated</span>
+                  }
+                </td>
                 <td>
                   @if (model.is_priced) {
                     {{ model.input_price_per_million }}
@@ -159,6 +179,100 @@
               autocomplete="off"
             />
           </div>
+          <div class="field">
+            <label for="model-publisher">Publisher</label>
+            <input
+              id="model-publisher"
+              name="publisher"
+              [ngModel]="publisher()"
+              (ngModelChange)="publisher.set($event)"
+              placeholder="google | anthropic | openai"
+              autocomplete="off"
+            />
+            <span class="field__hint">Selects the wire dialect the gateway speaks to it.</span>
+          </div>
+          <div class="field">
+            <label for="model-platform">Platform</label>
+            <input
+              id="model-platform"
+              name="platform"
+              [ngModel]="platform()"
+              (ngModelChange)="platform.set($event)"
+              placeholder="vertex | foundry"
+              autocomplete="off"
+            />
+          </div>
+          <div class="field">
+            <label for="model-hosting">Hosting</label>
+            <select
+              id="model-hosting"
+              name="hosting"
+              [ngModel]="hosting()"
+              (ngModelChange)="hosting.set($event)"
+            >
+              <option value="">—</option>
+              <option value="managed">Managed by the vendor</option>
+              <option value="self_deployed">Self-deployed (our capacity)</option>
+            </select>
+            <span class="field__hint">
+              Self-deployed endpoints cold-start and answer 429 for capacity, not quota.
+            </span>
+          </div>
+          <div class="field">
+            <label for="model-max-output">Max output tokens</label>
+            <input
+              id="model-max-output"
+              type="number"
+              min="1"
+              name="max_output"
+              [ngModel]="maxOutput()"
+              (ngModelChange)="maxOutput.set($event)"
+              placeholder="—"
+            />
+          </div>
+          <div class="field">
+            <label for="model-default-output">Default output tokens</label>
+            <input
+              id="model-default-output"
+              type="number"
+              min="1"
+              name="default_output"
+              [ngModel]="defaultOutput()"
+              (ngModelChange)="defaultOutput.set($event)"
+              placeholder="—"
+            />
+            <span class="field__hint">Applied when the caller sets no cap.</span>
+          </div>
+
+          <fieldset class="field" style="border: 0; padding: 0; margin: 0">
+            <legend class="field__legend">Capabilities</legend>
+            @for (capability of allCapabilities; track capability) {
+              <label class="checkline">
+                <input
+                  type="checkbox"
+                  [name]="'cap-' + capability"
+                  [ngModel]="hasCapability(capability)"
+                  (ngModelChange)="toggleCapability(capability, $event)"
+                />
+                {{ capability }}
+              </label>
+            }
+            <span class="field__hint">
+              Nothing ticked means <strong>undeclared</strong>: the gateway serves generation and
+              embedding and refuses everything beyond it.
+            </span>
+          </fieldset>
+
+          <label class="checkline">
+            <input
+              type="checkbox"
+              name="deprecated"
+              [ngModel]="deprecated()"
+              (ngModelChange)="deprecated.set($event)"
+            />
+            Deprecated — requests still succeed and carry a warning
+          </label>
+
           <button type="submit" class="btn btn--primary" [disabled]="!canSave()">
             {{ busy() ? 'Saving…' : 'Save' }}
           </button>

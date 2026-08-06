@@ -58,6 +58,12 @@ class GeminiModel(BaseModel):
     version: str
     displayName: str
     supportedGenerationMethods: list[str]
+    # AIRA extensions (FRD-114 §7): a client can discover what a model may be asked to do rather
+    # than reading our documentation — and, more usefully, see when nobody has declared it.
+    airaCapabilities: list[str] | None = None
+    airaMaxOutputTokens: int | None = None
+    airaDeprecated: bool | None = None
+    airaDeclared: bool | None = None
 
 
 class ListModelsResponse(BaseModel):

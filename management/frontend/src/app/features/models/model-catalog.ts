@@ -1,7 +1,7 @@
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { errorMessage } from '../../core/api/error-message';
-import { CatalogModel, Me } from '../../core/api/models';
+import { CAPABILITIES, Capability, CatalogModel, Me } from '../../core/api/models';
 import { MeService } from '../../core/api/me.service';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { ConfirmService } from '../../core/ui/confirm.service';
@@ -32,6 +32,30 @@ export class ModelCatalog implements OnInit {
   protected readonly provider = signal('');
   protected readonly inputPrice = signal('');
   protected readonly outputPrice = signal('');
+
+  // FRD-114. Zoneless: every piece of form state is a signal, or changing it from code renders
+  // nothing.
+  protected readonly allCapabilities = CAPABILITIES;
+  protected readonly capabilities = signal<Capability[]>([]);
+  protected readonly publisher = signal('');
+  protected readonly platform = signal('');
+  protected readonly hosting = signal<'' | 'managed' | 'self_deployed'>('');
+  protected readonly maxOutput = signal<number | null>(null);
+  protected readonly defaultOutput = signal<number | null>(null);
+  protected readonly deprecated = signal(false);
+
+  /** Models nobody has described. The gateway serves them at the baseline and refuses everything
+   * beyond it (FRD-114 FR-7), so an undeclared model quietly does less than the list suggests. */
+  protected readonly undeclared = computed(() => this.models().filter((m) => !m.is_declared));
+
+  protected toggleCapability(capability: Capability, on: boolean): void {
+    const current = this.capabilities().filter((value) => value !== capability);
+    this.capabilities.set(on ? [...current, capability] : current);
+  }
+
+  protected hasCapability(capability: Capability): boolean {
+    return this.capabilities().includes(capability);
+  }
 
   /** Only a Global Administrator maintains prices — they follow the provider contract. */
   protected readonly canEdit = computed(() => this.me()?.roles.includes('global-admin') ?? false);
@@ -69,6 +93,11 @@ export class ModelCatalog implements OnInit {
       // Half a price produces a cost figure that looks complete and is not.
       return 'Set both the input and the output price, or neither.';
     }
+    const max = this.maxOutput();
+    const fallback = this.defaultOutput();
+    if (max != null && fallback != null && fallback > max) {
+      return 'The default output cap cannot exceed the maximum.';
+    }
     return null;
   }
 
@@ -92,16 +121,19 @@ export class ModelCatalog implements OnInit {
         provider: this.provider().trim(),
         input_price_per_million: amount(this.inputPrice()),
         output_price_per_million: amount(this.outputPrice()),
+        capabilities: this.capabilities(),
+        publisher: this.publisher().trim(),
+        platform: this.platform().trim(),
+        hosting: this.hosting(),
+        max_output_tokens: this.maxOutput(),
+        default_max_output_tokens: this.defaultOutput(),
+        deprecated: this.deprecated(),
       })
       .subscribe({
         next: (model) => {
           this.busy.set(false);
           this.notice.set(`${model.name} saved.`);
-          this.name.set('');
-          this.displayName.set('');
-          this.provider.set('');
-          this.inputPrice.set('');
-          this.outputPrice.set('');
+          this.reset();
           this.showAdd.set(false);
           this.reload();
         },
@@ -112,13 +144,35 @@ export class ModelCatalog implements OnInit {
       });
   }
 
-  /** Load a row into the form so a price can be corrected in place. */
+  private reset(): void {
+    this.name.set('');
+    this.displayName.set('');
+    this.provider.set('');
+    this.inputPrice.set('');
+    this.outputPrice.set('');
+    this.capabilities.set([]);
+    this.publisher.set('');
+    this.platform.set('');
+    this.hosting.set('');
+    this.maxOutput.set(null);
+    this.defaultOutput.set(null);
+    this.deprecated.set(false);
+  }
+
+  /** Load a row into the form so a declaration can be corrected in place. */
   protected edit(model: CatalogModel): void {
     this.name.set(model.name);
     this.displayName.set(model.display_name ?? '');
     this.provider.set(model.provider ?? '');
     this.inputPrice.set(model.input_price_per_million ?? '');
     this.outputPrice.set(model.output_price_per_million ?? '');
+    this.capabilities.set([...(model.capabilities ?? [])]);
+    this.publisher.set(model.publisher ?? '');
+    this.platform.set(model.platform ?? '');
+    this.hosting.set(model.hosting ?? '');
+    this.maxOutput.set(model.max_output_tokens ?? null);
+    this.defaultOutput.set(model.default_max_output_tokens ?? null);
+    this.deprecated.set(model.deprecated ?? false);
     this.showAdd.set(true);
   }
 

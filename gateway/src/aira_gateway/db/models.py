@@ -196,17 +196,39 @@ class BudgetUsage(Base):
     unpriced_requests: Mapped[int] = mapped_column(Integer, default=0)
 
 
-class ModelPriceRead(Base):
-    """Gateway read-model of the model catalog's prices, fed from Management (FRD-403).
+class ModelRead(Base):
+    """Gateway read-model of the model catalog, fed from Management (FRD-403, FRD-114).
 
-    Prices are stored per one million tokens in nano-units of the installation currency, split
-    by direction because every provider bills input and output differently.
+    Renamed from ``model_prices`` when `FRD-114` added capabilities: a table called *prices* that
+    decides whether a thinking budget is accepted is a name that lies, and the next person to read
+    it pays for that.
+
+    Prices are per one million tokens in nano-units of the installation currency, split by
+    direction because every provider bills input and output differently. The capability columns
+    are what validation reads — and an **undeclared** model gets the baseline and nothing more
+    (FRD-114 FR-7): absence of information is not permission.
     """
 
-    __tablename__ = "model_prices"
+    __tablename__ = "model_catalog"
 
     model: Mapped[str] = mapped_column(String(128), primary_key=True)
     display_name: Mapped[str] = mapped_column(String(255), default="")
     provider: Mapped[str] = mapped_column(String(64), default="")
     input_price_per_million_nanos: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     output_price_per_million_nanos: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+
+    # -- what it can do, and how it is reached (FRD-114) -----------------------------------
+    capabilities: Mapped[Any | None] = mapped_column(JSON(none_as_null=True), nullable=True)
+    publisher: Mapped[str] = mapped_column(String(32), default="")
+    platform: Mapped[str] = mapped_column(String(32), default="")
+    addressing: Mapped[Any | None] = mapped_column(JSON(none_as_null=True), nullable=True)
+    #: What the price attaches to when the caller-facing name is not the vendor's (ADR-0011 r2).
+    underlying_model: Mapped[str] = mapped_column(String(128), default="")
+    max_output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    default_max_output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    thinking: Mapped[Any | None] = mapped_column(JSON(none_as_null=True), nullable=True)
+    embedding: Mapped[Any | None] = mapped_column(JSON(none_as_null=True), nullable=True)
+    attachments: Mapped[Any | None] = mapped_column(JSON(none_as_null=True), nullable=True)
+    hosting: Mapped[str] = mapped_column(String(16), default="")
+    deprecated: Mapped[bool] = mapped_column(Boolean, default=False)
+    numeric_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)

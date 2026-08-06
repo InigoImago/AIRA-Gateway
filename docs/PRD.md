@@ -54,7 +54,7 @@ gap, not an aspiration.
 | 10 | Unabhängigkeit von Google / Microsoft | **Architektur steht, Adapter fehlen** | `ADR-0011`, `ADR-0012`; `FRD-115`/`119`/`120` |
 | 11 | Übersicht über alle Use Cases | **teilweise** — Liste ✓, Governance-Sicht auf die Verarbeitungslogik fehlt | `FRD-202` ✓, `FRD-600` |
 | 12 | Self-Service: Filter- und Routing-Pipeline | **fertig** | `FRD-303`, `FRD-306` |
-| 13 | Zugelassene Modelle je Use Case | **teilweise** — `allow_check` ✓, genehmigter Katalog fehlt | `FRD-300` ✓, `FRD-307` |
+| 13 | Zugelassene Modelle je Use Case | **teilweise** — `allow_check` ✓, Fähigkeiten deklariert und durchgesetzt (`FRD-114` ✅), genehmigter Katalog fehlt noch | `FRD-300` ✓, `FRD-114` ✅, `FRD-307` |
 | 14 | IT-Security-Unterstützung: Modell-Smoke-Tests und Jailbreak-Versuche | **fehlt** | `FRD-504` |
 | 15 | Budgetübersicht und Budgetgrenze | **fertig** | `FRD-400`–`403`, `FRD-601` |
 | 16 | Anomalieerkennung | **fehlt** | `FRD-500`/`501` (Phase 5) |

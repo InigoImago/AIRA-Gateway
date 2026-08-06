@@ -16,7 +16,7 @@ from aira_gateway.db.models import (
     ApiKey,
     BudgetRead,
     BudgetUsage,
-    ModelPriceRead,
+    ModelRead,
     PipelineConfigRead,
     RateLimitRead,
     UseCaseMemberRead,
@@ -246,21 +246,47 @@ async def _delete_rate_limit(session: AsyncSession, limit_id: int) -> None:
     await session.execute(delete(RateLimitRead).where(RateLimitRead.id == limit_id))
 
 
+#: Declaration fields, with the value applied when the event does not carry them at all.
+#:
+#: The defaults matter during a rolling deploy: an older Management sends the FRD-403 payload with
+#: no capability fields, and the consumer must apply the prices it *did* send without blanking a
+#: declaration somebody made — while a payload that carries the field with a null clears it, which
+#: is the same event saying "this model no longer declares that".
+_DECLARATION_DEFAULTS: dict[str, Any] = {
+    "capabilities": None,
+    "publisher": "",
+    "platform": "",
+    "addressing": None,
+    "underlying_model": "",
+    "max_output_tokens": None,
+    "default_max_output_tokens": None,
+    "thinking": None,
+    "embedding": None,
+    "attachments": None,
+    "hosting": "",
+    "deprecated": False,
+    "numeric_id": None,
+}
+
+
 async def _upsert_model(session: AsyncSession, payload: dict[str, Any]) -> None:
-    """Upsert a catalogued model and its prices, keyed by model name (FRD-403)."""
-    fields = {
+    """Upsert a catalogued model, keyed by model name (FRD-403, FRD-114)."""
+    fields: dict[str, Any] = {
         "display_name": payload.get("display_name", ""),
         "provider": payload.get("provider", ""),
         "input_price_per_million_nanos": _price_nanos(payload.get("input_price_per_million")),
         "output_price_per_million_nanos": _price_nanos(payload.get("output_price_per_million")),
     }
-    record = await session.get(ModelPriceRead, payload["name"])
+    for field, default in _DECLARATION_DEFAULTS.items():
+        if field in payload:
+            fields[field] = payload[field] if payload[field] is not None else default
+    record = await session.get(ModelRead, payload["name"])
     if record is None:
-        session.add(ModelPriceRead(model=payload["name"], **fields))
+        session.add(ModelRead(model=payload["name"], **fields))
     else:
         for key, value in fields.items():
             setattr(record, key, value)
 
 
 async def _delete_model(session: AsyncSession, name: str) -> None:
-    await session.execute(delete(ModelPriceRead).where(ModelPriceRead.model == name))
+    await session.execute(delete(ModelRead).where(ModelRead.model == name))

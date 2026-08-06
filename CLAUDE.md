@@ -43,7 +43,7 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
   inevitably do when both were written from the same mental model — and line coverage cannot see
   a *missing requirement*: on 2026-08-05 a review found seven real defects behind a green suite at
   99% coverage. So: **prove a test can fail.** Break the property, watch it go red, restore.
-  `make mutants` (`tools/mutation_check.py`) does this for **96 properties** across auth, budgets,
+  `make mutants` (`tools/mutation_check.py`) does this for **104 properties** across auth, budgets,
   pipeline, retention, the management control plane and the gateway's counters; when
   you fix a bug, add the mutation that reintroduces it. Two traps that cost real defects here:
   a stand-in that is more permissive than the thing it replaces (reuse the real method where you
@@ -296,6 +296,17 @@ success path a failed write means a served request went unrecorded, and failing 
 and a request routed elsewhere then refused was naming the model the caller typed rather than the
 one attempted. Nineteen documents: `ADR-0010`–`ADR-0013` + `FRD-107`, `FRD-110`–`FRD-122`, `FRD-504`,
 `FRD-602` (ROADMAP Phase 8 / 5).
+**`FRD-114` done (2026-08-06)** — the model catalog is now a **runtime authority**: one shared
+vocabulary (`aira_common.models`), Management validates a declaration *where it is written* (a
+thinking maximum at or above the output cap describes a model that could never answer), the event
+carries everything (the gateway never asks Management on the request path), and `ModelCatalog`
+turns it into decisions. **Undeclared means the baseline and nothing more** — absence of
+information is not permission, the same rule as "unpriced is not free". Enforced today: output cap,
+per-model default cap, `generate`/`embed`, and a deprecation `Warning` header (deprecation **warns,
+revocation blocks** — conflating them removes the ability to announce a retirement). `model_prices`
+was renamed to `model_catalog`, and the rename exposed a real hazard: an old container's
+`create_all` **resurrected the dropped table** and then failed every event against it —
+`create_all` alongside Alembic means a partially-deployed stack can undo a migration.
 **Delivery order is fixed (ROADMAP Phase 8, 2026-08-06)**, derived from the owner's priority
 (KIRA compatibility → model connections → documents → the review findings) and the dependency that
 priority 1 needs priority 3: **`FRD-122` (audit) → `FRD-114` (metadata) → `FRD-115`+`119` (Vertex EU,

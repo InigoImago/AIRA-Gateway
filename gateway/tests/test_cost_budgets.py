@@ -12,7 +12,7 @@ from aira_gateway.budgets.service import BudgetService
 from aira_gateway.consumer.apply import apply_event
 from aira_gateway.core.canonical import CanonicalUsage
 from aira_gateway.db.base import Base
-from aira_gateway.db.models import BudgetRead, ModelPriceRead
+from aira_gateway.db.models import BudgetRead, ModelRead
 from aira_gateway.pricing import PricingService
 
 NOW = datetime(2026, 8, 5, 12, 0, tzinfo=UTC)
@@ -38,8 +38,8 @@ async def _add(sessionmaker, *rows) -> None:
         await session.commit()
 
 
-def _priced(model: str, input_price: str, output_price: str) -> ModelPriceRead:
-    return ModelPriceRead(
+def _priced(model: str, input_price: str, output_price: str) -> ModelRead:
+    return ModelRead(
         model=model,
         input_price_per_million_nanos=to_nanos(input_price),
         output_price_per_million_nanos=to_nanos(output_price),
@@ -59,7 +59,7 @@ async def test_a_request_is_priced_by_direction(sessionmaker) -> None:
 
 async def test_an_unpriced_model_yields_none_not_zero(sessionmaker) -> None:
     """ "We do not know" and "it was free" must not be the same number."""
-    await _add(sessionmaker, ModelPriceRead(model="mystery-1"))
+    await _add(sessionmaker, ModelRead(model="mystery-1"))
     pricing = PricingService(sessionmaker)
 
     usage = CanonicalUsage(prompt_tokens=1000, completion_tokens=1000)
@@ -72,7 +72,7 @@ async def test_a_half_priced_model_counts_as_unpriced(sessionmaker) -> None:
     # Billing one direction and ignoring the other would look complete and be wrong.
     await _add(
         sessionmaker,
-        ModelPriceRead(model="half-1", input_price_per_million_nanos=to_nanos("1.00")),
+        ModelRead(model="half-1", input_price_per_million_nanos=to_nanos("1.00")),
     )
     assert await PricingService(sessionmaker).price_for("half-1") is None
 

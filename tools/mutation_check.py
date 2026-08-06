@@ -73,6 +73,8 @@ COST = "gateway/tests/test_cost_budgets.py"
 CATALOG = "management/backend/tests/test_catalog.py"
 PIPELINE = "gateway/tests/test_pipeline_engine.py gateway/tests/test_pipeline_routes.py"
 RETENTION = "gateway/tests/test_retention.py gateway/tests/test_store_payloads.py"
+MODEL_CATALOG = "gateway/tests/test_model_catalog.py"
+CATALOG_DECLARATION = "management/backend/tests/test_catalog_declaration.py"
 
 MUTATIONS = [
     # ---- authentication and the tenant boundary (FRD-101/102, ADR-0006/0007) -------------
@@ -587,7 +589,7 @@ MUTATIONS = [
         "M24",
         "the reservation uses the caller's own output bound where it gave one",
         "gateway/src/aira_gateway/api/gemini/routes.py",
-        "    tokens = max_output_tokens or settings.budget_estimate_output_tokens",
+        "    tokens = declaration.output_cap(max_output_tokens) or settings.budget_estimate_output_tokens",
         "    tokens = settings.budget_estimate_output_tokens",
         f"{RATELIMIT_ROUTES} gateway/tests/test_cost_budgets.py {BUDGET_ROUTES}",
     ),
@@ -744,6 +746,71 @@ MUTATIONS = [
         "            roles=realm_roles(claims),",
         "            roles=(),",
         "gateway/tests/test_attribution.py gateway/tests/test_auth_oidc.py",
+    ),
+    # ---- the model catalog as a runtime authority (FRD-114) --------------------------------
+    Mutation(
+        "C1",
+        "an undeclared model gets the baseline and nothing more — absence is not permission",
+        "gateway/src/aira_gateway/catalog.py",
+        "        capabilities=capabilities if declared else BASELINE_CAPABILITIES,",
+        "        capabilities=capabilities if declared else frozenset(Capability),",
+        MODEL_CATALOG,
+    ),
+    Mutation(
+        "C2",
+        "a model absent from the catalog still serves the baseline, so nothing regresses",
+        "gateway/src/aira_gateway/catalog.py",
+        "            return ModelDeclaration(name=model)",
+        "            return ModelDeclaration(name=model, capabilities=frozenset())",
+        MODEL_CATALOG,
+    ),
+    Mutation(
+        "C3",
+        "a request above the declared output cap is refused rather than passed upstream",
+        "gateway/src/aira_gateway/api/gemini/routes.py",
+        "    if requested is not None and cap is not None and requested > cap:",
+        "    if requested is not None and cap is not None and False:",
+        MODEL_CATALOG,
+    ),
+    Mutation(
+        "C4",
+        "a model that declares no embedding refuses one before dispatch",
+        "gateway/src/aira_gateway/api/gemini/routes.py",
+        '    if method == "embedContent" and not declaration.can(Capability.EMBED):',
+        '    if method == "embedContent" and False:',
+        MODEL_CATALOG,
+    ),
+    Mutation(
+        "C5",
+        "deprecation warns and does not block, so a retirement can be announced first",
+        "gateway/src/aira_gateway/api/gemini/routes.py",
+        "    if not declaration.deprecated:\n        return {}",
+        "    if declaration.deprecated or True:\n        return {}",
+        MODEL_CATALOG,
+    ),
+    Mutation(
+        "C6",
+        "a thinking budget at or above the output cap is refused where it is written",
+        "management/backend/src/aira_management/apps/catalog/validation.py",
+        "    if maximum is not None and max_output_tokens is not None and maximum >= max_output_tokens:",
+        "    if maximum is not None and max_output_tokens is not None and False:",
+        CATALOG_DECLARATION,
+    ),
+    Mutation(
+        "C7",
+        "a partial update is validated against what the row already holds",
+        "management/backend/src/aira_management/apps/catalog/serializers.py",
+        "            field: attrs.get(field, getattr(self.instance, field, empty.get(field)))",
+        "            field: attrs.get(field, empty.get(field))",
+        CATALOG_DECLARATION,
+    ),
+    Mutation(
+        "C8",
+        "an older event applies its prices without erasing a declaration",
+        "gateway/src/aira_gateway/consumer/apply.py",
+        "        if field in payload:\n            fields[field] = payload[field] if payload[field] is not None else default",
+        "        fields[field] = payload.get(field) if payload.get(field) is not None else default",
+        MODEL_CATALOG,
     ),
     # ---- the audit trail (FRD-122) ---------------------------------------------------------
     Mutation(

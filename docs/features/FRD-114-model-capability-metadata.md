@@ -1,6 +1,6 @@
 # FRD-114 — What a model can do, and where its limits are
 
-> Phase: 8 (KIRA parity) · Status: **Draft** · Owner: Vadim Scheibe · Last updated: 2026-08-06
+> Phase: 8 (KIRA parity) · Status: **Done (2026-08-06)** · Owner: Vadim Scheibe · Last updated: 2026-08-06
 > Origin: `kira_api.md` §2.4, §5, programme: `ADR-0010`.
 > Extends the `Model` row introduced by `FRD-403`; the **approval** half stays in `FRD-307`.
 > Model identity and addressing follow **`ADR-0011`** rules 2 and 3.
@@ -214,6 +214,40 @@ that changed underneath a running system should be findable in a log, not inferr
   in between.
 - *Given* a model marked deprecated, *when* it is called, *then* the request succeeds and the
   response carries a `Warning` header.
+
+## 10a. What was actually built (2026-08-06)
+
+The vocabulary is shared (`aira_common.models`: `Capability`, `ThinkingMode`, `Hosting`,
+`BASELINE_CAPABILITIES`), Management gained the columns and a `validation.py` that refuses a
+declaration that cannot work, the event carries everything, and the gateway has a `ModelCatalog`
+that turns a declaration into a decision.
+
+**Enforced today**: the output cap, the per-model default cap (which sharpens the reservation for
+every vendor), `generate`/`embed` capabilities, and the deprecation `Warning` header.
+**Declared and distributed, enforced by the FRDs that use them**: the thinking, embedding and
+attachment blocks (`FRD-111`/`113`/`110`) — the storage, validation and transport exist so those
+stages plug in rather than start by inventing a schema.
+
+Three things worth recording:
+
+- **`model_prices` became `model_catalog`.** A table that decides whether a thinking budget is
+  accepted must not be called *prices*; the name would have misled everyone who read it next. The
+  rename cost an update to four raw-SQL integration tests, which is what a rename costs.
+- **The rename exposed a real deployment hazard.** During the rolling rebuild, the *consumer*
+  container was still running the old image, and its `create_all` **recreated `model_prices`** —
+  then failed every model event against a table Alembic had renamed. `create_all` alongside
+  Alembic means an old container can resurrect a dropped table. Nothing about this FRD caused it;
+  the rename simply made it visible, and it is now noted in `DEPLOYMENT.md`.
+- **The frontend edits the flat fields only.** Capabilities, publisher, platform, hosting, the two
+  caps and deprecation get real controls; the nested thinking/embedding/attachment blocks are
+  accepted by the API and shown in the table, and their editors are built by the FRDs that give
+  them meaning. A bespoke editor for a feature that does not exist yet is a guess about what it
+  will need.
+
+Coverage: 23 Management tests, 20 gateway tests, 7 frontend tests, 4 integration tests (the
+declaration travels the real outbox → relay → Kafka → consumer route into the migrated schema),
+and mutations **C1–C8**, each verified to be caught. `M24`'s anchor needed repairing, since the
+reservation now reads the model's default cap.
 
 ## 11. Dependencies & Risks
 

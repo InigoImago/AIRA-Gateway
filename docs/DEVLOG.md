@@ -5,6 +5,54 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-06 — Stufe 1: the model catalog becomes a runtime authority
+`FRD-114`. The catalog held prices; it now holds what a model may be *asked to do*, and the gateway
+decides from it. One shared vocabulary in `aira_common.models` — two copies of "which capabilities
+exist" would drift, and the drift would surface in whichever plane was not tested.
+
+The rule everything turns on is **undeclared means the baseline and nothing more.** The tempting
+default is the opposite: let an undeclared model accept everything and let the provider complain.
+That is wrong for the same reason "unpriced is not free" is wrong — absence of information is not
+permission, and an undeclared model would otherwise accept a 32 768-token thinking budget the
+pre-dispatch reservation has nothing to estimate against.
+
+Management validates a declaration **where it is written**, because the catalog is a runtime
+authority and a self-contradictory declaration would otherwise be discovered as a vendor error on
+every request against that model. The rule with teeth: a thinking maximum at or above the output
+cap describes a model that could never answer, since Anthropic draws thinking tokens from
+`max_tokens`. A PATCH is merged over the row before validating, or a change to `max_output_tokens`
+alone would be checked against a thinking block it cannot see — each half valid, the row not.
+
+Enforced today: the output cap, the per-model **default** cap (which sharpens the reservation for
+every vendor, not just the one that requires it), `generate`/`embed`, and a deprecation `Warning`
+header. Deprecation **warns**; revocation blocks. Conflating the two removes the ability to
+announce a retirement before performing one.
+
+**`model_prices` is now `model_catalog`.** A table that decides whether a thinking budget is
+accepted must not be called *prices*. That cost four raw-SQL integration tests an update, which is
+what a rename costs — and it turned up something that had nothing to do with this FRD:
+
+> During the rolling rebuild, the **consumer** container was still on the old image, and its
+> `create_all` **recreated `model_prices`** — then failed every model event against a table Alembic
+> had renamed. Nothing crashed. The declarations simply never arrived, which presents as "the
+> feature does not work".
+
+`create_all` alongside Alembic means a partially-deployed stack can undo a migration, silently.
+Written up in `DEPLOYMENT.md` §6a with the upgrade procedure; the durable fix — stop calling
+`create_all` outside tests — needs the demo and CI paths to build from migrations and is on the
+backlog rather than smuggled into this release.
+
+The frontend edits the flat fields with real controls and leaves the nested thinking/embedding/
+attachment blocks to the FRDs that give them meaning. A bespoke editor for a feature that does not
+exist yet is a guess about what it will need.
+
+Verified: 663 hermetic tests (98.4%), **104/104 mutations caught**, 64 integration tests — including
+the declaration travelling the real outbox → relay → Kafka → consumer route into the migrated
+schema — 239 frontend tests and 46 browser tests. The browser suite found one of its own
+assertions had become positional: it picked "the first warning badge", and there are now two.
+
+---
+
 ## 2026-08-06 — Stufe 0: the audit trail now records what was refused
 First stage of the delivery order, and the one that makes every later stage testable. `FRD-122`
 implemented: `aira_gateway/audit.py` (closed `Outcome` vocabulary + the `AuditTrail` a route fills
