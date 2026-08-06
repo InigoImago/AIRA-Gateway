@@ -184,6 +184,35 @@ predecessor's **wire contract** — and is now **accepted (Option C)**: the owne
 (PRD §1.1) names KIRA-API compatibility as central, so the compatibility surface is built, with a
 sunset date and its usage visible in reporting.
 
+### Delivery order (2026-08-06)
+
+The owner's priority is KIRA compatibility, then the Google/Microsoft model connections, then
+document handling, then the review findings (PRD §1.3). Priority 1 depends on priority 3, so the
+order below serves the priorities rather than restating them.
+
+| Stufe | Was | Warum hier |
+|---|---|---|
+| **0** | `FRD-122` — vollständiger Audit-Trail | Klein, additiv, kein Eingriff in den Request-Pfad — und **jede spätere Stufe wird dagegen getestet**. Ablehnungen, das aufrufende System und `requested_model` vs. `model` sind genau das, was man bei Fallback über zwei Anbieter und einer zweiten API-Fläche braucht. Zuerst, weil es danach mühsamer nachzurüsten ist als jetzt. |
+| **1** | `FRD-114` — Modell-Metadaten | Voraussetzung für alles: Publisher, Capabilities, Default-Cap, Adressierung, Hosting. |
+| **2** | `FRD-115` + `FRD-119` — Vertex EU, Gemini + Anthropic | Priorität 2, erste Hälfte. Erst danach ist überhaupt ein produktionsfähiges (EU-)Modell erreichbar. |
+| **3** | `FRD-110` — Dokumente | Priorität 3. Bewusst **nach** Stufe 2: ohne dokumentenfähiges Modell in der EU wären Dokumente nur gegen den Mock nutzbar. |
+| **4** | `FRD-107` Stage A — KIRA-Fläche, Textvertrag | Priorität 1, so früh wie ehrlich möglich. Nicht unterstützte Felder werden **abgewiesen**, nie ignoriert (`FRD-107` §5.2). Einfache Clients migrieren hier. |
+| **5** | `FRD-111`, `FRD-112`, `FRD-113` | Thinking, strukturierte Ausgabe, Embedding-Optionen. |
+| **6** | `FRD-107` Stage B | Dieselben Felder werden von abgewiesen zu bedient. Vertrag unverändert. |
+| **7** | `FRD-120` — Microsoft Foundry | Priorität 2, zweite Hälfte. Beweist zugleich Feature 19 (Erweiterbarkeit) — der Diff darf `upstreams/` nicht verlassen. |
+| **8** | `FRD-116`, `FRD-117`, `FRD-602`, `FRD-406` | Vault, Diagnostik, Export, Maskierung. |
+| **9** | `FRD-504`, `FRD-500`/`501`/`503` | IT-Security: Smoke-Tests, Anomalien, Incident Response. |
+
+Two deliberate deviations from a naive reading of the priority list, both stated so they can be
+overruled rather than discovered:
+
+- **`FRD-122` is first, not last.** It is one of "my points" and it is also the cheapest thing in the
+  programme. Every stage after it produces traffic that ought to be evidenced, and retrofitting the
+  audit once four vendors and two API surfaces are live is strictly harder than doing it while there
+  is one of each.
+- **Documents come after the EU connection**, not before, because a document capability that can only
+  be exercised against the mock is not the capability that was asked for.
+
 | FRD | What | Blocking? |
 |---|---|---|
 | `FRD-110` | Documents and images in a request | the widest gap; everything else sits on it |

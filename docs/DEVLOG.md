@@ -5,6 +5,48 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-06 — A delivery order, and the one place the priorities fight the dependencies
+The owner set the priority: **KIRA compatibility first, then the Google and Microsoft model
+connections (*easily extensible*), then document handling, then the review findings** — with the
+instruction to record my findings as features so they are not forgotten. PRD gains §1.2 (seven
+additional features from the code review) and §1.3 (the priority).
+
+**Priority 1 depends on priority 3.** `FRD-107` §5.2 is explicit: a KIRA surface built before the
+capabilities exist would accept fields it silently ignores, and a caller cannot tell that their
+document or their thinking budget was dropped. That is worse than a refusal.
+
+The resolution is a stage boundary rather than a wait. **`FRD-107` Stage A** ships the text contract
+— chat, streaming, embed, models, health, version-info, ki-usage, the error vocabulary, the integer
+model ids, attribution, the deprecation headers — and **refuses**, in the predecessor's own error
+vocabulary, any request carrying a field it cannot yet honour. **Stage B** moves those fields from
+refused to served with no change to the contract, because refusing was always the correct behaviour
+for a field we could not serve. Every consumer sending plain text — the majority — migrates months
+before the ones sending PDFs, and nobody is misled in between. The one thing Stage A must not do is
+*approximate*: KIRA applies a model's default thinking when the caller sends none, so Stage A either
+applies the real default or refuses; quietly sending no thinking at all would make answers differ
+for reasons nobody can see.
+
+The full order is now in ROADMAP Phase 8. Two deviations from a naive reading of the priority list,
+both written down so they can be overruled rather than discovered:
+
+- **`FRD-122` (audit) goes first, not last.** It is one of "my points" and it is also the cheapest
+  item in the programme — additive columns, one recording site, no request-path change. Every stage
+  after it produces traffic that ought to be evidenced, and retrofitting the audit once four vendors
+  and two API surfaces are live is strictly harder than doing it while there is one of each. It also
+  changes what every later test can assert.
+- **Documents come after the EU connection**, not before. Without a document-capable model reachable
+  in the EU, document support could only be exercised against the mock — which is not the capability
+  that was asked for.
+
+One feature named at the owner's own emphasis and worth repeating: **extensibility, as a measurable
+property.** "So dass es einfach erweiterbar wäre" is a claim until something checks it, so it has a
+test rather than an intention — adding a model family must not change anything above `upstreams/`
+(`FRD-115` §10). If a diff does, the canonical core is vendor-shaped, and the core is what gets
+fixed rather than the adapter. `FRD-120` (Foundry) is where that gets proved, which is part of why
+it sits after the first two vendors rather than being deferred indefinitely.
+
+---
+
 ## 2026-08-06 — The feature list, and what it makes visible
 The owner restated what AIRA Gateway *is*, as seventeen features. It now sits in **PRD §1.1** with an
 honest status column, because a list like that is only useful if the gaps are in it too.

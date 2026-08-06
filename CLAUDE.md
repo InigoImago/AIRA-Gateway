@@ -287,7 +287,16 @@ model invisible after fallback, pipeline decisions only on a **sampled** span, a
 global rather than per-request. `FRD-122` closes them; until then "auditable" is a claim the data
 does not fully support. Nineteen documents: `ADR-0010`–`ADR-0013` + `FRD-107`, `FRD-110`–`FRD-122`, `FRD-504`,
 `FRD-602` (ROADMAP Phase 8 / 5).
-**The owner's canonical feature list is PRD §1.1** (17 items, 2026-08-06) — read it before planning
+**Delivery order is fixed (ROADMAP Phase 8, 2026-08-06)**, derived from the owner's priority
+(KIRA compatibility → model connections → documents → the review findings) and the dependency that
+priority 1 needs priority 3: **`FRD-122` (audit) → `FRD-114` (metadata) → `FRD-115`+`119` (Vertex EU,
+Gemini+Claude) → `FRD-110` (documents) → `FRD-107` Stage A (KIRA text contract, unsupported fields
+**refused, never ignored**) → `FRD-111`/`112`/`113` → `FRD-107` Stage B → `FRD-120` (Foundry) →
+Vault/diagnostics/export/redaction → IT Security.** Two deliberate deviations, both documented:
+audit goes *first* (cheapest thing in the programme, and every later stage is tested against it),
+and documents come *after* the EU connection (a document capability exercisable only against the
+mock is not the capability that was asked for).
+**The owner's canonical feature list is PRD §1.1** (plus §1.2 review findings, §1.3 priority) — read it before planning
 anything. What it makes visible: **the governance features are largely built, the evidence features
 are not.** Budgets, limits, routing, self-service and roles work; auditability (`FRD-122`), incident
 response (`FRD-503`), anomaly detection (`FRD-500`/`501`) and model smoke tests (`FRD-504`) are the

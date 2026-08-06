@@ -48,6 +48,9 @@ changing a base URL.
   `POST /embed`, `GET /models`, `GET /health`, `GET /version-info`, `GET /ki-usage`.
 - **FR-2 Request and response shapes** exactly as `kira_api.md` §2 and §4, including the camelCase
   aliases (`maxTokens`, `responseSchema`, `thinkingConfig`, …) and `populate_by_name`.
+- **FR-2a Staged, and never silent** (§5.2). A field the gateway cannot yet honour is **refused**
+  with the predecessor's error vocabulary and a message naming it. No field is ever accepted and
+  ignored, at any stage.
 - **FR-3 Error vocabulary** as §6.2: `{code, message, details?}` with the predecessor's codes and
   status mapping.
 - **FR-4 Integer model ids** resolved through `FRD-114`'s numeric alias; an unknown id is
@@ -72,12 +75,36 @@ writer and the reporting service — everything below the surface.
 If this FRD ends up touching anything outside `api/kira/` and `FRD-114`'s alias, the canonical core
 was not as provider-agnostic as `FRD-100` claimed, and that is worth knowing.
 
-### 5.2 The capabilities must exist first
+### 5.2 The capabilities must exist first — so the surface ships in two stages
 
 `/chat` carries documents (`FRD-110`), thinking (`FRD-111`) and `responseSchema` (`FRD-112`);
 `/embed` carries task types and batching (`FRD-113`); `/models` reports capabilities and limits
 (`FRD-114`). A surface built before them would accept fields it silently ignores, which is worse
 than refusing them — a caller cannot tell that their thinking budget was dropped.
+
+That is an argument against *ignoring*, not against shipping. The owner's priority (PRD §1.3) puts
+KIRA compatibility first while its dependencies sit third, and the resolution is a stage boundary
+rather than a wait:
+
+**Stage A — the text contract, honestly bounded.** `/chat`, `/streaming-chat`, `/embed`, `/models`,
+`/health`, `/version-info`, `/ki-usage`, the error vocabulary, the integer model ids, attribution
+(§5.3) and the deprecation headers. A request carrying `request.parts[].mime_type`, `thinking` or
+`responseSchema` is **refused with the predecessor's own error code**, naming the field and saying
+it is not yet available on this gateway.
+
+**Stage B — the fields, as their capabilities land.** Each moves from refused to honoured with no
+change to the contract, because refusing was always the correct behaviour for a field we could not
+serve.
+
+The value of the boundary is concrete: every consumer that sends plain text — the majority — can
+migrate as soon as Stage A exists, months before the ones that send PDFs. What makes it safe is that
+a client is never misled. "Not yet supported here" is information a team can act on; a silently
+dropped field is not.
+
+> The one thing Stage A must not do is *approximate*. KIRA applies a model's default thinking when
+> the caller sends none (`kira_api.md` §4.3); Stage A must either apply the real default or refuse
+> — never quietly send no thinking at all and let the answer be different for reasons nobody can
+> see. If the model catalog cannot yet express the default, that model is not in Stage A.
 
 ### 5.3 Attribution: the one thing the predecessor does not have
 

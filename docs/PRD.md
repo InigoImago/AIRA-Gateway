@@ -60,6 +60,43 @@ gap, not an aspiration.
 | 16 | Anomalieerkennung | **fehlt** | `FRD-500`/`501` (Phase 5) |
 | 17 | Zentrale Übersicht über alle Use Cases | siehe 11 | `FRD-600`, `FRD-601` ✓ |
 
+### 1.2 Additional features from the code review (2026-08-06)
+
+Not in the list above, found by reading the code against it. Recorded here at the owner's request
+so they are not forgotten — several are small, and one of them is the difference between the
+product's central claim being true and being asserted.
+
+| # | Feature | Stand | Where |
+|--:|---|---|---|
+| 18 | **Verarbeitung von Dokumenten** (PDF, Bilder u. a. im Request) — KIRAs Kernfall | **fehlt** — `CanonicalMessage` trägt nur Text, `inlineData` wird mit 400 abgewiesen | `FRD-110` |
+| 19 | **Erweiterbarkeit als messbare Eigenschaft** — eine neue Modellfamilie ist ein Katalogeintrag plus höchstens ein Dialekt | **Architektur steht, ungeprüft** | `ADR-0011`, `FRD-115` §10 |
+| 20 | **Secrets aus Vault** — Richtlinie und Implementierung stehen seit Phase 0 auseinander | **fehlt** — Vault läuft im Stack, kein Code liest daraus | `FRD-116` |
+| 21 | **Betriebsdiagnostik** — Build-Identität, Upstream-Health, Trace-Header, CORS, OpenAPI 3.0 | **fehlt** | `FRD-117` |
+| 22 | **Maskierung sensibler Inhalte** in gespeicherten Payloads | **fehlt** — `Redactor` ist ein No-Op | `FRD-406` |
+| 23 | **Export der Auswertung** (CSV mit Content Negotiation) | **fehlt** | `FRD-602` |
+| 24 | Mehrere Keycloak-Backends / Gruppen aus UserInfo | **fehlt — Bedarf ungeklärt** | `FRD-118` §11 |
+
+Feature 19 deserves the emphasis the owner put on it (*"so dass es einfach erweiterbar wäre"*).
+Extensibility is a claim until something checks it, so it has a test rather than an intention:
+**adding a model family must not change anything above `upstreams/`** (`FRD-115` §10). If a diff
+does, the canonical core is vendor-shaped and the core is what gets fixed — not the adapter.
+
+### 1.3 Priority (owner, 2026-08-06)
+
+1. **Kompatibilität mit der KIRA-API**
+2. **Anbindung der Google- und Microsoft-Modelle** (Gemini, Anthropic, Azure OpenAI, Microsoft
+   eigene) — *einfach erweiterbar*
+3. **Verarbeitung von Dokumenten**
+4. The findings from the review (features 4, 5, 6, 14, 16 and 18–24)
+
+One conflict, stated rather than smoothed over: **priority 1 depends on priority 3.** `FRD-107` §5.2
+is explicit that a KIRA surface built before the capabilities exist would accept fields it silently
+ignores — a caller could not tell that their document or their thinking budget was dropped, which is
+worse than a refusal. The delivery order in `docs/ROADMAP.md` Phase 8 resolves it: the capabilities
+first, and a **staged** KIRA surface whose first stage ships early and **refuses** what it cannot yet
+honour instead of ignoring it. Simple clients then migrate months before the complex ones, and
+nobody is misled in the meantime.
+
 Three observations the table makes visible and prose would hide:
 
 - **The governance features are largely built; the evidence features are not.** Budgets, limits,
