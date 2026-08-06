@@ -21,10 +21,48 @@ from aira_gateway.pipeline.classifiers import (
     InjectionClassifier,
     LlmCategoryRouter,
     LlmInjectionClassifier,
+    Verdict,
 )
 from aira_gateway.pipeline.config import Pipeline, StepType
 from aira_gateway.pipeline.errors import PipelineRejected
 from aira_gateway.upstreams.base import ProviderRegistry
+
+#: What a filter does when its classifier could not reach a verdict (`FRD-125`).
+#:
+#: The default is to **block**, and that is a deliberate reversal. The classifier used to fail
+#: open, on the reasoning that an outage must not take down legitimate traffic — which sounds
+#: right until you notice what it means: a use case that configured a filter to *block* injections
+#: served them instead, with a 200, while the builder went on showing the step as active. That is
+#: not a degraded control, it is an absent one wearing the badge of a present one.
+#:
+#: `FRD-405` settled the same argument for rate limits — "not fail-open; that is the worst moment
+#: to stop bounding a caller" — and there is no reason a security filter should answer it
+#: differently. An operator who genuinely prefers availability can still choose it, but has to say
+#: so, and the choice is on the audit row.
+UNDETERMINED_BLOCKS = "block"
+UNDETERMINED_ALLOWS = "allow"
+
+
+def _blocks(verdict: Verdict, config: dict[str, Any]) -> bool:
+    """Whether this verdict stops the request, given how the step is configured."""
+    if config.get("action", "block") != "block":
+        return False
+    if verdict is Verdict.INJECTION:
+        return True
+    if verdict is Verdict.UNDETERMINED:
+        return str(config.get("on_undetermined", UNDETERMINED_BLOCKS)) != UNDETERMINED_ALLOWS
+    return False
+
+
+def _rejection(verdict: Verdict) -> str:
+    """Say which of the two happened. "Blocked" and "could not be checked" call for different
+    actions from whoever reads it — one is a caller to talk to, the other is a classifier to fix."""
+    if verdict is Verdict.UNDETERMINED:
+        return (
+            "The prompt-injection filter could not reach a verdict, and this use case is "
+            "configured to refuse rather than serve an unchecked request."
+        )
+    return "Request rejected by the prompt-injection filter."
 
 
 @dataclass
@@ -77,13 +115,22 @@ class PipelineEngine:
         )
         for step in pipeline.steps:
             if step.type is StepType.INJECTION_FILTER:
-                if await self._is_injection(step.config, outcome.request):
-                    action = step.config.get("action", "block")
-                    outcome.decisions.append(
-                        {"step": "injection_filter", "flagged": True, "action": action}
-                    )
-                    if action == "block":
-                        raise PipelineRejected("Request rejected by the prompt-injection filter.")
+                verdict = await self._injection_verdict(step.config, outcome.request)
+                action = step.config.get("action", "block")
+                blocking = _blocks(verdict, step.config)
+                # Recorded on **every** outcome, not only a flagged one. "The filter ran and passed"
+                # and "no filter was configured" are different facts, and after the fact an empty
+                # decision list could not tell them apart (`FRD-122` FR-4, `FRD-125`).
+                outcome.decisions.append(
+                    {
+                        "step": "injection_filter",
+                        "flagged": verdict is not Verdict.CLEAN,
+                        "action": "blocked" if blocking else action,
+                        "why": str(verdict),
+                    }
+                )
+                if blocking:
+                    raise PipelineRejected(_rejection(verdict))
             elif step.type is StepType.ALLOW_CHECK:
                 if self._allow_violation(step.config, outcome.request):
                     outcome.decisions.append(
@@ -115,15 +162,25 @@ class PipelineEngine:
         reason: str | None = None
         for step in pipeline.steps:
             if step.type is StepType.INJECTION_FILTER:
-                flagged = await self._is_injection(step.config, current)
+                verdict = await self._injection_verdict(step.config, current)
                 action = step.config.get("action", "block")
-                detail = {"mode": step.config.get("mode", "heuristic"), "action": action}
-                if flagged and action == "block":
+                detail = {
+                    "mode": step.config.get("mode", "heuristic"),
+                    "action": action,
+                    "verdict": str(verdict),
+                }
+                if _blocks(verdict, step.config):
                     trace.append(TraceEntry("injection_filter", "blocked", detail))
-                    blocked, reason = True, "Prompt-injection filter blocked the request."
+                    blocked, reason = True, _rejection(verdict)
                     break
+                # The dry run shows the operator what the builder would do, including the case
+                # they are least likely to have thought about: the classifier not answering.
                 trace.append(
-                    TraceEntry("injection_filter", "flagged" if flagged else "passed", detail)
+                    TraceEntry(
+                        "injection_filter",
+                        "passed" if verdict is Verdict.CLEAN else "flagged",
+                        detail,
+                    )
                 )
             elif step.type is StepType.ALLOW_CHECK:
                 if self._allow_violation(step.config, current):
@@ -154,9 +211,11 @@ class PipelineEngine:
 
     # -- step primitives (shared by run + dry_run) ----------------------------------------
 
-    async def _is_injection(self, config: dict[str, Any], request: CanonicalRequest) -> bool:
+    async def _injection_verdict(
+        self, config: dict[str, Any], request: CanonicalRequest
+    ) -> Verdict:
         text = self._scanned_text(request, config.get("scope", "user"))
-        return await self._injection_classifier(config).is_injection(text)
+        return await self._injection_classifier(config).verdict(text)
 
     def _injection_classifier(self, config: dict[str, Any]) -> InjectionClassifier:
         if config.get("mode") == "llm":

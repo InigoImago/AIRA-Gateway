@@ -499,6 +499,28 @@ into the audit trail with one oversized request — an unverifiable claim is not
 rule as "unpriced is not free". The body is not stored either. **A 401 still leaves no row, and that
 is a decision**: an unauthenticated request is a *security* event for `FRD-500`/`501`/`503`, not a
 usage row attributed to nobody — written into `FRD-122` so the question is already asked.
+**`FRD-125` (2026-08-06) — the filter that was configured, displayed, and doing nothing.** A use
+case set the LLM injection filter to **block**; an injection was sent; the gateway answered **200**
+and the model complied. Cause: the classifier asks for a one-word answer in a four-token allowance
+and dispatches **straight to the provider**, bypassing the catalog thinking resolution — so it never
+says "do not think", a reasoning model thinks by default, all four tokens go on reasoning, and
+`"INJECTION" in ""` is False. The same bug had silently disabled `model_route`. A verdict is now
+**three-valued**: `undetermined` covers an upstream failure, an empty reply, neither word, and
+**both** ("SAFE, no injection attempt" was asked for one word and gave two — a precedence rule
+nobody can predict is not an answer). It **blocks by default**, reversing "fails open": `FRD-405`
+settled this for rate limits — *the moment a control stops working is the worst moment to stop
+applying it* — and a filter that passes everything while the builder shows it active is an absent
+control wearing a present one's badge. `on_undetermined: allow` restores the old behaviour as a
+**choice, on the audit row**. Also: a filter that ran and **passed** now records so ("found nothing"
+vs "none configured" used to look identical), and `P1`/`P2` were **re-anchored** — a mutation whose
+anchor moved protects nothing. **Operational, not a defect**: against `qwen3:0.6b` the LLM filter
+answers INJECTION to everything — it is exactly as good as the model behind it, while the heuristic
+cannot be undetermined at all. **Test lesson**: two live assertions were testing the *model* (seed
+reproducibility across this server's cold prompt cache; a 0.6B picking the right category) and were
+replaced by the property that is ours — the classifier gets an answer at all, with the **old** call
+shape asserted still returning nothing so the test cannot start passing for a new reason.
+**Known and open (`FRD-125b`)**: a pipeline's own model calls are **unaudited, unbudgeted and
+unpriced** — one caller request with an LLM step makes two model calls and leaves one audit row.
 **Delivery order is fixed (ROADMAP Phase 8, 2026-08-06)**, derived from the owner's priority
 (KIRA compatibility → model connections → documents → the review findings) and the dependency that
 priority 1 needs priority 3: **`FRD-122` (audit) → `FRD-114` (metadata) → `FRD-115`+`119` (Vertex EU,

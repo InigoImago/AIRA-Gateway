@@ -92,6 +92,7 @@ MONEY = "libs/tests/test_money.py"
 COST = "gateway/tests/test_cost_budgets.py"
 CATALOG = "management/backend/tests/test_catalog.py"
 PIPELINE = "gateway/tests/test_pipeline_engine.py gateway/tests/test_pipeline_routes.py"
+CLASSIFIERS = "gateway/tests/test_pipeline_classifiers.py gateway/tests/test_pipeline_engine.py"
 RETENTION = "gateway/tests/test_retention.py gateway/tests/test_store_payloads.py"
 MODEL_CATALOG = "gateway/tests/test_model_catalog.py"
 VERTEX = "gateway/tests/test_vertex.py"
@@ -390,17 +391,19 @@ MUTATIONS = [
         "P1",
         "an injection filter set to block refuses the request",
         "gateway/src/aira_gateway/pipeline/engine.py",
-        'if action == "block":',
-        'if action == "no_such_action":',
-        PIPELINE,
+        # Re-anchored by `FRD-125`: the decision moved into `_blocks` when the verdict became
+        # three-valued, and a mutation whose anchor has moved protects nothing.
+        "    if verdict is Verdict.INJECTION:\n        return True",
+        "    if verdict is Verdict.INJECTION:\n        return False",
+        f"{PIPELINE} {CLASSIFIERS}",
     ),
     Mutation(
         "P2",
         "an injection filter set to flag does not refuse the request",
         "gateway/src/aira_gateway/pipeline/engine.py",
-        'if action == "block":\n',
-        "if True:\n",
-        PIPELINE,
+        '    if config.get("action", "block") != "block":\n        return False',
+        "    if False:\n        return False",
+        f"{PIPELINE} {CLASSIFIERS}",
     ),
     Mutation(
         "P3",
@@ -1871,6 +1874,47 @@ MUTATIONS = [
         '                subject="",\n                auth_method="",',
         '                subject="unverified",\n                auth_method="unverified",',
         HARDENING,
+    ),
+    # -- FRD-125: a classifier that did not answer has not said "clean" -------------------------
+    Mutation(
+        "Z1",
+        "a classifier that gave no usable answer is undetermined, never clean",
+        "gateway/src/aira_gateway/pipeline/classifiers.py",
+        "        return Verdict.UNDETERMINED",
+        "        return Verdict.CLEAN",
+        CLASSIFIERS,
+    ),
+    Mutation(
+        "Z2",
+        "an upstream failure in the classifier is undetermined, never clean",
+        "gateway/src/aira_gateway/pipeline/classifiers.py",
+        "        except UpstreamError:\n            return Verdict.UNDETERMINED",
+        "        except UpstreamError:\n            return Verdict.CLEAN",
+        CLASSIFIERS,
+    ),
+    Mutation(
+        "Z3",
+        "an undetermined verdict blocks a blocking filter rather than passing it through",
+        "gateway/src/aira_gateway/pipeline/engine.py",
+        "    if verdict is Verdict.UNDETERMINED:\n        return str(config.get",
+        "    if False:\n        return str(config.get",
+        CLASSIFIERS,
+    ),
+    Mutation(
+        "Z4",
+        "a classifier asks for no thinking, so its one-word allowance is not spent reasoning",
+        "gateway/src/aira_gateway/pipeline/classifiers.py",
+        "        thinking=Thinking(mode=ThinkingMode.DISABLED),",
+        "",
+        CLASSIFIERS,
+    ),
+    Mutation(
+        "Z5",
+        "a filter that ran and passed is recorded, so it is distinguishable from no filter",
+        "gateway/src/aira_gateway/pipeline/engine.py",
+        "                outcome.decisions.append(\n                    {\n                        \"step\": \"injection_filter\",",
+        "                if verdict is not Verdict.CLEAN:\n                    outcome.decisions.append(\n                    {\n                        \"step\": \"injection_filter\",",
+        CLASSIFIERS,
     ),
 ]
 

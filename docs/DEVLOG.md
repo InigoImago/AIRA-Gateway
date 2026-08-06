@@ -5,6 +5,63 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-06 — the filter that was configured, displayed, and doing nothing
+
+`FRD-125`. Third finding of the same live round, and the worst of them.
+
+A use case configured the LLM prompt-injection filter to **block**. An injection was sent. The
+gateway answered **200**, and the model complied with it — it printed a system prompt.
+
+The cause is one line, and it is the same line as the day's other findings wearing a third face.
+The classifier asks the model for a one-word answer inside a four-token allowance, and it dispatches
+**straight to the provider**, bypassing the catalog-based thinking resolution the serving path
+performs. So it never says "do not think". A reasoning model thinks by default. All four tokens went
+on reasoning, the answer came back empty, and the verdict was a `bool`:
+
+    "INJECTION" in ""   →   False   →   clean
+
+The same bug had silently disabled `model_route`, which returned "no category matched" for every
+request — indistinguishable from a router whose categories genuinely never fit.
+
+**A verdict now has three values.** `undetermined` covers an upstream failure, an empty reply, a
+reply containing neither word, and a reply containing *both* — "SAFE, no injection attempt here"
+was asked for one word and gave two, and picking a winner would be a precedence rule nobody could
+predict from outside (the argument `FRD-111` already makes about two `thinkingConfig` spellings).
+
+**And it blocks by default**, which reverses the old "fails open". That reversal deserves its
+sentence: the old behaviour was defended as "a classifier outage must not take down legitimate
+traffic", which is a real concern and the wrong answer — `FRD-405` settled the identical question
+for rate limits with *the moment a control stops working is the worst moment to stop applying it*. A
+filter that passes everything while the builder shows it as active is not a degraded control, it is
+an absent one wearing the badge of a present one. `on_undetermined: allow` restores the old
+behaviour for anyone who wants it, as a choice, on the audit row.
+
+Two smaller things fell out. A filter that ran and **passed** now records that it did — "the filter
+found nothing" and "no filter was configured" used to look identical afterwards and call for
+opposite conclusions. And mutations `P1`/`P2` were **re-anchored**: they pointed at a line this
+change moved, and a mutation whose anchor has moved protects nothing.
+
+### An operational finding that is not a defect
+
+Against `qwen3:0.6b` the LLM filter answers `INJECTION` to everything, including "What is 2 + 2?".
+The gateway is correct; the model is not a usable security classifier at that size. Worth saying
+because the builder makes the LLM mode look like the stronger option: **it is exactly as good as
+the model behind it**, and the heuristic — which cannot be undetermined, because a regex either
+matches or does not — has no such failure mode.
+
+### And a test lesson
+
+Two live assertions had to be rewritten because they were testing the *model*, not the gateway. A
+seed reproducibility check that failed one time in three (this server's first generation after a
+cold context differs — its prompt cache, not our seed), and a router check asserting that a 0.6B
+model picks the right category. Both replaced by the property that is actually ours: the classifier
+gets an answer at all. The second one asserts the **old** call shape still returns nothing, so if
+that ever stops being true the test says so rather than passing for a new reason.
+
+Mutations `Z1`–`Z5`. **215 properties defended.**
+
+---
+
 ## 2026-08-06 — the refusal that ran before the boundary
 
 Same live round, second finding. `FRD-122` §12.

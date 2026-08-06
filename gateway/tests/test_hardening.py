@@ -17,6 +17,7 @@ from aira_gateway.pipeline.classifiers import (
     MAX_CUSTOM_PATTERNS,
     MAX_SCANNED_CHARS,
     HeuristicInjectionClassifier,
+    Verdict,
 )
 from aira_gateway.pipeline.config import MAX_FALLBACK_MODELS, MAX_STEPS, Pipeline
 from aira_gateway.upstreams.base import ProviderRegistry
@@ -218,7 +219,7 @@ async def test_custom_patterns_are_capped() -> None:
         tuple(f"pattern{i}" for i in range(MAX_CUSTOM_PATTERNS + 20)), use_builtins=False
     )
     assert len(classifier._compiled) == MAX_CUSTOM_PATTERNS
-    assert await classifier.is_injection("pattern0") is True
+    assert await classifier.verdict("pattern0") is Verdict.INJECTION
 
 
 async def test_overlong_patterns_are_dropped() -> None:
@@ -229,8 +230,8 @@ async def test_overlong_patterns_are_dropped() -> None:
 async def test_scanned_text_is_bounded() -> None:
     classifier = HeuristicInjectionClassifier(("needle",), use_builtins=False)
     beyond = "x" * MAX_SCANNED_CHARS + "needle"
-    assert await classifier.is_injection(beyond) is False
-    assert await classifier.is_injection("needle" + beyond) is True
+    assert await classifier.verdict(beyond) is Verdict.CLEAN
+    assert await classifier.verdict("needle" + beyond) is Verdict.INJECTION
 
 
 def test_pipeline_from_dict_bounds_steps_and_fallbacks() -> None:

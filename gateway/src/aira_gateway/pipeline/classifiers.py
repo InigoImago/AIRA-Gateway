@@ -1,16 +1,28 @@
-"""Prompt-injection classifiers for the filter step (FRD-300/306).
+"""Prompt-injection classifiers for the filter step (FRD-300/306, FRD-125).
 
 Two interchangeable implementations behind one protocol: a ``Heuristic`` matcher (built-in +
 operator-supplied patterns) and an ``Llm`` classifier that asks a provider to label the text.
-The LLM variant fails **open** — a classifier outage must not take down legitimate traffic.
+
+**A verdict has three values, not two.** The LLM classifier used to answer ``bool`` and return
+``False`` whenever it could not get an answer — an upstream error, or an empty reply. Pointed at a
+real reasoning model that is not merely theoretical: the classifier asks for four output tokens,
+the model spends all four thinking, the answer comes back empty, and ``"INJECTION" in ""`` is
+``False``. Measured, not reasoned about — a use case with the LLM filter configured to **block**
+served the injection, and the model complied with it.
+
+That is the worst failure shape this project knows: a control that is configured, displayed as
+active, and does nothing. So ``UNDETERMINED`` exists, it is never folded into ``CLEAN``, and what
+happens next is the *step's* decision to make rather than this file's to assume.
 """
 
 from __future__ import annotations
 
 import re
+from enum import StrEnum
 from typing import Protocol, runtime_checkable
 
-from aira_gateway.core.canonical import CanonicalMessage, CanonicalRequest, Role
+from aira_common.models import ThinkingMode
+from aira_gateway.core.canonical import CanonicalMessage, CanonicalRequest, Role, Thinking
 from aira_gateway.upstreams.base import Upstream, UpstreamError
 
 # Built-in patterns, exposed so the UI can show operators exactly what the heuristic catches.
@@ -34,9 +46,19 @@ MAX_PATTERN_LENGTH = 256
 MAX_SCANNED_CHARS = 20_000
 
 
+class Verdict(StrEnum):
+    """What a classifier concluded — including that it could not conclude anything."""
+
+    INJECTION = "injection"
+    CLEAN = "clean"
+    #: The classifier was asked and did not answer usefully: an upstream failure, an empty reply,
+    #: or a reply that is neither of the two words it was told to use. **Not** clean.
+    UNDETERMINED = "undetermined"
+
+
 @runtime_checkable
 class InjectionClassifier(Protocol):
-    async def is_injection(self, text: str) -> bool: ...
+    async def verdict(self, text: str) -> Verdict: ...
 
 
 def _compile(pattern: str) -> re.Pattern[str]:
@@ -56,9 +78,13 @@ class HeuristicInjectionClassifier:
         patterns += extras[:MAX_CUSTOM_PATTERNS]
         self._compiled = [_compile(pattern) for pattern in patterns]
 
-    async def is_injection(self, text: str) -> bool:
+    async def verdict(self, text: str) -> Verdict:
+        """Never ``UNDETERMINED``: a regex either matches or it does not, and nothing it depends on
+        can be unavailable. That asymmetry is the reason the heuristic remains the default."""
         scanned = text[:MAX_SCANNED_CHARS]
-        return any(pattern.search(scanned) for pattern in self._compiled)
+        if any(pattern.search(scanned) for pattern in self._compiled):
+            return Verdict.INJECTION
+        return Verdict.CLEAN
 
 
 DEFAULT_INJECTION_INSTRUCTION = (
@@ -68,28 +94,41 @@ DEFAULT_INJECTION_INSTRUCTION = (
 )
 
 
+#: A one-word answer, with room for a model that adds punctuation or a leading space. Four was the
+#: original figure and it is the exact width in which a reasoning model returns nothing at all;
+#: this is small enough to stay cheap and wide enough that a truncated answer is a real signal
+#: rather than the normal case.
+CLASSIFIER_OUTPUT_TOKENS = 16
+
+
 class LlmInjectionClassifier:
-    """Asks a provider to classify the text; fails open on upstream error."""
+    """Asks a provider to label the text, and says so when it did not get an answer."""
 
     def __init__(self, provider: Upstream, model: str, instruction: str | None = None) -> None:
         self._provider = provider
         self._model = model
         self._instruction = instruction or DEFAULT_INJECTION_INSTRUCTION
 
-    async def is_injection(self, text: str) -> bool:
-        request = CanonicalRequest(
-            model=self._model,
-            messages=[
-                CanonicalMessage(role=Role.SYSTEM, text=self._instruction),
-                CanonicalMessage(role=Role.USER, text=text),
-            ],
-            max_output_tokens=4,
-        )
+    async def verdict(self, text: str) -> Verdict:
         try:
-            response = await self._provider.generate(request)
+            response = await self._provider.generate(
+                classifier_request(self._model, self._instruction, text)
+            )
         except UpstreamError:
-            return False
-        return "INJECTION" in response.text.upper()
+            return Verdict.UNDETERMINED
+        answer = response.text.upper()
+        says_injection = "INJECTION" in answer
+        says_safe = "SAFE" in answer
+        if says_injection and not says_safe:
+            return Verdict.INJECTION
+        if says_safe and not says_injection:
+            return Verdict.CLEAN
+        # Neither word, or **both**. An empty reply, a refusal, a paragraph of preamble, or
+        # "SAFE — no injection attempt here": all the same thing, which is that the classifier was
+        # asked for one word and did not give one. Picking a winner would be a precedence rule
+        # nobody can predict from outside, and reading it as "safe" is how a filter comes to pass
+        # everything while reporting that it ran.
+        return Verdict.UNDETERMINED
 
 
 _ROUTER_INSTRUCTION = (
@@ -99,8 +138,37 @@ _ROUTER_INSTRUCTION = (
 )
 
 
+def classifier_request(model: str, instruction: str, text: str) -> CanonicalRequest:
+    """The request every LLM step makes: one word out, and **no thinking**.
+
+    Thinking is switched off explicitly rather than left unset. Unset means the *model's* default,
+    and a reasoning model's default is to think — which, inside an allowance sized for one word,
+    means it returns nothing. The serving path resolves this against the catalog; a classifier
+    dispatches straight to the provider and so skipped it entirely.
+
+    Off is right here regardless of the model: the question is a labelling task with a fixed
+    two-word answer, and a model that needs to deliberate about it will not fit the answer in the
+    budget either way.
+    """
+    return CanonicalRequest(
+        model=model,
+        messages=[
+            CanonicalMessage(role=Role.SYSTEM, text=instruction),
+            CanonicalMessage(role=Role.USER, text=text),
+        ],
+        max_output_tokens=CLASSIFIER_OUTPUT_TOKENS,
+        thinking=Thinking(mode=ThinkingMode.DISABLED),
+    )
+
+
 class LlmCategoryRouter:
-    """Classifies a request into one of the configured categories (or None)."""
+    """Classifies a request into one of the configured categories (or ``None``).
+
+    ``None`` stays "use the configured default model" rather than becoming a refusal: an unrouted
+    request still gets a valid answer from a model the use case chose, which is a different
+    situation from a security control that did not run. It was, however, returning ``None`` for
+    every request against a reasoning model, for the same reason the filter was returning clean.
+    """
 
     def __init__(self, provider: Upstream, model: str, categories: list[dict[str, str]]) -> None:
         self._provider = provider
@@ -111,15 +179,8 @@ class LlmCategoryRouter:
         listing = "\n".join(
             f"- {c.get('name', '')}: {c.get('description', '')}" for c in self._categories
         )
-        request = CanonicalRequest(
-            model=self._model,
-            messages=[
-                CanonicalMessage(
-                    role=Role.SYSTEM, text=_ROUTER_INSTRUCTION.format(categories=listing)
-                ),
-                CanonicalMessage(role=Role.USER, text=text),
-            ],
-            max_output_tokens=8,
+        request = classifier_request(
+            self._model, _ROUTER_INSTRUCTION.format(categories=listing), text
         )
         try:
             response = await self._provider.generate(request)
