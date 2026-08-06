@@ -5,6 +5,61 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-06 — a real model in the stack (FRD-123)
+The mock agrees with us by construction: it reports the token counts we tell it to, truncates when
+we say so, and produces documents matching the schema because the same person wrote both sides. A
+green suite against it proves the gateway is *self-consistent* — which is the failure the mutation
+harness exists to warn about, one level up.
+
+So Ollama joins the stack behind a `verify` Compose profile. **Built as the OpenAI dialect, not
+against Ollama's native API**, and that is the whole reason it was worth doing now: `ADR-0011`
+already said the OpenAI wire format arrives regardless of `FRD-106`, because `FRD-120` (Azure
+OpenAI) needs it. Building against the native API would have been a fourth dialect serving only us.
+This way `FRD-120` shrinks to a transport, and the deferred OpenAI *surface* gets cheaper too.
+
+The dialect turned out to have its own version of a trap the other two already taught us. Anthropic
+splits usage across two events, so a last-event-wins mapper reported zero input tokens for every
+stream. Here, **usage arrives in a final chunk with an empty `choices` array** — a mapper indexing
+`choices[0]` loses it — and the vendor reports no usage on a stream *at all* unless
+`stream_options.include_usage` is sent. A stream that reports no usage is *released* rather than
+settled (`FRD-405`), so forgetting that one field would have made every streamed request silently
+free. Both are pinned.
+
+`FRD-111` §5.2 predicted the other one before this dialect existed: the vendor takes an abstract
+`reasoning_effort` and **no token budget at all**, so a `limited` request has no faithful mapping.
+It is refused rather than rounded — rounding 20 000 tokens to "high" spends a different amount than
+was asked for and nothing about the answer would show it.
+
+### The architecture assertion did its job
+
+`test_no_code_above_the_adapters_knows_the_vendor` failed, because the new dialect imported
+`to_json_schema` from the Anthropic one. The lazy fix is to widen the test's allow-list. The right
+one is that the translation was never Anthropic-specific — it is canonical → JSON Schema, two of
+the three dialects want it, and it now lives in `core/schema.py`. A dialect importing from another
+dialect is exactly how "the canonical core is provider-agnostic" quietly stops being true.
+
+### What is *not* verified yet, and why that is written here
+
+The container runs; the model registry (`registry.ollama.ai`) is denied by this sandbox's default
+network policy, and so is the Hugging Face fallback. So the adapter is complete and hermetically
+tested (38 tests) and **the two questions it exists to answer are still open**: whether thinking
+and structured output are reachable through the compatibility surface, and where thinking tokens
+are counted (`FRD-111` FR-6). The catalog seed therefore declares **neither capability** — absence
+of information is not permission, and declaring one on a guess is the single thing `FRD-114` says
+the catalog must never do.
+
+Five integration tests are written and skip with a reason naming `make verify-up`. The first is the
+one that motivated this: send a request with a marker in it, then assert the marker is in the
+stored `request_payload`. `FRD-103` has always claimed the prompts are stored, and every test that
+checked it compared our own bytes with our own bytes.
+
+Prices for local models are **invented, and say so in their own display name** — a local model
+costs nothing, an invented price is what makes `FRD-403` demonstrable end to end, and the
+distinction has to survive being pasted into a report, so it lives in the data rather than in a
+comment.
+
+---
+
 ## 2026-08-06 — Stufe 5+6: thinking, structured output, embedding options
 `FRD-111`, `FRD-112`, `FRD-113` — and, in the same change, `FRD-107` **Stage B**, because building
 a capability and then continuing to refuse it at the compatibility surface helps nobody. The KIRA

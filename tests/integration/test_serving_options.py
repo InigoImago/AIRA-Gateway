@@ -130,9 +130,7 @@ async def test_a_batch_is_recorded_under_the_verb_that_ran(engine: AsyncEngine) 
     recorded as `embedContent` makes "how much of our embedding traffic is batched" unanswerable —
     and the difference is invisible to every hermetic test, which shares one in-process writer."""
     name = f"itest-embed-{uuid.uuid4().hex[:8]}"
-    await _declare(
-        engine, name, {"capabilities": ["embed"], "embedding": {"supports_batch": True}}
-    )
+    await _declare(engine, name, {"capabilities": ["embed"], "embedding": {"supports_batch": True}})
     try:
         async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=30.0) as client:
             response = await client.post(
@@ -153,10 +151,7 @@ async def test_a_batch_is_recorded_under_the_verb_that_ran(engine: AsyncEngine) 
             async with engine.connect() as connection:
                 row = (
                     await connection.execute(
-                        text(
-                            "SELECT operation FROM request_logs"
-                            " ORDER BY created_at DESC LIMIT 1"
-                        )
+                        text("SELECT operation FROM request_logs ORDER BY created_at DESC LIMIT 1")
                     )
                 ).first()
             assert row is not None and row[0] == "batchEmbedContents"

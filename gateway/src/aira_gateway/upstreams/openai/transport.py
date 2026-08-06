@@ -1,0 +1,97 @@
+"""Reaching an OpenAI-compatible endpoint (FRD-123).
+
+Everything here is about *how to get there* and nothing about the API shape — the split
+`ADR-0011` asks for, and the reason `FRD-120` will add a Foundry transport beside this one rather
+than a second adapter: the dialect above is already written and already tested.
+
+What differs from `VertexTransport` is mostly what is **absent**. No credential, no project, no
+region in the URL. That is not a simplification to be proud of; it is what makes a local endpoint a
+development and verification tool rather than a deployment target (`FRD-123` §8).
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+import httpx
+
+from aira_gateway.upstreams.base import UpstreamError
+
+#: Ollama loads a model on its first request, which can take a minute or more for a cold one. The
+#: default timeout is generous for exactly that reason — `ADR-0012` §5 says a self-deployed model
+#: fails differently, and treating a cold start as an outage is the first way to get it wrong.
+DEFAULT_TIMEOUT_SECONDS = 300.0
+
+
+class OpenAITransport:
+    """One base URL, optionally one bearer token."""
+
+    def __init__(
+        self, *, client: httpx.AsyncClient, api_key: str = "", timeout: float | None = None
+    ) -> None:
+        self._client = client
+        self._api_key = api_key
+        self._timeout = timeout or DEFAULT_TIMEOUT_SECONDS
+
+    def _headers(self) -> dict[str, str]:
+        # A local endpoint needs none. Some compatible servers reject a request without the header
+        # regardless of its value, so it is sent whenever one is configured and omitted otherwise —
+        # never a placeholder, which would look like a credential in a log.
+        return {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
+
+    async def post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
+        try:
+            response = await self._client.post(
+                path, json=body, headers=self._headers(), timeout=self._timeout
+            )
+        except httpx.HTTPError as exc:
+            raise UpstreamError(f"Upstream error: {type(exc).__name__}.") from exc
+        self._raise_for_status(response)
+        data: dict[str, Any] = response.json()
+        return data
+
+    def stream(self, path: str, body: dict[str, Any]) -> Any:
+        return _StreamContext(self, path, body)
+
+    def _raise_for_status(self, response: httpx.Response) -> None:
+        if response.status_code == httpx.codes.OK:
+            return
+        # The status is passed through so `UPSTREAM_STATUS_MAP` can keep meaning what it means. A
+        # 429 from a self-deployed endpoint means *no free replica* rather than quota (`ADR-0012`
+        # §5) — the distinction belongs to whoever reads the audit, and flattening it here would
+        # remove their ability to make it.
+        raise UpstreamError(f"Upstream returned {response.status_code}.", response.status_code)
+
+
+class _StreamContext:
+    """An async context manager over a streamed response, mirroring the Vertex transport's.
+
+    Written out rather than borrowed from `contextlib` because the error handling has to run
+    *before* the caller starts iterating: a 500 that only surfaced on the first `aiter_lines`
+    would arrive after the response headers had already gone out to our own client.
+    """
+
+    def __init__(self, transport: OpenAITransport, path: str, body: dict[str, Any]) -> None:
+        self._transport = transport
+        self._path = path
+        self._body = body
+        self._context: Any = None
+
+    async def __aenter__(self) -> httpx.Response:
+        self._context = self._transport._client.stream(
+            "POST",
+            self._path,
+            json=self._body,
+            headers=self._transport._headers(),
+            timeout=self._transport._timeout,
+        )
+        try:
+            response = await self._context.__aenter__()
+        except httpx.HTTPError as exc:
+            raise UpstreamError(f"Upstream error: {type(exc).__name__}.") from exc
+        self._transport._raise_for_status(response)
+        checked: httpx.Response = response
+        return checked
+
+    async def __aexit__(self, *exc_info: Any) -> None:
+        await self._context.__aexit__(*exc_info)

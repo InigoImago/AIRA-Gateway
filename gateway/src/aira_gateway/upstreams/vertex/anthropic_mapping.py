@@ -30,7 +30,7 @@ from aira_gateway.core.canonical import (
     Role,
     TextPart,
 )
-from aira_gateway.core.schema import ResponseSchema
+from aira_gateway.core.schema import to_json_schema
 
 #: The finish reason for "the model answered, but not with the document that was asked for".
 #: Its own value rather than an error, so it travels through the same path every other abnormal
@@ -115,62 +115,6 @@ def canonical_to_anthropic(request: CanonicalRequest, *, max_tokens: int) -> dic
 #: The single tool a structured request pins the model to. Named rather than anonymous so the
 #: response mapper can tell "the model used our tool" from "the model called something else".
 STRUCTURED_TOOL = "aira_structured_output"
-
-#: Our vocabulary is OpenAPI-3.0-flavoured; Anthropic's `input_schema` is JSON Schema. Every field
-#: below exists in both with the same meaning, so the translation is faithful rather than
-#: best-effort — which is the condition `FRD-112` §5.2 sets for translating at all.
-_JSON_SCHEMA_FIELDS = (
-    "description",
-    "title",
-    "pattern",
-    "default",
-    "minimum",
-    "maximum",
-    "enum",
-    "required",
-)
-_JSON_SCHEMA_ALIASES = {
-    "min_length": "minLength",
-    "max_length": "maxLength",
-    "min_items": "minItems",
-    "max_items": "maxItems",
-    "min_properties": "minProperties",
-    "max_properties": "maxProperties",
-}
-
-
-def to_json_schema(schema: ResponseSchema) -> dict[str, Any]:
-    """OpenAPI 3.0 subset → JSON Schema, faithfully.
-
-    Two fields are deliberately **not** carried and neither is a lost constraint: ``example`` is
-    documentation, and ``propertyOrdering`` is a rendering hint about key order in a format where
-    key order carries no meaning. Everything that constrains a *value* is translated, because a
-    caller who bounded a field and quietly got an unbounded answer has been misled.
-    """
-    out: dict[str, Any] = {"type": str(schema.type).lower()}
-    if schema.nullable:
-        # JSON Schema expresses nullability as a type union, not as a flag.
-        out["type"] = [out["type"], "null"]
-    if schema.format:
-        out["format"] = schema.format
-    for field in _JSON_SCHEMA_FIELDS:
-        value = getattr(schema, field)
-        if value is not None:
-            out[field] = value
-    for field, alias in _JSON_SCHEMA_ALIASES.items():
-        value = getattr(schema, field)
-        if value is not None:
-            out[alias] = value
-    if schema.properties:
-        out["properties"] = {
-            name: to_json_schema(child) for name, child in schema.properties.items()
-        }
-    if schema.items is not None:
-        out["items"] = to_json_schema(schema.items)
-    if schema.any_of:
-        out["anyOf"] = [to_json_schema(variant) for variant in schema.any_of]
-    return out
-
 
 #: Anthropic distinguishes an image from a document, and the type is not interchangeable — an
 #: image block carrying a PDF is refused by the API, not silently coerced.

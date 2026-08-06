@@ -12,11 +12,17 @@ COMPOSE_FULL := docker compose -f $(COMPOSE_DIR)/docker-compose.yml \
 ENV_FILE := $(COMPOSE_DIR)/.env
 ENV_EXAMPLE := $(COMPOSE_DIR)/.env.example
 
+# The two models `make verify-up` pulls (FRD-123). Small on purpose: what is under test is the
+# gateway, not the answer, and the size is what keeps a CI job from pulling gigabytes.
+LOCAL_CHAT_MODEL ?= qwen3:0.6b
+LOCAL_EMBED_MODEL ?= all-minilm
+
 .DEFAULT_GOAL := help
 
 .PHONY: help up up-core down destroy ps logs restart env sync test test-py test-frontend \
         test-integration test-e2e e2e lint lint-py lint-frontend fmt seed seed-reset \
         migrate-gateway kafka-topics relay consume run-gateway run-gateway-oidc run-backend \
+        verify-up verify-down test-verify \
         run-frontend up-full down-full logs-apps build-images ci wait-healthy prune mutants
 
 help: ## Show this help
@@ -50,6 +56,25 @@ logs-apps: ## Tail logs of the application containers only
 
 build-images: ## Build the three application images without starting anything
 	$(COMPOSE_FULL) build gateway management frontend
+
+verify-up: env ## Start a real local model (FRD-123) and pull the two verification models
+	$(COMPOSE) --profile verify up -d ollama
+	@echo "waiting for the endpoint..."
+	@until curl -fsS http://localhost:11434/api/version >/dev/null 2>&1; do sleep 1; done
+	@echo "pulling models (hundreds of MB, once per machine)..."
+	docker exec aira-ollama ollama pull $(LOCAL_CHAT_MODEL)
+	docker exec aira-ollama ollama pull $(LOCAL_EMBED_MODEL)
+	@echo
+	@echo "Point the gateway at it:"
+	@echo "  AIRA_OLLAMA_URL=http://localhost:11434 \\"
+	@echo "  AIRA_OLLAMA_MODELS=$(LOCAL_CHAT_MODEL) \\"
+	@echo "  AIRA_OLLAMA_EMBEDDING_MODELS=$(LOCAL_EMBED_MODEL) make run-gateway-oidc"
+
+verify-down: ## Stop the local model (keeps the downloaded weights)
+	$(COMPOSE) --profile verify stop ollama
+
+test-verify: ## Integration tests that need a real local model (skips cleanly without one)
+	uv run pytest -m integration --no-cov tests/integration/test_local_model.py
 
 down: ## Stop the stack (keep volumes)
 	$(COMPOSE) down

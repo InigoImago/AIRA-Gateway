@@ -115,6 +115,19 @@ class GatewaySettings(BaseAiraSettings):
     #: Backstop for Anthropic's required ``max_tokens`` when the catalog declares no default.
     vertex_default_max_tokens: int = 4096
 
+    # Local models over an OpenAI-compatible endpoint (FRD-123). Registered **only** when a URL
+    # is set — a verification tool that appears in a deployment nobody asked for it in eventually
+    # serves production traffic. `AIRA_OLLAMA_REGION` is recorded on every audit row: a
+    # self-hosted model is the strongest residency story available, and one nothing records is a
+    # claim rather than evidence.
+    ollama_url: str = ""
+    ollama_models: str = ""
+    ollama_embedding_models: str = ""
+    ollama_region: str = "on-premises"
+    #: Generous on purpose: a cold self-deployed model loads for a minute or more, and treating
+    #: that as an outage is the first way to get `ADR-0012` §5 wrong.
+    ollama_timeout_seconds: float = 300.0
+
     #: The KIRA compatibility surface's stated end date, RFC 8594 (`ADR-0010` Option C). Empty
     #: means "announced as deprecated, no date yet" — a layer with no date is a permanent one, so
     #: this should be set the day a migration plan exists.

@@ -375,6 +375,21 @@ Three rules came out of it that generalise:
   the limit is intact on paper and gone in practice. Same for the budget's request count.
 Capability checks for thinking and schemas run **per hop** of the dispatch chain, for the same
 reason attachments do — a chain that quietly answers with less than was asked for returns a 200.
+**A real model in the stack (`FRD-123`, 2026-08-06)** — Ollama behind a `verify` Compose profile,
+**built as the OpenAI dialect** rather than against its native API, because `ADR-0011` says that
+dialect arrives regardless (Azure needs it) — so `FRD-120` shrinks to a transport. The mock agrees
+with us by construction; a model that never agreed to anything is the only way to know the
+accounting is right rather than merely self-consistent. Two traps the dialect hides: **usage
+arrives in a chunk with an empty `choices` array**, and the vendor reports **no** stream usage
+unless `stream_options.include_usage` is sent — and a stream reporting none is *released*, so
+forgetting it makes every streamed request silently free. A `limited` thinking budget has no
+faithful mapping (`reasoning_effort` is a level, not a budget) and is **refused, not rounded**.
+The architecture assertion caught the new dialect importing from the Anthropic one; the right fix
+was that `to_json_schema` was never vendor-specific and now lives in `core/schema.py`.
+**Still open, deliberately**: this sandbox denies `registry.ollama.ai`, so no model has been pulled
+— the adapter is hermetically tested (38 tests), the five integration tests skip with a reason, and
+the seed declares **neither** thinking nor structured output for local models, because absence of
+information is not permission. Local prices are **invented and say so in their display name**.
 **Delivery order is fixed (ROADMAP Phase 8, 2026-08-06)**, derived from the owner's priority
 (KIRA compatibility → model connections → documents → the review findings) and the dependency that
 priority 1 needs priority 3: **`FRD-122` (audit) → `FRD-114` (metadata) → `FRD-115`+`119` (Vertex EU,

@@ -176,9 +176,38 @@ services:
         condition: service_started
     networks: [aira]
 
+  # --- A real model, locally (opt-in via the "verify" profile; FRD-123) ---
+  #
+  # Not part of the reference stack, and that is deliberate. Its purpose is to make the whole
+  # governed path — stored prompts, real token counts, cost, roles, budgets — observable against
+  # something that did not agree with us by construction. A verification tool that came up with
+  # `make up` would eventually serve production traffic.
+  #
+  # The endpoint is unauthenticated: it must stay on this network.
+  ollama:
+    image: ollama/ollama:latest
+    container_name: aira-ollama
+    profiles: ["verify"]
+    volumes:
+      - ollama-models:/root/.ollama
+    ports:
+      - "11434:11434"
+    healthcheck:
+      # `ollama list` answers as soon as the server is up and — unlike a generation — does **not**
+      # load a model. `ADR-0012` §5: a probe that wakes a scaled-to-zero endpoint turns every
+      # health check into a cold start, which for a paid endpoint is also a billable call.
+      test: ["CMD", "ollama", "list"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+    networks: [aira]
+
 volumes:
   pgdata:
   kafka-data:
+  # Model layers are hundreds of megabytes and come from a registry a locked-down network denies
+  # by default. A named volume means one pull per machine rather than one per run.
+  ollama-models:
 
 networks:
   aira:
