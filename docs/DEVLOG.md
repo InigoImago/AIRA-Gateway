@@ -5,6 +5,59 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-06 — Model Garden answers one question and opens another
+Two facts landed after the parity FRDs were written, and both change them.
+
+**EU residency applies.** `FRD-115` moves from "worth doing" to required: our current adapter calls
+a global endpoint and cannot make a residency statement, so it is not a production candidate no
+matter how complete the rest becomes. The FRD now also *enforces* it — an allowed-region list, a
+model configured outside it refuses to start, and provider, publisher and region recorded on every
+audit row. Configuration alone would not hold: someone adds a model in `us-central1` because that
+is where a preview launched, and nothing objects.
+
+**Access is through the Gemini Enterprise platform's Model Garden — Gemini *and* Anthropic**, one
+project, one credential. That is a governance win and a technical complication, because the two
+vendors do not share a wire format. Anthropic models on Vertex are called through `:rawPredict` and
+speak the Anthropic Messages API:
+
+- `max_tokens` is **required**, and our canonical field is optional. A caller who omits it — most
+  of them, since it is optional today — would get a vendor error about a field they never set. So
+  `FRD-114` gains a **per-model default output cap**, which sharpens the budget reservation for
+  both vendors anyway.
+- **Thinking blocks come back in the response.** With Gemini, "we do not return chain-of-thought"
+  was cheap: we simply do not ask. With Anthropic it becomes an active obligation — the adapter
+  must drop them, and they must reach no response, log, span or audit row. A mapper that
+  concatenates all content blocks is the obvious implementation and the wrong one, so it gets its
+  own test. Their token *count* still reaches usage, because they were billed.
+- Anthropic's thinking budget is drawn from `max_tokens`, so `budget < max_tokens` becomes a
+  validation rule and the catalog must refuse to hold a combination that cannot work.
+- **There is no `responseSchema`.** Structured output is a forced tool call — one tool whose
+  `input_schema` is the caller's schema. So `FRD-114`'s `structured_output` flag means "by some
+  mechanism", the adapter refuses schema fields it cannot express faithfully rather than dropping
+  them, and `FRD-112` §5.3's post-routing capability check stops being defensive and becomes
+  load-bearing.
+- **No embeddings at all**, so `FRD-113` is Gemini-only and the capability declaration is what
+  enforces it — before dispatch, not by an adapter raising deep in the stack.
+
+New `FRD-119` for the dialect; `FRD-115` rewritten as the *platform* (transport, OAuth, region,
+registry) with the two dialects above it. The seam matters: put authentication in the adapters and
+it is written twice, put body mapping in the transport and a third vendor rewrites it. `FRD-110`'s
+media-type allow-list becomes an intersection of what AIRA accepts and what the target model
+accepts, checked after routing for the same reason the schema capability is.
+
+This is also the first honest test of `FRD-100`'s claim that the canonical core is
+provider-agnostic — until now "two upstreams" meant two spellings of Google's format. `FRD-115` §10
+carries an architecture assertion for it: if the diff reaches outside `upstreams/`, the core is
+Gemini-shaped and we should fix the core rather than smuggle a vendor field through it.
+
+One question deliberately left open in `FRD-115` §11: whether "Gemini Enterprise" here means Model
+Garden *raw model access* (assumed throughout) or the agent platform's own API, which is not a
+model API and would model grounding and server-side conversation state that our canonical core does
+not have. One authenticated `curl` against the project's `publishers/anthropic` endpoint settles
+it, and getting it wrong is a rewrite rather than a correction.
+
+---
+
 ## 2026-08-06 — KIRA parity: the programme, and where the gap actually is
 The predecessor's requirements (`kira_api.md`, KIA-KIRA-API v0.1.2) arrived with the instruction
 that AIRA must carry all of them. Reviewed against the code rather than against our own

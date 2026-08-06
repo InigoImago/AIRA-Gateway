@@ -24,6 +24,15 @@ schema. None of that exists here. There is also a substantive difference in *whe
 runs*: KIRA calls Vertex AI on regional endpoints (`europe-west1`, `eu`) with a service-account
 credential; AIRA calls the Generative Language API with an API key from an environment variable.
 
+**Answered 2026-08-06**: EU residency does apply, and access will be through the **Gemini
+Enterprise platform's Model Garden**, serving **Gemini and Anthropic** models. That settles the
+schedule question — `FRD-115` is required, not optional — and adds one this ADR did not
+anticipate: Model Garden gives us two vendors under one credential, and **they do not share a wire
+format**. Anthropic models are called through `:rawPredict` and speak the Anthropic Messages API,
+with a required `max_tokens`, returned thinking blocks, and no `responseSchema` at all. That is a
+second dialect (`FRD-119`), not a second base URL, and it is the first genuine test of `FRD-100`'s
+claim that the canonical core is provider-agnostic.
+
 Those two facts frame this ADR. The functional gaps are ordinary engineering, and the FRDs below
 cover them. The contract is a decision.
 
@@ -112,7 +121,8 @@ reporting, and the decision to remove it is made against a number rather than a 
 | [`FRD-112`](../features/FRD-112-structured-output.md) | `responseSchema` — forced JSON output | — |
 | [`FRD-113`](../features/FRD-113-embedding-options.md) | Task types, batches, dimensions | `FRD-114` |
 | [`FRD-114`](../features/FRD-114-model-capability-metadata.md) | What a model can do and where its limits are | — |
-| [`FRD-115`](../features/FRD-115-vertex-ai-upstream.md) | Vertex AI on a regional endpoint | — |
+| [`FRD-115`](../features/FRD-115-vertex-ai-upstream.md) | Vertex AI / Model Garden in the EU | **required** — residency confirmed |
+| [`FRD-119`](../features/FRD-119-anthropic-on-vertex.md) | Anthropic models: the second dialect | `FRD-115`, `FRD-114` |
 | [`FRD-116`](../features/FRD-116-vault-secrets.md) | Secrets actually read from Vault | — |
 | [`FRD-117`](../features/FRD-117-diagnostics-and-compatibility.md) | Version info, upstream health, CORS, OpenAPI 3.0, trace header | — |
 | [`FRD-118`](../features/FRD-118-federated-identity.md) | Several Keycloak backends, groups from UserInfo | — |

@@ -65,8 +65,13 @@ question is about.
 - **FR-2 Inline data.** A data part carries a declared media type and bytes. On the wire the bytes
   are base64; in the canonical model they are `bytes`. Invalid base64 is a **400**, not a
   truncated forward.
-- **FR-3 Media-type allow-list.** The fourteen types from `kira_api.md` §4.2. A type outside the
-  list is refused with a message naming it. Configurable per deployment, defaulting to the list.
+- **FR-3 Media-type allow-list, intersected with the model.** The fourteen types from
+  `kira_api.md` §4.2 are what *AIRA* accepts; what the **target model** accepts is declared in
+  `FRD-114`, and Anthropic's set is a subset of Google's. A part is admitted only if both allow it,
+  and a refusal names which of the two refused — "AIRA does not accept HEIC" and "this model does
+  not accept HEIC" call for different actions. Checked against the model actually dispatched to,
+  for the same reason `FRD-112` §5.3 checks its capability after routing: with a fallback chain,
+  the model that answers is not the model that was asked for.
 - **FR-4 The declared type is verified, not trusted.** A part claiming `application/pdf` whose
   bytes do not begin with a PDF signature is refused. The check is a magic-byte sniff, not a full
   parse: it is there to catch a mislabelled upload and a trivially disguised payload, and it is
@@ -125,6 +130,9 @@ comment (`§10`).
   is a 400.
 - **Gemini upstream** (`upstreams/gemini_mapping.py`): canonical parts map straight back to
   `inlineData` — the two formats agree, which is why this direction is cheap.
+- **Anthropic upstream** (`FRD-119`): the same parts map to `image` / `document` content blocks.
+  This is the mapping that tests whether the ordered-parts model is genuinely neutral or merely
+  Gemini's shape renamed — see `FRD-119` §5.2.
 - **Mock provider**: must accept attachments and describe them deterministically ("1 attachment:
   application/pdf, 12 KiB"), so the demo path and every hermetic test can exercise the feature
   without a real upstream. A mock that ignores attachments would let every test pass while the
@@ -144,7 +152,8 @@ for documents.
 
 So the estimate gains an **input component for attachments**: a per-media-type token estimate
 (configurable, defaulting to conservative published figures), multiplied by size where the model
-prices by area or page. It will be wrong — deliberately wrong **high**, the same direction the
+prices by area or page. The figures differ per vendor — Google and Anthropic tokenise images and
+PDFs differently — so the estimate is declared per model in `FRD-114`, not global. It will be wrong — deliberately wrong **high**, the same direction the
 output estimate already errs, and corrected by `settle` the moment the response returns with real
 `usageMetadata`.
 

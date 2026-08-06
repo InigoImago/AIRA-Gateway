@@ -56,13 +56,30 @@ usable, and `FRD-113` cannot tell a supported task type from a typo.
 ## 4. Functional Requirements
 
 - **FR-1 Capabilities.** Per model: `generate`, `embed`, `structured_output`, `thinking`,
-  `attachments`. A capability absent means the gateway refuses requests that need it.
-- **FR-2 Generation limits.** `max_output_tokens`. A request above it is refused
-  (`MAX_TOKENS_EXCEEDS_CAP`), rather than passed on for the provider to reject differently.
+  `attachments`. A capability absent means the gateway refuses requests that need it. With two
+  vendors these genuinely differ rather than being a formality — Anthropic models have no `embed`
+  at all, and `structured_output` is reached by a different mechanism (`FRD-119` §5.5), which is
+  why the flag says *whether*, never *how*.
+- **FR-2 Generation limits.** `max_output_tokens`, and a **default output cap** applied when the
+  caller sets none. A request above the maximum is refused (`MAX_TOKENS_EXCEEDS_CAP`) rather than
+  passed on for the provider to reject differently. The default is not optional polish: Anthropic
+  **requires** `max_tokens` on every request (`FRD-119` §5.3), so without a per-model default every
+  caller who omits it — which is most of them, since it is optional today — would receive a vendor
+  error about a field they never set. It also sharpens the budget reservation for both vendors.
+- **FR-2a Publisher.** Which vendor serves the model (`google`, `anthropic`, …). It selects the
+  wire dialect and the endpoint method (`FRD-115` FR-2), and it belongs beside the capabilities
+  rather than in adapter configuration, so one row answers "what is this model and how is it
+  reached".
 - **FR-3 Thinking declaration.** The permitted modes; `min_tokens`/`max_tokens` for `limited`; the
-  default setting; and the token budget each abstract level maps to (`FRD-111` §5.2).
+  default setting; and the token budget each abstract level maps to (`FRD-111` §5.2). Validated for
+  internal consistency on write: a thinking maximum at or above the model's output cap describes a
+  model that can never answer (`FRD-111` FR-3a), and the catalog should refuse to hold it.
 - **FR-4 Embedding declaration.** Supported task types, whether batching is supported, and the
-  available output dimensionalities with a default.
+  available output dimensionalities with a default. Absent for a publisher that does not embed.
+- **FR-4a Attachment declaration.** The media types **this model** accepts, and the token estimate
+  per type. `FRD-110` intersects its own allow-list with this one, and `FRD-110` §5.3's reservation
+  reads the estimates — the two vendors tokenise images and documents differently, so a global
+  figure would be wrong for one of them by construction.
 - **FR-5 Deprecation.** A `deprecated` flag. It **warns, it does not block**: requests succeed and
   carry a `Warning` response header, the model is marked in the SPA, and reporting can show who is
   still using it. Blocking is what `FRD-307`'s revocation is for, and conflating the two removes
@@ -129,7 +146,10 @@ Management `Model` gains (all nullable, so existing rows stay valid):
 | Field | Type | Notes |
 |---|---|---|
 | `capabilities` | string set | `generate`, `embed`, `structured_output`, `thinking`, `attachments` |
+| `publisher` | string? | `google`, `anthropic`, … — selects dialect and method (FR-2a) |
 | `max_output_tokens` | int? | FR-2 |
+| `default_max_output_tokens` | int? | applied when the caller sets none (FR-2) |
+| `attachments` | JSON? | accepted media types and their token estimates (FR-4a) |
 | `thinking` | JSON? | modes, `min_tokens`, `max_tokens`, default, level→budget map |
 | `embedding` | JSON? | `task_types`, `supports_batch`, `dimensions[]`, default |
 | `deprecated` | bool | default false |

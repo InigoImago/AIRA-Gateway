@@ -32,7 +32,10 @@ request as invisible.
 
 **Non-Goals**
 - **Returning the model's thoughts.** Google can emit them (`includeThoughts`); the predecessor
-  does not return them and neither will we. Chain-of-thought is the least reviewed text a model
+  does not return them and neither will we. With Anthropic this stops being a matter of not asking:
+  thinking blocks come back in the response by default, so the adapter must **drop** them and the
+  obligation becomes active rather than passive — `FRD-119` §5.4, with its own test asserting they
+  reach no response, log, span or audit row. Chain-of-thought is the least reviewed text a model
   produces and the most likely to contain the input restated; putting it in a response the gateway
   also persists is a data-protection decision, not a feature toggle. Out of scope, deliberately.
 - **Per-use-case policy on thinking** (e.g. "this use case may not exceed `low`"). A natural
@@ -56,6 +59,10 @@ request as invisible.
   budget below the model's minimum or above its maximum is refused. Each is a distinct error so a
   client can tell them apart (`INVALID_THINKING_MODE`, `MISSING_THINKING_TOKEN_COUNT`,
   `THINKING_TOKEN_COUNT_TOO_LOW`, `THINKING_TOKEN_COUNT_TOO_HIGH`).
+- **FR-3a The budget must fit inside the output allowance.** Anthropic draws thinking tokens from
+  `max_tokens`, so a budget at or above it produces a request that can never succeed. Validated
+  before dispatch, and `FRD-114`'s declaration is checked for the same consistency when it is
+  authored — the catalog must not be able to hold a combination that cannot work.
 - **FR-4 Default.** No setting in the request → the model's declared default, which may itself be
   `disabled`. A model that declares no thinking support at all with a request that asks for it is
   FR-3's first case.
@@ -95,6 +102,8 @@ belongs in the **upstream adapter**, alongside every other provider-specific dec
 
 - Gemini: `generationConfig.thinkingConfig.thinkingBudget` — `disabled` → `0`, `auto` → `-1`,
   `limited` → the caller's count, an abstract level → the model's declared budget for that level.
+- Anthropic (`FRD-119`): `thinking{type:"enabled",budget_tokens}` — no `auto` equivalent, so that
+  mode resolves to the model's declared default budget, and every budget is bounded by FR-3a.
 - Mock: honours the setting deterministically so the mode is observable in tests without a cloud.
 
 Putting the level→budget table in `FRD-114`'s model metadata rather than in code is what keeps a

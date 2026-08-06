@@ -144,6 +144,13 @@ output does not exist. There is also a difference in *where* the model runs — 
 Vertex AI on EU-regional endpoints with a service account; we use the global Generative Language
 API with an API key.
 
+**Confirmed 2026-08-06**: EU residency applies, and models are reached through the **Gemini
+Enterprise platform's Model Garden** — **Gemini *and* Anthropic** under one project and one
+credential. Two consequences: `FRD-115` is required rather than optional, and AIRA gains a
+**second wire dialect** (`FRD-119`), because Anthropic models on Vertex speak the Anthropic
+Messages API — required `max_tokens`, returned thinking blocks, no `responseSchema`. That is the
+first real test of the canonical core's claim to be provider-agnostic.
+
 `ADR-0010` frames the programme and holds the one open decision: whether AIRA also serves the
 predecessor's **wire contract** (clients migrate by changing a URL) or whether the clients move to
 the Gemini surface. Everything except `FRD-107` is needed either way and can start now.
@@ -155,7 +162,8 @@ the Gemini surface. Everything except `FRD-107` is needed either way and can sta
 | `FRD-112` | `responseSchema` — forced JSON output | — |
 | `FRD-113` | Embedding task types, batches, dimensions | needs `FRD-114` |
 | `FRD-114` | Model capability metadata | prerequisite for 111/112/113 |
-| `FRD-115` | Vertex AI on a regional endpoint | **schedule-critical if EU residency is required** |
+| `FRD-115` | Vertex AI / Model Garden in the EU | **required — residency confirmed** |
+| `FRD-119` | Anthropic models on Vertex: the second dialect | needs `FRD-115` + `FRD-114` |
 | `FRD-116` | Secrets actually read from Vault | policy and implementation have been apart since Phase 0 |
 | `FRD-117` | Version info, upstream health, CORS, OpenAPI 3.0, trace header | independent; makes the rest operable |
 | `FRD-118` | Several Keycloak backends, groups from UserInfo | **requirement unconfirmed — see its §11** |

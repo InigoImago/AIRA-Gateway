@@ -1,187 +1,251 @@
-# FRD-115 — Vertex AI upstream on a regional endpoint
+# FRD-115 — Reaching the models: Vertex AI / Model Garden in the EU
 
 > Phase: 8 (KIRA parity) · Status: **Draft** · Owner: Vadim Scheibe · Last updated: 2026-08-06
-> Origin: `kira_api.md` §5 (GCP endpoints), §10 (service-account config), programme: `ADR-0010`.
-> Extends `FRD-304` (upstream adapters). Related: `FRD-116` (where the credential comes from).
+> Origin: `kira_api.md` §5, §10; **confirmed 2026-08-06: EU residency applies, and access is via
+> the Gemini Enterprise platform's Model Garden, serving Gemini *and Anthropic* models.**
+> Programme: `ADR-0010`. Extends `FRD-304`. Paired with `FRD-119` (the Anthropic dialect).
+> Related: `FRD-116` (where the credential comes from).
 
 ## 1. Problem
 
-`FRD-304` gave AIRA a real Google adapter that calls
-`generativelanguage.googleapis.com/v1beta` with an API key from an environment variable. The
-predecessor calls **Vertex AI** on regional endpoints — `europe-west1-aiplatform.googleapis.com`
-and `aiplatform.eu.rep.googleapis.com` — authenticated with a **service account**.
+`FRD-304` gave AIRA a Google adapter that calls `generativelanguage.googleapis.com/v1beta` — a
+**global** endpoint — with an API key from an environment variable. Two facts, both now confirmed
+rather than inferred, make that insufficient:
 
-These are not two spellings of the same thing:
+- **EU residency applies.** Requests must be processed in the EU. A global endpoint cannot make
+  that statement, so our current adapter is not a candidate for production regardless of how
+  complete the rest of the parity work becomes.
+- **Access is through Model Garden, and it serves two vendors.** Gemini *and* Anthropic models
+  through one platform, one project, one credential. That is a procurement and governance win and
+  a technical complication: **the two vendors do not share a wire format.**
 
-- **Where the request is processed.** The Generative Language API is a global endpoint. Vertex AI's
-  regional and EU-multi-region endpoints exist because organisations have to be able to say where
-  the data went. If that requirement stands behind the predecessor — and a `eu` endpoint in a
-  production configuration is fairly strong evidence that it does — then no amount of feature
-  parity makes our current adapter a replacement.
-- **How it authenticates.** An API key is a bearer secret with no identity, no rotation story worth
-  the name, and no IAM. A service account has all three, and is what a corporate GCP project will
-  actually grant.
+The second point is the one that matters architecturally. Anthropic models on Vertex are called
+through `:rawPredict` / `:streamRawPredict` and speak the **Anthropic Messages API** — different
+request body, different streaming events, different usage fields, a *required* `max_tokens`, and a
+completely different mechanism for structured output. It is a second dialect, not a second base URL.
 
-So this is not an optimisation. Under a data-residency requirement it is the difference between
-being able to decommission the predecessor and not.
+This FRD covers **how we reach the platform** — endpoint, region, credential, registry. `FRD-119`
+covers **the Anthropic dialect** itself. Splitting them keeps the platform work testable before
+either dialect exists, and keeps the dialect work free of authentication concerns.
 
 ## 2. Goals & Non-Goals
 
 **Goals**
-- Dispatch to Vertex AI on a configurable regional endpoint, with the region a property of the
-  model rather than of the process.
-- Authenticate with a service account: signed JWT exchanged for an access token, cached and
-  refreshed, never on the request's critical path when it can be avoided.
-- Coexist with the existing adapter, with an explicit and *loud* rule for which one serves a model.
-- Everything above the adapter — pipeline, budgets, limits, persistence, reporting — unchanged.
-  That is the payoff of the canonical core and this FRD should not need to touch any of it.
+- Dispatch to Vertex AI on a configurable EU endpoint, with the region a property of the model.
+- Authenticate with a **service account**: signed JWT exchanged for an access token, cached,
+  refreshed ahead of expiry, single-flighted.
+- One access path serving **both** publishers, with the dialect chosen per model.
+- Record **provider, publisher and region per request**, so residency is evidenced from data
+  rather than asserted from configuration.
+- Everything above `upstreams/` unchanged.
 
 **Non-Goals**
-- Retiring the Generative Language adapter. It stays: it is what makes a laptop with one API key a
-  working development environment.
-- Other Vertex surfaces (tuning, batch prediction, Model Garden third-party models).
-- **Reading the credential from Vault** — `FRD-116`. This FRD takes it from configuration and is
-  written so that swapping the source is a one-line change.
+- **The Anthropic wire format** — `FRD-119`.
+- Retiring the Generative Language adapter. It stays as the laptop path: one API key, no GCP
+  project, `make up` works.
+- The Gemini Enterprise platform's **agent** surface (data stores, grounding, orchestration). We
+  consume *models* through Model Garden; if the agent surface is ever wanted it is a separate
+  upstream with a separate decision. See §11.
+- Tuning, batch prediction, non-Anthropic third-party Model Garden vendors.
+- Reading the credential from Vault — `FRD-116`.
 
 ## 3. User Stories
-- As **IT Security**, I want model traffic processed in a named region under a service-account
-  identity, so that the data-protection assessment can be completed.
-- As an **operator**, I want the region to be part of the model's definition, so that adding a
-  model in a different region is configuration.
+- As **IT Security**, I want every model call processed in the EU under a service-account identity,
+  and I want each request's region recorded, so that the data-protection assessment rests on
+  evidence.
+- As a **use-case administrator**, I want to route to a Gemini or an Anthropic model by name and
+  have everything else behave identically.
+- As an **operator**, I want one credential and one project for both vendors.
 
 ## 4. Functional Requirements
 
-- **FR-1 Vertex dispatch.** `generateContent`, `streamGenerateContent`, `embedContent` and
-  `batchEmbedContents` (`FRD-113`) against
-  `{location}-aiplatform.googleapis.com/v1/projects/{project}/locations/{location}/publishers/google/models/{model}`,
-  with `aiplatform.eu.rep.googleapis.com` for the `eu` multi-region.
-- **FR-2 Service-account auth.** RS256-signed JWT assertion exchanged at Google's token endpoint
-  for an access token; the token is cached and refreshed **before** expiry, not on failure.
-- **FR-3 Region per model.** Configured per model, not globally. The predecessor runs models in two
-  regions simultaneously and so will we.
-- **FR-4 One adapter per model, decided explicitly.** See §5.3.
-- **FR-5 TLS is verified.** Stated as a requirement because the predecessor sets `verify=False`
-  (`kira_api.md` §12.5) and this is a place where parity would be a mistake. We do not copy it.
-- **FR-6 The credential never leaves the process.** Not logged, not in spans, not in error
-  messages, not in `/readyz`. Same rule as the API key in `FRD-304`, restated because a
-  service-account key is materially more valuable.
-- **FR-7 Token acquisition failure is an upstream failure.** It maps to the existing
-  `UpstreamError` handling — a 503-shaped answer with the reason in the log — and must not be
-  reported as a client error.
+- **FR-1 Vertex dispatch.** `POST {host}/v1/projects/{project}/locations/{location}/publishers/
+  {publisher}/models/{model}:{method}`, where `{host}` is `{location}-aiplatform.googleapis.com`
+  or `aiplatform.eu.rep.googleapis.com` for the `eu` multi-region.
+- **FR-2 Publisher-dependent method and dialect.** `publishers/google` → `:generateContent` /
+  `:streamGenerateContent` / `:embedContent`, Gemini body. `publishers/anthropic` → `:rawPredict` /
+  `:streamRawPredict`, Anthropic body (`FRD-119`).
+- **FR-3 Service-account auth.** RS256-signed JWT assertion exchanged for an access token; cached
+  and refreshed **before** expiry, not on failure. One credential for both publishers.
+- **FR-4 Region per model**, not per process. Configuration carries region *and* publisher with
+  each model name.
+- **FR-5 EU-only by configuration, checked at startup.** See §5.5.
+- **FR-6 One adapter per model, decided loudly.** A model name offered by two providers refuses to
+  start, naming both (§5.4).
+- **FR-7 TLS is verified.** Stated because the predecessor sets `verify=False` (`kira_api.md`
+  §12.5). We do not copy it.
+- **FR-8 The credential never leaves the process.** Not logged, not in spans, not in error
+  messages, not in `/readyz`. Restated from `FRD-304` because a service-account private key is
+  materially more valuable than an API key.
+- **FR-9 Token-acquisition failure is an upstream failure**, mapping to `UpstreamError` and a
+  503-shaped answer — never a client error.
+- **FR-10 Provider, publisher and region on every audit row and span.** FR-5 is a configuration
+  claim; this is what makes it auditable.
 
 ## 5. Design & Architecture
 
-### 5.1 The protocol already fits
+### 5.1 One transport, two dialects
 
-`Upstream` is `models() / generate() / stream_generate() / embed()`. The Vertex adapter implements
-it exactly as the Gemini one does; the request body is the same Gemini JSON. The differences are
-the URL, the `Authorization` header, and the response envelope for streaming.
+```
+VertexTransport          # URL building, auth, retries, error mapping — publisher-agnostic
+├── VertexGeminiAdapter    # Gemini bodies (reuses FRD-304's mappers unchanged)
+└── VertexAnthropicAdapter # Anthropic bodies (FRD-119)
+```
 
-That is the whole point of `FRD-100`'s canonical core, and it is worth stating plainly as an
-acceptance criterion: **if this FRD needs to change anything above `upstreams/`, something was
-designed wrong.**
+Both adapters implement the existing `Upstream` protocol, so nothing above `upstreams/` learns that
+a second vendor exists. The transport owns everything that is about *Google the platform*
+(endpoint, OAuth, quota errors); each adapter owns everything that is about *the vendor's API*.
 
-### 5.2 Tokens: refreshed ahead of time, shared, and never a thundering herd
+Getting that seam right is the whole design. Put authentication in the adapters and it is written
+twice; put body mapping in the transport and adding a third vendor rewrites it.
 
-An access token lives about an hour. Fetching it lazily on expiry means one request pays a
-round trip, and under load *many* requests discover the expiry simultaneously and all fetch.
+### 5.2 Tokens: ahead of time, shared, single-flight
 
-So: a single token holder per adapter, refreshing at ~80% of lifetime, with concurrent refreshes
-collapsed into one in-flight attempt (`asyncio` single-flight). A failed refresh keeps serving the
-still-valid token and retries with backoff; only an expired token with a failing refresh produces
-FR-7's error. The clock is injectable, because "refreshes before expiry" is otherwise a property
-that can only be tested by waiting an hour.
+An access token lives about an hour. Fetching lazily on expiry makes one request pay a round trip
+and, under load, makes *many* requests discover the expiry at once and all fetch.
 
-### 5.3 Two adapters, one model name — decide loudly
+One token holder per project (not per adapter — the credential is shared), refreshing at ~80% of
+lifetime, with concurrent refreshes collapsed into one in-flight attempt. A failed refresh keeps
+serving the still-valid token and retries with backoff; only an expired token with a failing
+refresh produces FR-9. The clock is injectable, because "refreshes before expiry" is otherwise a
+property testable only by waiting an hour.
 
-`ProviderRegistry` maps model name → provider by iterating providers and assigning, so **the last
-provider registered silently wins**. With one adapter that was harmless. With two adapters that
-both offer `gemini-2.0-flash`, it becomes a silent decision about which region and which
-credential handled a request — and the wrong answer is invisible in every log and every report.
+### 5.3 Model naming has an `@` in it
 
-Two changes, both small:
+Anthropic models on Vertex carry a version suffix — `claude-sonnet-4-5@20250929`. That string
+travels through our model catalog, pipeline configuration, URL paths, Kafka keys and reporting
+group-by. `@` is not a problem for any of them, but it is exactly the kind of character that turns
+out to be a problem in one place — a validation regex written for `[a-z0-9-]`, or an unencoded URL
+segment.
 
-- Registration **refuses a duplicate model name** at startup and names the two providers. Failing
-  to boot is the correct response to an ambiguous routing table.
-- Configuration decides which adapter serves which models, explicitly — Vertex is configured with
-  its own model list per region, and a name in both lists is the error above.
+So: the allowed model-name character set is defined once, `@` is in it, and the URL segment is
+encoded on the way out. Asserted by a test using a real Anthropic model name, not a placeholder.
 
-The audit row and the span already record the model; they gain the **provider and region**, so
-that "where was this processed" is answerable from data rather than from configuration
-archaeology. Under a residency requirement this is not a nicety.
+### 5.4 Two adapters, one model name — refuse to start
 
-### 5.4 Configuration
+`ProviderRegistry` maps model name → provider by iterating and assigning, so **the last provider
+registered silently wins**. Harmless with one adapter. With three — Generative Language, Vertex
+Gemini, Vertex Anthropic — it becomes a silent decision about which region and which credential
+handled a request, and the wrong answer is invisible in every log and every report.
+
+Registration therefore **refuses a duplicate model name at startup and names both providers**.
+Failing to boot is the correct response to an ambiguous routing table; a running gateway that
+sometimes leaves the EU is not.
+
+### 5.5 "EU-only" has to be checked, not intended
+
+FR-5 is the requirement the residency assessment actually rests on, and configuration alone will
+not hold it: someone adds a model in `us-central1` because that is where a preview model launched,
+and nothing objects.
+
+So the gateway takes an **allowed-region list** (default: the EU regions and `eu`), and a model
+configured outside it **refuses to start**, naming the model and the region. Combined with FR-10's
+per-request recording, the claim becomes: configuration cannot express a non-EU region, and every
+request carries evidence of where it went.
+
+An organisation that deliberately wants a non-EU region changes one setting and thereby makes an
+explicit decision — which is the point.
+
+### 5.6 Configuration
 
 ```
 AIRA_VERTEX_PROJECT=my-project
-AIRA_VERTEX_CREDENTIALS=<service-account JSON>   # FRD-116 replaces this source
-AIRA_VERTEX_MODELS=eu:gemini-2.5-pro,europe-west1:gemini-2.0-flash
+AIRA_VERTEX_CREDENTIALS=<service-account JSON>     # FRD-116 replaces this source
+AIRA_VERTEX_ALLOWED_REGIONS=eu,europe-west1,europe-west4
+AIRA_VERTEX_MODELS=eu/google/gemini-2.5-pro,eu/anthropic/claude-sonnet-4-5@20250929
 ```
 
-Registered only when configured, exactly as `FRD-304`'s adapter is — so an unconfigured deployment
-behaves as it does today.
+`region/publisher/model` per entry — the three things FR-2 and FR-4 need. Registered only when
+configured, so an unconfigured deployment behaves exactly as today.
 
 ## 6. Data Model
 
-`request_logs` gains `provider` and `region` (nullable; migration). Reporting (`FRD-601`) can then
-break down by them, which is what makes FR-3 auditable rather than merely configured.
+`request_logs` gains `provider`, `publisher` and `region` (nullable; one migration). `FRD-601`'s
+reporting can then break down by them — which is what turns FR-10 from a log line into an
+answerable question.
 
 ## 7. API / Interface Contract
 
-No public API change. Internal: the `Upstream` protocol, unchanged.
+No public API change. Internal: `Upstream`, unchanged — and that is an acceptance criterion, not an
+observation (§10).
 
 ## 8. Security & Privacy
 
-- **The service-account key is the most valuable secret in the deployment.** FR-6 governs it, and
-  `FRD-116` is where it should ultimately live. Until then it is an environment variable and that
-  fact is a known, documented gap — not a design.
-- FR-5: TLS verification on.
-- The token holder keeps the access token in memory only, never persisted or logged.
-- Region recorded per request (§5.3) so residency is evidenced, not asserted.
+- **The service-account key is the most valuable secret in the deployment.** FR-8 governs it;
+  `FRD-116` is where it should live. Until then it is an environment variable, and that is a
+  documented gap rather than a design.
+- FR-7: TLS verification on.
+- FR-5 + FR-10: residency enforced at startup and evidenced per request.
+- Access tokens live in memory only.
+- Both publishers under one credential means one IAM grant to review — an advantage, provided the
+  grant is scoped to the models actually used rather than to the project.
 
 ## 9. Observability
 
-- `aira.upstream.provider`, `aira.upstream.region` on the span and the audit row.
-- A metric or log line on token refresh — success, failure, and the age at refresh. A credential
-  that quietly stopped refreshing is otherwise found by an outage.
-- `/readyz` reports adapter reachability per `FRD-117`, without exposing the credential.
+- `aira.upstream.provider`, `aira.upstream.publisher`, `aira.upstream.region` on spans and audit
+  rows.
+- Token refresh logged with outcome and token age at refresh. A credential that quietly stopped
+  refreshing is otherwise discovered by an outage.
+- Quota/429 responses distinguished from other upstream failures — per-model, per-region Vertex
+  quota is a different operational problem from a model being down, and `FRD-117`'s readiness
+  probe should not confuse them.
 
 ## 10. Testing & Acceptance Criteria
 
-- **Unit (hermetic, `MockTransport`)** — the URL is built correctly for a regional and for the `eu`
-  endpoint; the bearer header is set; request and response mapping match `FRD-304`'s; upstream
-  status codes pass through as they already do.
+- **Unit (hermetic, `MockTransport`)** — URLs built correctly for a regional host, the `eu`
+  multi-region, and both publishers with their respective methods; the bearer header set; upstream
+  status codes passed through as they already are.
 - **Unit (token holder)** — refreshes before expiry against an injected clock; concurrent callers
   produce **one** fetch; a failed refresh with a valid token keeps serving; an expired token with a
-  failing refresh raises `UpstreamError` and not a client error. The single-flight property is
-  written to fail first against a naive implementation.
+  failing refresh raises `UpstreamError`, not a client error. The single-flight property written to
+  fail first against a naive implementation.
 - **Unit (registry)** — a duplicate model name across providers **refuses to start**, naming both.
-- **Unit (secrets)** — the credential appears in no log record, span attribute or error message
-  produced by the adapter. Asserted by capturing all three during a failing call.
-- **Integration** — against a real project, if credentials are available in the environment;
-  skipped with a clear reason otherwise. It must assert the recorded region.
-- **Mutation** — TLS verification is actually on; the duplicate-name check actually refuses; the
-  refresh threshold is actually below expiry.
+- **Unit (residency)** — a model configured in a disallowed region **refuses to start**, naming
+  both. Written to fail first against a warning-only implementation.
+- **Unit (naming)** — a real Anthropic model name with `@` survives validation, URL construction,
+  Kafka key round-trip and reporting group-by.
+- **Unit (secrets)** — the credential appears in no log record, span attribute or error message.
+  Asserted by capturing all three during a failing call.
+- **Architecture assertion** — the diff for this FRD touches nothing outside `upstreams/`, the
+  settings, the migration and the tests. If it does, `FRD-100`'s canonical core is less
+  provider-agnostic than claimed and that is worth finding out here rather than at the third vendor.
+- **Integration** — against the real project where credentials exist; skipped with a clear reason
+  otherwise. Must assert the recorded region and publisher.
+- **Mutation** — TLS verification actually on; the duplicate-name check actually refuses; the
+  region allow-list actually refuses; the refresh threshold actually below expiry.
 
 **Acceptance**
-- *Given* a Vertex-configured gateway, *when* a request is dispatched, *then* it is processed at
-  the configured region, the audit row records provider and region, and the credential appears
-  nowhere in logs, spans or the response.
-- *Given* the same model name configured on two adapters, *when* the gateway starts, *then* it
-  refuses to start and names both.
+- *Given* a Vertex-configured gateway, *when* a request is dispatched to a Gemini and to an
+  Anthropic model, *then* both are processed in the configured EU region, both audit rows record
+  provider, publisher and region, and the credential appears nowhere in logs, spans or responses.
+- *Given* a model configured in `us-central1`, *when* the gateway starts, *then* it refuses and
+  names the model and the region.
 
 ## 11. Dependencies & Risks
 
-- **`FRD-116`** for the credential source; this FRD ships before it and says so.
-- **Risk — clock skew** breaks JWT assertions. Mitigated by a small leeway and by an error message
-  that names skew as a likely cause, because otherwise it presents as an unexplained 401.
-- **Open — does the residency requirement actually apply to AIRA?** The predecessor's configuration
-  implies it. If confirmed, this FRD is not optional and moves ahead of most of the programme; if
-  not, it is a straightforward improvement. **This is the single most schedule-relevant open
-  question in the programme.**
+- **`FRD-119`** for the Anthropic dialect; **`FRD-116`** for the credential source; **`FRD-114`**
+  so a model's publisher and capabilities are declared rather than inferred.
+- **Open — which surface of "Gemini Enterprise" do we call?** Two readings, and they lead to
+  different adapters:
+  1. **Model Garden raw model access** (assumed here): the platform is the procurement and
+     governance vehicle; we call the Vertex publisher endpoints directly. Everything above is
+     written for this.
+  2. **The agent platform's own API**: assistants, data stores, grounded answers. That is not a
+     model API and would be a different upstream with different semantics — grounding citations,
+     server-side conversation state — none of which the canonical core models today.
+
+  The phrasing "to access the Gemini and Anthropic models" reads as (1), which is why this FRD
+  assumes it. **Confirm before implementation** — one authenticated `curl` against the project's
+  `publishers/anthropic` endpoint settles it in a minute, and getting it wrong is a rewrite rather
+  than a correction.
+- **Risk — clock skew** breaks JWT assertions and presents as an unexplained 401. Small leeway
+  plus an error message that names skew as a likely cause.
+- **Risk — Model Garden requires per-model enablement** in the project. A model that is configured
+  but not enabled fails at first call, not at startup. `FRD-117`'s readiness probe should surface
+  it; the error message must distinguish "not enabled" from "not found".
 
 ## 12. Rollout / Demo
 
-Demo mode is unaffected — the mock stays the default and Vertex registers only when configured.
-`deploy/compose/README.md` gains the configuration and a note that a service-account key in an
-environment variable is an interim arrangement until `FRD-116`.
+Demo mode unaffected: the mock stays the default and Vertex registers only when configured.
+`deploy/compose/README.md` gains the configuration, the region allow-list, and a note that a
+service-account key in an environment variable is interim until `FRD-116`.

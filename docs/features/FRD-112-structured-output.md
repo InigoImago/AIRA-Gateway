@@ -74,14 +74,28 @@ passed through as `dict[str, Any]`. Three reasons, in order of importance:
 3. The KIRA surface (`FRD-107`) and the Gemini surface can then be two mappings onto one model,
    which is the whole reason the canonical core exists.
 
-### 5.2 On the wire
+### 5.2 On the wire — one capability, two mechanisms
 
-Gemini already has this, so the mapping is direct: `generationConfig.responseMimeType =
-"application/json"` and `generationConfig.responseSchema = <schema>`. The canonical request carries
-`response_schema: Schema | None`, and adapters that do not support it are excluded by FR-4 before
-they are ever asked.
+Gemini has the feature directly: `generationConfig.responseMimeType = "application/json"` and
+`generationConfig.responseSchema = <schema>`.
 
-### 5.3 The check belongs after routing — and this is the interesting part
+**Anthropic has no schema parameter at all.** The equivalent is a forced tool call — one tool whose
+`input_schema` is the caller's schema, `tool_choice` pinned to it, and the model's tool input read
+back as the document (`FRD-119` §5.5).
+
+So `structured_output` in `FRD-114` means "this model can do it **by some mechanism**", and which
+one is the adapter's business. Two things follow that are easy to get wrong:
+
+- **A schema field with no faithful equivalent is a refusal, not a silent drop.** Anthropic's
+  `input_schema` is JSON Schema and our subset is OpenAPI-3.0-flavoured; most fields translate, and
+  a caller who constrained a value and quietly got an unconstrained answer has been misled.
+- **A model that answers with prose instead of calling the tool has not satisfied the schema.**
+  That is FR-6, and with this mechanism it is a real path rather than a defensive one.
+
+The canonical request carries `response_schema: Schema | None`; adapters without the capability are
+excluded by FR-4 before they are ever asked.
+
+### 5.3 The check belongs after routing — and with two vendors it is load-bearing
 
 `FRD-300` gives a use case a `model_route` step (an LLM classifier picks a model per category) and
 a `fallback_models` dispatch chain. Both mean **the model that answers is not necessarily the model

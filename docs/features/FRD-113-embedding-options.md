@@ -58,6 +58,10 @@ model). All three matter to the consumer:
   naming the bound.
 - **FR-6 Metering.** A batch of *n* texts counts as **n** against request-shaped limits, not one
   (§5.3).
+- **FR-6a Not every vendor embeds.** Anthropic models have no embedding endpoint. The request is
+  refused by `FRD-114`'s capability declaration **before dispatch**, naming the model — never by an
+  adapter raising deep in the call stack, and never by a routing decision that quietly sends an
+  embedding to a model that cannot serve one.
 - **FR-7 Empty input is refused.** Neither an empty string, nor an empty list, nor a list
   containing an empty string — the predecessor's rule, and it prevents a class of accidental
   no-op billing.
