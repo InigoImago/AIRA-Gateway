@@ -32,6 +32,8 @@ from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as postgres_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from aira_common.counters import CountersUnavailable, DegradationLog
@@ -333,25 +335,16 @@ class BudgetService:
         now = now or datetime.now(UTC)
         async with self._sessionmaker() as session:
             for budget in budgets:
-                scope_key = _scope_key(budget)
-                period_key = _period_key(budget.period, now)
-                record = await session.get(BudgetUsage, (scope_key, period_key))
-                if record is None:
-                    record = BudgetUsage(
-                        scope_key=scope_key,
-                        period_key=period_key,
-                        tokens=0,
-                        requests=0,
-                        cost_nanos=0,
-                        unpriced_requests=0,
+                await session.execute(
+                    _accumulate(
+                        session,
+                        scope_key=_scope_key(budget),
+                        period_key=_period_key(budget.period, now),
+                        tokens=tokens,
+                        requests=requests,
+                        cost_nanos=cost_nanos,
                     )
-                    session.add(record)
-                record.tokens += tokens
-                record.requests += requests
-                if cost_nanos is None:
-                    record.unpriced_requests += requests
-                else:
-                    record.cost_nanos += cost_nanos
+                )
             await session.commit()
 
     async def usage(self, use_case: str, now: datetime | None = None) -> list[dict[str, Any]]:
@@ -406,3 +399,58 @@ class BudgetService:
         if record is None:
             return _Usage(0, 0, 0, 0)
         return _Usage(record.tokens, record.requests, record.cost_nanos, record.unpriced_requests)
+
+
+def _accumulate(
+    session: AsyncSession,
+    *,
+    scope_key: str,
+    period_key: str,
+    tokens: int,
+    requests: int,
+    cost_nanos: int | None,
+) -> Any:
+    """One statement that inserts the counter or adds to it. **Found by concurrency, twice.**
+
+    This was a read, then an insert-or-modify, then a commit, and both halves were racy:
+
+    - Two requests arriving as the *first* of a period both found no row and both inserted one.
+      One lost, with a ``UniqueViolation`` that reached the caller as a **500** for a request the
+      gateway had already served and charged for. Twenty concurrent requests against a fresh
+      budget produced two of them, every run.
+    - Two requests updating an *existing* row each read the old value and wrote an absolute new
+      one, so an increment was silently discarded. That failure has no error at all: the counter
+      that is supposed to be the system of record drifts **below** the truth, in the direction
+      that spends money, under exactly the load that makes a budget matter.
+
+    So the arithmetic moves into the database, where the row is locked for the statement's
+    duration. ``ON CONFLICT`` is spelled the same way by Postgres and SQLite and by nobody else,
+    which is why the dialect is dispatched on rather than assumed.
+
+    ``cost_nanos`` of ``None`` means the model had no price on file. It is counted under
+    ``unpriced_requests`` rather than as zero: a spend figure that silently omits traffic is worse
+    than one that admits what it does not know (`FRD-403`).
+    """
+    unpriced = requests if cost_nanos is None else 0
+    values = {
+        "scope_key": scope_key,
+        "period_key": period_key,
+        "tokens": tokens,
+        "requests": requests,
+        "cost_nanos": cost_nanos or 0,
+        "unpriced_requests": unpriced,
+    }
+    dialect = session.bind.dialect.name if session.bind is not None else "postgresql"
+    insert = postgres_insert if dialect == "postgresql" else sqlite_insert
+    statement = insert(BudgetUsage).values(**values)
+
+    columns = BudgetUsage.__table__.c
+    return statement.on_conflict_do_update(
+        index_elements=["scope_key", "period_key"],
+        set_={
+            "tokens": columns.tokens + tokens,
+            "requests": columns.requests + requests,
+            "cost_nanos": columns.cost_nanos + (cost_nanos or 0),
+            "unpriced_requests": columns.unpriced_requests + unpriced,
+        },
+    )

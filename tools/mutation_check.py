@@ -92,6 +92,7 @@ ATTACHMENTS = "gateway/tests/test_attachments.py"
 KIRA = "gateway/tests/test_kira_surface.py"
 TOKENS = "libs/tests/test_tokens.py"
 CATALOG_DECLARATION = "management/backend/tests/test_catalog_declaration.py"
+OPENAI_DIALECT = "gateway/tests/test_openai_dialect.py"
 THINKING = "gateway/tests/test_thinking.py gateway/tests/test_serving_options.py"
 RESPONSE_SCHEMA = "gateway/tests/test_response_schema.py gateway/tests/test_serving_options.py"
 EMBEDDING = "gateway/tests/test_embedding_options.py gateway/tests/test_serving_options.py"
@@ -1459,6 +1460,82 @@ MUTATIONS = [
         "            if units > bucket.capacity:",
         "            if False:",
         f"{RATELIMIT} {EMBEDDING}",
+    ),
+    Mutation(
+        "B8",
+        "the usage counter is accumulated by the database, not read-modify-written in Python",
+        "gateway/src/aira_gateway/budgets/service.py",
+        "            \"tokens\": columns.tokens + tokens,",
+        '            "tokens": tokens,',
+        f"{BUDGET_SERVICE} {COST}",
+    ),
+    # ---- the third dialect (FRD-123) ---------------------------------------------------------
+    #
+    # O1 is a defect that reached a running system: it was correct while Google was the only
+    # vendor and wrong the moment a model name contained a colon.
+    Mutation(
+        "O1",
+        "the verb is split off the *last* colon, so a model name may contain one",
+        "gateway/src/aira_gateway/api/gemini/routes.py",
+        "    model, separator, method = resource.rpartition(\":\")",
+        '    model, separator, method = resource.partition(":")',
+        OPENAI_DIALECT,
+    ),
+    Mutation(
+        "O2",
+        "a streamed request asks for the usage the vendor otherwise never reports",
+        "gateway/src/aira_gateway/upstreams/openai/mapping.py",
+        '        body["stream_options"] = {"include_usage": True}',
+        "        pass",
+        OPENAI_DIALECT,
+    ),
+    Mutation(
+        "O3",
+        "usage in a chunk with no choices is read rather than dropped",
+        "gateway/src/aira_gateway/upstreams/openai/mapping.py",
+        "        return CanonicalChunk(text_delta=\"\", finish_reason=None, usage=usage) if usage else None",  # noqa: E501
+        "        return None",
+        OPENAI_DIALECT,
+    ),
+    Mutation(
+        "O4",
+        "a token budget is refused rather than rounded to an effort level",
+        "gateway/src/aira_gateway/upstreams/openai/mapping.py",
+        "    if setting.mode is ThinkingMode.LIMITED:",
+        "    if False:",
+        OPENAI_DIALECT,
+    ),
+    Mutation(
+        "O5",
+        "a document is refused rather than sent to a dialect that carries only images",
+        "gateway/src/aira_gateway/upstreams/openai/mapping.py",
+        '        if not part.media_type.startswith("image/"):',
+        "        if False:",
+        OPENAI_DIALECT,
+    ),
+    Mutation(
+        "O6",
+        "vectors are returned in the order submitted, not the order received",
+        "gateway/src/aira_gateway/upstreams/openai/mapping.py",
+        '    entries.sort(key=lambda entry: int(entry.get("index", 0)))',
+        "    pass",
+        OPENAI_DIALECT,
+    ),
+    Mutation(
+        "O7",
+        "two servers under one name refuse to start",
+        "gateway/src/aira_gateway/upstreams/openai/__init__.py",
+        "        if name in seen:",
+        "        if False:",
+        OPENAI_DIALECT,
+    ),
+    Mutation(
+        "O8",
+        "a server declaring no models refuses to start",
+        "gateway/src/aira_gateway/upstreams/openai/__init__.py",
+        "        if not server.serves_anything:",
+        "        if False:",
+        OPENAI_DIALECT,
     ),
 ]
 

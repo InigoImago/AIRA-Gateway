@@ -58,7 +58,7 @@ from aira_gateway.routes.health import router as health_router
 from aira_gateway.upstreams.base import ProviderRegistry, Upstream
 from aira_gateway.upstreams.gemini import build_gemini_upstream
 from aira_gateway.upstreams.mock import MockProvider
-from aira_gateway.upstreams.openai import build_local_upstream
+from aira_gateway.upstreams.openai import build_openai_upstreams
 from aira_gateway.upstreams.vertex import build_vertex_upstreams
 
 
@@ -110,11 +110,11 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
     # Vertex EU (FRD-115). Every failure it can raise — unusable credentials, a model in a region
     # this deployment does not permit — happens here, at startup, on purpose.
     providers.extend(build_vertex_upstreams(settings))
-    # A local OpenAI-compatible endpoint (FRD-123), when one is configured. It goes through the
-    # same registry as every other adapter — so it passes the same pre-dispatch gate, pipeline,
-    # dispatch chain and audit writer, which is what makes it a *verification* of the governed
-    # path rather than a hole beside it.
-    providers.extend(build_local_upstream(settings))
+    # Servers speaking the OpenAI dialect (FRD-123) — one adapter per declared machine, each
+    # audited under its own name. They go through the same registry as every other adapter, so
+    # they pass the same pre-dispatch gate, pipeline, dispatch chain and audit writer: a
+    # self-hosted upstream is governed exactly like a cloud one, or it is a hole beside it.
+    providers.extend(build_openai_upstreams(settings))
     registry = ProviderRegistry(providers)
     app.state.providers = registry
     app.state.pipeline_engine = PipelineEngine(registry)

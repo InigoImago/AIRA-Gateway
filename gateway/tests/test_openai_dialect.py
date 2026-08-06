@@ -36,8 +36,13 @@ from aira_gateway.core.canonical import (
     Thinking,
 )
 from aira_gateway.core.schema import parse as parse_schema
-from aira_gateway.upstreams.base import UpstreamError
-from aira_gateway.upstreams.openai import build_local_upstream
+from aira_gateway.residency import RegionNotAllowed
+from aira_gateway.upstreams.base import AmbiguousModel, ProviderRegistry, UpstreamError
+from aira_gateway.upstreams.openai import (
+    ServerSpecInvalid,
+    build_openai_upstreams,
+    parse_servers,
+)
 from aira_gateway.upstreams.openai.adapter import OpenAIAdapter
 from aira_gateway.upstreams.openai.mapping import (
     DialectUnsupported,
@@ -331,26 +336,168 @@ def test_every_model_records_where_it_ran() -> None:
     assert described.region == "on-premises"
 
 
-def test_no_url_registers_no_adapter() -> None:
-    """A verification tool that appears in a deployment nobody asked for it in eventually serves
-    production traffic."""
-    assert build_local_upstream(GatewaySettings()) == []
+def test_no_configuration_registers_no_adapter() -> None:
+    """A system that appears in a deployment nobody asked for it in eventually serves production
+    traffic."""
+    assert build_openai_upstreams(GatewaySettings()) == []
 
 
 def test_a_url_with_no_models_registers_nothing_either() -> None:
     settings = GatewaySettings(ollama_url="http://localhost:11434")
-    assert build_local_upstream(settings) == []
+    assert build_openai_upstreams(settings) == []
 
 
-def test_a_configured_endpoint_registers_both_model_kinds() -> None:
+def test_the_single_endpoint_shorthand_is_one_server_named_ollama() -> None:
     settings = GatewaySettings(
         ollama_url="http://localhost:11434",
         ollama_models="qwen3:0.6b",
         ollama_embedding_models="all-minilm",
         ollama_region="on-premises",
+        allowed_regions="on-premises",
     )
-    described = {model.name: model for model in build_local_upstream(settings)[0].models()}
+    described = {model.name: model for model in build_openai_upstreams(settings)[0].models()}
 
     assert set(described) == {"qwen3:0.6b", "all-minilm"}
     assert described["qwen3:0.6b"].provider == "ollama"
     assert described["qwen3:0.6b"].region == "on-premises"
+
+
+# == several servers, which is the point of them being systems ===================================
+
+
+def test_each_declared_server_becomes_its_own_adapter() -> None:
+    """A deployment attaches several boxes, and each is a system in its own right — configured,
+    addressed and **audited** separately."""
+    spec = (
+        "gpu-a=http://gpu-a:11434|qwen3:8b|nomic-embed-text|dc-frankfurt;"
+        "gpu-b=http://gpu-b:11434|llama3.1:70b||dc-berlin"
+    )
+    settings = GatewaySettings(openai_servers=spec, allowed_regions="dc-frankfurt,dc-berlin")
+    upstreams = build_openai_upstreams(settings)
+
+    assert len(upstreams) == 2
+    described = {m.name: m for upstream in upstreams for m in upstream.models()}
+    assert set(described) == {"qwen3:8b", "nomic-embed-text", "llama3.1:70b"}
+
+
+def test_a_servers_name_reaches_the_audit_as_the_provider() -> None:
+    """ "Which machine served this, and what did that machine cost us" is unanswerable when every
+    box in the fleet logs as `ollama`."""
+    spec = "gpu-a=http://gpu-a:11434|qwen3:8b||dc-frankfurt"
+    settings = GatewaySettings(openai_servers=spec, allowed_regions="dc-frankfurt")
+    described = build_openai_upstreams(settings)[0].models()[0]
+
+    assert described.provider == "gpu-a"
+    assert described.region == "dc-frankfurt"
+
+
+def test_the_shorthand_and_the_list_can_be_used_together() -> None:
+    settings = GatewaySettings(
+        openai_servers="gpu-a=http://gpu-a:11434|qwen3:8b",
+        ollama_url="http://localhost:11434",
+        ollama_models="qwen3:0.6b",
+    )
+    providers = {u.models()[0].provider for u in build_openai_upstreams(settings)}
+    assert providers == {"gpu-a", "ollama"}
+
+
+@pytest.mark.parametrize(
+    "spec",
+    [
+        "no-equals-sign",
+        "=http://gpu-a:11434|qwen3:8b",
+        "gpu-a=gpu-a:11434|qwen3:8b",  # no scheme
+        "gpu-a=http://gpu-a:11434",  # declares no models
+        "gpu-a=http://gpu-a:11434|qwen3:8b;gpu-a=http://gpu-b:11434|llama3:8b",  # duplicate name
+    ],
+)
+def test_an_unreadable_declaration_refuses_to_start(spec: str) -> None:
+    """Every one of these is a **startup** failure. A gateway that started with half its servers
+    silently dropped would answer "model not found" for the rest — which reads as a catalog
+    problem and sends whoever debugs it to entirely the wrong place."""
+    with pytest.raises(ServerSpecInvalid):
+        build_openai_upstreams(GatewaySettings(openai_servers=spec))
+
+
+def test_the_duplicate_name_message_names_the_server() -> None:
+    """Two servers under one name would each overwrite the other's rows in a report."""
+    spec = "gpu-a=http://a:11434|m1;gpu-a=http://b:11434|m2"
+    with pytest.raises(ServerSpecInvalid, match="gpu-a"):
+        parse_servers(spec)
+
+
+def test_two_servers_offering_the_same_model_refuse_to_start() -> None:
+    """The registry's existing rule, and it matters more with a fleet: last-registration-wins
+    would be a silent choice of *which machine* handled a request, invisible in every log."""
+    spec = "gpu-a=http://a:11434|qwen3:8b;gpu-b=http://b:11434|qwen3:8b"
+    upstreams = build_openai_upstreams(GatewaySettings(openai_servers=spec))
+
+    with pytest.raises(AmbiguousModel):
+        ProviderRegistry(list(upstreams))
+
+
+# == a model name with a colon in it (found live, FRD-123) =======================================
+
+
+@pytest.mark.parametrize(
+    ("resource", "expected"),
+    [
+        ("mock-1:generateContent", ("mock-1", "generateContent")),
+        ("qwen3:0.6b:generateContent", ("qwen3:0.6b", "generateContent")),
+        ("llama3.1:70b:streamGenerateContent", ("llama3.1:70b", "streamGenerateContent")),
+        ("nomic-embed-text:v1.5:embedContent", ("nomic-embed-text:v1.5", "embedContent")),
+    ],
+)
+def test_the_verb_is_split_off_the_last_colon(resource: str, expected: tuple[str, str]) -> None:
+    """Found the first time a real request reached a real local model.
+
+    Google's model names carry no colon, so splitting at the *first* one was correct for as long
+    as Google was the only vendor. A self-hosted server's names are `qwen3:0.6b` — and the split
+    turned that into the model `qwen3` with the method `0.6b:generateContent`, answering **"Model
+    'qwen3' not found"**: a message naming a model nobody asked for, pointing at the catalog
+    instead of at the parser.
+    """
+    from aira_gateway.api.gemini.routes import split_resource
+
+    model, separator, method = split_resource(resource)
+    assert (model, method) == expected
+    assert separator == ":"
+
+
+def test_a_resource_with_no_verb_still_reports_a_missing_method() -> None:
+    """The empty separator is what the route tests for. Splitting from the right must not turn
+    "you forgot the method" into "the model is called nothing"."""
+    from aira_gateway.api.gemini.routes import split_resource
+
+    assert split_resource("mock-1") == ("", "", "mock-1")
+
+
+# == residency, corrected by a live request (FRD-123) ============================================
+
+
+def test_a_server_declares_no_region_unless_one_is_named() -> None:
+    """No claim, nothing to enforce, and a laptop keeps working. The evidence is opt-in."""
+    settings = GatewaySettings(ollama_url="http://localhost:11434", ollama_models="m1")
+    assert build_openai_upstreams(settings)[0].models()[0].region == ""
+
+
+def test_a_named_region_must_be_permitted_and_the_gateway_says_so_at_startup() -> None:
+    """The correction the first live request forced. `RegionAllowed` checks *every* model that
+    declares a region — as it should — so a server named into a region nobody permitted refused
+    every request with a 400. That reads as an upstream problem. Failing to start names the
+    setting instead."""
+    settings = GatewaySettings(
+        openai_servers="gpu-a=http://gpu-a:11434|qwen3:8b||dc-frankfurt",
+        allowed_regions="eu,europe-west1",
+    )
+    with pytest.raises(RegionNotAllowed, match="dc-frankfurt"):
+        build_openai_upstreams(settings)
+
+
+def test_a_permitted_local_region_starts_and_is_recorded() -> None:
+    """Opting in to the claim gets the claim: the audit row says where the request went."""
+    settings = GatewaySettings(
+        openai_servers="gpu-a=http://gpu-a:11434|qwen3:8b||dc-frankfurt",
+        allowed_regions="eu,dc-frankfurt",
+    )
+    assert build_openai_upstreams(settings)[0].models()[0].region == "dc-frankfurt"

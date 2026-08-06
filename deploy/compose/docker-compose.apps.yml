@@ -40,6 +40,14 @@ services:
       AIRA_OIDC_JWKS_URI: ${AIRA_OIDC_JWKS_URI:-http://keycloak:8080/realms/aira/protocol/openid-connect/certs}
       AIRA_OIDC_AUDIENCE: ${AIRA_OIDC_AUDIENCE:-}
       AIRA_GOOGLE_API_KEY: ${AIRA_GOOGLE_API_KEY:-}
+      # Servers speaking the OpenAI dialect (FRD-123). Empty registers none. The in-network name
+      # is `ollama`, not `localhost` — the same split as the JWKS URI above, and the same reason.
+      AIRA_OPENAI_SERVERS: ${AIRA_OPENAI_SERVERS:-}
+      AIRA_OLLAMA_URL: ${AIRA_OLLAMA_URL:-}
+      AIRA_OLLAMA_MODELS: ${AIRA_OLLAMA_MODELS:-}
+      AIRA_OLLAMA_EMBEDDING_MODELS: ${AIRA_OLLAMA_EMBEDDING_MODELS:-}
+      AIRA_OLLAMA_REGION: ${AIRA_OLLAMA_REGION:-}
+      AIRA_ALLOWED_REGIONS: ${AIRA_ALLOWED_REGIONS:-}
       AIRA_OTEL_ENABLED: ${AIRA_OTEL_ENABLED:-false}
       AIRA_OTEL_ENDPOINT: http://otel-collector:4318
       AIRA_LOG_JSON: "true"

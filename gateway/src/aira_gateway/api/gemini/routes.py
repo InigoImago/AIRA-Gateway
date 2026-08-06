@@ -72,6 +72,24 @@ _log = get_logger("aira_gateway")
 router = APIRouter(tags=["gemini"])
 
 
+def split_resource(resource: str) -> tuple[str, str, str]:
+    """``model:method`` → the two parts, splitting at the **last** colon.
+
+    Not the first. Google's model names carry none, so `partition` was correct for as long as
+    Google was the only vendor — and then a self-hosted server arrived whose names are
+    `qwen3:0.6b` and `llama3.1:70b`. Splitting at the first colon turned that into the model
+    `qwen3` and the method `0.6b:generateContent`, which surfaced as **"Model \'qwen3\' not
+    found"**: a message naming a model the caller never asked for, pointing at the catalog
+    instead of at the parser.
+
+    The method never contains a colon and the model may, so the last one is the separator. Found
+    the first time a real request was sent to a real local model, which is the entire argument for
+    having one (`FRD-123`).
+    """
+    model, separator, method = resource.rpartition(":")
+    return (model, separator, method) if separator else ("", "", resource)
+
+
 def _first_error(exc: ValidationError) -> str:
     first = exc.errors()[0]
     location = ".".join(str(part) for part in first.get("loc", ()))
@@ -152,7 +170,7 @@ async def generate(resource: str, request: Request) -> Response:
     to bypass the pre-dispatch gate, because the gate lived inside one branch instead of on the
     path every branch takes. So the branches *raise* and the boundary records (FRD-122 §5.1).
     """
-    model, _, method = resource.partition(":")
+    model, _, method = split_resource(resource)
     trail = AuditTrail(operation=method or "unknown", requested_model=model)
     started = time.monotonic()
     try:
@@ -219,7 +237,7 @@ async def _write_refusal(
 
 
 async def _generate(resource: str, request: Request, trail: AuditTrail) -> Response:
-    model, separator, method = resource.partition(":")
+    model, separator, method = split_resource(resource)
     if not separator:
         raise GeminiHTTPError(
             400, f"Missing method in '{resource}' (expected model:method).", "INVALID_ARGUMENT"

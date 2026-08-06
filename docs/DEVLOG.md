@@ -5,6 +5,55 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-06 — the first real requests, and three defects
+Ollama attached as **systems, plural** — `AIRA_OPENAI_SERVERS` takes a list of named servers, each
+with its own URL, models and region, because a self-hosted fleet is several machines and "which box
+served this request" is exactly what an audit exists to answer. Every server's name reaches the
+audit row as the provider; with one endpoint setting they would all have logged as `ollama`.
+
+Then a live suite (`tests/integration/test_governed_path.py`): a real API key bound to a real use
+case, real HTTP through the deployed gateway, and the database read afterwards. Fourteen cases —
+served-and-stored, payloads-off, budgets, budget exhaustion, refusals recorded, the tenant
+boundary, revocation, and concurrency. It found three things.
+
+**1. A model name may contain a colon.** `model:method` was split at the *first* one, which was
+correct for as long as Google was the only vendor. A self-hosted model is called `qwen3:0.6b`, so
+the split produced the model `qwen3` and the method `0.6b:generateContent`, and the answer was
+**"Model 'qwen3' not found"** — a message naming a model nobody asked for, pointing at the catalog
+instead of at the parser. The verb never contains a colon and the model may, so it splits from the
+right.
+
+**2. A comment claimed a rule the system did not have.** `build_openai_upstreams` said a locally
+declared region was "recorded, not checked" — and the first real request came back *"runs in
+'on-premises', and this request may only be processed in [...]"*, because `RegionAllowed` quite
+correctly checks every model that declares one. The comment described an intention; the code had a
+rule; the rule was right. So a server now declares **no** region unless the operator names one —
+no claim, nothing to enforce, a laptop keeps working — and naming one opts in to both the evidence
+and the check, which happens **at startup** rather than as a 400 on every request.
+
+**3. The budget counter was racy in two ways, and one of them was silent.** Twenty concurrent
+requests against a fresh budget produced two **500s**: `record` read the counter, inserted it when
+absent, and committed, so two requests arriving as the *first* of a period both inserted and one
+lost on the primary key — a 500 for a request that had already been served and charged for.
+
+The quieter half has no error at all. `record.tokens += n` reads the loaded value and writes an
+**absolute** one, so two overlapping writes discard an increment. The counter that is supposed to
+be the system of record drifts *below* the truth, in the direction that spends money, under exactly
+the load that makes a budget matter. Both are closed by moving the arithmetic into an upsert, where
+the row is locked for the statement — dialect-dispatched, because `ON CONFLICT` is spelled the same
+by Postgres and SQLite and by nobody else.
+
+Two hermetic tests were written for it and **both were shown to fail against the old code** before
+the fix went in; `B8` is the mutation. Worth noting what this says about the layers: 955 hermetic
+tests, 164 mutations and a 96% coverage gate all passed over this defect for months, because a
+single-threaded SQLite suite cannot express "two requests at once" and the mock never produced one.
+
+Still open: the model blobs come from `*.r2.cloudflarestorage.com`, which the sandbox denies, so
+`FRD-111` FR-6 and `FRD-112` FR-6 remain unanswered against a real model. Everything up to the
+upstream call is now exercised end to end.
+
+---
+
 ## 2026-08-06 — a real model in the stack (FRD-123)
 The mock agrees with us by construction: it reports the token counts we tell it to, truncates when
 we say so, and produces documents matching the schema because the same person wrote both sides. A

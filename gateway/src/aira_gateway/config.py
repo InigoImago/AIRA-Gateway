@@ -115,15 +115,28 @@ class GatewaySettings(BaseAiraSettings):
     #: Backstop for Anthropic's required ``max_tokens`` when the catalog declares no default.
     vertex_default_max_tokens: int = 4096
 
-    # Local models over an OpenAI-compatible endpoint (FRD-123). Registered **only** when a URL
-    # is set — a verification tool that appears in a deployment nobody asked for it in eventually
-    # serves production traffic. `AIRA_OLLAMA_REGION` is recorded on every audit row: a
+    # Servers speaking the OpenAI dialect (FRD-123) — Ollama boxes, self-deployed endpoints,
+    # later Foundry. **A list, because they are separate systems**: a deployment can attach several,
+    # and each one is configured, priced and *audited* under its own name. With a single endpoint
+    # setting, "which machine served this request" has no answer, which for a self-hosted fleet is
+    # exactly the question an audit exists to answer.
+    #
+    #   name=url|models|embedding_models|region, entries separated by ';'
+    #   gpu-a=http://gpu-a:11434|qwen3:8b|nomic-embed-text|dc-frankfurt;gpu-b=http://gpu-b:11434|...
+    openai_servers: str = ""
+
+    # The single-endpoint shorthand, equivalent to one entry above and named `ollama`. Registered
+    # **only** when a URL is set — a system that appears in a deployment nobody asked for it in
+    # eventually serves production traffic. `AIRA_OLLAMA_REGION` is recorded on every audit row: a
     # self-hosted model is the strongest residency story available, and one nothing records is a
     # claim rather than evidence.
     ollama_url: str = ""
     ollama_models: str = ""
     ollama_embedding_models: str = ""
-    ollama_region: str = "on-premises"
+    #: Empty by default: **no residency claim**, so nothing to enforce and a laptop keeps working.
+    #: Naming one opts in to the evidence *and* to the check — the name must then also appear in
+    #: `AIRA_ALLOWED_REGIONS`, or the gateway refuses to start and says so.
+    ollama_region: str = ""
     #: Generous on purpose: a cold self-deployed model loads for a minute or more, and treating
     #: that as an outage is the first way to get `ADR-0012` §5 wrong.
     ollama_timeout_seconds: float = 300.0
