@@ -70,6 +70,7 @@ class Mutation:
     tests: str
 
 
+NO_SILENT_DROP = "gateway/tests/test_no_silent_drop.py"
 RATELIMIT = "gateway/tests/test_ratelimit.py"
 RATELIMIT_ROUTES = "gateway/tests/test_ratelimit_routes.py"
 BUDGET_RESERVATION = "gateway/tests/test_budget_reservation.py"
@@ -1777,6 +1778,75 @@ MUTATIONS = [
         "    elif isinstance(exc, GeminiHTTPError):",
         "    elif False:",
         f"{EDGE} {KIRA}",
+    ),
+    # -- FRD-124: nothing a request asks for is accepted and thrown away ------------------------
+    #
+    # The whole family came from one live run: eleven of twelve legitimately-sendable fields were
+    # answered 200 and ignored. Each mutation below restores one of those silences.
+    Mutation(
+        "Y1",
+        "a field this gateway does not serve is refused rather than accepted and ignored",
+        "gateway/src/aira_gateway/api/gemini/schemas.py",
+        '            raise ValueError(f"\'{field}\' is not served by this gateway: {reason}")',
+        "            pass",
+        NO_SILENT_DROP,
+    ),
+    Mutation(
+        "Y2",
+        "a field nobody modelled is refused naming it, rather than silently dropped",
+        "gateway/src/aira_gateway/api/gemini/schemas.py",
+        '_STRICT = ConfigDict(extra="forbid")',
+        '_STRICT = ConfigDict(extra="ignore")',
+        NO_SILENT_DROP,
+    ),
+    Mutation(
+        "Y3",
+        "a sampling control the caller set reaches the dialect instead of being dropped",
+        "gateway/src/aira_gateway/api/gemini/mapping.py",
+        "        seed=config.seed if config else None,",
+        "        seed=None,",
+        NO_SILENT_DROP,
+    ),
+    Mutation(
+        "Y4",
+        "a candidate whose dialect cannot express a control is skipped, not served without it",
+        "gateway/src/aira_gateway/api/serving.py",
+        "        checks.append(SamplingExpressible(registry_of(request), canonical.sampling_requested))",
+        "        pass",
+        NO_SILENT_DROP,
+    ),
+    Mutation(
+        "Y5",
+        "an adapter that declares no sampling support refuses rather than silently allowing all",
+        "gateway/src/aira_gateway/requirements.py",
+        '        supported: frozenset[str] = getattr(provider, "sampling_controls", frozenset())',
+        '        supported: frozenset[str] = getattr(provider, "sampling_controls", self._requested)',
+        NO_SILENT_DROP,
+    ),
+    Mutation(
+        "Y6",
+        "thinking switched off is sent as off, not as an absent parameter the model reads as its default",
+        "gateway/src/aira_gateway/upstreams/openai/mapping.py",
+        "    if request.thinking is not None:\n        body[\"reasoning_effort\"]",
+        "    if request.thinking is not None and request.thinking.mode is not ThinkingMode.DISABLED:"
+        "\n        body[\"reasoning_effort\"]",
+        f"{OPENAI_DIALECT} {NO_SILENT_DROP}",
+    ),
+    Mutation(
+        "Y7",
+        "a request for several candidates is refused rather than answered with one",
+        "gateway/src/aira_gateway/api/gemini/schemas.py",
+        "        if self.candidateCount is not None and self.candidateCount != 1:",
+        "        if False:",
+        NO_SILENT_DROP,
+    ),
+    Mutation(
+        "Y8",
+        "the compatibility surface refuses an unknown field rather than ignoring it",
+        "gateway/src/aira_gateway/api/kira/schemas.py",
+        '_STRICT_ALIASED = ConfigDict(populate_by_name=True, extra="forbid")',
+        '_STRICT_ALIASED = ConfigDict(populate_by_name=True, extra="ignore")',
+        NO_SILENT_DROP,
     ),
 ]
 

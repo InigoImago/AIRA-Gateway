@@ -22,6 +22,9 @@ from aira_gateway.core.canonical import (
 )
 from aira_gateway.upstreams.base import UpstreamError, UpstreamModel
 from aira_gateway.upstreams.gemini_mapping import (
+    SAMPLING as GEMINI_SAMPLING,
+)
+from aira_gateway.upstreams.gemini_mapping import (
     batch_embedding_body,
     canonical_to_gemini_embedding,
     canonical_to_gemini_request,
@@ -46,6 +49,8 @@ class GeminiUpstream:
             UpstreamModel(name, name, _METHODS, "generative-language", "google", "global")
             for name in models
         ]
+
+    sampling_controls = GEMINI_SAMPLING
 
     def models(self) -> list[UpstreamModel]:
         return list(self._models)

@@ -13,9 +13,16 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 _ALIASED = ConfigDict(populate_by_name=True, extra="ignore")
 
+#: Request shapes refuse what they do not model (`FRD-124`). Stage A's rule was already "an
+#: unsupported field is refused by name, never ignored", and it was enforced only for the two
+#: fields anybody had thought of. A migrating client that sends a field the predecessor accepted
+#: and this surface does not now learns so at migration time, which is the entire point of running
+#: a compatibility surface rather than hoping.
+_STRICT_ALIASED = ConfigDict(populate_by_name=True, extra="forbid")
+
 
 class TextPart(BaseModel):
-    model_config = _ALIASED
+    model_config = _STRICT_ALIASED
     text: str
 
 
@@ -23,13 +30,13 @@ class DataPart(BaseModel):
     """An attachment. `FRD-110` landed before this surface did, so Stage A carries documents —
     the plan had them arriving in Stage B, and refusing a capability we have would be silly."""
 
-    model_config = _ALIASED
+    model_config = _STRICT_ALIASED
     mime_type: str = Field(alias="mime_type")
     data: str
 
 
 class RequestContent(BaseModel):
-    model_config = _ALIASED
+    model_config = _STRICT_ALIASED
     parts: list[dict[str, Any]]
 
     @model_validator(mode="after")
@@ -45,19 +52,19 @@ class RequestContent(BaseModel):
 
 
 class ConversationContent(BaseModel):
-    model_config = _ALIASED
+    model_config = _STRICT_ALIASED
     content: RequestContent
     role: Literal["user", "model"]
 
 
 class ThinkingSetting(BaseModel):
-    model_config = _ALIASED
+    model_config = _STRICT_ALIASED
     mode: str
     tokens: int | None = None
 
 
 class ChatRequest(BaseModel):
-    model_config = _ALIASED
+    model_config = _STRICT_ALIASED
 
     request: RequestContent
     model_id: int = Field(alias="model_id")
@@ -85,7 +92,7 @@ class ChatResponse(BaseModel):
 
 
 class EmbeddingRequest(BaseModel):
-    model_config = _ALIASED
+    model_config = _STRICT_ALIASED
 
     text: str | list[str]
     model_id: int = Field(alias="model_id")

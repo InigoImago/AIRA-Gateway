@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import csv
 import io
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -236,61 +237,133 @@ def test_the_window_bounds_apply_to_csv_exactly_as_to_json() -> None:
 # == the scope rule, asserted on the file's bytes (§5.3) =========================================
 
 
-class _Principal:
-    """A caller entitled to one use case and no oversight role."""
+@pytest.fixture
+async def stack():
+    """The endpoint over a **real** reporting service holding two use cases' traffic.
+
+    Assembled rather than stubbed, and driven through HTTP rather than by calling the pieces,
+    because the mutation that survived the first version of this test proved the gap: `FRD-601`'s
+    scope tests check `visible_scope` in isolation and the service tests check the query in
+    isolation, and *nothing* checked that the endpoint connects them. Two correct halves and no
+    wire between them is precisely the shape of an export that returns more than the screen.
+    """
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+    from sqlalchemy.pool import StaticPool
+
+    from aira_gateway.db.base import Base
+    from aira_gateway.db.models import RequestLog
+    from aira_gateway.reporting.service import ReportingService
+
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        poolclass=StaticPool,
+        connect_args={"check_same_thread": False},
+    )
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with sessionmaker() as session:
+        for use_case, subject in (("kundenservice", "alice"), ("vertrieb", "bob")):
+            session.add(
+                RequestLog(
+                    subject=subject,
+                    auth_method="api_key",
+                    use_case=use_case,
+                    api="gemini",
+                    operation="generateContent",
+                    model=f"model-for-{use_case}",
+                    status=200,
+                    prompt_tokens=10,
+                    completion_tokens=20,
+                    total_tokens=30,
+                    cost_nanos=1_000_000_000,
+                    latency_ms=40,
+                    created_at=datetime.now(UTC),
+                )
+            )
+        await session.commit()
+
+    app = create_app(GatewaySettings(auth_required=False, log_queue_size=0))
+    app.state.reporting = ReportingService(sessionmaker)
+    yield app
+    await engine.dispose()
+
+
+def _as(app: Any, principal: Any) -> TestClient:
+    """Drive the endpoint as a specific caller, leaving every other rule in place."""
+    from aira_gateway.auth.dependencies import require_principal
+
+    app.dependency_overrides[require_principal] = lambda: principal
+    return TestClient(app)
+
+
+class _Member:
+    """A caller entitled to one use case and holding no oversight role."""
 
     subject = "member"
     method = "oidc"
     credential = "test"
     use_cases = ("kundenservice",)
     roles: tuple[str, ...] = ()
-
-    @property
-    def is_governance(self) -> bool:
-        return False
+    is_governance = False
 
 
-async def test_a_caller_without_oversight_exports_only_their_own_use_cases() -> None:
+class _Governance:
+    subject = "auditor"
+    method = "oidc"
+    credential = "test"
+    use_cases: tuple[str, ...] = ()
+    roles = ("it-steuerung",)
+    is_governance = True
+
+
+@pytest.mark.parametrize("breakdown", ["use_case", "model", "member"])
+async def test_a_caller_without_oversight_exports_only_their_own_use_cases(
+    stack, breakdown: str
+) -> None:
     """**The test `FRD-602` §5.3 exists for.** An export that returned more than the screen would
     be a governance failure delivered as a file — forwarded, saved, and impossible to recall.
 
-    Asserted against the bytes, not against the service call: the failure being guarded lives in
-    the rendering path, and a test that checked the *arguments* would pass against a renderer that
-    ignored them.
+    Asserted on the bytes of the downloaded file, over a real query, through the real endpoint. And
+    on **every** breakdown: the scope is applied once to the report, so a breakdown that leaked
+    would leak the model and member names rather than the use case's — the same disclosure wearing
+    a different column heading.
     """
-    from aira_gateway.api.reporting import visible_scope
+    with _as(stack, _Member()) as client:
+        response = client.get(
+            "/v1beta/reporting", headers={"Accept": "text/csv"}, params={"breakdown": breakdown}
+        )
 
-    app = create_app(GatewaySettings(auth_required=False, log_queue_size=0))
+    assert response.status_code == 200
+    body = response.content.decode("utf-8")
+    assert "vertrieb" not in body, "the export returned a use case the caller cannot see"
+    assert "bob" not in body
+    assert ("kundenservice" in body) or ("alice" in body)
 
-    seen: dict[str, Any] = {}
-    original = app.state.reporting.report
 
-    async def recording(scope, start, end):  # noqa: ANN001, ANN202
-        seen["scope"] = scope
-        return {
-            "by_use_case": [
-                {"key": name, "requests": 1, "cost_nanos": 0, "unpriced_requests": 0}
-                for name in (scope or ("kundenservice", "vertrieb", "personal"))
-            ],
-            "by_model": [],
-            "by_member": [],
-        }
+async def test_the_same_caller_sees_the_same_use_cases_in_json_and_in_csv(stack) -> None:
+    """The formats are two renderings of one answer. If they could disagree, the safe one would be
+    the one everybody reads and the leaky one the one that gets forwarded."""
+    with _as(stack, _Member()) as client:
+        as_json = client.get("/v1beta/reporting").json()
+        as_csv = client.get("/v1beta/reporting", headers={"Accept": "text/csv"}).content.decode()
 
-    app.state.reporting.report = recording
-    try:
-        with TestClient(app) as client:
-            client.app.dependency_overrides = {}
-            body = render(
-                await recording(visible_scope(_Principal()), None, None), "use_case", "EUR"
-            )
-    finally:
-        app.state.reporting.report = original
+    keys = {row["key"] for row in as_json["by_use_case"]}
+    assert keys == {"kundenservice"}
+    for key in keys:
+        assert key in as_csv
+    assert "vertrieb" not in as_csv
 
-    assert seen["scope"] == ("kundenservice",)
+
+async def test_oversight_exports_every_use_case(stack) -> None:
+    """The other half of the rule. A test that only showed somebody being *excluded* would pass
+    against an export that returned nothing at all to anyone."""
+    with _as(stack, _Governance()) as client:
+        body = client.get("/v1beta/reporting", headers={"Accept": "text/csv"}).content.decode()
+
     assert "kundenservice" in body
-    # The two the caller is not a member of must not be in the file at all.
-    assert "vertrieb" not in body
-    assert "personal" not in body
+    assert "vertrieb" in body
 
 
 def test_the_scope_decision_is_made_once_and_the_format_chosen_afterwards() -> None:

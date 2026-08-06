@@ -460,6 +460,32 @@ comment beside it already documents. **A shared library's dependencies cannot be
 environment that also installs its consumers**, and this repo's dev env, test runner and coverage
 gate are all such an environment. `libs/tests/test_declared_dependencies.py` now parses every module
 and checks; shown to fail with the declaration removed.
+**`FRD-124` done (2026-08-06) — nothing a request asks for is silently dropped.** Twelve fields a
+legitimate Google client can send were posted at the running gateway; **eleven came back 200 and
+did nothing**: `stopSequences` (unbounded output), `seed` (a different answer every call — the exact
+failure a seed exists to rule out), `tools` (prose where a function call was expected),
+`safetySettings` (a governance control applied nowhere), `candidateCount: 3` (one answer, which
+reads as the model having one thing to say). `ADR-0012`'s rule — **a chain must not degrade a
+request silently** — had only ever been pointed at the *model*; a field the *surface* drops is the
+same defect one step earlier. Three answers now: portable → carried; out of scope by `ADR-0013` →
+**refused by name with the reason**; the dialect has no word for it → **the candidate is skipped**
+(`SamplingExpressible`, the fifth requirement to share the `ADR-0012` §3 mechanism and the first
+that is a property of the **dialect**, since no catalog entry can say whether `top_k` exists — no
+dialect has all six controls). Refusal not best effort: `seed` on a Claude candidate answers
+perfectly and simply is not reproducible, and **nothing in the response differs from a correct
+one**. This **reverses `FRD-100` FR-7 on evidence** — Google's own API rejects unknown fields, so
+leniency was never the compatible choice; strictness stays **one-directional**, responses keep
+ignoring extras or every upstream release becomes an outage.
+The defect that started it: `disabled` thinking mapped to an **absent** `reasoning_effort`, with a
+comment claiming absence means off. A real reasoning model sent no such field **thinks anyway** and
+spent the whole 600-token allowance on it — empty answer, 200, reasoning stripped before the caller
+sees it. A green unit test asserted the wrong thing, because code and test came from the same idea.
+**Off has to be said out loud.**
+Two test lessons, the second one repeated: unit tests that exercise a requirement *directly* leave
+the route's wiring undefended (a mutation proved it) — **the same shape as the export's scope test
+the same day**, both invisible to coverage; and integration tests here assert **behaviour, not wire
+bodies** (a seed makes three requests return one answer), because inspecting a dict is exactly how
+the thinking defect survived a suite that appeared to test it.
 **Delivery order is fixed (ROADMAP Phase 8, 2026-08-06)**, derived from the owner's priority
 (KIRA compatibility → model connections → documents → the review findings) and the dependency that
 priority 1 needs priority 3: **`FRD-122` (audit) → `FRD-114` (metadata) → `FRD-115`+`119` (Vertex EU,

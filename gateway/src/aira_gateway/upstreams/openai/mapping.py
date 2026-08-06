@@ -55,7 +55,15 @@ SCHEMA_NAME = "aira_response"
 #: which is why `FRD-111` §5.2 said `limited` has no equivalent here and must be refused by
 #: capability rather than approximated: silently rounding a caller's 20 000-token budget to "high"
 #: would spend a different amount of money than they asked for, and nothing would say so.
+#:
+#: `disabled` maps to the value `"none"` and **not** to an absent field. Measured against a real
+#: server rather than assumed: a reasoning model sent no `reasoning_effort` **thinks anyway** — it
+#: is the model's own default, not "off" — and spends the whole output allowance doing it. The
+#: caller who explicitly switched thinking off then receives a 200, an empty or truncated answer,
+#: and a bill for several hundred tokens of reasoning that is dropped before they ever see it.
+#: `"none"` on the same server answers in about fifteen tokens.
 _REASONING_EFFORT = {
+    ThinkingMode.DISABLED: "none",
     ThinkingMode.MINIMAL: "minimal",
     ThinkingMode.LOW: "low",
     ThinkingMode.MEDIUM: "medium",
@@ -127,11 +135,10 @@ def canonical_to_openai(request: CanonicalRequest, *, stream: bool = False) -> d
     if request.max_output_tokens is not None:
         body["max_tokens"] = request.max_output_tokens
     if request.thinking is not None:
-        effort = _reasoning_effort(request.thinking)
-        if effort is not None:
-            body["reasoning_effort"] = effort
+        body["reasoning_effort"] = _reasoning_effort(request.thinking)
     if request.response_schema is not None:
         body["response_format"] = _response_format(request.response_schema)
+    _add_sampling(body, request)
     if stream:
         body["stream"] = True
         # Usage is **not** reported on a streamed response unless it is asked for, and a stream
@@ -141,10 +148,43 @@ def canonical_to_openai(request: CanonicalRequest, *, stream: bool = False) -> d
     return body
 
 
-def _reasoning_effort(setting: Thinking) -> str | None:
-    if setting.mode is ThinkingMode.DISABLED:
-        # There is no "off" value; the absence of the parameter is off, as with Anthropic.
-        return None
+#: What this dialect can express (`FRD-124`). `top_k` is absent from the OpenAI chat API and is
+#: therefore **refused** on a candidate served this way, not quietly dropped — a caller who pinned
+#: `top_k=1` for near-determinism and silently got the default is the same failure as a dropped
+#: attachment, one layer down.
+SAMPLING = frozenset({"top_p", "seed", "presence_penalty", "frequency_penalty", "stop_sequences"})
+
+
+def _add_sampling(body: dict[str, Any], request: CanonicalRequest) -> None:
+    if request.top_p is not None:
+        body["top_p"] = request.top_p
+    if request.seed is not None:
+        body["seed"] = request.seed
+    if request.presence_penalty is not None:
+        body["presence_penalty"] = request.presence_penalty
+    if request.frequency_penalty is not None:
+        body["frequency_penalty"] = request.frequency_penalty
+    if request.stop_sequences:
+        body["stop"] = list(request.stop_sequences)
+    if request.top_k is not None:
+        # Unreachable through the dispatch chain, which skips this candidate before we get here.
+        # Kept as a backstop: the requirement and the mapping have to agree, and the day they
+        # disagree the mapping is the one holding the request.
+        raise DialectUnsupported(
+            "This dialect has no 'top_k'. It is refused rather than dropped: a caller who set it "
+            "and silently received the model's default would get a different answer with a 200 on "
+            "it."
+        )
+
+
+def _reasoning_effort(setting: Thinking) -> str:
+    """The abstract level this dialect takes — including an explicit `"none"` for off.
+
+    The obvious implementation omits the field for `disabled`, on the reasoning that a parameter
+    nobody sets is a feature nobody gets. That reasoning is wrong for a *reasoning* model, whose
+    own default is to think, and the failure it produces is the worst-behaved kind: a 200 with an
+    empty answer. Off has to be said out loud.
+    """
     if setting.mode is ThinkingMode.LIMITED:
         raise DialectUnsupported(
             "This dialect takes an effort level, not a token budget, so a 'limited' thinking "

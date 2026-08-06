@@ -44,6 +44,7 @@ from aira_gateway.requirements import (
     MediaTypesSupported,
     RegionAllowed,
     Requirement,
+    SamplingExpressible,
     StructuredOutputSupported,
     ThinkingHonoured,
     permits,
@@ -201,6 +202,8 @@ def requirements_for(request: Request, canonical: CanonicalRequest | None) -> Pe
         checks.append(StructuredOutputSupported(catalog_of(request)))
     if canonical is not None and canonical.thinking is not None:
         checks.append(ThinkingHonoured(catalog_of(request), canonical.thinking))
+    if canonical is not None and canonical.sampling_requested:
+        checks.append(SamplingExpressible(registry_of(request), canonical.sampling_requested))
     return permits(checks)
 
 

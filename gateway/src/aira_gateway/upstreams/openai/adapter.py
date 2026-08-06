@@ -22,6 +22,9 @@ from aira_gateway.core.canonical import (
 )
 from aira_gateway.upstreams.base import UpstreamModel
 from aira_gateway.upstreams.openai.mapping import (
+    SAMPLING as OPENAI_SAMPLING,
+)
+from aira_gateway.upstreams.openai.mapping import (
     canonical_to_openai,
     canonical_to_openai_embedding,
     embedding_values,
@@ -68,6 +71,8 @@ class OpenAIAdapter:
         self._region = region
         self._chat = list(models)
         self._embedding = list(embedding_models or [])
+
+    sampling_controls = OPENAI_SAMPLING
 
     def models(self) -> list[UpstreamModel]:
         return [

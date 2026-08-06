@@ -19,7 +19,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, computed_field, model_validator
+from pydantic import BaseModel, ConfigDict, computed_field, model_validator
 
 from aira_common.models import ThinkingMode
 from aira_gateway.core.schema import ResponseSchema
@@ -104,12 +104,43 @@ class Thinking(BaseModel):
     tokens: int | None = None
 
 
+#: The sampling controls a request can carry beyond `temperature`, named canonically.
+#:
+#: They are listed rather than left implicit because **no dialect expresses all of them**, and the
+#: difference has to be answerable per candidate: OpenAI has no `top_k`, Anthropic has no `seed`
+#: and no penalties. `ADR-0011` rule 3 in its usual form — a flag says *whether*, the dialect says
+#: *how* — with the twist that here the honest answer is sometimes "it cannot", and that has to be
+#: a refusal rather than a dropped field.
+SAMPLING_CONTROLS = (
+    "top_p",
+    "top_k",
+    "seed",
+    "presence_penalty",
+    "frequency_penalty",
+    "stop_sequences",
+)
+
+
 class CanonicalRequest(BaseModel):
+    #: A misspelled field here would be accepted and do nothing, which is the same failure this
+    #: whole feature is about, one layer in — where it would be found by nobody.
+    model_config = ConfigDict(extra="forbid")
+
     model: str
     messages: list[CanonicalMessage]
     temperature: float | None = None
     max_output_tokens: int | None = None
     thinking: Thinking | None = None
+    #: Sampling controls (`FRD-124`). Every one of these changes the answer, and every one of them
+    #: was previously accepted at the surface and thrown away before dispatch — a caller who set a
+    #: `seed` for reproducibility got a 200 and a different answer each time, with nothing to say
+    #: why.
+    top_p: float | None = None
+    top_k: int | None = None
+    seed: int | None = None
+    presence_penalty: float | None = None
+    frequency_penalty: float | None = None
+    stop_sequences: tuple[str, ...] = ()
     #: A schema the answer must conform to (`FRD-112`). Parsed and bounded at the surface, then
     #: **forwarded, never executed** — re-validating the response would mean running
     #: caller-supplied regexes over provider output on the hot path.
@@ -130,6 +161,19 @@ class CanonicalRequest(BaseModel):
     def media_types(self) -> frozenset[str]:
         """The distinct media types this request carries. What a model must be able to read."""
         return frozenset(part.media_type for part in self.attachments)
+
+    @property
+    def sampling_requested(self) -> frozenset[str]:
+        """Which sampling controls this request actually sets.
+
+        Only what was *asked for* — a dialect that cannot express `top_k` must not refuse a request
+        that never mentioned it. An empty `stop_sequences` counts as unset for the same reason.
+        """
+        return frozenset(
+            name
+            for name in SAMPLING_CONTROLS
+            if (value := getattr(self, name)) is not None and value != ()
+        )
 
     @property
     def is_empty(self) -> bool:

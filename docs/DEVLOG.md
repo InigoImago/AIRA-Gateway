@@ -5,6 +5,83 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-06 — twelve fields, eleven silences
+
+A local model made this findable. `FRD-124`.
+
+Twelve fields a legitimate Google client can send were posted at the running gateway. **Eleven came
+back 200 and did nothing.** `stopSequences` — unbounded output. `seed` — a different answer every
+call, which is the exact failure a seed exists to rule out, presented as the model being creative.
+`tools` — prose where a function call was expected. `safetySettings` — a governance control applied
+nowhere. `candidateCount: 3` — one candidate, and one answer where three were asked for does not
+look like a partial failure, it looks like the model had one thing to say.
+
+The project has a rule for this and has had it since `ADR-0012`: **a chain must not be able to
+degrade a request silently.** A model that cannot read the PDF is skipped, never sent the prompt
+without it, because a dropped attachment produces a fluent wrong answer with a 200 and the caller
+blames the model. That rule was pointed at the *model*. It was never pointed at the *surface* — and
+a field the surface drops is the same defect one step earlier.
+
+### The one that started it
+
+`thinkingConfig: {mode: "disabled"}`. The dialect mapped `disabled` to an **absent**
+`reasoning_effort`, with a comment saying "there is no 'off' value; the absence of the parameter is
+off, as with Anthropic." Measured against a real reasoning model: sent no `reasoning_effort` it
+thinks anyway — absence selects the *model's* default, not off — and it spent the whole 600-token
+allowance doing it. Empty answer, `MAX_TOKENS`, 200. The reasoning is stripped from the response by
+design, so the caller sees a model that failed to answer, not a setting that was ignored. The same
+server sent `"none"` answers in twelve tokens.
+
+There was a unit test asserting `"reasoning_effort" not in body`. It was green because the code and
+the test came from the same wrong idea. **Off has to be said out loud.**
+
+### What was built
+
+Three answers instead of two:
+
+    portable and supported     → carried to the dialect       topP, seed, stopSequences, …
+    known but out of scope     → refused, saying why          tools, safetySettings, cachedContent
+    the dialect cannot say it  → the candidate is skipped     top_k on OpenAI, seed on Anthropic
+
+The third reuses the requirement mechanism that already carries region, media types, schemas and
+thinking. `SamplingExpressible` is the fifth to share it — and the first that is a property of the
+**dialect** rather than the model, because no catalog entry can say whether `top_k` exists. That
+depends on the wire format the request will travel over, and no dialect has all six:
+
+    Gemini      top_p  top_k  seed  presence  frequency  stop
+    OpenAI      top_p    —    seed  presence  frequency  stop
+    Anthropic   top_p  top_k    —       —         —      stop
+
+Refusal rather than best effort, for the reason that decides every one of these: `seed` on a Claude
+candidate produces a perfectly good answer that simply is not reproducible, and **nothing in it
+differs from a correct one**.
+
+### Reversing FR-7, on evidence
+
+`FRD-100` FR-7 had the request models ignore unknown fields, so real Gemini clients sending extra
+keys were not rejected. Both halves of that argument turn out to be wrong: Google's own API rejects
+unknown fields, so leniency was never the compatible choice; and the fields clients actually send
+are ones that change the answer. Strictness is one-directional — **responses keep ignoring extras**,
+because a provider adding a field must never break a caller.
+
+### Two test lessons, one of them repeated
+
+The hermetic tests for `SamplingExpressible` exercised it directly, never through the route. A
+mutation removing it from the route's requirement list left every one of them green: two correct
+halves and no wire between them. **That is the second time in one day** — the CSV export's scope
+test had the identical shape, built the file itself instead of downloading it, and survived the
+mutation that made the endpoint ignore the caller's scope. Both are fixed by driving the real
+endpoint; both were invisible to coverage, which saw every line run.
+
+And the integration tests here assert **behaviour, not wire bodies**: a seed makes three identical
+requests return one answer, a stop sequence truncates the output, thinking off produces an answer.
+None of that can be established by inspecting a dict — which is exactly how the thinking defect
+survived a suite that appeared to test it.
+
+38 hermetic tests, 9 against the real model, mutations `Y1`–`Y8`. **207 properties defended.**
+
+---
+
 ## 2026-08-06 — the usage export, and the same dependency lesson twice
 `FRD-602`. CSV is a **renderer on the existing reporting endpoint**, chosen by `Accept` — never its
 own endpoint, because `FRD-601`'s visibility rule is one function and a second entry point is a

@@ -96,6 +96,14 @@ def gemini_to_canonical(
             if config and config.responseSchema is not None
             else None
         ),
+        # `FRD-124`. Carried, not dropped — the dialect either expresses each of these or the
+        # candidate is skipped, which is the only way a caller can tell that it was not applied.
+        top_p=config.topP if config else None,
+        top_k=config.topK if config else None,
+        seed=config.seed if config else None,
+        presence_penalty=config.presencePenalty if config else None,
+        frequency_penalty=config.frequencyPenalty if config else None,
+        stop_sequences=tuple(config.stopSequences or ()) if config else (),
     )
 
 

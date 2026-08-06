@@ -24,12 +24,18 @@ from aira_gateway.core.canonical import (
 )
 from aira_gateway.upstreams.base import UpstreamError, UpstreamModel
 from aira_gateway.upstreams.gemini_mapping import (
+    SAMPLING as GEMINI_SAMPLING,
+)
+from aira_gateway.upstreams.gemini_mapping import (
     batch_embedding_body,
     canonical_to_gemini_embedding,
     canonical_to_gemini_request,
     embedding_values,
     gemini_chunk_to_canonical,
     gemini_response_to_canonical,
+)
+from aira_gateway.upstreams.vertex.anthropic_mapping import (
+    SAMPLING as ANTHROPIC_SAMPLING,
 )
 from aira_gateway.upstreams.vertex.anthropic_mapping import (
     StreamAssembler,
@@ -70,6 +76,8 @@ class VertexGeminiAdapter:
     def __init__(self, transport: VertexTransport, models: list[VertexModel]) -> None:
         self._transport = transport
         self._models = {model.name: model for model in models}
+
+    sampling_controls = GEMINI_SAMPLING
 
     def models(self) -> list[UpstreamModel]:
         return [
@@ -131,6 +139,8 @@ class VertexAnthropicAdapter:
         # backstop for a model whose catalog entry declares none, so a caller never receives a
         # vendor error about a field they did not set.
         self._default_max_tokens = default_max_tokens
+
+    sampling_controls = ANTHROPIC_SAMPLING
 
     def models(self) -> list[UpstreamModel]:
         return [

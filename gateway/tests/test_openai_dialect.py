@@ -144,10 +144,19 @@ def test_an_effort_level_maps_to_reasoning_effort(mode: ThinkingMode, effort: st
     assert body["reasoning_effort"] == effort
 
 
-def test_disabled_thinking_sends_no_parameter() -> None:
-    """There is no "off" value; the absence of the parameter is off."""
+def test_disabled_thinking_says_off_out_loud_rather_than_omitting_the_parameter() -> None:
+    """**Off has to be said.** This test previously asserted the opposite, and was green, because
+    the code and the test came from the same wrong idea: that a parameter nobody sets is a feature
+    nobody gets.
+
+    A real server settled it. Sent no `reasoning_effort`, a reasoning model **thinks anyway** —
+    absence selects the *model's* default, which for a reasoning model is on — and it spent the
+    entire 600-token output allowance doing so. The caller who explicitly switched thinking off
+    received a 200, a truncated answer, and a bill for reasoning that is stripped from the response
+    before they ever see it. The same server, sent `"none"`, answered in about fifteen tokens.
+    """
     body = canonical_to_openai(_request(thinking=Thinking(mode=ThinkingMode.DISABLED, tokens=0)))
-    assert "reasoning_effort" not in body
+    assert body["reasoning_effort"] == "none"
 
 
 def test_a_token_budget_is_refused_rather_than_rounded_to_a_level() -> None:

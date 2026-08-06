@@ -74,9 +74,35 @@ def canonical_to_gemini_request(request: CanonicalRequest) -> dict[str, Any]:
         # answer this feature exists to prevent, produced by our own request body.
         generation_config["responseMimeType"] = "application/json"
         generation_config["responseSchema"] = request.response_schema.to_wire()
+    _add_sampling(generation_config, request)
     if generation_config:
         body["generationConfig"] = generation_config
     return body
+
+
+#: Google's `GenerationConfig` names all six (`FRD-124`). This is the one dialect that can express
+#: everything the canonical request carries, which is exactly why the others must say so when they
+#: cannot: the difference is invisible in the response.
+SAMPLING = frozenset(
+    {"top_p", "top_k", "seed", "presence_penalty", "frequency_penalty", "stop_sequences"}
+)
+
+_SAMPLING_WIRE = {
+    "top_p": "topP",
+    "top_k": "topK",
+    "seed": "seed",
+    "presence_penalty": "presencePenalty",
+    "frequency_penalty": "frequencyPenalty",
+}
+
+
+def _add_sampling(config: dict[str, Any], request: CanonicalRequest) -> None:
+    for name, wire in _SAMPLING_WIRE.items():
+        value = getattr(request, name)
+        if value is not None:
+            config[wire] = value
+    if request.stop_sequences:
+        config["stopSequences"] = list(request.stop_sequences)
 
 
 def thinking_budget(setting: Thinking) -> int:

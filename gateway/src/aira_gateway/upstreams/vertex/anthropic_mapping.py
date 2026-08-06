@@ -55,6 +55,35 @@ _STOP_REASONS = {
 }
 
 
+#: What the Messages API can express (`FRD-124`). It has `top_p`, `top_k` and `stop_sequences`,
+#: and it has **no** `seed` and no presence/frequency penalties — so a request that pins a seed for
+#: reproducibility is refused on a Claude candidate rather than answered non-reproducibly with a
+#: 200. This is the same shape as the `limited` thinking refusal one file over, and it is the
+#: reason `SAMPLING` is declared per dialect rather than assumed.
+SAMPLING = frozenset({"top_p", "top_k", "stop_sequences"})
+
+_UNSUPPORTED_SAMPLING = {
+    "seed": "no seed parameter, so a request cannot be made reproducible here",
+    "presence_penalty": "no presence penalty",
+    "frequency_penalty": "no frequency penalty",
+}
+
+
+def _add_sampling(body: dict[str, Any], request: CanonicalRequest) -> None:
+    if request.top_p is not None:
+        body["top_p"] = request.top_p
+    if request.top_k is not None:
+        body["top_k"] = request.top_k
+    if request.stop_sequences:
+        body["stop_sequences"] = list(request.stop_sequences)
+    for name, why in _UNSUPPORTED_SAMPLING.items():
+        if getattr(request, name) is not None:
+            # A backstop behind the dispatch chain, which skips this candidate first. Kept because
+            # the requirement and the mapping have to agree, and on the day they disagree the
+            # mapping is the one holding the request.
+            raise ValueError(f"The Anthropic Messages API has {why}; '{name}' cannot be honoured.")
+
+
 def canonical_to_anthropic(request: CanonicalRequest, *, max_tokens: int) -> dict[str, Any]:
     """Build an Anthropic Messages body.
 
@@ -84,6 +113,7 @@ def canonical_to_anthropic(request: CanonicalRequest, *, max_tokens: int) -> dic
         body["system"] = "\n\n".join(system_parts)
     if request.temperature is not None:
         body["temperature"] = request.temperature
+    _add_sampling(body, request)
     if request.thinking is not None and request.thinking.mode is not ThinkingMode.DISABLED:
         budget = request.thinking.tokens
         if budget is not None:

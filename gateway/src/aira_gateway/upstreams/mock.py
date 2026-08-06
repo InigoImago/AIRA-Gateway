@@ -18,6 +18,7 @@ from typing import Any
 
 from aira_common.models import ThinkingMode
 from aira_gateway.core.canonical import (
+    SAMPLING_CONTROLS,
     CanonicalChunk,
     CanonicalEmbeddingRequest,
     CanonicalRequest,
@@ -40,6 +41,11 @@ class MockProvider:
             version=model,
             supported_methods=("generateContent", "streamGenerateContent", "embedContent"),
         )
+
+    #: The mock is our own code, so it can honour anything the canonical request carries — and
+    #: it must declare that rather than inherit it, or the declaration would be optional in
+    #: practice and the one adapter that forgot would be the one that mattered.
+    sampling_controls = frozenset(SAMPLING_CONTROLS)
 
     def models(self) -> list[UpstreamModel]:
         return [self._model]

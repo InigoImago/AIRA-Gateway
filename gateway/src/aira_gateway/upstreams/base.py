@@ -54,6 +54,14 @@ class UpstreamModel:
 class Upstream(Protocol):
     """A provider AIRA can dispatch canonical requests to."""
 
+    #: Which of `SAMPLING_CONTROLS` this provider's dialect can express (`FRD-124`).
+    #:
+    #: Declared per adapter and **never defaulted to "all"**. The same rule the catalog follows —
+    #: undeclared means unsupported — for the same reason: a control silently dropped changes the
+    #: answer and returns a 200. `test_every_adapter_declares_its_sampling_support` makes the
+    #: omission a test failure rather than a quiet permission.
+    sampling_controls: frozenset[str]
+
     def models(self) -> list[UpstreamModel]: ...
 
     async def generate(self, request: CanonicalRequest) -> CanonicalResponse: ...

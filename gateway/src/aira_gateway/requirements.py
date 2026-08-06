@@ -155,6 +155,45 @@ class ThinkingHonoured:
         return permitted_by(self._setting, await self._catalog.declaration(model))
 
 
+class SamplingExpressible:
+    """The candidate's dialect must be able to express every sampling control this request sets.
+
+    The fifth requirement, and the first that is a property of the **dialect** rather than of the
+    model: no model declaration can say whether `top_k` exists, because that depends on the wire
+    format the request will travel over. `ADR-0011` again — the caller asks for one thing, three
+    vendors offer three vocabularies, and where one of them has no word for it the honest answer is
+    to say so.
+
+    The failure it prevents is quiet by construction. `seed` on a Claude candidate produces a
+    perfectly good answer that simply is not reproducible; `top_k` on an OpenAI-compatible one
+    produces a perfectly good answer sampled from a wider distribution than was asked for. Nothing
+    in either response differs from a correct one, which is the definition of a difference that has
+    to be refused rather than absorbed.
+    """
+
+    def __init__(self, registry: ProviderRegistry, requested: frozenset[str]) -> None:
+        self._registry = registry
+        self._requested = requested
+
+    async def refusal(self, model: str) -> str | None:
+        if not self._requested:
+            return None
+        provider = self._registry.provider_for(model)
+        if provider is None:
+            return None  # dispatch already reports an unserved model, and says it better
+        # Undeclared means unsupported, as everywhere else. An adapter that omits the attribute
+        # refuses every sampling control rather than silently accepting them all — and a test
+        # makes the omission itself fail, so this branch is a floor and not a policy.
+        supported: frozenset[str] = getattr(provider, "sampling_controls", frozenset())
+        missing = sorted(self._requested - supported)
+        if not missing:
+            return None
+        return (
+            f"the dialect serving this model cannot express {', '.join(missing)}, and a request "
+            "answered without them differs only in the answer"
+        )
+
+
 def permits(requirements: Sequence[Requirement]) -> Callable[[str], Awaitable[str | None]]:
     """Combine requirements into the predicate the dispatch chain takes.
 
