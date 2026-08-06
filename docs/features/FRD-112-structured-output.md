@@ -83,8 +83,12 @@ Gemini has the feature directly: `generationConfig.responseMimeType = "applicati
 `input_schema` is the caller's schema, `tool_choice` pinned to it, and the model's tool input read
 back as the document (`FRD-119` §5.5).
 
+Azure OpenAI has a third: `response_format: {type: "json_schema", json_schema: {…, strict: true}}`
+(`FRD-120` §5.4), where `strict` mode further restricts what is expressible.
+
 So `structured_output` in `FRD-114` means "this model can do it **by some mechanism**", and which
-one is the adapter's business. Two things follow that are easy to get wrong:
+one is the adapter's business — three unrelated mechanisms behind one flag is exactly what
+`ADR-0011` rule 3 exists to keep out of the catalog. Two things follow that are easy to get wrong:
 
 - **A schema field with no faithful equivalent is a refusal, not a silent drop.** Anthropic's
   `input_schema` is JSON Schema and our subset is OpenAPI-3.0-flavoured; most fields translate, and

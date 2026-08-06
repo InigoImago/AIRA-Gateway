@@ -5,6 +5,56 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-06 — A third platform decides the shape of the second
+Microsoft Foundry is wanted for the future: Azure OpenAI models and Microsoft's own. Not urgent —
+and precisely because it is not urgent, it is the right moment to let it settle the upstream
+architecture, since it is the third vendor and the third is where the abstraction is decided. With
+two you can always absorb the difference in a conditional.
+
+Foundry brings three things Vertex did not: the **OpenAI Chat Completions** wire format, **Entra ID**
+authentication, and a different notion of what a model *is* — Azure addresses a customer-named
+**deployment** in a resource in a region, and the same deployment name in two resources can be two
+different models.
+
+`ADR-0011` records the resulting shape: **transport × dialect × model identity.** A transport owns
+reaching the vendor's cloud (endpoint, credential, retries, quota errors); a dialect owns the API
+shape (bodies, streaming events, usage, capability mechanisms); an upstream composes them. Vertex is
+one transport with two dialects; Foundry is one transport with the OpenAI dialect — which is then
+reusable by any platform that speaks it, and that reusability is most of the justification.
+
+Three rules came out of it, each fixing something that would otherwise have been decided by
+accident:
+
+- **Credential acquisition is one abstraction.** All three platforms need identical behaviour —
+  cache, refresh ahead of expiry, single-flight, serve through a failed refresh — and differ only in
+  how the token is obtained. `FRD-115`'s token holder becomes a shared `TokenSource`. Writing that
+  refresh race three times means getting it right three times, and the second one is always the one
+  that is subtly wrong.
+- **A caller names a model; the platform's addressing is catalog configuration.** No use case's
+  pipeline config may contain an Azure deployment name. The failure mode if we got this wrong is
+  the interesting part: `FRD-403` prices by model name, a deployment called `production` has no
+  price, and unpriced traffic is *counted apart rather than as zero* — so the spend figures would
+  not break, they would quietly stop being complete.
+- **Capability flags say whether, never how.** Three vendors, three unrelated structured-output
+  mechanisms (a schema parameter, a forced tool call, a `json_schema` response format) and two
+  reasoning shapes (token budget, effort level). The flag stays a boolean; the mechanism lives in
+  the dialect.
+
+Two pleasant confirmations. `FRD-111`'s canonical thinking model — `mode` + optional `tokens`, taken
+from the *predecessor's* vocabulary — turns out to cover Azure's `reasoning_effort` levels, a vendor
+it was not written for. And Azure reports reasoning tokens separately, which finally answers
+`FRD-111` FR-6's open verification for at least one vendor.
+
+One planning consequence: the **OpenAI wire format now arrives as an upstream whether or not
+`FRD-106` is ever built.** Once canonical ⇄ OpenAI exists in one direction, the deferred OpenAI
+*inbound* surface is largely that mapping reversed plus a router. The decision to defer it stands;
+the estimate behind that decision does not, and should be revisited when it next comes up.
+
+`ADR-0011` and `FRD-120` written; `FRD-114` (model identity and addressing), `FRD-115` (shared
+token source, region allow-list generalised), `FRD-111` and `FRD-112` (the third mechanism) amended.
+
+---
+
 ## 2026-08-06 — Model Garden answers one question and opens another
 Two facts landed after the parity FRDs were written, and both change them.
 

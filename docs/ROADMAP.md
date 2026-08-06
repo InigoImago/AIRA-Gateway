@@ -151,6 +151,14 @@ credential. Two consequences: `FRD-115` is required rather than optional, and AI
 Messages API — required `max_tokens`, returned thinking blocks, no `responseSchema`. That is the
 first real test of the canonical core's claim to be provider-agnostic.
 
+**A third platform is wanted (2026-08-06): Microsoft Foundry** — Azure OpenAI plus Microsoft's own
+models. Not urgent, but it is the platform that *decides* the shape of the upstream layer: with two
+vendors any difference can be absorbed by a conditional, with three it has to be a structure.
+`ADR-0011` records that structure — **transport × dialect × model identity** — and `FRD-120`
+specifies Foundry against it. One planning consequence worth noting: the **OpenAI wire format
+arrives as an upstream regardless of `FRD-106`**, so the deferred OpenAI *surface* becomes
+materially cheaper once the dialect exists.
+
 `ADR-0010` frames the programme and holds the one open decision: whether AIRA also serves the
 predecessor's **wire contract** (clients migrate by changing a URL) or whether the clients move to
 the Gemini surface. Everything except `FRD-107` is needed either way and can start now.
@@ -164,6 +172,7 @@ the Gemini surface. Everything except `FRD-107` is needed either way and can sta
 | `FRD-114` | Model capability metadata | prerequisite for 111/112/113 |
 | `FRD-115` | Vertex AI / Model Garden in the EU | **required — residency confirmed** |
 | `FRD-119` | Anthropic models on Vertex: the second dialect | needs `FRD-115` + `FRD-114` |
+| `FRD-120` | Microsoft Foundry (Azure OpenAI + Microsoft's own) | **planned, not scheduled** — see `ADR-0011` |
 | `FRD-116` | Secrets actually read from Vault | policy and implementation have been apart since Phase 0 |
 | `FRD-117` | Version info, upstream health, CORS, OpenAPI 3.0, trace header | independent; makes the rest operable |
 | `FRD-118` | Several Keycloak backends, groups from UserInfo | **requirement unconfirmed — see its §11** |

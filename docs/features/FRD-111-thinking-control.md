@@ -104,6 +104,10 @@ belongs in the **upstream adapter**, alongside every other provider-specific dec
   `limited` → the caller's count, an abstract level → the model's declared budget for that level.
 - Anthropic (`FRD-119`): `thinking{type:"enabled",budget_tokens}` — no `auto` equivalent, so that
   mode resolves to the model's declared default budget, and every budget is bounded by FR-3a.
+- Azure OpenAI (`FRD-120`): `reasoning_effort` — an **abstract level with no token budget at all**,
+  so `limited` has no equivalent and is refused by capability rather than approximated. Worth
+  noting because it validates the canonical shape: `mode` + optional `tokens` was taken from the
+  predecessor's vocabulary and covers a vendor it was not written for.
 - Mock: honours the setting deterministically so the mode is observable in tests without a cloud.
 
 Putting the level→budget table in `FRD-114`'s model metadata rather than in code is what keeps a

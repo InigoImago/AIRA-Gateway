@@ -3,6 +3,7 @@
 > Phase: 8 (KIRA parity) · Status: **Draft** · Owner: Vadim Scheibe · Last updated: 2026-08-06
 > Origin: `kira_api.md` §2.4, §5, programme: `ADR-0010`.
 > Extends the `Model` row introduced by `FRD-403`; the **approval** half stays in `FRD-307`.
+> Model identity and addressing follow **`ADR-0011`** rules 2 and 3.
 > Depended on by: `FRD-111`, `FRD-112`, `FRD-113`, `FRD-107`.
 
 ## 1. Problem
@@ -66,10 +67,18 @@ usable, and `FRD-113` cannot tell a supported task type from a typo.
   **requires** `max_tokens` on every request (`FRD-119` §5.3), so without a per-model default every
   caller who omits it — which is most of them, since it is optional today — would receive a vendor
   error about a field they never set. It also sharpens the budget reservation for both vendors.
-- **FR-2a Publisher.** Which vendor serves the model (`google`, `anthropic`, …). It selects the
-  wire dialect and the endpoint method (`FRD-115` FR-2), and it belongs beside the capabilities
-  rather than in adapter configuration, so one row answers "what is this model and how is it
-  reached".
+- **FR-2a Publisher and platform addressing.** Which vendor serves the model (`google`,
+  `anthropic`, `openai`, …), which platform reaches it, and how that platform addresses it. It
+  selects the wire dialect and the endpoint method (`FRD-115` FR-2).
+- **FR-2b The caller's name is not the platform's name** (`ADR-0011` rule 2). A caller says
+  `gpt-5`; the catalog says that is the Foundry transport, resource *X*, deployment *Y*. A use
+  case's pipeline configuration must never contain an Azure deployment name or a Vertex publisher
+  path — otherwise a vendor-side redeployment becomes a configuration migration across every use
+  case.
+- **FR-2c Price attaches to the underlying model, not to the addressing.** An Azure deployment may
+  be called `production`; that string has no price. Since unpriced traffic is *counted apart rather
+  than as zero* (`FRD-403`), getting this wrong would not fail — it would make the spend figures
+  quietly incomplete, which is worse.
 - **FR-3 Thinking declaration.** The permitted modes; `min_tokens`/`max_tokens` for `limited`; the
   default setting; and the token budget each abstract level maps to (`FRD-111` §5.2). Validated for
   internal consistency on write: a thinking maximum at or above the model's output cap describes a
@@ -146,7 +155,10 @@ Management `Model` gains (all nullable, so existing rows stay valid):
 | Field | Type | Notes |
 |---|---|---|
 | `capabilities` | string set | `generate`, `embed`, `structured_output`, `thinking`, `attachments` |
-| `publisher` | string? | `google`, `anthropic`, … — selects dialect and method (FR-2a) |
+| `publisher` | string? | `google`, `anthropic`, `openai`, … — selects the dialect (FR-2a) |
+| `platform` | string? | which transport reaches it (`vertex`, `foundry`, …) |
+| `addressing` | JSON? | platform-specific: publisher path, resource + deployment, … (FR-2b) |
+| `underlying_model` | string? | what the price attaches to when the addressing differs (FR-2c) |
 | `max_output_tokens` | int? | FR-2 |
 | `default_max_output_tokens` | int? | applied when the caller sets none (FR-2) |
 | `attachments` | JSON? | accepted media types and their token estimates (FR-4a) |

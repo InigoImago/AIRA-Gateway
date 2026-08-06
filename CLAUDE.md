@@ -256,8 +256,18 @@ platform's Model Garden: Gemini *and* Anthropic, one project, one credential.** 
 dialect**: Anthropic on Vertex uses `:rawPredict` with the Anthropic Messages API — **`max_tokens`
 required**, **thinking blocks returned** (must be dropped, never persisted), **no `responseSchema`**
 (structured output is a forced tool call), **no embeddings**. That is `FRD-119`, and it is the first
-real test of whether the canonical core is provider-agnostic or merely Gemini-shaped. Twelve
-documents: `ADR-0010` + `FRD-107`, `FRD-110`–`FRD-119`, `FRD-602` (see ROADMAP Phase 8). **One decision open** (`ADR-0010`): does AIRA serve the predecessor's wire contract, so
+real test of whether the canonical core is provider-agnostic or merely Gemini-shaped. **A third platform is wanted: Microsoft Foundry** (Azure OpenAI + Microsoft's own models) —
+planned, not scheduled, and it is what *decides* the upstream shape: two vendors can be reconciled
+with a conditional, three need a structure. **`ADR-0011`** records it — **transport × dialect ×
+model identity**: a transport owns reaching the cloud (endpoint, credential, region), a dialect owns
+the API shape, and **the caller's model name is never the platform's addressing** (an Azure
+*deployment* is not a model, and pricing must attach to the underlying model or spend figures go
+quietly incomplete). Credential acquisition is **one shared `TokenSource`** with three
+implementations, not three refresh races. Capability flags say **whether, never how** — three
+vendors now do structured output by three unrelated mechanisms. Note: the **OpenAI dialect arrives
+as an upstream regardless of `FRD-106`**, which makes that deferred surface much cheaper later.
+Fourteen documents: `ADR-0010`, `ADR-0011` + `FRD-107`, `FRD-110`–`FRD-120`, `FRD-602` (ROADMAP
+Phase 8). **One decision open** (`ADR-0010`): does AIRA serve the predecessor's wire contract, so
 clients migrate by changing a URL, or do the clients move to the Gemini surface? Recommendation:
 compatibility surface **with a sunset date and its usage in reporting** — everything except
 `FRD-107` is contract-independent and can start now. Three deviations from the predecessor are

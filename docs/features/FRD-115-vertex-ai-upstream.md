@@ -3,7 +3,9 @@
 > Phase: 8 (KIRA parity) · Status: **Draft** · Owner: Vadim Scheibe · Last updated: 2026-08-06
 > Origin: `kira_api.md` §5, §10; **confirmed 2026-08-06: EU residency applies, and access is via
 > the Gemini Enterprise platform's Model Garden, serving Gemini *and Anthropic* models.**
-> Programme: `ADR-0010`. Extends `FRD-304`. Paired with `FRD-119` (the Anthropic dialect).
+> Programme: `ADR-0010`. Architecture: **`ADR-0011`** (platform × dialect × identity).
+> Extends `FRD-304`. Paired with `FRD-119` (the Anthropic dialect); `FRD-120` reuses its
+> `TokenSource` and its region allow-list for Microsoft Foundry.
 > Related: `FRD-116` (where the credential comes from).
 
 ## 1. Problem
@@ -99,7 +101,13 @@ a second vendor exists. The transport owns everything that is about *Google the 
 Getting that seam right is the whole design. Put authentication in the adapters and it is written
 twice; put body mapping in the transport and adding a third vendor rewrites it.
 
-### 5.2 Tokens: ahead of time, shared, single-flight
+### 5.2 Tokens: ahead of time, shared, single-flight — and not Google-specific
+
+**`ADR-0011` rule 1 applies here**: the behaviour below is identical for every platform (Vertex's
+service account, Foundry's Entra ID, a static API key); only the *acquisition* differs. It is
+therefore a shared `TokenSource` with a per-platform implementation, not a Vertex class. Getting
+the refresh race right once is the point — writing it per platform means getting it right per
+platform, and the second one is always the one that is subtly wrong.
 
 An access token lives about an hour. Fetching lazily on expiry makes one request pay a round trip
 and, under load, makes *many* requests discover the expiry at once and all fetch.
@@ -145,6 +153,10 @@ request carries evidence of where it went.
 
 An organisation that deliberately wants a non-EU region changes one setting and thereby makes an
 explicit decision — which is the point.
+
+The mechanism is **not Google-specific**: Azure regions carry the same requirement and use the same
+allow-list (`FRD-120` FR-4). One residency control for every platform, rather than one per vendor
+that each has to be found and audited separately.
 
 ### 5.6 Configuration
 

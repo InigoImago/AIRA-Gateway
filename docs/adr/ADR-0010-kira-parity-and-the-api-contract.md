@@ -123,6 +123,7 @@ reporting, and the decision to remove it is made against a number rather than a 
 | [`FRD-114`](../features/FRD-114-model-capability-metadata.md) | What a model can do and where its limits are | — |
 | [`FRD-115`](../features/FRD-115-vertex-ai-upstream.md) | Vertex AI / Model Garden in the EU | **required** — residency confirmed |
 | [`FRD-119`](../features/FRD-119-anthropic-on-vertex.md) | Anthropic models: the second dialect | `FRD-115`, `FRD-114` |
+| [`FRD-120`](../features/FRD-120-microsoft-foundry.md) | Microsoft Foundry: the third platform *(planned)* | `ADR-0011`, `FRD-115` |
 | [`FRD-116`](../features/FRD-116-vault-secrets.md) | Secrets actually read from Vault | — |
 | [`FRD-117`](../features/FRD-117-diagnostics-and-compatibility.md) | Version info, upstream health, CORS, OpenAPI 3.0, trace header | — |
 | [`FRD-118`](../features/FRD-118-federated-identity.md) | Several Keycloak backends, groups from UserInfo | — |
