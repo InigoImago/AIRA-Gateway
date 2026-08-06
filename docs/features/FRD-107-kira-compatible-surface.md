@@ -1,0 +1,192 @@
+# FRD-107 — A KIRA-compatible API surface
+
+> Phase: 8 (KIRA parity) · Status: **Blocked — waiting on `ADR-0010`** · Owner: Vadim Scheibe
+> Last updated: 2026-08-06
+> Origin: `kira_api.md` §2, §6, §12. Depends on `FRD-110`–`FRD-114`.
+
+> **Do not start this before `ADR-0010` is decided.** If the decision is to move the clients to the
+> Gemini surface, this FRD is dropped entirely and `FRD-114`'s numeric alias goes with it. Every
+> other FRD in the programme is needed either way.
+
+## 1. Problem
+
+Even with every capability in place, a KIRA client cannot call AIRA. The paths differ, the request
+body differs, the error vocabulary differs, and models are identified by integer rather than by
+name. Migration would mean a code change in every consuming application, scheduled by every
+consuming team — and the predecessor cannot be decommissioned until the last of them is done.
+
+This FRD is the alternative: AIRA answers the predecessor's requests, so a consumer migrates by
+changing a base URL.
+
+## 2. Goals & Non-Goals
+
+**Goals**
+- The predecessor's endpoints, request and response shapes and error codes, served by AIRA.
+- Every AIRA control applies to that traffic: attribution, budgets, rate limits, the pipeline,
+  persistence, reporting. **That is the entire point** — traffic that has not migrated is traffic
+  that is not governed.
+- The surface announces that it is transitional, and its usage is measurable, so the decision to
+  remove it is made against a number (`ADR-0010` Option C).
+
+**Non-Goals**
+- Bug-compatibility. Where the predecessor's behaviour is a mistake, we do the right thing and
+  document the difference (§5.5). Two are already identified.
+- Preserving its internal shapes beyond the wire contract.
+- Serving it forever. §5.6.
+
+## 3. User Stories
+- As an **application owner**, I want to point my existing client at AIRA by changing a URL, so
+  that migration is a configuration change I can schedule this quarter.
+- As **IT Steuerung**, I want migrated traffic under budgets and limits from day one.
+- As an **operator**, I want to see how much traffic still uses this surface, so that retiring it
+  is a decision rather than an argument.
+
+## 4. Functional Requirements
+
+- **FR-1 Endpoints** under `/kira/api/external`: `POST /chat`, `POST /streaming-chat`,
+  `POST /embed`, `GET /models`, `GET /health`, `GET /version-info`, `GET /ki-usage`.
+- **FR-2 Request and response shapes** exactly as `kira_api.md` §2 and §4, including the camelCase
+  aliases (`maxTokens`, `responseSchema`, `thinkingConfig`, …) and `populate_by_name`.
+- **FR-3 Error vocabulary** as §6.2: `{code, message, details?}` with the predecessor's codes and
+  status mapping.
+- **FR-4 Integer model ids** resolved through `FRD-114`'s numeric alias; an unknown id is
+  `404 MODEL_NOT_FOUND`.
+- **FR-5 SSE events** as §2.2: `{status: "update"|"completed", data}`, terminating in a
+  `CompletedEvent` carrying the full response and usage.
+- **FR-6 Attribution** resolved per §5.3 — this is the requirement with no counterpart in the
+  predecessor and the one that decides whether the surface is governable at all.
+- **FR-7 Authorization levels.** Standard-user endpoints and the admin-only `/ki-usage`, mapped
+  onto AIRA's roles rather than onto a group name from a YAML file (§5.4).
+- **FR-8 Deprecation is declared.** `Deprecation` and `Sunset` headers (RFC 8594) on every
+  response, and the surface is a dimension in reporting (§5.6).
+
+## 5. Design & Architecture
+
+### 5.1 A third mapper, not a third gateway
+
+`aira_gateway/api/kira/` sits beside `api/gemini/`: schemas, a mapper to and from the canonical
+core, and a router. It shares the pre-dispatch gate, the pipeline, the dispatch chain, the audit
+writer and the reporting service — everything below the surface.
+
+If this FRD ends up touching anything outside `api/kira/` and `FRD-114`'s alias, the canonical core
+was not as provider-agnostic as `FRD-100` claimed, and that is worth knowing.
+
+### 5.2 The capabilities must exist first
+
+`/chat` carries documents (`FRD-110`), thinking (`FRD-111`) and `responseSchema` (`FRD-112`);
+`/embed` carries task types and batching (`FRD-113`); `/models` reports capabilities and limits
+(`FRD-114`). A surface built before them would accept fields it silently ignores, which is worse
+than refusing them — a caller cannot tell that their thinking budget was dropped.
+
+### 5.3 Attribution: the one thing the predecessor does not have
+
+Every AIRA control is scoped to a **use case**. The predecessor has no such concept: a caller is a
+user in a group, and that is all. So a KIRA request arrives with no selector, and without one it
+cannot be budgeted, limited, priced or reported.
+
+The resolution, in order:
+
+1. **Exactly one use case in the caller's Keycloak groups** → that one. `FRD-102` already derives
+   `Principal.use_cases` from `/use-cases/<slug>` groups, so for the common case — an application
+   that belongs to one use case — attribution is automatic and the client changes nothing.
+2. **An explicit `X-AIRA-Use-Case` header** → that one, if the caller is a member.
+3. **Several memberships and no header** → **403 naming the candidates.** Not a guess, and not a
+   fallback to an "unattributed" bucket: an unattributed bucket is a hole in every control at once,
+   and it would be the path of least resistance for every caller.
+
+This is the one place a migrating client may need a change — one header — and only when its
+identity belongs to several use cases. That trade is worth stating in the migration guide up front,
+because discovering it during a cut-over is expensive.
+
+### 5.4 Two permission levels onto five roles
+
+The predecessor's "standard user" and "admin" come from configured group names. Ours come from
+realm roles (`ADR-0009`). The mapping: standard-user endpoints need a valid principal with a
+resolved use case (§5.3); `/ki-usage` needs a governance role — the same rule `FRD-601` already
+applies, reusing `visible_scope` rather than a second decision.
+
+`/ki-usage` then becomes a projection of `FRD-601`'s report onto the predecessor's columns
+(`user_id`, `model_id`, `entry_count`, `token_input_sum`, `token_output_sum`), with its CSV
+negotiation coming from `FRD-602`.
+
+### 5.5 Where we deliberately differ
+
+Two, both security-relevant, both to be listed in the migration guide:
+
+- **`GET /models` requires authentication.** The predecessor's is open. Our catalog reveals which
+  models an organisation has approved and what their limits are; that is not public.
+- **CORS is not `*` with credentials** (`FRD-117` §5.4).
+
+Anything else discovered during implementation is added here rather than being absorbed silently —
+a compatibility surface with undocumented differences is worse than no compatibility surface,
+because it is trusted.
+
+### 5.6 A surface with an ending
+
+Per `ADR-0010` Option C: `Deprecation: true` and a `Sunset` date on every response from day one,
+the date in the migration guide, and **`surface` as a dimension in the request log** so reporting
+can answer "how much traffic still uses this" per use case. Retirement is then a conversation about
+a number.
+
+## 6. Data Model
+
+`request_logs.api` already exists and already distinguishes surfaces; it gains the `kira` value.
+No migration.
+
+## 7. API / Interface Contract
+
+`kira_api.md` §2 and §4 are the contract; this FRD does not restate them. The mapping table from
+KIRA error codes to canonical failures belongs in the implementation and is asserted by tests, one
+per code.
+
+## 8. Security & Privacy
+
+- **§5.3 is the security requirement.** An unattributed request would bypass budgets, rate limits
+  and per-use-case retention simultaneously. The 403 in case 3 is deliberate and must not be
+  softened into a default.
+- §5.5: two places we do not copy the predecessor.
+- Everything else — key handling, payload storage, retention, redaction — is inherited unchanged,
+  because the surface sits above all of it.
+
+## 9. Observability
+
+`aira.api.surface = "kira"` on spans and audit rows; reporting can break down by it (§5.6).
+
+## 10. Testing & Acceptance Criteria
+
+- **Contract tests** — one per endpoint, asserting the response shape field by field against
+  `kira_api.md`, and **one per error code** in §6.2 asserting the code and the status. These are
+  the tests that make "compatible" a fact rather than a claim.
+- **Unit (attribution)** — one membership resolves automatically; a header selects among several; a
+  header naming a non-membership is 403; several memberships with no header is **403 naming the
+  candidates** and is written to fail first against an implementation that picks one.
+- **Unit (controls)** — a KIRA request is rate-limited, budgeted, priced and logged exactly as the
+  equivalent Gemini request. Asserted by running both through and comparing the resulting audit
+  rows, which is the only way to be sure the surface did not skip a step.
+- **Integration** — a real KIRA-shaped request end to end, including SSE, with the audit row
+  showing `api = kira`.
+- **Mutation** — the unattributed path actually refuses; the deprecation headers are actually
+  present; the model-id lookup actually validates.
+
+**Acceptance**
+- *Given* a client written against the predecessor, *when* only its base URL is changed, *then* its
+  chat, streaming, embedding and model-list calls succeed with identical response shapes, and the
+  traffic appears in AIRA's reporting under its use case.
+- *Given* a caller whose identity belongs to two use cases and who sends no header, *when* they
+  call `/chat`, *then* they receive a 403 naming both, and nothing was dispatched.
+
+## 11. Dependencies & Risks
+
+- **`ADR-0010`** (blocking), then `FRD-110`–`FRD-114`.
+- **Risk — the surface outlives its purpose.** The mitigation is §5.6 and nothing else; a sunset
+  date with no measurement is a wish.
+- **Risk — `kira_api.md` is a description, not the source.** Details will differ from the running
+  predecessor. Contract tests should be validated against **captured real traffic** where possible,
+  not only against the document. The embedding aggregation question in `FRD-113` §11 is a known
+  instance and will not be the only one.
+
+## 12. Rollout / Demo
+
+A migration guide covering the base-URL change, the `X-AIRA-Use-Case` header (§5.3), the two
+deliberate differences (§5.5) and the sunset date. Demo mode serves the surface against the mock
+so a consumer can test their client before any cloud credentials exist.

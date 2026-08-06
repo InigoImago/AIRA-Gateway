@@ -132,6 +132,41 @@ FRDs: `FRD-700-hardening`, `FRD-701-k8s-helm`, `FRD-702-perf-and-ha`.
 
 ---
 
+## Phase 8 — KIRA parity
+**Goal:** AIRA carries every capability of the predecessor **KIA-KIRA-API** (`kira_api.md`), so that
+it can be decommissioned.
+
+A review on 2026-08-06 found the gap is not where it might be assumed. In breadth AIRA is well
+ahead — the predecessor has no use cases, no budgets, no rate limits, no pipeline, no management
+UI. In the **core request path** it is behind: the canonical message carries one field, `text`,
+so documents and images are rejected at the door, thinking budgets do not exist, and structured
+output does not exist. There is also a difference in *where* the model runs — the predecessor uses
+Vertex AI on EU-regional endpoints with a service account; we use the global Generative Language
+API with an API key.
+
+`ADR-0010` frames the programme and holds the one open decision: whether AIRA also serves the
+predecessor's **wire contract** (clients migrate by changing a URL) or whether the clients move to
+the Gemini surface. Everything except `FRD-107` is needed either way and can start now.
+
+| FRD | What | Blocking? |
+|---|---|---|
+| `FRD-110` | Documents and images in a request | the widest gap; everything else sits on it |
+| `FRD-111` | Thinking modes and budgets | needs `FRD-114` |
+| `FRD-112` | `responseSchema` — forced JSON output | — |
+| `FRD-113` | Embedding task types, batches, dimensions | needs `FRD-114` |
+| `FRD-114` | Model capability metadata | prerequisite for 111/112/113 |
+| `FRD-115` | Vertex AI on a regional endpoint | **schedule-critical if EU residency is required** |
+| `FRD-116` | Secrets actually read from Vault | policy and implementation have been apart since Phase 0 |
+| `FRD-117` | Version info, upstream health, CORS, OpenAPI 3.0, trace header | independent; makes the rest operable |
+| `FRD-118` | Several Keycloak backends, groups from UserInfo | **requirement unconfirmed — see its §11** |
+| `FRD-602` | CSV export of the usage report | follows `FRD-601` ✓ |
+| `FRD-107` | The KIRA wire format itself | **blocked on `ADR-0010`** |
+
+**Out of scope for now:** the OpenAI-compatible surface (`FRD-106`) — deferred by decision on
+2026-08-06 so the parity programme is not competing with a second new contract.
+
+---
+
 ## Backlog — agreed, not yet scheduled
 
 Work that is decided but deliberately not in the current phase. Ordered as agreed with the

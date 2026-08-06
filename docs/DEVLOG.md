@@ -5,6 +5,69 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-06 — KIRA parity: the programme, and where the gap actually is
+The predecessor's requirements (`kira_api.md`, KIA-KIRA-API v0.1.2) arrived with the instruction
+that AIRA must carry all of them. Reviewed against the code rather than against our own
+documentation, the result was not what the phase history would suggest.
+
+**In breadth we are well ahead.** Use cases with object RBAC, self-service keys, budgets down to
+spend, cross-instance rate limits, the pipeline, Kafka config distribution, the management UI,
+retention, cost reporting — the predecessor has none of it.
+
+**In the core request path we are behind, and further than it looks.** `CanonicalMessage` carries
+exactly one field, `text: str`, and the Gemini surface's `Part` requires `text` — so a request with
+`inlineData` is not merely unmapped, it is **rejected with a 400**. The predecessor accepts
+documents and images in fourteen MIME types, controls the thinking budget, and forces JSON output
+against a schema. None of that exists here. Its embedding path takes eight task types, batches and
+two dimensionalities; ours takes one string.
+
+Two findings I had not expected to matter as much as they do:
+
+- **Vertex AI, not the Generative Language API.** The predecessor calls `europe-west1` and the
+  `eu` multi-region with a service account. We call the global endpoint with an API key. If a data
+  residency requirement sits behind that configuration — and an `eu` endpoint in a production file
+  is decent evidence — then no amount of feature parity makes our adapter a replacement.
+  `FRD-115`, and it may be the most schedule-critical item in the programme.
+- **Vault is in the stack and nothing reads from it.** `CLAUDE.md` §2 has said "secrets only in
+  Vault" since Phase 0; every secret actually comes from an environment variable. `FRD-116`. This
+  becomes pressing rather than untidy the moment a service-account *private key* is involved.
+
+Eleven documents written: `ADR-0010` plus `FRD-107`, `FRD-110`–`FRD-118`, `FRD-602`.
+
+**The one open decision** is in `ADR-0010`: does AIRA also serve the predecessor's *wire contract*,
+so clients migrate by changing a URL, or do the clients move to the Gemini surface? My
+recommendation is the compatibility surface **with a stated sunset date and its usage visible in
+reporting**, because the alternative couples our decommissioning date to the slowest consuming
+team, and until they migrate their traffic is ungoverned — which is the whole thing the budgets and
+limits exist for. Recorded as *Proposed*; `FRD-107` stays blocked until it is decided. Everything
+else is contract-independent and can start immediately.
+
+Three places where the FRDs deliberately **do not** copy the predecessor, each written down so the
+deviation is a decision rather than an omission: TLS verification stays on (`kira_api.md` sets
+`verify=False`); CORS is an origin allow-list, not `*` with credentials; and `GET /models` requires
+authentication. A fourth is close to it — the predecessor resolves group membership from the
+UserInfo endpoint on **every request**, which would make each authenticated call depend on Keycloak
+being up and fast; `FRD-118` §11 asks whether that requirement even applies to us before anyone
+builds it.
+
+Three design points inside the FRDs are worth repeating here because they are the ones most likely
+to be got wrong quietly:
+
+- **An attachment costs tokens no character count predicts** (`FRD-110` §5.3). The pre-dispatch
+  reservation would estimate a 20 000-token PDF request as a sentence, reopening under documents
+  precisely the race `FRD-405` closed for text.
+- **A batch must not be a way around a rate limit** (`FRD-113` §5.3). One token per request means a
+  caller limited to 10 requests a minute can embed 5 000 texts a minute. A batch of *n* takes *n*.
+- **The structured-output capability must be checked after routing** (`FRD-112` §5.3). With a
+  fallback chain, the model that answers is not the model that was asked for, and returning prose
+  to a caller that will `JSON.parse` it is a failure that surfaces days later in someone else's
+  application.
+
+The OpenAI-compatible surface (`FRD-106`) is deferred by decision so parity is not competing with a
+second new contract.
+
+---
+
 ## 2026-08-06 — Reporting: the data has been collected since Phase 1, and is finally readable
 Every dispatched request has been recorded since `FRD-103` and priced since `FRD-403`. Nothing
 showed any of it. The only figures anywhere were the consumption bars beside a budget — one use

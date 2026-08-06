@@ -20,3 +20,4 @@ Each ADR is immutable once **Accepted** — to change a decision, add a new ADR 
 | 0007 | [Security hardening baseline (authorization boundaries, safe defaults, input bounds)](ADR-0007-security-hardening-baseline.md) | Accepted | 2026-08-04 |
 | 0008 | [Redis as the shared counter store for rate limits and budget reservations](ADR-0008-redis-shared-counters.md) | Accepted | 2026-08-05 |
 | 0009 | [The gateway learns realm roles, from one shared definition](ADR-0009-gateway-knows-roles.md) | Accepted | 2026-08-06 |
+| 0010 | [KIRA parity: bring the contract along, or move the clients?](ADR-0010-kira-parity-and-the-api-contract.md) | **Proposed — decision open** | 2026-08-06 |

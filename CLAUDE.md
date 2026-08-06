@@ -244,7 +244,25 @@ values on purpose). Latency is an **average and a maximum**, and is called that 
 is Postgres-only and the hermetic tests run on SQLite. Unpriced traffic stays counted apart, and
 the screen says the spend is a lower bound whenever there is any. Per-request *browsing* waits for
 `FRD-406` (ADR-0009).
-Next candidates: **content redaction** (`FRD-406`, the `Redactor` hook is still a no-op —
+**KIRA parity programme (`ADR-0010`, 2026-08-06)** — AIRA is the successor to **KIA-KIRA-API**
+(`kira_api.md`) and must carry all of its functionality. Reviewed against the code: in breadth we
+are well ahead (the predecessor has no use cases, budgets, limits, pipeline or UI); in the **core
+request path** we are behind. `CanonicalMessage` carries one field, `text: str`, and the Gemini
+`Part` requires `text`, so a request with `inlineData` is **rejected with a 400** — documents and
+images, thinking budgets and structured output do not exist here at all. Also: the predecessor runs
+on **Vertex AI, EU-regional, service-account authenticated**, we run on the global Generative
+Language API with an API key; and **Vault is in the stack but no code reads from it** despite §2's
+policy. Eleven documents: `ADR-0010` + `FRD-107`, `FRD-110`–`FRD-118`, `FRD-602` (see ROADMAP
+Phase 8). **One decision open** (`ADR-0010`): does AIRA serve the predecessor's wire contract, so
+clients migrate by changing a URL, or do the clients move to the Gemini surface? Recommendation:
+compatibility surface **with a sunset date and its usage in reporting** — everything except
+`FRD-107` is contract-independent and can start now. Three deviations from the predecessor are
+deliberate and written down: TLS verification stays on, CORS is an allow-list not `*`, and
+`GET /models` requires auth. The OpenAI surface (`FRD-106`) is deferred so parity is not competing
+with a second new contract.
+Next candidates: **`FRD-110`** (documents/images — the widest gap, everything sits on it),
+**`FRD-114`** (model metadata — prerequisite for 111/112/113), **`FRD-115`/`FRD-116`** (Vertex +
+Vault, schedule-critical if EU residency applies), **content redaction** (`FRD-406`, the `Redactor` hook is still a no-op —
 deliberately deferred, see the ROADMAP backlog), budget
 threshold alerting, Phase 5 (anomaly/IT-Security), `FRD-307` (model catalog), `FRD-106` (OpenAI
 surface). See `docs/DEVLOG.md`.
