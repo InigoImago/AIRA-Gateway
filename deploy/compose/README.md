@@ -65,6 +65,24 @@ docker compose ps
   `make kafka-topics` is required; it creates all five compacted config topics.
 
 
+## Test clients in the dev realm
+
+The realm carries two confidential clients with service accounts, `aira-integration-tests`
+(role `it-steuerung`) and `aira-integration-tests-member` (role `use-case-admin`). They exist so
+`tests/integration/` can obtain **real, realm-signed tokens** carrying real roles — the one thing
+no hermetic test can produce and no browser test can hand to a non-browser caller.
+
+Two of them on purpose: a visibility test with a single caller can only show that somebody sees
+something, never that anybody is excluded.
+
+They use the client-credentials grant, deliberately *not* the password grant, which ADR-0007
+disabled and which is not worth re-enabling for a convenience a machine-to-machine grant already
+provides. Their secrets are in the realm file: **dev only**, never a template for a real realm.
+
+A stack whose realm predates these clients will not have them — the import runs only when the
+realm does not exist. The tests say so when their token request fails; recreate the realm as
+below.
+
 ## Changing the Keycloak realm
 
 `--import-realm` uses the `IGNORE_EXISTING` strategy: the realm under

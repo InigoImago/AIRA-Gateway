@@ -50,6 +50,33 @@
           }
         }
       ]
+    },
+    {
+      "clientId": "aira-integration-tests",
+      "name": "Integration tests (dev only)",
+      "description": "Service account used by tests/integration to obtain a real realm-signed token. Never enable outside a dev realm.",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "integration-tests-dev-secret",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "protocol": "openid-connect",
+      "attributes": {
+        "access.token.lifespan": "300"
+      }
+    },
+    {
+      "clientId": "aira-integration-tests-member",
+      "name": "Integration tests, non-governance (dev only)",
+      "description": "Second service account, deliberately without an oversight role: an RBAC test with only one caller proves nothing about who is excluded.",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "integration-tests-member-secret",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "protocol": "openid-connect"
     }
   ],
   "users": [
@@ -171,6 +198,22 @@
       ],
       "groups": [
         "/use-cases/demo-uc"
+      ]
+    },
+    {
+      "username": "service-account-aira-integration-tests",
+      "enabled": true,
+      "serviceAccountClientId": "aira-integration-tests",
+      "realmRoles": [
+        "it-steuerung"
+      ]
+    },
+    {
+      "username": "service-account-aira-integration-tests-member",
+      "enabled": true,
+      "serviceAccountClientId": "aira-integration-tests-member",
+      "realmRoles": [
+        "use-case-admin"
       ]
     }
   ],

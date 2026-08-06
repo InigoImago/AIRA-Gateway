@@ -28,10 +28,11 @@ from aira_common.apikeys import generate_api_key
 from aira_gateway.consumer.apply import apply_event
 from aira_gateway.db.base import build_sessionmaker
 
+from .conftest import MANAGEMENT_DB
+
 pytestmark = pytest.mark.integration
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-MANAGEMENT_DB = "postgresql+psycopg://aira:aira-local@localhost:5432/aira_mgmt"
 
 
 async def _management_engine() -> AsyncEngine:
