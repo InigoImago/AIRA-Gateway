@@ -50,6 +50,14 @@ A third, smaller one: a test asserted `provider == "ollama"`. It went red the mo
 were renamed for the fallback fixture, because it was asserting somebody's `.env` rather than the
 system's behaviour. What matters is *that* a machine is identified.
 
+**173 mutations, all defended.** The nine added this round (`O1`–`O8`, `B8`) were caught on their
+first run — and one *older* entry surfaced as undefended: `B3`, "unknown cost is counted apart, not
+summed as zero", whose anchor had been absorbed into the new upsert. Repointed at the line that now
+carries the rule and shown to fail before being accepted, because an entry that has never been red
+claims a protection it has not demonstrated. That is the second time this session an anchor moved
+with a refactor; it is the harness's most common false report and the reason it names them rather
+than skipping.
+
 ---
 
 ## 2026-08-06 — the first real requests, and three defects

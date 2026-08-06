@@ -293,8 +293,8 @@ MUTATIONS = [
         "B3",
         "a request of unknown cost is counted apart, not summed as zero",
         "gateway/src/aira_gateway/budgets/service.py",
-        "                    record.unpriced_requests += requests",
-        "                    record.cost_nanos += 0",
+        "    unpriced = requests if cost_nanos is None else 0",
+        "    unpriced = 0",
         f"{COST} gateway/tests/test_budget_service.py",
     ),
     Mutation(
