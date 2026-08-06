@@ -436,6 +436,17 @@ stack's Vault with a **real AppRole** the suite creates, scopes to its own path 
 **Two test lessons worth carrying:** `caplog` cannot see structlog, so "no secret reaches a log"
 was green against a loader that printed everything — use `structlog.testing.capture_logs`; and an
 assertion matching a string that appears in *both* the right and the wrong message proves nothing.
+**`FRD-117` done except FR-7 (2026-08-06) — diagnostics.** The rule: **a health check must not be
+able to take down a healthy service.** Reachability is probed in the background and `/readyz`
+*reads* the verdict; probing inline makes readiness as slow as the slowest upstream. **The first
+draft would have proved nothing** — it probed `provider.models()`, which is local configuration
+evaluated once at registry build, so every verdict would have been a confident green describing
+nothing. Adapters now implement `ping()` (a GET of a listing, never a generation, which would wake
+a scaled-to-zero model); one without it reports `probed: false`. **Stale counts as degraded**, and
+**unreachable is degraded not down** — verified by stopping the model container: 200 `ready` with
+`degraded: true`, cleared on recovery. `x-trace-id` is pure ASGI mounted outermost (BaseHTTPMiddleware
+loses the span context, and the failing responses are the ones worth correlating). CORS refuses
+`*`+credentials at startup. FR-7 (a second OpenAPI 3.0 doc) is **not built** and said so.
 **Delivery order is fixed (ROADMAP Phase 8, 2026-08-06)**, derived from the owner's priority
 (KIRA compatibility → model connections → documents → the review findings) and the dependency that
 priority 1 needs priority 3: **`FRD-122` (audit) → `FRD-114` (metadata) → `FRD-115`+`119` (Vertex EU,

@@ -53,6 +53,18 @@ class OpenAITransport:
         data: dict[str, Any] = response.json()
         return data
 
+    async def get(self, path: str) -> dict[str, Any]:
+        """A read, for the readiness probe. Same credential and same error mapping as a post."""
+        try:
+            response = await self._client.get(
+                path, headers=await self.headers(), timeout=self._timeout
+            )
+        except httpx.HTTPError as exc:
+            raise UpstreamError(f"Upstream error: {type(exc).__name__}.") from exc
+        self._raise_for_status(response)
+        data: dict[str, Any] = response.json()
+        return data
+
     def stream(self, path: str, body: dict[str, Any]) -> Any:
         return _StreamContext(self, path, body)
 

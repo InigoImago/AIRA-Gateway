@@ -53,6 +53,12 @@ class AzureRoutes:
             f"?api-version={self._api_version}"
         )
 
+    def listing(self) -> str:
+        # Not a deployment path: this asks whether the *resource* answers, which is the question a
+        # readiness probe has. Asking a deployment would make the verdict depend on which one, and
+        # a resource with one cold deployment is not an unreachable resource.
+        return f"/openai/models?api-version={self._api_version}"
+
     def body_model(self, model: str) -> str | None:
         # The path already named the deployment. Azure ignores a body `model`, and sending one
         # would put a *caller-facing* name on the wire where a reader would take it for the

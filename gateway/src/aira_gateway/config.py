@@ -141,6 +141,14 @@ class GatewaySettings(BaseAiraSettings):
     #: that as an outage is the first way to get `ADR-0012` §5 wrong.
     ollama_timeout_seconds: float = 300.0
 
+    # Cross-origin access (FRD-117 §5.4). **An allow-list, empty by default** — the SPA is served
+    # from the same origin through the proxy, so anything cross-origin is a deliberate choice.
+    # `*` together with credentials refuses to start: browsers reject the combination, and a server
+    # that implements it by reflecting the origin lets any site a user visits call this API with
+    # their credentials. The predecessor ships exactly that; parity would be a regression.
+    cors_origins: str = ""
+    cors_allow_credentials: bool = False
+
     # Microsoft Foundry / Azure OpenAI (FRD-120). Registered only when the endpoint, a credential
     # and at least one deployment are all present — half a configuration is a gateway that starts
     # and answers 401 for everything, which reads as a broken credential rather than a missing one.

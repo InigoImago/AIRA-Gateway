@@ -1,6 +1,6 @@
 # FRD-117 — Diagnostics and client compatibility
 
-> Phase: 8 (KIRA parity) · Status: **Draft** · Owner: Vadim Scheibe · Last updated: 2026-08-06
+> Phase: 8 (KIRA parity) · Status: **Done except FR-7 (2026-08-06)** · Owner: Vadim Scheibe · Last updated: 2026-08-06
 > Origin: `kira_api.md` §2.5, §2.6, §8.1–8.3, §12.2, programme: `ADR-0010`.
 > Touches `FRD-001` and `FRD-105` (observability), `FRD-100` (surface).
 
@@ -169,6 +169,50 @@ readiness signal that reflects the dependency the service exists for.
 - *Given* an upstream that is unreachable, *when* `/readyz` is called, *then* it returns 200 with
   `degraded: true` naming the provider, within the usual response time, and no upstream call was
   made during the request.
+
+## 10a. What was built (2026-08-06)
+
+FR-1 through FR-6. **FR-7 (a second OpenAPI 3.0 document) is not built**, and that is a choice
+rather than an omission: it exists for a legacy API portal that this deployment does not have, and
+a generated document nobody reads is a thing that silently stops matching the routes. It is a
+half-day whenever a portal actually needs it.
+
+### The mistake the first draft made, and why it mattered
+
+The prober called `provider.models()`. That is **local configuration** — evaluated once when the
+registry is built — so it can neither fail later nor say anything about the network. Every verdict
+would have been a confident green describing nothing at all, which is *worse* than no probe,
+because a green board is acted upon. It was found by writing a test with a provider that raises,
+discovering the provider could not be registered at all, and following that back.
+
+Adapters now implement an optional `ping()` — a **GET of a listing**, never a generation. An
+adapter without one is reported `probed: false, "not checked"`, because "we did not look" and "it
+is fine" are different answers and only one is safe to act on. Verified live: `gpu-a` and `gpu-b`
+report `2 model(s) listed, 2ms`; the mock says it was not checked.
+
+### The three rules the design turns on
+
+- **A health check must not be able to take down a healthy service.** The predecessor's probes
+  every model on every call, making readiness as slow as the slowest upstream. A live test asserts
+  ten readiness probes finish in under five seconds, and another asks the model server directly
+  whether probing loaded anything.
+- **Stale is reported as stale.** A prober that died leaves its last good verdict behind, and a
+  reader that trusted it would see a green board describing a minute long past. Staleness counts as
+  degraded.
+- **Unreachable is degraded, not down.** Verified by stopping the model container: `/readyz` stayed
+  **200 `ready`** with `degraded: true`, and cleared when the container came back. A load balancer
+  keeps the instance; the signal is for an alert, not an eviction.
+
+`x-trace-id` sits in pure ASGI middleware mounted outermost — a `BaseHTTPMiddleware` would run the
+app in a separate task and lose the span context, so the header would be missing exactly when a
+span exists. Confirmed against the deployed gateway: the 401 carries one.
+
+CORS refuses `*` **with credentials at startup**. The predecessor ships that combination
+(`kira_api.md` §8.1); browsers reject it, and a server implementing it by reflecting the origin lets
+any site a user visits call the API with their credentials. A misconfiguration that only shows up
+under a browser is one that ships.
+
+24 hermetic tests, 9 integration, mutations **D1**–**D6**.
 
 ## 11. Dependencies & Risks
 

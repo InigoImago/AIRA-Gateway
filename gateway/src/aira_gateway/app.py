@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import Depends, FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -40,9 +41,11 @@ from aira_gateway.budgets.service import BudgetService
 from aira_gateway.catalog import ModelCatalog
 from aira_gateway.config import GatewaySettings
 from aira_gateway.db.base import build_engine, build_sessionmaker, create_all
+from aira_gateway.diagnostics import UpstreamProbe
 from aira_gateway.middleware import (
     BodySizeLimitMiddleware,
     RequestTooLarge,
+    TraceIdMiddleware,
     UseCasePathMiddleware,
 )
 from aira_gateway.persistence.redaction import NoOpRedactor
@@ -98,7 +101,14 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
             async with sessionmaker() as session:
                 await ApiKeyService(session).ensure_demo_key()
         await app_.state.log_writer.start()
+        # One probe *before* serving, so the first readiness answer is a verdict rather than an
+        # absence — a fresh pod that reported "unknown" for its first minute would be indis-
+        # tinguishable from one whose prober never started.
+        probe = app_.state.upstream_probe
+        await probe.probe_once()
+        probe.start()
         yield
+        await probe.stop()
         # Drained, not dropped: a redeploy must not discard audit rows still in the queue.
         await app_.state.log_writer.stop()
         await counters.close()
@@ -125,6 +135,10 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
     registry = ProviderRegistry(providers)
     app.state.providers = registry
     app.state.pipeline_engine = PipelineEngine(registry)
+    # Reachability is probed in the background and *read* by `/readyz` (`FRD-117` §5.2). Probing
+    # inline would make the readiness probe as slow as the slowest upstream and, against a
+    # self-deployed model, would wake a scaled-to-zero endpoint on every check.
+    app.state.upstream_probe = UpstreamProbe(registry, degradation)
     app.state.pipeline_store = PipelineStore(sessionmaker)
     app.state.counters = counters
     app.state.degradation = degradation
@@ -159,6 +173,10 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
 
     # Middleware runs outermost-last: the body limit is added last so it is the first thing an
     # inbound request meets, before any of it is buffered.
+    _configure_cors(app, settings)
+    # Outermost, so a response produced by an exception handler still carries it (`FRD-117` FR-4).
+    # The requests that most need correlating are the ones that went wrong.
+    app.add_middleware(TraceIdMiddleware)
     app.add_middleware(UseCasePathMiddleware)
     app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.max_request_bytes)
 
@@ -191,6 +209,40 @@ def redact_span_query(span: Any, scope: MutableMapping[str, Any]) -> None:
     redacted = redact_query_string(query)
     span.set_attribute("url.query", redacted)
     span.set_attribute("http.target", f"{scope.get('path', '')}?{redacted}")
+
+
+class CorsMisconfigured(Exception):
+    """A CORS policy that would disable the protection it looks like it is providing."""
+
+
+def _configure_cors(app: FastAPI, settings: GatewaySettings) -> None:
+    """An explicit allow-list, defaulting to none (`FRD-117` §5.4).
+
+    The predecessor sets ``allow_origins=["*"]`` **with** ``allow_credentials=True``. Browsers
+    reject that combination outright, and a server that implements it by *reflecting* the origin
+    disables the protection entirely: any site a user visits can then call this API with their
+    credentials. Parity here would be a security regression, so it is refused **at startup** rather
+    than at request time — a misconfiguration that only shows up under a browser is one that ships.
+
+    Empty by default because the SPA is served from the same origin through the proxy, so a
+    deployment that needs cross-origin access is making a deliberate choice.
+    """
+    origins = [origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()]
+    if not origins:
+        return
+    if "*" in origins and settings.cors_allow_credentials:
+        raise CorsMisconfigured(
+            "AIRA_CORS_ORIGINS='*' together with credentials would let any site call this API "
+            "with a user's credentials. Name the origins instead."
+        )
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins,
+        allow_credentials=settings.cors_allow_credentials,
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["authorization", "content-type", "x-goog-api-key", "x-aira-use-case"],
+        expose_headers=["x-trace-id", "retry-after", "deprecation", "sunset", "warning"],
+    )
 
 
 def _register_exception_handlers(app: FastAPI) -> None:

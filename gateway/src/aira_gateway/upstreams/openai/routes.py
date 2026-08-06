@@ -35,6 +35,10 @@ class Routes(Protocol):
         """The value for the body's ``model`` field, or ``None`` to omit it entirely."""
         ...
 
+    def listing(self) -> str:
+        """A path that is cheap to GET and proves the endpoint is answering (`FRD-117` §5.2)."""
+        ...
+
 
 class StandardRoutes:
     """The plain form: one path, the model in the body. Ollama, direct OpenAI, a NIM endpoint."""
@@ -50,3 +54,6 @@ class StandardRoutes:
 
     def body_model(self, model: str) -> str | None:
         return model
+
+    def listing(self) -> str:
+        return "/v1/models"

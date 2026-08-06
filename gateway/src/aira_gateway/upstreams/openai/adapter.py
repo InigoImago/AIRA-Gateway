@@ -108,6 +108,24 @@ class OpenAIAdapter:
                 if chunk is not None:
                     yield chunk
 
+    @property
+    def probe_name(self) -> str:
+        """How this adapter appears in `/readyz`. The configured name, not the class — three
+        servers of the same kind must be distinguishable, which is the whole point of naming
+        them (`FRD-123`)."""
+        return self._provider
+
+    async def ping(self) -> str:
+        """The cheapest remote question there is (`FRD-117` §5.2).
+
+        A **GET of a listing**, never a generation: a probe that generated would cost money to
+        answer "are you there", and against a self-deployed endpoint it would wake a scaled-to-zero
+        model on every health check.
+        """
+        listing = await self._transport.get(self._routes.listing())
+        count = len(listing.get("data") or [])
+        return f"{count} model(s) listed" if count else "endpoint answered"
+
     async def embed(self, request: CanonicalEmbeddingRequest) -> list[list[float]]:
         body = self._named(canonical_to_openai_embedding(request), request.model)
         data = await self._transport.post(self._routes.embed(request.model), body)

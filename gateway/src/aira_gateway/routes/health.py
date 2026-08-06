@@ -28,8 +28,36 @@ router = APIRouter(tags=["health"])
 
 @router.get("/healthz")
 async def healthz() -> dict[str, str]:
-    """Liveness probe: the process is up and serving."""
+    """Liveness probe: the process is up and serving.
+
+    **Deliberately trivial, and it must stay that way.** No I/O of any kind. A liveness probe that
+    checks a dependency restarts a healthy process when that dependency blinks, which is how a
+    restart loop gets built out of a transient outage.
+    """
     return {"status": "ok"}
+
+
+@router.get("/version-info")
+async def version_info(request: Request) -> dict[str, object]:
+    """What is running here (`FRD-117` FR-1). Unauthenticated, like the predecessor's.
+
+    Absent build metadata yields **nulls, not an error**: a development run has no build number
+    and should still answer. It carries no configuration and no secret — a commit hash identifies
+    the code, which is exactly what somebody correlating a bug report needs and nothing more.
+    """
+    settings: GatewaySettings = request.app.state.settings
+    commit = settings.git_commit or ""
+    return {
+        "service": settings.app_name,
+        "environment": settings.environment,
+        "buildNumber": settings.build_number or None,
+        "buildTime": settings.build_time or None,
+        "git": {
+            "commit": commit or None,
+            "commitShort": commit[:7] or None,
+            "branch": settings.git_branch or None,
+        },
+    }
 
 
 @router.get("/readyz")
@@ -54,15 +82,24 @@ async def readyz(request: Request) -> JSONResponse:
     degradation = getattr(request.app.state, "degradation", None)
     fallbacks = degradation.features if degradation is not None else {}
 
+    # Read from a **cached** background verdict, never probed inline (`FRD-117` §5.2). An inline
+    # probe makes readiness as slow as the slowest upstream, so one degraded provider evicts pods
+    # that were serving perfectly well — a health check that can take down a healthy service.
+    probe = getattr(request.app.state, "upstream_probe", None)
+    upstreams = probe.snapshot() if probe is not None else {}
+
     return JSONResponse(
         status_code=200 if ready else 503,
         content={
             "status": "ready" if ready else "not_ready",
             # Degraded is not "not ready": the instance still serves, with the fallbacks in
-            # ADR-0008 in force. Anything watching this should alert, not evacuate.
-            "degraded": not counters_ok or bool(fallbacks),
+            # ADR-0008 in force. An unreachable *upstream* is the same shape of answer — a gateway
+            # that still refuses over-budget requests and serves reporting is not down, and
+            # evicting it helps nobody (FR-3). Anything watching this should alert, not evacuate.
+            "degraded": not counters_ok or bool(fallbacks) or bool(probe and probe.degraded),
             "fallbacks": fallbacks,
             "checks": checks,
+            "upstreams": upstreams,
         },
     )
 

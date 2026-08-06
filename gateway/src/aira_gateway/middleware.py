@@ -14,6 +14,7 @@ import re
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from aira_common.observability import trace_context_fields
 from aira_gateway.auth.attribution import USE_CASE_PATH_KEY
 
 _USE_CASE_PATH = re.compile(r"^/uc/([^/]+)(/.*)$")
@@ -101,3 +102,38 @@ class BodySizeLimitMiddleware:
             }
         )
         await send({"type": "http.response.body", "body": body})
+
+
+class TraceIdMiddleware:
+    """Put the active trace id on **every** response, including the failures (`FRD-117` FR-4).
+
+    Pure ASGI and mounted outermost, and both are load-bearing. Outermost, because a response
+    produced by an exception handler is still a response — and the requests that most need
+    correlating are exactly the ones that went wrong. `BaseHTTPMiddleware` is avoided because it
+    runs the downstream app in a separate task, which loses the OpenTelemetry span context: the
+    header would then be absent precisely when a span exists.
+
+    Absent when no span is active, rather than a placeholder. An id that correlates with nothing is
+    worse than no id, because somebody will search for it.
+    """
+
+    HEADER = b"x-trace-id"
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_trace(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                trace_id = trace_context_fields().get("trace_id")
+                if trace_id:
+                    headers = list(message.get("headers") or [])
+                    headers.append((self.HEADER, str(trace_id).encode("ascii")))
+                    message = {**message, "headers": headers}
+            await send(message)
+
+        await self.app(scope, receive, send_with_trace)

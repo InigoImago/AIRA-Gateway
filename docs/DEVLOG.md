@@ -5,6 +5,45 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-06 — diagnostics, and a probe that would have proved nothing
+`FRD-117` FR-1 to FR-6. The design centre is one sentence from §5.2: **a health check must not be
+able to take down a healthy service.** The predecessor's `/health` probes every registered model on
+every call, which makes readiness as slow as the slowest upstream — so one degraded provider evicts
+pods that were serving perfectly well, and against a paid endpoint it bills for the privilege.
+
+So the probe runs in the background and `/readyz` reads the last verdict. A live test asserts ten
+readiness probes finish in under five seconds, and another asks the model server directly whether
+probing loaded anything — because "the probe never generates" is exactly the kind of claim that
+decays into a convenient call somebody added later.
+
+**The first draft would have proved nothing.** It probed by calling `provider.models()`, which is
+*local configuration* evaluated once when the registry is built: it cannot fail later and says
+nothing about the network. Every verdict would have been a confident green describing nothing —
+worse than no probe, because a green board gets acted on. It surfaced while writing a test with a
+provider that raises, discovering such a provider cannot be registered at all, and following that
+back. Adapters now implement an optional `ping()`, a GET of a listing; one without it is reported
+`probed: false, "not checked"`, because *we did not look* and *it is fine* are different answers.
+
+The case that mattered most could only be staged live: stop the model container and watch. `/readyz`
+stayed **200 `ready`** with `degraded: true`, and cleared when it came back. A load balancer keeps
+the instance — the signal is for an alert, not an eviction, and that distinction is the feature.
+
+`x-trace-id` is pure ASGI, mounted outermost. `BaseHTTPMiddleware` would run the app in a separate
+task and lose the span context, so the header would be absent exactly when a span exists; and
+outermost because the responses that most need correlating are the ones an exception handler
+produced. Confirmed on a deployed gateway: the 401 carries one.
+
+CORS refuses `*` with credentials **at startup**. The predecessor ships that combination; browsers
+reject it, and a server implementing it by reflecting the origin lets any site a user visits call
+the API with their credentials. A misconfiguration that only appears under a browser is one that
+ships.
+
+**FR-7, the second OpenAPI 3.0 document, is not built** — it serves a legacy portal this deployment
+does not have, and a generated document nobody reads silently stops matching the routes. Said
+rather than quietly skipped.
+
+---
+
 ## 2026-08-06 — Vault, finally reading from the thing that was already running
 `CLAUDE.md` §2 has said "secrets only in HashiCorp Vault" since Phase 0, and Vault has been in the
 Compose stack for as long — with **no code reading from it**. Every credential this system holds

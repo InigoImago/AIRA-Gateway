@@ -103,6 +103,7 @@ OPENAI_DIALECT = "gateway/tests/test_openai_dialect.py"
 EDGE = "gateway/tests/test_edge_cases.py"
 FOUNDRY = "gateway/tests/test_foundry.py"
 SECRETS = "libs/tests/test_secrets.py"
+DIAGNOSTICS = "gateway/tests/test_diagnostics.py"
 THINKING = "gateway/tests/test_thinking.py gateway/tests/test_serving_options.py"
 RESPONSE_SCHEMA = "gateway/tests/test_response_schema.py gateway/tests/test_serving_options.py"
 EMBEDDING = "gateway/tests/test_embedding_options.py gateway/tests/test_serving_options.py"
@@ -1652,6 +1653,57 @@ MUTATIONS = [
         "        if not secret_id:",
         "        if False:",
         SECRETS,
+    ),
+    # ---- diagnostics (FRD-117) -----------------------------------------------------------------
+    #
+    # D1 is the one that keeps a health check from being able to take down a healthy service.
+    Mutation(
+        "D1",
+        "an unreachable upstream degrades readiness rather than failing it",
+        "gateway/src/aira_gateway/routes/health.py",
+        '            "degraded": not counters_ok or bool(fallbacks) or bool(probe and probe.degraded),',  # noqa: E501
+        '            "degraded": not counters_ok or bool(fallbacks),',
+        DIAGNOSTICS,
+    ),
+    Mutation(
+        "D2",
+        "an adapter with no cheap probe is reported unprobed, never as healthy",
+        "gateway/src/aira_gateway/diagnostics.py",
+        '            return Verdict(name, True, "no probe available; not checked", self._now(), probed=False)',  # noqa: E501
+        '            return Verdict(name, True, "reachable", self._now())',
+        DIAGNOSTICS,
+    ),
+    Mutation(
+        "D3",
+        "a verdict that has aged out is reported as stale rather than as fine",
+        "gateway/src/aira_gateway/diagnostics.py",
+        '            "stale": age > stale_after,',
+        '            "stale": False,',
+        DIAGNOSTICS,
+    ),
+    Mutation(
+        "D4",
+        "a stale verdict counts as degraded, so a dead prober is visible",
+        "gateway/src/aira_gateway/diagnostics.py",
+        "            not verdict.ok or (verdict.probed and (now - verdict.at) > self.stale_after)",
+        "            not verdict.ok",
+        DIAGNOSTICS,
+    ),
+    Mutation(
+        "D5",
+        "a wildcard CORS origin with credentials refuses to start",
+        "gateway/src/aira_gateway/app.py",
+        '    if "*" in origins and settings.cors_allow_credentials:',
+        "    if False:",
+        DIAGNOSTICS,
+    ),
+    Mutation(
+        "D6",
+        "an upstream that never answers becomes a red verdict rather than hanging the probe",
+        "gateway/src/aira_gateway/diagnostics.py",
+        "            detail = await asyncio.wait_for(ping(), timeout=self.timeout)",
+        "            detail = await ping()",
+        DIAGNOSTICS,
     ),
     # ---- what an edge-case sweep against the running API found (FRD-123) ---------------------
     #
