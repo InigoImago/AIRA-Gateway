@@ -59,6 +59,29 @@ class ModelDeclaration:
         types = (self.attachments or {}).get("media_types")
         return frozenset(types) if isinstance(types, dict) else frozenset()
 
+    def attachment_tokens(self, media_types: list[str]) -> int:
+        """What the declared attachments are expected to cost in **input** tokens.
+
+        An image or a PDF costs hundreds to thousands of input tokens that no property of the
+        request body predicts. Without this the pre-dispatch reservation would treat a request
+        carrying a 20 000-token document as a sentence — reopening under documents exactly the
+        race `FRD-405` closed for text, where N concurrent requests all pass a limit with room
+        for one.
+
+        Wrong **high** by design, and corrected by `settle` the moment the real usage arrives.
+        What must not happen is a silent zero: that is the "unknown is not zero" rule, and a
+        reservation that ignores the expensive half of a request is not a limit.
+        """
+        declared = (self.attachments or {}).get("media_types")
+        if not isinstance(declared, dict):
+            return 0
+        total = 0
+        for media_type in media_types:
+            spec = declared.get(media_type)
+            if isinstance(spec, dict):
+                total += int(spec.get("tokens", 0) or 0)
+        return total
+
     def output_cap(self, requested: int | None) -> int | None:
         """The output token cap to send upstream: the caller's, else the model's default.
 

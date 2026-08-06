@@ -5,6 +5,58 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-06 — Stufe 3: documents, and the rule that a refusal beats a fluent wrong answer
+`FRD-110`. `CanonicalMessage` carries ordered parts; the Gemini surface takes `inlineData`; both
+dialects map it; the mock sees it; the reservation counts it; the audit row keeps a description.
+
+The owner stated the requirement in one sentence and it is the one everything here serves:
+**if the model cannot read the document, throw an error — do not try anyway, or the model
+hallucinates and the user thinks something else is broken.** That is exactly right, and it is worth
+spelling out why it is not merely tidy: a dropped attachment produces *no error*. It produces a
+fluent, confident answer about a document the model never saw, returned with a 200, and the caller
+reports that "the model is hallucinating" and looks for the fault everywhere except where it is.
+
+So a model that cannot read what was sent is refused **by name**, with the types it lacks, and the
+message distinguishes *undeclared* (a catalog gap somebody closes in a minute) from *declares no
+attachment support* (a fact about the model). Checked after routing at every hop, on the mechanism
+built for exactly this last commit.
+
+Four decisions worth keeping visible:
+
+- **`text=` still constructs and `.text` still reads.** The whole existing suite passed unmodified
+  against the reshaped model — which is what turned a change that "reaches everything" into a
+  change to one file. The care needed is elsewhere: `.text` was total and is now **lossy**, so the
+  injection filter and the routing classifier see the prompt and not the document. That blind spot
+  is a property with a test rather than a comment.
+- **Stripping is not redaction.** Attachment bytes are removed before the redactor runs, and
+  unconditionally, because a deployment that swaps the redactor must not be able to turn it off.
+- **The mock sees attachments.** One that ignored them would let every hermetic test pass while the
+  real path was broken, and the feature would be exercised only against a cloud nobody has in CI.
+- **Embedding refuses an attachment** rather than embedding the prompt without it — the same rule
+  one level down (`FRD-113`: chunking a document is the consumer's decision).
+
+**And then the integration layer earned its keep again.** Running the suite repeatedly to check for
+flakiness turned up a failure at roughly one in eight: a client dropping the socket mid-stream
+sometimes **vanished from the audit log**.
+
+Nothing to do with documents. Closing a generator from inside the process raises `GeneratorExit`,
+and awaits in a `finally` run normally — which is why the hermetic disconnect test passes
+deterministically and has since the day it was written. A real socket dropping **cancels the
+response task**, and a bare `await` in that `finally` re-raises `CancelledError` at its first
+suspension point: the settle and the row were simply lost. `FRD-405` B4 promised this path is
+accounted for. It was — in-process only.
+
+Shielded now, and verified over 15 consecutive runs after rebuilding the container (the first
+"fix" appeared not to work because the container was still on the old image, which is its own
+small lesson). Deliberately given **no** mutation entry: no hermetic test can distinguish the
+shielded version from the unshielded one, so an entry would be a false claim, and a harness that
+makes one is worse than no harness. `tools/mutation_check.py` now says that in its own docstring,
+and the integration test carries the explanation so nobody re-runs the flake away.
+
+135/135 mutations, 738 hermetic tests, 73 integration, 46 browser.
+
+---
+
 ## 2026-08-06 — The fallback chain learns to say no
 A question from the owner — *is the region set for the whole gateway, or can it be bound to a use
 case?* — turned into a smaller and more urgent finding than the one it asked about.

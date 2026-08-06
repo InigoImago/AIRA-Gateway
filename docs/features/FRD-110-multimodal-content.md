@@ -1,6 +1,6 @@
 # FRD-110 — Documents and images in a request
 
-> Phase: 8 (KIRA parity) · Status: **Draft** · Owner: Vadim Scheibe · Last updated: 2026-08-06
+> Phase: 8 (KIRA parity) · Status: **Done (2026-08-06)** · Owner: Vadim Scheibe · Last updated: 2026-08-06
 > Origin: `kira_api.md` §4.1–4.2 (`RequestContent`, `DocumentMimeTypeEnum`), programme: `ADR-0010`.
 > Multi-vendor consequences governed by **`ADR-0012`** (documents are not uniformly supported).
 > Touches: `FRD-100` (Gemini surface), `FRD-103` (persistence), `FRD-300` (pipeline),
@@ -279,6 +279,50 @@ vocabulary if that surface is built):
   no bytes.
 - *Given* a request declaring `application/pdf` and carrying a PNG, *when* it is submitted, *then*
   it is refused with a message naming the declared type, and nothing was forwarded upstream.
+
+## 10a. What was actually built (2026-08-06)
+
+`CanonicalMessage` carries ordered parts, `attachments.py` holds the checks, the Gemini surface
+takes `inlineData`, both dialects map it, the mock *sees* it, the reservation counts it, and the
+audit row keeps a description.
+
+**The requirement the owner stated is the one everything serves**: a model that cannot read the
+document is refused, by name, with the types it lacks. Sending the prompt without the attachment
+would produce no error — it would produce a fluent, confident answer about a document the model
+never saw, with a 200, and the caller would report that the model is hallucinating and look for the
+fault everywhere except where it is.
+
+Four decisions worth keeping visible:
+
+- **`text=` still constructs a message and `.text` still reads one.** That is what made this a
+  change to one file rather than twenty — the whole existing suite passed unmodified against the
+  reshaped model. It is also the thing to be careful about: `.text` was total and is now lossy, so
+  the pipeline's blind spot (FR-9) is a *property with a test*, not a comment.
+- **Stripping is not redaction.** Attachment bytes are removed before the redactor runs and
+  unconditionally, because a deployment that swaps the redactor must not be able to turn it off.
+- **The mock describes what it was sent.** A mock that ignored attachments would let every hermetic
+  test pass while the real path was broken, and the feature would be exercised only against a cloud
+  nobody has in CI.
+- **Embedding refuses an attachment** rather than embedding the prompt without it — the same rule
+  one level down.
+
+Coverage: 24 hermetic tests, 4 integration tests, mutations **F1–F11**, each verified to be caught.
+
+### The defect the integration layer found
+
+Running the suite repeatedly to check for flakiness turned up a failure at roughly one run in
+eight: a client that dropped the socket mid-stream sometimes **vanished from the audit log**.
+
+The cause had nothing to do with documents and everything to do with what a hermetic test can see.
+Closing a generator from inside the process raises `GeneratorExit`, and awaits in a `finally` run
+normally — which is why `test_a_client_that_disconnects_mid_stream_does_not_leak_the_reservation`
+passes deterministically. A real socket dropping **cancels the response task**, and a bare `await`
+in that `finally` re-raises `CancelledError` at its first suspension point: the settle and the row
+were lost. `FRD-405` B4 had promised this path is accounted for; it was, in-process.
+
+The accounting is now `asyncio.shield`ed. Deliberately **not** given a mutation entry: no hermetic
+test can distinguish the two versions, so an entry would be a false claim — and a harness that
+makes one is worse than no harness. The guard lives in the integration suite and the test says so.
 
 ## 11. Dependencies & Risks
 

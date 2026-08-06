@@ -6,14 +6,36 @@ fields so real Gemini clients that send extra keys are not rejected (FRD-100 FR-
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 _IGNORE = ConfigDict(extra="ignore")
 
 
-class Part(BaseModel):
+class InlineData(BaseModel):
+    """Google's shape for an attachment: a media type and base64 bytes."""
+
     model_config = _IGNORE
-    text: str
+    mimeType: str
+    data: str
+
+
+class Part(BaseModel):
+    """One part of a prompt: text **or** inline data, never both and never neither.
+
+    Modelled as optional fields with a validator rather than a union, because Google's wire format
+    is a single object shape and a caller who sends `{}` deserves an error naming the problem, not
+    a union-discrimination message listing two schemas.
+    """
+
+    model_config = _IGNORE
+    text: str | None = None
+    inlineData: InlineData | None = None
+
+    @model_validator(mode="after")
+    def _exactly_one(self) -> Part:
+        if (self.text is None) == (self.inlineData is None):
+            raise ValueError("a part must carry either 'text' or 'inlineData', not both")
+        return self
 
 
 class Content(BaseModel):

@@ -6,15 +6,41 @@ request/response bodies. Unit-tested independently of the HTTP client.
 
 from __future__ import annotations
 
+import base64
 from typing import Any
 
 from aira_gateway.core.canonical import (
     CanonicalChunk,
+    CanonicalMessage,
     CanonicalRequest,
     CanonicalResponse,
     CanonicalUsage,
     Role,
+    TextPart,
 )
+
+
+def _wire_parts(message: CanonicalMessage) -> list[dict[str, Any]]:
+    """Canonical parts → Gemini parts, in order.
+
+    The two formats agree, which is why this direction is cheap — and preserving the order is the
+    part that is not merely cosmetic: "this image, then this question" and "this question, then
+    this image" are different prompts.
+    """
+    wire: list[dict[str, Any]] = []
+    for part in message.parts:
+        if isinstance(part, TextPart):
+            wire.append({"text": part.text})
+        else:
+            wire.append(
+                {
+                    "inlineData": {
+                        "mimeType": part.media_type,
+                        "data": base64.b64encode(part.data).decode("ascii"),
+                    }
+                }
+            )
+    return wire
 
 
 def canonical_to_gemini_request(request: CanonicalRequest) -> dict[str, Any]:
@@ -23,10 +49,10 @@ def canonical_to_gemini_request(request: CanonicalRequest) -> dict[str, Any]:
     system: dict[str, Any] | None = None
     for message in request.messages:
         if message.role is Role.SYSTEM:
-            system = {"parts": [{"text": message.text}]}
+            system = {"parts": _wire_parts(message)}
         else:
             role = "model" if message.role is Role.MODEL else "user"
-            contents.append({"role": role, "parts": [{"text": message.text}]})
+            contents.append({"role": role, "parts": _wire_parts(message)})
 
     body: dict[str, Any] = {"contents": contents}
     if system is not None:

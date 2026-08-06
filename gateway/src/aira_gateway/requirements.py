@@ -16,6 +16,8 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Protocol
 
+from aira_common.models import Capability
+from aira_gateway.catalog import ModelCatalog
 from aira_gateway.upstreams.base import ProviderRegistry
 
 
@@ -62,6 +64,44 @@ class RegionAllowed:
                 f"runs in '{described.region}', and this request may only be processed in "
                 f"{sorted(self._allowed)}"
             )
+        return None
+
+
+class MediaTypesSupported:
+    """The model must be able to read every attachment the request carries (`ADR-0012` §3).
+
+    **This is the requirement the whole document feature turns on.** The tempting behaviour when a
+    model cannot read a PDF is to send the prompt without it and let the model answer anyway. That
+    produces **no error**: it produces a fluent, confident answer about a document the model never
+    saw, returned with a 200, indistinguishable from a correct one to everyone including the
+    caller — who then reports that "the model is hallucinating" and looks for the fault in the
+    wrong place entirely.
+
+    So a model that cannot read what was sent is refused, by name, with the types it lacks. An
+    error is a recoverable outcome; a confident wrong answer is not.
+
+    Checked against the model **about to be dispatched to** — after routing, at every hop of the
+    chain. A check against the model the caller named would be satisfied by a request that then
+    fell back to one that cannot read a thing.
+    """
+
+    def __init__(self, catalog: ModelCatalog, required: frozenset[str]) -> None:
+        self._catalog = catalog
+        self._required = required
+
+    async def refusal(self, model: str) -> str | None:
+        if not self._required:
+            return None
+        declaration = await self._catalog.declaration(model)
+        if not declaration.can(Capability.ATTACHMENTS):
+            # Undeclared *and* declared-without-attachments land here, and the message says which:
+            # one is a catalog gap somebody can close in a minute, the other is a fact about the
+            # model. Telling them apart is the difference between a fix and a support ticket.
+            missing = "declares no attachment support" if declaration.declared else "is undeclared"
+            return f"{missing}, so it cannot read the {sorted(self._required)} this request carries"
+        unreadable = self._required - declaration.media_types
+        if unreadable:
+            return f"cannot read {sorted(unreadable)}; it accepts {sorted(declaration.media_types)}"
         return None
 
 

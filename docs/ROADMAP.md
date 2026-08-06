@@ -195,7 +195,7 @@ order below serves the priorities rather than restating them.
 | **0** ✅ | ~~`FRD-122` — vollständiger Audit-Trail~~ **fertig 2026-08-06** | Klein, additiv, kein Eingriff in den Request-Pfad — und **jede spätere Stufe wird dagegen getestet**. Ablehnungen, das aufrufende System und `requested_model` vs. `model` sind genau das, was man bei Fallback über zwei Anbieter und einer zweiten API-Fläche braucht. Zuerst, weil es danach mühsamer nachzurüsten ist als jetzt. |
 | **1** ✅ | ~~`FRD-114` — Modell-Metadaten~~ **fertig 2026-08-06** | Voraussetzung für alles: Publisher, Capabilities, Default-Cap, Adressierung, Hosting. |
 | **2** ✅ | ~~`FRD-115` + `FRD-119` — Vertex EU, Gemini + Anthropic~~ **fertig 2026-08-06** | Priorität 2, erste Hälfte. Erst danach ist überhaupt ein produktionsfähiges (EU-)Modell erreichbar. |
-| **3** | `FRD-110` — Dokumente | Priorität 3. Bewusst **nach** Stufe 2: ohne dokumentenfähiges Modell in der EU wären Dokumente nur gegen den Mock nutzbar. |
+| **3** ✅ | ~~`FRD-110` — Dokumente~~ **fertig 2026-08-06** | Priorität 3. Bewusst **nach** Stufe 2: ohne dokumentenfähiges Modell in der EU wären Dokumente nur gegen den Mock nutzbar. |
 | **4** | `FRD-107` Stage A — KIRA-Fläche, Textvertrag | Priorität 1, so früh wie ehrlich möglich. Nicht unterstützte Felder werden **abgewiesen**, nie ignoriert (`FRD-107` §5.2). Einfache Clients migrieren hier. |
 | **5** | `FRD-111`, `FRD-112`, `FRD-113` | Thinking, strukturierte Ausgabe, Embedding-Optionen. |
 | **6** | `FRD-107` Stage B | Dieselben Felder werden von abgewiesen zu bedient. Vertrag unverändert. |
@@ -215,7 +215,7 @@ overruled rather than discovered:
 
 | FRD | What | Blocking? |
 |---|---|---|
-| `FRD-110` | Documents and images in a request | the widest gap; everything else sits on it |
+| ~~`FRD-110`~~ | Documents and images in a request | **Done (2026-08-06).** Ordered parts, allow-list + signature check + bounds, per-model media types checked after routing, reservation counts them, audit keeps a description not the bytes. A model that cannot read it **refuses**. |
 | `FRD-111` | Thinking modes and budgets | needs `FRD-114` |
 | `FRD-112` | `responseSchema` — forced JSON output | — |
 | `FRD-113` | Embedding task types, batches, dimensions | needs `FRD-114` |

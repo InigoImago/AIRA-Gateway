@@ -18,6 +18,12 @@ add the mutation that reintroduces it: that is what stops it coming back silentl
 Notes for whoever extends this:
 
 - The baseline suite must be green first, or every mutation looks "caught" for the wrong reason.
+- **Some properties cannot live here, and saying so is part of being honest.** "A client dropping
+  a real socket still leaves its request settled and logged" is one: closing a generator in-process
+  raises `GeneratorExit` and a bare `await` in a `finally` runs fine, so no hermetic test can tell
+  the shielded version from the unshielded one. It is guarded by `tests/integration/
+  test_request_path.py` instead. A mutation that survives here would be a false claim, and a
+  harness that makes one is worse than no harness.
 - Keep the test selection **wide enough**. A too-narrow selection reports a false gap: M25 was
   first reported as surviving only because the test that catches it lives in another file.
 - The anchor text must be unique in the file; a missing anchor is reported rather than skipped
@@ -76,6 +82,7 @@ RETENTION = "gateway/tests/test_retention.py gateway/tests/test_store_payloads.p
 MODEL_CATALOG = "gateway/tests/test_model_catalog.py"
 VERTEX = "gateway/tests/test_vertex.py"
 REQUIREMENTS = "gateway/tests/test_dispatch_requirements.py"
+ATTACHMENTS = "gateway/tests/test_attachments.py"
 TOKENS = "libs/tests/test_tokens.py"
 CATALOG_DECLARATION = "management/backend/tests/test_catalog_declaration.py"
 
@@ -765,6 +772,95 @@ MUTATIONS = [
         "DEFAULT_ALLOWED_REGIONS = EU_REGIONS_GOOGLE + EU_REGIONS_AZURE",
         "DEFAULT_ALLOWED_REGIONS = EU_REGIONS_GOOGLE",
         REQUIREMENTS,
+    ),
+    # ---- documents and images (FRD-110) ----------------------------------------------------
+    Mutation(
+        "F1",
+        "a model that cannot read the attachment is refused, never sent the prompt without it",
+        "gateway/src/aira_gateway/requirements.py",
+        "        if not declaration.can(Capability.ATTACHMENTS):",
+        "        if False:",
+        ATTACHMENTS,
+    ),
+    Mutation(
+        "F2",
+        "the media types are checked one by one, not merely 'does it do attachments'",
+        "gateway/src/aira_gateway/requirements.py",
+        "        unreadable = self._required - declaration.media_types",
+        "        unreadable = frozenset()",
+        ATTACHMENTS,
+    ),
+    Mutation(
+        "F3",
+        "the attachment requirement is applied to the request that carries one",
+        "gateway/src/aira_gateway/api/gemini/routes.py",
+        "    if canonical is not None and canonical.media_types:",
+        "    if False:",
+        ATTACHMENTS,
+    ),
+    Mutation(
+        "F4",
+        "invalid base64 is refused rather than silently truncated into a shorter document",
+        "gateway/src/aira_gateway/attachments.py",
+        "        return base64.b64decode(raw, validate=True)",
+        "        return base64.b64decode(raw)",
+        ATTACHMENTS,
+    ),
+    Mutation(
+        "F5",
+        "the media-type allow-list actually restricts",
+        "gateway/src/aira_gateway/attachments.py",
+        "    if media_type not in limits.media_types:",
+        "    if False:",
+        ATTACHMENTS,
+    ),
+    Mutation(
+        "F6",
+        "a mislabelled upload is caught by its signature",
+        "gateway/src/aira_gateway/attachments.py",
+        "    if not any(data.startswith(signature) for signature in signatures):",
+        "    if False:",
+        ATTACHMENTS,
+    ),
+    Mutation(
+        "F7",
+        "attachment bytes never reach the audit table",
+        "gateway/src/aira_gateway/persistence/writer.py",
+        "                stripped: dict[str, Any] = strip_attachments(payload)",
+        "                stripped: dict[str, Any] = payload",
+        ATTACHMENTS,
+    ),
+    Mutation(
+        "F8",
+        "the reservation counts the attachment rather than treating it as free",
+        "gateway/src/aira_gateway/api/gemini/routes.py",
+        "    tokens += declaration.attachment_tokens(attachments or [])",
+        "    tokens += 0",
+        ATTACHMENTS,
+    ),
+    Mutation(
+        "F9",
+        "the text view of a message excludes attachments, which is the pipeline's stated blind spot",
+        "gateway/src/aira_gateway/core/canonical.py",
+        '        return "".join(part.text for part in self.parts if isinstance(part, TextPart))',
+        '        return "".join(getattr(part, "text", str(part)) for part in self.parts)',
+        ATTACHMENTS,
+    ),
+    Mutation(
+        "F10",
+        "part order is preserved, because it changes the prompt",
+        "gateway/src/aira_gateway/api/gemini/mapping.py",
+        "            parts.append(TextPart(text=part.text))\n            continue",
+        "            parts.insert(0, TextPart(text=part.text))\n            continue",
+        ATTACHMENTS,
+    ),
+    Mutation(
+        "F11",
+        "embedding refuses an attachment rather than embedding the prompt without it",
+        "gateway/src/aira_gateway/api/gemini/routes.py",
+        "        if any(part.inlineData is not None for part in embed_request.content.parts):",
+        "        if False:",
+        ATTACHMENTS,
     ),
     # ---- the dispatch chain may not degrade silently (ADR-0012 §3) -------------------------
     Mutation(

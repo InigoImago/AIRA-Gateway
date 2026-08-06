@@ -7,6 +7,7 @@ provider, and mapped back. Errors use the Gemini error envelope.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import AsyncIterator
 from typing import Any
@@ -27,6 +28,7 @@ from aira_gateway.api.gemini.mapping import (
     gemini_to_canonical,
     upstream_model_to_gemini,
 )
+from aira_gateway.attachments import AttachmentRejected
 from aira_gateway.audit import AuditTrail, Outcome, decision_summary
 from aira_gateway.budgets.errors import BudgetExceeded
 from aira_gateway.budgets.ledger import Amounts
@@ -39,7 +41,12 @@ from aira_gateway.pipeline.engine import PipelineEngine
 from aira_gateway.pipeline.errors import PipelineRejected
 from aira_gateway.pipeline.store import PipelineStore
 from aira_gateway.ratelimit.errors import RateLimited
-from aira_gateway.requirements import RegionAllowed, permits
+from aira_gateway.requirements import (
+    MediaTypesSupported,
+    RegionAllowed,
+    Requirement,
+    permits,
+)
 from aira_gateway.residency import parse_allowed
 from aira_gateway.upstreams.base import ProviderRegistry, Upstream, UpstreamError
 
@@ -71,7 +78,11 @@ _UPSTREAM_STATUS_MAP: dict[int, tuple[int, str]] = {
 
 
 async def _enforce_pre_dispatch(
-    request: Request, *, model: str, max_output_tokens: int | None
+    request: Request,
+    *,
+    model: str,
+    max_output_tokens: int | None,
+    attachments: list[str] | None = None,
 ) -> Reservation:
     """Every control a request must clear before anything expensive happens.
 
@@ -84,7 +95,9 @@ async def _enforce_pre_dispatch(
     subject = getattr(attribution, "subject", None)
 
     await request.app.state.rate_limits.check(use_case, subject)
-    estimate = await _estimate(request, model=model, max_output_tokens=max_output_tokens)
+    estimate = await _estimate(
+        request, model=model, max_output_tokens=max_output_tokens, attachments=attachments
+    )
     # `app.state` is untyped, so the annotation is what states the contract the route relies on.
     reservation: Reservation = await request.app.state.budgets.guard(
         use_case, subject, estimated=estimate
@@ -92,7 +105,13 @@ async def _enforce_pre_dispatch(
     return reservation
 
 
-async def _estimate(request: Request, *, model: str, max_output_tokens: int | None) -> Amounts:
+async def _estimate(
+    request: Request,
+    *,
+    model: str,
+    max_output_tokens: int | None,
+    attachments: list[str] | None = None,
+) -> Amounts:
     """What this request is expected to consume, for the pre-dispatch reservation (FRD-405).
 
     The real cost is unknowable before the model answers, so the estimate is deliberately
@@ -109,6 +128,10 @@ async def _estimate(request: Request, *, model: str, max_output_tokens: int | No
     # estimate for every vendor, and it is the same number the request will actually carry.
     declaration = await _catalog(request).declaration(model)
     tokens = declaration.output_cap(max_output_tokens) or settings.budget_estimate_output_tokens
+    # Attachments are input, and input a character count cannot predict (FRD-110 §5.3). Priced at
+    # the output rate along with everything else: over-reserving briefly is the safe direction for
+    # a spend limit, and the figure is corrected the moment the response arrives.
+    tokens += declaration.attachment_tokens(attachments or [])
     price = await request.app.state.pricing.price_for(model)
     cost = 0 if price is None else cost_nanos(tokens, price.output_per_million_nanos)
     return Amounts(tokens=tokens, requests=1, cost_nanos=cost)
@@ -137,16 +160,21 @@ def _provenance(request: Request, model: str) -> tuple[str, str, str] | None:
     return (described.provider, described.publisher, described.region)
 
 
-def _requirements(request: Request) -> Permits:
+def _requirements(request: Request, canonical: CanonicalRequest | None) -> Permits:
     """What a candidate must satisfy to serve this request (`ADR-0012` §3).
 
-    Assembled per request because the answer depends on the request: today only residency, and
-    `FRD-110` adds the attachment media types the caller actually sent.
+    Assembled per request because the answer depends on the request: residency always, and the
+    attachment media types only when the caller actually sent one.
     """
     settings = request.app.state.settings
     # One list, every transport (`ADR-0012` §6) — reading a Vertex-named setting here would make
     # the first Azure model fail a check named after Google.
-    return permits([RegionAllowed(_registry(request), parse_allowed(settings.allowed_regions))])
+    checks: list[Requirement] = [
+        RegionAllowed(_registry(request), parse_allowed(settings.allowed_regions))
+    ]
+    if canonical is not None and canonical.media_types:
+        checks.append(MediaTypesSupported(_catalog(request), canonical.media_types))
+    return permits(checks)
 
 
 def _catalog(request: Request) -> ModelCatalog:
@@ -280,6 +308,8 @@ _REFUSAL_OUTCOMES: dict[int, Outcome] = {
 
 
 def _refusal_outcome(exc: Exception) -> Outcome:
+    if isinstance(exc, AttachmentRejected):
+        return Outcome.INVALID_REQUEST
     if isinstance(exc, NoCapableModel):
         return Outcome.NO_CAPABLE_MODEL
     if isinstance(exc, RateLimited):
@@ -296,6 +326,8 @@ def _refusal_outcome(exc: Exception) -> Outcome:
 
 
 def _refusal_response(exc: Exception) -> JSONResponse:
+    if isinstance(exc, AttachmentRejected):
+        return _error(400, str(exc), "INVALID_ARGUMENT")
     if isinstance(exc, NoCapableModel):
         # A 400, not the 502 this used to be. "Every candidate was excluded" is a configuration or
         # capability problem somebody can fix; an upstream outage is not, and reporting them as the
@@ -331,6 +363,7 @@ async def generate(resource: str, request: Request) -> Response:
     try:
         return await _generate(resource, request, trail)
     except (
+        AttachmentRejected,
         RateLimited,
         BudgetExceeded,
         PipelineRejected,
@@ -453,7 +486,8 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
     reservation = await _enforce_pre_dispatch(
         request,
         model=effective_model,
-        max_output_tokens=canonical.max_output_tokens if canonical is not None else None,
+        max_output_tokens=requested_output,
+        attachments=[part.media_type for part in canonical.attachments] if canonical else None,
     )
 
     if canonical is not None:
@@ -467,7 +501,7 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
                     _registry(request),
                     canonical,
                     fallbacks,
-                    permits=_requirements(request),
+                    permits=_requirements(request, canonical),
                 )
                 canonical_response = dispatched.response
                 trail.served_by(canonical_response.model, dispatched.candidate_index)
@@ -512,7 +546,16 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
     assert embed_request is not None  # the method dispatch above guarantees it
     async with request.app.state.budgets.hold(reservation):
         started = time.monotonic()
-        text = "".join(part.text for part in embed_request.content.parts)
+        # Embedding takes text only. `FRD-113` is explicit that embedding a document means
+        # chunking it, which is the consumer's decision — so an attachment here is refused rather
+        # than quietly ignored, which would embed the prompt and not the file.
+        if any(part.inlineData is not None for part in embed_request.content.parts):
+            raise GeminiHTTPError(
+                400,
+                "Embedding takes text only; send the document to a generate verb instead.",
+                "INVALID_ARGUMENT",
+            )
+        text = "".join(part.text or "" for part in embed_request.content.parts)
         values = await provider.embed(model, text)
         payload = schemas.EmbedContentResponse(
             embedding=schemas.ContentEmbedding(values=values)
@@ -607,16 +650,30 @@ def _stream_response(
             finally:
                 # Runs when the client hangs up too. The upstream was called either way, so the
                 # request has to be accounted for and logged rather than vanishing from both.
-                await _finish_stream(
-                    request,
-                    reservation,
-                    trail,
-                    model=canonical.model,
-                    body=body,
-                    text="".join(parts),
-                    usage=final_usage,
-                    status=status,
-                    started=started,
+                #
+                # **Shielded**, and the reason is subtle enough to be worth stating. Closing the
+                # generator from inside the process raises `GeneratorExit`, and awaits in a
+                # `finally` then run normally — which is why the hermetic disconnect test passes
+                # deterministically. A client dropping a real socket cancels the response task
+                # instead, and a bare `await` here re-raises `CancelledError` at its first
+                # suspension point: the settle and the audit row are simply lost. That showed up as
+                # a 1-in-8 flake in the integration suite, which is what a lost row looks like from
+                # the outside.
+                #
+                # `shield` lets the accounting run to completion while the cancellation propagates
+                # past it. Losing the row is the failure `FRD-405` B4 promised not to have.
+                await asyncio.shield(
+                    _finish_stream(
+                        request,
+                        reservation,
+                        trail,
+                        model=canonical.model,
+                        body=body,
+                        text="".join(parts),
+                        usage=final_usage,
+                        status=status,
+                        started=started,
+                    )
                 )
 
     media_type = "text/event-stream" if sse else "application/json"

@@ -23,6 +23,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from aira_common.logging import get_logger
+from aira_gateway.attachments import strip_attachments
 from aira_gateway.core.canonical import CanonicalUsage
 from aira_gateway.db.models import UseCaseRead
 from aira_gateway.persistence.redaction import Redactor
@@ -159,7 +160,12 @@ class RequestLogWriter:
             def _maybe(payload: dict[str, Any] | None) -> dict[str, Any] | None:
                 if not store or payload is None:
                     return None
-                return self._redactor.redact(payload)
+                # Strip first, then redact. A base64 PDF in a JSONB column would make each row
+                # megabytes, put binary the gateway never inspected inside the retention boundary,
+                # and hand redaction something it cannot process (FRD-110 §5.4). Unconditional,
+                # because a deployment that swaps the redactor must not be able to turn it off.
+                stripped: dict[str, Any] = strip_attachments(payload)
+                return self._redactor.redact(stripped)
 
             await RequestLogService(session).record(
                 subject=entry.subject,

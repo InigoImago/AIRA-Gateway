@@ -16,14 +16,17 @@ Every difference from Gemini is a mapping this file owns:
 
 from __future__ import annotations
 
+import base64
 from typing import Any
 
 from aira_gateway.core.canonical import (
     CanonicalChunk,
+    CanonicalMessage,
     CanonicalRequest,
     CanonicalResponse,
     CanonicalUsage,
     Role,
+    TextPart,
 )
 
 #: Vertex requires this in the body rather than as a header.
@@ -62,7 +65,7 @@ def canonical_to_anthropic(request: CanonicalRequest, *, max_tokens: int) -> dic
             system_parts.append(message.text)
             continue
         role = "assistant" if message.role is Role.MODEL else "user"
-        messages.append({"role": role, "content": [{"type": "text", "text": message.text}]})
+        messages.append({"role": role, "content": _content_blocks(message)})
 
     body: dict[str, Any] = {
         "anthropic_version": ANTHROPIC_VERSION,
@@ -74,6 +77,37 @@ def canonical_to_anthropic(request: CanonicalRequest, *, max_tokens: int) -> dic
     if request.temperature is not None:
         body["temperature"] = request.temperature
     return body
+
+
+#: Anthropic distinguishes an image from a document, and the type is not interchangeable — an
+#: image block carrying a PDF is refused by the API, not silently coerced.
+_DOCUMENT_TYPES = frozenset({"application/pdf"})
+
+
+def _content_blocks(message: CanonicalMessage) -> list[dict[str, Any]]:
+    """Canonical parts → Anthropic content blocks, in order.
+
+    Anthropic *is* a list of typed blocks, so the ordered-parts model maps onto it more directly
+    than onto Gemini's — which is a small piece of evidence that the canonical shape is neutral
+    rather than Google's renamed (`FRD-119` §5.2).
+    """
+    blocks: list[dict[str, Any]] = []
+    for part in message.parts:
+        if isinstance(part, TextPart):
+            blocks.append({"type": "text", "text": part.text})
+            continue
+        kind = "document" if part.media_type in _DOCUMENT_TYPES else "image"
+        blocks.append(
+            {
+                "type": kind,
+                "source": {
+                    "type": "base64",
+                    "media_type": part.media_type,
+                    "data": base64.b64encode(part.data).decode("ascii"),
+                },
+            }
+        )
+    return blocks
 
 
 def answer_text(content: Any) -> str:

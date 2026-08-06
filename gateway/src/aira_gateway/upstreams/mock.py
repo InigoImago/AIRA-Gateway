@@ -35,7 +35,7 @@ class MockProvider:
 
     async def generate(self, request: CanonicalRequest) -> CanonicalResponse:
         prompt = request.last_user_text().strip().replace("\n", " ")[:120]
-        words = f"[mock:{request.model}] response to: {prompt}".split()
+        words = f"[mock:{request.model}] response to: {prompt}{_attachments(request)}".split()
 
         finish_reason = "stop"
         limit = request.max_output_tokens
@@ -65,4 +65,24 @@ class MockProvider:
 
     @staticmethod
     def _prompt_tokens(request: CanonicalRequest) -> int:
-        return sum(len(message.text.split()) for message in request.messages)
+        # Attachments cost input tokens that no character count predicts, and the mock has to say
+        # so or every budget test against a document would measure a request that looked free.
+        # 250 per 1 KiB is a coarse stand-in for what a provider actually charges — the point is
+        # that it is not zero.
+        attachment_tokens = sum(part.size // 4 for part in request.attachments)
+        words = sum(len(message.text.split()) for message in request.messages)
+        return words + attachment_tokens
+
+
+def _attachments(request: CanonicalRequest) -> str:
+    """Describe what was attached, deterministically.
+
+    A mock that ignored attachments would let every hermetic test pass while the real path was
+    broken — and the whole document feature would be exercised only against a cloud nobody has in
+    CI. So the mock *sees* them, and says what it saw.
+    """
+    parts = request.attachments
+    if not parts:
+        return ""
+    described = ", ".join(f"{part.media_type} ({part.size} bytes)" for part in parts)
+    return f" [with {len(parts)} attachment(s): {described}]"

@@ -68,7 +68,7 @@ product's central claim being true and being asserted.
 
 | # | Feature | Stand | Where |
 |--:|---|---|---|
-| 18 | **Verarbeitung von Dokumenten** (PDF, Bilder u. a. im Request) — KIRAs Kernfall | **fehlt** — `CanonicalMessage` trägt nur Text, `inlineData` wird mit 400 abgewiesen | `FRD-110` |
+| 18 | **Verarbeitung von Dokumenten** (PDF, Bilder u. a. im Request) — KIRAs Kernfall | **fertig (2026-08-06)** — geordnete Teile, 15 Medientypen, Signaturprüfung, Grenzen; ein Modell, das den Typ nicht lesen kann, **lehnt ab** statt zu halluzinieren | `FRD-110` ✅ |
 | 19 | **Erweiterbarkeit als messbare Eigenschaft** — eine neue Modellfamilie ist ein Katalogeintrag plus höchstens ein Dialekt | **Architektur steht, ungeprüft** | `ADR-0011`, `FRD-115` §10 |
 | 20 | **Secrets aus Vault** — Richtlinie und Implementierung stehen seit Phase 0 auseinander | **fehlt** — Vault läuft im Stack, kein Code liest daraus | `FRD-116` |
 | 21 | **Betriebsdiagnostik** — Build-Identität, Upstream-Health, Trace-Header, CORS, OpenAPI 3.0 | **fehlt** | `FRD-117` |

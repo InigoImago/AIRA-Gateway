@@ -330,6 +330,23 @@ reach the audit row. Residency is **one policy for every cloud** (`aira_gateway.
 Google's `europe-west1` and Azure's `westeurope` in one list, defaulting to the EU regions of every
 supported cloud — a per-cloud setting would mean a per-cloud audit. It is still **deployment-wide**;
 per-use-case regions are a governance extension, not a bug fix, and are not built.
+**`FRD-110` done (2026-08-06) — documents and images.** `CanonicalMessage` carries **ordered
+parts**; `text=` still constructs and `.text` still reads, so the whole existing suite passed
+unmodified — but `.text` is now **lossy**, which is the pipeline's stated blind spot (a prompt
+injection inside a PDF is invisible to the injection filter). **The rule that matters: a model that
+cannot read the attachment is refused by name, never sent the prompt without it** — a dropped
+attachment produces no error, it produces a fluent wrong answer with a 200 and the caller blames
+the model. Checked **after routing at every hop**, so a fallback skips an incapable candidate and
+an exhausted chain fails. Attachment bytes are stripped before redaction and unconditionally
+(stripping is not redaction); the reservation counts attachment tokens (a document is input no
+character count predicts); the mock *sees* attachments or the feature would only ever be exercised
+against a cloud nobody has in CI.
+**The integration layer found a defect the hermetic one structurally cannot see**: a client
+dropping a real socket **cancels** the response task, so a bare `await` in the streaming `finally`
+lost the settle and the audit row — in-process `aclose()` raises `GeneratorExit` and works fine,
+which is why the hermetic test passed. Now `asyncio.shield`ed, and deliberately given **no**
+mutation entry, because no hermetic test can tell the two apart and a harness that claims otherwise
+is worse than none.
 **Delivery order is fixed (ROADMAP Phase 8, 2026-08-06)**, derived from the owner's priority
 (KIRA compatibility → model connections → documents → the review findings) and the dependency that
 priority 1 needs priority 3: **`FRD-122` (audit) → `FRD-114` (metadata) → `FRD-115`+`119` (Vertex EU,

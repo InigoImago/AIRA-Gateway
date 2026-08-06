@@ -218,8 +218,14 @@ async def test_a_client_that_stops_reading_still_leaves_the_request_accounted_fo
     response iterator and closes it explicitly, and which was verified to fail against the code
     that had the defect.
 
-    It earns its place here anyway: it is the only test that takes a real socket away from a real
-    server, and a regression that only appears over HTTP would show up nowhere else.
+    It earns its place here anyway, and on 2026-08-06 it earned it concretely: it failed roughly
+    one run in eight, and the cause was a **real defect the hermetic test structurally could not
+    see**. Closing a generator from inside the process raises ``GeneratorExit``, and awaits in a
+    ``finally`` then run normally. A client dropping a real socket **cancels the response task**
+    instead, and a bare ``await`` in that ``finally`` re-raises ``CancelledError`` at its first
+    suspension point — so the settle and the audit row were simply lost. The accounting is now
+    shielded. A test that fails one time in eight is a defect reporting itself quietly, and the
+    temptation to re-run it away is exactly what this note exists to prevent.
     """
     slug = f"itest-{uuid.uuid4().hex[:8]}"
     key = await _use_case_with_key(engine, slug)
