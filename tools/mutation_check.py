@@ -720,6 +720,31 @@ MUTATIONS = [
         "        self._degradation = degradation or DegradationLog()",
         "gateway/tests/test_ratelimit.py",
     ),
+    # ---- oversight (ADR-0009) ------------------------------------------------------------
+    Mutation(
+        "O1",
+        "oversight is global-admin and it-steuerung, and no other role",
+        "libs/src/aira_common/roles.py",
+        "GOVERNANCE_ROLES: frozenset[Role] = frozenset({Role.GLOBAL_ADMIN, Role.IT_STEUERUNG})",
+        "GOVERNANCE_ROLES: frozenset[Role] = frozenset({Role.GLOBAL_ADMIN, Role.IT_STEUERUNG, Role.USE_CASE_ADMIN})",
+        "libs/tests/test_roles.py management/backend/tests/test_rbac.py",
+    ),
+    Mutation(
+        "O2",
+        "a malformed roles claim yields no oversight rather than an error",
+        "gateway/src/aira_gateway/auth/attribution.py",
+        "    if not isinstance(access, dict):\n        return ()",
+        "    if not isinstance(access, dict):\n        raise ValueError(access)",
+        "gateway/tests/test_attribution.py",
+    ),
+    Mutation(
+        "O3",
+        "the roles a token carries reach the principal",
+        "gateway/src/aira_gateway/auth/oidc.py",
+        "            roles=realm_roles(claims),",
+        "            roles=(),",
+        "gateway/tests/test_attribution.py gateway/tests/test_auth_oidc.py",
+    ),
     # ---- the counter transport -----------------------------------------------------------
     Mutation(
         "M21",

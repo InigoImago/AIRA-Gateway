@@ -8,8 +8,9 @@ against the caller's Keycloak group membership. Membership groups live under
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from typing import Any
 
 from fastapi import Request
 
@@ -46,6 +47,22 @@ def usecases_from_groups(groups: Iterable[str]) -> tuple[str, ...]:
             if slug:
                 slugs.append(slug)
     return tuple(dict.fromkeys(slugs))  # de-duplicate, preserve order
+
+
+def realm_roles(claims: Mapping[str, Any]) -> tuple[str, ...]:
+    """The realm roles a token carries, from Keycloak's ``realm_access.roles`` (ADR-0009).
+
+    Anything malformed yields no roles rather than an error: a token whose claim is the wrong
+    shape is a token with no oversight, which is the safe reading. Failing authentication over it
+    would let a realm misconfiguration lock everyone out of the data plane.
+    """
+    access = claims.get("realm_access")
+    if not isinstance(access, dict):
+        return ()
+    roles = access.get("roles")
+    if not isinstance(roles, list):
+        return ()
+    return tuple(dict.fromkeys(str(role) for role in roles if isinstance(role, str)))
 
 
 def resolve_use_case(request: Request) -> str | None:

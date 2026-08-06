@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from aira_common.logging import get_logger
 from aira_common.oidc import JwtVerifier, SigningKeyResolver, build_jwks_client
-from aira_gateway.auth.attribution import usecases_from_groups
+from aira_gateway.auth.attribution import realm_roles, usecases_from_groups
 from aira_gateway.auth.principal import Principal
 from aira_gateway.config import GatewaySettings
 
@@ -35,7 +35,10 @@ class OidcValidator:
         raw_groups = claims.get("groups")
         groups = raw_groups if isinstance(raw_groups, list) else []
         return Principal(
-            subject=str(subject), method="oidc", use_cases=usecases_from_groups(groups)
+            subject=str(subject),
+            method="oidc",
+            use_cases=usecases_from_groups(groups),
+            roles=realm_roles(claims),
         )
 
 

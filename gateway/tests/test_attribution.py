@@ -4,7 +4,11 @@ from starlette.requests import Request
 from aira_common.apikeys import generate_api_key
 from aira_gateway.app import create_app
 from aira_gateway.auth import keys
-from aira_gateway.auth.attribution import resolve_use_case, usecases_from_groups
+from aira_gateway.auth.attribution import (
+    realm_roles,
+    resolve_use_case,
+    usecases_from_groups,
+)
 from aira_gateway.auth.principal import Principal
 from aira_gateway.config import GatewaySettings
 from aira_gateway.db.models import ApiKey, UseCaseRead
@@ -184,3 +188,50 @@ async def test_an_unbound_key_is_not_restricted(authed_client) -> None:
         await session.commit()
 
     assert _generate(authed_client, "/uc/anything", {"x-goog-api-key": full}).status_code == 200
+
+
+# ---- realm roles (ADR-0009) ------------------------------------------------------------
+
+
+def test_realm_roles_are_read_from_the_token() -> None:
+    assert realm_roles({"realm_access": {"roles": ["it-steuerung", "use-case-user"]}}) == (
+        "it-steuerung",
+        "use-case-user",
+    )
+
+
+def test_a_malformed_roles_claim_yields_no_oversight_rather_than_an_error() -> None:
+    """A token whose claim is the wrong shape is a token with no oversight — the safe reading.
+
+    Failing authentication over it would let one realm misconfiguration lock every caller out of
+    the data plane, which is a far worse outcome than one person seeing fewer use cases.
+    """
+    for claims in (
+        {},
+        {"realm_access": None},
+        {"realm_access": {}},
+        {"realm_access": {"roles": "x"}},
+    ):
+        assert realm_roles(claims) == ()
+    # A non-string entry is skipped rather than coerced into a role name.
+    assert realm_roles({"realm_access": {"roles": ["ok", 7, None]}}) == ("ok",)
+
+
+def test_duplicate_roles_are_collapsed() -> None:
+    assert realm_roles({"realm_access": {"roles": ["a", "a", "b"]}}) == ("a", "b")
+
+
+def test_a_governance_role_is_recognised_and_a_use_case_role_is_not() -> None:
+    """Oversight is not membership: a use-case admin administers their own use cases, a
+    governance role sees every one of them and may act inside none."""
+    assert Principal(subject="s", method="oidc", roles=("it-steuerung",)).is_governance is True
+    assert Principal(subject="s", method="oidc", roles=("global-admin",)).is_governance is True
+    assert Principal(subject="s", method="oidc", roles=("use-case-admin",)).is_governance is False
+    assert Principal(subject="s", method="oidc", roles=()).is_governance is False
+    # An API key is issued for a use case, not for a person with a standing in the organisation.
+    assert Principal(subject="s", method="api_key", use_cases=("uc",)).is_governance is False
+
+
+def test_an_unknown_role_is_simply_not_governance() -> None:
+    """A realm that grows a role this code has never heard of must not break authentication."""
+    assert Principal(subject="s", method="oidc", roles=("brand-new-role",)).is_governance is False

@@ -15,10 +15,10 @@ from django.db.models import QuerySet
 from guardian.shortcuts import get_objects_for_user
 from rest_framework.permissions import BasePermission
 
-from aira_management.roles import ALL_ROLES, Role
+from aira_management.roles import ALL_ROLES, GOVERNANCE_ROLES, Role
 
 # Roles with organisation-wide read visibility (oversight).
-GOVERNANCE_ROLES: frozenset[Role] = frozenset({Role.GLOBAL_ADMIN, Role.IT_STEUERUNG})
+# Defined once in aira_common.roles so the gateway cannot drift from it (ADR-0009).
 
 
 def sync_user_roles(user: Any, claims: dict[str, Any]) -> None:

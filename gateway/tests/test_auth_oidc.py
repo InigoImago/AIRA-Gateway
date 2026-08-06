@@ -34,6 +34,7 @@ def _token(
     aud: str | None = None,
     sub: str | None = "user-123",
     groups: list[str] | None = None,
+    roles: list[str] | None = None,
     expired: bool = False,
 ) -> str:
     now = dt.datetime.now(dt.UTC)
@@ -45,6 +46,8 @@ def _token(
         claims["aud"] = aud
     if groups is not None:
         claims["groups"] = groups
+    if roles is not None:
+        claims["realm_access"] = {"roles": roles}
     return jwt.encode(claims, private, algorithm="RS256")
 
 
@@ -129,3 +132,27 @@ def test_build_validator_with_audience_skips_the_warning() -> None:
         GatewaySettings(oidc_enabled=True, oidc_issuer=ISSUER, oidc_audience="aira-gateway")
     )
     assert validator is not None
+
+
+def test_the_realm_roles_reach_the_principal() -> None:
+    """The claim is already in the token; before ADR-0009 the validator simply dropped it, and a
+    governance caller was indistinguishable from someone with no memberships at all."""
+    private, public = _keypair()
+    validator = OidcValidator(ISSUER, None, _Resolver(public))
+
+    principal = validator.validate(_token(private, roles=["it-steuerung", "use-case-user"]))
+
+    assert principal is not None
+    assert principal.roles == ("it-steuerung", "use-case-user")
+    assert principal.is_governance is True
+
+
+def test_a_token_without_roles_yields_a_principal_with_none() -> None:
+    private, public = _keypair()
+    validator = OidcValidator(ISSUER, None, _Resolver(public))
+
+    principal = validator.validate(_token(private))
+
+    assert principal is not None
+    assert principal.roles == ()
+    assert principal.is_governance is False

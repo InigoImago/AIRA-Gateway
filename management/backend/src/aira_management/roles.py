@@ -1,21 +1,13 @@
-"""Canonical AIRA roles.
+"""Canonical AIRA roles — re-exported from the shared definition.
 
-These five roles map to Keycloak groups + Django ``Group``s (object-level scoping via
-``django-guardian`` arrives with the RBAC work in Phase 2 / FRD-201). Defined here so both
-seeding (FRD-002) and later RBAC share one source of truth.
+The definition moved to :mod:`aira_common.roles` when the gateway came to need the same answer
+to "is this caller governance" for reporting across use cases (ADR-0009). This module stays so
+the Django side keeps importing from where it always has, and so there is one obvious place to
+look from inside Management.
 """
 
 from __future__ import annotations
 
-from enum import StrEnum
+from aira_common.roles import ALL_ROLES, GOVERNANCE_ROLES, Role, is_governance
 
-
-class Role(StrEnum):
-    GLOBAL_ADMIN = "global-admin"
-    IT_SECURITY = "it-security"
-    IT_STEUERUNG = "it-steuerung"
-    USE_CASE_ADMIN = "use-case-admin"
-    USE_CASE_USER = "use-case-user"
-
-
-ALL_ROLES: tuple[Role, ...] = tuple(Role)
+__all__ = ["ALL_ROLES", "GOVERNANCE_ROLES", "Role", "is_governance"]
