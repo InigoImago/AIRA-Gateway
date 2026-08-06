@@ -210,6 +210,10 @@ Not built: the audit **digest**. `ResponseSchema.digest()` exists and is tested;
 row needs a migration, and it was left out rather than half-done. Stated here so it is a task and
 not an assumption.
 
+**Verified against a real model (2026-08-06).** A schema request through the OpenAI dialect came
+back `{ "colour": "red" }` with a normal finish reason — so the capability is *declared* for that
+model on evidence rather than on a guess, which is the converse of `FRD-114` FR-7's rule.
+
 Mutations **S1–S7**.
 
 ## 11. Dependencies & Risks

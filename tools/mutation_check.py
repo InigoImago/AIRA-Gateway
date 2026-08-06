@@ -1284,7 +1284,7 @@ MUTATIONS = [
         "            raise",
         COUNTERS,
     ),
-# ---- thinking (FRD-111) -----------------------------------------------------------------
+    # ---- thinking (FRD-111) -----------------------------------------------------------------
     #
     # The expensive knob on a request: budgets reach 32 768 tokens, billed as output. Three of
     # these are about *money* rather than correctness, which is why they are here at all.
@@ -1465,7 +1465,7 @@ MUTATIONS = [
         "B8",
         "the usage counter is accumulated by the database, not read-modify-written in Python",
         "gateway/src/aira_gateway/budgets/service.py",
-        "            \"tokens\": columns.tokens + tokens,",
+        '            "tokens": columns.tokens + tokens,',
         '            "tokens": tokens,',
         f"{BUDGET_SERVICE} {COST}",
     ),
@@ -1477,7 +1477,7 @@ MUTATIONS = [
         "O1",
         "the verb is split off the *last* colon, so a model name may contain one",
         "gateway/src/aira_gateway/api/gemini/routes.py",
-        "    model, separator, method = resource.rpartition(\":\")",
+        '    model, separator, method = resource.rpartition(":")',
         '    model, separator, method = resource.partition(":")',
         OPENAI_DIALECT,
     ),
@@ -1493,7 +1493,7 @@ MUTATIONS = [
         "O3",
         "usage in a chunk with no choices is read rather than dropped",
         "gateway/src/aira_gateway/upstreams/openai/mapping.py",
-        "        return CanonicalChunk(text_delta=\"\", finish_reason=None, usage=usage) if usage else None",  # noqa: E501
+        '        return CanonicalChunk(text_delta="", finish_reason=None, usage=usage) if usage else None',  # noqa: E501
         "        return None",
         OPENAI_DIALECT,
     ),

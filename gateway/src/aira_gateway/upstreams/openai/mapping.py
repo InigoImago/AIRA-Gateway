@@ -182,13 +182,36 @@ def finish_reason(value: Any) -> str:
     return _FINISH_REASONS.get(str(value), "stop")
 
 
+#: The field a reasoning model returns its chain of thought in — **read from, never**. `FRD-111`
+#: §2 decided thoughts are not returned, logged or persisted. With Gemini that was free (we simply
+#: never ask); with Anthropic it became an active obligation to drop a block; here it is a third
+#: shape of the same obligation, and the most easily missed, because the obvious implementation —
+#: concatenating everything the message carries — would return it.
+#:
+#: Measured, not assumed: a one-word answer from a local reasoning model came back with `content`
+#: of "Hi" and 439 characters of `reasoning`, all of it billed inside `completion_tokens`.
+REASONING_FIELD = "reasoning"
+
+
+def answer_of(message: dict[str, Any]) -> str:
+    """The answer, and **only** the answer.
+
+    An empty string when the model spent its whole allowance thinking. That is not hidden: the
+    finish reason is `length` in that case and maps to `max_tokens`, so a caller receiving nothing
+    can tell why. Substituting the reasoning for the missing answer would be the opposite of what
+    `FRD-111` decided — chain of thought is the least reviewed text a model produces, it routinely
+    restates the input, and it would land in a column the gateway also persists.
+    """
+    return str(message.get("content") or "")
+
+
 def openai_to_canonical(data: dict[str, Any], model: str) -> CanonicalResponse:
     choices = data.get("choices") or []
     first = choices[0] if choices else {}
     message = first.get("message") or {}
     return CanonicalResponse(
         model=model,
-        text=str(message.get("content") or ""),
+        text=answer_of(message),
         finish_reason=finish_reason(first.get("finish_reason")),
         usage=_usage_of(data.get("usage")),
     )
@@ -210,6 +233,9 @@ def openai_chunk_to_canonical(data: dict[str, Any]) -> CanonicalChunk | None:
     first = choices[0]
     delta = first.get("delta") or {}
     reason = first.get("finish_reason")
+    # `delta.reasoning` is discarded here for the same reason `answer_of` ignores it. A streaming
+    # mapper that forwarded every string field in the delta would stream the model's thoughts to
+    # the caller, one token at a time, into a response the gateway also persists.
     return CanonicalChunk(
         text_delta=str(delta.get("content") or ""),
         finish_reason=finish_reason(reason) if reason else None,

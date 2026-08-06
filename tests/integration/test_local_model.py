@@ -17,6 +17,7 @@ under test is absent is worse than one that fails.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import uuid
 
@@ -25,7 +26,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from .conftest import GATEWAY_URL
+from .conftest import GATEWAY_URL, Fixture
 
 pytestmark = pytest.mark.integration
 
@@ -58,7 +59,25 @@ async def _require(model: str) -> None:
         pytest.skip(f"'{model}' is not pulled — run `make verify-up`")
 
 
-async def _latest_row(engine: AsyncEngine, model: str) -> dict[str, object] | None:
+async def _latest_row(
+    engine: AsyncEngine, model: str, *, wait: float = 15.0
+) -> dict[str, object] | None:
+    """The most recent row for this model, waiting for it to appear.
+
+    The audit write is deliberately **off the request path** (`FRD-405`), so reading immediately
+    after a 200 is a race — and this test had it: one run passed, the next failed on a row that
+    simply had not been written yet. A flaky assertion about a *missing audit row* is the worst
+    kind, because the failure it imitates is one of the most serious the system has.
+    """
+    deadline = asyncio.get_running_loop().time() + wait
+    while True:
+        row = await _query_row(engine, model)
+        if row is not None or asyncio.get_running_loop().time() > deadline:
+            return row
+        await asyncio.sleep(0.3)
+
+
+async def _query_row(engine: AsyncEngine, model: str) -> dict[str, object] | None:
     async with engine.connect() as connection:
         row = (
             await connection.execute(
@@ -75,7 +94,9 @@ async def _latest_row(engine: AsyncEngine, model: str) -> dict[str, object] | No
     return dict(row._mapping) if row is not None else None
 
 
-async def test_a_real_answer_is_stored_exactly_as_it_was_sent(engine: AsyncEngine) -> None:
+async def test_a_real_answer_is_stored_exactly_as_it_was_sent(
+    engine: AsyncEngine, fixture: Fixture
+) -> None:
     """The question nobody wrote down because it looked too obvious to check: are the prompts and
     responses actually persisted, and is what is stored what was sent? `FRD-103` says yes and the
     hermetic tests agree — about a payload the mock also produced."""
@@ -87,8 +108,9 @@ async def test_a_real_answer_is_stored_exactly_as_it_was_sent(engine: AsyncEngin
             f"/v1beta/models/{CHAT_MODEL}:generateContent",
             json={
                 "contents": [{"role": "user", "parts": [{"text": marker}]}],
-                "generationConfig": {"maxOutputTokens": 32},
+                "generationConfig": {"maxOutputTokens": 600},
             },
+            headers=fixture.headers(),
         )
     if response.status_code in (401, 403):
         pytest.skip("the gateway requires authentication for this route")
@@ -118,7 +140,7 @@ async def test_a_real_answer_is_stored_exactly_as_it_was_sent(engine: AsyncEngin
 
 
 async def test_the_recorded_cost_is_the_declared_price_applied_to_the_real_counts(
-    engine: AsyncEngine,
+    engine: AsyncEngine, fixture: Fixture
 ) -> None:
     """`FRD-403` end to end. The price is fictitious and says so in its display name; the
     *arithmetic* is not, and it has never been checked against token counts we did not choose."""
@@ -129,8 +151,9 @@ async def test_the_recorded_cost_is_the_declared_price_applied_to_the_real_count
             f"/v1beta/models/{CHAT_MODEL}:generateContent",
             json={
                 "contents": [{"role": "user", "parts": [{"text": "one sentence about rain"}]}],
-                "generationConfig": {"maxOutputTokens": 32},
+                "generationConfig": {"maxOutputTokens": 600},
             },
+            headers=fixture.headers(),
         )
     if response.status_code != 200:
         pytest.skip(f"the model did not serve this request ({response.status_code})")
@@ -145,8 +168,8 @@ async def test_the_recorded_cost_is_the_declared_price_applied_to_the_real_count
         prices = (
             await connection.execute(
                 text(
-                    "SELECT input_price_nanos, output_price_nanos FROM model_catalog"
-                    " WHERE model = :model"
+                    "SELECT input_price_per_million_nanos, output_price_per_million_nanos"
+                    " FROM model_catalog WHERE model = :model"
                 ),
                 {"model": CHAT_MODEL},
             )
@@ -161,7 +184,9 @@ async def test_the_recorded_cost_is_the_declared_price_applied_to_the_real_count
     assert int(cost) == expected
 
 
-async def test_a_streamed_answer_is_accounted_for_like_a_whole_one(engine: AsyncEngine) -> None:
+async def test_a_streamed_answer_is_accounted_for_like_a_whole_one(
+    engine: AsyncEngine, fixture: Fixture
+) -> None:
     """The one place this format hides its usage. It reports none on a stream unless asked, and a
     stream reporting none is *released* rather than settled (`FRD-405`) — so a forgotten
     `stream_options` would make every streamed request silently free."""
@@ -174,6 +199,7 @@ async def test_a_streamed_answer_is_accounted_for_like_a_whole_one(engine: Async
             "POST",
             url,
             json={"contents": [{"role": "user", "parts": [{"text": "count to three"}]}]},
+            headers=fixture.headers(),
         ) as response,
     ):
         if response.status_code != 200:
@@ -188,7 +214,9 @@ async def test_a_streamed_answer_is_accounted_for_like_a_whole_one(engine: Async
     assert int(row["prompt_tokens"] or 0) > 0, "a streamed request was recorded as costing nothing"
 
 
-async def test_a_real_batch_returns_one_vector_per_text(engine: AsyncEngine) -> None:
+async def test_a_real_batch_returns_one_vector_per_text(
+    engine: AsyncEngine, fixture: Fixture
+) -> None:
     """`FRD-113` FR-1 against a real embedder: n in, n out, in the order submitted. The mock could
     only ever confirm that we can count."""
     await _require(EMBED_MODEL)
@@ -202,6 +230,7 @@ async def test_a_real_batch_returns_one_vector_per_text(engine: AsyncEngine) -> 
                     {"content": {"parts": [{"text": "an entirely different one"}]}},
                 ]
             },
+            headers=fixture.headers(),
         )
     if response.status_code == 404:
         pytest.skip(f"'{EMBED_MODEL}' is not registered — set AIRA_OLLAMA_EMBEDDING_MODELS")
@@ -236,3 +265,100 @@ async def test_a_cold_model_is_not_woken_by_a_health_check() -> None:
         # Listing tags must not have caused a model to be resident. If one already is, this says
         # nothing — hence the guard rather than a hard assertion on an empty list.
         assert isinstance(loaded.json().get("models", []), list)
+
+
+# == what a real model does with the options (measured, not assumed) =============================
+
+
+async def test_a_schema_request_comes_back_as_a_document(
+    engine: AsyncEngine, fixture: Fixture
+) -> None:
+    """`FRD-112` against a model that never agreed to anything. The mock produces a conforming
+    document because the same code wrote the schema handling and the generator."""
+    await _require(CHAT_MODEL)
+    schema = {
+        "type": "OBJECT",
+        "properties": {"colour": {"type": "STRING"}},
+        "required": ["colour"],
+    }
+
+    async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=300.0) as client:
+        response = await client.post(
+            f"/v1beta/models/{CHAT_MODEL}:generateContent",
+            json={
+                "contents": [{"role": "user", "parts": [{"text": "Name one colour."}]}],
+                "generationConfig": {"responseSchema": schema, "maxOutputTokens": 900},
+            },
+            headers=fixture.headers(),
+        )
+    if response.status_code != 200:
+        pytest.skip(f"the model did not serve a schema request ({response.status_code})")
+
+    import json as _json
+
+    text_out = response.json()["candidates"][0]["content"]["parts"][0]["text"]
+    document = _json.loads(text_out)
+    assert set(document) == {"colour"}
+    assert isinstance(document["colour"], str)
+
+
+async def test_thinking_is_billed_as_output_and_never_returned(
+    engine: AsyncEngine, fixture: Fixture
+) -> None:
+    """`FRD-111` FR-6, the question that could only be answered here.
+
+    Two things at once, because they are two halves of the same measurement: the thinking is
+    charged inside ``completion_tokens`` — so `FRD-403`'s pricing needs no special case, which was
+    an assumption until now — and **none of it reaches the caller or the database**. A one-word
+    answer from this model costs a hundred-odd output tokens; the reasoning behind it is the least
+    reviewed text the model produces and is dropped in the adapter (`FRD-111` §2).
+    """
+    await _require(CHAT_MODEL)
+
+    async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=300.0) as client:
+        response = await client.post(
+            f"/v1beta/models/{CHAT_MODEL}:generateContent",
+            json={
+                "contents": [{"role": "user", "parts": [{"text": "Say hello in one word."}]}],
+                "generationConfig": {
+                    "thinkingConfig": {"mode": "medium"},
+                    "maxOutputTokens": 900,
+                },
+            },
+            headers=fixture.headers(),
+        )
+    if response.status_code != 200:
+        pytest.skip(f"the model did not serve a thinking request ({response.status_code})")
+
+    answer = response.json()["candidates"][0]["content"]["parts"][0]["text"]
+    reported = response.json()["usageMetadata"]["candidatesTokenCount"]
+
+    # The billed output is far larger than the answer: that *is* the thinking, counted as output.
+    assert reported > max(1, len(answer)), "thinking does not appear in the output token count"
+
+    row = await _latest_row(engine, CHAT_MODEL)
+    assert row is not None
+    stored = str(row["response_payload"])
+    # A chain of thought in a persisted column is a data-protection problem, not a feature.
+    for tell in ("<think>", "Okay,", "The user wants"):
+        assert tell not in stored, f"the model's reasoning was persisted: {tell!r}"
+
+
+async def test_a_thinking_mode_the_dialect_cannot_express_is_refused(fixture: Fixture) -> None:
+    """`FRD-111` §5.2 predicted this before the dialect existed: this wire format takes an effort
+    level and no token budget. Rounding a caller's count to a level spends a different amount of
+    money than they asked for, and nothing about the answer would show it."""
+    await _require(CHAT_MODEL)
+
+    async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=60.0) as client:
+        response = await client.post(
+            f"/v1beta/models/{CHAT_MODEL}:generateContent",
+            json={
+                "contents": [{"role": "user", "parts": [{"text": "hi"}]}],
+                "generationConfig": {"thinkingConfig": {"mode": "limited", "tokens": 2048}},
+            },
+            headers=fixture.headers(),
+        )
+
+    assert response.status_code in (400, 500), response.text
+    assert "INVALID_THINKING_MODE" in response.text or "effort level" in response.text

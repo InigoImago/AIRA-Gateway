@@ -501,3 +501,75 @@ def test_a_permitted_local_region_starts_and_is_recorded() -> None:
         allowed_regions="eu,dc-frankfurt",
     )
     assert build_openai_upstreams(settings)[0].models()[0].region == "dc-frankfurt"
+
+
+# == the model's thoughts never leave the adapter (measured, FRD-111 §2) =========================
+
+
+def test_the_reasoning_field_is_never_returned_as_the_answer() -> None:
+    """A reasoning model returns its chain of thought in its own field, and the obvious mapper —
+    concatenate what the message carries — would hand it back to the caller and into a column the
+    gateway persists. Third vendor, third shape, same obligation.
+
+    Not hypothetical: a local model answering "Say hello in one word" returned `content` of "Hi"
+    beside 439 characters of `reasoning`.
+    """
+    payload = {
+        "choices": [
+            {
+                "message": {
+                    "content": "Hi",
+                    "reasoning": "The user wants a greeting. They said one word, so...",
+                },
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {"prompt_tokens": 16, "completion_tokens": 109},
+    }
+    response = openai_to_canonical(payload, "local-1")
+
+    assert response.text == "Hi"
+    assert "user wants" not in response.text
+
+
+def test_an_answer_that_was_all_thinking_comes_back_empty_and_says_why() -> None:
+    """The failure this makes visible rather than hides. A model that spends its whole allowance
+    reasoning produces **no answer**; substituting the reasoning would return the most
+    unreviewed text the model produced, as though it were the reply. The empty string plus a
+    truncation finish reason is the honest pair — measured, at `max_tokens` 400."""
+    payload = {
+        "choices": [
+            {"message": {"content": "", "reasoning": "..." * 100}, "finish_reason": "length"}
+        ],
+        "usage": {"prompt_tokens": 25, "completion_tokens": 400},
+    }
+    response = openai_to_canonical(payload, "local-1")
+
+    assert response.text == ""
+    assert response.finish_reason == "max_tokens"
+
+
+def test_streamed_reasoning_is_dropped_delta_by_delta() -> None:
+    """Otherwise the thoughts are streamed to the caller a token at a time, which is the same
+    leak arriving more slowly."""
+    chunk = openai_chunk_to_canonical(
+        {"choices": [{"delta": {"reasoning": "let me think about this"}}]}
+    )
+    assert chunk is None or chunk.text_delta == ""
+
+
+def test_thinking_tokens_are_billed_inside_the_output_count() -> None:
+    """`FRD-111` FR-6, finally **measured** rather than assumed. It matters because the recorded
+    cost is understated if the provider reports them apart: a one-word answer cost 109 completion
+    tokens, of which the answer itself was one. The pricing needs no special case — but that was
+    a claim until a real model was asked."""
+    payload = {
+        "choices": [
+            {"message": {"content": "Hi", "reasoning": "x" * 439}, "finish_reason": "stop"}
+        ],
+        "usage": {"prompt_tokens": 16, "completion_tokens": 109},
+    }
+    usage = openai_to_canonical(payload, "local-1").usage
+
+    assert usage.completion_tokens == 109
+    assert usage.total_tokens == 125

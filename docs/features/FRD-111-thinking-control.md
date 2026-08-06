@@ -222,9 +222,19 @@ Three decisions worth keeping:
   same reason a chain may not drop an attachment: less reasoning than was asked for is not an
   error, it is a worse answer with a 200 on it.
 
-FR-6's verification is still owed — whether the provider folds thinking into the reported output
-tokens or reports it apart can only be learned against the real upstream, and the recorded cost is
-understated if we guessed. The mock reports them as output tokens, which is the assumption.
+**FR-6 is answered (2026-08-06), and the answer is the one we assumed.** A local reasoning model
+asked for one word returned `content` of `"Hi"` beside 439 characters of reasoning, and reported
+`completion_tokens: 109`. The thinking is billed **inside the output count**, so `FRD-403`'s
+pricing needs no special case — which had been a claim for as long as the only witness was a mock
+we wrote ourselves.
+
+The measurement also produced a requirement nobody had written down. The reasoning comes back in
+its **own field**, and the obvious mapper — take what the message carries — returns it. That is a
+third shape of the §2 obligation (Gemini: never ask; Anthropic: drop a block; here: ignore a field)
+and the most easily missed of the three. A second measurement showed why it matters in the other
+direction too: at a 400-token cap the model spent the entire allowance reasoning and `content` came
+back **empty**. The honest answer is the empty string with a truncation finish reason, not the
+reasoning substituted for the answer it failed to produce.
 
 Mutations **T5–T10**; unit and route tests including the reservation pair (a 20 000-token budget
 reserves exactly 20 000 more than the same request without one).
