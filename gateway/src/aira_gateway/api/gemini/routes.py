@@ -19,12 +19,14 @@ from aira_common.logging import get_logger
 from aira_common.money import cost_nanos
 from aira_common.observability import set_span_attributes
 from aira_gateway.api.gemini import schemas
+from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.api.gemini.errors import gemini_error_response as _error
 from aira_gateway.api.gemini.mapping import (
     canonical_to_gemini,
     gemini_to_canonical,
     upstream_model_to_gemini,
 )
+from aira_gateway.audit import AuditTrail, Outcome, decision_summary
 from aira_gateway.budgets.errors import BudgetExceeded
 from aira_gateway.budgets.ledger import Amounts
 from aira_gateway.budgets.service import Reservation
@@ -116,12 +118,14 @@ def _registry(request: Request) -> ProviderRegistry:
 
 
 async def _run_pipeline(
-    request: Request, canonical: CanonicalRequest
+    request: Request, canonical: CanonicalRequest, trail: AuditTrail
 ) -> tuple[CanonicalRequest, tuple[str, ...]]:
     """Apply the use case's pre-dispatch pipeline (FRD-300). Pass-through when none is configured.
 
     Returns the effective request (possibly re-routed) and the dispatch fallback chain. May raise
-    ``PipelineRejected`` when a filter/allow-check blocks the request.
+    ``PipelineRejected`` when a filter/allow-check blocks the request — and the decisions taken up
+    to that point are on the trail by then, so a blocked request records *why* rather than only
+    *that* (FRD-122 FR-4).
     """
     store: PipelineStore = request.app.state.pipeline_store
     engine: PipelineEngine = request.app.state.pipeline_engine
@@ -129,7 +133,11 @@ async def _run_pipeline(
     pipeline = await store.get(use_case)
     if pipeline is None:
         return canonical, ()
-    outcome = await engine.run(pipeline, canonical)
+    # The engine appends into the trail's list, so a step that blocks still leaves behind the
+    # decisions taken before it — including the routing that sent the request to the step that
+    # refused it.
+    outcome = await engine.run(pipeline, canonical, decisions=trail.decisions)
+    trail.routed_to(outcome.request.model)
     if outcome.decisions:
         set_span_attributes(
             {
@@ -160,22 +168,135 @@ async def get_model(model: str, request: Request) -> Response:
     return JSONResponse(upstream_model_to_gemini(upstream_model).model_dump())
 
 
+#: How a refusal maps onto the closed outcome vocabulary. Anything unmapped is a bug in this
+#: table, not a reason to record nothing — see ``_refusal_outcome``.
+_REFUSAL_OUTCOMES: dict[int, Outcome] = {
+    404: Outcome.MODEL_NOT_FOUND,
+    400: Outcome.INVALID_REQUEST,
+    403: Outcome.BLOCKED_BY_PIPELINE,
+}
+
+
+def _refusal_outcome(exc: Exception) -> Outcome:
+    if isinstance(exc, RateLimited):
+        return Outcome.RATE_LIMITED
+    if isinstance(exc, BudgetExceeded):
+        return Outcome.BUDGET_EXCEEDED
+    if isinstance(exc, PipelineRejected):
+        return Outcome.BLOCKED_BY_PIPELINE
+    if isinstance(exc, UpstreamError):
+        return Outcome.UPSTREAM_ERROR
+    if isinstance(exc, GeminiHTTPError):
+        return _REFUSAL_OUTCOMES.get(exc.code, Outcome.INVALID_REQUEST)
+    return Outcome.INVALID_REQUEST
+
+
+def _refusal_response(exc: Exception) -> JSONResponse:
+    if isinstance(exc, RateLimited):
+        return _error(
+            429, exc.message, "RESOURCE_EXHAUSTED", headers={"Retry-After": exc.retry_after}
+        )
+    if isinstance(exc, BudgetExceeded):
+        return _error(429, exc.message, "RESOURCE_EXHAUSTED")
+    if isinstance(exc, PipelineRejected):
+        return _error(exc.code, exc.message, exc.status)
+    if isinstance(exc, UpstreamError):
+        return _upstream_error(exc)
+    assert isinstance(exc, GeminiHTTPError)
+    return exc.to_response()
+
+
 @router.post("/v1beta/models/{resource}")
 async def generate(resource: str, request: Request) -> Response:
+    """Dispatch a Gemini verb — and record the request whether or not it was served.
+
+    Every refusal is written **here**, once. The obvious alternative is a ``record_request`` beside
+    each ``return _error(...)``; there are half a dozen of those, the next verb adds more, and one
+    of them will be forgotten. That is not hypothetical — it is exactly how ``:embedContent`` came
+    to bypass the pre-dispatch gate, because the gate lived inside one branch instead of on the
+    path every branch takes. So the branches *raise* and the boundary records (FRD-122 §5.1).
+    """
+    model, _, method = resource.partition(":")
+    trail = AuditTrail(operation=method or "unknown", requested_model=model)
+    started = time.monotonic()
+    try:
+        return await _generate(resource, request, trail)
+    except (RateLimited, BudgetExceeded, PipelineRejected, UpstreamError, GeminiHTTPError) as exc:
+        response = _refusal_response(exc)
+        await _record_refusal(request, trail, exc, status=response.status_code, started=started)
+        return response
+
+
+async def _record_refusal(
+    request: Request, trail: AuditTrail, exc: Exception, *, status: int, started: float
+) -> None:
+    """Write the audit row for a request that was not served.
+
+    Deliberately not conditional on anything: a refusal that leaves no trace is a control nobody
+    can review, which is the whole reason `FRD-122` exists. The reason lives in ``outcome``; the
+    error's own message stays in the response and the log, because a free-text reason on the row
+    would be greppable and never groupable.
+
+    A request refused before the auth dependency resolved an attribution has nothing to attribute
+    and is not recorded here — a 401 is an authentication event, and writing a row per
+    unauthenticated request would make the audit table a denial-of-service target (FRD-122 §2).
+    """
+    if getattr(request.state, "attribution", None) is None:
+        return
+    try:
+        await _write_refusal(request, trail, exc, status=status, started=started)
+    except Exception:  # noqa: BLE001 — see below
+        # The audit must never become a way to fail a request that was **correctly refused**.
+        # Turning a 429 into a 500 misinforms the client about what happened and invites the
+        # retry storm the limit exists to prevent. The row is lost and said to be lost, loudly.
+        #
+        # Deliberately not applied to the success path: there, a failed write means a served
+        # request went unrecorded, and failing loudly is the defensible answer to that.
+        _log.error(
+            "audit_refusal_not_recorded",
+            operation=trail.operation,
+            model=trail.served_model,
+            status=status,
+            outcome=str(_refusal_outcome(exc)),
+            exc_info=True,
+        )
+
+
+async def _write_refusal(
+    request: Request, trail: AuditTrail, exc: Exception, *, status: int, started: float
+) -> None:
+    await record_request(
+        request,
+        operation=trail.operation,
+        model=trail.served_model,
+        status=status,
+        usage=None,
+        latency_ms=_elapsed_ms(started),
+        request_payload=trail.body,
+        response_payload=None,
+        outcome=_refusal_outcome(exc),
+        requested_model=trail.requested_model,
+        model_selection=trail.selection,
+        pipeline_decisions=decision_summary(trail.decisions),
+    )
+
+
+async def _generate(resource: str, request: Request, trail: AuditTrail) -> Response:
     model, separator, method = resource.partition(":")
     if not separator:
-        return _error(
+        raise GeminiHTTPError(
             400, f"Missing method in '{resource}' (expected model:method).", "INVALID_ARGUMENT"
         )
 
     provider = _registry(request).provider_for(model)
     if provider is None:
-        return _error(404, f"Model '{model}' not found.", "NOT_FOUND")
+        raise GeminiHTTPError(404, f"Model '{model}' not found.", "NOT_FOUND")
 
     try:
         body = await request.json()
     except ValueError:
-        return _error(400, "Request body is not valid JSON.", "INVALID_ARGUMENT")
+        raise GeminiHTTPError(400, "Request body is not valid JSON.", "INVALID_ARGUMENT") from None
+    trail.body = body
 
     # Parse and prepare per method, then run the pre-dispatch controls once for all of them.
     canonical: CanonicalRequest | None = None
@@ -186,43 +307,33 @@ async def generate(resource: str, request: Request) -> Response:
         try:
             gemini_request = schemas.GenerateContentRequest.model_validate(body)
         except ValidationError as exc:
-            return _error(400, _first_error(exc), "INVALID_ARGUMENT")
+            raise GeminiHTTPError(400, _first_error(exc), "INVALID_ARGUMENT") from exc
         canonical = gemini_to_canonical(model, gemini_request)
 
-        try:
-            canonical, fallbacks = await _run_pipeline(request, canonical)
-        except PipelineRejected as exc:
-            return _error(exc.code, exc.message, exc.status)
+        canonical, fallbacks = await _run_pipeline(request, canonical, trail)
 
         # Routing may have changed the model — resolve the effective provider.
         provider = _registry(request).provider_for(canonical.model)
         if provider is None:
-            return _error(404, f"Model '{canonical.model}' not found.", "NOT_FOUND")
+            raise GeminiHTTPError(404, f"Model '{canonical.model}' not found.", "NOT_FOUND")
     elif method == "embedContent":
         try:
             embed_request = schemas.EmbedContentRequest.model_validate(body)
         except ValidationError as exc:
-            return _error(400, _first_error(exc), "INVALID_ARGUMENT")
+            raise GeminiHTTPError(400, _first_error(exc), "INVALID_ARGUMENT") from exc
     else:
-        return _error(400, f"Unknown method '{method}'.", "INVALID_ARGUMENT")
+        raise GeminiHTTPError(400, f"Unknown method '{method}'.", "INVALID_ARGUMENT")
 
     # One gate for every method. Keeping these inside the generateContent branch is how
     # `:embedContent` ended up unlimited and unbudgeted — a caller only had to pick the other
     # verb. A control that applies to some verbs and not others has to be impossible to write
     # by accident, so there is exactly one place to add the next one.
     effective_model = canonical.model if canonical is not None else model
-    try:
-        reservation = await _enforce_pre_dispatch(
-            request,
-            model=effective_model,
-            max_output_tokens=canonical.max_output_tokens if canonical is not None else None,
-        )
-    except RateLimited as exc:
-        return _error(
-            429, exc.message, "RESOURCE_EXHAUSTED", headers={"Retry-After": exc.retry_after}
-        )
-    except BudgetExceeded as exc:
-        return _error(429, exc.message, "RESOURCE_EXHAUSTED")
+    reservation = await _enforce_pre_dispatch(
+        request,
+        model=effective_model,
+        max_output_tokens=canonical.max_output_tokens if canonical is not None else None,
+    )
 
     if canonical is not None:
         if method == "generateContent":
@@ -231,12 +342,9 @@ async def generate(resource: str, request: Request) -> Response:
             # budget consumed by a request that produced nothing (FRD-405 FR-5).
             async with request.app.state.budgets.hold(reservation):
                 started = time.monotonic()
-                try:
-                    canonical_response = await dispatch_with_fallback(
-                        _registry(request), canonical, fallbacks
-                    )
-                except UpstreamError as exc:
-                    return _upstream_error(exc)
+                dispatched = await dispatch_with_fallback(_registry(request), canonical, fallbacks)
+                canonical_response = dispatched.response
+                trail.served_by(canonical_response.model, dispatched.candidate_index)
                 # Priced once, then shared: the budget counters and the audit trail must not be
                 # able to disagree about what a request cost (FRD-403).
                 cost = await request.app.state.pricing.cost_nanos(
@@ -256,19 +364,19 @@ async def generate(resource: str, request: Request) -> Response:
                     request_payload=body,
                     response_payload=payload,
                     cost_nanos=cost,
+                    requested_model=trail.requested_model,
+                    model_selection=trail.selection,
+                    pipeline_decisions=decision_summary(trail.decisions),
                 )
                 return JSONResponse(payload)
         sse = request.query_params.get("alt") == "sse"
-        return _stream_response(request, provider, canonical, body, reservation, sse=sse)
+        return _stream_response(request, provider, canonical, body, reservation, trail, sse=sse)
 
     assert embed_request is not None  # the method dispatch above guarantees it
     async with request.app.state.budgets.hold(reservation):
         started = time.monotonic()
         text = "".join(part.text for part in embed_request.content.parts)
-        try:
-            values = await provider.embed(model, text)
-        except UpstreamError as exc:
-            return _upstream_error(exc)
+        values = await provider.embed(model, text)
         payload = schemas.EmbedContentResponse(
             embedding=schemas.ContentEmbedding(values=values)
         ).model_dump()
@@ -284,6 +392,7 @@ async def generate(resource: str, request: Request) -> Response:
             latency_ms=_elapsed_ms(started),
             request_payload=body,
             response_payload=payload,
+            requested_model=trail.requested_model,
         )
         return JSONResponse(payload)
 
@@ -313,6 +422,7 @@ def _stream_response(
     canonical: CanonicalRequest,
     body: dict[str, Any],
     reservation: Reservation,
+    trail: AuditTrail,
     *,
     sse: bool,
 ) -> StreamingResponse:
@@ -361,6 +471,7 @@ def _stream_response(
                 await _finish_stream(
                     request,
                     reservation,
+                    trail,
                     model=canonical.model,
                     body=body,
                     text="".join(parts),
@@ -376,6 +487,7 @@ def _stream_response(
 async def _finish_stream(
     request: Request,
     reservation: Reservation,
+    trail: AuditTrail,
     *,
     model: str,
     body: dict[str, Any],
@@ -406,4 +518,11 @@ async def _finish_stream(
         request_payload=body,
         response_payload={"text": text},
         cost_nanos=cost,
+        # A stream whose upstream died mid-flight has already sent a 200 header, so `status` is
+        # the only place the failure survives — and the outcome has to agree with it, or the audit
+        # would report a served request that produced an error.
+        outcome=Outcome.SERVED if status == 200 else Outcome.UPSTREAM_ERROR,
+        requested_model=trail.requested_model,
+        model_selection=trail.selection,
+        pipeline_decisions=decision_summary(trail.decisions),
     )

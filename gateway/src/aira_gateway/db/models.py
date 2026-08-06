@@ -58,12 +58,30 @@ class RequestLog(Base):
     auth_method: Mapped[str] = mapped_column(String(32))
     use_case: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     source_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Which *system* called (FRD-122 FR-5): an API key's prefix, or an OIDC client id. Distinct
+    # from `subject`, which is who the credential belongs to. Without it, five keys issued for one
+    # use case by one administrator are one identity in the log — and a leaked key can be revoked
+    # but its blast radius cannot be assessed. Never any part of a secret.
+    credential: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
 
     # request/response metadata
     api: Mapped[str] = mapped_column(String(32))
     operation: Mapped[str] = mapped_column(String(64))
+    #: What answered. Unchanged in meaning, so every existing query, report and index still holds.
     model: Mapped[str] = mapped_column(String(128), index=True)
+    #: What the caller named, before routing or fallback (FRD-122 FR-3). With cross-vendor chains
+    #: (ADR-0012) these differ, and "why did the Anthropic spend triple" has no answer without it.
+    requested_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    #: ``direct`` | ``route`` | ``fallback:N`` — how the served model was arrived at.
+    model_selection: Mapped[str | None] = mapped_column(String(32), nullable=True)
     status: Mapped[int] = mapped_column(Integer)
+    #: Why the request ended this way (:class:`aira_gateway.audit.Outcome`). Indexed: reporting
+    #: groups by it, and a refusal that is not groupable is a log line rather than a figure.
+    outcome: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    #: Which pipeline steps ran and what each decided — never the classifier's reasoning text.
+    pipeline_decisions: Mapped[Any | None] = mapped_column(JSON(none_as_null=True), nullable=True)
+    #: Which controls were running on a fallback while this request was handled (FRD-405).
+    degraded: Mapped[Any | None] = mapped_column(JSON(none_as_null=True), nullable=True)
     prompt_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     completion_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     total_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)

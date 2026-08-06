@@ -42,19 +42,19 @@ def _request(model: str) -> CanonicalRequest:
 
 async def test_primary_success() -> None:
     registry = ProviderRegistry([_Provider("a"), _Provider("b")])
-    response = await dispatch_with_fallback(registry, _request("a"), ("b",))
+    response = (await dispatch_with_fallback(registry, _request("a"), ("b",))).response
     assert response.model == "a"
 
 
 async def test_falls_back_when_primary_fails() -> None:
     registry = ProviderRegistry([_Provider("a", fail=True), _Provider("b")])
-    response = await dispatch_with_fallback(registry, _request("a"), ("b",))
+    response = (await dispatch_with_fallback(registry, _request("a"), ("b",))).response
     assert response.model == "b"
 
 
 async def test_skips_unknown_fallback_model() -> None:
     registry = ProviderRegistry([_Provider("a", fail=True), _Provider("c")])
-    response = await dispatch_with_fallback(registry, _request("a"), ("ghost", "c"))
+    response = (await dispatch_with_fallback(registry, _request("a"), ("ghost", "c"))).response
     assert response.model == "c"
 
 

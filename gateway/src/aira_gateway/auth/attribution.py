@@ -36,6 +36,8 @@ class Attribution:
     subject: str
     method: str
     use_case: str | None
+    #: The calling system's credential identity, carried through to the audit row (FRD-122 FR-5).
+    credential: str | None = None
 
 
 def usecases_from_groups(groups: Iterable[str]) -> tuple[str, ...]:

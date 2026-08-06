@@ -23,6 +23,10 @@ class Principal:
 
     subject: str
     method: str
+    #: The *credential's* identity — an API key's prefix, or an OIDC client id. Distinct from
+    #: ``subject``, which is whose credential it is. This is the one the audit trail needs to
+    #: answer "which system called" (FRD-122 FR-5), and it never contains part of a secret.
+    credential: str | None = None
     label: str | None = None
     use_cases: tuple[str, ...] = ()
     roles: tuple[str, ...] = ()

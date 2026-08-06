@@ -34,9 +34,15 @@ class OidcValidator:
             return None
         raw_groups = claims.get("groups")
         groups = raw_groups if isinstance(raw_groups, list) else []
+        # `azp` (authorized party) is the client the token was issued to; `client_id` appears on
+        # client-credentials tokens. Either answers "which system", which is a different question
+        # from `sub` — the same person's token from two applications should not look identical in
+        # the audit trail.
+        client = claims.get("azp") or claims.get("client_id")
         return Principal(
             subject=str(subject),
             method="oidc",
+            credential=str(client)[:64] if client else None,
             use_cases=usecases_from_groups(groups),
             roles=realm_roles(claims),
         )

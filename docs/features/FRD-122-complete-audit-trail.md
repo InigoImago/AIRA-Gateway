@@ -1,6 +1,6 @@
 # FRD-122 — A complete audit trail: what was asked, what was decided, what was served
 
-> Phase: 8 · Status: **Draft** · Owner: Vadim Scheibe · Last updated: 2026-08-06
+> Phase: 8 · Status: **Done (2026-08-06)** · Owner: Vadim Scheibe · Last updated: 2026-08-06
 > Origin: a review against `ADR-0013`'s "auditable brains" standard, 2026-08-06, and against the owner's feature definition
 > (PRD §1.1) — *"welches System wann was womit aufgerufen hat"*.
 > Extends `FRD-103` (request log). Touches `FRD-300`, `FRD-405`, `FRD-601`, `FRD-115`.
@@ -218,6 +218,30 @@ sampled, detailed, short-lived; the row is unsampled, compact and kept.
 - *Given* a use case with two API keys, *when* one is reported compromised, *then* every request
   made with **that** key can be listed — with its model, time and outcome — and the other key's
   traffic is not in the list.
+
+## 10a. What was actually built (2026-08-06)
+
+All five gaps closed. `aira_gateway/audit.py` holds the closed vocabulary and the `AuditTrail` a
+route fills in as it goes; `request_logs` gains six nullable columns (migration `0012`), indexed on
+`outcome` and `credential`; the refusal row is written at the route's exception boundary, so the
+branches now *raise* where they used to `return _error(...)`.
+
+Two things came out of building it that were not in the plan:
+
+- **The full-queue test found a real defect.** With the writer failing, a correctly refused request
+  returned **500** instead of 429 — the audit write itself was turning a valid refusal into an
+  error, and a client would have retried into the limit it had just hit. FR-7 is now enforced by a
+  guard around the refusal write, which is deliberately *not* extended to the success path: there,
+  a failed write means a served request went unrecorded, and failing loudly is the right answer.
+- **A refusal must name the model that was actually attempted.** A request routed elsewhere and
+  then refused was recording the model the caller typed, which blames a model that was never
+  called. Fixed and pinned by its own test.
+
+Coverage: 20 hermetic tests, 4 integration tests (the migrated schema is asserted separately,
+because the hermetic suite builds its schema with `create_all` and would pass with an empty
+migration), 3 frontend tests, and mutations **T1–T8**, each verified to be caught. The existing
+`M23` anchor needed repairing — the pre-dispatch gate lost its `try/except` when refusals began
+raising — which is the mutation harness doing its job.
 
 ## 11. Dependencies & Risks
 

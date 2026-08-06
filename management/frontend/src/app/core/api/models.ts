@@ -166,4 +166,6 @@ export interface Report {
   by_use_case: ReportRow[];
   by_model: ReportRow[];
   by_member: ReportRow[];
+  /** Why requests ended the way they did — `served`, `rate_limited`, … (FRD-122). */
+  by_outcome: ReportRow[];
 }

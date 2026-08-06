@@ -30,6 +30,7 @@ function report(over: Partial<Report> = {}): Report {
     by_use_case: [row()],
     by_model: [row({ key: 'mock-1' })],
     by_member: [row({ key: 'alice' })],
+    by_outcome: [row({ key: 'served' })],
     ...over,
   };
 }
@@ -99,6 +100,37 @@ describe('ReportingPage', () => {
     expect(setup(of(report({ scope: 'use_cases' }))).testid('scope')?.textContent).toContain(
       'Your use cases only',
     );
+  });
+
+  it('counts refusals apart from successes, so a wall being hit is a number', () => {
+    // A use case grinding against its budget all day used to look like a quiet one: the
+    // refusals were 429s and nothing said which control produced them (FRD-122).
+    const { testid } = setup(
+      of(
+        report({
+          by_outcome: [
+            row({ key: 'served', requests: 40 }),
+            row({ key: 'rate_limited', requests: 7 }),
+            row({ key: 'budget_exceeded', requests: 3 }),
+          ],
+        }),
+      ),
+    );
+
+    expect(testid('total-refused')?.textContent).toContain('10');
+  });
+
+  it('reports no refusals when everything was served', () => {
+    const { testid } = setup(of(report({ by_outcome: [row({ key: 'served', requests: 12 })] })));
+
+    expect(testid('total-refused')?.textContent?.trim()).toBe('0');
+  });
+
+  it('renders the outcome breakdown alongside the other three', () => {
+    const { text } = setup(of(report({ by_outcome: [row({ key: 'rate_limited', requests: 7 })] })));
+
+    expect(text()).toContain('By outcome');
+    expect(text()).toContain('rate_limited');
   });
 
   it('shows the unpriced caveat only when there is unpriced traffic', () => {

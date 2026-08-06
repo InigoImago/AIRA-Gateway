@@ -11,6 +11,7 @@ from sqlalchemy import select
 
 from aira_gateway.api.gemini.routes import _stream_response
 from aira_gateway.app import create_app
+from aira_gateway.audit import AuditTrail
 from aira_gateway.auth.attribution import Attribution
 from aira_gateway.budgets.errors import BudgetExceeded
 from aira_gateway.budgets.service import BudgetService, Reservation
@@ -203,6 +204,7 @@ async def test_a_client_that_disconnects_mid_stream_does_not_leak_the_reservatio
             _canonical(),
             _BODY,
             Reservation(),
+            AuditTrail(operation="streamGenerateContent", requested_model="mock-1"),
             sse=False,
         )
         iterator = response.body_iterator

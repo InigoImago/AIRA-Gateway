@@ -93,6 +93,10 @@
           <dd data-testid="total-failed">{{ report.totals.failed_requests }}</dd>
         </div>
         <div class="stat">
+          <dt>Refused by a control</dt>
+          <dd data-testid="total-refused">{{ refused() }}</dd>
+        </div>
+        <div class="stat">
           <dt>Tokens (prompt / completion)</dt>
           <dd>{{ report.totals.prompt_tokens }} / {{ report.totals.completion_tokens }}</dd>
         </div>
@@ -131,6 +135,11 @@
       label="Member"
       [rows]="report.by_member"
       emptyText="Nobody made a request in this period."
+    />
+    <app-breakdown-table
+      label="Outcome"
+      [rows]="report.by_outcome"
+      emptyText="Nothing happened in this period."
     />
   }
 </div>

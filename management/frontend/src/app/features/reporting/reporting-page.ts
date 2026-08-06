@@ -77,6 +77,17 @@ export class ReportingPage implements OnInit {
   /** Requests in the period whose cost is unknown because the model has no price on file. */
   protected readonly unpriced = computed(() => this.report()?.totals.unpriced_requests ?? 0);
 
+  /**
+   * Requests that were refused rather than served (FRD-122). Shown beside the totals because a
+   * use case grinding against its limit all day otherwise looks like a quiet one: the refusals
+   * were 429s, and until the outcome was recorded nothing said which control produced them.
+   */
+  protected readonly refused = computed(() =>
+    (this.report()?.by_outcome ?? [])
+      .filter((row) => row.key !== 'served')
+      .reduce((sum, row) => sum + row.requests, 0),
+  );
+
   /** Whether this caller is seeing the whole installation or only their own use cases. */
   protected readonly seesEverything = computed(() => this.report()?.scope === 'all');
 

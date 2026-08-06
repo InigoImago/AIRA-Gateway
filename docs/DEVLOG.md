@@ -5,6 +5,48 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-06 — Stufe 0: the audit trail now records what was refused
+First stage of the delivery order, and the one that makes every later stage testable. `FRD-122`
+implemented: `aira_gateway/audit.py` (closed `Outcome` vocabulary + the `AuditTrail` a route fills
+in as it goes), migration `0012` (six nullable columns, indexed on `outcome` and `credential`), and
+the recording site.
+
+**Refusals are written at the route's exception boundary, once.** The obvious alternative is a
+`record_request` beside each `return _error(...)`; there were half a dozen of those and the next
+verb would add more. That is not a hypothetical concern — it is exactly how `:embedContent` came to
+bypass the pre-dispatch gate, because the gate lived inside one branch instead of on the path every
+branch takes. So the branches now **raise** and the boundary records.
+
+Two things the work found that the plan did not have:
+
+- **A full writer queue turned a correct 429 into a 500.** The test for FR-7 was written expecting
+  to pass; it failed. The audit write was propagating out of the refusal path, so a client that hit
+  a rate limit got a server error — and would have retried straight into the limit it had just hit.
+  Guarded now, and deliberately **only** on the refusal path: on the success path a failed write
+  means a *served* request went unrecorded, and failing loudly is the defensible answer to that.
+- **A refusal was naming the model the caller typed, not the one attempted.** A request routed
+  elsewhere by the pipeline and then refused blamed a model that was never called. Found by a
+  mutation surviving (`T3`), which is the harness doing precisely what it exists for: the property
+  looked covered and was not.
+
+Also repaired the `M23` anchor — the pre-dispatch gate lost its `try/except` when refusals began
+raising, so the mutation that guards "every verb passes the controls" no longer applied. A mutation
+whose anchor is gone protects nothing, which is why the harness reports missing anchors rather than
+skipping them.
+
+One design point worth keeping visible: pipeline decisions are persisted through an **allow-list**,
+not a deny-list. A step that starts recording the classifier's explanation would otherwise begin
+persisting model output about a caller's prompt the day it is added — silently, in a column
+redaction cannot process.
+
+Verified at four layers: 620 hermetic tests (99.2% coverage), **96/96 mutations caught**, 60
+integration tests against the migrated Postgres schema (asserted separately, because the hermetic
+suite builds its schema with `create_all` and would pass with an empty migration), 232 frontend
+tests and 46 browser tests. The Reporting screen now shows refusals beside successes, so a use case
+grinding against its budget wall is a figure rather than a log search.
+
+---
+
 ## 2026-08-06 — A delivery order, and the one place the priorities fight the dependencies
 The owner set the priority: **KIRA compatibility first, then the Google and Microsoft model
 connections (*easily extensible*), then document handling, then the review findings** — with the

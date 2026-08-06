@@ -43,7 +43,7 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
   inevitably do when both were written from the same mental model — and line coverage cannot see
   a *missing requirement*: on 2026-08-05 a review found seven real defects behind a green suite at
   99% coverage. So: **prove a test can fail.** Break the property, watch it go red, restore.
-  `make mutants` (`tools/mutation_check.py`) does this for **88 properties** across auth, budgets,
+  `make mutants` (`tools/mutation_check.py`) does this for **96 properties** across auth, budgets,
   pipeline, retention, the management control plane and the gateway's counters; when
   you fix a bug, add the mutation that reintroduces it. Two traps that cost real defects here:
   a stand-in that is more permissive than the thing it replaces (reuse the real method where you
@@ -284,8 +284,17 @@ gateway think for the use case?* A review against that word found four audit gap
 importantly that a **refused request leaves no row at all** (rate-limited, over budget, unknown
 model, invalid: the log records what was *served*, not what was *asked*), plus served-vs-requested
 model invisible after fallback, pipeline decisions only on a **sampled** span, and degradation
-global rather than per-request. `FRD-122` closes them; until then "auditable" is a claim the data
-does not fully support. Nineteen documents: `ADR-0010`–`ADR-0013` + `FRD-107`, `FRD-110`–`FRD-122`, `FRD-504`,
+global rather than per-request. **`FRD-122` closed all five on 2026-08-06** (migration `0012`, mutations `T1`–`T8`): refusals are
+recorded at the route's **exception boundary** — one site, because a fact repeated at every
+`return` is a fact eventually forgotten at one of them; `requested_model` sits beside `model`
+(which keeps its meaning, so existing reports and indexes still hold); pipeline decisions are
+persisted through an **allow-list** so a future step cannot start storing the classifier's
+reasoning by default; the API-key **prefix** identifies the calling system; degradation is frozen
+onto the row; and reporting counts refusals by outcome. Two findings while building it: a full
+writer queue was turning a correct **429 into a 500** (guarded on the refusal path only — on the
+success path a failed write means a served request went unrecorded, and failing loudly is right),
+and a request routed elsewhere then refused was naming the model the caller typed rather than the
+one attempted. Nineteen documents: `ADR-0010`–`ADR-0013` + `FRD-107`, `FRD-110`–`FRD-122`, `FRD-504`,
 `FRD-602` (ROADMAP Phase 8 / 5).
 **Delivery order is fixed (ROADMAP Phase 8, 2026-08-06)**, derived from the owner's priority
 (KIRA compatibility → model connections → documents → the review findings) and the dependency that

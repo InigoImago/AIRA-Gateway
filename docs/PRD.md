@@ -45,8 +45,8 @@ gap, not an aspiration.
 | 1 | Einheitliche Bereitstellung von Modellen | **teilweise** — eine Oberfläche und ein kanonischer Kern stehen; nur ein echter Anbieter ist angebunden | `FRD-100`, `FRD-115`/`119`/`120` offen |
 | 2 | Rollenzuweisung | **fertig** | `FRD-201`, `ADR-0009` |
 | 3 | Kompatibilität mit der KIRA-API | **spezifiziert** — durch diese Liste als zentral bestätigt, `ADR-0010` damit entschieden | `FRD-107` + `FRD-110`–`114` |
-| 4 | Auditierbarkeit | **teilweise** — fünf Lücken gefunden | `FRD-122` |
-| 5 | Speicherung von Requests/Responses: *welches System wann was womit* | **teilweise** — gespeichert ✓, aber das **aufrufende System** ist nicht unterscheidbar, und Ablehnungen erzeugen keine Zeile | `FRD-103` ✓, `FRD-122` |
+| 4 | Auditierbarkeit | **fertig (2026-08-06)** — alle fünf Lücken geschlossen | `FRD-122` ✅ |
+| 5 | Speicherung von Requests/Responses: *welches System wann was womit* | **fertig (2026-08-06)** — das aufrufende System ist über den Key-Prefix unterscheidbar, Ablehnungen erzeugen eine Zeile | `FRD-103` ✓, `FRD-122` ✅ |
 | 6 | Incident Response | **fehlt** | `FRD-503` (Phase 5) |
 | 7 | Blockierung gefährlicher Anfragen | **teilweise** — Prompt-Injection-Filter ✓; kein Betriebs-Kill-Switch, keine weiteren Kategorien | `FRD-300` ✓, `FRD-503` |
 | 8 | Model Routing anhand der Definition | **fertig** | `FRD-300`, `FRD-306` |

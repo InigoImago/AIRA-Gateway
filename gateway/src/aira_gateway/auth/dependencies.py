@@ -100,13 +100,19 @@ async def require_attribution(
     else:
         authorize_use_case(principal, use_case)
 
-    attribution = Attribution(subject=principal.subject, method=principal.method, use_case=use_case)
+    attribution = Attribution(
+        subject=principal.subject,
+        method=principal.method,
+        use_case=use_case,
+        credential=principal.credential,
+    )
     request.state.attribution = attribution
     set_span_attributes(
         {
             "aira.subject": attribution.subject,
             "aira.auth_method": attribution.method,
             "aira.use_case": attribution.use_case,
+            "aira.credential": attribution.credential,
         }
     )
     return attribution

@@ -37,7 +37,13 @@ class ApiKeyService:
             return None
         use_cases = (record.use_case,) if record.use_case else ()
         return Principal(
-            subject=record.subject, method="api_key", label=record.label, use_cases=use_cases
+            subject=record.subject,
+            method="api_key",
+            # The prefix *is* the key's identity — it is the public half of the credential and is
+            # already stored unhashed, so recording it discloses nothing the database does not.
+            credential=record.prefix,
+            label=record.label,
+            use_cases=use_cases,
         )
 
     async def revoke(self, prefix: str) -> bool:

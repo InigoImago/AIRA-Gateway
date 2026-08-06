@@ -131,6 +131,13 @@ class ReportingService:
                     row.as_dict()
                     for row in await self._grouped(session, scope, start, end, RequestLog.subject)
                 ],
+                # Why requests ended the way they did (FRD-122 FR-8). Without it a use case
+                # grinding against its budget wall all day is indistinguishable from a healthy
+                # one — the refusals were 429s and nothing said which control produced them.
+                "by_outcome": [
+                    row.as_dict()
+                    for row in await self._grouped(session, scope, start, end, RequestLog.outcome)
+                ],
             }
 
     def _window(self, statement: Any, scope: Scope, start: datetime, end: datetime) -> Any:
@@ -163,4 +170,7 @@ class ReportingService:
                 func.coalesce(func.sum(RequestLog.cost_nanos), 0).desc()
             )
         )
+        # A NULL group is a real group, not an absence: rows written before a column existed, and
+        # requests with no use case, both land here. Labelling them keeps them countable instead of
+        # quietly dropping them out of a total.
         return [_figures(row.key or "(none)", row) for row in result]

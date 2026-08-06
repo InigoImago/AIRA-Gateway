@@ -52,6 +52,14 @@ class PendingLog:
     request_payload: dict[str, Any] | None
     response_payload: dict[str, Any] | None
     cost_nanos: int | None
+    # FRD-122. Defaulted so a caller that only knows the old facts still produces a valid row —
+    # which matters because a *refusal* often knows nothing else.
+    credential: str | None = None
+    outcome: str | None = None
+    requested_model: str | None = None
+    model_selection: str | None = None
+    pipeline_decisions: list[dict[str, Any]] | None = None
+    degraded: dict[str, str] | None = None
 
 
 class RequestLogWriter:
@@ -164,6 +172,12 @@ class RequestLogWriter:
                 request_payload=_maybe(entry.request_payload),
                 response_payload=_maybe(entry.response_payload),
                 cost_nanos=entry.cost_nanos,
+                credential=entry.credential,
+                outcome=entry.outcome,
+                requested_model=entry.requested_model,
+                model_selection=entry.model_selection,
+                pipeline_decisions=entry.pipeline_decisions,
+                degraded=entry.degraded,
             )
 
     async def _may_store_payloads(self, session: AsyncSession, use_case: str | None) -> bool:

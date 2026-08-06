@@ -109,11 +109,14 @@ This is the one breaking change in the programme, and it is better made once, de
 class TextPart(BaseModel):
     text: str
 
+
 class DataPart(BaseModel):
-    media_type: str      # from the allow-list
-    data: bytes          # decoded; base64 is a wire concern
+    media_type: str  # from the allow-list
+    data: bytes  # decoded; base64 is a wire concern
+
 
 CanonicalPart = TextPart | DataPart
+
 
 class CanonicalMessage(BaseModel):
     role: Role

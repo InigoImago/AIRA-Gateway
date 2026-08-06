@@ -56,8 +56,25 @@ class PipelineEngine:
 
     # -- public ---------------------------------------------------------------------------
 
-    async def run(self, pipeline: Pipeline, request: CanonicalRequest) -> PipelineOutcome:
-        outcome = PipelineOutcome(request=request, fallback_models=pipeline.fallback_models)
+    async def run(
+        self,
+        pipeline: Pipeline,
+        request: CanonicalRequest,
+        *,
+        decisions: list[dict[str, Any]] | None = None,
+    ) -> PipelineOutcome:
+        """Run the configured steps.
+
+        ``decisions`` lets a caller supply the list the steps append to, so that the decisions
+        taken **before** a blocking step survive the exception. Without it a blocked request could
+        record only *that* it was blocked, never the routing that led it to the step that blocked
+        it (FRD-122 FR-4).
+        """
+        outcome = PipelineOutcome(
+            request=request,
+            fallback_models=pipeline.fallback_models,
+            decisions=decisions if decisions is not None else [],
+        )
         for step in pipeline.steps:
             if step.type is StepType.INJECTION_FILTER:
                 if await self._is_injection(step.config, outcome.request):
@@ -69,6 +86,9 @@ class PipelineEngine:
                         raise PipelineRejected("Request rejected by the prompt-injection filter.")
             elif step.type is StepType.ALLOW_CHECK:
                 if self._allow_violation(step.config, outcome.request):
+                    outcome.decisions.append(
+                        {"step": "allow_check", "action": "blocked", "to": outcome.request.model}
+                    )
                     raise PipelineRejected(
                         f"Model '{outcome.request.model}' is not allowed for this use case.",
                         code=403,

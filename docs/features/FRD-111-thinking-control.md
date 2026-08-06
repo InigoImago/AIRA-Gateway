@@ -82,8 +82,14 @@ The setting lives on `CanonicalRequest`:
 
 ```python
 class ThinkingMode(StrEnum):
-    DISABLED = "disabled"; LIMITED = "limited"; AUTO = "auto"
-    HIGH = "high"; MEDIUM = "medium"; LOW = "low"; MINIMAL = "minimal"
+    DISABLED = "disabled"
+    LIMITED = "limited"
+    AUTO = "auto"
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+    MINIMAL = "minimal"
+
 
 class Thinking(BaseModel):
     mode: ThinkingMode

@@ -192,7 +192,7 @@ order below serves the priorities rather than restating them.
 
 | Stufe | Was | Warum hier |
 |---|---|---|
-| **0** | `FRD-122` — vollständiger Audit-Trail | Klein, additiv, kein Eingriff in den Request-Pfad — und **jede spätere Stufe wird dagegen getestet**. Ablehnungen, das aufrufende System und `requested_model` vs. `model` sind genau das, was man bei Fallback über zwei Anbieter und einer zweiten API-Fläche braucht. Zuerst, weil es danach mühsamer nachzurüsten ist als jetzt. |
+| **0** ✅ | ~~`FRD-122` — vollständiger Audit-Trail~~ **fertig 2026-08-06** | Klein, additiv, kein Eingriff in den Request-Pfad — und **jede spätere Stufe wird dagegen getestet**. Ablehnungen, das aufrufende System und `requested_model` vs. `model` sind genau das, was man bei Fallback über zwei Anbieter und einer zweiten API-Fläche braucht. Zuerst, weil es danach mühsamer nachzurüsten ist als jetzt. |
 | **1** | `FRD-114` — Modell-Metadaten | Voraussetzung für alles: Publisher, Capabilities, Default-Cap, Adressierung, Hosting. |
 | **2** | `FRD-115` + `FRD-119` — Vertex EU, Gemini + Anthropic | Priorität 2, erste Hälfte. Erst danach ist überhaupt ein produktionsfähiges (EU-)Modell erreichbar. |
 | **3** | `FRD-110` — Dokumente | Priorität 3. Bewusst **nach** Stufe 2: ohne dokumentenfähiges Modell in der EU wären Dokumente nur gegen den Mock nutzbar. |
@@ -224,7 +224,7 @@ overruled rather than discovered:
 | `FRD-119` | Anthropic models on Vertex: the second dialect | needs `FRD-115` + `FRD-114` |
 | `FRD-120` | Microsoft Foundry (Azure OpenAI + Microsoft's own) | **planned, not scheduled** — see `ADR-0011` |
 | `FRD-121` | Document conversion for models that cannot read documents | **optional — probably do not build first**, `ADR-0012` §4 / `ADR-0013` |
-| `FRD-122` | A complete audit trail — refusals, asked-vs-served, decisions, degradation | **`ADR-0013` makes this the honesty test of the whole thing** |
+| ~~`FRD-122`~~ | A complete audit trail — refusals, asked-vs-served, decisions, degradation | **Done (2026-08-06).** Refusals are recorded, the calling system is identified, asked-vs-served is distinguishable, pipeline decisions and degradation are on the row, and reporting counts refusals. |
 | `FRD-116` | Secrets actually read from Vault | policy and implementation have been apart since Phase 0 |
 | `FRD-117` | Version info, upstream health, CORS, OpenAPI 3.0, trace header | independent; makes the rest operable |
 | `FRD-118` | Several Keycloak backends, groups from UserInfo | **requirement unconfirmed — see its §11** |
