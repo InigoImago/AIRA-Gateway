@@ -42,7 +42,7 @@ gap, not an aspiration.
 
 | # | Feature | Stand | Where |
 |--:|---|---|---|
-| 1 | Einheitliche Bereitstellung von Modellen | **teilweise** — eine Oberfläche und ein kanonischer Kern stehen; nur ein echter Anbieter ist angebunden | `FRD-100`, `FRD-115`/`119`/`120` offen |
+| 1 | Einheitliche Bereitstellung von Modellen | **weitgehend** — Gemini **und** Anthropic über Vertex in der EU (`FRD-115`/`119` ✅); Microsoft Foundry offen | `FRD-100` ✓, `FRD-120` offen |
 | 2 | Rollenzuweisung | **fertig** | `FRD-201`, `ADR-0009` |
 | 3 | Kompatibilität mit der KIRA-API | **spezifiziert** — durch diese Liste als zentral bestätigt, `ADR-0010` damit entschieden | `FRD-107` + `FRD-110`–`114` |
 | 4 | Auditierbarkeit | **fertig (2026-08-06)** — alle fünf Lücken geschlossen | `FRD-122` ✅ |
@@ -51,7 +51,7 @@ gap, not an aspiration.
 | 7 | Blockierung gefährlicher Anfragen | **teilweise** — Prompt-Injection-Filter ✓; kein Betriebs-Kill-Switch, keine weiteren Kategorien | `FRD-300` ✓, `FRD-503` |
 | 8 | Model Routing anhand der Definition | **fertig** | `FRD-300`, `FRD-306` |
 | 9 | Modell-Fallback | **fertig** — muss noch capability-homogen werden | `FRD-302` ✓, `ADR-0012` §3 |
-| 10 | Unabhängigkeit von Google / Microsoft | **Architektur steht, Adapter fehlen** | `ADR-0011`, `ADR-0012`; `FRD-115`/`119`/`120` |
+| 10 | Unabhängigkeit von Google / Microsoft | **belegt für zwei Anbieter** — die Architektur-Assertion ist ein Test: kein Code oberhalb der Adapter kennt den Vendor. Foundry offen | `ADR-0011` ✅, `FRD-115`/`119` ✅, `FRD-120` |
 | 11 | Übersicht über alle Use Cases | **teilweise** — Liste ✓, Governance-Sicht auf die Verarbeitungslogik fehlt | `FRD-202` ✓, `FRD-600` |
 | 12 | Self-Service: Filter- und Routing-Pipeline | **fertig** | `FRD-303`, `FRD-306` |
 | 13 | Zugelassene Modelle je Use Case | **teilweise** — `allow_check` ✓, Fähigkeiten deklariert und durchgesetzt (`FRD-114` ✅), genehmigter Katalog fehlt noch | `FRD-300` ✓, `FRD-114` ✅, `FRD-307` |

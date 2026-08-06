@@ -74,6 +74,8 @@ CATALOG = "management/backend/tests/test_catalog.py"
 PIPELINE = "gateway/tests/test_pipeline_engine.py gateway/tests/test_pipeline_routes.py"
 RETENTION = "gateway/tests/test_retention.py gateway/tests/test_store_payloads.py"
 MODEL_CATALOG = "gateway/tests/test_model_catalog.py"
+VERTEX = "gateway/tests/test_vertex.py"
+TOKENS = "libs/tests/test_tokens.py"
 CATALOG_DECLARATION = "management/backend/tests/test_catalog_declaration.py"
 
 MUTATIONS = [
@@ -746,6 +748,103 @@ MUTATIONS = [
         "            roles=realm_roles(claims),",
         "            roles=(),",
         "gateway/tests/test_attribution.py gateway/tests/test_auth_oidc.py",
+    ),
+    # ---- Vertex EU and the second dialect (FRD-115, FRD-119) -------------------------------
+    Mutation(
+        "V1",
+        "residency is enforced: a model outside the allowed regions refuses to start",
+        "gateway/src/aira_gateway/upstreams/vertex/transport.py",
+        "    if region not in allowed:",
+        "    if False:",
+        VERTEX,
+    ),
+    Mutation(
+        "V2",
+        "the EU multi-region has its own host, not a region-prefixed one",
+        "gateway/src/aira_gateway/upstreams/vertex/transport.py",
+        '_MULTI_REGION_HOSTS = {"eu": "aiplatform.eu.rep.googleapis.com"}',
+        "_MULTI_REGION_HOSTS: dict[str, str] = {}",
+        VERTEX,
+    ),
+    Mutation(
+        "V3",
+        "an ambiguous routing table refuses to start rather than silently picking one",
+        "gateway/src/aira_gateway/upstreams/base.py",
+        "                if model.name in self._by_model:",
+        "                if False:",
+        VERTEX,
+    ),
+    Mutation(
+        "V4",
+        "the model's reasoning never reaches the caller",
+        "gateway/src/aira_gateway/upstreams/vertex/anthropic_mapping.py",
+        '_ANSWER_BLOCKS = frozenset({"text"})',
+        '_ANSWER_BLOCKS = frozenset({"text", "thinking"})',
+        VERTEX,
+    ),
+    Mutation(
+        "V5",
+        "several system messages are concatenated rather than reduced to the last",
+        "gateway/src/aira_gateway/upstreams/vertex/anthropic_mapping.py",
+        '        body["system"] = "\\n\\n".join(system_parts)',
+        '        body["system"] = system_parts[-1]',
+        VERTEX,
+    ),
+    Mutation(
+        "V6",
+        "streamed usage is accumulated across events, not replaced by the last one",
+        "gateway/src/aira_gateway/upstreams/vertex/anthropic_mapping.py",
+        "            self._prompt += usage.prompt_tokens\n            self._completion += usage.completion_tokens",
+        "            self._prompt = usage.prompt_tokens\n            self._completion = usage.completion_tokens",
+        VERTEX,
+    ),
+    Mutation(
+        "V7",
+        "cache tokens are counted as input rather than dropped from the bill",
+        "gateway/src/aira_gateway/upstreams/vertex/anthropic_mapping.py",
+        '        prompt_tokens=int(usage.get("input_tokens", 0) or 0) + cached + created,',
+        '        prompt_tokens=int(usage.get("input_tokens", 0) or 0),',
+        VERTEX,
+    ),
+    Mutation(
+        "V8",
+        "an upstream status is preserved so the route can pass 429/503/504 through",
+        "gateway/src/aira_gateway/upstreams/vertex/transport.py",
+        '            f"Vertex upstream returned {response.status_code}.", response.status_code',
+        '            f"Vertex upstream returned {response.status_code}."',
+        VERTEX,
+    ),
+    Mutation(
+        "V9",
+        "a token is refreshed before it expires, not once it has",
+        "libs/src/aira_common/tokens.py",
+        "REFRESH_AT = 0.8",
+        "REFRESH_AT = 1.0",
+        TOKENS,
+    ),
+    Mutation(
+        "V10",
+        "concurrent callers produce one fetch, not one each",
+        "libs/src/aira_common/tokens.py",
+        "        async with self._lock:",
+        "        if True:",
+        TOKENS,
+    ),
+    Mutation(
+        "V11",
+        "a failed refresh keeps serving a token that is still valid",
+        "libs/src/aira_common/tokens.py",
+        "                if current is not None and current.usable(now):\n                    return current.value",
+        "                if False:\n                    return current.value",
+        TOKENS,
+    ),
+    Mutation(
+        "V12",
+        "a credential never appears in the error that reports it unusable",
+        "gateway/src/aira_gateway/upstreams/vertex/auth.py",
+        "                f\"Service-account credentials are missing: {', '.join(missing)}.\"",
+        '                f"Service-account credentials are missing from {data}."',
+        VERTEX,
     ),
     # ---- the model catalog as a runtime authority (FRD-114) --------------------------------
     Mutation(

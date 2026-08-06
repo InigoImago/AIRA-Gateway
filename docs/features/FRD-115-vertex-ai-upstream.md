@@ -1,6 +1,6 @@
 # FRD-115 — Reaching the models: Vertex AI / Model Garden in the EU
 
-> Phase: 8 (KIRA parity) · Status: **Draft** · Owner: Vadim Scheibe · Last updated: 2026-08-06
+> Phase: 8 (KIRA parity) · Status: **Done (2026-08-06)** · Owner: Vadim Scheibe · Last updated: 2026-08-06
 > Origin: `kira_api.md` §5, §10; **confirmed 2026-08-06: EU residency applies, and access is via
 > the Gemini Enterprise platform's Model Garden, serving Gemini *and Anthropic* models.**
 > Programme: `ADR-0010`. Architecture: **`ADR-0011`** (platform × dialect × identity).
@@ -259,6 +259,33 @@ observation (§10).
   provider, publisher and region, and the credential appears nowhere in logs, spans or responses.
 - *Given* a model configured in `us-central1`, *when* the gateway starts, *then* it refuses and
   names the model and the region.
+
+## 10a. What was actually built (2026-08-06)
+
+`aira_common.tokens` (the shared `TokenSource` — refresh-ahead, single-flight, serve-through-a-
+failed-refresh, injectable clock), `upstreams/vertex/` (auth, transport, the two adapters), the
+region allow-list with a startup refusal, `AmbiguousModel` in the registry, and provenance columns
+on `request_logs` (migration `0014`).
+
+**The architecture assertion is a test, not an intention.** `test_no_code_above_the_adapters_knows_
+the_vendor` parses every module outside `upstreams/vertex/`, strips docstrings, and fails if a
+vendor name appears in *code*. It passes: nothing above the adapters knows what Anthropic is. What
+*did* change outside `upstreams/` changed for FR-6 and FR-10 — refusing an ambiguous routing table
+and recording where each request went — which are platform requirements this FRD states, not the
+dialect leaking.
+
+**Not built here, deliberately:** the thinking, structured-output and attachment mappings
+(`FRD-111`/`112`/`110`) — the canonical core does not carry those fields yet, and a mapper for a
+field that does not exist is a guess. `FRD-119` §6 lists them and they land with those stages.
+
+Coverage: 27 gateway tests and 10 token-source tests, all hermetic against `httpx.MockTransport`;
+5 integration tests for the migrated schema; mutations **V1–V12**, each verified to be caught.
+
+> **`V4` survived first, and that is the finding worth keeping.** The test for "the model's
+> reasoning never reaches the caller" put the reasoning in the vendor's own `thinking` field —
+> so removing the block-type filter changed nothing, because the *field name* differed too. It
+> proved nothing about the filter it was named after. Rewritten to put the reasoning in a `text`
+> field, which is what holds the selection to being by **block type**.
 
 ## 11. Dependencies & Risks
 

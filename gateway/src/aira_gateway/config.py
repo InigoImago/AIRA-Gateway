@@ -82,6 +82,21 @@ class GatewaySettings(BaseAiraSettings):
     gemini_models: str = "gemini-2.0-flash,gemini-1.5-flash"
     gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
 
+    # Vertex AI / Model Garden (FRD-115). Registered only when a project and credentials are
+    # configured; a laptop keeps working on the Generative Language adapter above.
+    vertex_project: str = ""
+    #: The service-account key, as JSON. An interim source — `FRD-116` moves it to Vault, which is
+    #: where a private key of this value belongs.
+    vertex_credentials: str = ""
+    #: ``region/publisher/model`` per entry. The three things the URL and the dialect need.
+    vertex_models: str = ""
+    #: Residency, enforced: a model outside this set refuses to start. Empty falls back to the EU
+    #: defaults, so a deployment cannot leave the EU by forgetting to configure something.
+    vertex_allowed_regions: str = ""
+    vertex_timeout_seconds: float = 120.0
+    #: Backstop for Anthropic's required ``max_tokens`` when the catalog declares no default.
+    vertex_default_max_tokens: int = 4096
+
     # OIDC bearer validation (Keycloak). When disabled, only API keys are accepted.
     oidc_enabled: bool = False
     oidc_issuer: str = ""

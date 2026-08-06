@@ -60,6 +60,9 @@ class PendingLog:
     model_selection: str | None = None
     pipeline_decisions: list[dict[str, Any]] | None = None
     degraded: dict[str, str] | None = None
+    provider: str | None = None
+    publisher: str | None = None
+    region: str | None = None
 
 
 class RequestLogWriter:
@@ -178,6 +181,9 @@ class RequestLogWriter:
                 model_selection=entry.model_selection,
                 pipeline_decisions=entry.pipeline_decisions,
                 degraded=entry.degraded,
+                provider=entry.provider,
+                publisher=entry.publisher,
+                region=entry.region,
             )
 
     async def _may_store_payloads(self, session: AsyncSession, use_case: str | None) -> bool:

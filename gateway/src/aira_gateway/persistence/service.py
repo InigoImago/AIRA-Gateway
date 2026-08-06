@@ -39,6 +39,9 @@ class RequestLogService:
         model_selection: str | None = None,
         pipeline_decisions: list[dict[str, Any]] | None = None,
         degraded: dict[str, str] | None = None,
+        provider: str | None = None,
+        publisher: str | None = None,
+        region: str | None = None,
     ) -> RequestLog:
         entry = RequestLog(
             subject=subject,
@@ -57,6 +60,9 @@ class RequestLogService:
             # An empty mapping means "nothing was degraded", which is a fact worth keeping
             # distinct from "we did not look" — so it is stored rather than collapsed to NULL.
             degraded=degraded,
+            provider=provider,
+            publisher=publisher,
+            region=region,
             prompt_tokens=usage.prompt_tokens if usage else None,
             completion_tokens=usage.completion_tokens if usage else None,
             total_tokens=usage.total_tokens if usage else None,

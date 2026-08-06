@@ -91,7 +91,10 @@ async def test_a_use_case_published_by_the_relay_reaches_the_gateway(engine: Asy
 
         relay = _run_relay()
         assert relay.returncode == 0, relay.stderr
-        assert "published" in relay.stdout
+        # Deliberately not asserting that *this* relay published it. On a full stack the
+        # `management-relay` container is also draining the outbox and usually wins the race, so
+        # "no pending events" is the transport working rather than failing. What matters is that
+        # the event arrives, which the read-model check below is what actually proves.
 
         row = await _wait_for(
             engine, "SELECT name FROM use_cases WHERE slug = :slug", {"slug": slug}

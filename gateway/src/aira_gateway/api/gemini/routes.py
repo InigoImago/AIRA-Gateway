@@ -122,6 +122,19 @@ def _registry(request: Request) -> ProviderRegistry:
     return registry
 
 
+def _provenance(request: Request, model: str) -> tuple[str, str, str] | None:
+    """Where the request was processed, from the adapter that serves the model.
+
+    Read from the registry rather than the catalog: the catalog says where a model is *configured*
+    to run, the registry says which adapter actually holds it. Under a residency requirement the
+    second is the one worth recording.
+    """
+    described = _registry(request).get_model(model)
+    if described is None or not described.provider:
+        return None
+    return (described.provider, described.publisher, described.region)
+
+
 def _catalog(request: Request) -> ModelCatalog:
     catalog: ModelCatalog = request.app.state.catalog
     return catalog
@@ -353,6 +366,7 @@ async def _write_refusal(
         requested_model=trail.requested_model,
         model_selection=trail.selection,
         pipeline_decisions=decision_summary(trail.decisions),
+        provenance=_provenance(request, trail.served_model),
     )
 
 
@@ -446,6 +460,7 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
                     requested_model=trail.requested_model,
                     model_selection=trail.selection,
                     pipeline_decisions=decision_summary(trail.decisions),
+                    provenance=_provenance(request, canonical_response.model),
                 )
                 return JSONResponse(payload, headers=_deprecation_headers(declaration))
         sse = request.query_params.get("alt") == "sse"
@@ -481,6 +496,7 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
             request_payload=body,
             response_payload=payload,
             requested_model=trail.requested_model,
+            provenance=_provenance(request, model),
         )
         return JSONResponse(payload, headers=_deprecation_headers(declaration))
 
@@ -614,4 +630,5 @@ async def _finish_stream(
         requested_model=trail.requested_model,
         model_selection=trail.selection,
         pipeline_decisions=decision_summary(trail.decisions),
+        provenance=_provenance(request, trail.served_model),
     )

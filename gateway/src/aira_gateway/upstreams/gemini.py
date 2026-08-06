@@ -29,7 +29,10 @@ class GeminiUpstream:
     def __init__(self, api_key: str, models: list[str], client: httpx.AsyncClient) -> None:
         self._api_key = api_key
         self._client = client
-        self._models = [UpstreamModel(name, name, _METHODS) for name in models]
+        self._models = [
+            UpstreamModel(name, name, _METHODS, "generative-language", "google", "global")
+            for name in models
+        ]
 
     def models(self) -> list[UpstreamModel]:
         return list(self._models)

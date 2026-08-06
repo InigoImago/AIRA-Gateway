@@ -74,6 +74,12 @@ class RequestLog(Base):
     requested_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     #: ``direct`` | ``route`` | ``fallback:N`` — how the served model was arrived at.
     model_selection: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    #: Where the request was actually processed (FRD-115 FR-10). Residency is a configuration
+    #: claim; these three columns are what make it evidence, per request rather than per
+    #: deployment.
+    provider: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    publisher: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    region: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     status: Mapped[int] = mapped_column(Integer)
     #: Why the request ended this way (:class:`aira_gateway.audit.Outcome`). Indexed: reporting
     #: groups by it, and a refusal that is not groupable is a log line rather than a figure.

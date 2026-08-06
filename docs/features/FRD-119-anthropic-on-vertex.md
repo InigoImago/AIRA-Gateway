@@ -1,6 +1,6 @@
 # FRD-119 — Anthropic models on Vertex: the second dialect
 
-> Phase: 8 (KIRA parity) · Status: **Draft** · Owner: Vadim Scheibe · Last updated: 2026-08-06
+> Phase: 8 (KIRA parity) · Status: **Done (2026-08-06)** · Owner: Vadim Scheibe · Last updated: 2026-08-06
 > Origin: confirmed 2026-08-06 — Model Garden serves **Gemini and Anthropic** models.
 > Programme: `ADR-0010`. Requires `FRD-115` (transport, auth, region). Amends `FRD-110`–`FRD-114`.
 

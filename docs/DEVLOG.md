@@ -5,6 +5,61 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-06 — Stufe 2: the EU, and the first vendor that does not speak Google
+`FRD-115` and `FRD-119`. One `VertexTransport` — URL, OAuth, region, error mapping — with two
+dialects above it: Gemini bodies unchanged from `FRD-304`, and the Anthropic Messages API.
+
+**Residency is enforced rather than intended.** A configuration that *can* express a non-EU region
+is a configuration in which somebody eventually adds one, because that is where a preview model
+launched, and nothing objects. So the allowed regions are a list, a model outside it makes the
+gateway **refuse to start**, and provider/publisher/region land on every audit row. "The
+configuration says EU" is a claim; "this request went to `eu`" is evidence, and `FRD-601` can now
+break spend down by it.
+
+**An ambiguous routing table is a startup failure.** `ProviderRegistry` assigned by iteration, so
+the last provider registered silently won. With one adapter that was harmless. With three —
+Generative Language, Vertex Gemini, Vertex Anthropic — it becomes a silent decision about which
+region and which credential handled a request, invisible in every log and every report.
+
+**The token holder is shared, not Google's.** Cache, refresh at 80% of lifetime, collapse
+concurrent refreshes into one, keep serving a valid token through a failed refresh, back off rather
+than retry every request. Identical for Vertex, Foundry and a static key; only the acquisition
+differs (`ADR-0011` rule 1). Written once because getting that race right per platform means
+getting it wrong on the second one.
+
+Anthropic's differences are each a mapping: `max_tokens` **required** (always sent, from the
+catalog's per-model default), the system prompt as a top-level parameter with several messages
+concatenated rather than reduced to the last, cache tokens counted as input because they *were*
+input, streamed usage **accumulated** across `message_start` and `message_delta` where Gemini puts
+everything in the last chunk — and **thinking blocks dropped**, which with Gemini was free (we
+simply never ask) and here is an active obligation.
+
+**The architecture assertion is now a test.** `FRD-100` has claimed since Phase 1 that the
+canonical core is provider-agnostic, and until today "two upstreams" meant two spellings of
+Google's format — the claim had never been tested.
+`test_no_code_above_the_adapters_knows_the_vendor` parses every module outside `upstreams/vertex/`,
+strips docstrings, and fails if a vendor name appears in code. **It passes.** What did change
+outside `upstreams/` changed for FR-6 and FR-10 — refusing an ambiguous table, recording where each
+request went — which are platform requirements, not the dialect leaking.
+
+**One mutation survived, and it is the one worth writing down.** `V4` guards "the model's reasoning
+never reaches the caller". The test put the reasoning in the vendor's own `thinking` field — so
+removing the block-type filter changed nothing, because the *field name* differed too. It passed
+for a reason that had nothing to do with the property it was named after. Rewritten to put the
+reasoning in a `text` field, which is what actually holds the selection to being by **block type**;
+a second test pins that an unknown future block type is dropped too.
+
+The integration layer also caught a race it had always had: the test asserted that *its own* relay
+published the event, and on a full stack the `management-relay` container usually wins. It now
+asserts the outcome — the row reaches the gateway — rather than who delivered it.
+
+Verified: 699 hermetic tests (97.1%), **116/116 mutations caught**, 69 integration tests, 239
+frontend and 46 browser tests. Not built here, deliberately: the thinking, structured-output and
+attachment mappings, because the canonical core does not carry those fields yet and a mapper for a
+field that does not exist is a guess.
+
+---
+
 ## 2026-08-06 — Stufe 1: the model catalog becomes a runtime authority
 `FRD-114`. The catalog held prices; it now holds what a model may be *asked to do*, and the gateway
 decides from it. One shared vocabulary in `aira_common.models` — two copies of "which capabilities

@@ -449,6 +449,41 @@ respectively) — give them the identical environment.
 
 ---
 
+### 4a. Vertex AI in the EU (FRD-115)
+
+The Generative Language adapter (`AIRA_GOOGLE_API_KEY`) is the **laptop** path: one key, no GCP
+project, a global endpoint. It cannot make a residency statement and is not a production candidate
+where one is required.
+
+```bash
+AIRA_VERTEX_PROJECT=my-gcp-project
+AIRA_VERTEX_CREDENTIALS='{"client_email":"…","private_key":"…"}'   # FRD-116 moves this to Vault
+AIRA_VERTEX_ALLOWED_REGIONS=eu,europe-west1        # empty → the EU defaults
+AIRA_VERTEX_MODELS=eu/google/gemini-2.5-pro,eu/anthropic/claude-sonnet-4-5@20250929
+```
+
+Each model is `region/publisher/model` — the three things the URL and the dialect choice need.
+
+**Four things fail at startup rather than at dispatch**, on purpose. A gateway that starts and then
+fails every request looks like an upstream outage; one that starts and quietly serves a non-EU
+region is worse than one that will not start at all.
+
+| Refused at boot | Because |
+|---|---|
+| A model in a region outside `ALLOWED_REGIONS` | residency is a configuration claim, and this is what makes it hold |
+| Credentials that are not a usable service-account key | a credential problem must not present as an upstream problem |
+| A model spec that is not `region/publisher/model` | a typo here would otherwise become a 404 per request |
+| The same model name on two adapters | otherwise the region and credential that served a request are a silent choice |
+
+**Provenance.** Every request records `provider`, `publisher` and `region`; reporting can break
+down by them. That is what turns "we are in the EU" from an assertion into something an auditor can
+check per request.
+
+**The service-account key is the most valuable secret here.** It is never logged, never in a span
+and never in an error message — but an environment variable is an interim arrangement: it appears
+in `docker inspect`, in process listings and in orchestrator manifests. `FRD-116` moves it to
+Vault, and until then this is a documented gap rather than a design.
+
 ## 5. Preparing Keycloak
 
 The reference realm is `deploy/compose/keycloak/realms/aira-realm.json`. Reproduce these four

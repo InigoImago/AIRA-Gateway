@@ -57,6 +57,7 @@ from aira_gateway.routes.health import router as health_router
 from aira_gateway.upstreams.base import ProviderRegistry, Upstream
 from aira_gateway.upstreams.gemini import build_gemini_upstream
 from aira_gateway.upstreams.mock import MockProvider
+from aira_gateway.upstreams.vertex import build_vertex_upstreams
 
 
 def create_app(settings: GatewaySettings | None = None) -> FastAPI:
@@ -104,6 +105,9 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
     gemini = build_gemini_upstream(settings)
     if gemini is not None:
         providers.append(gemini)
+    # Vertex EU (FRD-115). Every failure it can raise — unusable credentials, a model in a region
+    # this deployment does not permit — happens here, at startup, on purpose.
+    providers.extend(build_vertex_upstreams(settings))
     registry = ProviderRegistry(providers)
     app.state.providers = registry
     app.state.pipeline_engine = PipelineEngine(registry)

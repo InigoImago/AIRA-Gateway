@@ -194,7 +194,7 @@ order below serves the priorities rather than restating them.
 |---|---|---|
 | **0** ✅ | ~~`FRD-122` — vollständiger Audit-Trail~~ **fertig 2026-08-06** | Klein, additiv, kein Eingriff in den Request-Pfad — und **jede spätere Stufe wird dagegen getestet**. Ablehnungen, das aufrufende System und `requested_model` vs. `model` sind genau das, was man bei Fallback über zwei Anbieter und einer zweiten API-Fläche braucht. Zuerst, weil es danach mühsamer nachzurüsten ist als jetzt. |
 | **1** ✅ | ~~`FRD-114` — Modell-Metadaten~~ **fertig 2026-08-06** | Voraussetzung für alles: Publisher, Capabilities, Default-Cap, Adressierung, Hosting. |
-| **2** | `FRD-115` + `FRD-119` — Vertex EU, Gemini + Anthropic | Priorität 2, erste Hälfte. Erst danach ist überhaupt ein produktionsfähiges (EU-)Modell erreichbar. |
+| **2** ✅ | ~~`FRD-115` + `FRD-119` — Vertex EU, Gemini + Anthropic~~ **fertig 2026-08-06** | Priorität 2, erste Hälfte. Erst danach ist überhaupt ein produktionsfähiges (EU-)Modell erreichbar. |
 | **3** | `FRD-110` — Dokumente | Priorität 3. Bewusst **nach** Stufe 2: ohne dokumentenfähiges Modell in der EU wären Dokumente nur gegen den Mock nutzbar. |
 | **4** | `FRD-107` Stage A — KIRA-Fläche, Textvertrag | Priorität 1, so früh wie ehrlich möglich. Nicht unterstützte Felder werden **abgewiesen**, nie ignoriert (`FRD-107` §5.2). Einfache Clients migrieren hier. |
 | **5** | `FRD-111`, `FRD-112`, `FRD-113` | Thinking, strukturierte Ausgabe, Embedding-Optionen. |
@@ -220,8 +220,8 @@ overruled rather than discovered:
 | `FRD-112` | `responseSchema` — forced JSON output | — |
 | `FRD-113` | Embedding task types, batches, dimensions | needs `FRD-114` |
 | ~~`FRD-114`~~ | Model capability metadata | **Done (2026-08-06).** Capabilities, publisher/platform/addressing, output caps, thinking/embedding/attachment declarations, hosting, deprecation. Undeclared = baseline only. |
-| `FRD-115` | Vertex AI / Model Garden in the EU | **required — residency confirmed** |
-| `FRD-119` | Anthropic models on Vertex: the second dialect | needs `FRD-115` + `FRD-114` |
+| ~~`FRD-115`~~ | Vertex AI / Model Garden in the EU | **Done (2026-08-06).** Shared `TokenSource`, region allow-list enforced at startup, ambiguous routing table refuses to boot, provenance on every audit row. |
+| ~~`FRD-119`~~ | Anthropic models on Vertex: the second dialect | **Done (2026-08-06)** for what the canonical core carries today. Thinking / structured output / attachments land with `FRD-111`/`112`/`110`. |
 | `FRD-120` | Microsoft Foundry (Azure OpenAI + Microsoft's own) | **planned, not scheduled** — see `ADR-0011` |
 | `FRD-121` | Document conversion for models that cannot read documents | **optional — probably do not build first**, `ADR-0012` §4 / `ADR-0013` |
 | ~~`FRD-122`~~ | A complete audit trail — refusals, asked-vs-served, decisions, degradation | **Done (2026-08-06).** Refusals are recorded, the calling system is identified, asked-vs-served is distinguishable, pipeline decisions and degradation are on the row, and reporting counts refusals. |

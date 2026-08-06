@@ -30,11 +30,19 @@ class UpstreamError(Exception):
 
 @dataclass(frozen=True, slots=True)
 class UpstreamModel:
-    """Metadata describing a model an upstream exposes."""
+    """Metadata describing a model an upstream exposes.
+
+    ``provider``/``publisher``/``region`` are the **provenance** (FRD-115 FR-10): under a residency
+    requirement, "the configuration says EU" is a claim and "this request went to `eu`" is
+    evidence. They are recorded on every audit row and span, so `FRD-601` can break down by them.
+    """
 
     name: str
     version: str
     supported_methods: tuple[str, ...]
+    provider: str = ""
+    publisher: str = ""
+    region: str = ""
 
 
 @runtime_checkable
@@ -50,6 +58,17 @@ class Upstream(Protocol):
     async def embed(self, model: str, text: str) -> list[float]: ...
 
 
+class AmbiguousModel(Exception):
+    """Two providers offer the same model name.
+
+    Raised at startup. With one adapter the old behaviour — last registration wins — was harmless;
+    with three (Generative Language, Vertex Gemini, Vertex Anthropic) it becomes a **silent**
+    decision about which region and which credential handled a request, and the wrong answer is
+    invisible in every log and every report. Failing to boot is the correct response to an
+    ambiguous routing table; a running gateway that sometimes leaves the EU is not.
+    """
+
+
 class ProviderRegistry:
     """Resolves model names to providers and lists available models."""
 
@@ -58,6 +77,12 @@ class ProviderRegistry:
         self._models: dict[str, UpstreamModel] = {}
         for provider in providers:
             for model in provider.models():
+                if model.name in self._by_model:
+                    raise AmbiguousModel(
+                        f"Model '{model.name}' is offered by both "
+                        f"{type(self._by_model[model.name]).__name__} and "
+                        f"{type(provider).__name__}. Configure it on exactly one."
+                    )
                 self._by_model[model.name] = provider
                 self._models[model.name] = model
 

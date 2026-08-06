@@ -43,7 +43,7 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
   inevitably do when both were written from the same mental model — and line coverage cannot see
   a *missing requirement*: on 2026-08-05 a review found seven real defects behind a green suite at
   99% coverage. So: **prove a test can fail.** Break the property, watch it go red, restore.
-  `make mutants` (`tools/mutation_check.py`) does this for **104 properties** across auth, budgets,
+  `make mutants` (`tools/mutation_check.py`) does this for **116 properties** across auth, budgets,
   pipeline, retention, the management control plane and the gateway's counters; when
   you fix a bug, add the mutation that reintroduces it. Two traps that cost real defects here:
   a stand-in that is more permissive than the thing it replaces (reuse the real method where you
@@ -307,6 +307,18 @@ revocation blocks** — conflating them removes the ability to announce a retire
 was renamed to `model_catalog`, and the rename exposed a real hazard: an old container's
 `create_all` **resurrected the dropped table** and then failed every event against it —
 `create_all` alongside Alembic means a partially-deployed stack can undo a migration.
+**`FRD-115`+`FRD-119` done (2026-08-06)** — **Vertex EU with Gemini and Anthropic.** One
+`VertexTransport` (URL, OAuth, region, errors) under two dialects; the shared `TokenSource`
+(`aira_common.tokens`) refreshes ahead of expiry, single-flights, and serves through a failed
+refresh — written once because getting that race right per platform means getting it wrong on the
+second. **Residency is enforced, not intended**: a model outside the allowed regions **refuses to
+start**, and provider/publisher/region are on every audit row (migration `0014`) so an EU claim is
+evidence rather than configuration. An **ambiguous routing table refuses to boot** — with three
+adapters, last-registration-wins becomes a silent choice of region and credential. Anthropic
+specifics: `max_tokens` always sent, **thinking blocks dropped**, cache tokens counted as input,
+streamed usage **accumulated** across `message_start` and `message_delta`, no embedding.
+**The architecture assertion is a test**: `test_no_code_above_the_adapters_knows_the_vendor` parses
+every module outside `upstreams/vertex/` and fails if a vendor appears in code. It passes.
 **Delivery order is fixed (ROADMAP Phase 8, 2026-08-06)**, derived from the owner's priority
 (KIRA compatibility → model connections → documents → the review findings) and the dependency that
 priority 1 needs priority 3: **`FRD-122` (audit) → `FRD-114` (metadata) → `FRD-115`+`119` (Vertex EU,
