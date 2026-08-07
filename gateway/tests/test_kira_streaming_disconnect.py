@@ -99,24 +99,40 @@ async def test_a_caller_that_goes_away_while_the_model_answers_is_still_recorded
     assert rows[0].operation == "streaming-chat"
 
 
-async def test_a_cancelled_stream_gives_its_reservation_back() -> None:
-    """Nothing chargeable was produced, so settling would book a request against a caller who
-    received nothing — and a use case with a request limit would lose allowance to somebody
-    hanging up."""
+async def test_a_cancelled_stream_is_not_billed_for_what_it_did_not_deliver() -> None:
+    """Nothing chargeable was produced, so nothing is booked. A use case with a request limit must
+    not lose allowance to a caller who hung up.
+
+    Asserted on the **counter**, not on a call to `release`. A tracking stand-in cannot see it:
+    `hold` is the real service's own method and its internal `self.release(...)` never passes
+    through a wrapper — so a test that counted calls would be testing the wrapper.
+    """
+    from aira_gateway.db.models import BudgetRead, BudgetUsage
+
     provider = _SlowProvider()
     app = create_app(GatewaySettings(auth_required=False, log_queue_size=0, allowed_regions="eu"))
     app.state.providers = ProviderRegistry([provider])
-    tracker = _TrackingBudgets(app.state.budgets)
-    app.state.budgets = tracker
 
     with TestClient(app):
         async with app.state.db_sessionmaker() as session:
             session.add(ModelRead(model="slow-1", numeric_id=1, capabilities=["generate"]))
+            session.add(
+                BudgetRead(
+                    id=1,
+                    use_case="demo",
+                    scope="use_case",
+                    subject="",
+                    period="month",
+                    limit_requests=1000,
+                    enabled=True,
+                )
+            )
             await session.commit()
 
         from aira_gateway.api.kira import routes
 
-        task = asyncio.create_task(_drive(routes, _kira_request(app), None))
+        request = _kira_request(app, use_case="demo")
+        task = asyncio.create_task(_drive(routes, request, None))
         await asyncio.wait_for(provider.entered.wait(), timeout=5)
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
@@ -124,31 +140,13 @@ async def test_a_cancelled_stream_gives_its_reservation_back() -> None:
         provider.finish.set()
         await asyncio.sleep(0.1)
 
-    assert tracker.released == 1, "the reservation was not given back"
-    assert tracker.settled == 0, "a caller who received nothing was billed for a request"
+        async with app.state.db_sessionmaker() as session:
+            usage = list((await session.execute(select(BudgetUsage))).scalars())
+
+    assert not any(u.requests for u in usage), "a caller who received nothing was billed"
 
 
-class _TrackingBudgets:
-    """Delegates to the real service and counts which way each reservation was resolved."""
-
-    def __init__(self, real: object) -> None:
-        self._real = real
-        self.settled = 0
-        self.released = 0
-
-    def __getattr__(self, name: str):  # noqa: ANN202
-        return getattr(self._real, name)
-
-    async def settle(self, *args, **kwargs):  # noqa: ANN002, ANN003, ANN202
-        self.settled += 1
-        return await self._real.settle(*args, **kwargs)  # type: ignore[attr-defined]
-
-    async def release(self, *args, **kwargs):  # noqa: ANN002, ANN003, ANN202
-        self.released += 1
-        return await self._real.release(*args, **kwargs)  # type: ignore[attr-defined]
-
-
-def _kira_request(app):  # noqa: ANN001, ANN202
+def _kira_request(app, use_case: str | None = None):  # noqa: ANN001, ANN202
     """A minimal ASGI request carrying the state the streaming handler reads."""
     import json as _json
 

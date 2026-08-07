@@ -7,7 +7,6 @@ provider, and mapped back. Errors use the Gemini error envelope.
 
 from __future__ import annotations
 
-import asyncio
 import time
 from collections.abc import AsyncIterator
 from typing import Any
@@ -29,6 +28,8 @@ from aira_gateway.api.gemini.mapping import (
 from aira_gateway.api.serving import (
     REFUSALS,
     UPSTREAM_STATUS_MAP,
+    Prepared,
+    accounting,
     catalog_of,
     check_structured_result,
     deprecation_headers,
@@ -44,12 +45,10 @@ from aira_gateway.api.serving import (
 from aira_gateway.attachments import AttachmentRejected
 from aira_gateway.audit import AuditTrail, Outcome, decision_summary
 from aira_gateway.budgets.errors import BudgetExceeded
-from aira_gateway.budgets.service import Reservation
 from aira_gateway.core.canonical import (
     CanonicalChunk,
     CanonicalEmbeddingRequest,
     CanonicalRequest,
-    CanonicalUsage,
 )
 from aira_gateway.core.schema import SchemaRejected
 from aira_gateway.embedding import EmbeddingRejected
@@ -291,15 +290,22 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
     embed_request = prepared.embed
     fallbacks = prepared.fallbacks
     declaration = prepared.declaration
-    reservation = prepared.reservation
 
     if canonical is not None:
         if method == "generateContent":
-            # `hold` releases the reservation unless it is settled inside the block, so no exit
-            # path — an upstream outage, a pricing lookup that fails, an outright bug — can leave
-            # budget consumed by a request that produced nothing (FRD-405 FR-5).
-            async with request.app.state.budgets.hold(reservation):
-                started = time.monotonic()
+            started = time.monotonic()
+            # The post-dispatch sequence, in the one place that owns it. It holds the reservation
+            # and accounts for the request **however it ends** — including a caller who goes away
+            # while the model is still answering, which used to leave no row at all (`FRD-128`).
+            async with accounting(
+                request,
+                trail,
+                prepared,
+                api="gemini",
+                operation="generateContent",
+                body=body,
+                started=started,
+            ) as acct:
                 dispatched = await dispatch_with_fallback(
                     registry_of(request),
                     canonical,
@@ -309,49 +315,29 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
                 canonical_response = dispatched.response
                 trail.served_by(canonical_response.model, dispatched.candidate_index)
                 trail.passed_over(dispatched.skipped)
-                # A truncated or unsatisfied document is not data (FRD-112 FR-6). Checked before
-                # the reservation is settled, so a refused answer is released rather than booked.
+                # A truncated or unsatisfied document is not data (FRD-112 FR-6). Raised before
+                # the outcome is reported, so a refused answer is released rather than booked.
                 check_structured_result(canonical, canonical_response)
-                # Priced once, then shared: the budget counters and the audit trail must not be
-                # able to disagree about what a request cost (FRD-403).
-                cost = await request.app.state.pricing.cost_nanos(
-                    canonical_response.model, canonical_response.usage
-                )
-                await request.app.state.budgets.settle(
-                    reservation, canonical_response.usage.total_tokens, cost_nanos=cost
-                )
                 payload = canonical_to_gemini(canonical_response).model_dump()
-                await record_request(
-                    request,
-                    operation="generateContent",
-                    model=canonical_response.model,
-                    status=200,
-                    usage=canonical_response.usage,
-                    latency_ms=elapsed_ms(started),
-                    request_payload=body,
-                    response_payload=payload,
-                    cost_nanos=cost,
-                    requested_model=trail.requested_model,
-                    model_selection=trail.selection,
-                    pipeline_decisions=decision_summary(trail.decisions),
-                    provenance=provenance(request, canonical_response.model),
-                )
-                return JSONResponse(payload, headers=deprecation_headers(declaration))
+                acct.served(canonical_response.model, canonical_response.usage, payload)
+            return JSONResponse(payload, headers=deprecation_headers(declaration))
         sse = request.query_params.get("alt") == "sse"
         return _stream_response(
             request,
             provider,
             canonical,
             body,
-            reservation,
+            prepared,
             trail,
             sse=sse,
             headers=deprecation_headers(declaration),
         )
 
     assert embed_request is not None  # the method dispatch above guarantees it
-    async with request.app.state.budgets.hold(reservation):
-        started = time.monotonic()
+    started = time.monotonic()
+    async with accounting(
+        request, trail, prepared, api="gemini", operation=method, body=body, started=started
+    ) as acct:
         vectors = await provider.embed(embed_request)
         payload = (
             schemas.BatchEmbedContentsResponse(
@@ -362,25 +348,8 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
                 embedding=schemas.ContentEmbedding(values=vectors[0] if vectors else [])
             ).model_dump()
         )
-        # Embeddings report no token usage, so there is nothing to price. The batch still counts
-        # as the *many* requests it is against a request-limited budget — settling it as one would
-        # hand back everything the reservation took and leave batched traffic invisible.
-        await request.app.state.budgets.settle(
-            reservation, 0, cost_nanos=None, requests=embed_request.size
-        )
-        await record_request(
-            request,
-            operation=method,
-            model=model,
-            status=200,
-            usage=None,
-            latency_ms=elapsed_ms(started),
-            request_payload=body,
-            response_payload=payload,
-            requested_model=trail.requested_model,
-            provenance=provenance(request, model),
-        )
-        return JSONResponse(payload, headers=deprecation_headers(declaration))
+        acct.embedded(model, payload, units=embed_request.size)
+    return JSONResponse(payload, headers=deprecation_headers(declaration))
 
 
 def _chunk_to_gemini(chunk: CanonicalChunk, model: str) -> schemas.GenerateContentResponse:
@@ -407,7 +376,7 @@ def _stream_response(
     provider: Upstream,
     canonical: CanonicalRequest,
     body: dict[str, Any],
-    reservation: Reservation,
+    prepared: Prepared,
     trail: AuditTrail,
     *,
     sse: bool,
@@ -416,10 +385,16 @@ def _stream_response(
     """Stream chunks as SSE (`?alt=sse`, for the google-genai SDK) or a JSON array (Gemini REST)."""
 
     async def generate_chunks() -> AsyncIterator[str]:
-        # The same guarantee as the non-streaming path: whatever ends this generator — the stream
-        # completing, an upstream failure, or the client hanging up — the reservation is resolved.
-        async with request.app.state.budgets.hold(reservation):
-            started = time.monotonic()
+        started = time.monotonic()
+        async with accounting(
+            request,
+            trail,
+            prepared,
+            api="gemini",
+            operation="streamGenerateContent",
+            body=body,
+            started=started,
+        ) as acct:
             parts: list[str] = []
             final_usage = None
             separator = ""
@@ -453,78 +428,16 @@ def _stream_response(
                 if not sse:
                     yield "]"
             finally:
-                # Runs when the client hangs up too. The upstream was called either way, so the
-                # request has to be accounted for and logged rather than vanishing from both.
-                #
-                # **Shielded**, and the reason is subtle enough to be worth stating. Closing the
-                # generator from inside the process raises `GeneratorExit`, and awaits in a
-                # `finally` then run normally — which is why the hermetic disconnect test passes
-                # deterministically. A client dropping a real socket cancels the response task
-                # instead, and a bare `await` here re-raises `CancelledError` at its first
-                # suspension point: the settle and the audit row are simply lost. That showed up as
-                # a 1-in-8 flake in the integration suite, which is what a lost row looks like from
-                # the outside.
-                #
-                # `shield` lets the accounting run to completion while the cancellation propagates
-                # past it. Losing the row is the failure `FRD-405` B4 promised not to have.
-                await asyncio.shield(
-                    _finish_stream(
-                        request,
-                        reservation,
-                        trail,
-                        model=canonical.model,
-                        body=body,
-                        text="".join(parts),
-                        usage=final_usage,
-                        status=status,
-                        started=started,
-                    )
-                )
+                # Reported into the shared sequence, which owns the shielded settle-and-record for
+                # every path — this one included. A stream that reported no usage produced nothing
+                # chargeable and is *released*: settling would still book one request, and a use
+                # case with a request limit would lose allowance to an upstream outage.
+                if final_usage is not None:
+                    acct.served(canonical.model, final_usage, {"text": "".join(parts)})
+                acct.status = status
+                if status != 200:
+                    acct.outcome = Outcome.UPSTREAM_ERROR
 
     media_type = "text/event-stream" if sse else "application/json"
     return StreamingResponse(generate_chunks(), media_type=media_type, headers=headers)
 
-
-async def _finish_stream(
-    request: Request,
-    reservation: Reservation,
-    trail: AuditTrail,
-    *,
-    model: str,
-    body: dict[str, Any],
-    text: str,
-    usage: CanonicalUsage | None,
-    status: int,
-    started: float,
-) -> None:
-    """Account for a finished stream and write its audit row.
-
-    A stream that reported no usage produced nothing chargeable, so it is *released* rather than
-    settled — settling would still book one request, and a use case with a request limit would
-    lose allowance to an upstream outage. Anything that did produce output is settled with what
-    it actually used, including a stream that died half way.
-    """
-    cost = await request.app.state.pricing.cost_nanos(model, usage)
-    if usage is None:
-        await request.app.state.budgets.release(reservation)
-    else:
-        await request.app.state.budgets.settle(reservation, usage.total_tokens, cost_nanos=cost)
-    await record_request(
-        request,
-        operation="streamGenerateContent",
-        model=model,
-        status=status,
-        usage=usage,
-        latency_ms=elapsed_ms(started),
-        request_payload=body,
-        response_payload={"text": text},
-        cost_nanos=cost,
-        # A stream whose upstream died mid-flight has already sent a 200 header, so `status` is
-        # the only place the failure survives — and the outcome has to agree with it, or the audit
-        # would report a served request that produced an error.
-        outcome=Outcome.SERVED if status == 200 else Outcome.UPSTREAM_ERROR,
-        requested_model=trail.requested_model,
-        model_selection=trail.selection,
-        pipeline_decisions=decision_summary(trail.decisions),
-        provenance=provenance(request, trail.served_model),
-    )

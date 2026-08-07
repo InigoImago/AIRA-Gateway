@@ -15,8 +15,12 @@ its own routes. Everything here is about the request, not about how it was spell
 
 from __future__ import annotations
 
+import asyncio
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from typing import Any
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
@@ -28,7 +32,7 @@ from aira_common.observability import set_span_attributes
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.api.gemini.errors import gemini_error_response as _error
 from aira_gateway.attachments import AttachmentRejected
-from aira_gateway.audit import AuditTrail, Outcome
+from aira_gateway.audit import AuditTrail, Outcome, decision_summary
 from aira_gateway.budgets.errors import BudgetExceeded
 from aira_gateway.budgets.ledger import Amounts
 from aira_gateway.budgets.service import Reservation
@@ -37,6 +41,7 @@ from aira_gateway.core.canonical import (
     CanonicalEmbeddingRequest,
     CanonicalRequest,
     CanonicalResponse,
+    CanonicalUsage,
 )
 from aira_gateway.core.schema import SchemaBounds, SchemaRejected
 from aira_gateway.embedding import EmbeddingBounds, EmbeddingRejected
@@ -526,6 +531,166 @@ async def prepare_for_dispatch(
         ),
     )
     return Prepared(canonical, embed, fallbacks, declaration, reservation)
+
+
+@dataclass(slots=True)
+class Accounting:
+    """What a request produced, reported into the sequence that will account for it.
+
+    A caller sets `response` (or `vectors`, or neither) and the exit does the rest. Reporting into
+    an object rather than calling settle/record inline is what lets **one** exit cover every way
+    out — served, refused, or cancelled while the model was still answering.
+    """
+
+    response: CanonicalResponse | None = None
+    payload: dict[str, Any] | None = None
+    usage: CanonicalUsage | None = None
+    model: str = ""
+    #: `499` — the caller left. Nobody is sent it; it exists so the audit can tell that case from
+    #: a served one. Overwritten by whatever actually happened.
+    status: int = 499
+    outcome: Outcome | None = None
+    #: Whether anything was produced at all. Distinct from `usage is None`, because an embedding
+    #: produces vectors and reports **no tokens** — settling it as "nothing" would hand back a
+    #: batch's whole reservation and leave batched traffic invisible to a request limit.
+    produced: bool = False
+    #: What this call weighed against a request-limited budget: one, or one per text in a batch.
+    requests: int = 1
+
+    def served(self, model: str, usage: CanonicalUsage | None, payload: dict[str, Any]) -> None:
+        self.model = model
+        self.usage = usage
+        self.payload = payload
+        self.status = 200
+        self.outcome = Outcome.SERVED
+        self.produced = True
+
+    def embedded(self, model: str, payload: dict[str, Any], *, units: int) -> None:
+        """Vectors, which cost tokens nobody reports. Weighed as the many requests it is."""
+        self.served(model, None, payload)
+        self.requests = units
+
+    def failed(self, status: int, outcome: Outcome) -> None:
+        self.status = status
+        self.outcome = outcome
+
+
+@asynccontextmanager
+async def accounting(
+    request: Request,
+    trail: AuditTrail,
+    prepared: Prepared,
+    *,
+    api: str,
+    operation: str,
+    body: dict[str, Any] | None,
+    started: float,
+) -> AsyncIterator[Accounting]:
+    """Hold the reservation, and account for the request **however it ends**.
+
+    The companion to `prepare_for_dispatch`, and it exists for the same reason: the post-dispatch
+    steps — hold, dispatch, price, settle, record — were written out once per verb per surface,
+    six times, and their *order* is the guarantee. `FRD-126` consolidated the half before dispatch;
+    this is the half after.
+
+    Asked whether every path had been tested with a dropped connection, the answer was no, and the
+    check found that **four of the six lost the audit row**: a caller who went away while the model
+    was answering made a request that reached the upstream disappear from the record. `FRD-122`'s
+    rule does not care how a request ended — the log records what was asked.
+
+    **Shielded.** Closing a generator in-process raises `GeneratorExit` and awaits in a `finally`
+    run normally; a caller dropping a real socket cancels the task, and a bare `await` here
+    re-raises `CancelledError` at its first suspension point, losing exactly the work this function
+    exists to do. That was found as a 1-in-8 integration flake (`FRD-110`) on the one path that
+    had it; now no path can be without it.
+
+    Nothing chargeable produced means the reservation is **released**, not settled: booking a
+    request against somebody who received nothing would spend a request limit on a caller who hung
+    up, or on an upstream outage.
+    """
+    state = Accounting(model=prepared.model)
+    record = True
+    # The accounting runs **inside** `hold`, not around it. Outside, `hold` sees an unresolved
+    # reservation on the way out and gives it back — and then the settle books it again. One
+    # request, settled once and released once, which a test caught immediately.
+    async with request.app.state.budgets.hold(prepared.reservation):
+        try:
+            yield state
+        except (asyncio.CancelledError, GeneratorExit):
+            # The caller left. Nobody will render a response and nobody else will write a row,
+            # so this is the only place the request can be recorded — which is exactly what four
+            # of the six paths were failing to do.
+            raise
+        except BaseException:
+            # A refusal on its way to the surface's exception boundary, which knows the status and
+            # the outcome vocabulary for it and writes the row itself. Writing a *second* row here
+            # would double-count every failed request.
+            record = False
+            raise
+        finally:
+            await asyncio.shield(
+                _settle_and_record(
+                    request,
+                    trail,
+                    prepared,
+                    state,
+                    api=api,
+                    operation=operation,
+                    body=body,
+                    started=started,
+                    record=record,
+                )
+            )
+
+
+async def _settle_and_record(
+    request: Request,
+    trail: AuditTrail,
+    prepared: Prepared,
+    state: Accounting,
+    *,
+    api: str,
+    operation: str,
+    body: dict[str, Any] | None,
+    started: float,
+    record: bool = True,
+) -> None:
+    model = state.model or prepared.model
+    cost = await request.app.state.pricing.cost_nanos(model, state.usage)
+    if not state.produced:
+        # Nothing chargeable, so nothing is settled — and nothing is released here either, because
+        # `hold` has already given an unresolved reservation back by the time this runs. Releasing
+        # again would count the give-back twice, which a test caught within the minute.
+        #
+        # The rule itself stands: settling would still book one request, so a use case with a
+        # request limit would lose allowance to a caller who hung up or an upstream that failed.
+        cost = None
+    else:
+        await request.app.state.budgets.settle(
+            prepared.reservation,
+            state.usage.total_tokens if state.usage else 0,
+            cost_nanos=cost,
+            requests=state.requests,
+        )
+    if not record:
+        return
+    await record_request(
+        request,
+        operation=operation,
+        model=trail.served_model or model,
+        status=state.status,
+        usage=state.usage,
+        latency_ms=elapsed_ms(started),
+        request_payload=body,
+        response_payload=state.payload,
+        cost_nanos=cost,
+        outcome=state.outcome or Outcome.CLIENT_GONE,
+        requested_model=trail.requested_model,
+        model_selection=trail.selection,
+        pipeline_decisions=decision_summary(trail.decisions),
+        provenance=provenance(request, model),
+        api=api,
+    )
 
 
 async def record_pipeline_calls(request: Request, trail: AuditTrail) -> None:

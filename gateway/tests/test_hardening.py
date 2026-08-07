@@ -272,14 +272,21 @@ def test_trusted_forwarded_for_without_header_uses_peer() -> None:
     assert resp.status_code == 200
 
 
-def test_stream_error_is_recorded_with_the_real_status() -> None:
-    """A stream that dies mid-flight must not be audited as a success."""
+async def test_stream_error_is_recorded_with_the_real_status() -> None:
+    """A stream that dies mid-flight must not be audited as a success.
+
+    Asserted on the **row** rather than on an intercepted call. It used to monkeypatch
+    `routes.record_request`, which stopped intercepting the moment `FRD-128` gave the
+    post-dispatch sequence one owner — a test coupled to *where* the write happens rather than to
+    *whether* it happens, and it went quiet instead of failing loudly.
+    """
     from collections.abc import AsyncIterator
 
-    from aira_gateway.core.canonical import CanonicalChunk, CanonicalRequest
-    from aira_gateway.upstreams.base import UpstreamError, UpstreamModel
+    from sqlalchemy import select
 
-    recorded: list[int] = []
+    from aira_gateway.core.canonical import CanonicalChunk, CanonicalRequest
+    from aira_gateway.db.models import RequestLog
+    from aira_gateway.upstreams.base import UpstreamError, UpstreamModel
 
     class _Failing:
         def models(self) -> list[UpstreamModel]:
@@ -295,21 +302,15 @@ def test_stream_error_is_recorded_with_the_real_status() -> None:
         async def embed(self, request: object) -> list[list[float]]:
             return [[0.0]]
 
-    app = create_app(GatewaySettings(auth_required=False))
+    app = create_app(GatewaySettings(auth_required=False, log_queue_size=0))
     app.state.providers = ProviderRegistry([_Failing()])
 
-    async def _record(request, **kwargs) -> None:  # noqa: ANN001
-        recorded.append(kwargs["status"])
+    with TestClient(app) as client:
+        resp = client.post("/v1beta/models/mock-1:streamGenerateContent", json=_BODY)
+        assert resp.status_code == 200  # headers were already on the wire
 
-    import aira_gateway.api.gemini.routes as routes
+        async with app.state.db_sessionmaker() as session:
+            rows = list((await session.execute(select(RequestLog))).scalars())
 
-    original = routes.record_request
-    routes.record_request = _record
-    try:
-        with TestClient(app) as client:
-            resp = client.post("/v1beta/models/mock-1:streamGenerateContent", json=_BODY)
-            assert resp.status_code == 200  # headers were already on the wire
-    finally:
-        routes.record_request = original
-
-    assert recorded == [503]
+    assert [row.status for row in rows] == [503]
+    assert rows[0].outcome == "upstream_error"

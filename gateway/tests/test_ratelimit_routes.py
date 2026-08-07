@@ -31,6 +31,24 @@ def _canonical() -> CanonicalRequest:
     )
 
 
+def _prepared():  # noqa: ANN202
+    """The pre-dispatch result the streaming path now takes, instead of a bare reservation.
+
+    `FRD-128` gave the post-dispatch sequence one owner, and it needs the same thing every other
+    path hands it: what was prepared, not just what was reserved.
+    """
+    from aira_gateway.api.serving import Prepared
+    from aira_gateway.catalog import ModelDeclaration
+
+    return Prepared(
+        canonical=_canonical(),
+        embed=None,
+        fallbacks=(),
+        declaration=ModelDeclaration(name="mock-1"),
+        reservation=Reservation(),
+    )
+
+
 def _stream_request(app) -> Request:  # noqa: ANN001
     """A minimal ASGI request carrying the app state the streaming path reads."""
     scope = {
@@ -209,7 +227,7 @@ async def test_a_client_that_disconnects_mid_stream_does_not_leak_the_reservatio
             app.state.providers.provider_for("mock-1"),
             _canonical(),
             _BODY,
-            Reservation(),
+            _prepared(),
             AuditTrail(operation="streamGenerateContent", requested_model="mock-1"),
             sse=False,
         )

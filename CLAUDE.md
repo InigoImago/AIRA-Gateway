@@ -43,7 +43,7 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
   inevitably do when both were written from the same mental model — and line coverage cannot see
   a *missing requirement*: on 2026-08-05 a review found seven real defects behind a green suite at
   99% coverage. So: **prove a test can fail.** Break the property, watch it go red, restore.
-  `make mutants` (`tools/mutation_check.py`) does this for **227 properties** across auth, budgets,
+  `make mutants` (`tools/mutation_check.py`) does this for **229 properties** across auth, budgets,
   pipeline, retention, the management control plane and the gateway's counters; when
   you fix a bug, add the mutation that reintroduces it. Two traps that cost real defects here:
   a stand-in that is more permissive than the thing it replaces (reuse the real method where you
@@ -54,7 +54,11 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
   → `e2e/` (real browser, `make test-e2e`). Anything needing a user token belongs in `e2e/`: the
   dev realm has the password grant disabled, so a token only comes from the real code flow.
 - **Typed code**: Python type hints (mypy), TypeScript strict mode.
-- **A surface parses; the layer decides.** `api/serving.py` shared the *steps* of the pre-dispatch
+- **A surface parses; the layer decides.** Both halves of the request path now have one owner —
+  `prepare_for_dispatch` before dispatch (`FRD-126`) and `accounting` after it (`FRD-128`). The
+  second was found by asking whether every path had been tested with a dropped connection: four of
+  six lost the audit row when a caller went away mid-answer. A request that reached an upstream is
+  recorded however it ended, including `499`/`client_gone`. `api/serving.py` shared the *steps* of the pre-dispatch
   path with both API surfaces and not their *order* — and every guarantee that layer makes is a
   guarantee about the order (rate limit before the pipeline, declaration and thinking after
   routing, reservation last). Both surfaces wrote the same six calls by hand until `FRD-126`;

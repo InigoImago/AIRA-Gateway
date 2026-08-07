@@ -44,6 +44,10 @@ class Outcome(StrEnum):
     #: "somebody keeps posting 20 MB" and "somebody sent malformed JSON" are different operational
     #: facts, and a shared bucket would hide the first inside the second.
     REQUEST_TOO_LARGE = "request_too_large"
+    #: The caller went away before the answer was ready. Its own value rather than an upstream
+    #: error: the upstream did nothing wrong, and "clients keep hanging up" is a different thing
+    #: to investigate from "the provider keeps failing" (`FRD-128`).
+    CLIENT_GONE = "client_gone"
 
 
 #: How the served model was arrived at. ``fallback:N`` names the candidate's position in the chain.

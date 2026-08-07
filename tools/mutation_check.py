@@ -2031,19 +2031,43 @@ MUTATIONS = [
     # layer is where that property is checked.
     Mutation(
         "Z17",
-        "a stream that ends without an answer is still recorded, however it ended",
-        "gateway/src/aira_gateway/api/kira/routes.py",
-        "        await _record(\n            request,\n            trail,\n            operation=\"streaming-chat\",\n            status=outcome.status,\n            response=None,",
-        "        return\n        await _record(\n            request,\n            trail,\n            operation=\"streaming-chat\",\n            status=outcome.status,\n            response=None,",
+        "a request that ends without an answer is still recorded, however it ended",
+        "gateway/src/aira_gateway/api/serving.py",
+        # Re-anchored by `FRD-128`: the hand-written finisher this pointed at is gone, and the
+        # property it named now belongs to every path rather than to one surface's stream.
+        "    if not record:\n        return",
+        "    if True:\n        return",
         "gateway/tests/test_kira_streaming_disconnect.py gateway/tests/test_kira_surface.py",
     ),
     Mutation(
         "Z18",
-        "a stream that produced nothing is released, not settled for a request nobody was served",
-        "gateway/src/aira_gateway/api/kira/routes.py",
-        "        await request.app.state.budgets.release(reservation)",
-        "        pass",
-        "gateway/tests/test_kira_streaming_disconnect.py gateway/tests/test_kira_surface.py",
+        "a request that produced nothing is released, not settled for an answer nobody received",
+        "gateway/src/aira_gateway/api/serving.py",
+        "    if not state.produced:",
+        "    if False:",
+        # The selection widened with the anchor, exactly as `K6`'s had to: this was one surface's
+        # stream and is now every path's, so naming one surface's tests checks a sixth of it.
+        "gateway/tests/test_kira_streaming_disconnect.py gateway/tests/test_ratelimit_routes.py "
+        "gateway/tests/test_cancelled_requests.py gateway/tests/test_hardening.py",
+    ),
+    Mutation(
+        "Z19",
+        "a caller who goes away while the model answers is still recorded on every path",
+        "gateway/src/aira_gateway/api/serving.py",
+        #  is a real name that a cancellation is *not*, so the cancellation
+        # falls through to the clause below and is treated as a refusal somebody else will
+        # record — which is the defect: nobody else does.
+        "        except (asyncio.CancelledError, GeneratorExit):",
+        "        except (KeyboardInterrupt,):",
+        "gateway/tests/test_cancelled_requests.py gateway/tests/test_kira_streaming_disconnect.py",
+    ),
+    Mutation(
+        "Z20",
+        "an embedding batch settles as the many requests it is, not as one",
+        "gateway/src/aira_gateway/api/serving.py",
+        "            requests=state.requests,",
+        "            requests=1,",
+        "gateway/tests/test_ratelimit_routes.py gateway/tests/test_serving_options.py",
     ),
 ]
 

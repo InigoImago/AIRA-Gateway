@@ -25,7 +25,9 @@ class _BlockingBudgets:
     async def guard(self, use_case, subject, *, estimated=None):  # noqa: ANN001, ANN201
         raise BudgetExceeded("Request budget exhausted for use_case (day).")
 
-    async def settle(self, reservation, tokens, *, cost_nanos=None, now=None):  # noqa: ANN001, ANN201
+    # The real signature, including `requests` — a stand-in narrower than the thing it replaces
+    # is how a control comes to be tested against something that cannot express what it does.
+    async def settle(self, reservation, tokens, *, cost_nanos=None, now=None, requests=1):  # noqa: ANN001, ANN201, E501
         reservation.resolved = True
 
     async def release(self, reservation):  # noqa: ANN001, ANN201
@@ -51,7 +53,9 @@ class _RecordingBudgets:
         self.estimates.append(estimated)
         return Reservation()
 
-    async def settle(self, reservation, tokens, *, cost_nanos=None, now=None):  # noqa: ANN001, ANN201
+    # The real signature, including `requests` — a stand-in narrower than the thing it replaces
+    # is how a control comes to be tested against something that cannot express what it does.
+    async def settle(self, reservation, tokens, *, cost_nanos=None, now=None, requests=1):  # noqa: ANN001, ANN201, E501
         reservation.resolved = True
         self.recorded.append(tokens)
         self.costs.append(cost_nanos)

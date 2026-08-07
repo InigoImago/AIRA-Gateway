@@ -5,6 +5,61 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-07 — a request the caller abandoned is still a request that happened
+
+`FRD-128`, the second of the three steps, and it started with a question rather than a failure:
+*have all the paths been tested with a dropped connection?*
+
+No. Streaming had been — Gemini's by closing the iterator and by a live client walking away,
+KIRA's the day before (`FRD-127`). **Every non-streaming path had not, and all four lost the audit
+row.** A caller who went away while the model was still answering made a request that reached the
+upstream, spent tokens and spent money vanish from the record.
+
+Six paths, each with its own copy of `hold → dispatch → check → price → settle → record`, and the
+guarantee is the *order*. Two of the six were right. `accounting()` owns it now, shielded, and the
+surfaces went from **twelve** direct calls to **zero**.
+
+A caller who abandons a request is recorded with status **499** and outcome `client_gone` — nobody
+is sent that status, it exists so the audit can tell that case from a served one, and it is its own
+outcome because "clients keep hanging up" is a different thing to investigate from "the provider
+keeps failing".
+
+### Three things that cost a draft each
+
+**The accounting has to run inside `hold`, not around it.** Outside, `hold` sees an unresolved
+reservation on the way out and gives it back — then the settle books it again. One request, settled
+once and released once.
+
+**`hold` owns the release.** An explicit release in the exit counted the give-back twice.
+
+**An embedding produces vectors and reports no tokens**, which is not the same as producing
+nothing. Conflating them would release a whole batch's reservation and leave batched traffic
+invisible to a request limit.
+
+### Two tests that were asserting the wrong thing
+
+Both were coupled to *where* something happens rather than to *whether* it happens, and both went
+quiet instead of failing when it moved. One monkeypatched `routes.record_request` and stopped
+intercepting the moment the write moved into the shared sequence. The other counted calls to
+`release` through a delegating stand-in — which `hold`'s internal `self.release(...)` never passes
+through, so it was testing the wrapper. Both now read the row and the counter.
+
+### And two of my own mistakes worth recording
+
+A string replacement removed `'    reservation = ...'` as a **substring** of the eight-space
+version, leaving four stray spaces that silently re-indented the next line. Then a heuristic
+"repair" pass made it worse by de-indenting an `except`. The lesson is not subtle: line-based edits
+need line-based matching, and a repair driven by a guess about what broke is a second break. Both
+were caught by the syntax check within a minute, which is the only reason this paragraph is about
+drafts.
+
+Mutations `Z17`–`Z20`, with `Z17`/`Z18` re-anchored onto the shared sequence — the hand-written
+finisher they pointed at is gone. The shield still has **no** mutation, and the reason is
+`FRD-110`'s, re-verified by `FRD-127`: no hermetic test can tell a generator close from a socket
+drop, so a harness claiming to guard it would claim a proof nobody has.
+
+---
+
 ## 2026-08-07 — the fix the second surface never got
 
 `FRD-127`, and the first of the three steps that came out of assessing what a third API surface

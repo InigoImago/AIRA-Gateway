@@ -114,7 +114,7 @@ So the answer to *"would a third surface generalise easily?"* is: **half of it w
 recommended order is
 
 1. close the KIRA streaming gap (small, standalone) — **done, `FRD-127`**,
-2. consolidate the post-dispatch sequence the way this FRD consolidated the pre-dispatch one,
+2. consolidate the post-dispatch sequence the way this FRD consolidated the pre-dispatch one — **done, `FRD-128`**,
 3. then `FRD-106`.
 
 Doing `FRD-106` first would mean a seventh copy of that sequence, and a third chance to make the
