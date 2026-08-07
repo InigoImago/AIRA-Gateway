@@ -5,6 +5,51 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-07 — documentation, and a licence
+
+A reader arriving at this repository had a 96-line README, a `DEPLOYMENT.md` and forty ADRs and
+FRDs. That is a lot of *why* and very little *what*. Six documents now sit between them, each with
+one job, linked from a README that is a hub rather than a wall:
+
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) — C4 at three levels, in Mermaid. Context (who uses it, what
+  it reaches), containers (six processes, what each is), and components inside each plane.
+- [`REQUEST-LIFECYCLE.md`](REQUEST-LIFECYCLE.md) — one request end to end: middleware,
+  authentication, the seven pre-dispatch steps **in order and why that order**, dispatch with its
+  conditions, the single accounting exit, and what happens asynchronously afterwards.
+- [`SETUP.md`](SETUP.md) — the four ways to run it: demo, standalone, development from source, and
+  integrated onto existing infrastructure.
+- [`CONFIGURATION.md`](CONFIGURATION.md) — every `AIRA_*` variable with its **real default**, read
+  out of the code rather than remembered, plus what degrades when each piece is missing and what
+  refuses to boot.
+- [`INTEGRATIONS.md`](INTEGRATIONS.md) — one section per connected system: what Postgres, Keycloak,
+  Kafka, Redis, each model platform, the collector and the proxy must provide, which credentials,
+  which settings on *their* side, and a checklist each.
+- [`GAP-ANALYSIS.md`](GAP-ANALYSIS.md) — requirements against what is built. **Described, not
+  fixed**, at the owner's request.
+
+Also: **Apache 2.0**, with a `NOTICE` that names the third-party systems this software connects to
+and disclaims affiliation. The licence text was written out rather than fetched — the sandbox denies
+`apache.org`, and a licence file assembled from memory is one worth saying was assembled from
+memory, so it was checked against the canonical structure clause by clause.
+
+Two accuracy notes, because documentation drifts the same way code does. Every default in the
+configuration reference was **dumped from the settings classes**, not typed; every relative link is
+checked by a script; and two claims were wrong on first writing and corrected against the source —
+the traffic target is `showcase-traffic`, and the published ports are overridable
+(`AIRA_GATEWAY_PORT` and friends). The README's status line said "Phases 0–5 delivered", which is
+not true while `FRD-502` is missing; it now says so.
+
+**What the gap analysis found** is worth having in this log rather than only in that file. Against
+PRD §1.1: nine features built, six partial, two missing — and the partials are breadth rather than
+correctness. The two that matter most are both about *evidence being usable*: `FRD-406` (redaction)
+is the only open item that blocks two others — per-request browsing and the IT Security console's
+scoped payload view — and it is the only place the product currently makes a promise it does not
+keep, since payloads are stored and nothing masks anything inside them. `FRD-502` is the one that
+turns work already done into work somebody can use: Phase 5 built the rules, the engine and the
+enforcement, and the role whose job that is has no screen for any of it.
+
+---
+
 ## 2026-08-07 — 84 live cases against the anomaly work, and five defects
 
 `FRD-500`/`501`/`503` shipped with hermetic tests, 251 mutation properties and a green gate. A

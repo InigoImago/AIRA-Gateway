@@ -1,0 +1,29 @@
+AIRA Gateway — AI REST API
+Copyright 2026 The AIRA Gateway Authors
+
+This product includes software developed by the AIRA Gateway project.
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may not use
+this file except in compliance with the License. You may obtain a copy of the
+License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software distributed
+under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
+CONDITIONS OF ANY KIND, either express or implied. See the License for the
+specific language governing permissions and limitations under the License.
+
+--------------------------------------------------------------------------------
+
+Third-party components are used under their own licences and are not covered by
+the licence above. The dependency sets are pinned in `uv.lock` (Python) and
+`management/frontend/package-lock.json` (Node); the infrastructure images used
+by the Compose stack are named in `deploy/compose/docker-compose.yml`.
+
+Names of third-party products and services referenced in this documentation —
+including Google Gemini, Google Vertex AI, Microsoft Azure / Microsoft Foundry,
+Anthropic Claude, OpenAI, Ollama, Keycloak, Apache Kafka, PostgreSQL, Redis,
+HashiCorp Vault, Grafana and OpenTelemetry — are the trademarks of their
+respective owners and are used here solely to identify the systems this software
+connects to. No affiliation or endorsement is implied.

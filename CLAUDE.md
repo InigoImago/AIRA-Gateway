@@ -83,6 +83,18 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
 - **Async on the hot path**: persistence and event emission must not block the gateway request path.
 - **Security by default**: validate input, scope every query by role/object, redact where required.
 
+### Reader-facing documentation (added 2026-08-07)
+The ADRs and FRDs record *why*; six documents record *what*, and the `README.md` is a hub linking
+them: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) (C4 in Mermaid),
+[`docs/REQUEST-LIFECYCLE.md`](docs/REQUEST-LIFECYCLE.md) (one request, every control, in order),
+[`docs/SETUP.md`](docs/SETUP.md) (demo · standalone · dev · integrated),
+[`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) (every `AIRA_*` variable, defaults dumped from the
+settings classes rather than remembered), [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md) (what each
+connected system must provide) and [`docs/GAP-ANALYSIS.md`](docs/GAP-ANALYSIS.md) (requirements
+against reality). Licence: **Apache 2.0** (`LICENSE`, `NOTICE`). When a feature changes what a
+reader would do or expect, the relevant one of those six changes with it — a link checker and the
+settings dump make the mechanical half cheap.
+
 ## 4. Documentation discipline (IMPORTANT — keep this current)
 Always keep documentation in sync with what is actually built. On any meaningful change:
 1. **ADRs** — record every significant/architectural decision as an ADR in `docs/adr/`
