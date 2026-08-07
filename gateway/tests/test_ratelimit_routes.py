@@ -309,3 +309,85 @@ def test_a_successful_request_settles_rather_than_releases() -> None:
 
     assert response.status_code == 200
     assert (budgets.settled, budgets.released) == (1, 0)
+
+
+# == every verb of every surface is metered (FRD-125c) ===========================================
+
+
+class _RefusingLimiter:
+    """A limiter that refuses everything, and remembers what weight it was asked for."""
+
+    def __init__(self) -> None:
+        self.weights: list[int] = []
+
+    async def check(self, use_case, subject, units=1):  # noqa: ANN001, ANN201
+        self.weights.append(units)
+        raise RateLimited("Rate limit exceeded.", retry_after="3")
+
+
+def _metered_app() -> tuple[object, _RefusingLimiter]:
+
+    limiter = _RefusingLimiter()
+    app = create_app(GatewaySettings(auth_required=False, log_queue_size=0))
+    app.state.rate_limits = limiter
+    return app, limiter
+
+
+_CASES = [
+    ("/v1beta/models/mock-1:generateContent", _BODY),
+    ("/v1beta/models/mock-1:embedContent", {"content": {"parts": [{"text": "hi"}]}}),
+    ("/kira/api/external/chat", {"request": {"parts": [{"text": "hi"}]}, "model_id": 1}),
+    ("/kira/api/external/embed", {"text": "hi", "model_id": 1}),
+]
+
+
+async def test_every_verb_of_every_surface_is_rate_limited() -> None:
+    """**The regression this exists for.**
+
+    The rate-limit take moved out of `enforce_pre_dispatch` and into the Gemini routes, which left
+    the KIRA surface unmetered on all three of its verbs. Nothing failed, because every test that
+    asked whether a surface was limited asked it of the Gemini one. A control applied to some
+    entry points and not others has to be impossible to write by accident — so this asks all of
+    them, and the next surface is one line here.
+    """
+    from aira_gateway.db.models import ModelRead
+
+    for path, body in _CASES:
+        app, limiter = _metered_app()
+        with TestClient(app) as client:
+            async with app.state.db_sessionmaker() as session:
+                # One row: the model is the primary key, and this surface addresses it by an
+                # integer id, so both verbs resolve through the same entry.
+                session.add(
+                    ModelRead(
+                        model="mock-1", numeric_id=1, capabilities=["generate", "embed"]
+                    )
+                )
+                await session.commit()
+            response = client.post(path, json=body)
+
+        assert response.status_code == 429, f"{path} was served without being metered"
+        assert limiter.weights, f"{path} never reached the limiter"
+
+
+async def test_reaching_a_reservation_without_the_early_gate_is_a_loud_failure() -> None:
+    """The backstop, exercised directly.
+
+    It never fires while every surface is wired correctly, which is the point — and also why a
+    mutation removing it survived: with nothing reaching it, deleting it changes nothing anybody
+    observes. So it is called on its own, without the gate, and asserted to refuse.
+
+    What it protects is not a caller's request but a future surface: `FRD-106` will add a third,
+    and a reservation taken without the gate is a surface serving traffic nobody meters. Failing
+    here is how that becomes a test failure instead of an invoice.
+    """
+    import pytest
+
+    from aira_gateway.api.serving import enforce_pre_dispatch
+
+    app = create_app(GatewaySettings(auth_required=False, log_queue_size=0))
+    with TestClient(app):
+        request = _stream_request(app)  # a bare request: no gate has run on it
+
+        with pytest.raises(RuntimeError, match="guard_before_work"):
+            await enforce_pre_dispatch(request, model="mock-1", max_output_tokens=None)

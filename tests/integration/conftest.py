@@ -18,6 +18,31 @@ MANAGEMENT_URL = "http://127.0.0.1:8002"
 MANAGEMENT_DB = "postgresql+psycopg://aira:aira-local@localhost:5432/aira_mgmt"
 
 
+async def wait_for_row(engine: AsyncEngine, sql: str, params: dict, timeout: float = 8.0):
+    """Poll until a query returns a row, or give up and say why.
+
+    The audit write moved **off the hot path** with `FRD-405`: a bounded queue drained by a worker.
+    So a response arriving is not the same event as its row existing, and a test that reads
+    immediately is testing the drain rate. This repository has been caught by that three times, and
+    a fourth was found by running the whole live suite at once — the 174-case edge suite leaves the
+    queue busy, and the next file's single read landed before the drain.
+
+    A poll rather than a sleep: a fixed wait is either too short on a loaded machine or wasted on
+    an idle one, and the failure message should say "never arrived", not "was not there yet".
+    """
+    import asyncio
+
+    deadline = asyncio.get_running_loop().time() + timeout
+    while True:
+        async with engine.connect() as connection:
+            row = (await connection.execute(text(sql), params)).first()
+        if row is not None:
+            return row
+        if asyncio.get_running_loop().time() >= deadline:
+            raise AssertionError(f"no row after {timeout}s: {sql} {params}")
+        await asyncio.sleep(0.2)
+
+
 @pytest.fixture
 def settings() -> GatewaySettings:
     return GatewaySettings()

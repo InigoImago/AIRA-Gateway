@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import httpx
 import pytest
-from tests.integration.conftest import GATEWAY_URL
+from tests.integration.conftest import GATEWAY_URL, wait_for_row
 
 pytestmark = pytest.mark.integration
 
@@ -103,16 +103,17 @@ async def test_an_api_key_authenticates_and_is_attributed(
         assert response.json()["candidates"][0]["content"]["parts"][0]["text"]
 
         # The dispatched request is recorded with its attribution (FRD-103).
-        async with engine.connect() as connection:  # type: ignore[attr-defined]
-            recorded = await connection.execute(
-                text(
-                    "SELECT subject, auth_method, status FROM request_logs"
-                    " WHERE subject = :subject ORDER BY created_at DESC LIMIT 1"
-                ),
-                {"subject": "integration-test"},
-            )
-            row = recorded.first()
-        assert row is not None
+        #
+        # Waited for, not read straight away: the audit write is off the hot path (`FRD-405`), so
+        # a 200 and its row are two events. Reading immediately passed on an idle machine and
+        # failed once the whole live suite ran ahead of it — a test of the drain rate wearing the
+        # name of a test of attribution.
+        row = await wait_for_row(
+            engine,  # type: ignore[arg-type]
+            "SELECT subject, auth_method, status FROM request_logs"
+            " WHERE subject = :subject ORDER BY created_at DESC LIMIT 1",
+            {"subject": "integration-test"},
+        )
         assert row.auth_method == "api_key"
         assert row.status == 200
     finally:

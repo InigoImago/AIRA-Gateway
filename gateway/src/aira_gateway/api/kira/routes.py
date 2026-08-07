@@ -47,6 +47,7 @@ from aira_gateway.api.serving import (
     elapsed_ms,
     embedding_bounds,
     enforce_pre_dispatch,
+    guard_before_work,
     provenance,
     refusal_outcome,
     registry_of,
@@ -240,6 +241,8 @@ async def _prepare(
 
     canonical = to_canonical(parsed, model, bounds=schema_bounds(request))
     check_not_empty(canonical)
+    # Before the pipeline, which can call a model of its own — both chat verbs come through here.
+    await guard_before_work(request)
     canonical, fallbacks = await run_pipeline(request, canonical, trail)
     routed = await check_declaration(
         request, model=canonical.model, method="generateContent", requested=parsed.max_tokens
@@ -455,6 +458,11 @@ async def embed(request: Request, principal: Principal = Depends(require_princip
             # callers keep getting it — where the model declares it.
             default_task_type=DEFAULT_TASK_TYPE,
         )
+
+        # A batch weighs what it is (`FRD-113` FR-6), so the weight is taken here and not
+        # defaulted to one. This verb has no pipeline to protect — it takes the gate because the
+        # gate is where rate limiting lives, and a verb that skips it is a verb with none.
+        await guard_before_work(request, units=embed_request.size)
 
         reservation = await enforce_pre_dispatch(
             request,

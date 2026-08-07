@@ -1976,6 +1976,22 @@ MUTATIONS = [
         "    units = 1",
         "gateway/tests/test_serving_options.py",
     ),
+    Mutation(
+        "Z13",
+        "the compatibility surface takes the same early gate, so its verbs are metered too",
+        "gateway/src/aira_gateway/api/kira/routes.py",
+        "    await guard_before_work(request)\n    canonical, fallbacks = await run_pipeline",
+        "    canonical, fallbacks = await run_pipeline",
+        "gateway/tests/test_ratelimit_routes.py gateway/tests/test_pipeline_accounting.py",
+    ),
+    Mutation(
+        "Z14",
+        "reaching a reservation without the early gate fails loudly rather than serving unmetered",
+        "gateway/src/aira_gateway/api/serving.py",
+        '    if not getattr(request.state, "early_gate_taken", False):',
+        "    if False:",
+        "gateway/tests/test_ratelimit_routes.py gateway/tests/test_pipeline_accounting.py",
+    ),
 ]
 
 

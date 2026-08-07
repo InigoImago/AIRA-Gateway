@@ -325,3 +325,33 @@ async def test_the_embedding_verb_takes_the_same_early_gate() -> None:
         )
 
     assert response.status_code == 429
+
+
+async def test_the_compatibility_surface_takes_the_same_early_gate() -> None:
+    """One surface fixed and the other forgotten is this project's most repeated defect shape.
+
+    `guard_before_work` went into the Gemini routes; the KIRA surface calls the same
+    `run_pipeline` and did not take it, so an exhausted budget still paid for a classifier there.
+    Found by asking whether the pipeline runs at all when the budget is gone — and checking both
+    surfaces rather than the one that had just been changed.
+    """
+    guard = _Guard()
+    app = _app(_filter(action="flag"), guard)
+    app.state.budgets = _Exhausted()
+
+    with TestClient(app) as client:
+        # This surface addresses models by the predecessor's integer ids, so the catalog has to
+        # carry one or the request never reaches the pipeline at all — and the test would pass for
+        # a reason that has nothing to do with the gate.
+        async with app.state.db_sessionmaker() as session:
+            session.add(ModelRead(model="guard", numeric_id=1, capabilities=["generate"]))
+            await session.commit()
+
+        response = client.post(
+            "/kira/api/external/chat",
+            json={"request": {"parts": [{"text": "hi"}]}, "model_id": 1},
+            headers={"x-aira-use-case": "demo"},
+        )
+
+    assert response.status_code == 429
+    assert guard.calls == 0, "the classifier ran for a request that was never going to be served"

@@ -114,6 +114,7 @@ async def guard_before_work(request: Request, *, units: int = 1) -> None:
 
     await request.app.state.rate_limits.check(use_case, subject, units)
     await request.app.state.budgets.refuse_if_exhausted(use_case, subject)
+    request.state.early_gate_taken = True
 
 
 async def enforce_pre_dispatch(
@@ -140,6 +141,20 @@ async def enforce_pre_dispatch(
     predicts: today a thinking budget (`FRD-111` FR-5), which can be an order of magnitude larger
     than the answer and is billed at the output rate.
     """
+    if not getattr(request.state, "early_gate_taken", False):
+        # A surface that reserves without having taken `guard_before_work` is a surface with no
+        # rate limiting, and the first draft of this change was exactly that: the take moved out of
+        # here and into the Gemini routes, leaving the KIRA surface unlimited on all three verbs.
+        # Nothing failed, because no test asked whether *that* surface was limited.
+        #
+        # So the two are wired together rather than merely both present. Reaching a reservation
+        # without the gate is a programming error and says so, instead of quietly serving traffic
+        # nobody is metering.
+        raise RuntimeError(
+            "enforce_pre_dispatch reached without guard_before_work; this surface would serve "
+            "unmetered traffic. Take the early gate before the pipeline."
+        )
+
     attribution = getattr(request.state, "attribution", None)
     use_case = getattr(attribution, "use_case", None)
     subject = getattr(attribution, "subject", None)
