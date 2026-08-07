@@ -1,4 +1,4 @@
-# FRD-125 — A classifier that did not answer has not said "clean"
+# FRD-125 — The pipeline's own model calls are first class
 
 > Phase: 3 (correction) · Status: **Done (2026-08-06)** · Owner: AIRA · Last updated: 2026-08-06
 > Related: `FRD-300`, `FRD-306`, `FRD-405` (fail-closed), `FRD-122` (audit), `docs/adr/ADR-0013.md`
@@ -18,6 +18,16 @@ A security control that is configured, displayed as active, and does nothing is 
 shape this project knows. The same bug silently disabled `model_route`, which returned "no category
 matched" for every request.
 
+Counting rather than reading found the second half of it. One caller request with an LLM step makes
+**two** model calls and left **one** audit row: the classifier's tokens were unaudited, unbudgeted
+and unpriced. Against the real model that call costs roughly as much as the answer it guards, so a
+use case running an LLM filter was reporting a little over half its actual spend.
+
+The two halves are one feature — *the pipeline's own model calls are first class* — because they
+have one cause. A step that dispatches straight to the provider skips everything the serving path
+does around a model call: the catalog, the audit, the budget. Part (a) is the decision it got wrong;
+part (b) is the money it never mentioned.
+
 ## 2. Goals & Non-Goals
 
 **Goals**
@@ -27,9 +37,16 @@ matched" for every request.
   must be chosen.
 - A step that ran and *passed* is recorded, so it is distinguishable from no step at all.
 
+**Goals (part b — accounting)**
+- A model call a pipeline step makes leaves its own audit row, priced.
+- Its tokens and money count against the use case's budget.
+- A step that *blocked* still records what deciding to block cost.
+
 **Non-Goals**
 - Making the LLM filter accurate. That is the classifier model's job — see §9.
-- The accounting half (a pipeline's own model calls are unbudgeted and unaudited). Separate work.
+- Reserving classifier tokens in advance. They are already spent by the time their size is known,
+  because the pipeline runs *before* the reservation — routing has to choose the model the
+  reservation is made against. Booking after the fact is the honest description of that.
 
 ## 3. Functional Requirements
 
@@ -45,6 +62,19 @@ matched" for every request.
 - **FR-6** Every filter outcome reaches the audit row, including a clean pass.
 - **FR-7** The dry run shows the `undetermined` case, so an operator meets it in the builder rather
   than in production.
+
+## 3a. Functional requirements (part b)
+
+- **FR-8** Every model call a pipeline step makes is recorded as its own audit row, named
+  `pipeline:<step>`, priced like any other.
+- **FR-9** Those tokens and that money are booked against the use case's budgets — with
+  `requests=0`, because the caller made **one** request and counting the classifier as a second
+  would inflate every request figure and could trip a *request* limit for traffic nobody sent.
+- **FR-10** The row is written for a blocked request too.
+- **FR-11** The row never carries the prompt. The classifier is *sent* the caller's text; storing
+  it again under a second row would double every retention and redaction question (`FRD-404`,
+  `FRD-406`).
+- **FR-12** A heuristic filter records nothing, because it spent nothing.
 
 ## 4. Design
 
@@ -71,12 +101,43 @@ carrying two spellings. The model was asked for one word and gave two; that is n
 A regex matches or it does not, and nothing it depends on can be unavailable. That asymmetry is
 why the heuristic remains the default and why the LLM mode is the one that needed a policy.
 
+### 4.4 Why the hook is inside `run_pipeline`
+
+`run_pipeline` is the only thing that produces these calls, and both surfaces call it — so one
+`finally` there covers the served path, the blocked path, the Gemini surface and the KIRA surface
+at once. The alternative was a hook at each surface's boundary, which is the shape that let
+`:embedContent` slip past the pre-dispatch gate.
+
+The collector is **passed in**, exactly as `decisions` already is, so the spend survives the
+exception a blocking step raises. That symmetry is not decoration: the two facts have the same
+lifetime and the same failure mode.
+
+### 4.5 What it turned out to cost
+
+Measured against the real model: the classifier's call costs **roughly as much as the answer it
+guards**. A use case running an LLM filter was therefore reporting a little over half its actual
+spend, and its budget counters never saw the difference at all.
+
 ## 5. Testing
 
 - Hermetic: `test_pipeline_classifiers.py`, `test_pipeline_engine.py`.
-- Mutation: `Z1`–`Z5`, plus `P1`/`P2` **re-anchored** — they pointed at a line this change moved,
+- Mutation: `Z1`–`Z9`, plus `P1`/`P2` **re-anchored** — they pointed at a line this change moved,
   and a mutation whose anchor has moved protects nothing.
 - Integration: the injection that was served is now refused, against the real model.
+
+### 5.1 What the mutation harness caught that the tests did not
+
+Two properties came back undefended on the first full run.
+
+The budget booking was asserted nowhere: every accounting test looked at the **audit row**, and the
+app under test had no budget configured, so booking zero changed nothing under observation. A test
+that configures one and counts now exists.
+
+The classifier's upstream-failure branch was undefended because part (b) **moved the line the
+mutation was anchored to**. The harness said so rather than passing quietly, which is what makes
+"a mutation whose anchor has moved protects nothing" a checkable claim rather than a maxim. Chasing
+it also found a second copy of the router's logic left behind by the same refactor — `classify`
+re-implementing `classify_text`, with the untested error branch in the copy. It delegates now.
 
 ## 6. Rollout
 

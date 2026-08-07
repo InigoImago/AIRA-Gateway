@@ -25,6 +25,13 @@ MAX_MODEL_LENGTH = 128
 MAX_CATEGORIES = 32
 MAX_TEXT_LENGTH = 4_000
 
+#: What a *blocking* LLM filter may be told to do when its classifier reaches no verdict
+#: (`FRD-125`). Validated **here**, where the value is authored, rather than left to the gateway:
+#: the gateway treats anything that is not "allow" as blocking, so a typo would be safe — and
+#: silently mean the opposite of what somebody typed, which is the failure this whole release is
+#: about, one layer up.
+UNDETERMINED_POLICIES = ("block", "allow")
+
 # Nested quantifiers ("(a+)+", "(a*)*", "(ab|a)+" …) are the classic trigger for catastrophic
 # backtracking: matching one against a long prompt can take exponential time and stall a
 # gateway worker. Custom patterns that fail to compile are matched literally by the gateway, so
@@ -71,6 +78,12 @@ def _validate_step_config(step_type: str, config: dict[str, Any]) -> None:
         for pattern in patterns:
             _check_regex(pattern)
         _check_text(config, "instruction")
+        policy = config.get("on_undetermined")
+        if policy is not None and policy not in UNDETERMINED_POLICIES:
+            raise serializers.ValidationError(
+                f"step.config.on_undetermined must be one of {list(UNDETERMINED_POLICIES)}, "
+                f"not '{policy}'."
+            )
     elif step_type == "allow_check":
         _check_str_list(config.get("models", []), "models", MAX_MODELS, MAX_MODEL_LENGTH)
     elif step_type == "model_route":

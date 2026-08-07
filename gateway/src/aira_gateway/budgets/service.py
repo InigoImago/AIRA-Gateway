@@ -347,6 +347,35 @@ class BudgetService:
                 )
             await session.commit()
 
+    async def book_side_call(
+        self,
+        use_case: str | None,
+        subject: str | None,
+        tokens: int,
+        *,
+        cost_nanos: int | None = None,
+        now: datetime | None = None,
+    ) -> None:
+        """Book tokens the **gateway** spent on the caller's behalf (`FRD-125`).
+
+        A pipeline's classifier call is real money against the same use case, and it was counted as
+        nothing at all — which `FRD-403` names as the one thing worse than an unpriced request.
+
+        ``requests=0`` deliberately. The caller made one request; counting the classifier as a
+        second would inflate every request figure and could trip a *request* limit for traffic the
+        caller never sent. Tokens and money are consumption and are counted; a request is an event
+        and there was one.
+
+        Not a reservation. These tokens are already spent by the time their size is known — the
+        pipeline runs before the reservation, because routing has to choose the model the
+        reservation is made against. Booking after the fact is the honest description of that.
+        """
+        if not use_case or tokens <= 0:
+            return
+        async with self._sessionmaker() as session:
+            budgets = await self._applicable(session, use_case, subject)
+        await self.record(budgets, tokens, cost_nanos=cost_nanos, now=now, requests=0)
+
     async def usage(self, use_case: str, now: datetime | None = None) -> list[dict[str, Any]]:
         """Current-period usage per budget for a use case (for the UI consumption view, FRD-402).
 

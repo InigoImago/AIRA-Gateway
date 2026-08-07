@@ -519,8 +519,17 @@ cannot be undetermined at all. **Test lesson**: two live assertions were testing
 reproducibility across this server's cold prompt cache; a 0.6B picking the right category) and were
 replaced by the property that is ours — the classifier gets an answer at all, with the **old** call
 shape asserted still returning nothing so the test cannot start passing for a new reason.
-**Known and open (`FRD-125b`)**: a pipeline's own model calls are **unaudited, unbudgeted and
-unpriced** — one caller request with an LLM step makes two model calls and leaves one audit row.
+**`FRD-125b` closed it too**: one caller request with an LLM step makes **two** model calls and left
+**one** audit row — the classifier's tokens invisible three ways (reporting showed a spend they were
+not in; `FRD-403`'s "unpriced is counted apart, never as zero" broken by counting them as *nothing*;
+a model call `ADR-0013` says must be auditable that nothing recorded). Each call now leaves a row
+named `pipeline:<step>` (so reporting separates what a use case *asked* from what *governing it*
+cost) and is booked with **`requests=0`** — the caller made one request, and a second would inflate
+request figures and could trip a request limit for traffic nobody sent. The hook is **one `finally`
+in `run_pipeline`**, with the collector **passed in like `decisions`**, so a blocked step still
+reports what deciding cost and both surfaces get it. The measured number: **the classifier costs
+roughly as much as the answer it guards** — an LLM-filtered use case was reporting about half its
+real spend.
 **Delivery order is fixed (ROADMAP Phase 8, 2026-08-06)**, derived from the owner's priority
 (KIRA compatibility → model connections → documents → the review findings) and the dependency that
 priority 1 needs priority 3: **`FRD-122` (audit) → `FRD-114` (metadata) → `FRD-115`+`119` (Vertex EU,

@@ -260,3 +260,50 @@ def test_rejects_too_many_fallback_models() -> None:
 
 def test_rejects_overlong_fallback_model_name() -> None:
     assert _save([], ["x" * 200]).status_code == 400
+
+
+def test_the_undetermined_policy_is_validated_where_it_is_authored() -> None:
+    """`FRD-125` gave a blocking LLM filter a choice about what to do when its classifier reaches
+    no verdict. The gateway reads anything that is not "allow" as blocking, so a typo is *safe* —
+    and silently means the opposite of what somebody typed. Caught here, where they typed it."""
+    admin = _user("admin1", "use-case-admin")
+    _make_uc(admin, "demo-uc")
+
+    resp = _client(admin).put(
+        f"{BASE}demo-uc/pipeline/",
+        {
+            "steps": [
+                {
+                    "type": "injection_filter",
+                    "config": {"mode": "llm", "action": "block", "on_undetermined": "blok"},
+                }
+            ],
+            "fallback_models": [],
+        },
+        format="json",
+    )
+
+    assert resp.status_code == 400
+    assert "on_undetermined" in str(resp.json())
+
+
+def test_both_undetermined_policies_are_accepted() -> None:
+    admin = _user("admin1", "use-case-admin")
+    _make_uc(admin, "demo-uc")
+    client = _client(admin)
+
+    for policy in ("block", "allow"):
+        resp = client.put(
+            f"{BASE}demo-uc/pipeline/",
+            {
+                "steps": [
+                    {
+                        "type": "injection_filter",
+                        "config": {"mode": "llm", "on_undetermined": policy},
+                    }
+                ],
+                "fallback_models": [],
+            },
+            format="json",
+        )
+        assert resp.status_code == 200, policy

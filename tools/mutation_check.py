@@ -93,6 +93,7 @@ COST = "gateway/tests/test_cost_budgets.py"
 CATALOG = "management/backend/tests/test_catalog.py"
 PIPELINE = "gateway/tests/test_pipeline_engine.py gateway/tests/test_pipeline_routes.py"
 CLASSIFIERS = "gateway/tests/test_pipeline_classifiers.py gateway/tests/test_pipeline_engine.py"
+ACCOUNTING = "gateway/tests/test_pipeline_accounting.py"
 RETENTION = "gateway/tests/test_retention.py gateway/tests/test_store_payloads.py"
 MODEL_CATALOG = "gateway/tests/test_model_catalog.py"
 VERTEX = "gateway/tests/test_vertex.py"
@@ -1888,8 +1889,11 @@ MUTATIONS = [
         "Z2",
         "an upstream failure in the classifier is undetermined, never clean",
         "gateway/src/aira_gateway/pipeline/classifiers.py",
-        "        except UpstreamError:\n            return Verdict.UNDETERMINED",
-        "        except UpstreamError:\n            return Verdict.CLEAN",
+        # Re-anchored: `FRD-125b` moved this return into `classify_text`, and the harness reported
+        # the property as undefended rather than pretending otherwise — which is the behaviour that
+        # makes "a mutation whose anchor moved protects nothing" checkable instead of aspirational.
+        "            return Classification(Verdict.UNDETERMINED)",
+        "            return Classification(Verdict.CLEAN)",
         CLASSIFIERS,
     ),
     Mutation(
@@ -1915,6 +1919,38 @@ MUTATIONS = [
         "                outcome.decisions.append(\n                    {\n                        \"step\": \"injection_filter\",",
         "                if verdict is not Verdict.CLEAN:\n                    outcome.decisions.append(\n                    {\n                        \"step\": \"injection_filter\",",
         CLASSIFIERS,
+    ),
+    Mutation(
+        "Z6",
+        "a model call the pipeline made leaves its own audit row",
+        "gateway/src/aira_gateway/api/serving.py",
+        "        await record_pipeline_calls(request, trail)",
+        "        pass",
+        ACCOUNTING,
+    ),
+    Mutation(
+        "Z7",
+        "a step that blocked still records what deciding to block cost",
+        "gateway/src/aira_gateway/api/serving.py",
+        "    finally:\n        # **One site**",
+        "    else:\n        # **One site**",
+        ACCOUNTING,
+    ),
+    Mutation(
+        "Z8",
+        "a pipeline call is booked against the budget as tokens and not as a second request",
+        "gateway/src/aira_gateway/budgets/service.py",
+        "        await self.record(budgets, tokens, cost_nanos=cost_nanos, now=now, requests=0)",
+        "        await self.record(budgets, 0, cost_nanos=cost_nanos, now=now, requests=0)",
+        f"{ACCOUNTING} gateway/tests/test_budget_service.py",
+    ),
+    Mutation(
+        "Z9",
+        "the pipeline's own call never stores the caller's prompt a second time",
+        "gateway/src/aira_gateway/api/serving.py",
+        "                request_payload=None,\n                response_payload=None,\n                cost_nanos=cost,",
+        "                request_payload=trail.body,\n                response_payload=None,\n                cost_nanos=cost,",
+        ACCOUNTING,
     ),
 ]
 

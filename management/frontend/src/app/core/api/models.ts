@@ -58,6 +58,12 @@ export interface StepConfig {
   patterns?: string[];
   use_builtins?: boolean;
   instruction?: string;
+  /**
+   * What a *blocking* LLM filter does when its classifier reaches no verdict (FRD-125).
+   * Defaults to refusing: a filter that serves unchecked requests stops protecting anything
+   * while still showing as active in the builder.
+   */
+  on_undetermined?: 'block' | 'allow';
   // allow_check
   models?: string[];
   // model_route

@@ -18,10 +18,12 @@ happens next is the *step's* decision to make rather than this file's to assume.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol, runtime_checkable
 
 from aira_common.models import ThinkingMode
+from aira_gateway.audit import ModelCall
 from aira_gateway.core.canonical import CanonicalMessage, CanonicalRequest, Role, Thinking
 from aira_gateway.upstreams.base import Upstream, UpstreamError
 
@@ -56,9 +58,22 @@ class Verdict(StrEnum):
     UNDETERMINED = "undetermined"
 
 
+@dataclass(frozen=True, slots=True)
+class Classification:
+    """A verdict, and the model call it cost — ``None`` when no model was asked.
+
+    The call travels with the verdict rather than being fetched afterwards, because "what did this
+    step spend" and "what did this step decide" are one event and holding them apart is how one of
+    them ends up unrecorded (`FRD-125`).
+    """
+
+    verdict: Verdict
+    call: ModelCall | None = None
+
+
 @runtime_checkable
 class InjectionClassifier(Protocol):
-    async def verdict(self, text: str) -> Verdict: ...
+    async def classify_text(self, text: str) -> Classification: ...
 
 
 def _compile(pattern: str) -> re.Pattern[str]:
@@ -78,13 +93,18 @@ class HeuristicInjectionClassifier:
         patterns += extras[:MAX_CUSTOM_PATTERNS]
         self._compiled = [_compile(pattern) for pattern in patterns]
 
-    async def verdict(self, text: str) -> Verdict:
-        """Never ``UNDETERMINED``: a regex either matches or it does not, and nothing it depends on
-        can be unavailable. That asymmetry is the reason the heuristic remains the default."""
+    async def classify_text(self, text: str) -> Classification:
+        """Never ``UNDETERMINED``, and never a model call: a regex either matches or it does not,
+        nothing it depends on can be unavailable, and it costs nobody anything. That asymmetry is
+        the reason the heuristic remains the default."""
         scanned = text[:MAX_SCANNED_CHARS]
         if any(pattern.search(scanned) for pattern in self._compiled):
-            return Verdict.INJECTION
-        return Verdict.CLEAN
+            return Classification(Verdict.INJECTION)
+        return Classification(Verdict.CLEAN)
+
+    async def verdict(self, text: str) -> Verdict:
+        """The verdict alone, for callers that have nothing to bill."""
+        return (await self.classify_text(text)).verdict
 
 
 DEFAULT_INJECTION_INSTRUCTION = (
@@ -109,14 +129,25 @@ class LlmInjectionClassifier:
         self._model = model
         self._instruction = instruction or DEFAULT_INJECTION_INSTRUCTION
 
-    async def verdict(self, text: str) -> Verdict:
+    async def classify_text(self, text: str) -> Classification:
         try:
             response = await self._provider.generate(
                 classifier_request(self._model, self._instruction, text)
             )
         except UpstreamError:
-            return Verdict.UNDETERMINED
-        answer = response.text.upper()
+            # No call to report: nothing was served, so nothing was spent. A failed call that
+            # *did* consume tokens is a provider that charged for an error, and neither vendor
+            # here reports usage on one.
+            return Classification(Verdict.UNDETERMINED)
+        call = ModelCall(step="injection_filter", model=self._model, usage=response.usage)
+        return Classification(self._verdict_of(response.text), call)
+
+    async def verdict(self, text: str) -> Verdict:
+        return (await self.classify_text(text)).verdict
+
+    @staticmethod
+    def _verdict_of(text: str) -> Verdict:
+        answer = text.upper()
         says_injection = "INJECTION" in answer
         says_safe = "SAFE" in answer
         if says_injection and not says_safe:
@@ -175,7 +206,8 @@ class LlmCategoryRouter:
         self._model = model
         self._categories = categories
 
-    async def classify(self, text: str) -> str | None:
+    async def classify_text(self, text: str) -> tuple[str | None, ModelCall | None]:
+        """The category and what asking for it cost."""
         listing = "\n".join(
             f"- {c.get('name', '')}: {c.get('description', '')}" for c in self._categories
         )
@@ -185,10 +217,20 @@ class LlmCategoryRouter:
         try:
             response = await self._provider.generate(request)
         except UpstreamError:
-            return None
+            return None, None
+        call = ModelCall(step="model_route", model=self._model, usage=response.usage)
         answer = response.text.strip().upper()
         for category in self._categories:
             name = category.get("name", "")
             if name and name.upper() in answer:
-                return name
-        return None
+                return name, call
+        return None, call
+
+    async def classify(self, text: str) -> str | None:
+        """The category alone, for callers with nothing to bill.
+
+        Delegates rather than repeating the body. The second copy lasted about an hour before this
+        was noticed, and its `except UpstreamError` branch was already the only one no test
+        reached — which is how two copies of one rule start to disagree.
+        """
+        return (await self.classify_text(text))[0]

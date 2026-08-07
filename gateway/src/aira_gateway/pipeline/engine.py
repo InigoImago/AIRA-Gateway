@@ -15,8 +15,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from aira_gateway.audit import ModelCall
 from aira_gateway.core.canonical import CanonicalRequest, Role
 from aira_gateway.pipeline.classifiers import (
+    Classification,
     HeuristicInjectionClassifier,
     InjectionClassifier,
     LlmCategoryRouter,
@@ -70,6 +72,9 @@ class PipelineOutcome:
     request: CanonicalRequest
     fallback_models: tuple[str, ...]
     decisions: list[dict[str, Any]] = field(default_factory=list)
+    #: Model calls the steps made. Collected here rather than reported by each step, so a step
+    #: that then *blocks* still hands back what it spent deciding to (`FRD-125`).
+    model_calls: list[ModelCall] = field(default_factory=list)
 
 
 @dataclass
@@ -100,6 +105,7 @@ class PipelineEngine:
         request: CanonicalRequest,
         *,
         decisions: list[dict[str, Any]] | None = None,
+        model_calls: list[ModelCall] | None = None,
     ) -> PipelineOutcome:
         """Run the configured steps.
 
@@ -107,15 +113,23 @@ class PipelineEngine:
         taken **before** a blocking step survive the exception. Without it a blocked request could
         record only *that* it was blocked, never the routing that led it to the step that blocked
         it (FRD-122 FR-4).
+
+        ``model_calls`` is the same idea for money rather than for reasons: a step that blocks
+        still spent whatever it took to decide that, and a caller-supplied list means the spend
+        survives the exception exactly as the decisions do (`FRD-125`).
         """
         outcome = PipelineOutcome(
             request=request,
             fallback_models=pipeline.fallback_models,
             decisions=decisions if decisions is not None else [],
+            model_calls=model_calls if model_calls is not None else [],
         )
         for step in pipeline.steps:
             if step.type is StepType.INJECTION_FILTER:
-                verdict = await self._injection_verdict(step.config, outcome.request)
+                classification = await self._classify(step.config, outcome.request)
+                if classification.call is not None:
+                    outcome.model_calls.append(classification.call)
+                verdict = classification.verdict
                 action = step.config.get("action", "block")
                 blocking = _blocks(verdict, step.config)
                 # Recorded on **every** outcome, not only a flagged one. "The filter ran and passed"
@@ -142,7 +156,9 @@ class PipelineEngine:
                         status="PERMISSION_DENIED",
                     )
             elif step.type is StepType.MODEL_ROUTE:
-                category, target = await self._route(step.config, outcome.request)
+                category, target, call = await self._route(step.config, outcome.request)
+                if call is not None:
+                    outcome.model_calls.append(call)
                 if target and target != outcome.request.model:
                     outcome.decisions.append(
                         {
@@ -189,7 +205,7 @@ class PipelineEngine:
                     break
                 trace.append(TraceEntry("allow_check", "allowed", {"model": current.model}))
             elif step.type is StepType.MODEL_ROUTE:
-                category, target = await self._route(step.config, current)
+                category, target, _ = await self._route(step.config, current)
                 if target and target != current.model:
                     trace.append(
                         TraceEntry(
@@ -211,11 +227,16 @@ class PipelineEngine:
 
     # -- step primitives (shared by run + dry_run) ----------------------------------------
 
+    async def _classify(
+        self, config: dict[str, Any], request: CanonicalRequest
+    ) -> Classification:
+        text = self._scanned_text(request, config.get("scope", "user"))
+        return await self._injection_classifier(config).classify_text(text)
+
     async def _injection_verdict(
         self, config: dict[str, Any], request: CanonicalRequest
     ) -> Verdict:
-        text = self._scanned_text(request, config.get("scope", "user"))
-        return await self._injection_classifier(config).verdict(text)
+        return (await self._classify(config, request)).verdict
 
     def _injection_classifier(self, config: dict[str, Any]) -> InjectionClassifier:
         if config.get("mode") == "llm":
@@ -232,23 +253,28 @@ class PipelineEngine:
 
     async def _route(
         self, config: dict[str, Any], request: CanonicalRequest
-    ) -> tuple[str | None, str | None]:
+    ) -> tuple[str | None, str | None, ModelCall | None]:
+        """The category, the model to use, and what asking cost — the third is new (`FRD-125`).
+
+        A router that reached no category still made the call, and a use case running one over
+        traffic it then routes nowhere is paying for exactly those.
+        """
         categories: list[dict[str, str]] = config.get("categories", [])
         default_model = config.get("default_model")
         if not categories:
-            return None, default_model
+            return None, default_model, None
         model = config.get("model") or self._default_model()
         provider = self._registry.provider_for(model) if model else None
         if provider is None or model is None:
-            return None, default_model
-        name = await LlmCategoryRouter(provider, model, categories).classify(
+            return None, default_model, None
+        name, call = await LlmCategoryRouter(provider, model, categories).classify_text(
             self._route_text(request)
         )
         if name:
             for category in categories:
                 if category.get("name") == name:
-                    return name, category.get("model") or default_model
-        return None, default_model
+                    return name, category.get("model") or default_model, call
+        return None, default_model, call
 
     # -- helpers --------------------------------------------------------------------------
 

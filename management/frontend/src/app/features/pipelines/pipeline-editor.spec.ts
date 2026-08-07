@@ -530,6 +530,46 @@ describe('PipelineEditor interactions', () => {
     expect(harness.component.dryRun()).not.toBeNull();
   });
 
+  it('offers the undetermined policy only for the LLM classifier', () => {
+    // The heuristic cannot be undetermined — a regex either matches or it does not — so offering
+    // the choice there would be a control with no effect, which is what FRD-125 is about.
+    const harness = setup({
+      steps: [{ type: 'injection_filter', config: { mode: 'heuristic' } }],
+      fallback_models: [],
+    });
+    harness.component.select(0);
+    harness.fixture.detectChanges();
+    expect(html(harness).querySelector('#insp-undetermined')).toBeNull();
+
+    const mode = html(harness).querySelector<HTMLSelectElement>('#insp-mode')!;
+    mode.value = 'llm';
+    mode.dispatchEvent(new Event('change'));
+    harness.fixture.detectChanges();
+    expect(html(harness).querySelector('#insp-undetermined')).not.toBeNull();
+  });
+
+  it('defaults the undetermined policy to refusing, and records a change', () => {
+    const harness = setup({
+      steps: [{ type: 'injection_filter', config: { mode: 'llm' } }],
+      fallback_models: [],
+    });
+    harness.component.select(0);
+    harness.fixture.detectChanges();
+
+    const select = html(harness).querySelector<HTMLSelectElement>('#insp-undetermined')!;
+    // The *offered* default is the safe one. Asserted on the option order rather than on
+    // `select.value`, which ngModel writes asynchronously — that assertion would be a test of
+    // Angular's binding schedule wearing the name of a test of our default.
+    expect(select.options[0].value).toBe('block');
+
+    // Driven through the DOM rather than the component method, so the binding is under test too:
+    // a control that renders but changes nothing is the failure this whole feature is about.
+    select.value = 'allow';
+    select.dispatchEvent(new Event('change'));
+    harness.fixture.detectChanges();
+    expect(harness.component.config().steps[0].config.on_undetermined).toBe('allow');
+  });
+
   it('adds a category from the inspector button', () => {
     const harness = setup({
       steps: [{ type: 'model_route', config: { categories: [] } }],

@@ -169,6 +169,22 @@
 
             @if (step.config.mode === 'llm') {
               <div class="field">
+                <label for="insp-undetermined">If the classifier cannot decide</label>
+                <select
+                  id="insp-undetermined"
+                  [ngModel]="step.config.on_undetermined || 'block'"
+                  (ngModelChange)="setStepField(selectedIndex(), 'on_undetermined', $event)"
+                >
+                  <option value="block">Refuse the request (recommended)</option>
+                  <option value="allow">Serve it unchecked</option>
+                </select>
+                <p class="hint">
+                  A classifier can fail to answer — the model is unreachable, or it replies with
+                  something that is neither verdict. Serving those requests means this filter
+                  silently stops protecting anything while still showing as active here.
+                </p>
+              </div>
+              <div class="field">
                 <label for="insp-filter-model">Classifier model</label>
                 <input
                   id="insp-filter-model"

@@ -18,6 +18,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from aira_gateway.core.canonical import CanonicalUsage
+
 
 class Outcome(StrEnum):
     """Why a request ended the way it did.
@@ -54,6 +56,22 @@ def fallback_selection(index: int) -> str:
     return SELECTION_DIRECT if index == 0 else f"fallback:{index}"
 
 
+@dataclass(frozen=True, slots=True)
+class ModelCall:
+    """A model call a **pipeline step** made while deciding what to do with the caller's request.
+
+    It exists because one caller request with an LLM step makes two model calls and used to leave
+    one audit row. The second call was invisible three ways at once: `FRD-601` reported a spend it
+    was not part of, `FRD-403`'s "unpriced traffic is counted apart, never as zero" was violated by
+    counting it as *nothing*, and `ADR-0013`'s auditable model access had a model call in it that
+    nothing recorded. All three follow from the same omission, so one record fixes all three.
+    """
+
+    step: str
+    model: str
+    usage: CanonicalUsage
+
+
 @dataclass
 class AuditTrail:
     """What a route learns about a request as it goes, kept so a refusal can still be recorded.
@@ -75,6 +93,10 @@ class AuditTrail:
     decisions: list[dict[str, Any]] = field(default_factory=list)
     #: The parsed request body, so a refusal can be recorded with what was actually sent.
     body: dict[str, Any] | None = None
+    #: Model calls made *by the pipeline*, not by the caller. Recorded even when the request was
+    #: then refused — a filter that blocked still spent the tokens it took to decide that, and a
+    #: use case running a blocking filter over rejected traffic is paying for exactly those.
+    model_calls: list[ModelCall] = field(default_factory=list)
 
     @property
     def served_model(self) -> str:

@@ -35,6 +35,7 @@ from aira_gateway.catalog import ModelCatalog, ModelDeclaration
 from aira_gateway.core.canonical import CanonicalRequest, CanonicalResponse
 from aira_gateway.core.schema import SchemaBounds, SchemaRejected
 from aira_gateway.embedding import EmbeddingBounds, EmbeddingRejected
+from aira_gateway.persistence.recorder import record_request
 from aira_gateway.pipeline.dispatch import NoCapableModel, Permits
 from aira_gateway.pipeline.engine import PipelineEngine
 from aira_gateway.pipeline.errors import PipelineRejected
@@ -349,7 +350,17 @@ async def run_pipeline(
     # The engine appends into the trail's list, so a step that blocks still leaves behind the
     # decisions taken before it — including the routing that sent the request to the step that
     # refused it.
-    outcome = await engine.run(pipeline, canonical, decisions=trail.decisions)
+    try:
+        outcome = await engine.run(
+            pipeline, canonical, decisions=trail.decisions, model_calls=trail.model_calls
+        )
+    finally:
+        # **One site**, and it is in the `finally` on purpose: a filter that blocked still spent
+        # the tokens it took to decide that, and a use case running a blocking filter over rejected
+        # traffic is paying for exactly those. Both surfaces reach it because both call this
+        # function — the alternative was a hook at each surface's boundary, which is the shape that
+        # let `:embedContent` slip past the pre-dispatch gate.
+        await record_pipeline_calls(request, trail)
     trail.routed_to(outcome.request.model)
     if outcome.decisions:
         set_span_attributes(
@@ -365,6 +376,57 @@ async def run_pipeline(
             decisions=outcome.decisions,
         )
     return outcome.request, outcome.fallback_models
+
+
+async def record_pipeline_calls(request: Request, trail: AuditTrail) -> None:
+    """Audit and bill the model calls the **pipeline** made (`FRD-125`).
+
+    One caller request with an LLM step makes two model calls and used to leave one audit row. The
+    second was invisible three ways: reporting showed a spend it was not part of, the budget
+    counters never saw it, and `ADR-0013`'s auditable model access had a model call in it that
+    nothing recorded.
+
+    Called from the surface's boundary for **served and refused requests alike**, and that is the
+    part worth stating: a filter that blocked still spent the tokens it took to decide that, and a
+    use case running a blocking filter over rejected traffic is paying for precisely those.
+
+    Never allowed to fail the request. The caller's own row is already written by the time this
+    runs, and losing the classifier's row is worse than turning a correct answer into a 500 —
+    said loudly instead.
+    """
+    if not trail.model_calls:
+        return
+    try:
+        attribution = getattr(request.state, "attribution", None)
+        for call in trail.model_calls:
+            cost = await request.app.state.pricing.cost_nanos(call.model, call.usage)
+            await record_request(
+                request,
+                # Named for the step, so the reporting breakdown separates "what the use case
+                # asked" from "what governing it cost" instead of blending them into one figure.
+                operation=f"pipeline:{call.step}",
+                model=call.model,
+                status=200,
+                usage=call.usage,
+                latency_ms=None,
+                # Never the prompt. The classifier is *sent* the caller's text, and storing it a
+                # second time under a different row would double every retention and redaction
+                # question this system has (`FRD-404`, `FRD-406`).
+                request_payload=None,
+                response_payload=None,
+                cost_nanos=cost,
+                outcome=Outcome.SERVED,
+                requested_model=call.model,
+                provenance=provenance(request, call.model),
+            )
+            await request.app.state.budgets.book_side_call(
+                getattr(attribution, "use_case", None),
+                getattr(attribution, "subject", None),
+                call.usage.total_tokens,
+                cost_nanos=cost,
+            )
+    except Exception:  # noqa: BLE001 — see above
+        _log.error("pipeline_call_not_recorded", operation=trail.operation, exc_info=True)
 
 
 _REFUSAL_OUTCOMES: dict[int, Outcome] = {

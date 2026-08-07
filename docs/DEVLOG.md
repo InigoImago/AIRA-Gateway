@@ -58,7 +58,51 @@ model picks the right category. Both replaced by the property that is actually o
 gets an answer at all. The second one asserts the **old** call shape still returns nothing, so if
 that ever stops being true the test says so rather than passing for a new reason.
 
-Mutations `Z1`–`Z5`. **215 properties defended.**
+### The other half: it was not being paid for either
+
+Counting model calls rather than reading code again. One caller request with an LLM step makes
+**two** model calls and left **one** audit row. The classifier's tokens were invisible three ways at
+once: `FRD-601` reported a spend they were not part of, `FRD-403`'s *"unpriced traffic is counted
+apart, never as zero"* was broken by counting them as **nothing at all** — the one thing that rule
+exists to forbid — and `ADR-0013`'s auditable model access had a model call in it that nothing
+recorded.
+
+Each pipeline call now leaves its own row, named `pipeline:<step>` so reporting can separate what a
+use case *asked* from what *governing it* cost, and is booked against the budget with
+**`requests=0`**: the caller made one request, and counting the classifier as a second would inflate
+every request figure and could trip a request limit for traffic nobody sent.
+
+The hook lives in `run_pipeline`, in a `finally`, and the collector is **passed in** exactly as
+`decisions` already is — so a step that *blocked* still reports what deciding to block cost, and
+both surfaces get it because both call that function. A hook per surface boundary is the shape that
+let `:embedContent` slip past the pre-dispatch gate.
+
+The number is the part worth keeping: against the real model, **the classifier's call costs roughly
+as much as the answer it guards**. A use case running an LLM filter was reporting a little over half
+its actual spend.
+
+### Two survivors, and what each of them was
+
+The harness reported two properties undefended on the first full run, and both were my own doing.
+
+`Z8` — *a pipeline call is booked against the budget* — survived because every accounting test
+asserted the **audit row**, and the app under test had no budget configured. Booking zero tokens
+changed nothing anybody was looking at. The fix is a test that configures a budget and counts;
+without it, an unbudgeted classifier is not a rounding error, because measured against a real model
+it costs about as much as the answer it guards, so a use case at its limit would keep spending past
+it.
+
+`Z2` — *an upstream failure is undetermined, never clean* — survived because **its anchor had
+moved**: part (b) lifted that `return` out of `verdict` and into `classify_text`, and a mutation
+whose anchor no longer matches cannot break the property it names. This project already knew that
+rule; what is new is that the harness now demonstrates it rather than asserting it, because it
+reported the property as *undefended* instead of quietly passing. Re-anchored.
+
+Chasing `Z2` also turned up a second copy of the router's logic — `classify` had been left
+re-implementing what `classify_text` does, and its `except UpstreamError` branch was already the one
+no test reached. Two copies of one rule, about an hour old. It now delegates.
+
+Mutations `Z1`–`Z9`. **219 properties defended.**
 
 ---
 

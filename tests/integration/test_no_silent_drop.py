@@ -367,3 +367,59 @@ async def test_a_filter_that_passed_leaves_a_decision_on_the_audit_row(fixture, 
 
     assert decisions and "injection_filter" in decisions
     assert "clean" in decisions
+
+
+async def test_the_pipeline_pays_for_itself_visibly(fixture, engine) -> None:
+    """One caller request with an LLM step makes **two** model calls, and used to leave one row.
+
+    Measured against the real model, the classifier's call costs roughly as much as the answer it
+    guards — so a use case running an LLM filter was reporting little over half its actual spend,
+    and its budget counters never saw the difference at all.
+    """
+    from sqlalchemy import text
+
+    await _with_pipeline(
+        engine,
+        fixture.slug,
+        [{"type": "injection_filter", "config": {"mode": "llm", "action": "flag", "model": MODEL}}],
+    )
+
+    async with httpx.AsyncClient(timeout=300.0) as client:
+        response = await client.post(
+            f"{GATEWAY_URL}/v1beta/models/{MODEL}:generateContent",
+            headers=fixture.headers(),
+            json={
+                "contents": [{"role": "user", "parts": [{"text": "What is 2 + 2?"}]}],
+                "generationConfig": {
+                    "maxOutputTokens": 30,
+                    "thinkingConfig": {"mode": "disabled"},
+                },
+            },
+        )
+    assert response.status_code == 200
+
+    await asyncio.sleep(2.5)
+    async with engine.connect() as connection:
+        rows = (
+            (
+                await connection.execute(
+                    text(
+                        "SELECT operation, total_tokens, request_payload IS NULL AS no_body"
+                        " FROM request_logs WHERE use_case = :slug ORDER BY created_at"
+                    ),
+                    {"slug": fixture.slug},
+                )
+            )
+            .mappings()
+            .all()
+        )
+
+    operations = [row["operation"] for row in rows]
+    assert "pipeline:injection_filter" in operations, "the classifier call left no trace"
+    assert "generateContent" in operations
+
+    side = next(row for row in rows if row["operation"].startswith("pipeline:"))
+    assert side["total_tokens"] and side["total_tokens"] > 0
+    # The classifier is *sent* the caller's text; storing it a second time would double every
+    # retention and redaction question this system has.
+    assert side["no_body"]
