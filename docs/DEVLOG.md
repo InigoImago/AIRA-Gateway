@@ -5,6 +5,50 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-07 — the fix the second surface never got
+
+`FRD-127`, and the first of the three steps that came out of assessing what a third API surface
+would cost.
+
+The Gemini streaming path wraps its accounting in `finally` + `asyncio.shield`, with a long comment
+explaining that a caller dropping a real socket **cancels the response task**, so a bare `await`
+there loses the settle and the audit row. It was found as a 1-in-8 integration flake. **The KIRA
+streaming path had neither** — no `finally` at all.
+
+That is what duplication does, and where it leaves it: the surface written second did not receive
+the fix the first one earned.
+
+The window is different here, and the difference is why copying the Gemini test would have proved
+nothing. This surface's "stream" delivers **one terminal event carrying the whole answer**, so the
+accounting happens *before* anything is yielded — hanging up after the first chunk finds the work
+already done. What is exposed is the long await in the middle: a caller who goes away while the
+model is still thinking. The upstream was called; the request then vanished from the record.
+
+Now one shielded exit accounts for every way out — served, refused, or cancelled — and a stream
+that produced nothing chargeable is **released** rather than settled, because booking a request
+against somebody who received nothing would spend a request limit on a caller who hung up. The
+status for that row is `499`: nobody is sent it, because there is nobody to send it to, and it
+exists so the audit can tell that case from a served one.
+
+### The test that had to be corrected before it could be trusted
+
+Written first, it reproduced the defect exactly — model reached, no row. Then it turned out to pass
+**with and without the shield**. It proves the `finally` exists, which was the real gap here, and it
+cannot prove the shield matters: in-process cancellation and a dropped socket are not the same
+event, which is precisely what `FRD-110` recorded when it declined to add a mutation for Gemini's
+shield.
+
+So there is no mutation for this one either, and the reason is written next to it. A harness that
+claimed to guard the shield would be claiming a proof nobody has — worse than a harness with a gap
+that says so. `Z17` guards the row, `Z18` guards the release, and the shield is the integration
+layer's to check.
+
+An earlier draft of `Z17` added a `_no_shield` passthrough to the production module for the harness
+to swap in. Production code shaped by its own test harness is the wrong direction; the mutation is
+a one-line edit now.
+
+---
+
 ## 2026-08-07 — a surface parses; the layer decides
 
 `FRD-126`. Prompted by a question rather than a failure: *why are there two pipelines with six

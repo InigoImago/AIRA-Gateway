@@ -113,7 +113,7 @@ this FRD fixed, one step later in the request, and it has already cost a defect:
 So the answer to *"would a third surface generalise easily?"* is: **half of it would.** The
 recommended order is
 
-1. close the KIRA streaming gap (small, standalone),
+1. close the KIRA streaming gap (small, standalone) — **done, `FRD-127`**,
 2. consolidate the post-dispatch sequence the way this FRD consolidated the pre-dispatch one,
 3. then `FRD-106`.
 

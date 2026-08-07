@@ -2022,6 +2022,29 @@ MUTATIONS = [
         "async def prepare_for_dispatch_renamed(",
         "gateway/tests/test_surface_layering.py",
     ),
+    # The **shield** deliberately has no mutation, and the reason is `FRD-110`'s, restated:
+    # closing a generator in-process raises `GeneratorExit` and awaits in a `finally` run normally,
+    # while a real socket drop cancels the task. A hermetic test cannot tell those apart — verified
+    # here by running this surface's disconnect test against an un-shielded version and watching it
+    # pass. A mutation that claims to guard the shield would be claiming a proof nobody has, and a
+    # harness that lies about its coverage is worse than one with a gap in it. The integration
+    # layer is where that property is checked.
+    Mutation(
+        "Z17",
+        "a stream that ends without an answer is still recorded, however it ended",
+        "gateway/src/aira_gateway/api/kira/routes.py",
+        "        await _record(\n            request,\n            trail,\n            operation=\"streaming-chat\",\n            status=outcome.status,\n            response=None,",
+        "        return\n        await _record(\n            request,\n            trail,\n            operation=\"streaming-chat\",\n            status=outcome.status,\n            response=None,",
+        "gateway/tests/test_kira_streaming_disconnect.py gateway/tests/test_kira_surface.py",
+    ),
+    Mutation(
+        "Z18",
+        "a stream that produced nothing is released, not settled for a request nobody was served",
+        "gateway/src/aira_gateway/api/kira/routes.py",
+        "        await request.app.state.budgets.release(reservation)",
+        "        pass",
+        "gateway/tests/test_kira_streaming_disconnect.py gateway/tests/test_kira_surface.py",
+    ),
 ]
 
 

@@ -16,10 +16,12 @@ cannot see, and that is true whether the reason is "not built yet" or "this mode
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import time
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -56,6 +58,7 @@ from aira_gateway.audit import AuditTrail, Outcome, decision_summary
 from aira_gateway.auth.dependencies import require_principal
 from aira_gateway.auth.principal import Principal
 from aira_gateway.budgets.errors import BudgetExceeded
+from aira_gateway.budgets.service import Reservation
 from aira_gateway.catalog import ModelDeclaration
 from aira_gateway.core.canonical import CanonicalResponse
 from aira_gateway.core.schema import SchemaRejected
@@ -256,6 +259,71 @@ async def _prepare(
     return prepared, parsed
 
 
+@dataclass
+class _StreamOutcome:
+    """What a stream managed to produce before it ended, however it ended.
+
+    Collected rather than acted on inline, so that one shielded exit can account for every way out
+    — served, refused, or cancelled while the model was still answering.
+    """
+
+    response: CanonicalResponse | None = None
+    payload: dict[str, Any] | None = None
+    status: int = 499
+    reason: Outcome | None = None
+
+
+async def _finish_streaming_chat(
+    request: Request,
+    reservation: Reservation,
+    trail: AuditTrail,
+    *,
+    outcome: _StreamOutcome,
+    body: dict[str, Any],
+    started: float,
+) -> None:
+    """Account for a finished stream and write its row — whichever way it finished.
+
+    A stream that produced nothing chargeable is **released** rather than settled: settling would
+    still book one request, and a use case with a request limit would lose allowance to a caller
+    who hung up or to an upstream that failed. `499` is the status for "the caller left" — it is
+    not sent to anybody, because there is nobody to send it to, and it exists so the audit can
+    tell that case apart from a served one.
+    """
+    if outcome.response is None:
+        await request.app.state.budgets.release(reservation)
+        await _record(
+            request,
+            trail,
+            operation="streaming-chat",
+            status=outcome.status,
+            response=None,
+            body=body,
+            payload=None,
+            started=started,
+            outcome=outcome.reason or Outcome.UPSTREAM_ERROR,
+        )
+        return
+
+    cost = await request.app.state.pricing.cost_nanos(
+        outcome.response.model, outcome.response.usage
+    )
+    await request.app.state.budgets.settle(
+        reservation, outcome.response.usage.total_tokens, cost_nanos=cost
+    )
+    await _record(
+        request,
+        trail,
+        operation="streaming-chat",
+        status=outcome.status,
+        response=outcome.response,
+        body=body,
+        payload=outcome.payload,
+        started=started,
+        cost=cost,
+    )
+
+
 async def _record(
     request: Request,
     trail: AuditTrail,
@@ -360,57 +428,59 @@ async def streaming_chat(
         )
 
     async def events() -> AsyncIterator[str]:
+        outcome: _StreamOutcome = _StreamOutcome()
         async with request.app.state.budgets.hold(reservation):
             try:
-                dispatched = await dispatch_with_fallback(
-                    registry_of(request),
-                    canonical,
-                    fallbacks,
-                    permits=requirements_for(request, canonical),
+                try:
+                    dispatched = await dispatch_with_fallback(
+                        registry_of(request),
+                        canonical,
+                        fallbacks,
+                        permits=requirements_for(request, canonical),
+                    )
+                    # Inside the same `try`, deliberately. This surface's "stream" delivers one
+                    # terminal event carrying the whole answer, so an incomplete document would
+                    # arrive looking exactly like complete data — and a refusal raised *outside*
+                    # the handler would escape the generator as a 500 with no audit row rather
+                    # than being recorded as the refusal it is.
+                    check_structured_result(canonical, dispatched.response)
+                except KIRA_REFUSALS as exc:
+                    # Headers are already sent, so the failure cannot change the status. It is
+                    # still accounted for and logged, which keeps a failed stream out of the
+                    # "served" column (FRD-122).
+                    outcome.status = 502
+                    outcome.reason = refusal_outcome(exc)
+                    return
+                trail.served_by(dispatched.response.model, dispatched.candidate_index)
+                trail.passed_over(dispatched.skipped)
+                outcome.response = dispatched.response
+                event = completed_event(dispatched.response)
+                outcome.payload = event["data"]
+                outcome.status = 200
+                yield f"data: {json.dumps(event)}\n\n"
+            finally:
+                # **Shielded**, and the reason is the one the Gemini surface learned from a
+                # 1-in-8 integration flake and this one never received. Closing a generator from
+                # inside the process raises `GeneratorExit` and awaits in a `finally` run
+                # normally; a caller dropping a real socket **cancels the task**, and a bare
+                # `await` here re-raises `CancelledError` at its first suspension point — the
+                # settle and the audit row are simply lost.
+                #
+                # The window is different on this surface and that is why a copy of the Gemini
+                # test would have proved nothing: the whole answer arrives in one terminal event,
+                # so the accounting happens *before* anything is yielded. What is exposed is the
+                # long await in the middle — a caller who goes away while the model is still
+                # thinking. The upstream was called either way.
+                await asyncio.shield(
+                    _finish_streaming_chat(
+                        request,
+                        reservation,
+                        trail,
+                        outcome=outcome,
+                        body=body,
+                        started=started,
+                    )
                 )
-                # Inside the same `try`, deliberately. This surface's "stream" delivers one
-                # terminal event carrying the whole answer, so an incomplete document would arrive
-                # looking exactly like complete data — and a refusal raised *outside* the handler
-                # would escape the generator as a 500 with no audit row rather than being recorded
-                # as the refusal it is.
-                check_structured_result(canonical, dispatched.response)
-            except KIRA_REFUSALS as exc:
-                # Headers are already sent, so the failure cannot change the status. It is still
-                # accounted for and logged, which is what keeps a failed stream out of the "served"
-                # column (FRD-122).
-                await _record(
-                    request,
-                    trail,
-                    operation="streaming-chat",
-                    status=502,
-                    response=None,
-                    body=body,
-                    payload=None,
-                    started=started,
-                    outcome=refusal_outcome(exc),
-                )
-                return
-            trail.served_by(dispatched.response.model, dispatched.candidate_index)
-            trail.passed_over(dispatched.skipped)
-            cost = await request.app.state.pricing.cost_nanos(
-                dispatched.response.model, dispatched.response.usage
-            )
-            await request.app.state.budgets.settle(
-                reservation, dispatched.response.usage.total_tokens, cost_nanos=cost
-            )
-            event = completed_event(dispatched.response)
-            await _record(
-                request,
-                trail,
-                operation="streaming-chat",
-                status=200,
-                response=dispatched.response,
-                body=body,
-                payload=event["data"],
-                started=started,
-                cost=cost,
-            )
-            yield f"data: {json.dumps(event)}\n\n"
 
     return StreamingResponse(events(), media_type="text/event-stream", headers=_sunset(request))
 
