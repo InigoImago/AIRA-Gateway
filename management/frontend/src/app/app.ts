@@ -4,6 +4,22 @@ import { MeService } from './core/api/me.service';
 import { Me } from './core/api/models';
 import { AuthService } from './core/auth/auth.service';
 
+const ROLE_LABELS: Record<string, string> = {
+  'global-admin': 'Global administrator',
+  'it-steuerung': 'IT Steuerung',
+  'it-security': 'IT Security',
+  'use-case-admin': 'Use-case administrator',
+  'use-case-user': 'Use-case user',
+};
+
+const ROLE_EXPLANATIONS: Record<string, string> = {
+  'global-admin': 'Sees every use case and is the only role that may price a model.',
+  'it-steuerung': 'Sees every use case and the whole spend report, and may change none of it.',
+  'it-security': 'Sees every use case for security oversight — its configuration, not its content.',
+  'use-case-admin': 'Administers the use cases you are a member of.',
+  'use-case-user': 'Uses the use cases you are a member of; read-only here.',
+};
+
 @Component({
   selector: 'app-root',
   imports: [RouterOutlet, RouterLink],
@@ -25,6 +41,31 @@ export class App implements OnInit {
 
   protected hasRole(role: string): boolean {
     return this.me()?.roles.includes(role) ?? false;
+  }
+
+  /**
+   * Which hat the signed-in person is wearing, in words rather than in realm slugs.
+   *
+   * Half of what a role-based console has to answer is "why can I not do this", and the first step
+   * is saying which role is asking. `use-case-admin` is a claim name; "Use-Case-Administrator" is
+   * an answer.
+   */
+  /**
+   * One chip per role the token carries: the slug for machines, the words for people.
+   *
+   * This replaced three disabled navigation tabs, one per oversight role, that pointed at screens
+   * which do not exist yet. A tab that cannot be clicked teaches nothing except that something is
+   * broken — but the *property* those tabs encoded (what the console shows follows the roles in
+   * the token) is worth keeping, so it moved here rather than disappearing.
+   */
+  protected roleChips(): { slug: string; label: string; explains: string }[] {
+    return (this.me()?.roles ?? [])
+      .filter((slug) => slug in ROLE_LABELS)
+      .map((slug) => ({
+        slug,
+        label: ROLE_LABELS[slug],
+        explains: ROLE_EXPLANATIONS[slug] ?? '',
+      }));
   }
 
   protected logout(): void {

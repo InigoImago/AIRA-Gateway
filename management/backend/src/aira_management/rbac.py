@@ -15,7 +15,7 @@ from django.db.models import QuerySet
 from guardian.shortcuts import get_objects_for_user
 from rest_framework.permissions import BasePermission
 
-from aira_management.roles import ALL_ROLES, GOVERNANCE_ROLES, Role
+from aira_management.roles import ALL_ROLES, GOVERNANCE_ROLES, OVERSIGHT_ROLES, Role
 
 # Roles with organisation-wide read visibility (oversight).
 # Defined once in aira_common.roles so the gateway cannot drift from it (ADR-0009).
@@ -49,9 +49,20 @@ def has_governance_role(user: Any) -> bool:
     return has_role(user, *GOVERNANCE_ROLES)
 
 
+def has_oversight_role(user: Any) -> bool:
+    """Whether this user may see every use case — a wider set than may see every figure.
+
+    PRD §154 gives IT Security "security oversight (restricted view)". The restriction is on
+    business content and spend, not on knowing which use cases exist: retention, payload storage,
+    filters and limits are precisely the metadata that role oversees. Folding it in with
+    `GOVERNANCE_ROLES` gave it an **empty console**, which is not a restricted view.
+    """
+    return has_role(user, *OVERSIGHT_ROLES)
+
+
 def scope_queryset(user: Any, perm: str, queryset: QuerySet[Any]) -> QuerySet[Any]:
-    """Return only the objects the user may see: all for governance, else guardian-permitted."""
-    if has_governance_role(user):
+    """Return only the objects the user may see: all for oversight, else guardian-permitted."""
+    if has_oversight_role(user):
         return queryset
     return get_objects_for_user(user, perm, klass=queryset)
 

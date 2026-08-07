@@ -125,6 +125,25 @@ test.describe('Reporting', () => {
     await expect(page.locator('button:has-text("Show")')).toBeDisabled();
   });
 
+  test('an info button opens the sentence that says what a figure counts', async ({ page }) => {
+    // Reported from the running console: the info buttons showed nothing. They carried a `title`
+    // attribute, and a native tooltip needs a long hover, never appears on a touch screen and is
+    // invisible to a keyboard — so the button looked clickable and did nothing. A real browser is
+    // the only layer that can tell "renders a tooltip attribute" from "shows the reader anything".
+    await login(page, USERS.governance);
+    await page.goto('/reporting');
+
+    await expect(page.locator('[data-testid="help-refused"]')).toHaveCount(0);
+    await page.click('[data-testid="info-refused"]');
+    await expect(page.locator('[data-testid="help-refused"]')).toBeVisible();
+    await expect(page.locator('[data-testid="help-refused"]')).toContainText(
+      'never reached a model',
+    );
+
+    await page.click('[data-testid="info-refused"]');
+    await expect(page.locator('[data-testid="help-refused"]')).toHaveCount(0);
+  });
+
   test('the report fits a narrow viewport instead of scrolling the page sideways', async ({
     page,
   }) => {

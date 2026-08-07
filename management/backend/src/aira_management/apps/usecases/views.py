@@ -32,6 +32,20 @@ from aira_management.apps.pipelines.models import PipelineConfig
 from aira_management.apps.pipelines.serializers import PipelineConfigSerializer
 from aira_management.apps.ratelimits.models import RateLimit
 from aira_management.apps.ratelimits.serializers import RateLimitSerializer
+from aira_management.apps.usecases.access import (
+    CHANGE as _CHANGE_PERM,
+)
+from aira_management.apps.usecases.access import (
+    MANAGE as _MANAGE_PERM,
+)
+from aira_management.apps.usecases.access import (
+    VIEW as _VIEW_PERM,
+)
+from aira_management.apps.usecases.access import (
+    is_member,
+    may_admin,
+    may_manage,
+)
 from aira_management.apps.usecases.events import emit
 from aira_management.apps.usecases.models import UseCase, UseCaseMembership
 from aira_management.apps.usecases.serializers import (
@@ -39,12 +53,13 @@ from aira_management.apps.usecases.serializers import (
     MembershipSerializer,
     UseCaseSerializer,
 )
-from aira_management.rbac import IsUseCaseAdmin, has_role, scope_queryset
-from aira_management.roles import Role
+from aira_management.rbac import IsUseCaseAdmin, scope_queryset
 
-_VIEW = "usecases.view_usecase"
-_CHANGE = "usecases.change_usecase"
-_MANAGE = "usecases.manage_members"
+# One definition, in `access.py`, because the console asks the same questions to decide what to
+# put on screen — see the module docstring there.
+_VIEW = _VIEW_PERM
+_CHANGE = _CHANGE_PERM
+_MANAGE = _MANAGE_PERM
 
 
 def _grant(user: Any, usecase: UseCase, role: str) -> None:
@@ -142,24 +157,13 @@ class UseCaseViewSet(viewsets.ModelViewSet[UseCase]):
             emit("usecase.deleted", {"slug": slug})
 
     def _may_admin(self, usecase: UseCase) -> bool:
-        user = self.request.user
-        return has_role(user, Role.GLOBAL_ADMIN) or user.has_perm(_CHANGE, usecase)
+        return may_admin(self.request.user, usecase)
 
     def _may_manage(self, usecase: UseCase) -> bool:
-        user = self.request.user
-        return has_role(user, Role.GLOBAL_ADMIN) or user.has_perm(_MANAGE, usecase)
+        return may_manage(self.request.user, usecase)
 
     def _is_member(self, usecase: UseCase) -> bool:
-        """True if the caller is an actual member of the use case (or a global admin).
-
-        Deliberately *not* the same as "may see it": the governance roles (global-admin,
-        it-steuerung) get organisation-wide read visibility through ``scope_queryset``, and
-        read visibility must never imply the right to act inside a use case (ADR-0007).
-        """
-        user: Any = self.request.user
-        if has_role(user, Role.GLOBAL_ADMIN):
-            return True
-        return UseCaseMembership.objects.filter(use_case=usecase, user=user).exists()
+        return is_member(self.request.user, usecase)
 
     @action(detail=True, methods=["get", "post"])
     def members(self, request: Request, slug: str | None = None) -> Response:

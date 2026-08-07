@@ -139,6 +139,103 @@ export class ReportingPage implements OnInit {
 
   /** Which table the spreadsheet contains. A CSV is one table, so it is chosen, not guessed. */
   protected readonly exportBreakdown = signal<'use_case' | 'model' | 'member'>('use_case');
+  /**
+   * What each figure counts, in one sentence.
+   *
+   * A governance console is read by people deciding whether a control is working, and a number
+   * whose definition is guessed at is a number that gets argued about instead of acted on. These
+   * used to live in the headings, where "Refused by a control" wrapped to two lines and broke the
+   * card row — the answer is not a shorter truth but a heading plus a place to put the rest.
+   */
+  protected readonly explain = {
+    spend:
+      'Money for the period, priced per model from the prompt/completion split. Traffic on a model with no price on file is counted apart, never as zero — see the caveat below when it appears.',
+    requests:
+      'Requests that reached a model. An embedding batch counts as the many texts it carries, not as one.',
+    failed:
+      'Requests that reached a model and came back with an error — an upstream failure, not a decision of ours.',
+    refused:
+      'Requests this gateway itself declined: over budget, over a rate limit, blocked by the pipeline, or asking for something no model could serve. These never reached a model.',
+    tokens:
+      'Prompt tokens (what was sent, including any attachment) and completion tokens (what came back, including reasoning the model did not show you). Both are billed, at different rates.',
+    latency:
+      'Average and maximum, end to end, for the period. Not a percentile: that would need a Postgres-only function, and the hermetic tests run on SQLite.',
+  };
+
+  /** Which explanation is open, if any. One at a time: six open paragraphs is a wall of text. */
+  protected readonly openInfo = signal<string | null>(null);
+
+  protected toggleInfo(key: string): void {
+    this.openInfo.update((current) => (current === key ? null : key));
+  }
+
+  /**
+   * The headline figures, as data rather than as six near-identical blocks of markup.
+   *
+   * Written as a loop because the six differed only in their label, their value and their
+   * sentence — and because the sentence *is* part of the figure. A number in a governance console
+   * whose definition has to be guessed at gets argued about instead of acted on.
+   */
+  protected readonly stats = computed(() => {
+    const totals = this.report()?.totals;
+    if (!totals) return [];
+    const latency =
+      totals.avg_latency_ms === null
+        ? '—'
+        : `${totals.avg_latency_ms} / ${totals.max_latency_ms} ms`;
+    return [
+      {
+        key: 'spend',
+        label: 'Spend',
+        value: totals.cost,
+        testid: 'total-cost',
+        help: this.explain.spend,
+      },
+      {
+        key: 'requests',
+        label: 'Requests',
+        value: `${totals.requests}`,
+        testid: 'total-requests',
+        help: this.explain.requests,
+      },
+      {
+        key: 'failed',
+        label: 'Failed',
+        value: `${totals.failed_requests}`,
+        testid: 'total-failed',
+        help: this.explain.failed,
+      },
+      {
+        key: 'refused',
+        label: 'Refused',
+        value: `${this.refused()}`,
+        testid: 'total-refused',
+        help: this.explain.refused,
+      },
+      {
+        key: 'tokens',
+        label: 'Tokens',
+        value: `${totals.prompt_tokens} / ${totals.completion_tokens}`,
+        unit: 'prompt / completion',
+        help: this.explain.tokens,
+      },
+      {
+        key: 'latency',
+        label: 'Latency',
+        value: latency,
+        unit: totals.avg_latency_ms === null ? undefined : 'average / maximum',
+        help: this.explain.latency,
+      },
+    ] as {
+      key: string;
+      label: string;
+      value: string;
+      testid?: string;
+      unit?: string;
+      help: string;
+    }[];
+  });
+
   protected readonly exporting = signal(false);
 
   protected download(): void {

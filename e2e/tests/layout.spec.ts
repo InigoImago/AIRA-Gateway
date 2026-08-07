@@ -92,11 +92,7 @@ test.describe('Layout', () => {
     const slug = uniqueSlug('long');
     const longName = 'Ein-ausgesprochen-langer-Name-ohne-Leerzeichen-'.repeat(4);
 
-    await page.goto('/use-cases');
-    await page.fill('#uc-slug', slug);
-    await page.fill('#uc-name', longName);
-    await page.click('button[type="submit"]');
-    await expect(page.locator(`text=${slug}`).first()).toBeVisible();
+    await createUseCase(page, slug, longName);
 
     for (const viewport of [VIEWPORTS[0], VIEWPORTS[2]]) {
       await page.setViewportSize({

@@ -1,0 +1,18 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Renewing your session…</title>
+  </head>
+  <body>
+    <!--
+      The silent-refresh landing page. It is loaded in a hidden iframe, hands the result back to
+      the opener, and is never seen by anybody — which is the point: a session that renews itself
+      should be invisible, and the alternative is a console that starts reporting "invalid
+      credentials" the moment a token's lifetime runs out.
+    -->
+    <script>
+      parent.postMessage(location.hash || '#error=no_hash', location.origin);
+    </script>
+  </body>
+</html>

@@ -25,6 +25,10 @@ import { PageFeedback } from '../../core/ui/page-feedback';
 export class RateLimitsTab {
   readonly slug = input.required<string>();
   readonly limits = input.required<RateLimit[]>();
+  /** Whether this caller may change anything here. Told by the page, which was told by the
+   * server — an object-level permission is not in the token, and a panel that assumes yes offers
+   * buttons that answer 403. */
+  readonly canManage = input(false);
   /** Raised after a change lands, so the parent can reload what it owns. */
   readonly changed = output<void>();
 

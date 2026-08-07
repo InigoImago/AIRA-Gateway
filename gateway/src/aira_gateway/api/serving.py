@@ -640,7 +640,7 @@ async def accounting(
     async with request.app.state.budgets.hold(prepared.reservation):
         try:
             yield state
-        except (asyncio.CancelledError, GeneratorExit):
+        except asyncio.CancelledError, GeneratorExit:
             # The caller left. Nobody will render a response and nobody else will write a row,
             # so this is the only place the request can be recorded — which is exactly what four
             # of the six paths were failing to do.

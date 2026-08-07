@@ -41,6 +41,7 @@ interface Options {
   usageRefused?: boolean;
   overrides?: Overrides;
   confirmAnswer?: boolean;
+  canManage?: boolean;
 }
 
 function setup(options: Options = {}) {
@@ -74,6 +75,9 @@ function setup(options: Options = {}) {
   fixture.componentRef.setInput('usage', options.usage ?? {});
   fixture.componentRef.setInput('usageUnavailable', options.usageUnavailable ?? false);
   fixture.componentRef.setInput('usageRefused', options.usageRefused ?? false);
+  // Default to an administrator: most of these cases are about the form. The read-only case is a
+  // test of its own, below.
+  fixture.componentRef.setInput('canManage', options.canManage ?? true);
   const changes: number[] = [];
   fixture.componentInstance.changed.subscribe(() => changes.push(1));
   fixture.detectChanges();
@@ -276,7 +280,11 @@ describe('BudgetsTab', () => {
     // why the gateway is down. One message for both would send people the wrong way.
     const budgets: Budget[] = [{ id: 1, scope: 'use_case', period: 'month', limit_tokens: 10 }];
     const refused = setup({ budgets, usageUnavailable: true, usageRefused: true });
-    expect(refused.text()).toContain('does not count you as a member');
+    // Naming the Keycloak group is the whole remedy — and saying it *is not* the member list on
+    // this page, because a reader looking at their own name there reads "not a member" as a bug.
+    expect(refused.text()).toContain('/use-cases/demo-uc');
+    expect(refused.text()).toContain('not');
+    expect(refused.text()).toContain('member list on this page');
 
     const unreachable = setup({ budgets, usageUnavailable: true, usageRefused: false });
     expect(unreachable.text()).toContain('could not be reached');
@@ -399,5 +407,20 @@ describe('BudgetsTab rendering', () => {
       usage: usageFor(),
     });
     expect(harness.text()).toContain('alice');
+  });
+});
+
+describe('BudgetsTab — a reader', () => {
+  it('sees the figures and none of the controls', () => {
+    const { fixture, text } = setup({
+      canManage: false,
+      budgets: [{ id: 1, scope: 'use_case', period: 'month', limit_cost: '250.00' }],
+    });
+    const html = fixture.nativeElement as HTMLElement;
+
+    expect(text()).toContain('250.00');
+    expect(text()).not.toContain('+ Add budget');
+    expect(html.querySelector('[aria-label^="Remove budget"]')).toBeNull();
+    expect(html.querySelector('[data-testid="budgets-readonly"]')).not.toBeNull();
   });
 });

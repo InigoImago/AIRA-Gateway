@@ -440,4 +440,3 @@ def _stream_response(
 
     media_type = "text/event-stream" if sse else "application/json"
     return StreamingResponse(generate_chunks(), media_type=media_type, headers=headers)
-

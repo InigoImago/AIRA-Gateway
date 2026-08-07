@@ -5,6 +5,129 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-07 — the console stops promising what the server refuses
+
+`FRD-206`. A walkthrough of the running console, role by role, produced fourteen findings. Most were
+cosmetic. Three were not, and they shared one shape: **the console was answering questions only the
+server can answer, and answering them generously.**
+
+A use-case *user* was shown "Add member" and "Remove" on every row; using either produced a `403`
+from the screen that had just invited the click. IT Security signed in to an empty console. Anyone
+who could open the pipeline builder could rearrange a graph they could never save.
+
+The cause is structural rather than a slip. Object-level permission lives in `django-guardian` rows,
+so it is **not in the token**, so `/api/v1/me` cannot carry it — the console had no way to know and
+filled the gap with an assumption. The fix is that the object says what this caller may do
+(`can_admin` / `can_manage` / `is_member`), computed by `apps/usecases/access.py` — **the same three
+predicates the viewset enforces with**, extracted from private methods so both sides read one
+definition. Restating the rules in TypeScript would have been the same defect with an extra copy to
+forget.
+
+The test that matters is not "the reader sees no button" but an **agreement test**: for each of the
+three answers, the corresponding request is attempted and its status must match what the object
+reported. Two mutations (`Z23`, `Z24`) hardcode a reported permission to `true` and are caught by
+it. `G1` and `G3` were re-anchored, because this change moved the code they pointed at and a
+mutation whose anchor has moved protects nothing.
+
+Three smaller decisions came out of it and generalise:
+
+- **An action nobody can carry out is worse than an absent one.** An absent action reads as a
+  boundary; a present one that fails reads as a broken system — and the reader's next move is to
+  distrust the figures on the same page. So every withheld action is replaced by one sentence
+  naming who performs it, and read-only stays *usable*: members, budgets, limits and the pipeline
+  are all still visible, and the dry-run panel still runs, because none of that changes anything.
+- **Read-only means inert, not un-saveable.** The builder's graph sits in a native
+  `<fieldset disabled>`, so the add/remove buttons inside it cannot be used either. Hiding Save
+  alone would let somebody rearrange a pipeline for nothing — the same defect one step later.
+- **`is_member` and `can_manage` are separate answers, and so is visibility.** An oversight role
+  sees every use case and belongs to none of them (`ADR-0007`), so it must not be offered a key; a
+  member belongs to one without administering it, so it must be.
+
+`IT Security` was the other half of the same mistake: `scope_queryset` used one role set for both
+"sees every use case" and "sees every figure". PRD §154 gives that role the first and not the
+second, and folded together it saw nothing at all. Split into `OVERSIGHT_ROLES` ⊃
+`GOVERNANCE_ROLES` — oversight decides visibility, governance decides spend.
+
+And a message that was true and still wrong: the budgets tab told a reader "the gateway does not
+count you as a member of this use case" while they were looking at their own name in the Members
+tab. Both statements were correct — the gateway takes membership from the Keycloak group
+`/use-cases/<slug>`, Management from its own table. It now says exactly that, because the remedy is
+a group and not a table.
+
+The rest of the walkthrough, fixed in the same pass: the session now renews itself (`offline_access`
++ silent refresh — an expired token was reporting "invalid credentials" on every screen, which reads
+as the data being untrustworthy rather than the session having ended); creating a use case is a
+button and a window that ends on the new use case's **settings**, since one with no members, no
+budget and no limits is not finished and the list is what makes it look finished; "slug" became
+**technical id**, filled in from the name and described by what makes it matter (it is permanent and
+appears in every API key; the name is not); the model editor became a window that names the model it
+is editing; the reporting cards got short headings plus an info button holding the sentence that
+says what each figure counts — "Refused by a control" was breaking the card row, and the answer to a
+heading that does not fit is not a smaller font; and the export row and the catalog's Edit/Remove
+pair got the spacing they never had, the latter because two buttons touching invite the wrong one
+and one of them is destructive.
+
+Also documented rather than left in the DEVLOG alone: `FRD-130` (the demo showcase), which the
+previous entry referenced without a document existing.
+
+**Two defects I shipped and had to be told about.** The smaller one first: the reporting screen's
+new info buttons showed nothing. They carried a `title` attribute — a native tooltip needs a long
+hover, never appears on a touch screen, and is invisible to a keyboard — so a control sat there
+looking clickable and did nothing when used. That is the exact defect this pass was written to fix,
+committed inside the fix for it. It now opens a paragraph inside the card, and an e2e case asserts
+that using it *reveals text*, because only a real browser can tell "renders a tooltip attribute"
+from "shows the reader anything".
+
+**The larger one: the console would not load at all.** The
+session-renewal fix (above) added `offline_access` to the requested scopes to get a refresh token.
+This realm does not permit offline tokens, so the code-to-token exchange came back
+`not_allowed` — and Keycloak answers *that* failure without CORS headers, so the browser reported
+a CORS error naming neither the scope nor the realm setting. The page went blank after a
+successful login, which looks like a crash and is nothing of the kind.
+
+Two things worth keeping from it. `offline_access` was the **wrong instrument** even where it
+works: the authorization-code flow already returns a refresh token, and `offline_access` asks for
+one that outlives the SSO session — a credential a governance console has no business holding. And
+the reason it reached the running stack is that **I ran three of the four test layers and skipped
+the fourth**, on a change that lives only in the fourth: no unit test can perform an OIDC
+redirect, and `e2e/tests/auth.spec.ts` — which does — would have failed on the first run. The
+config is now pinned by a unit test that says *why*, but the layer rule is the real lesson: a
+change to the login flow is an e2e change, whatever else it touches.
+
+That run also turned up sixteen e2e failures — every one of them a test driving a screen this
+pass deliberately changed, which is what an e2e suite is *supposed* to do when the UI moves. The
+creation form became a button and a window, so the shared `createUseCase` helper drives that
+instead; "the inputs are cleared after a successful POST" became "the window is gone and the page
+moved on", which is the same zoneless property observed where it now lives. Two changed meaning
+rather than mechanics and were rewritten rather than repaired: the governance role no longer
+*clicks* Issue key and reads the refusal, because the console does not offer it any more; and the
+three disabled navigation tabs are gone, so the property they encoded (the console follows the
+roles in the token) moved to a chip per role in the header, carrying `data-role` so it stays
+assertable without depending on the wording. Three more were the same story a level down: the
+model editor's Save moved into a window footer and reaches its form by `form=`, so the tests
+address it that way — which is also what proves the association still works; and the
+consumption-hidden message changed wording deliberately, so the assertion follows the new
+requirement (name the Keycloak group *and* say it is not the member list on the same page) rather
+than the old sentence.
+
+Two demo-seed defects fell out of asking the *running* stack who could manage what, rather than
+reading the declaration: `itgov` was still administering `personalwesen` and `itsec` still belonged
+to `kundenservice`, both from declarations long since changed. **A membership left behind is not a
+stale row, it is live permission on a use case** — the seed now reconciles to what it declares and
+revokes what it removes. And `personalwesen` no longer belongs to an oversight role at all: it was
+there so the demo could show a use case `ucadmin` cannot touch, at the cost of teaching the opposite
+of what IT Steuerung *is*.
+
+**Found while running the gates: `make ci` was already red**, and not because of anything in this
+change. `ruff` is declared as `>=0.9` and `uv.lock` had moved to 0.16.1, whose formatter targets
+`py314` and applies **PEP 758** — `except A, B:` without parentheses. Eight committed files were
+therefore unformatted against the very tool the gate runs. Reformatted, and `Z19`'s anchor moved
+with the line it points at. Worth knowing for next time: a lock refresh can redefine a *format*
+gate across the whole tree without a single source line being edited, and nothing announces it
+except the gate itself.
+
+---
+
 ## 2026-08-07 — a demo somebody can walk through
 
 `FRD-130`. `seed_demo` created five roles and one user each, which lets you log in as every role and

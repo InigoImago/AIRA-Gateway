@@ -41,6 +41,7 @@ from aira_management.apps.usecases.views import (
     _budget_payload,
     _grant,
     _rate_limit_payload,
+    _revoke,
     _snapshot,
 )
 
@@ -110,7 +111,12 @@ def _use_cases() -> list[dict[str, Any]]:
 MEMBERSHIPS: dict[str, list[tuple[str, str]]] = {
     "kundenservice": [("ucadmin", UseCaseMembership.ADMIN), ("ucuser", UseCaseMembership.USER)],
     "entwicklung": [("ucadmin", UseCaseMembership.ADMIN)],
-    "personalwesen": [("itgov", UseCaseMembership.ADMIN)],
+    # Deliberately **not** an oversight role. `itgov` administered this one, which let the demo
+    # show a use case `ucadmin` cannot touch — at the cost of teaching the opposite of what the
+    # role is: PRD §154 gives IT Steuerung every figure and no write anywhere, and a walkthrough
+    # in which it renames a use case demonstrates a boundary that does not exist. The global
+    # administrator owns it instead; the point (a use case outside `ucadmin`'s reach) survives.
+    "personalwesen": [("admin", UseCaseMembership.ADMIN)],
 }
 
 
@@ -170,10 +176,20 @@ def _budgets() -> list[dict[str, Any]]:
 
 def _rate_limits() -> list[dict[str, Any]]:
     return [
-        {"use_case": "entwicklung", "scope": RateLimit.USE_CASE, "subject": "", "limit_rpm": 60,
-         "burst": 20},
-        {"use_case": "entwicklung", "scope": RateLimit.MEMBER, "subject": "ucadmin",
-         "limit_rpm": 20, "burst": 5},
+        {
+            "use_case": "entwicklung",
+            "scope": RateLimit.USE_CASE,
+            "subject": "",
+            "limit_rpm": 60,
+            "burst": 20,
+        },
+        {
+            "use_case": "entwicklung",
+            "scope": RateLimit.MEMBER,
+            "subject": "ucadmin",
+            "limit_rpm": 20,
+            "burst": 5,
+        },
     ]
 
 
@@ -232,8 +248,14 @@ def seed_showcase(fresh: bool) -> SeedResult:
                 stale.delete()
                 events.emit("usecase.deleted", {"slug": slug})
 
-    created = {"use_cases": 0, "memberships": 0, "budgets": 0, "rate_limits": 0,
-               "pipelines": 0, "api_keys": 0}
+    created = {
+        "use_cases": 0,
+        "memberships": 0,
+        "budgets": 0,
+        "rate_limits": 0,
+        "pipelines": 0,
+        "api_keys": 0,
+    }
     keys: dict[str, str] = {}
 
     for declaration in _use_cases():
@@ -243,6 +265,20 @@ def seed_showcase(fresh: bool) -> SeedResult:
             )
             created["use_cases"] += int(was_created)
             events.emit("usecase.upserted", _snapshot(usecase))
+
+        # Reconcile, do not merely add. A membership the declaration no longer names is a ghost
+        # with real permissions: `itgov` kept administering `personalwesen` after it was removed
+        # from the list above, and `itsec` kept a membership from a run whose declaration is long
+        # gone. A seed that only ever adds cannot be re-run to a known state, which is most of
+        # what a seed is for.
+        declared = {name for name, _ in MEMBERSHIPS.get(usecase.slug, [])}
+        undeclared = usecase.memberships.select_related("user").exclude(user__username__in=declared)
+        for membership in list(undeclared):
+            with transaction.atomic():
+                username = membership.user.get_username()
+                _revoke(membership.user, usecase)
+                membership.delete()
+                events.emit("membership.removed", {"slug": usecase.slug, "username": username})
 
         for username, role in MEMBERSHIPS.get(usecase.slug, []):
             user = users.get(username)
@@ -267,40 +303,42 @@ def seed_showcase(fresh: bool) -> SeedResult:
             keys[usecase.slug] = _ensure_key(usecase, owner, created)
 
     for spec in _budgets():
-        usecase = UseCase.objects.filter(slug=spec.pop("use_case")).first()
-        if usecase is None:
+        target = UseCase.objects.filter(slug=spec.pop("use_case")).first()
+        if target is None:
             continue
         with transaction.atomic():
             budget, was_created = Budget.objects.update_or_create(
-                use_case=usecase,
+                use_case=target,
                 scope=spec["scope"],
                 subject=spec["subject"],
                 period=spec["period"],
                 defaults=spec,
             )
-            events.emit("budget.upserted", _budget_payload(budget, usecase.slug))
+            events.emit("budget.upserted", _budget_payload(budget, target.slug))
             created["budgets"] += int(was_created)
 
     for spec in _rate_limits():
-        usecase = UseCase.objects.filter(slug=spec.pop("use_case")).first()
-        if usecase is None:
+        target = UseCase.objects.filter(slug=spec.pop("use_case")).first()
+        if target is None:
             continue
         with transaction.atomic():
             limit, was_created = RateLimit.objects.update_or_create(
-                use_case=usecase, scope=spec["scope"], subject=spec["subject"], defaults=spec
+                use_case=target, scope=spec["scope"], subject=spec["subject"], defaults=spec
             )
-            events.emit("ratelimit.upserted", _rate_limit_payload(limit, usecase.slug))
+            events.emit("ratelimit.upserted", _rate_limit_payload(limit, target.slug))
             created["rate_limits"] += int(was_created)
 
     for slug, config in _pipelines().items():
-        usecase = UseCase.objects.filter(slug=slug).first()
-        if usecase is None:
+        target = UseCase.objects.filter(slug=slug).first()
+        if target is None:
             continue
         with transaction.atomic():
-            PipelineConfig.objects.update_or_create(use_case=usecase, defaults=config)
+            PipelineConfig.objects.update_or_create(use_case=target, defaults=config)
             events.emit("pipeline.upserted", {"use_case": slug, **config})
             created["pipelines"] += 1
 
+    # `created` counts things; the plaintext keys are strings. The union is what the seed
+    # framework prints, so it is typed as the mixed thing it is rather than squeezed into ints.
     return {**created, "api_keys_plaintext": keys}
 
 

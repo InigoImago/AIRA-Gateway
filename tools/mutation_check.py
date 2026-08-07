@@ -201,9 +201,9 @@ MUTATIONS = [
     # ---- the management control plane (FRD-200/201/202/204, ADR-0007) --------------------
     Mutation(
         "G1",
-        "a governance role sees every use case, a normal user only their own",
+        "an oversight role sees every use case, a normal user only their own",
         "management/backend/src/aira_management/rbac.py",
-        "    if has_governance_role(user):",
+        "    if has_oversight_role(user):",
         "    if True:",
         MGMT_RBAC,
     ),
@@ -218,9 +218,9 @@ MUTATIONS = [
     Mutation(
         "G3",
         "editing a use case needs the change permission, not mere visibility",
-        "management/backend/src/aira_management/apps/usecases/views.py",
-        "        return has_role(user, Role.GLOBAL_ADMIN) or user.has_perm(_CHANGE, usecase)",
-        "        return has_role(user, Role.GLOBAL_ADMIN) or user.has_perm(_VIEW, usecase)",
+        "management/backend/src/aira_management/apps/usecases/access.py",
+        "    return has_role(user, Role.GLOBAL_ADMIN) or user.has_perm(CHANGE, usecase)",
+        "    return has_role(user, Role.GLOBAL_ADMIN) or user.has_perm(VIEW, usecase)",
         MGMT_RBAC,
     ),
     Mutation(
@@ -1625,15 +1625,15 @@ MUTATIONS = [
         "V1",
         "a configured Vault that cannot be read stops the process rather than falling back",
         "libs/src/aira_common/secrets.py",
-        "            raise VaultUnavailable(\n                f\"Vault at {self._config.address} is unreachable ({type(exc).__name__}).\"\n            ) from exc\n\n        if response.status_code != httpx.codes.OK:",  # noqa: E501
-        "            return \"\"\n\n        if False:",
+        '            raise VaultUnavailable(\n                f"Vault at {self._config.address} is unreachable ({type(exc).__name__})."\n            ) from exc\n\n        if response.status_code != httpx.codes.OK:',  # noqa: E501
+        '            return ""\n\n        if False:',
         SECRETS,
     ),
     Mutation(
         "V2",
         "a Vault value wins over the environment",
         "libs/src/aira_common/secrets.py",
-        "        merged[name if name.startswith(env_prefix) else f\"{env_prefix}{name}\"] = value",
+        '        merged[name if name.startswith(env_prefix) else f"{env_prefix}{name}"] = value',
         "        merged.setdefault(name, value)",
         SECRETS,
     ),
@@ -1658,7 +1658,7 @@ MUTATIONS = [
         "a secret-id file that cannot be read is named rather than falling through",
         "libs/src/aira_common/secrets.py",
         "            raise VaultUnavailable(\n                f\"{SECRET_ID_FILE_ENV} points at '{path}', which cannot be read \"",  # noqa: E501
-        "            return \"\", \"\"\n        if False:\n            raise VaultUnavailable(\n                f\"{SECRET_ID_FILE_ENV} points at '{path}', which cannot be read \"",  # noqa: E501
+        '            return "", ""\n        if False:\n            raise VaultUnavailable(\n                f"{SECRET_ID_FILE_ENV} points at \'{path}\', which cannot be read "',  # noqa: E501
         SECRETS,
     ),
     Mutation(
@@ -1737,7 +1737,7 @@ MUTATIONS = [
         "a format this endpoint does not serve is refused rather than answered in another",
         "gateway/src/aira_gateway/api/reporting.py",
         "    raise GeminiHTTPError(\n        406,",
-        "    return \"json\"\n    raise GeminiHTTPError(\n        406,",
+        '    return "json"\n    raise GeminiHTTPError(\n        406,',
         CSV_EXPORT,
     ),
     Mutation(
@@ -1800,7 +1800,7 @@ MUTATIONS = [
         "Y1",
         "a field this gateway does not serve is refused rather than accepted and ignored",
         "gateway/src/aira_gateway/api/gemini/schemas.py",
-        '            raise ValueError(f"\'{field}\' is not served by this gateway: {reason}")',
+        "            raise ValueError(f\"'{field}' is not served by this gateway: {reason}\")",
         "            pass",
         NO_SILENT_DROP,
     ),
@@ -1840,9 +1840,9 @@ MUTATIONS = [
         "Y6",
         "thinking switched off is sent as off, not as an absent parameter the model reads as its default",
         "gateway/src/aira_gateway/upstreams/openai/mapping.py",
-        "    if request.thinking is not None:\n        body[\"reasoning_effort\"]",
+        '    if request.thinking is not None:\n        body["reasoning_effort"]',
         "    if request.thinking is not None and request.thinking.mode is not ThinkingMode.DISABLED:"
-        "\n        body[\"reasoning_effort\"]",
+        '\n        body["reasoning_effort"]',
         f"{OPENAI_DIALECT} {NO_SILENT_DROP}",
     ),
     Mutation(
@@ -1925,8 +1925,8 @@ MUTATIONS = [
         "Z5",
         "a filter that ran and passed is recorded, so it is distinguishable from no filter",
         "gateway/src/aira_gateway/pipeline/engine.py",
-        "                outcome.decisions.append(\n                    {\n                        \"step\": \"injection_filter\",",
-        "                if verdict is not Verdict.CLEAN:\n                    outcome.decisions.append(\n                    {\n                        \"step\": \"injection_filter\",",
+        '                outcome.decisions.append(\n                    {\n                        "step": "injection_filter",',
+        '                if verdict is not Verdict.CLEAN:\n                    outcome.decisions.append(\n                    {\n                        "step": "injection_filter",',
         CLASSIFIERS,
     ),
     Mutation(
@@ -2010,8 +2010,8 @@ MUTATIONS = [
         "Z15",
         "the shared sequence resolves thinking after routing, not against the model the caller named",
         "gateway/src/aira_gateway/api/serving.py",
-        "            update={\"thinking\": resolve_thinking(canonical.thinking, declaration)}",
-        "            update={\"thinking\": canonical.thinking}",
+        '            update={"thinking": resolve_thinking(canonical.thinking, declaration)}',
+        '            update={"thinking": canonical.thinking}',
         "gateway/tests/test_serving_options.py gateway/tests/test_kira_surface.py",
     ),
     Mutation(
@@ -2054,11 +2054,11 @@ MUTATIONS = [
         "Z19",
         "a caller who goes away while the model answers is still recorded on every path",
         "gateway/src/aira_gateway/api/serving.py",
-        #  is a real name that a cancellation is *not*, so the cancellation
+        # `KeyboardInterrupt` is a real name that a cancellation is *not*, so the cancellation
         # falls through to the clause below and is treated as a refusal somebody else will
         # record — which is the defect: nobody else does.
-        "        except (asyncio.CancelledError, GeneratorExit):",
-        "        except (KeyboardInterrupt,):",
+        "        except asyncio.CancelledError, GeneratorExit:",
+        "        except KeyboardInterrupt:",
         "gateway/tests/test_cancelled_requests.py gateway/tests/test_kira_streaming_disconnect.py",
     ),
     Mutation(
@@ -2084,6 +2084,23 @@ MUTATIONS = [
         '        detail = _reason(response) if response.status_code == 400 else ""',
         "        detail = _reason(response)",
         "gateway/tests/test_openai_dialect.py gateway/tests/test_error_handling.py",
+    ),
+    # ---- the console is told what it may do, and told the truth (FRD-131) ----------------
+    Mutation(
+        "Z23",
+        "what the detail says a caller may do is what the server would let them do",
+        "management/backend/src/aira_management/apps/usecases/serializers.py",
+        '            "can_manage": may_manage(user, obj),',
+        '            "can_manage": True,',
+        MGMT_RBAC,
+    ),
+    Mutation(
+        "Z24",
+        "seeing every use case is not being in one, so it does not mint a key",
+        "management/backend/src/aira_management/apps/usecases/serializers.py",
+        '            "is_member": is_member(user, obj),',
+        '            "is_member": True,',
+        MGMT_RBAC,
     ),
 ]
 

@@ -29,7 +29,12 @@ interface Tab {
 const httpError = (status: number) =>
   throwError(() => ({ status, error: { error: { message: 'refused' } } }));
 
-function setup(limits: RateLimit[] = [], overrides: Overrides = {}, confirmAnswer = true) {
+function setup(
+  limits: RateLimit[] = [],
+  overrides: Overrides = {},
+  confirmAnswer = true,
+  canManage = true,
+) {
   TestBed.resetTestingModule();
   const calls: string[] = [];
   const service = {
@@ -55,6 +60,7 @@ function setup(limits: RateLimit[] = [], overrides: Overrides = {}, confirmAnswe
   const fixture = TestBed.createComponent(RateLimitsTab);
   fixture.componentRef.setInput('slug', 'demo-uc');
   fixture.componentRef.setInput('limits', limits);
+  fixture.componentRef.setInput('canManage', canManage);
   const changes: number[] = [];
   fixture.componentInstance.changed.subscribe(() => changes.push(1));
   fixture.detectChanges();
@@ -186,5 +192,22 @@ describe('RateLimitsTab', () => {
     expect(html.querySelector('#rl-rpm')).toBeTruthy();
     // The form must say why it will not submit rather than just disabling the button.
     expect(harness.text()).toContain('A member limit needs a username.');
+  });
+});
+
+describe('RateLimitsTab — a reader', () => {
+  it('sees the limits and none of the controls', () => {
+    const { fixture, text } = setup(
+      [{ id: 1, scope: 'use_case', subject: '', limit_rpm: 60 }],
+      {},
+      true,
+      false,
+    );
+    const html = fixture.nativeElement as HTMLElement;
+
+    expect(text()).toContain('60');
+    expect(text()).not.toContain('+ Add rate limit');
+    expect(html.querySelector('[aria-label^="Remove the rate limit"]')).toBeNull();
+    expect(html.querySelector('[data-testid="rate-limits-readonly"]')).not.toBeNull();
   });
 });

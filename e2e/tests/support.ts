@@ -79,13 +79,21 @@ export async function expectNoHorizontalOverflow(page: Page, context: string) {
   ).toBeLessThanOrEqual(overflow.clientWidth + 1);
 }
 
-/** Create a use case through the UI, returning its slug. */
+/**
+ * Create a use case through the UI, returning its slug.
+ *
+ * Creation is a window reached from a button, and saving ends on the new use case's **settings**
+ * (FRD-206 FR-8) — one with no members, no budget and no limits is not finished, and the list is
+ * what makes it look finished. The technical id is filled in from the name; it is typed here
+ * anyway because these tests need a slug they chose.
+ */
 export async function createUseCase(page: Page, slug: string, name: string) {
   await page.goto('/use-cases');
-  await page.fill('#uc-slug', slug);
+  await page.click('button:has-text("New use case")');
   await page.fill('#uc-name', name);
-  await page.click('button[type="submit"]');
-  await expect(page.locator(`text=${slug}`).first()).toBeVisible();
+  await page.fill('#uc-slug', slug);
+  await page.click('button[type="submit"][form="uc-create-form"]');
+  await expect(page).toHaveURL(new RegExp(`/use-cases/${slug}`), { timeout: 30_000 });
   return slug;
 }
 

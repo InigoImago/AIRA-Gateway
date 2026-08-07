@@ -9,6 +9,15 @@
   @if (me(); as user) {
     <div class="aira-user">
       <span class="aira-user__name">{{ user.username }}</span>
+      <!-- Which hat you are wearing, one chip per role. Half of what a role-based console has
+           to answer is "why can I not do this", and the first step is showing which role is
+           asking. `data-role` carries the slug, so the role is assertable without depending on
+           the wording. -->
+      @for (role of roleChips(); track role.slug) {
+        <span class="aira-user__role" [attr.data-role]="role.slug" [title]="role.explains">{{
+          role.label
+        }}</span>
+      }
       <button type="button" class="btn btn--sm" (click)="logout()">Logout</button>
     </div>
   }
@@ -20,15 +29,16 @@
     >Models &amp; prices</a
   >
   <a class="aira-nav__item" routerLink="/reporting" routerLinkActive="is-active">Reporting</a>
-  @if (hasRole('it-security')) {
-    <span class="aira-nav__item is-disabled" data-role="it-security">Security</span>
-  }
-  @if (hasRole('it-steuerung')) {
-    <span class="aira-nav__item is-disabled" data-role="it-steuerung">Governance</span>
-  }
-  @if (hasRole('global-admin')) {
-    <span class="aira-nav__item is-disabled" data-role="global-admin">Administration</span>
-  }
+  <!--
+    Screens that do not exist yet used to sit here as disabled tabs, one per oversight role. They
+    read as broken navigation — somebody logs in as the administrator, sees "Administration", and
+    finds it does not respond. A tab that cannot be clicked teaches nothing except that something
+    is wrong.
+
+    What each role *may* do is instead shown where they are: the use-case list says whose it is,
+    and the roles are named in the header. When `FRD-500`/`501`/`503` build the security console,
+    it becomes a real tab.
+  -->
 </nav>
 
 <main class="aira-main">

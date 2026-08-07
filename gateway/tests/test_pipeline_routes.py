@@ -141,3 +141,56 @@ def test_route_to_unknown_model_returns_404() -> None:
         resp = client.post("/v1beta/models/mock-1:generateContent", json=_body("hi"))
     assert resp.status_code == 404
     assert "ghost" in resp.json()["error"]["message"]
+
+
+def test_a_dry_run_simulates_the_model_the_pipeline_is_about() -> None:
+    """Found in the builder: an allow-check permitting `qwen3:0.6b` answered **"Blocked: Model
+    'mock-1' is not allowed"**.
+
+    The dry run had defaulted to the first *registered* model, so it refused a model the operator
+    never chose, on a rule that was working correctly — the feature looked broken while the
+    pipeline was fine. A step that names models is a step saying which models the pipeline is for.
+    """
+    from aira_gateway.api.pipeline import _model_the_pipeline_is_about
+
+    class _Model:
+        name = "mock-1"
+
+    allow = {"steps": [{"type": "allow_check", "config": {"models": ["qwen3:0.6b"]}}]}
+    assert _model_the_pipeline_is_about(allow, [_Model()]) == "qwen3:0.6b"
+
+    route = {
+        "steps": [
+            {
+                "type": "model_route",
+                "config": {"categories": [{"name": "code", "model": "strong-1"}]},
+            }
+        ]
+    }
+    assert _model_the_pipeline_is_about(route, [_Model()]) == "strong-1"
+
+    # And with nothing to go on it still answers, rather than refusing to run at all.
+    assert _model_the_pipeline_is_about({"steps": []}, [_Model()]) == "mock-1"
+
+
+def test_a_dry_run_still_honours_a_model_the_caller_named() -> None:
+    """The inference is a *default*, not an override: an operator asking "what happens to
+    `gemini-2.5-pro` here" must get an answer about that model."""
+    from fastapi.testclient import TestClient
+
+    from aira_gateway.app import create_app
+    from aira_gateway.config import GatewaySettings
+
+    app = create_app(GatewaySettings(auth_required=False, log_queue_size=0))
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1beta/pipeline:dryRun",
+            json={
+                "user": "hi",
+                "model": "named-by-the-caller",
+                "pipeline": {"steps": [{"type": "allow_check", "config": {"models": ["other"]}}]},
+            },
+        )
+
+    assert response.status_code == 200
+    assert "named-by-the-caller" in response.json()["block_reason"]

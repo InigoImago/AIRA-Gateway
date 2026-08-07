@@ -1,4 +1,13 @@
-import { Component, OnInit, computed, inject, signal } from '@angular/core';
+import {
+  Component,
+  ElementRef,
+  OnInit,
+  computed,
+  effect,
+  inject,
+  signal,
+  viewChild,
+} from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { errorMessage } from '../../core/api/error-message';
 import { CAPABILITIES, Capability, CatalogModel, Me } from '../../core/api/models';
@@ -13,6 +22,9 @@ const AMOUNT = /^\d+([.,]\d{1,6})?$/;
   selector: 'app-model-catalog',
   imports: [FormsModule],
   templateUrl: './model-catalog.html',
+  // Escape closes the editor. A window with no way out but the mouse is a window somebody gets
+  // stuck in.
+  host: { '(document:keydown.escape)': 'close()' },
 })
 export class ModelCatalog implements OnInit {
   private readonly service = inject(UseCaseService);
@@ -26,6 +38,17 @@ export class ModelCatalog implements OnInit {
   protected readonly notice = signal<string | null>(null);
   protected readonly me = signal<Me | null>(null);
   protected readonly showAdd = signal(false);
+  /** The model id being corrected, or '' when adding a new one. Also the window's title. */
+  protected readonly editing = signal('');
+  private readonly dialog = viewChild<ElementRef<HTMLElement>>('dialog');
+
+  constructor() {
+    // Move the keyboard into the window when it opens, or Escape and Tab still belong to the page
+    // behind it.
+    effect(() => {
+      if (this.showAdd()) this.dialog()?.nativeElement.focus();
+    });
+  }
 
   protected readonly name = signal('');
   protected readonly displayName = signal('');
@@ -134,6 +157,7 @@ export class ModelCatalog implements OnInit {
           this.busy.set(false);
           this.notice.set(`${model.name} saved.`);
           this.reset();
+          this.editing.set('');
           this.showAdd.set(false);
           this.reload();
         },
@@ -159,7 +183,22 @@ export class ModelCatalog implements OnInit {
     this.deprecated.set(false);
   }
 
-  /** Load a row into the form so a declaration can be corrected in place. */
+  /** Open the window empty, for a model the catalog does not have yet. */
+  protected add(): void {
+    this.reset();
+    this.editing.set('');
+    this.showAdd.set(true);
+  }
+
+  /** Close the window, discarding whatever was typed. Deliberately not a save. */
+  protected close(): void {
+    if (!this.showAdd()) return;
+    this.showAdd.set(false);
+    this.editing.set('');
+    this.reset();
+  }
+
+  /** Load a row into the window so a declaration can be corrected. */
   protected edit(model: CatalogModel): void {
     this.name.set(model.name);
     this.displayName.set(model.display_name ?? '');
@@ -173,6 +212,7 @@ export class ModelCatalog implements OnInit {
     this.maxOutput.set(model.max_output_tokens ?? null);
     this.defaultOutput.set(model.default_max_output_tokens ?? null);
     this.deprecated.set(model.deprecated ?? false);
+    this.editing.set(model.name);
     this.showAdd.set(true);
   }
 

@@ -135,6 +135,39 @@ describe('ModelCatalog', () => {
     expect(reader.text()).not.toContain('Add model');
   });
 
+  it('names the model it is editing, and leaving the window discards the edit', () => {
+    const harness = setup();
+    const html = () => harness.fixture.nativeElement as HTMLElement;
+
+    harness.component.edit({
+      name: 'gemini-2.0-flash',
+      display_name: '',
+      provider: 'google',
+      input_price_per_million: '1.00',
+      output_price_per_million: '2.00',
+      is_priced: true,
+      is_declared: true,
+      capabilities: [],
+    } as never);
+    harness.fixture.detectChanges();
+
+    // Which model this window is about must be on screen. The unfolding panel it replaced put the
+    // form far below the row it came from, with nothing saying which row that was.
+    const dialog = html().querySelector('[role="dialog"]');
+    expect(dialog?.textContent).toContain('gemini-2.0-flash');
+
+    harness.component.name.set('typo');
+    [...html().querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.trim() === 'Cancel')
+      ?.click();
+    harness.fixture.detectChanges();
+
+    expect(html().querySelector('[role="dialog"]')).toBeNull();
+    expect(harness.saved).toHaveLength(0);
+    // Reopening must not show the abandoned edit.
+    expect(harness.component.name()).toBe('');
+  });
+
   it('refuses a price that is not an amount', () => {
     const { component } = setup();
     component.name.set('m-1');
@@ -212,13 +245,19 @@ describe('ModelCatalog', () => {
 });
 
 describe('ModelCatalog interactions', () => {
-  it('opens the form, fills it, and saves from the DOM', async () => {
+  it('opens the editor window, fills it, and saves from the DOM', async () => {
     const harness = setup();
     const html = () => harness.fixture.nativeElement as HTMLElement;
 
     expect(html().querySelector('#model-name')).toBeNull();
-    html().querySelector<HTMLButtonElement>('[aria-expanded="false"]')?.click();
+    [...html().querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.includes('Add model'))
+      ?.click();
     harness.fixture.detectChanges();
+
+    const dialog = html().querySelector('[role="dialog"]');
+    expect(dialog).not.toBeNull();
+    expect(dialog?.getAttribute('aria-modal')).toBe('true');
 
     const name = html().querySelector<HTMLInputElement>('#model-name');
     expect(name).not.toBeNull();
@@ -230,7 +269,10 @@ describe('ModelCatalog interactions', () => {
     harness.component.outputPrice.set('2.00');
     harness.fixture.detectChanges();
 
-    html().querySelector('form')?.dispatchEvent(new Event('submit'));
+    // Through the footer button, which lives *outside* the form and reaches it by `form=`. Firing
+    // submit on the form directly would pass even if that association were wrong, and an
+    // unclickable Save is the only way this window can fail.
+    html().querySelector<HTMLButtonElement>('button[type="submit"]')?.click();
     harness.fixture.detectChanges();
 
     expect(harness.saved[0]).toMatchObject({
@@ -238,7 +280,7 @@ describe('ModelCatalog interactions', () => {
       input_price_per_million: '1.00',
       output_price_per_million: '2.00',
     });
-    // A successful save clears and closes the form.
+    // A successful save clears and closes the window.
     expect(harness.component.showAdd()).toBe(false);
     expect(harness.component.name()).toBe('');
   });

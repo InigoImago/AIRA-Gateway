@@ -21,7 +21,7 @@
           <code>{{ useCase.slug }}</code>
         </div>
         <a class="btn btn--sm" [routerLink]="['/use-cases', useCase.slug, 'pipeline']">
-          Edit pipeline →
+          {{ canManage() ? 'Edit pipeline →' : 'View pipeline →' }}
         </a>
       </div>
     </div>
@@ -131,57 +131,69 @@
           investigated. Either way the metadata — who, when, which model, how many tokens, what it
           cost — is kept for reporting.
         </p>
-        <form class="stack" (ngSubmit)="saveRetention()">
-          <!-- No `for`: the input is nested, so the label is already associated with it. Adding
+        @if (!canManage()) {
+          <p data-testid="retention-readonly" style="margin: 0">
+            @if (useCase()?.store_payloads === false) {
+              Prompts and responses are <strong>not stored</strong> for this use case.
+            } @else {
+              Prompts and responses are kept for
+              <strong>{{ useCase()?.retention_days ?? '—' }} day(s)</strong>.
+            }
+            Only an administrator of this use case can change that.
+          </p>
+        } @else {
+          <form class="stack" (ngSubmit)="saveRetention()">
+            <!-- No `for`: the input is nested, so the label is already associated with it. Adding
                `for` as well makes a real browser forward the click a second time — the box
                toggles twice and the switch looks dead. jsdom does not reproduce it. -->
-          <label class="row" style="gap: 0.5rem">
-            <!-- Plain [checked]/(change) rather than ngModel: a one-way ngModel binding on a
+            <label class="row" style="gap: 0.5rem">
+              <!-- Plain [checked]/(change) rather than ngModel: a one-way ngModel binding on a
                  checkbox inside an NgForm writes the old value straight back, so the box springs
                  back and the switch cannot be operated. -->
-            <input
-              type="checkbox"
-              id="store-payloads"
-              name="store_payloads"
-              [checked]="storePayloads()"
-              (change)="storePayloads.set($any($event.target).checked)"
-            />
-            Store prompts and responses
-          </label>
+              <input
+                type="checkbox"
+                id="store-payloads"
+                name="store_payloads"
+                [checked]="storePayloads()"
+                (change)="storePayloads.set($any($event.target).checked)"
+              />
+              Store prompts and responses
+            </label>
 
-          @if (storePayloads()) {
-            <div class="form-inline">
-              <div class="field">
-                <label for="retention-days">Keep them for (days)</label>
-                <input
-                  id="retention-days"
-                  name="retention_days"
-                  type="number"
-                  min="1"
-                  max="3650"
-                  [ngModel]="retentionDays()"
-                  (ngModelChange)="retentionDays.set($event)"
-                />
-                <span class="field__hint">Deleted automatically once the period has passed.</span>
+            @if (storePayloads()) {
+              <div class="form-inline">
+                <div class="field">
+                  <label for="retention-days">Keep them for (days)</label>
+                  <input
+                    id="retention-days"
+                    name="retention_days"
+                    type="number"
+                    min="1"
+                    max="3650"
+                    [ngModel]="retentionDays()"
+                    (ngModelChange)="retentionDays.set($event)"
+                  />
+                  <span class="field__hint">Deleted automatically once the period has passed.</span>
+                </div>
               </div>
-            </div>
-          } @else {
-            <p class="callout callout--warning" style="margin: 0">
-              Nothing a caller sends or receives is written for this use case. Anything already
-              stored is removed on the next retention run. Incidents can then only be traced through
-              the metadata.
-            </p>
-          }
-
-          <div class="row">
-            <button type="submit" class="btn btn--primary" [disabled]="!canSaveRetention()">
-              {{ feedback.busy() ? 'Saving…' : 'Save' }}
-            </button>
-            @if (retentionError(); as message) {
-              <span class="field__hint field__hint--error">{{ message }}</span>
+            } @else {
+              <p class="callout callout--warning" style="margin: 0">
+                Nothing a caller sends or receives is written for this use case. Anything already
+                stored is removed on the next retention run. Incidents can then only be traced
+                through the metadata.
+              </p>
             }
-          </div>
-        </form>
+
+            <div class="row">
+              <button type="submit" class="btn btn--primary" [disabled]="!canSaveRetention()">
+                {{ feedback.busy() ? 'Saving…' : 'Save' }}
+              </button>
+              @if (retentionError(); as message) {
+                <span class="field__hint field__hint--error">{{ message }}</span>
+              }
+            </div>
+          </form>
+        }
       </div>
     </div>
   }
@@ -191,17 +203,25 @@
     <div class="card" role="tabpanel" aria-labelledby="tab-members">
       <div class="spread">
         <h3 class="section-title" style="margin: 0">Members</h3>
-        <button
-          type="button"
-          class="btn btn--sm"
-          [attr.aria-expanded]="showAddMember()"
-          (click)="showAddMember.set(!showAddMember())"
-        >
-          {{ showAddMember() ? 'Cancel' : '+ Add member' }}
-        </button>
+        @if (canManage()) {
+          <button
+            type="button"
+            class="btn btn--sm"
+            [attr.aria-expanded]="showAddMember()"
+            (click)="showAddMember.set(!showAddMember())"
+          >
+            {{ showAddMember() ? 'Cancel' : '+ Add member' }}
+          </button>
+        }
       </div>
+      @if (!canManage()) {
+        <p class="muted" style="margin: 0.25rem 0 0" data-testid="members-readonly">
+          You can see who belongs to this use case. Adding and removing members is done by its
+          administrators.
+        </p>
+      }
 
-      @if (showAddMember()) {
+      @if (showAddMember() && canManage()) {
         <form class="form-inline disclosure" (ngSubmit)="addMember()">
           <div class="field grow">
             <label for="member-user">Username</label>
@@ -250,15 +270,17 @@
                   <span class="badge badge--muted">{{ member.role }}</span>
                 </td>
                 <td class="table__actions">
-                  <button
-                    type="button"
-                    class="btn btn--sm btn--danger"
-                    [disabled]="feedback.busy()"
-                    [attr.aria-label]="'Remove ' + member.username"
-                    (click)="removeMember(member.username)"
-                  >
-                    Remove
-                  </button>
+                  @if (canManage()) {
+                    <button
+                      type="button"
+                      class="btn btn--sm btn--danger"
+                      [disabled]="feedback.busy()"
+                      [attr.aria-label]="'Remove ' + member.username"
+                      (click)="removeMember(member.username)"
+                    >
+                      Remove
+                    </button>
+                  }
                 </td>
               </tr>
             } @empty {
@@ -277,21 +299,30 @@
     <div class="card" role="tabpanel" aria-labelledby="tab-keys">
       <div class="spread">
         <h3 class="section-title" style="margin: 0">API keys</h3>
-        <button
-          type="button"
-          class="btn btn--sm btn--primary"
-          [attr.aria-expanded]="showIssueKey()"
-          (click)="showIssueKey.set(!showIssueKey())"
-        >
-          {{ showIssueKey() ? 'Cancel' : '+ Issue key' }}
-        </button>
+        @if (isMember()) {
+          <button
+            type="button"
+            class="btn btn--sm btn--primary"
+            [attr.aria-expanded]="showIssueKey()"
+            (click)="showIssueKey.set(!showIssueKey())"
+          >
+            {{ showIssueKey() ? 'Cancel' : '+ Issue key' }}
+          </button>
+        }
       </div>
       <p class="muted" style="margin: 0.25rem 0 0">
         Keys are bound to this use case — requests made with them are attributed here automatically.
         Only members of the use case can issue one.
       </p>
 
-      @if (showIssueKey()) {
+      @if (!isMember()) {
+        <p class="muted" style="margin: 0.25rem 0 0" data-testid="keys-readonly">
+          A key is data-plane access, so only members of this use case may issue one — seeing a use
+          case is deliberately not enough.
+        </p>
+      }
+
+      @if (showIssueKey() && isMember()) {
         <form class="form-inline disclosure" (ngSubmit)="issueKey()">
           <div class="field grow">
             <label for="key-label">Label (optional)</label>
@@ -359,7 +390,7 @@
                   }
                 </td>
                 <td class="table__actions">
-                  @if (key.is_active) {
+                  @if (key.is_active && canManage()) {
                     <button
                       type="button"
                       class="btn btn--sm btn--danger"
@@ -391,12 +422,18 @@
       [usage]="usage()"
       [usageUnavailable]="usageUnavailable()"
       [usageRefused]="usageRefused()"
+      [canManage]="canManage()"
       (changed)="loadBudgets()"
     />
   }
 
   <!-- Rate limits (FRD-405) -->
   @if (tab() === 'rate-limits') {
-    <app-rate-limits-tab [slug]="slug" [limits]="rateLimits()" (changed)="loadRateLimits()" />
+    <app-rate-limits-tab
+      [slug]="slug"
+      [limits]="rateLimits()"
+      [canManage]="canManage()"
+      (changed)="loadRateLimits()"
+    />
   }
 </div>

@@ -227,9 +227,7 @@ class PipelineEngine:
 
     # -- step primitives (shared by run + dry_run) ----------------------------------------
 
-    async def _classify(
-        self, config: dict[str, Any], request: CanonicalRequest
-    ) -> Classification:
+    async def _classify(self, config: dict[str, Any], request: CanonicalRequest) -> Classification:
         text = self._scanned_text(request, config.get("scope", "user"))
         return await self._injection_classifier(config).classify_text(text)
 

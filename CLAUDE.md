@@ -43,7 +43,7 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
   inevitably do when both were written from the same mental model — and line coverage cannot see
   a *missing requirement*: on 2026-08-05 a review found seven real defects behind a green suite at
   99% coverage. So: **prove a test can fail.** Break the property, watch it go red, restore.
-  `make mutants` (`tools/mutation_check.py`) does this for **231 properties** across auth, budgets,
+  `make mutants` (`tools/mutation_check.py`) does this for **233 properties** across auth, budgets,
   pipeline, retention, the management control plane and the gateway's counters; when
   you fix a bug, add the mutation that reintroduces it. Two traps that cost real defects here:
   a stand-in that is more permissive than the thing it replaces (reuse the real method where you
@@ -595,6 +595,44 @@ compatibility surface **with a sunset date and its usage in reporting** — ever
 deliberate and written down: TLS verification stays on, CORS is an allow-list not `*`, and
 `GET /models` requires auth. The OpenAI surface (`FRD-106`) is deferred so parity is not competing
 with a second new contract.
+**The console stops promising what the server refuses (`FRD-206`, 2026-08-07)** — a role-by-role
+walkthrough of the running UI produced fourteen findings; three shared one shape: **the console was
+answering questions only the server can answer, and answering them generously.** A use-case *user*
+was shown "Add member"/"Remove" and got a 403 from the screen that had just invited the click; IT
+Security saw an **empty** console; anyone who could open the pipeline builder could rearrange a
+graph they could never save. Object-level permission lives in guardian rows, so it is **not in the
+token** and `/me` cannot carry it — the console filled the gap with an assumption. Now the object
+says what this caller may do (`can_admin`/`can_manage`/`is_member`), computed by
+`apps/usecases/access.py`, **the same predicates the viewset enforces with** (a restatement in
+TypeScript would be the same defect with an extra copy to forget). The test that matters is an
+**agreement test** — for each answer, attempt the request and require the status to match what the
+object reported; `Z23`/`Z24` hardcode a reported permission to true and are caught by it, and
+`G1`/`G3` were **re-anchored** because this change moved the code they pointed at. Three rules
+generalise: **an action nobody can carry out is worse than an absent one** (absent reads as a
+boundary, present-and-failing reads as a broken system — and the reader then distrusts the figures
+on the same page), so every withheld action names who performs it and read-only stays *usable*;
+**read-only means inert, not un-saveable** (the graph sits in a native `<fieldset disabled>` —
+hiding Save alone lets somebody rearrange a pipeline for nothing); and **`is_member`, `can_manage`
+and visibility are three different answers** — an oversight role sees every use case and must not be
+offered a key, a member administers none and must be. IT Security's empty console was the same
+mistake: `scope_queryset` used one role set for both "sees every use case" and "sees every figure",
+now `OVERSIGHT_ROLES` ⊃ `GOVERNANCE_ROLES`. Also fixed: the session renews itself (an expired token
+reported "invalid credentials" everywhere, which reads as untrustworthy *data*); creating a use case
+is a window that ends on its **settings**, not the list; "slug" became **technical id**, derived
+from the name; the model editor is a window naming its model; reporting cards got short headings
+plus **info buttons** carrying what each figure counts. Two defects were shipped inside this pass
+and reported back, both instructive: `offline_access` was added to get a refresh token and **broke
+login outright** — the realm forbids offline tokens, the code-to-token exchange answered
+`not_allowed`, and Keycloak answers *that* without CORS headers, so the browser reported a CORS
+error naming neither the scope nor the setting (the code flow already returns a refresh token; the
+scope asks for one that outlives the session, which a governance console must not hold); and the
+info buttons were a `title` attribute, so they **looked clickable and did nothing** — the very
+defect the pass was about. Both share one cause: **three test layers ran and the fourth did not**,
+and both changes live only in the fourth. No unit test performs an OIDC redirect, and none can tell
+"renders a tooltip attribute" from "shows the reader anything". A change to the login flow, or to
+whether a control does something when used, **is an e2e change**. That run also updated 16 e2e
+tests whose screens this pass deliberately moved — five rewritten rather than repaired, because
+their *meaning* changed.
 Next candidates: **`FRD-114`** (model metadata — now also carries publisher + default output cap,
 prerequisite for 110–113 and 119), **`FRD-110`** (documents/images — the widest gap),
 **`FRD-115`/`FRD-119`** (Vertex EU + the Anthropic dialect — required), **`FRD-116`** (Vault),

@@ -2,14 +2,16 @@ import { expect, test } from '@playwright/test';
 import { USERS, createUseCase, login, logout, uniqueSlug } from './support';
 
 test.describe('Use-case management', () => {
-  test('creates a use case, adds a member, and clears the form', async ({ page }) => {
+  test('creates a use case, lands on its settings, and adds a member', async ({ page }) => {
     await login(page, USERS.useCaseAdmin);
     const slug = uniqueSlug('flow');
     await createUseCase(page, slug, 'Flow probe');
 
-    // Regression (zoneless): the inputs used to keep the submitted text after a successful POST.
-    await expect(page.locator('#uc-slug')).toHaveValue('');
-    await expect(page.locator('#uc-name')).toHaveValue('');
+    // Regression (zoneless): state reset from the HTTP callback has to schedule a re-render. The
+    // window used to be a form that kept the submitted text; now the proof is that the window is
+    // gone and the page moved on.
+    await expect(page.locator('[role="dialog"]')).toHaveCount(0);
+    await expect(page.locator('h2')).toContainText('Flow probe');
 
     await page.goto(`/use-cases/${slug}?tab=members`);
     await page.click('button:has-text("Add member")');
@@ -89,10 +91,10 @@ test.describe('Use-case management', () => {
     await page.goto(`/use-cases/${slug}?tab=keys`);
     await expect(page.locator('h2')).toContainText('Governance probe');
 
-    await page.click('button:has-text("Issue key")');
-    await page.click('form button[type="submit"]');
-
-    await expect(page.locator('[role="alert"]')).toContainText('members of this use case');
+    // The console does not offer it at all any more (FRD-206): an action nobody can carry out
+    // reads as a broken system, not as a boundary. It says who may, instead.
+    await expect(page.locator('button:has-text("Issue key")')).toHaveCount(0);
+    await expect(page.locator('[data-testid="keys-readonly"]')).toContainText('members');
     await expect(page.locator('.secret')).toHaveCount(0);
   });
 
@@ -110,13 +112,14 @@ test.describe('Use-case management', () => {
     await expect(page.locator('[role="progressbar"]')).toHaveCount(1);
   });
 
-  test('an invalid slug is refused before the request is sent', async ({ page }) => {
+  test('an invalid technical id is refused before the request is sent', async ({ page }) => {
     await login(page, USERS.useCaseAdmin);
     await page.goto('/use-cases');
-    await page.fill('#uc-slug', 'Not A Slug');
+    await page.click('button:has-text("New use case")');
     await page.fill('#uc-name', 'Invalid');
+    await page.fill('#uc-slug', 'Not A Slug');
 
     await expect(page.locator('#uc-slug-error')).toContainText('Lowercase letters');
-    await expect(page.locator('button[type="submit"]')).toBeDisabled();
+    await expect(page.locator('button[type="submit"][form="uc-create-form"]')).toBeDisabled();
   });
 });

@@ -96,8 +96,11 @@ test.describe('Gateway integration', () => {
     await page.fill('#budget-requests', '5');
     await page.click('form button[type="submit"]');
 
-    await expect(page.locator('.callout--warning')).toContainText('does not count you as a member');
+    // The remedy is the Keycloak group, and the message has to say so *and* say it is not the
+    // member list on the same page — a reader looking at their own name there reads a bare "not a
+    // member" as a broken screen (FRD-206 §4.5).
     await expect(page.locator('.callout--warning')).toContainText(`/use-cases/${slug}`);
+    await expect(page.locator('.callout--warning')).toContainText('member list on this page');
     // The limits themselves are still rendered.
     await expect(page.locator('[role="progressbar"]')).toHaveCount(1);
   });

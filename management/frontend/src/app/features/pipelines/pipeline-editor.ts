@@ -179,8 +179,24 @@ export class PipelineEditor implements OnInit {
     return rows;
   });
 
+  /**
+   * Whether this caller may change the pipeline, as the server answers it on the use case.
+   *
+   * The builder is reachable by anyone who may see the use case, and reading a pipeline is
+   * genuinely useful — it is the configuration governing every request they make. Editing it is
+   * not: a save would come back 403 with the graph already rearranged on screen. So the graph
+   * becomes read-only and the test panel stays live, because a dry run changes nothing.
+   */
+  protected readonly canManage = signal(false);
+
   ngOnInit(): void {
     this.slug = this.route.snapshot.paramMap.get('slug') ?? '';
+    this.service.get(this.slug).subscribe({
+      next: (useCase) => this.canManage.set(useCase.permissions?.can_manage ?? false),
+      // A use case we cannot read leaves the safe answer in place rather than a second error
+      // banner about a request the reader did not make.
+      error: () => this.canManage.set(false),
+    });
     this.service.getPipeline(this.slug).subscribe({
       next: (config) => {
         this.config.set(config);
@@ -283,8 +299,10 @@ export class PipelineEditor implements OnInit {
   }
 
   protected runDryRun(): void {
+    // The previous result is **kept on screen** while the next one runs. Clearing it first
+    // collapsed the whole panel and the page jumped, which reads as a reload — and a control panel
+    // that appears to reload makes somebody wonder what else it just did.
     this.dryRunError.set(null);
-    this.dryRun.set(null);
     this.dryRunning.set(true);
     this.service
       .dryRunPipeline({

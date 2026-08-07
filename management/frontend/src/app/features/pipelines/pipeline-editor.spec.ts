@@ -41,6 +41,8 @@ interface Options {
   save?: Observable<PipelineConfig>;
   dryRun?: Observable<DryRunResult>;
   confirm?: boolean;
+  canManage?: boolean;
+  useCaseFails?: boolean;
 }
 
 function setup(initial: PipelineConfig, options: Options = {}) {
@@ -55,6 +57,23 @@ function setup(initial: PipelineConfig, options: Options = {}) {
       {
         provide: UseCaseService,
         useValue: {
+          // What the caller may do here comes from the use case, not from the pipeline: the
+          // builder is reachable by anyone who may see it, and a save they cannot make would
+          // come back 403 with the graph already rearranged.
+          get: () =>
+            options.useCaseFails
+              ? throwError(() => ({ status: 404 }))
+              : of({
+                  slug: 'demo-uc',
+                  name: 'Demo',
+                  description: '',
+                  processing_notes: '',
+                  permissions: {
+                    can_admin: true,
+                    can_manage: options.canManage ?? true,
+                    is_member: true,
+                  },
+                }),
           getPipeline: () => options.load ?? of(initial),
           savePipeline: (_slug: string, config: PipelineConfig) => {
             saved = config;
@@ -605,5 +624,42 @@ describe('PipelineEditor loading guard', () => {
   it('renders the builder once the config is there', () => {
     const { fixture } = setup({ steps: [], fallback_models: [] });
     expect((fixture.nativeElement as HTMLElement).querySelector('.pipe')).not.toBeNull();
+  });
+});
+
+describe('PipelineEditor — a reader', () => {
+  it('can read the pipeline and try it, and can change nothing', () => {
+    // The builder is reachable by anyone who may see the use case, and reading it is genuinely
+    // useful — it is the configuration governing every request they make. Rearranging a graph
+    // that can never be saved is not: the 403 arrives after the work.
+    const { fixture } = setup({ steps: [], fallback_models: [] } as unknown as PipelineConfig, {
+      canManage: false,
+    });
+    const html = fixture.nativeElement as HTMLElement;
+
+    expect(html.querySelector('[data-testid="pipeline-readonly"]')).not.toBeNull();
+    expect(html.textContent).not.toContain('Save pipeline');
+    // Not merely hidden: a native disabled fieldset makes every control inside it inert, so the
+    // add/remove buttons in the graph cannot be used either.
+    const guard = html.querySelector<HTMLFieldSetElement>('fieldset.bare');
+    expect(guard?.disabled).toBe(true);
+    // The test panel is outside it — a dry run changes nothing.
+    expect(guard?.querySelector('#sample-system')).toBeNull();
+    expect(html.querySelector('#sample-system')).not.toBeNull();
+  });
+});
+
+describe('PipelineEditor — the permission request itself fails', () => {
+  it('keeps the safe answer and does not add a second error banner', () => {
+    // The reader asked for a pipeline, not for a use case. An error about a request they did not
+    // make explains nothing — and the safe answer to "may I change this" is no.
+    const { fixture, component } = setup(
+      { steps: [], fallback_models: [] } as unknown as PipelineConfig,
+      { useCaseFails: true },
+    );
+    const html = fixture.nativeElement as HTMLElement;
+
+    expect(html.querySelector<HTMLFieldSetElement>('fieldset.bare')?.disabled).toBe(true);
+    expect(component.error()).toBeNull();
   });
 });

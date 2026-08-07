@@ -79,37 +79,45 @@
         </span>
       </div>
 
+      <!--
+        Short headings, with the explanation behind an info button that actually opens.
+
+        Two things went wrong before this. "Refused by a control" wrapped to two lines and broke
+        the card row — and the fix for a heading that does not fit is not a smaller font, it is a
+        shorter heading plus somewhere to put the rest. Then that somewhere was a `title`
+        attribute, so the button looked clickable and did nothing: a native tooltip needs a long
+        hover, never appears on a touch screen, and is invisible to a keyboard. A control that
+        does nothing when used is the defect this whole pass was about.
+      -->
       <dl class="stat-row">
-        <div class="stat">
-          <dt>Spend</dt>
-          <dd data-testid="total-cost">{{ report.totals.cost }}</dd>
-        </div>
-        <div class="stat">
-          <dt>Requests</dt>
-          <dd data-testid="total-requests">{{ report.totals.requests }}</dd>
-        </div>
-        <div class="stat">
-          <dt>Failed</dt>
-          <dd data-testid="total-failed">{{ report.totals.failed_requests }}</dd>
-        </div>
-        <div class="stat">
-          <dt>Refused by a control</dt>
-          <dd data-testid="total-refused">{{ refused() }}</dd>
-        </div>
-        <div class="stat">
-          <dt>Tokens (prompt / completion)</dt>
-          <dd>{{ report.totals.prompt_tokens }} / {{ report.totals.completion_tokens }}</dd>
-        </div>
-        <div class="stat">
-          <dt>Latency (avg / max)</dt>
-          <dd>
-            @if (report.totals.avg_latency_ms === null) {
-              —
-            } @else {
-              {{ report.totals.avg_latency_ms }} ms / {{ report.totals.max_latency_ms }} ms
+        @for (stat of stats(); track stat.key) {
+          <div class="stat">
+            <dt>
+              {{ stat.label }}
+              <button
+                type="button"
+                class="stat__info"
+                [attr.aria-expanded]="openInfo() === stat.key"
+                [attr.aria-label]="'What does ' + stat.label + ' count?'"
+                [attr.data-testid]="'info-' + stat.key"
+                (click)="toggleInfo(stat.key)"
+              >
+                i
+              </button>
+            </dt>
+            <dd [attr.data-testid]="stat.testid">
+              {{ stat.value }}
+              @if (stat.unit) {
+                <span class="stat__unit">{{ stat.unit }}</span>
+              }
+            </dd>
+            @if (openInfo() === stat.key) {
+              <p class="stat__help" role="note" [attr.data-testid]="'help-' + stat.key">
+                {{ stat.help }}
+              </p>
             }
-          </dd>
-        </div>
+          </div>
+        }
       </dl>
 
       @if (unpriced() > 0) {
@@ -127,7 +135,7 @@
         The same figures as a spreadsheet, for the period above and the caller's own scope — a
         download shows exactly what this screen shows, never more.
       </p>
-      <div class="form-row">
+      <div class="form-row form-row--spaced">
         <label for="export-breakdown">Table</label>
         <select
           id="export-breakdown"
@@ -141,7 +149,7 @@
         </select>
         <button
           type="button"
-          class="button"
+          class="btn btn--primary"
           (click)="download()"
           [disabled]="exporting() || !canLoad()"
           data-testid="export-download"

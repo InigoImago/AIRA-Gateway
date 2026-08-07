@@ -92,7 +92,7 @@ def _reason(response: httpx.Response) -> str:
     """The provider's stated reason, if it gave one in the shape this dialect uses."""
     try:
         message = response.json().get("error", {}).get("message")
-    except (ValueError, AttributeError):
+    except ValueError, AttributeError:
         return ""
     # Bounded: an upstream is not a trusted source of arbitrarily long strings to put in our own
     # error envelope and audit log.

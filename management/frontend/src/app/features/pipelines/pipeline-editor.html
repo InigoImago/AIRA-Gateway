@@ -12,9 +12,11 @@
       } @else if (dirty()) {
         <span class="badge badge--warning" role="status">Unsaved changes</span>
       }
-      <button type="button" class="btn btn--primary" [disabled]="saving()" (click)="save()">
-        {{ saving() ? 'Saving…' : 'Save pipeline' }}
-      </button>
+      @if (canManage()) {
+        <button type="button" class="btn btn--primary" [disabled]="saving()" (click)="save()">
+          {{ saving() ? 'Saving…' : 'Save pipeline' }}
+        </button>
+      }
     </div>
   </div>
 
@@ -28,302 +30,317 @@
       Loading pipeline…
     </p>
   } @else {
-    <div class="pipe">
-      <!-- Graph -->
-      <div class="pipe__graph card">
-        <div class="node node--endpoint">Request in</div>
-        <div class="edge"></div>
-
-        @for (step of config().steps; track $index) {
-          <div
-            class="node node--step"
-            [class.is-selected]="selectedIndex() === $index"
-            (click)="select($index)"
-            (keydown.enter)="select($index)"
-            (keydown.space)="select($index); $event.preventDefault()"
-            tabindex="0"
-            role="button"
-            [attr.aria-pressed]="selectedIndex() === $index"
-            [attr.aria-label]="'Step ' + ($index + 1) + ': ' + label(step.type) + '. Configure.'"
-          >
-            <div class="node__body">
-              <span class="node__index" aria-hidden="true">{{ $index + 1 }}</span>
-              <div class="node__text">
-                <div class="node__title">{{ label(step.type) }}</div>
-                <div class="node__meta muted">{{ summarize(step) }}</div>
-              </div>
-            </div>
-            <div class="node__controls" (click)="$event.stopPropagation()">
-              <button
-                type="button"
-                class="btn btn--sm btn--ghost"
-                [disabled]="!canMove($index, -1)"
-                [attr.aria-label]="'Move ' + label(step.type) + ' up'"
-                (click)="moveStep($index, -1)"
-              >
-                ↑
-              </button>
-              <button
-                type="button"
-                class="btn btn--sm btn--ghost"
-                [disabled]="!canMove($index, 1)"
-                [attr.aria-label]="'Move ' + label(step.type) + ' down'"
-                (click)="moveStep($index, 1)"
-              >
-                ↓
-              </button>
-              <button
-                type="button"
-                class="btn btn--sm btn--danger"
-                [attr.aria-label]="'Remove ' + label(step.type)"
-                (click)="removeStep($index)"
-              >
-                ✕
-              </button>
-            </div>
-          </div>
+    @if (!canManage()) {
+      <p class="callout" data-testid="pipeline-readonly">
+        You can read this pipeline and try it out below. Changing it is done by the administrators
+        of this use case.
+      </p>
+    }
+    <!-- A native disabled fieldset, so every control inside it — including the buttons that add
+         and remove steps — is genuinely inert. Leaving the graph editable and only hiding Save
+         would let somebody rearrange a pipeline for nothing. -->
+    <fieldset class="bare" [disabled]="!canManage()">
+      <div class="pipe">
+        <!-- Graph -->
+        <div class="pipe__graph card">
+          <div class="node node--endpoint">Request in</div>
           <div class="edge"></div>
-        }
 
-        <div class="node node--dispatch">Dispatch</div>
-
-        @for (model of config().fallback_models; track model) {
-          <div class="edge edge--fallback"></div>
-          <div
-            class="node node--fallback"
-            (click)="select('fallback')"
-            (keydown.enter)="select('fallback')"
-            (keydown.space)="select('fallback'); $event.preventDefault()"
-            tabindex="0"
-            role="button"
-            aria-label="Configure the fallback chain"
-          >
-            fallback → <code>{{ model }}</code>
-          </div>
-        }
-        @if (config().fallback_models.length === 0) {
-          <div class="edge edge--fallback"></div>
-          <div
-            class="node node--fallback node--muted"
-            (click)="select('fallback')"
-            (keydown.enter)="select('fallback')"
-            (keydown.space)="select('fallback'); $event.preventDefault()"
-            tabindex="0"
-            role="button"
-            aria-label="Add a fallback model"
-          >
-            + add fallback
-          </div>
-        }
-
-        <div class="pipe__add">
-          <span class="muted">Add step:</span>
-          @for (type of stepTypes; track type) {
-            <button type="button" class="btn btn--sm" (click)="addStep(type)">
-              + {{ label(type) }}
-            </button>
-          }
-        </div>
-      </div>
-
-      <!-- Inspector -->
-      <div class="pipe__inspector card">
-        @if (selectedStep(); as step) {
-          <h3 class="section-title">{{ label(step.type) }}</h3>
-          <p class="muted" style="margin-top: -0.4rem">{{ help(step.type) }}</p>
-
-          @if (step.type === 'injection_filter') {
-            <div class="field">
-              <label for="insp-mode">Detection mode</label>
-              <select
-                id="insp-mode"
-                [ngModel]="step.config.mode || 'heuristic'"
-                (ngModelChange)="setStepField(selectedIndex(), 'mode', $event)"
-              >
-                <option value="heuristic">Heuristic — pattern matching (free, instant)</option>
-                <option value="llm">LLM classifier — a model judges the text</option>
-              </select>
-            </div>
-            <div class="field">
-              <label for="insp-action">On detection</label>
-              <select
-                id="insp-action"
-                [ngModel]="step.config.action || 'block'"
-                (ngModelChange)="setStepField(selectedIndex(), 'action', $event)"
-              >
-                <option value="block">Block the request (reject)</option>
-                <option value="flag">Flag &amp; continue (log only)</option>
-              </select>
-            </div>
-            <div class="field">
-              <label for="insp-scope">Scan</label>
-              <select
-                id="insp-scope"
-                [ngModel]="step.config.scope || 'user'"
-                (ngModelChange)="setStepField(selectedIndex(), 'scope', $event)"
-              >
-                <option value="user">User message only</option>
-                <option value="system_user">System prompt + user message</option>
-              </select>
-            </div>
-
-            @if (step.config.mode === 'llm') {
-              <div class="field">
-                <label for="insp-undetermined">If the classifier cannot decide</label>
-                <select
-                  id="insp-undetermined"
-                  [ngModel]="step.config.on_undetermined || 'block'"
-                  (ngModelChange)="setStepField(selectedIndex(), 'on_undetermined', $event)"
+          @for (step of config().steps; track $index) {
+            <div
+              class="node node--step"
+              [class.is-selected]="selectedIndex() === $index"
+              (click)="select($index)"
+              (keydown.enter)="select($index)"
+              (keydown.space)="select($index); $event.preventDefault()"
+              tabindex="0"
+              role="button"
+              [attr.aria-pressed]="selectedIndex() === $index"
+              [attr.aria-label]="'Step ' + ($index + 1) + ': ' + label(step.type) + '. Configure.'"
+            >
+              <div class="node__body">
+                <span class="node__index" aria-hidden="true">{{ $index + 1 }}</span>
+                <div class="node__text">
+                  <div class="node__title">{{ label(step.type) }}</div>
+                  <div class="node__meta muted">{{ summarize(step) }}</div>
+                </div>
+              </div>
+              <div class="node__controls" (click)="$event.stopPropagation()">
+                <button
+                  type="button"
+                  class="btn btn--sm btn--ghost"
+                  [disabled]="!canMove($index, -1)"
+                  [attr.aria-label]="'Move ' + label(step.type) + ' up'"
+                  (click)="moveStep($index, -1)"
                 >
-                  <option value="block">Refuse the request (recommended)</option>
-                  <option value="allow">Serve it unchecked</option>
+                  ↑
+                </button>
+                <button
+                  type="button"
+                  class="btn btn--sm btn--ghost"
+                  [disabled]="!canMove($index, 1)"
+                  [attr.aria-label]="'Move ' + label(step.type) + ' down'"
+                  (click)="moveStep($index, 1)"
+                >
+                  ↓
+                </button>
+                <button
+                  type="button"
+                  class="btn btn--sm btn--danger"
+                  [attr.aria-label]="'Remove ' + label(step.type)"
+                  (click)="removeStep($index)"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+            <div class="edge"></div>
+          }
+
+          <div class="node node--dispatch">Dispatch</div>
+
+          @for (model of config().fallback_models; track model) {
+            <div class="edge edge--fallback"></div>
+            <div
+              class="node node--fallback"
+              (click)="select('fallback')"
+              (keydown.enter)="select('fallback')"
+              (keydown.space)="select('fallback'); $event.preventDefault()"
+              tabindex="0"
+              role="button"
+              aria-label="Configure the fallback chain"
+            >
+              fallback → <code>{{ model }}</code>
+            </div>
+          }
+          @if (config().fallback_models.length === 0) {
+            <div class="edge edge--fallback"></div>
+            <div
+              class="node node--fallback node--muted"
+              (click)="select('fallback')"
+              (keydown.enter)="select('fallback')"
+              (keydown.space)="select('fallback'); $event.preventDefault()"
+              tabindex="0"
+              role="button"
+              aria-label="Add a fallback model"
+            >
+              + add fallback
+            </div>
+          }
+
+          <div class="pipe__add">
+            <span class="muted">Add step:</span>
+            @for (type of stepTypes; track type) {
+              <button type="button" class="btn btn--sm" (click)="addStep(type)">
+                + {{ label(type) }}
+              </button>
+            }
+          </div>
+        </div>
+
+        <!-- Inspector -->
+        <div class="pipe__inspector card">
+          @if (selectedStep(); as step) {
+            <h3 class="section-title">{{ label(step.type) }}</h3>
+            <p class="muted" style="margin-top: -0.4rem">{{ help(step.type) }}</p>
+
+            @if (step.type === 'injection_filter') {
+              <div class="field">
+                <label for="insp-mode">Detection mode</label>
+                <select
+                  id="insp-mode"
+                  [ngModel]="step.config.mode || 'heuristic'"
+                  (ngModelChange)="setStepField(selectedIndex(), 'mode', $event)"
+                >
+                  <option value="heuristic">Heuristic — pattern matching (free, instant)</option>
+                  <option value="llm">LLM classifier — a model judges the text</option>
                 </select>
-                <p class="hint">
-                  A classifier can fail to answer — the model is unreachable, or it replies with
-                  something that is neither verdict. Serving those requests means this filter
-                  silently stops protecting anything while still showing as active here.
-                </p>
               </div>
               <div class="field">
-                <label for="insp-filter-model">Classifier model</label>
+                <label for="insp-action">On detection</label>
+                <select
+                  id="insp-action"
+                  [ngModel]="step.config.action || 'block'"
+                  (ngModelChange)="setStepField(selectedIndex(), 'action', $event)"
+                >
+                  <option value="block">Block the request (reject)</option>
+                  <option value="flag">Flag &amp; continue (log only)</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="insp-scope">Scan</label>
+                <select
+                  id="insp-scope"
+                  [ngModel]="step.config.scope || 'user'"
+                  (ngModelChange)="setStepField(selectedIndex(), 'scope', $event)"
+                >
+                  <option value="user">User message only</option>
+                  <option value="system_user">System prompt + user message</option>
+                </select>
+              </div>
+
+              @if (step.config.mode === 'llm') {
+                <div class="field">
+                  <label for="insp-undetermined">If the classifier cannot decide</label>
+                  <select
+                    id="insp-undetermined"
+                    [ngModel]="step.config.on_undetermined || 'block'"
+                    (ngModelChange)="setStepField(selectedIndex(), 'on_undetermined', $event)"
+                  >
+                    <option value="block">Refuse the request (recommended)</option>
+                    <option value="allow">Serve it unchecked</option>
+                  </select>
+                  <p class="hint">
+                    A classifier can fail to answer — the model is unreachable, or it replies with
+                    something that is neither verdict. Serving those requests means this filter
+                    silently stops protecting anything while still showing as active here.
+                  </p>
+                </div>
+                <div class="field">
+                  <label for="insp-filter-model">Classifier model</label>
+                  <input
+                    id="insp-filter-model"
+                    [ngModel]="step.config.model || ''"
+                    (ngModelChange)="setStepField(selectedIndex(), 'model', $event)"
+                    placeholder="defaults to first available model"
+                  />
+                </div>
+                <div class="field">
+                  <label for="insp-instruction">Instruction to the classifier (optional)</label>
+                  <textarea
+                    id="insp-instruction"
+                    rows="3"
+                    [ngModel]="step.config.instruction || ''"
+                    (ngModelChange)="setStepField(selectedIndex(), 'instruction', $event)"
+                    placeholder="Default: reply INJECTION or SAFE for the message."
+                  ></textarea>
+                </div>
+              } @else {
+                <div class="field">
+                  <label class="row" style="gap: 0.4rem">
+                    <input
+                      type="checkbox"
+                      style="width: auto"
+                      [ngModel]="step.config.use_builtins !== false"
+                      (ngModelChange)="setStepField(selectedIndex(), 'use_builtins', $event)"
+                    />
+                    Use built-in patterns
+                  </label>
+                </div>
+                <details>
+                  <summary class="muted">Built-in patterns ({{ builtinLabels.length }})</summary>
+                  <ul class="pattern-list">
+                    @for (p of builtinLabels; track p) {
+                      <li>{{ p }}</li>
+                    }
+                  </ul>
+                </details>
+                <div class="field">
+                  <label for="insp-patterns"
+                    >Custom patterns (one per line — keyword or regex)</label
+                  >
+                  <textarea
+                    id="insp-patterns"
+                    rows="3"
+                    [ngModel]="(step.config.patterns || []).join('\n')"
+                    (ngModelChange)="setListField(selectedIndex(), 'patterns', $event)"
+                    placeholder="e.g. exfiltrate&#10;bypass\s+safety"
+                  ></textarea>
+                </div>
+              }
+            } @else if (step.type === 'allow_check') {
+              <div class="field">
+                <label for="insp-allowed">Allowed models (comma-separated)</label>
                 <input
-                  id="insp-filter-model"
+                  id="insp-allowed"
+                  [ngModel]="(step.config.models || []).join(', ')"
+                  (ngModelChange)="setListField(selectedIndex(), 'models', $event)"
+                  placeholder="gemini-2.0-flash, mock-1"
+                />
+              </div>
+              <p class="muted">Requests for any other model are rejected with 403.</p>
+            } @else if (step.type === 'model_route') {
+              <div class="field">
+                <label for="insp-route-model">Classifier model</label>
+                <input
+                  id="insp-route-model"
                   [ngModel]="step.config.model || ''"
                   (ngModelChange)="setStepField(selectedIndex(), 'model', $event)"
                   placeholder="defaults to first available model"
                 />
               </div>
-              <div class="field">
-                <label for="insp-instruction">Instruction to the classifier (optional)</label>
-                <textarea
-                  id="insp-instruction"
-                  rows="3"
-                  [ngModel]="step.config.instruction || ''"
-                  (ngModelChange)="setStepField(selectedIndex(), 'instruction', $event)"
-                  placeholder="Default: reply INJECTION or SAFE for the message."
-                ></textarea>
-              </div>
-            } @else {
-              <div class="field">
-                <label class="row" style="gap: 0.4rem">
-                  <input
-                    type="checkbox"
-                    style="width: auto"
-                    [ngModel]="step.config.use_builtins !== false"
-                    (ngModelChange)="setStepField(selectedIndex(), 'use_builtins', $event)"
-                  />
-                  Use built-in patterns
-                </label>
-              </div>
-              <details>
-                <summary class="muted">Built-in patterns ({{ builtinLabels.length }})</summary>
-                <ul class="pattern-list">
-                  @for (p of builtinLabels; track p) {
-                    <li>{{ p }}</li>
-                  }
-                </ul>
-              </details>
-              <div class="field">
-                <label for="insp-patterns">Custom patterns (one per line — keyword or regex)</label>
-                <textarea
-                  id="insp-patterns"
-                  rows="3"
-                  [ngModel]="(step.config.patterns || []).join('\n')"
-                  (ngModelChange)="setListField(selectedIndex(), 'patterns', $event)"
-                  placeholder="e.g. exfiltrate&#10;bypass\s+safety"
-                ></textarea>
-              </div>
-            }
-          } @else if (step.type === 'allow_check') {
-            <div class="field">
-              <label for="insp-allowed">Allowed models (comma-separated)</label>
-              <input
-                id="insp-allowed"
-                [ngModel]="(step.config.models || []).join(', ')"
-                (ngModelChange)="setListField(selectedIndex(), 'models', $event)"
-                placeholder="gemini-2.0-flash, mock-1"
-              />
-            </div>
-            <p class="muted">Requests for any other model are rejected with 403.</p>
-          } @else if (step.type === 'model_route') {
-            <div class="field">
-              <label for="insp-route-model">Classifier model</label>
-              <input
-                id="insp-route-model"
-                [ngModel]="step.config.model || ''"
-                (ngModelChange)="setStepField(selectedIndex(), 'model', $event)"
-                placeholder="defaults to first available model"
-              />
-            </div>
-            <p class="muted">
-              The classifier reads system + user text and picks one category below.
-            </p>
+              <p class="muted">
+                The classifier reads system + user text and picks one category below.
+              </p>
 
-            @for (cat of step.config.categories || []; track $index) {
-              <div class="category">
-                <div class="row" style="gap: 0.4rem">
+              @for (cat of step.config.categories || []; track $index) {
+                <div class="category">
+                  <div class="row" style="gap: 0.4rem">
+                    <input
+                      class="grow"
+                      [ngModel]="cat.name"
+                      (ngModelChange)="setCategoryField(selectedIndex(), $index, 'name', $event)"
+                      placeholder="category, e.g. code"
+                      [attr.aria-label]="'Category ' + ($index + 1) + ' name'"
+                    />
+                    <input
+                      class="grow"
+                      [ngModel]="cat.model"
+                      (ngModelChange)="setCategoryField(selectedIndex(), $index, 'model', $event)"
+                      placeholder="→ model, e.g. strong-1"
+                      [attr.aria-label]="'Category ' + ($index + 1) + ' target model'"
+                    />
+                    <button
+                      type="button"
+                      class="btn btn--sm btn--danger"
+                      [attr.aria-label]="'Remove category ' + ($index + 1)"
+                      (click)="removeCategory(selectedIndex(), $index)"
+                    >
+                      ✕
+                    </button>
+                  </div>
                   <input
-                    class="grow"
-                    [ngModel]="cat.name"
-                    (ngModelChange)="setCategoryField(selectedIndex(), $index, 'name', $event)"
-                    placeholder="category, e.g. code"
-                    [attr.aria-label]="'Category ' + ($index + 1) + ' name'"
+                    [ngModel]="cat.description || ''"
+                    (ngModelChange)="
+                      setCategoryField(selectedIndex(), $index, 'description', $event)
+                    "
+                    placeholder="when to pick this (helps the classifier)"
+                    [attr.aria-label]="'Category ' + ($index + 1) + ' description'"
                   />
-                  <input
-                    class="grow"
-                    [ngModel]="cat.model"
-                    (ngModelChange)="setCategoryField(selectedIndex(), $index, 'model', $event)"
-                    placeholder="→ model, e.g. strong-1"
-                    [attr.aria-label]="'Category ' + ($index + 1) + ' target model'"
-                  />
-                  <button
-                    type="button"
-                    class="btn btn--sm btn--danger"
-                    [attr.aria-label]="'Remove category ' + ($index + 1)"
-                    (click)="removeCategory(selectedIndex(), $index)"
-                  >
-                    ✕
-                  </button>
                 </div>
+              }
+              <button type="button" class="btn btn--sm" (click)="addCategory(selectedIndex())">
+                + Add category
+              </button>
+
+              <div class="field" style="margin-top: 0.75rem">
+                <label for="insp-default-model">Default model (when nothing matches)</label>
                 <input
-                  [ngModel]="cat.description || ''"
-                  (ngModelChange)="setCategoryField(selectedIndex(), $index, 'description', $event)"
-                  placeholder="when to pick this (helps the classifier)"
-                  [attr.aria-label]="'Category ' + ($index + 1) + ' description'"
+                  id="insp-default-model"
+                  [ngModel]="step.config.default_model || ''"
+                  (ngModelChange)="setStepField(selectedIndex(), 'default_model', $event)"
+                  placeholder="e.g. mock-1"
                 />
               </div>
             }
-            <button type="button" class="btn btn--sm" (click)="addCategory(selectedIndex())">
-              + Add category
-            </button>
-
-            <div class="field" style="margin-top: 0.75rem">
-              <label for="insp-default-model">Default model (when nothing matches)</label>
+          } @else if (selected() === 'fallback') {
+            <h3 class="section-title">Fallback chain</h3>
+            <div class="field">
+              <label for="insp-fallback">Fallback models (comma-separated, in order)</label>
               <input
-                id="insp-default-model"
-                [ngModel]="step.config.default_model || ''"
-                (ngModelChange)="setStepField(selectedIndex(), 'default_model', $event)"
-                placeholder="e.g. mock-1"
+                id="insp-fallback"
+                [ngModel]="config().fallback_models.join(', ')"
+                (ngModelChange)="setFallback($event)"
+                placeholder="gemini-1.5-flash, mock-1"
               />
             </div>
+            <p class="muted">Tried in order when the primary upstream fails (non-streaming).</p>
+          } @else {
+            <p class="muted">Select a node in the graph to configure it.</p>
           }
-        } @else if (selected() === 'fallback') {
-          <h3 class="section-title">Fallback chain</h3>
-          <div class="field">
-            <label for="insp-fallback">Fallback models (comma-separated, in order)</label>
-            <input
-              id="insp-fallback"
-              [ngModel]="config().fallback_models.join(', ')"
-              (ngModelChange)="setFallback($event)"
-              placeholder="gemini-1.5-flash, mock-1"
-            />
-          </div>
-          <p class="muted">Tried in order when the primary upstream fails (non-streaming).</p>
-        } @else {
-          <p class="muted">Select a node in the graph to configure it.</p>
-        }
+        </div>
       </div>
-    </div>
+    </fieldset>
 
     <!-- Test panel -->
     <div class="card stack">
@@ -379,6 +396,11 @@
           </div>
           @if (dryRunError(); as message) {
             <p class="callout callout--danger">{{ message }}</p>
+          }
+          @if (dryRunning() && dryRun()) {
+            <p class="muted" style="margin: 0 0 0.4rem">
+              Re-running — showing the previous result…
+            </p>
           }
           @if (dryRun(); as result) {
             @if (result.blocked) {

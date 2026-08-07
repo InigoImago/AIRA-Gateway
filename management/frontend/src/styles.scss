@@ -321,8 +321,13 @@ $field-label-gap: 0.3rem;
   overflow-wrap: anywhere;
 }
 /* Keep action buttons on one line so the column does not collapse into a stack. */
+/* A row's actions. `gap` rather than `white-space: nowrap` alone: "Edit" and "Remove" flush
+ * against each other invite the wrong one, and the destructive one is the one that gets hit. */
 .table .table__actions {
-  text-align: right;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 0.4rem;
   white-space: nowrap;
 }
 .table th {
@@ -564,9 +569,64 @@ $field-label-gap: 0.3rem;
   background: var(--aira-surface-muted, transparent);
 }
 .stat dt {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
   font-size: 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
+  color: var(--aira-text-muted);
+}
+
+/* The "i" beside a figure. A governance console is read by people deciding whether a control is
+ * working, and a number whose definition is guessed at gets argued about instead of acted on —
+ * but a heading long enough to define itself is a heading that wraps and breaks the row. This is
+ * where the rest of the sentence goes. */
+.stat__info {
+  flex: 0 0 auto;
+  width: 1.05rem;
+  height: 1.05rem;
+  padding: 0;
+  border: 1px solid var(--aira-border);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--aira-text-muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1;
+  font-style: italic;
+  cursor: pointer;
+}
+.stat__info:hover,
+.stat__info:focus-visible {
+  border-color: var(--aira-accent, currentColor);
+  color: var(--aira-text, currentColor);
+}
+
+/* The explanation an info button opens. Inside the card, under the figure it is about — a
+ * tooltip elsewhere on the page would make the reader hunt for what it refers to. */
+.stat__help {
+  margin: 0.5rem 0 0;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--aira-border);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: var(--aira-text-muted);
+}
+.stat__info[aria-expanded='true'] {
+  color: #fff;
+  background: var(--aira-brand);
+  border-color: var(--aira-brand);
+}
+
+/* The unit under a paired figure — "prompt / completion" belongs with the number, not in the
+ * heading where it doubled the heading's length. */
+.stat__unit {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
   color: var(--aira-text-muted);
 }
 .stat dd {
@@ -597,4 +657,87 @@ $field-label-gap: 0.3rem;
   font-weight: 600;
   color: var(--aira-text-muted);
   margin-bottom: 0.3rem;
+}
+
+/* ---- spacing that was missing (FRD-206) ------------------------------------------- */
+
+/* A select and the button that acts on it, sitting flush against each other, read as one
+ * control — and the export row had exactly that. */
+.form-row--spaced {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+/* Two buttons touching invite the wrong one. "Edit" and "Remove" side by side with no gap is the
+ * version of that with the highest cost, so the gap is defined where a row of actions is defined
+ * rather than per screen. */
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+/* ---- modal window ----------------------------------------------------------------- */
+
+/* Editing a row from a table used to unfold a form far below the row it was about, with nothing
+ * on screen naming the model being edited and the table still clickable behind it — so a second
+ * Edit silently replaced the first one's unsaved changes. A window names its subject, has one way
+ * out, and cannot be edited past. */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(16, 24, 40, 0.45);
+  z-index: 40;
+}
+.modal {
+  position: fixed;
+  z-index: 41;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(880px, calc(100vw - 2rem));
+  max-height: calc(100vh - 3rem);
+  display: flex;
+  flex-direction: column;
+  background: var(--aira-surface);
+  border: 1px solid var(--aira-border);
+  border-radius: var(--aira-radius);
+  box-shadow: var(--aira-shadow-lg);
+}
+.modal:focus-visible {
+  outline: none;
+}
+.modal__head,
+.modal__foot {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 1rem 1.25rem;
+}
+.modal__head {
+  justify-content: space-between;
+  border-bottom: 1px solid var(--aira-border);
+}
+.modal__foot {
+  justify-content: flex-end;
+  border-top: 1px solid var(--aira-border);
+  flex-wrap: wrap;
+}
+/* The only scrolling part, so the title stays visible and Save stays reachable however long the
+ * declaration gets. */
+.modal__body {
+  padding: 1.25rem;
+  overflow-y: auto;
+}
+
+/* A fieldset used only for its `disabled` semantics — it must not draw a box around the thing it
+ * is making read-only. */
+fieldset.bare {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
 }

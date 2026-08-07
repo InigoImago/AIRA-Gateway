@@ -7,6 +7,7 @@ from aira_management.rbac import (
     IsUseCaseAdmin,
     IsUseCaseUser,
     has_governance_role,
+    has_oversight_role,
     has_role,
     scope_queryset,
     sync_user_roles,
@@ -76,3 +77,37 @@ def test_scope_queryset_non_governance_is_filtered() -> None:
     user = _user_with_roles("use-case-user")
     scoped = scope_queryset(user, "auth.view_group", Group.objects.all())
     assert scoped.count() == 0  # no object-level permissions granted
+
+
+@pytest.mark.django_db
+def test_security_oversight_is_a_restricted_view_not_an_absent_one() -> None:
+    """Found by logging in as `itsec` and finding an empty console.
+
+    PRD §154 gives IT Security "security oversight (restricted view) … cross-use-case anomaly
+    visibility … **cannot** see all business content by default". The restriction is on content and
+    spend, not on knowing which use cases exist — retention, payload storage, filters and limits
+    are exactly the security-relevant metadata that role is there to oversee.
+
+    It was folded in with the spend roles, so it saw nothing at all. A role that sees nothing is
+    not a restricted view.
+    """
+    from aira_management.apps.usecases.models import UseCase
+
+    UseCase.objects.create(slug="somebody-elses", name="Not theirs")
+    user = get_user_model().objects.create(username="itsec-probe")
+    sync_user_roles(user, {"realm_access": {"roles": ["it-security"]}})
+
+    visible = scope_queryset(user, "usecases.view_usecase", UseCase.objects.all())
+
+    assert visible.filter(slug="somebody-elses").exists()
+
+
+@pytest.mark.django_db
+def test_security_oversight_is_still_not_a_spend_role() -> None:
+    """The other half, and the reason the two sets are separate rather than one widened set: the
+    figures stay with the roles the PRD gives them."""
+    user = get_user_model().objects.create(username="itsec-spend")
+    sync_user_roles(user, {"realm_access": {"roles": ["it-security"]}})
+
+    assert not has_governance_role(user)
+    assert has_oversight_role(user)

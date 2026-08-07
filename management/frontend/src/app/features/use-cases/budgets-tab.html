@@ -1,20 +1,29 @@
 <div class="card" role="tabpanel" aria-labelledby="tab-budgets">
   <div class="spread">
     <h3 class="section-title" style="margin: 0">Budgets</h3>
-    <button
-      type="button"
-      class="btn btn--sm btn--primary"
-      [attr.aria-expanded]="showForm()"
-      (click)="showForm.set(!showForm())"
-    >
-      {{ showForm() ? 'Cancel' : '+ Add budget' }}
-    </button>
+    @if (canManage()) {
+      <button
+        type="button"
+        class="btn btn--sm btn--primary"
+        [attr.aria-expanded]="showForm()"
+        (click)="showForm.set(!showForm())"
+      >
+        {{ showForm() ? 'Cancel' : '+ Add budget' }}
+      </button>
+    }
   </div>
   <p class="muted" style="margin: 0.25rem 0 0">
     Token / request limits per period. The gateway rejects requests over budget with 429.
   </p>
 
-  @if (showForm()) {
+  @if (!canManage()) {
+    <p class="muted" style="margin: 0.25rem 0 0" data-testid="budgets-readonly">
+      You can see what this use case may spend and how much of it is gone. Setting a limit is done
+      by its administrators.
+    </p>
+  }
+
+  @if (showForm() && canManage()) {
     <form class="form-inline disclosure" (ngSubmit)="add()">
       <div class="field">
         <label for="budget-scope">Scope</label>
@@ -108,9 +117,14 @@
   @if (usageUnavailable() && budgets().length) {
     <p class="callout callout--warning" style="margin-top: 1rem">
       @if (usageRefused()) {
-        Consumption is hidden because the gateway does not count you as a member of this use case.
-        Membership for the data plane comes from the Keycloak group
-        <code>/use-cases/{{ slug() }}</code> — ask an administrator to add you there.
+        <!--
+          Two different membership lists, and saying only "you are not a member" while the reader
+          is looking at their own name in the Members tab reads as a broken screen.
+        -->
+        The limits below are in force; what has been consumed is not shown. Consumption comes from
+        the gateway, which takes membership from the Keycloak group
+        <code>/use-cases/{{ slug() }}</code> — <strong>not</strong> from the member list on this
+        page. Being listed there does not put you in the group. Ask an administrator to add you.
       } @else {
         Consumption is unavailable — the gateway could not be reached. The configured limits below
         are still in force.
@@ -126,15 +140,17 @@
             <strong>{{ labelFor(budget) }}</strong>
             <span class="badge badge--muted">{{ budget.period }}</span>
           </div>
-          <button
-            type="button"
-            class="btn btn--sm btn--danger"
-            [disabled]="feedback.busy()"
-            [attr.aria-label]="'Remove budget for ' + labelFor(budget)"
-            (click)="remove(budget.id)"
-          >
-            Remove
-          </button>
+          @if (canManage()) {
+            <button
+              type="button"
+              class="btn btn--sm btn--danger"
+              [disabled]="feedback.busy()"
+              [attr.aria-label]="'Remove budget for ' + labelFor(budget)"
+              (click)="remove(budget.id)"
+            >
+              Remove
+            </button>
+          }
         </div>
 
         @if (budget.limit_cost) {

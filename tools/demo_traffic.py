@@ -86,8 +86,7 @@ async def _embed(client: httpx.AsyncClient, slug: str) -> int:
         headers={"x-goog-api-key": key_for(slug), "content-type": "application/json"},
         json={
             "requests": [
-                {"content": {"parts": [{"text": f"Wissensbaustein {index}"}]}}
-                for index in range(4)
+                {"content": {"parts": [{"text": f"Wissensbaustein {index}"}]}} for index in range(4)
             ]
         },
     )

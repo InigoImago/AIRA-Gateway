@@ -109,178 +109,217 @@
   @if (canEdit()) {
     <div class="card">
       <div class="spread">
-        <h3 class="section-title" style="margin: 0">Add or update a model</h3>
-        <button
-          type="button"
-          class="btn btn--sm btn--primary"
-          [attr.aria-expanded]="showAdd()"
-          (click)="showAdd.set(!showAdd())"
-        >
-          {{ showAdd() ? 'Cancel' : '+ Add model' }}
-        </button>
+        <h3 class="section-title" style="margin: 0">Model declarations</h3>
+        <button type="button" class="btn btn--sm btn--primary" (click)="add()">+ Add model</button>
       </div>
-
-      @if (showAdd()) {
-        <form class="form-inline disclosure" (ngSubmit)="save()">
-          <div class="field grow">
-            <label for="model-name">Model id</label>
-            <input
-              id="model-name"
-              name="name"
-              [ngModel]="name()"
-              (ngModelChange)="name.set($event)"
-              placeholder="gemini-2.0-flash"
-              autocomplete="off"
-            />
-            <span class="field__hint">Exactly as the gateway exposes it.</span>
-          </div>
-          <div class="field">
-            <label for="model-display">Display name</label>
-            <input
-              id="model-display"
-              name="display_name"
-              [ngModel]="displayName()"
-              (ngModelChange)="displayName.set($event)"
-              autocomplete="off"
-            />
-          </div>
-          <div class="field">
-            <label for="model-provider">Provider</label>
-            <input
-              id="model-provider"
-              name="provider"
-              [ngModel]="provider()"
-              (ngModelChange)="provider.set($event)"
-              placeholder="google"
-              autocomplete="off"
-            />
-          </div>
-          <div class="field">
-            <label for="model-input">Input price / 1M</label>
-            <input
-              id="model-input"
-              name="input_price"
-              inputmode="decimal"
-              [ngModel]="inputPrice()"
-              (ngModelChange)="inputPrice.set($event)"
-              placeholder="0.075"
-              autocomplete="off"
-            />
-          </div>
-          <div class="field">
-            <label for="model-output">Output price / 1M</label>
-            <input
-              id="model-output"
-              name="output_price"
-              inputmode="decimal"
-              [ngModel]="outputPrice()"
-              (ngModelChange)="outputPrice.set($event)"
-              placeholder="0.30"
-              autocomplete="off"
-            />
-          </div>
-          <div class="field">
-            <label for="model-publisher">Publisher</label>
-            <input
-              id="model-publisher"
-              name="publisher"
-              [ngModel]="publisher()"
-              (ngModelChange)="publisher.set($event)"
-              placeholder="google | anthropic | openai"
-              autocomplete="off"
-            />
-            <span class="field__hint">Selects the wire dialect the gateway speaks to it.</span>
-          </div>
-          <div class="field">
-            <label for="model-platform">Platform</label>
-            <input
-              id="model-platform"
-              name="platform"
-              [ngModel]="platform()"
-              (ngModelChange)="platform.set($event)"
-              placeholder="vertex | foundry"
-              autocomplete="off"
-            />
-          </div>
-          <div class="field">
-            <label for="model-hosting">Hosting</label>
-            <select
-              id="model-hosting"
-              name="hosting"
-              [ngModel]="hosting()"
-              (ngModelChange)="hosting.set($event)"
-            >
-              <option value="">—</option>
-              <option value="managed">Managed by the vendor</option>
-              <option value="self_deployed">Self-deployed (our capacity)</option>
-            </select>
-            <span class="field__hint">
-              Self-deployed endpoints cold-start and answer 429 for capacity, not quota.
-            </span>
-          </div>
-          <div class="field">
-            <label for="model-max-output">Max output tokens</label>
-            <input
-              id="model-max-output"
-              type="number"
-              min="1"
-              name="max_output"
-              [ngModel]="maxOutput()"
-              (ngModelChange)="maxOutput.set($event)"
-              placeholder="—"
-            />
-          </div>
-          <div class="field">
-            <label for="model-default-output">Default output tokens</label>
-            <input
-              id="model-default-output"
-              type="number"
-              min="1"
-              name="default_output"
-              [ngModel]="defaultOutput()"
-              (ngModelChange)="defaultOutput.set($event)"
-              placeholder="—"
-            />
-            <span class="field__hint">Applied when the caller sets no cap.</span>
-          </div>
-
-          <fieldset class="field" style="border: 0; padding: 0; margin: 0">
-            <legend class="field__legend">Capabilities</legend>
-            @for (capability of allCapabilities; track capability) {
-              <label class="checkline">
-                <input
-                  type="checkbox"
-                  [name]="'cap-' + capability"
-                  [ngModel]="hasCapability(capability)"
-                  (ngModelChange)="toggleCapability(capability, $event)"
-                />
-                {{ capability }}
-              </label>
-            }
-            <span class="field__hint">
-              Nothing ticked means <strong>undeclared</strong>: the gateway serves generation and
-              embedding and refuses everything beyond it.
-            </span>
-          </fieldset>
-
-          <label class="checkline">
-            <input
-              type="checkbox"
-              name="deprecated"
-              [ngModel]="deprecated()"
-              (ngModelChange)="deprecated.set($event)"
-            />
-            Deprecated — requests still succeed and carry a warning
-          </label>
-
-          <button type="submit" class="btn btn--primary" [disabled]="!canSave()">
-            {{ busy() ? 'Saving…' : 'Save' }}
-          </button>
-          @if (formError(); as message) {
-            <span class="field__hint field__hint--error">{{ message }}</span>
-          }
-        </form>
-      }
+      <p class="muted" style="margin: 0.5rem 0 0">
+        A declaration is what the gateway enforces: the output cap, what the model can be asked to
+        do, and what it costs. Use <strong>Edit</strong> on a row to correct one.
+      </p>
     </div>
   }
 </div>
+
+<!--
+  The editor is a window, not a panel that unfolds under the table.
+
+  Editing a row from the table used to scroll the page to a form far below the row it was about,
+  with nothing on screen saying which model was being edited — and with the table still visible and
+  still clickable, so a second Edit silently replaced the first one's unsaved changes. A modal says
+  what it is about, has one way out, and cannot be edited past.
+-->
+@if (showAdd()) {
+  <div class="modal-backdrop" (click)="close()"></div>
+  <div
+    #dialog
+    class="modal"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="model-editor-title"
+    tabindex="-1"
+  >
+    <div class="modal__head">
+      <h3 id="model-editor-title" style="margin: 0">
+        @if (editing()) {
+          Edit <code>{{ editing() }}</code>
+        } @else {
+          Add a model
+        }
+      </h3>
+      <button type="button" class="btn btn--sm btn--ghost" aria-label="Close" (click)="close()">
+        ✕
+      </button>
+    </div>
+
+    <div class="modal__body">
+      <form id="model-editor-form" class="form-inline" (ngSubmit)="save()">
+        <div class="field grow">
+          <label for="model-name">Model id</label>
+          <input
+            id="model-name"
+            name="name"
+            [ngModel]="name()"
+            (ngModelChange)="name.set($event)"
+            [readOnly]="!!editing()"
+            placeholder="gemini-2.0-flash"
+            autocomplete="off"
+          />
+          <span class="field__hint">Exactly as the gateway exposes it.</span>
+        </div>
+        <div class="field">
+          <label for="model-display">Display name</label>
+          <input
+            id="model-display"
+            name="display_name"
+            [ngModel]="displayName()"
+            (ngModelChange)="displayName.set($event)"
+            autocomplete="off"
+          />
+        </div>
+        <div class="field">
+          <label for="model-provider">Provider</label>
+          <input
+            id="model-provider"
+            name="provider"
+            [ngModel]="provider()"
+            (ngModelChange)="provider.set($event)"
+            placeholder="google"
+            autocomplete="off"
+          />
+        </div>
+        <div class="field">
+          <label for="model-input">Input price / 1M</label>
+          <input
+            id="model-input"
+            name="input_price"
+            inputmode="decimal"
+            [ngModel]="inputPrice()"
+            (ngModelChange)="inputPrice.set($event)"
+            placeholder="0.075"
+            autocomplete="off"
+          />
+        </div>
+        <div class="field">
+          <label for="model-output">Output price / 1M</label>
+          <input
+            id="model-output"
+            name="output_price"
+            inputmode="decimal"
+            [ngModel]="outputPrice()"
+            (ngModelChange)="outputPrice.set($event)"
+            placeholder="0.30"
+            autocomplete="off"
+          />
+        </div>
+        <div class="field">
+          <label for="model-publisher">Publisher</label>
+          <input
+            id="model-publisher"
+            name="publisher"
+            [ngModel]="publisher()"
+            (ngModelChange)="publisher.set($event)"
+            placeholder="google | anthropic | openai"
+            autocomplete="off"
+          />
+          <span class="field__hint">Selects the wire dialect the gateway speaks to it.</span>
+        </div>
+        <div class="field">
+          <label for="model-platform">Platform</label>
+          <input
+            id="model-platform"
+            name="platform"
+            [ngModel]="platform()"
+            (ngModelChange)="platform.set($event)"
+            placeholder="vertex | foundry"
+            autocomplete="off"
+          />
+        </div>
+        <div class="field">
+          <label for="model-hosting">Hosting</label>
+          <select
+            id="model-hosting"
+            name="hosting"
+            [ngModel]="hosting()"
+            (ngModelChange)="hosting.set($event)"
+          >
+            <option value="">—</option>
+            <option value="managed">Managed by the vendor</option>
+            <option value="self_deployed">Self-deployed (our capacity)</option>
+          </select>
+          <span class="field__hint">
+            Self-deployed endpoints cold-start and answer 429 for capacity, not quota.
+          </span>
+        </div>
+        <div class="field">
+          <label for="model-max-output">Max output tokens</label>
+          <input
+            id="model-max-output"
+            type="number"
+            min="1"
+            name="max_output"
+            [ngModel]="maxOutput()"
+            (ngModelChange)="maxOutput.set($event)"
+            placeholder="—"
+          />
+        </div>
+        <div class="field">
+          <label for="model-default-output">Default output tokens</label>
+          <input
+            id="model-default-output"
+            type="number"
+            min="1"
+            name="default_output"
+            [ngModel]="defaultOutput()"
+            (ngModelChange)="defaultOutput.set($event)"
+            placeholder="—"
+          />
+          <span class="field__hint">Applied when the caller sets no cap.</span>
+        </div>
+
+        <fieldset class="field" style="border: 0; padding: 0; margin: 0">
+          <legend class="field__legend">Capabilities</legend>
+          @for (capability of allCapabilities; track capability) {
+            <label class="checkline">
+              <input
+                type="checkbox"
+                [name]="'cap-' + capability"
+                [ngModel]="hasCapability(capability)"
+                (ngModelChange)="toggleCapability(capability, $event)"
+              />
+              {{ capability }}
+            </label>
+          }
+          <span class="field__hint">
+            Nothing ticked means <strong>undeclared</strong>: the gateway serves generation and
+            embedding and refuses everything beyond it.
+          </span>
+        </fieldset>
+
+        <label class="checkline">
+          <input
+            type="checkbox"
+            name="deprecated"
+            [ngModel]="deprecated()"
+            (ngModelChange)="deprecated.set($event)"
+          />
+          Deprecated — requests still succeed and carry a warning
+        </label>
+      </form>
+    </div>
+
+    <div class="modal__foot">
+      @if (formError(); as message) {
+        <span class="field__hint field__hint--error grow">{{ message }}</span>
+      }
+      <button type="button" class="btn" (click)="close()">Cancel</button>
+      <button
+        type="submit"
+        form="model-editor-form"
+        class="btn btn--primary"
+        [disabled]="!canSave()"
+      >
+        {{ busy() ? 'Saving…' : 'Save' }}
+      </button>
+    </div>
+  </div>
+}

@@ -35,6 +35,10 @@ export class BudgetsTab {
   readonly usage = input.required<Record<number, BudgetUsage>>();
   readonly usageUnavailable = input(false);
   readonly usageRefused = input(false);
+  /** Whether this caller may change anything here. Told by the page, which was told by the
+   * server — an object-level permission is not in the token, and a panel that assumes yes offers
+   * buttons that answer 403. */
+  readonly canManage = input(false);
   readonly changed = output<void>();
 
   private readonly service = inject(UseCaseService);

@@ -373,3 +373,63 @@ describe('isoDay', () => {
     expect(isoDay(new Date(2026, 0, 1, 0, 15))).toBe('2026-01-01');
   });
 });
+
+describe('ReportingPage — what each figure counts', () => {
+  it('opens the explanation when the info button is used', () => {
+    // Reported from the running console: the info buttons showed nothing. They carried a `title`
+    // attribute — a native tooltip needs a long hover, never appears on a touch screen, and is
+    // invisible to a keyboard. A control that does nothing when used is exactly the defect this
+    // pass was about, committed in the fix for it.
+    const { fixture, testid } = setup();
+
+    expect(testid('help-refused')).toBeNull();
+
+    testid('info-refused')?.dispatchEvent(new Event('click'));
+    fixture.detectChanges();
+
+    const help = testid('help-refused');
+    expect(help).not.toBeNull();
+    // The sentence has to say the thing the short heading cannot: these never reached a model.
+    expect(help?.textContent).toContain('never reached a model');
+    expect(testid('info-refused')?.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('closes on a second use, and shows one explanation at a time', () => {
+    const { fixture, testid } = setup();
+
+    testid('info-refused')?.dispatchEvent(new Event('click'));
+    fixture.detectChanges();
+    testid('info-tokens')?.dispatchEvent(new Event('click'));
+    fixture.detectChanges();
+
+    // Six open paragraphs is a wall of text where six figures were.
+    expect(testid('help-refused')).toBeNull();
+    expect(testid('help-tokens')).not.toBeNull();
+
+    testid('info-tokens')?.dispatchEvent(new Event('click'));
+    fixture.detectChanges();
+    expect(testid('help-tokens')).toBeNull();
+  });
+
+  it('still renders every figure, with its unit beside the number rather than in the heading', () => {
+    const { element, testid } = setup();
+
+    expect(testid('total-cost')).not.toBeNull();
+    expect(testid('total-requests')).not.toBeNull();
+    expect(testid('total-failed')).not.toBeNull();
+    expect(testid('total-refused')).not.toBeNull();
+    expect(element.querySelectorAll('.stat').length).toBe(6);
+    expect(element.textContent).toContain('prompt / completion');
+  });
+
+  it('says a dash for a period with no latency, and drops the unit with it', () => {
+    // A period with no served request has no latency. Printing "— average / maximum" labels a
+    // measurement that was never taken.
+    const { element, text } = setup(
+      of(report({ totals: row({ key: 'total', avg_latency_ms: null, max_latency_ms: null }) })),
+    );
+
+    expect(text()).toContain('—');
+    expect(element.textContent).not.toContain('average / maximum');
+  });
+});

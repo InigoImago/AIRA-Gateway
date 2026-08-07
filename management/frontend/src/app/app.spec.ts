@@ -49,17 +49,28 @@ describe('App', () => {
     expect(el.querySelector('.aira-user')?.textContent).toContain('demo');
   });
 
-  it('shows role-specific navigation for the user roles', async () => {
+  it('names the role in the header instead of showing tabs that do not respond', () => {
+    // The console used to render a disabled tab per oversight role — "Security", "Governance",
+    // "Administration" — for screens that do not exist. Somebody logging in as the administrator
+    // clicked "Administration" and nothing happened, which teaches only that something is broken.
+    //
+    // What a role *is* answers the question they actually have. The tabs come back when
+    // `FRD-500`/`501`/`503` build the console behind them.
     configure(true, ['it-security', 'global-admin']);
     const fixture = TestBed.createComponent(App);
     fixture.detectChanges();
-    await fixture.whenStable();
     const el = fixture.nativeElement as HTMLElement;
-    expect(el.querySelector('[data-role="it-security"]')).not.toBeNull();
-    expect(el.querySelector('[data-role="global-admin"]')).not.toBeNull();
-    expect(el.querySelector('[data-role="it-steuerung"]')).toBeNull();
-  });
 
+    // The tabs are gone from the navigation…
+    expect(el.querySelector('.aira-nav__item.is-disabled')).toBeNull();
+    // …and what they encoded — the console follows the roles in the token — is now a chip per
+    // role in the header, carrying the slug so it stays assertable without depending on wording.
+    expect(el.querySelector('.aira-user__role[data-role="it-security"]')).not.toBeNull();
+    expect(el.querySelector('.aira-user__role[data-role="global-admin"]')).not.toBeNull();
+    expect(el.querySelector('[data-role="use-case-user"]')).toBeNull();
+    expect(el.textContent).toContain('IT Security');
+    expect(el.textContent).toContain('Global administrator');
+  });
   it('signs the user out from the header', async () => {
     configure(true);
     const fixture = TestBed.createComponent(App);

@@ -8,6 +8,15 @@
       "name": "use-cases",
       "subGroups": [
         {
+          "name": "kundenservice"
+        },
+        {
+          "name": "entwicklung"
+        },
+        {
+          "name": "personalwesen"
+        },
+        {
           "name": "demo-uc"
         },
         {
@@ -155,6 +164,8 @@
         "use-case-admin"
       ],
       "groups": [
+        "/use-cases/kundenservice",
+        "/use-cases/entwicklung",
         "/use-cases/demo-uc"
       ]
     },
@@ -176,6 +187,7 @@
         "use-case-user"
       ],
       "groups": [
+        "/use-cases/kundenservice",
         "/use-cases/demo-uc"
       ]
     },

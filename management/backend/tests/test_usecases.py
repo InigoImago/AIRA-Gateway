@@ -248,3 +248,75 @@ def test_the_period_is_published_to_the_gateway(captured_events) -> None:
 
     published = [p for t, p in captured_events if t == "usecase.upserted"]
     assert published[-1]["retention_days"] == 14
+
+
+# ---- what the caller may do here, said out loud ------------------------------------------
+
+
+def test_the_detail_says_what_this_caller_may_do() -> None:
+    """Found by opening a use case as `ucuser` and seeing "Add member" and "Remove".
+
+    Object-level permission lives in guardian rows, not in the token, so the console cannot work
+    it out from `/me` — it was guessing, and it guessed generously. Clicking the button it offered
+    produced a 403 from the screen that had just invited the click, which reads as a broken system
+    rather than as a boundary.
+
+    The answer is the same predicates that enforce it, returned on the object.
+    """
+    admin = _user("perm-admin", "use-case-admin")
+    _create(_client(admin), "perm-uc")
+    member = _user("perm-user", "use-case-user")
+    _client(admin).post(
+        f"{BASE}perm-uc/members/", {"username": "perm-user", "role": "user"}, format="json"
+    )
+
+    as_admin = _client(admin).get(f"{BASE}perm-uc/").json()["permissions"]
+    assert as_admin == {"can_admin": True, "can_manage": True, "is_member": True}
+
+    as_member = _client(member).get(f"{BASE}perm-uc/").json()["permissions"]
+    assert as_member == {"can_admin": False, "can_manage": False, "is_member": True}
+
+
+def test_seeing_every_use_case_is_not_being_in_one() -> None:
+    """The other half, and the reason `is_member` is a separate answer from `can_manage`.
+
+    An oversight role sees every use case (FRD-201/ADR-0007) and may act inside none of them —
+    including issuing an API key, which is data-plane access. A console that read "I can see it"
+    as "I belong to it" would put a key-issuing button in front of exactly the roles that must
+    not have one.
+    """
+    admin = _user("scope-admin", "use-case-admin")
+    _create(_client(admin), "scope-uc")
+    steering = _user("scope-gov", "it-steuerung")
+
+    permissions = _client(steering).get(f"{BASE}scope-uc/").json()["permissions"]
+
+    assert permissions == {"can_admin": False, "can_manage": False, "is_member": False}
+
+
+def test_the_permissions_a_use_case_reports_are_the_ones_it_enforces() -> None:
+    """A restatement of a rule is a rule that drifts. This holds the two together: for each of the
+    three answers, the corresponding request must agree with what the object said."""
+    admin = _user("agree-admin", "use-case-admin")
+    _create(_client(admin), "agree-uc")
+    member = _user("agree-user", "use-case-user")
+    _client(admin).post(
+        f"{BASE}agree-uc/members/", {"username": "agree-user", "role": "user"}, format="json"
+    )
+
+    for user in (admin, member):
+        client = _client(user)
+        said = client.get(f"{BASE}agree-uc/").json()["permissions"]
+
+        admin_allowed = client.patch(f"{BASE}agree-uc/", {"name": "x"}, format="json").status_code
+        assert (admin_allowed != 403) is said["can_admin"]
+
+        manage_allowed = client.post(
+            f"{BASE}agree-uc/members/", {"username": "agree-user", "role": "user"}, format="json"
+        ).status_code
+        assert (manage_allowed != 403) is said["can_manage"]
+
+        member_allowed = client.post(
+            f"{BASE}agree-uc/api-keys/", {"label": "k"}, format="json"
+        ).status_code
+        assert (member_allowed != 403) is said["is_member"]

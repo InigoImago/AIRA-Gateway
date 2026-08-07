@@ -22,13 +22,17 @@ test.describe('Authentication', () => {
     expect(page.url()).toContain('code_challenge=');
   });
 
-  test('navigation reflects the realm roles carried by the token', async ({ page }) => {
+  test('the console reflects the realm roles carried by the token', async ({ page }) => {
+    // These used to be disabled navigation tabs pointing at screens that do not exist. They were
+    // removed — a tab that cannot be clicked reads as broken navigation — and the property they
+    // encoded moved to a chip per role in the header, which is where somebody asking "why can I
+    // not do this" is looking.
     await login(page, USERS.globalAdmin);
-    await expect(page.locator('[data-role="global-admin"]')).toBeVisible();
+    await expect(page.locator('.aira-user__role[data-role="global-admin"]')).toBeVisible();
     await logout(page);
 
     await login(page, USERS.governance);
-    await expect(page.locator('[data-role="it-steuerung"]')).toBeVisible();
+    await expect(page.locator('.aira-user__role[data-role="it-steuerung"]')).toBeVisible();
     await expect(page.locator('[data-role="global-admin"]')).toHaveCount(0);
   });
 

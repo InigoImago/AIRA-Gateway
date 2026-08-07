@@ -17,6 +17,7 @@ from aira_management.apps.seed.contributions.roles_and_users import seed_roles_a
 from aira_management.apps.seed.contributions.showcase import seed_showcase
 from aira_management.apps.usecases import events
 from aira_management.apps.usecases.models import UseCase
+from aira_management.apps.usecases.views import _grant
 from aira_management.rbac import scope_queryset, sync_user_roles
 from django.contrib.auth import get_user_model
 
@@ -55,12 +56,14 @@ def test_the_roles_do_not_all_see_the_same_thing(seeded) -> None:
     sync_user_roles(users["itgov"], {"realm_access": {"roles": ["it-steuerung"]}})
 
     admin_sees = set(
-        scope_queryset(users["ucadmin"], "usecases.view_usecase", UseCase.objects.all())
-        .values_list("slug", flat=True)
+        scope_queryset(
+            users["ucadmin"], "usecases.view_usecase", UseCase.objects.all()
+        ).values_list("slug", flat=True)
     )
     governance_sees = set(
-        scope_queryset(users["itgov"], "usecases.view_usecase", UseCase.objects.all())
-        .values_list("slug", flat=True)
+        scope_queryset(users["itgov"], "usecases.view_usecase", UseCase.objects.all()).values_list(
+            "slug", flat=True
+        )
     )
 
     assert "personalwesen" not in admin_sees, "the scoping is invisible in the demo"
@@ -159,3 +162,48 @@ def test_a_fresh_run_does_not_revoke_the_keys_it_is_about_to_reissue(seeded) -> 
     created = {payload["slug"] for kind, payload in recorded if kind == "usecase.upserted"}
 
     assert not (deleted & created), f"reset announced as retirement for {deleted & created}"
+
+
+@pytest.mark.django_db
+def test_a_membership_the_declaration_no_longer_names_is_removed() -> None:
+    """Found by asking the running stack who could manage what.
+
+    `itgov` was still administering `personalwesen` and `itsec` still belonged to
+    `kundenservice`, both from declarations that no longer exist. A seed that only ever adds
+    cannot be re-run to a known state, which is most of what a seed is for — and a stale
+    membership is not a stale row, it is live permission on a use case.
+    """
+    from aira_management.apps.usecases.access import may_manage
+    from aira_management.apps.usecases.models import UseCaseMembership
+
+    seed_roles_and_users(fresh=False)
+    seed_showcase(fresh=False)
+    usecase = UseCase.objects.get(slug="kundenservice")
+    intruder = get_user_model().objects.create(username="left-the-team")
+    UseCaseMembership.objects.create(use_case=usecase, user=intruder, role=UseCaseMembership.ADMIN)
+    _grant(intruder, usecase, UseCaseMembership.ADMIN)
+    assert may_manage(get_user_model().objects.get(pk=intruder.pk), usecase)
+
+    seed_showcase(fresh=False)
+
+    assert not UseCaseMembership.objects.filter(use_case=usecase, user=intruder).exists()
+    # And the permission it granted is gone with it, not left behind as an invisible grant.
+    assert not may_manage(get_user_model().objects.get(pk=intruder.pk), usecase)
+
+
+@pytest.mark.django_db
+def test_an_oversight_role_administers_nothing_in_the_demo() -> None:
+    """PRD §154 gives IT Steuerung every figure and no write anywhere. A walkthrough in which it
+    renames a use case demonstrates a boundary that does not exist."""
+    from aira_management.apps.usecases.access import may_manage
+
+    seed_roles_and_users(fresh=False)
+    seed_showcase(fresh=False)
+    users = get_user_model().objects
+
+    for username in ("itgov", "itsec"):
+        user = users.filter(username=username).first()
+        if user is None:
+            continue
+        for usecase in UseCase.objects.all():
+            assert not may_manage(user, usecase), f"{username} administers {usecase.slug}"

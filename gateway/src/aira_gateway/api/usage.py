@@ -3,6 +3,12 @@
 Returns current-period consumption per budget for a use case, for the management UI's budget
 view. Read-only — no dispatch, no payload data — but it *is* per-use-case operational data, so
 it requires an authenticated caller who is entitled to that use case (ADR-0007).
+
+**Entitled** is wider here than it is for *acting*. `authorize_use_case` asks for membership,
+which is exactly right before spending somebody's budget and wrong before reading a figure an
+oversight role can already see in full on the reporting screen. Refusing the per-use-case number
+to somebody who is shown the total was not a stricter rule, it was an inconsistent one — and in
+the console it appeared as "consumption is hidden" on every budget tab, for every role.
 """
 
 from __future__ import annotations
@@ -26,6 +32,9 @@ async def usage(
     use_case: str, request: Request, principal: Principal = Depends(require_principal)
 ) -> JSONResponse:
     require_valid_use_case(use_case)
-    authorize_use_case(principal, use_case)
+    # Oversight reads; everybody else has to be a member. The same split `FRD-601` makes for the
+    # spend report, applied to the figure that report is made of.
+    if not principal.is_governance:
+        authorize_use_case(principal, use_case)
     service: BudgetService = request.app.state.budgets
     return JSONResponse({"use_case": use_case, "usage": await service.usage(use_case)})

@@ -123,3 +123,15 @@
     padding: 1rem;
   }
 }
+
+/* One chip per role the token carries. Small and quiet: it answers "which hat am I wearing"
+ * without competing with the navigation. */
+.aira-user__role {
+  padding: 0.1rem 0.45rem;
+  border: 1px solid var(--aira-border);
+  border-radius: 999px;
+  font-size: 0.72rem;
+  color: var(--aira-text-muted);
+  white-space: nowrap;
+  cursor: help;
+}

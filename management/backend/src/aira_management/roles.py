@@ -8,6 +8,20 @@ look from inside Management.
 
 from __future__ import annotations
 
-from aira_common.roles import ALL_ROLES, GOVERNANCE_ROLES, Role, is_governance
+from aira_common.roles import (
+    ALL_ROLES,
+    GOVERNANCE_ROLES,
+    OVERSIGHT_ROLES,
+    Role,
+    has_oversight,
+    is_governance,
+)
 
-__all__ = ["ALL_ROLES", "GOVERNANCE_ROLES", "Role", "is_governance"]
+__all__ = [
+    "ALL_ROLES",
+    "GOVERNANCE_ROLES",
+    "OVERSIGHT_ROLES",
+    "Role",
+    "has_oversight",
+    "is_governance",
+]

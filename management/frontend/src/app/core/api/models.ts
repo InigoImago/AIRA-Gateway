@@ -6,7 +6,24 @@ export interface Me {
   use_cases: string[];
 }
 
+/**
+ * What the signed-in caller may do inside one use case, as the server answers it.
+ *
+ * Not derivable from `/me`: these are object-level (django-guardian) permissions, so the console
+ * has to be told. It used to guess, and it guessed generously — a use-case *user* was shown "Add
+ * member" and got a 403 from the screen that had just invited the click.
+ */
+export interface UseCasePermissions {
+  /** May rename or delete the use case itself. */
+  can_admin: boolean;
+  /** May change what happens inside it: members, keys, pipeline, budgets, limits. */
+  can_manage: boolean;
+  /** Actually belongs to it — which is what issuing an API key requires, and seeing it is not. */
+  is_member: boolean;
+}
+
 export interface UseCase {
+  permissions?: UseCasePermissions;
   slug: string;
   name: string;
   description: string;

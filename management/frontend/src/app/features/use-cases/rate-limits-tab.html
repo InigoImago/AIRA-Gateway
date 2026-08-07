@@ -1,14 +1,16 @@
 <div class="card" role="tabpanel" aria-labelledby="tab-rate-limits">
   <div class="spread">
     <h3 class="section-title" style="margin: 0">Rate limits</h3>
-    <button
-      type="button"
-      class="btn btn--sm btn--primary"
-      [attr.aria-expanded]="showForm()"
-      (click)="showForm.set(!showForm())"
-    >
-      {{ showForm() ? 'Cancel' : '+ Add rate limit' }}
-    </button>
+    @if (canManage()) {
+      <button
+        type="button"
+        class="btn btn--sm btn--primary"
+        [attr.aria-expanded]="showForm()"
+        (click)="showForm.set(!showForm())"
+      >
+        {{ showForm() ? 'Cancel' : '+ Add rate limit' }}
+      </button>
+    }
   </div>
   <p class="muted" style="margin: 0.25rem 0 0">
     A budget says how much may be spent; this says how fast. Without one, a client stuck in a retry
@@ -16,7 +18,13 @@
     it. Over the limit the gateway answers 429 with a <code>Retry-After</code>.
   </p>
 
-  @if (showForm()) {
+  @if (!canManage()) {
+    <p class="muted" style="margin: 0.25rem 0 0" data-testid="rate-limits-readonly">
+      You can see how fast this use case may send. Changing it is done by its administrators.
+    </p>
+  }
+
+  @if (showForm() && canManage()) {
     <form class="form-inline disclosure" (ngSubmit)="add()">
       <div class="field">
         <label for="rl-scope">Scope</label>
@@ -106,15 +114,17 @@
               }
             </td>
             <td class="right">
-              <button
-                type="button"
-                class="btn btn--sm btn--danger"
-                [disabled]="feedback.busy()"
-                [attr.aria-label]="'Remove the rate limit for ' + labelFor(limit)"
-                (click)="remove(limit.id)"
-              >
-                Remove
-              </button>
+              @if (canManage()) {
+                <button
+                  type="button"
+                  class="btn btn--sm btn--danger"
+                  [disabled]="feedback.busy()"
+                  [attr.aria-label]="'Remove the rate limit for ' + labelFor(limit)"
+                  (click)="remove(limit.id)"
+                >
+                  Remove
+                </button>
+              }
             </td>
           </tr>
         } @empty {

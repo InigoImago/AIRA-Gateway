@@ -1,5 +1,10 @@
 <div class="stack">
-  <h2 style="margin: 0">Use Cases</h2>
+  <div class="spread">
+    <h2 style="margin: 0">Use Cases</h2>
+    @if (canCreate()) {
+      <button type="button" class="btn btn--primary" (click)="openCreate()">+ New use case</button>
+    }
+  </div>
 
   @if (error(); as message) {
     <p class="callout callout--danger" role="alert">{{ message }}</p>
@@ -12,14 +17,21 @@
         Loading use cases…
       </p>
     } @else if (isEmpty()) {
-      <p class="empty">No use cases yet — create the first one below.</p>
+      <p class="empty">
+        No use cases yet.
+        @if (canCreate()) {
+          Use <strong>New use case</strong> above to create the first one.
+        }
+      </p>
     } @else {
       <div class="table-wrap">
         <table class="table">
           <thead>
             <tr>
               <th scope="col">Name</th>
-              <th scope="col">Slug</th>
+              <!-- "Slug" is our word, not the reader's. What it *is* to them is the identifier
+                   their systems will quote. -->
+              <th scope="col">Technical id</th>
             </tr>
           </thead>
           <tbody>
@@ -38,43 +50,87 @@
       </div>
     }
   </div>
-
-  <div class="card">
-    <h3 class="section-title">Create a use case</h3>
-    <form class="form-inline" (ngSubmit)="create()">
-      <div class="field">
-        <label for="uc-slug">Slug</label>
-        <input
-          id="uc-slug"
-          name="slug"
-          [ngModel]="slug()"
-          (ngModelChange)="slug.set($event)"
-          placeholder="a-z0-9-"
-          autocomplete="off"
-          [attr.aria-invalid]="slugError() ? 'true' : null"
-          [attr.aria-describedby]="slugError() ? 'uc-slug-error' : 'uc-slug-hint'"
-        />
-        @if (slugError(); as message) {
-          <span id="uc-slug-error" class="field__hint field__hint--error">{{ message }}</span>
-        } @else {
-          <span id="uc-slug-hint" class="field__hint"
-            >Used in the gateway URL and in API keys.</span
-          >
-        }
-      </div>
-      <div class="field grow">
-        <label for="uc-name">Name</label>
-        <input
-          id="uc-name"
-          name="name"
-          [ngModel]="name()"
-          (ngModelChange)="name.set($event)"
-          placeholder="Human-readable name"
-        />
-      </div>
-      <button type="submit" class="btn btn--primary" [disabled]="!canCreate()">
-        {{ creating() ? 'Creating…' : 'Create' }}
-      </button>
-    </form>
-  </div>
 </div>
+
+<!--
+  Creating a use case is a step, not a form parked under the list.
+
+  It also ends somewhere: a new use case has no members, no budget and no limits, and leaving the
+  creator back on the list makes an unconfigured use case look finished. Saving goes straight to
+  its settings.
+-->
+@if (showCreate()) {
+  <div class="modal-backdrop" (click)="closeCreate()"></div>
+  <div
+    #dialog
+    class="modal"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="uc-create-title"
+    tabindex="-1"
+  >
+    <div class="modal__head">
+      <h3 id="uc-create-title" style="margin: 0">New use case</h3>
+      <button
+        type="button"
+        class="btn btn--sm btn--ghost"
+        aria-label="Close"
+        (click)="closeCreate()"
+      >
+        ✕
+      </button>
+    </div>
+
+    <div class="modal__body">
+      <form id="uc-create-form" class="stack" (ngSubmit)="create()">
+        <div class="field">
+          <label for="uc-name">Name</label>
+          <input
+            id="uc-name"
+            name="name"
+            [ngModel]="name()"
+            (ngModelChange)="nameChanged($event)"
+            placeholder="Customer service assistant"
+            autocomplete="off"
+          />
+          <span class="field__hint">What people will call it. You can change this later.</span>
+        </div>
+
+        <div class="field">
+          <label for="uc-slug">Technical id</label>
+          <input
+            id="uc-slug"
+            name="slug"
+            [ngModel]="slug()"
+            (ngModelChange)="slugChanged($event)"
+            placeholder="customer-service-assistant"
+            autocomplete="off"
+            [attr.aria-invalid]="slugError() ? 'true' : null"
+            [attr.aria-describedby]="slugError() ? 'uc-slug-error' : 'uc-slug-hint'"
+          />
+          @if (slugError(); as message) {
+            <span id="uc-slug-error" class="field__hint field__hint--error">{{ message }}</span>
+          } @else {
+            <span id="uc-slug-hint" class="field__hint">
+              Filled in from the name, and you rarely need to touch it. It appears in the gateway
+              URL and in every API key issued here, so it is
+              <strong>permanent</strong> — the name is not.
+            </span>
+          }
+        </div>
+      </form>
+    </div>
+
+    <div class="modal__foot">
+      <button type="button" class="btn" (click)="closeCreate()">Cancel</button>
+      <button
+        type="submit"
+        form="uc-create-form"
+        class="btn btn--primary"
+        [disabled]="!canSubmit()"
+      >
+        {{ creating() ? 'Creating…' : 'Create and configure' }}
+      </button>
+    </div>
+  </div>
+}

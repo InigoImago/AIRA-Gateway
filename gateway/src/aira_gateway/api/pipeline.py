@@ -36,6 +36,33 @@ class DryRunRequest(BaseModel):
     pipeline: dict[str, Any] = {}
 
 
+def _model_the_pipeline_is_about(pipeline: dict[str, Any], models: list[Any]) -> str:
+    """Which model to simulate when the caller named none.
+
+    The first *registered* model was the obvious choice and the wrong one: a builder testing an
+    allow-check that permits `qwen3:0.6b` was answered **"Blocked: Model 'mock-1' is not
+    allowed"** — a refusal about a model the operator never chose, on a rule that is working
+    correctly. The dry run looked broken while the pipeline was fine.
+
+    So the pipeline's own configuration is asked first. A step that names models is a step saying
+    which models this pipeline is *for*.
+    """
+    steps = pipeline.get("steps") or []
+    for step in steps:
+        config = step.get("config") or {}
+        allowed = config.get("models") or []
+        if allowed:
+            return str(allowed[0])
+        for category in config.get("categories") or []:
+            if category.get("model"):
+                return str(category["model"])
+        if config.get("default_model"):
+            return str(config["default_model"])
+    for fallback in pipeline.get("fallback_models") or []:
+        return str(fallback)
+    return models[0].name if models else "mock-1"
+
+
 @router.post("/v1beta/pipeline:dryRun")
 async def dry_run(
     request: Request, _principal: Principal = Depends(require_principal)
@@ -53,7 +80,7 @@ async def dry_run(
     engine: PipelineEngine = request.app.state.pipeline_engine
 
     models = registry.models()
-    model = payload.model or (models[0].name if models else "mock-1")
+    model = payload.model or _model_the_pipeline_is_about(payload.pipeline, models)
     messages: list[CanonicalMessage] = []
     if payload.system:
         messages.append(CanonicalMessage(role=Role.SYSTEM, text=payload.system))

@@ -13,6 +13,9 @@ const USE_CASE: UseCase = {
   processing_notes: '',
   retention_days: 7,
   store_payloads: true,
+  // What the server says this caller may do here. An administrator, for most of these cases;
+  // the read-only ones say so themselves.
+  permissions: { can_admin: true, can_manage: true, is_member: true },
 };
 
 /** Only the members the tests touch; the rest of the surface is stubbed with empty results. */
@@ -652,5 +655,108 @@ describe('UseCaseDetail payload storage', () => {
     harness.fixture.detectChanges();
     expect(harness.text()).toContain('Payload storage');
     expect(harness.text()).toContain('off');
+  });
+});
+
+describe('UseCaseDetail — what a reader may do', () => {
+  /** The same use case, seen by somebody who belongs to it but administers nothing. */
+  const asReader = () =>
+    setup({
+      get: of({
+        ...USE_CASE,
+        permissions: { can_admin: false, can_manage: false, is_member: true },
+      }),
+      members: of([{ username: 'ada', role: 'user', created_at: '' }]),
+      apiKeys: of([{ prefix: 'abc123', label: 'k', owner: 'ada', is_active: true }]),
+    });
+
+  it('offers no action the server would refuse', () => {
+    // Reported from the running console: a use-case *user* saw "Add member" and "Remove", used
+    // one, and got a 403 from the screen that had just invited the click. An action nobody can
+    // carry out reads as a broken system rather than as a boundary.
+    const harness = asReader();
+    const html = () => harness.fixture.nativeElement as HTMLElement;
+
+    harness.component.selectTab('members');
+    harness.fixture.detectChanges();
+    expect(html().textContent).toContain('ada');
+    expect(html().querySelector('[aria-label="Remove ada"]')).toBeNull();
+    expect(html().textContent).not.toContain('+ Add member');
+    // …and says who does it, instead of leaving a table with no explanation.
+    expect(html().querySelector('[data-testid="members-readonly"]')).not.toBeNull();
+
+    harness.component.selectTab('keys');
+    harness.fixture.detectChanges();
+    expect(html().querySelector('[aria-label="Revoke key abc123"]')).toBeNull();
+
+    harness.component.selectTab('overview');
+    harness.fixture.detectChanges();
+    expect(html().querySelector('#store-payloads')).toBeNull();
+    // The setting is still *reported* — it is exactly the kind of thing a member needs to know.
+    expect(html().querySelector('[data-testid="retention-readonly"]')?.textContent).toContain('7');
+  });
+
+  it('still lets a member issue a key, because membership is what that needs', () => {
+    // The other half. `is_member` and `can_manage` are separate answers on purpose: seeing a use
+    // case must never imply acting in it (ADR-0007), and belonging to one must not require
+    // administering it.
+    const harness = asReader();
+    harness.component.selectTab('keys');
+    harness.fixture.detectChanges();
+
+    expect((harness.fixture.nativeElement as HTMLElement).textContent).toContain('+ Issue key');
+  });
+
+  it('assumes nothing while the answer has not arrived', () => {
+    // Defaulting to "yes" would flash every button on screen and then take them away, which is
+    // worse than showing them a moment later.
+    const harness = setup({ get: of({ ...USE_CASE, permissions: undefined }) });
+    harness.component.selectTab('members');
+    harness.fixture.detectChanges();
+
+    expect((harness.fixture.nativeElement as HTMLElement).textContent).not.toContain(
+      '+ Add member',
+    );
+  });
+});
+
+describe('UseCaseDetail — an oversight role', () => {
+  /** Sees every use case (FRD-201) and belongs to none of them (ADR-0007). */
+  const asOversight = () =>
+    setup({
+      get: of({
+        ...USE_CASE,
+        store_payloads: false,
+        permissions: { can_admin: false, can_manage: false, is_member: false },
+      }),
+    });
+
+  it('is not offered a key, because a key is data-plane access', () => {
+    const harness = asOversight();
+    harness.component.selectTab('keys');
+    harness.fixture.detectChanges();
+    const html = harness.fixture.nativeElement as HTMLElement;
+
+    expect(html.textContent).not.toContain('+ Issue key');
+    expect(html.querySelector('[data-testid="keys-readonly"]')).not.toBeNull();
+  });
+
+  it('is offered a view of the pipeline, not an edit of it', () => {
+    const harness = asOversight();
+    expect((harness.fixture.nativeElement as HTMLElement).textContent).toContain('View pipeline');
+  });
+
+  it('is told storage is off rather than shown a switch it cannot flip', () => {
+    // The *other* branch of the read-only statement: with storage off there is no period to
+    // report, and reporting "kept for — day(s)" would be worse than saying nothing.
+    const harness = asOversight();
+    harness.component.selectTab('overview');
+    harness.fixture.detectChanges();
+    const readonly = (harness.fixture.nativeElement as HTMLElement).querySelector(
+      '[data-testid="retention-readonly"]',
+    );
+
+    expect(readonly?.textContent).toContain('not stored');
+    expect(readonly?.textContent).not.toContain('day(s)');
   });
 });

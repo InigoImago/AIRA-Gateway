@@ -45,7 +45,7 @@ test.describe('Cost budgets', () => {
     await page.fill('#model-name', model);
     await page.fill('#model-input', '0.075');
     await page.fill('#model-output', '0.30');
-    await page.click('form button[type="submit"]');
+    await page.click('button[type="submit"][form="model-editor-form"]');
 
     await expect(page.locator(`code:has-text("${model}")`)).toBeVisible();
     await expect(page.locator('table')).toContainText('0.075');
@@ -54,7 +54,7 @@ test.describe('Cost budgets', () => {
     await page.click('button:has-text("Add model")');
     const unpriced = uniqueSlug('unpriced');
     await page.fill('#model-name', unpriced);
-    await page.click('form button[type="submit"]');
+    await page.click('button[type="submit"][form="model-editor-form"]');
     // Targeted by text rather than by position: the catalog now also flags models nobody has
     // *declared* (FRD-114), so `.first()` would assert about whichever badge happens to render
     // earlier — which is a fact about the column order, not about pricing.
@@ -72,7 +72,9 @@ test.describe('Cost budgets', () => {
     await page.fill('#model-input', '1.00');
 
     await expect(page.locator('.field__hint--error')).toContainText('both');
-    await expect(page.locator('form button[type="submit"]')).toBeDisabled();
+    await expect(
+      page.locator('button[type="submit"][form="model-editor-form"]'),
+    ).toBeDisabled();
   });
 
   test('only a global admin can change prices', async ({ page }) => {

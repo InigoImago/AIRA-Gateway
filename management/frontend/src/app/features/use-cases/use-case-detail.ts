@@ -57,6 +57,21 @@ export class UseCaseDetail implements OnInit {
 
   protected slug = '';
 
+  /**
+   * What this caller may do here — answered by the server, never inferred.
+   *
+   * These are object-level (guardian) permissions, so `/me` does not contain them and the console
+   * cannot work them out. It used to render every action to everybody: a use-case *user* saw
+   * "Add member" and "Remove", clicked one, and got a 403 from the screen that had just invited
+   * the click. An action nobody can carry out reads as a broken system, not as a boundary.
+   *
+   * Default while nothing has loaded: **no**. Showing an action and taking it away is worse than
+   * showing it a moment later.
+   */
+  protected readonly canManage = computed(() => this.useCase()?.permissions?.can_manage ?? false);
+  /** Membership, which is what issuing a key needs — and seeing a use case is not (ADR-0007). */
+  protected readonly isMember = computed(() => this.useCase()?.permissions?.is_member ?? false);
+
   // Form state lives in signals: the app runs zoneless, so a plain property changed from code
   // (resetting a form, switching scope) would not schedule a re-render.
   protected readonly memberUsername = signal('');

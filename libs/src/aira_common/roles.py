@@ -38,6 +38,22 @@ ALL_ROLES: tuple[Role, ...] = tuple(Role)
 # thing in the data plane to need this distinction.
 GOVERNANCE_ROLES: frozenset[Role] = frozenset({Role.GLOBAL_ADMIN, Role.IT_STEUERUNG})
 
+# Roles that may **see** every use case, which is a wider set than the ones that may see every
+# figure. PRD §154 is explicit about the difference: IT Security has "security oversight (restricted
+# view) … cross-use-case anomaly visibility … **cannot** see all business content by default".
+#
+# The two were one set until somebody logged in as `itsec` and found an empty console. A role that
+# sees nothing is not a restricted view, it is an absent one — and the restriction the PRD asks for
+# is on *content and spend*, not on knowing which use cases exist and how they are configured.
+# Retention, payload storage, filters and limits are exactly the security-relevant metadata that
+# role is there to oversee.
+OVERSIGHT_ROLES: frozenset[Role] = GOVERNANCE_ROLES | frozenset({Role.IT_SECURITY})
+
+
+def has_oversight(roles: Iterable[str]) -> bool:
+    """True if any of ``roles`` may see every use case (not necessarily every figure)."""
+    return any(role in OVERSIGHT_ROLES for role in roles)
+
 
 def is_governance(roles: Iterable[str]) -> bool:
     """True if any of ``roles`` oversees the whole installation.
