@@ -30,19 +30,14 @@ from aira_gateway.api.serving import (
     REFUSALS,
     UPSTREAM_STATUS_MAP,
     catalog_of,
-    check_declaration,
-    check_not_empty,
     check_structured_result,
     deprecation_headers,
     elapsed_ms,
-    embedding_bounds,
-    enforce_pre_dispatch,
-    guard_before_work,
+    prepare_for_dispatch,
     provenance,
     refusal_outcome,
     registry_of,
     requirements_for,
-    run_pipeline,
     schema_bounds,
     upstream_error,
 )
@@ -58,14 +53,11 @@ from aira_gateway.core.canonical import (
 )
 from aira_gateway.core.schema import SchemaRejected
 from aira_gateway.embedding import EmbeddingRejected
-from aira_gateway.embedding import estimated_tokens as embedding_tokens
-from aira_gateway.embedding import validate as validate_embedding
 from aira_gateway.persistence.recorder import record_request
 from aira_gateway.pipeline.dispatch import NoCapableModel, dispatch_with_fallback
 from aira_gateway.pipeline.errors import PipelineRejected
 from aira_gateway.ratelimit.errors import RateLimited
-from aira_gateway.thinking import ThinkingRejected, reserved_tokens
-from aira_gateway.thinking import resolve as resolve_thinking
+from aira_gateway.thinking import ThinkingRejected
 from aira_gateway.upstreams.base import Upstream, UpstreamError
 
 _log = get_logger("aira_gateway")
@@ -270,7 +262,6 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
         except ValidationError as exc:
             raise GeminiHTTPError(400, _first_error(exc), "INVALID_ARGUMENT") from exc
         canonical = gemini_to_canonical(model, gemini_request, bounds=schema_bounds(request))
-        check_not_empty(canonical)
     elif method in ("embedContent", "batchEmbedContents"):
         try:
             entries = (
@@ -284,57 +275,23 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
     else:
         raise GeminiHTTPError(400, f"Unknown method '{method}'.", "INVALID_ARGUMENT")
 
-    units = embed_request.size if embed_request is not None else 1
-
-    # Parsed, weighed, and *then* the controls that need no model — before the pipeline, which can
-    # make a model call of its own. Refusing after that point means the refusal was paid for.
-    # Weighed first because a batch weighs what it is (`FRD-113` FR-6): taking one unit here and
-    # the rest later would meter a batch of 500 as a single request for as long as it takes to run
-    # the pipeline, and a first draft of this did exactly that until a test said so.
-    await guard_before_work(request, units=units)
-
-    if canonical is not None:
-        canonical, fallbacks = await run_pipeline(request, canonical, trail)
-        # Routing may have changed the model — resolve the effective provider.
-        provider = registry_of(request).provider_for(canonical.model)
-        if provider is None:
-            raise GeminiHTTPError(404, f"Model '{canonical.model}' not found.", "NOT_FOUND")
-
-    # One gate for every method. Keeping these inside the generateContent branch is how
-    # `:embedContent` ended up unlimited and unbudgeted — a caller only had to pick the other
-    # verb. A control that applies to some verbs and not others has to be impossible to write
-    # by accident, so there is exactly one place to add the next one.
-    effective_model = canonical.model if canonical is not None else model
-    requested_output = canonical.max_output_tokens if canonical is not None else None
-    declaration = await check_declaration(
-        request, model=effective_model, method=method, requested=requested_output
-    )
-
-    if canonical is not None:
-        # Resolved against the model that will actually serve this — after routing, before the
-        # reservation. The order is load-bearing: the number sent upstream and the number reserved
-        # against the budget have to be the same one, or the limit is bounding a different request
-        # than the one that was made (`FRD-111` §5.3).
-        canonical = canonical.model_copy(
-            update={"thinking": resolve_thinking(canonical.thinking, declaration)}
-        )
-    if embed_request is not None:
-        embed_request = validate_embedding(embed_request, declaration, embedding_bounds(request))
-
-    reservation = await enforce_pre_dispatch(
+    # The whole pre-dispatch sequence, in the one place that owns its order (`serving.py`). This
+    # used to be six calls written out here and six more written out in the KIRA surface — the
+    # same order, twice, and a third surface would have been a third copy. Every guarantee this
+    # layer makes is a guarantee about that order, so the order is not a surface's to assemble.
+    prepared = await prepare_for_dispatch(
         request,
-        model=effective_model,
-        max_output_tokens=requested_output,
-        attachments=[part.media_type for part in canonical.attachments] if canonical else None,
-        units=units,
-        extra_tokens=(
-            reserved_tokens(canonical.thinking)
-            if canonical is not None
-            else embedding_tokens(embed_request)
-            if embed_request is not None
-            else 0
-        ),
+        trail,
+        method=method,
+        canonical=canonical,
+        embed=embed_request,
+        requested_output=canonical.max_output_tokens if canonical is not None else None,
     )
+    canonical = prepared.canonical
+    embed_request = prepared.embed
+    fallbacks = prepared.fallbacks
+    declaration = prepared.declaration
+    reservation = prepared.reservation
 
     if canonical is not None:
         if method == "generateContent":

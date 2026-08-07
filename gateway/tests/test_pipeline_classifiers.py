@@ -73,7 +73,7 @@ async def test_an_empty_answer_is_undetermined_and_not_clean() -> None:
 
 
 async def test_an_answer_carrying_both_words_is_undetermined_rather_than_a_guess() -> None:
-    """"SAFE — no injection attempt here" contains both. Picking a winner would be a precedence
+    """ "SAFE — no injection attempt here" contains both. Picking a winner would be a precedence
     rule nobody could predict from outside; the model was asked for one word and gave two."""
     for reply in ("SAFE - no injection attempt", "Not an INJECTION, this is SAFE"):
         verdict = await LlmInjectionClassifier(_StubProvider(reply), "guard").verdict("hi")

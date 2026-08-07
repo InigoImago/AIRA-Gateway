@@ -16,6 +16,7 @@ its own routes. Everything here is about the request, not about how it was spell
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
@@ -32,9 +33,15 @@ from aira_gateway.budgets.errors import BudgetExceeded
 from aira_gateway.budgets.ledger import Amounts
 from aira_gateway.budgets.service import Reservation
 from aira_gateway.catalog import ModelCatalog, ModelDeclaration
-from aira_gateway.core.canonical import CanonicalRequest, CanonicalResponse
+from aira_gateway.core.canonical import (
+    CanonicalEmbeddingRequest,
+    CanonicalRequest,
+    CanonicalResponse,
+)
 from aira_gateway.core.schema import SchemaBounds, SchemaRejected
 from aira_gateway.embedding import EmbeddingBounds, EmbeddingRejected
+from aira_gateway.embedding import estimated_tokens as embedding_tokens
+from aira_gateway.embedding import validate as validate_embedding
 from aira_gateway.persistence.recorder import record_request
 from aira_gateway.pipeline.dispatch import NoCapableModel, Permits
 from aira_gateway.pipeline.engine import PipelineEngine
@@ -51,7 +58,8 @@ from aira_gateway.requirements import (
     permits,
 )
 from aira_gateway.residency import parse_allowed
-from aira_gateway.thinking import ThinkingRejected
+from aira_gateway.thinking import ThinkingRejected, reserved_tokens
+from aira_gateway.thinking import resolve as resolve_thinking
 from aira_gateway.upstreams.base import ProviderRegistry, UpstreamError
 
 _log = get_logger("aira_gateway")
@@ -419,6 +427,105 @@ async def run_pipeline(
             decisions=outcome.decisions,
         )
     return outcome.request, outcome.fallback_models
+
+
+@dataclass(slots=True)
+class Prepared:
+    """Everything the pre-dispatch sequence decided, handed over in one piece."""
+
+    canonical: CanonicalRequest | None
+    embed: CanonicalEmbeddingRequest | None
+    fallbacks: tuple[str, ...]
+    declaration: ModelDeclaration
+    reservation: Reservation
+
+    @property
+    def model(self) -> str:
+        """The model that will actually serve this — after routing, not as the caller spelled it."""
+        if self.canonical is not None:
+            return self.canonical.model
+        assert self.embed is not None
+        return str(self.embed.model)
+
+
+async def prepare_for_dispatch(
+    request: Request,
+    trail: AuditTrail,
+    *,
+    method: str,
+    canonical: CanonicalRequest | None = None,
+    embed: CanonicalEmbeddingRequest | None = None,
+    requested_output: int | None = None,
+    default_task_type: str | None = None,
+) -> Prepared:
+    """The whole pre-dispatch sequence, in the one place that owns its order.
+
+    This function exists because sharing the *steps* turned out not to be the same as sharing the
+    *sequence*. `serving.py` already held every one of these, and both surfaces still wrote the
+    order out by hand — the same six calls, twice, and in the KIRA surface spread across four
+    functions. A third surface (`FRD-106`) would have written them a third time.
+
+    That is not tidiness. **Every property this layer guarantees is a property of the order:**
+
+        rate limit before the pipeline   or a refused request pays for a classifier call
+        declaration after routing        or a cap is checked against a model that never serves it
+        thinking after routing           or a budget is validated against the wrong model
+        reservation last                 or it is made against the model the caller *named*
+
+    None of those is expressible in a function that only knows its own step, which is why the gap
+    kept reappearing: `:embedContent` bypassing the gate, then the KIRA surface losing its rate
+    limiting entirely. A surface that assembles the order can assemble it wrong; a surface that
+    calls this cannot.
+
+    What is left to a surface is what its own docstring always claimed: parse its wire format,
+    render its error envelope, own its routes.
+    """
+    if canonical is not None:
+        check_not_empty(canonical)
+
+    units = embed.size if embed is not None else 1
+
+    # Weighed first — a batch weighs what it is (`FRD-113` FR-6) — and then the controls that need
+    # no model, before the pipeline, which can make a model call of its own.
+    await guard_before_work(request, units=units)
+
+    fallbacks: tuple[str, ...] = ()
+    if canonical is not None:
+        canonical, fallbacks = await run_pipeline(request, canonical, trail)
+        if registry_of(request).provider_for(canonical.model) is None:
+            # Routing sent it somewhere nobody serves. Raised as the shared error so each surface
+            # renders it in its own envelope rather than each checking for itself.
+            raise GeminiHTTPError(404, f"Model '{canonical.model}' not found.", "NOT_FOUND")
+
+    served = canonical.model if canonical is not None else (embed.model if embed else "")
+    declaration = await check_declaration(
+        request, model=served, method=method, requested=requested_output
+    )
+
+    if canonical is not None:
+        canonical = canonical.model_copy(
+            update={"thinking": resolve_thinking(canonical.thinking, declaration)}
+        )
+    if embed is not None:
+        embed = validate_embedding(
+            embed, declaration, embedding_bounds(request), default_task_type=default_task_type
+        )
+
+    reservation = await enforce_pre_dispatch(
+        request,
+        model=served,
+        max_output_tokens=requested_output,
+        attachments=[part.media_type for part in canonical.attachments] if canonical else None,
+        units=units,
+        extra_tokens=(
+            reserved_tokens(canonical.thinking)
+            if canonical is not None
+            else embedding_tokens(embed)
+            if embed is not None
+            else 0
+        ),
+    )
+    return Prepared(canonical, embed, fallbacks, declaration, reservation)
 
 
 async def record_pipeline_calls(request: Request, trail: AuditTrail) -> None:

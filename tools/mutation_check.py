@@ -622,9 +622,11 @@ MUTATIONS = [
     Mutation(
         "M23",
         "every verb passes the pre-dispatch controls, not only the generate ones",
-        "gateway/src/aira_gateway/api/gemini/routes.py",
+        "gateway/src/aira_gateway/api/serving.py",
+        # Re-anchored by `FRD-126`: this step moved out of the surfaces and into the one
+        # sequence that owns their order. A mutation whose anchor has moved protects nothing.
         "    reservation = await enforce_pre_dispatch(",
-        "    reservation = Reservation() if embed_request else await enforce_pre_dispatch(",
+        "    reservation = Reservation() if embed is not None else await enforce_pre_dispatch(",
         RATELIMIT_ROUTES,
     ),
     Mutation(
@@ -849,10 +851,17 @@ MUTATIONS = [
     Mutation(
         "K6",
         "a request on this surface passes the same pre-dispatch controls as any other",
-        "gateway/src/aira_gateway/api/kira/routes.py",
-        "        reservation = await enforce_pre_dispatch(\n            request,\n            model=canonical.model,\n            max_output_tokens=canonical.max_output_tokens,\n            attachments=[part.media_type for part in canonical.attachments],\n            extra_tokens=reserved_tokens(canonical.thinking),\n        )\n        async with request.app.state.budgets.hold(reservation):",
-        "        reservation = Reservation()\n        async with request.app.state.budgets.hold(reservation):",
-        KIRA,
+        "gateway/src/aira_gateway/api/serving.py",
+        # Re-anchored by `FRD-126`: this step moved out of the surfaces and into the one
+        # sequence that owns their order. A mutation whose anchor has moved protects nothing.
+        # `FRD-126` is what makes this one property rather than one per surface — which is the
+        # change's whole claim, so the mutation now tests the claim instead of one copy of it.
+        "    return Prepared(canonical, embed, fallbacks, declaration, reservation)",
+        "    return Prepared(canonical, embed, fallbacks, declaration, Reservation())",
+        # The selection widened with the anchor. This was one surface's property and is now every
+        # surface's, so testing it with one surface's tests would check a third of the claim —
+        # which is exactly how it survived the first run after the move.
+        f"{KIRA} {ACCOUNTING} gateway/tests/test_budget_routes.py",
     ),
     Mutation(
         "K7",
@@ -1963,27 +1972,32 @@ MUTATIONS = [
     Mutation(
         "Z11",
         "an already-exhausted budget refuses before the pipeline can spend anything",
-        "gateway/src/aira_gateway/api/gemini/routes.py",
-        "    await guard_before_work(request, units=units)",
-        "    pass",
+        "gateway/src/aira_gateway/api/serving.py",
+        # Re-anchored by `FRD-126`: this step moved out of the surfaces and into the one
+        # sequence that owns their order. A mutation whose anchor has moved protects nothing.
+        "    await guard_before_work(request, units=units)\n\n    fallbacks",
+        "    fallbacks",
         f"{ACCOUNTING} gateway/tests/test_serving_options.py",
     ),
     Mutation(
         "Z12",
         "the early gate weighs a batch as the many requests it is",
-        "gateway/src/aira_gateway/api/gemini/routes.py",
-        "    units = embed_request.size if embed_request is not None else 1",
+        "gateway/src/aira_gateway/api/serving.py",
+        # Re-anchored by `FRD-126`: this step moved out of the surfaces and into the one
+        # sequence that owns their order. A mutation whose anchor has moved protects nothing.
+        "    units = embed.size if embed is not None else 1",
         "    units = 1",
         "gateway/tests/test_serving_options.py",
     ),
-    Mutation(
-        "Z13",
-        "the compatibility surface takes the same early gate, so its verbs are metered too",
-        "gateway/src/aira_gateway/api/kira/routes.py",
-        "    await guard_before_work(request)\n    canonical, fallbacks = await run_pipeline",
-        "    canonical, fallbacks = await run_pipeline",
-        "gateway/tests/test_ratelimit_routes.py gateway/tests/test_pipeline_accounting.py",
-    ),
+    # `Z13` lived here: "the compatibility surface takes the same early gate". It was a distinct
+    # property only *because* there were two surfaces each taking the gate for themselves. After
+    # `FRD-126` there is one sequence, so its anchor and `Z11`'s are the same line, and two
+    # mutations on one line measure one thing twice.
+    #
+    # Removed rather than kept, as `X3` was: what it really claimed — that this surface goes
+    # through the shared sequence at all — is now enforced structurally by
+    # `test_surface_layering.py` and mutated by `Z16`. A property guarded by the structure is not
+    # a property a line-edit can take away, and pretending otherwise inflates the count.
     Mutation(
         "Z14",
         "reaching a reservation without the early gate fails loudly rather than serving unmetered",
@@ -1991,6 +2005,22 @@ MUTATIONS = [
         '    if not getattr(request.state, "early_gate_taken", False):',
         "    if False:",
         "gateway/tests/test_ratelimit_routes.py gateway/tests/test_pipeline_accounting.py",
+    ),
+    Mutation(
+        "Z15",
+        "the shared sequence resolves thinking after routing, not against the model the caller named",
+        "gateway/src/aira_gateway/api/serving.py",
+        "            update={\"thinking\": resolve_thinking(canonical.thinking, declaration)}",
+        "            update={\"thinking\": canonical.thinking}",
+        "gateway/tests/test_serving_options.py gateway/tests/test_kira_surface.py",
+    ),
+    Mutation(
+        "Z16",
+        "a surface cannot assemble the pre-dispatch order itself",
+        "gateway/src/aira_gateway/api/serving.py",
+        "async def prepare_for_dispatch(",
+        "async def prepare_for_dispatch_renamed(",
+        "gateway/tests/test_surface_layering.py",
     ),
 ]
 

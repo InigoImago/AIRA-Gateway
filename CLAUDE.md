@@ -43,7 +43,7 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
   inevitably do when both were written from the same mental model — and line coverage cannot see
   a *missing requirement*: on 2026-08-05 a review found seven real defects behind a green suite at
   99% coverage. So: **prove a test can fail.** Break the property, watch it go red, restore.
-  `make mutants` (`tools/mutation_check.py`) does this for **224 properties** across auth, budgets,
+  `make mutants` (`tools/mutation_check.py`) does this for **225 properties** across auth, budgets,
   pipeline, retention, the management control plane and the gateway's counters; when
   you fix a bug, add the mutation that reintroduces it. Two traps that cost real defects here:
   a stand-in that is more permissive than the thing it replaces (reuse the real method where you
@@ -54,6 +54,13 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
   → `e2e/` (real browser, `make test-e2e`). Anything needing a user token belongs in `e2e/`: the
   dev realm has the password grant disabled, so a token only comes from the real code flow.
 - **Typed code**: Python type hints (mypy), TypeScript strict mode.
+- **A surface parses; the layer decides.** `api/serving.py` shared the *steps* of the pre-dispatch
+  path with both API surfaces and not their *order* — and every guarantee that layer makes is a
+  guarantee about the order (rate limit before the pipeline, declaration and thinking after
+  routing, reservation last). Both surfaces wrote the same six calls by hand until `FRD-126`;
+  the third would have written them again. `prepare_for_dispatch` owns the sequence, a surface owns
+  parsing and its error envelope, and `test_surface_layering.py` fails on a surface that calls a
+  step directly. A layering rule only a reviewer enforces is one the next surface breaks.
 - **A page is a parent plus panels.** `use-case-detail` grew to 1238 lines and six concerns
   before it was split: the parent loads and owns the tab bar (whose counts must exist before any
   tab is opened, which is why loading stays there), and each panel is a child owning its form

@@ -40,19 +40,15 @@ from aira_gateway.api.kira.mapping import (
 from aira_gateway.api.serving import (
     REFUSALS,
     UPSTREAM_STATUS_MAP,
+    Prepared,
     catalog_of,
-    check_declaration,
-    check_not_empty,
     check_structured_result,
     elapsed_ms,
-    embedding_bounds,
-    enforce_pre_dispatch,
-    guard_before_work,
+    prepare_for_dispatch,
     provenance,
     refusal_outcome,
     registry_of,
     requirements_for,
-    run_pipeline,
     schema_bounds,
 )
 from aira_gateway.attachments import AttachmentRejected
@@ -61,18 +57,15 @@ from aira_gateway.auth.dependencies import require_principal
 from aira_gateway.auth.principal import Principal
 from aira_gateway.budgets.errors import BudgetExceeded
 from aira_gateway.catalog import ModelDeclaration
-from aira_gateway.core.canonical import CanonicalRequest, CanonicalResponse
+from aira_gateway.core.canonical import CanonicalResponse
 from aira_gateway.core.schema import SchemaRejected
 from aira_gateway.embedding import DEFAULT_TASK_TYPE, EmbeddingRejected
-from aira_gateway.embedding import estimated_tokens as embedding_tokens
-from aira_gateway.embedding import validate as validate_embedding
 from aira_gateway.persistence.recorder import record_request
 from aira_gateway.pipeline.dispatch import NoCapableModel, dispatch_with_fallback
 from aira_gateway.pipeline.errors import PipelineRejected
 from aira_gateway.ratelimit.errors import RateLimited
 from aira_gateway.reporting.service import ReportingService
-from aira_gateway.thinking import ThinkingRejected, reserved_tokens
-from aira_gateway.thinking import resolve as resolve_thinking
+from aira_gateway.thinking import ThinkingRejected
 from aira_gateway.upstreams.base import UpstreamError
 
 BASE = "/kira/api/external"
@@ -210,9 +203,18 @@ async def _resolve_model(request: Request, model_id: int) -> str:
 
 
 async def _prepare(
-    request: Request, principal: Principal, body: dict[str, Any], *, operation: str
-) -> tuple[CanonicalRequest, tuple[str, ...], AuditTrail, Any]:
-    """Everything between "a body arrived" and "dispatch it"."""
+    request: Request, principal: Principal, body: dict[str, Any], trail: AuditTrail
+) -> tuple[Prepared, Any]:
+    """Everything between "a body arrived" and "dispatch it" that is *this surface's* business.
+
+    Which is: resolve the caller, parse the predecessor's shape, turn an integer model id into a
+    model, and refuse what this contract does not serve. Everything after that is the same for
+    every surface and belongs to `prepare_for_dispatch`.
+
+    The trail is **passed in** rather than created here. It used to be returned and the caller's
+    own reassigned over — two audit trails for one request, and the one carrying the body thrown
+    away.
+    """
     resolve_attribution(request, principal)
     try:
         parsed = schemas.ChatRequest.model_validate(body)
@@ -222,7 +224,7 @@ async def _prepare(
         ) from exc
 
     model = await _resolve_model(request, parsed.model_id)
-    trail = AuditTrail(operation=operation, requested_model=model)
+    trail.requested_model = model
     declaration = await catalog_of(request).declaration(model)
 
     if not declaration.can(Capability.GENERATE):
@@ -240,20 +242,18 @@ async def _prepare(
         )
 
     canonical = to_canonical(parsed, model, bounds=schema_bounds(request))
-    check_not_empty(canonical)
-    # Before the pipeline, which can call a model of its own — both chat verbs come through here.
-    await guard_before_work(request)
-    canonical, fallbacks = await run_pipeline(request, canonical, trail)
-    routed = await check_declaration(
-        request, model=canonical.model, method="generateContent", requested=parsed.max_tokens
+    # One call, and the order is not this surface's to choose. It used to be four steps written
+    # out here and the reservation written out again in each of the three handlers below — which
+    # is how this surface came to have no rate limiting at all when the take moved.
+    prepared = await prepare_for_dispatch(
+        request,
+        trail,
+        method="generateContent",
+        canonical=canonical,
+        requested_output=parsed.max_tokens,
     )
-    # Resolved against the model that will actually serve this, **after** routing: a pipeline can
-    # send the request somewhere else, and a thinking budget validated against the model the caller
-    # named would be validated against a model that never sees it.
-    canonical = canonical.model_copy(
-        update={"thinking": resolve_thinking(canonical.thinking, routed)}
-    )
-    return canonical, fallbacks, trail, parsed
+    assert prepared.canonical is not None
+    return prepared, parsed
 
 
 async def _record(
@@ -296,16 +296,10 @@ async def chat(request: Request, principal: Principal = Depends(require_principa
     try:
         body = await _json(request)
         trail.body = body
-        canonical, fallbacks, trail, parsed = await _prepare(
-            request, principal, body, operation="chat"
-        )
-        reservation = await enforce_pre_dispatch(
-            request,
-            model=canonical.model,
-            max_output_tokens=canonical.max_output_tokens,
-            attachments=[part.media_type for part in canonical.attachments],
-            extra_tokens=reserved_tokens(canonical.thinking),
-        )
+        prepared, parsed = await _prepare(request, principal, body, trail)
+        canonical, fallbacks = prepared.canonical, prepared.fallbacks
+        assert canonical is not None
+        reservation = prepared.reservation
         async with request.app.state.budgets.hold(reservation):
             dispatched = await dispatch_with_fallback(
                 registry_of(request),
@@ -356,16 +350,10 @@ async def streaming_chat(
     try:
         body = await _json(request)
         trail.body = body
-        canonical, fallbacks, trail, parsed = await _prepare(
-            request, principal, body, operation="streaming-chat"
-        )
-        reservation = await enforce_pre_dispatch(
-            request,
-            model=canonical.model,
-            max_output_tokens=canonical.max_output_tokens,
-            attachments=[part.media_type for part in canonical.attachments],
-            extra_tokens=reserved_tokens(canonical.thinking),
-        )
+        prepared, parsed = await _prepare(request, principal, body, trail)
+        canonical, fallbacks = prepared.canonical, prepared.fallbacks
+        assert canonical is not None
+        reservation = prepared.reservation
     except KIRA_REFUSALS as exc:
         return await _refused(
             request, trail, exc, body=body, started=started, operation="streaming-chat"
@@ -445,34 +433,20 @@ async def embed(request: Request, principal: Principal = Depends(require_princip
 
         model = await _resolve_model(request, parsed.model_id)
         trail.requested_model = model
-        declaration = await catalog_of(request).declaration(model)
 
-        # Every rule about *what may be embedded* is the shared validator's, so the two surfaces
-        # cannot disagree about whether a batch is allowed or a task type is declared. What this
-        # surface owns is the predecessor's default task type, applied in `to_embedding`.
-        embed_request = validate_embedding(
-            to_embedding(parsed, model),
-            declaration,
-            embedding_bounds(request),
-            # The predecessor defaults to `RETRIEVAL_QUERY` when the caller says nothing, so its
-            # callers keep getting it — where the model declares it.
+        # What this surface owns is the predecessor's default task type; every rule about *what
+        # may be embedded* — and the whole order of the controls around it — belongs to the
+        # shared sequence, which is why only the default is named here.
+        prepared = await prepare_for_dispatch(
+            request,
+            trail,
+            method="embedContent",
+            embed=to_embedding(parsed, model),
             default_task_type=DEFAULT_TASK_TYPE,
         )
-
-        # A batch weighs what it is (`FRD-113` FR-6), so the weight is taken here and not
-        # defaulted to one. This verb has no pipeline to protect — it takes the gate because the
-        # gate is where rate limiting lives, and a verb that skips it is a verb with none.
-        await guard_before_work(request, units=embed_request.size)
-
-        reservation = await enforce_pre_dispatch(
-            request,
-            model=model,
-            max_output_tokens=None,
-            # A batch of n is n requests against the limits, not one (`FRD-113` FR-6). Admitting
-            # it as one would let a caller limited to 10 requests a minute embed thousands.
-            units=embed_request.size,
-            extra_tokens=embedding_tokens(embed_request),
-        )
+        embed_request = prepared.embed
+        assert embed_request is not None
+        reservation = prepared.reservation
         async with request.app.state.budgets.hold(reservation):
             provider = registry_of(request).provider_for(model)
             if provider is None:

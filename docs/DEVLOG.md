@@ -5,6 +5,65 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-07 — a surface parses; the layer decides
+
+`FRD-126`. Prompted by a question rather than a failure: *why are there two pipelines with six
+steps each — would emulating an OpenAI interface spawn another six?* It would have.
+
+There were never two pipelines. There is one, and there were **two hand-written choreographies
+around it**. `api/serving.py` was extracted precisely so both surfaces could share everything below
+the wire format, and its docstring says a surface owns "parsing its own wire format, rendering its
+own error envelope, and its own routes". It shared the *steps*. Nobody noticed it had not shared
+the *order*:
+
+    Gemini                          KIRA
+    check_not_empty                 check_not_empty        ⎫
+    guard_before_work               guard_before_work      ⎪ _prepare()
+    run_pipeline                    run_pipeline           ⎪
+    check_declaration               check_declaration      ⎪
+    resolve_thinking                resolve_thinking       ⎭
+    enforce_pre_dispatch            enforce_pre_dispatch   ← written out in three handlers
+
+That distinction is the whole story of the last two days. **Every guarantee this layer makes is a
+guarantee about the order** — rate limit before the pipeline or a refusal is paid for; declaration
+and thinking after routing or they are checked against a model that never serves the request;
+reservation last or it is made against the model the caller *named*. None of that can be expressed
+by a function that knows only its own step, which is why the same gap kept coming back wearing
+different names: `:embedContent` bypassing the gate, then the KIRA surface losing rate limiting
+entirely when one take moved one function over.
+
+`prepare_for_dispatch` owns the order. The KIRA surface went from six of these calls to **zero**.
+And the rule is now a test — `test_surface_layering.py` parses each surface and fails on a direct
+call to any step, the same shape as the vendor assertion in `test_vertex.py`, for the same reason: a
+layering rule only a reviewer enforces is a rule the *next* surface breaks, and the next surface is
+the one nobody is watching yet.
+
+The evidence that this was a move and not a rewrite is that **no test changed**: 887 hermetic and
+316 live, green before and after.
+
+**Four mutations came back `STALE`** — not "survived": the harness distinguishes "this property is
+undefended" from "this mutation no longer applies", and all four pointed at lines this change moved
+into the shared sequence. Re-anchored there. A fifth (`Z13`) was **removed**: it claimed "the
+compatibility surface takes the same early gate", which was a distinct property only *because* each
+surface took the gate for itself. Now its anchor and `Z11`'s are the same line, and two mutations
+on one line measure one thing twice. What it really claimed is enforced structurally by
+`test_surface_layering.py` — the same call `X3` got, for the same reason.
+
+### And the honest limit of this change
+
+Asked what a third surface would now cost, the answer turned out to be *half of it*. The
+pre-dispatch order is shared; the **post-dispatch** order — hold, dispatch, check, price, settle,
+record — is still written out **six times**, three verbs in each surface. Same shape, one step
+later.
+
+It has already cost a defect. Gemini's streaming path wraps its accounting in `finally` +
+`asyncio.shield`, with a comment explaining that a client dropping a real socket *cancels* the
+response task and a bare `await` loses the settle and the row — found as a 1-in-8 integration flake.
+**The KIRA streaming path has neither.** The surface written second never got the fix the first one
+earned, which is precisely what duplication does and precisely where it leaves it.
+
+---
+
 ## 2026-08-06 — the filter that was configured, displayed, and doing nothing
 
 `FRD-125`. Third finding of the same live round, and the worst of them.

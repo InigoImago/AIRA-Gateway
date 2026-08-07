@@ -160,9 +160,7 @@ async def test_a_heuristic_filter_records_nothing_because_it_spent_nothing() -> 
     guard = _Guard()
     app = _app(
         Pipeline(
-            steps=(
-                PipelineStep(type=StepType.INJECTION_FILTER, config={"mode": "heuristic"}),
-            ),
+            steps=(PipelineStep(type=StepType.INJECTION_FILTER, config={"mode": "heuristic"}),),
             fallback_models=(),
         ),
         guard,

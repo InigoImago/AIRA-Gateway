@@ -48,12 +48,12 @@ class _AlwaysOverBudget:
     async def guard(self, use_case, subject, *, estimated=None):  # noqa: ANN001, ANN201
         raise BudgetExceeded("Budget exceeded for use case.")
 
-
-
     # `FRD-125c` added a pre-pipeline check to the real service. Inherited rather than stubbed out:
     # a stand-in more permissive than the thing it replaces is how a control comes to be tested
     # against something that cannot refuse. These stands-in carry no budgets, so it returns at once.
     refuse_if_exhausted = BudgetService.refuse_if_exhausted
+
+
 class _FailingProvider:
     def models(self) -> list[UpstreamModel]:
         return [UpstreamModel("mock-1", "mock-1", ("generateContent",))]

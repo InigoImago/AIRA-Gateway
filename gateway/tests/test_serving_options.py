@@ -315,11 +315,11 @@ class _RecordingBudgets:
         self.estimates.append(estimated)
         return Reservation()
 
-
     # `FRD-125c` added a pre-pipeline check to the real service. Inherited rather than stubbed out:
     # a stand-in more permissive than the thing it replaces is how a control comes to be tested
     # against something that cannot refuse. These stands-in carry no budgets, so it returns at once.
     refuse_if_exhausted = BudgetService.refuse_if_exhausted
+
     async def settle(self, reservation, tokens, *, cost_nanos=None, now=None, requests=1):  # noqa: ANN001, ANN201, E501
         reservation.resolved = True
         self.settled.append(requests)

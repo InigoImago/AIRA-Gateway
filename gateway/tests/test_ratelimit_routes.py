@@ -359,9 +359,7 @@ async def test_every_verb_of_every_surface_is_rate_limited() -> None:
                 # One row: the model is the primary key, and this surface addresses it by an
                 # integer id, so both verbs resolve through the same entry.
                 session.add(
-                    ModelRead(
-                        model="mock-1", numeric_id=1, capabilities=["generate", "embed"]
-                    )
+                    ModelRead(model="mock-1", numeric_id=1, capabilities=["generate", "embed"])
                 )
                 await session.commit()
             response = client.post(path, json=body)
