@@ -39,7 +39,6 @@ from aira_gateway.api.kira.mapping import (
 )
 from aira_gateway.api.serving import (
     REFUSALS,
-    UPSTREAM_STATUS_MAP,
     Prepared,
     accounting,
     catalog_of,
@@ -51,6 +50,7 @@ from aira_gateway.api.serving import (
     registry_of,
     requirements_for,
     schema_bounds,
+    upstream_status,
 )
 from aira_gateway.attachments import AttachmentRejected
 from aira_gateway.audit import AuditTrail, Outcome, decision_summary
@@ -131,7 +131,7 @@ def _error_response(request: Request, exc: Exception) -> JSONResponse:
     elif isinstance(exc, NoCapableModel):
         response = errors.kira_error_response(400, errors.MODEL_NOT_FOUND, str(exc))
     elif isinstance(exc, UpstreamError):
-        code = UPSTREAM_STATUS_MAP.get(exc.status_code or 0, (502, ""))[0]
+        code = upstream_status(exc.status_code)[0]
         name = (
             errors.EXTERNAL_KI_API_TOO_MANY_REQUEST if code == 429 else errors.EXTERNAL_KI_API_ERROR
         )

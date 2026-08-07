@@ -75,7 +75,28 @@ class OpenAITransport:
         # 429 from a self-deployed endpoint means *no free replica* rather than quota (`ADR-0012`
         # §5) — the distinction belongs to whoever reads the audit, and flattening it here would
         # remove their ability to make it.
-        raise UpstreamError(f"Upstream returned {response.status_code}.", response.status_code)
+        # The provider's own reason is carried for a **400**, and only for a 400: it refused the
+        # body we built and usually says exactly which field it objected to. "Upstream returned
+        # 400." throws that away and leaves an operator reading a status page about a fault in
+        # their own catalog.
+        #
+        # Not for 401/403 — those are about *our* credentials, the caller cannot act on them, and
+        # the message may name the credential. Not for 5xx, which is the provider's internal noise.
+        detail = _reason(response) if response.status_code == 400 else ""
+        raise UpstreamError(
+            f"Upstream returned {response.status_code}.{detail}", response.status_code
+        )
+
+
+def _reason(response: httpx.Response) -> str:
+    """The provider's stated reason, if it gave one in the shape this dialect uses."""
+    try:
+        message = response.json().get("error", {}).get("message")
+    except (ValueError, AttributeError):
+        return ""
+    # Bounded: an upstream is not a trusted source of arbitrarily long strings to put in our own
+    # error envelope and audit log.
+    return f" {str(message)[:300]}" if message else ""
 
 
 class _StreamContext:

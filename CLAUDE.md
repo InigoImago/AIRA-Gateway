@@ -43,7 +43,7 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
   inevitably do when both were written from the same mental model — and line coverage cannot see
   a *missing requirement*: on 2026-08-05 a review found seven real defects behind a green suite at
   99% coverage. So: **prove a test can fail.** Break the property, watch it go red, restore.
-  `make mutants` (`tools/mutation_check.py`) does this for **229 properties** across auth, budgets,
+  `make mutants` (`tools/mutation_check.py`) does this for **231 properties** across auth, budgets,
   pipeline, retention, the management control plane and the gateway's counters; when
   you fix a bug, add the mutation that reintroduces it. Two traps that cost real defects here:
   a stand-in that is more permissive than the thing it replaces (reuse the real method where you
@@ -547,6 +547,19 @@ right and the guard — which reads the **shared counter** (`FRD-405`) — never
 counter expired; both stores now, verified live (429 at 40 200 against a 40 000 cap). The test for
 it **passed against the broken code** at first, because on a *cold* counter the guard seeds from
 Postgres: a test that never reached the path it was named after, warmed now.
+**Developer round against the running model (`FRD-129`, 2026-08-07)** — 47 live cases walking both
+surfaces: ordinary journeys, dropped connections on **every** path, and every figure checked in the
+**database** rather than in the response. Nothing asserts an answer's *content* (that tests the
+model, and flakes); what is asserted is that a request is recorded, weighed, priced and bounded —
+and that **both surfaces leave the same facts**, compared as audit rows rather than by reading two
+code paths. Two findings: the catalog declared a thinking mode (`minimal`) the server refuses **by
+name**, filled in from the enum instead of from a measurement — the mirror of `FRD-114`'s rule, now
+corrected in the seed with the measured set; and the resulting error was worse than the fault — the
+caller got `502 UNAVAILABLE`/"Upstream returned 400." while the provider had said exactly which
+field it objected to. An upstream **400** now answers **`400 FAILED_PRECONDITION`** carrying that
+reason (same argument as `NoCapableModel`: operator-fixable, not an outage), while **401/403 stay
+masked** — those are *our* credentials, the caller cannot act on them, and the message may name the
+credential.
 **Delivery order is fixed (ROADMAP Phase 8, 2026-08-06)**, derived from the owner's priority
 (KIRA compatibility → model connections → documents → the review findings) and the dependency that
 priority 1 needs priority 3: **`FRD-122` (audit) → `FRD-114` (metadata) → `FRD-115`+`119` (Vertex EU,

@@ -582,3 +582,37 @@ def test_thinking_tokens_are_billed_inside_the_output_count() -> None:
 
     assert usage.completion_tokens == 109
     assert usage.total_tokens == 125
+
+
+def test_a_credential_failure_from_the_provider_is_not_handed_to_the_caller() -> None:
+    """`FRD-129`. A 400 means the provider refused the **body we built**, and its reason is the
+    most actionable thing anybody gets — a catalog declaring a mode the server rejects by name
+    surfaced as "Upstream returned 400." with status `UNAVAILABLE`, which sends an operator to a
+    status page about a fault in their own configuration.
+
+    A 401 is a different thing entirely: it is about *our* credentials, the caller cannot act on
+    it, and the message may name the credential. That one stays masked.
+    """
+    import httpx
+
+    from aira_gateway.upstreams.openai.transport import OpenAITransport
+
+    transport = OpenAITransport(client=httpx.AsyncClient())
+
+    refused = httpx.Response(
+        400,
+        json={"error": {"message": "invalid reasoning value: 'minimal'"}},
+        request=httpx.Request("POST", "http://x/v1/chat/completions"),
+    )
+    with pytest.raises(Exception) as caught:  # noqa: PT011 — the type is asserted below
+        transport._raise_for_status(refused)
+    assert "minimal" in str(caught.value)
+
+    unauthorised = httpx.Response(
+        401,
+        json={"error": {"message": "invalid api key sk-abc123"}},
+        request=httpx.Request("POST", "http://x/v1/chat/completions"),
+    )
+    with pytest.raises(Exception) as masked:
+        transport._raise_for_status(unauthorised)
+    assert "sk-abc123" not in str(masked.value)

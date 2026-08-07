@@ -47,14 +47,29 @@ def _declarations() -> list[dict[str, Any]]:
             # ten thousand requests.
             "input_price_per_million": Decimal("0.100000"),
             "output_price_per_million": Decimal("0.400000"),
-            "capabilities": ["generate"],
+            # `structured_output` is measured too: this dialect takes a named `json_schema`, and
+            # the running model returns a document that satisfies one.
+            "capabilities": ["generate", "structured_output", "thinking"],
             "max_output_tokens": 4096,
             "default_max_output_tokens": 512,
-            # No `thinking` and no `attachments` block on purpose. **Undeclared means the baseline
-            # and nothing more** (`FRD-114` FR-7): whether this endpoint's OpenAI-compatible
-            # surface carries reasoning and images is a question to be *measured*, and declaring
-            # it on a guess is the one thing the catalog must never do. Add them when the
-            # integration run says so.
+            # **Measured, not guessed.** This block was deliberately empty until an integration
+            # run against the running model answered the question (`FRD-114` FR-7: undeclared
+            # means the baseline and nothing more). It has now answered it, and the answer
+            # includes a correction worth keeping:
+            #
+            #   `minimal` is **not** declared. The catalog is not free to invent a mode: this
+            #   server accepts `none`, `low`, `medium`, `high` and `max`, and refuses `minimal`
+            #   *by name*. A hand-written declaration that included it produced a request the
+            #   model rejected — the mirror image of the mistake this comment was written to
+            #   prevent, and the reason to declare what a run showed rather than what an enum
+            #   offers.
+            #
+            # `attachments` stays undeclared: this endpoint carries images in the dialect, but no
+            # local model here has been measured reading one.
+            "thinking": {
+                "modes": ["disabled", "low", "medium", "high"],
+                "default": {"mode": "disabled"},
+            },
             "numeric_id": 9001,
         },
         {

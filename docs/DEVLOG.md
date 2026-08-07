@@ -5,6 +5,52 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-07 — a developer round against the running model
+
+`FRD-129`. After two structural changes to the request path and three defect fixes, a walk through
+the system the way somebody using it would: both surfaces, ordinary journeys, dropped connections
+on every path, and every figure checked **in the database** rather than in the response body.
+
+**47 live cases**, and the shape of them is the point. Nothing asserts on the *content* of an
+answer — `qwen3:0.6b` is a real model and a poor one, and asserting its accuracy would be testing
+somebody else's work and flaking. What is asserted is what the gateway promises: that a request is
+recorded, weighed, priced and bounded, and that the **two surfaces leave the same facts behind** for
+the same work. That last one is checked by comparing audit rows rather than by reading two code
+paths, because a step skipped on one surface is invisible in its own tests.
+
+Everything the last days built held: the tokens in the row equal the tokens in the response, the
+budget counter equals the sum of the rows, a batch of five is counted as five, an exhausted budget
+refuses without paying for a classifier, a dropped connection leaves a row on every path, and both
+surfaces are rate-limited.
+
+### Two findings
+
+**A declaration nobody had measured.** The catalog said this model offers the `minimal` thinking
+mode. The server accepts `none`, `low`, `medium`, `high`, `max` — and refuses `minimal` **by name**.
+The seed file had deliberately declared no thinking at all, with a comment saying to add it "when
+the integration run says so"; a hand-written entry had filled it in from the enum instead. The run
+has now said so, and the seed carries the measured set. Declaring from the vocabulary rather than
+from a measurement is the mirror image of the mistake `FRD-114` was written to prevent.
+
+**And the error it produced was worse than the error itself.** The caller received
+`502 UNAVAILABLE`, "Upstream returned 400." The provider had said, precisely, *invalid reasoning
+value: 'minimal'* — and that was discarded. An operator reading `UNAVAILABLE` checks a status page;
+the fault was in their own catalog.
+
+An upstream **400** now answers `400 FAILED_PRECONDITION` and carries the provider's reason. Same
+argument as `NoCapableModel`: "the provider refused the body we built" is operator-fixable, an
+outage is not. The test that encoded the old rule had a comment giving the reason to change it —
+*"a 400 from the upstream reflects our config"* — and it does, which is exactly why calling it an
+outage misleads.
+
+**Only 400**, though. The old test was right about the other half: a 401 or 403 is about *our*
+credentials, the caller cannot act on it, and the provider's message may name the credential. Those
+stay masked, and a test now pins that too.
+
+Mutations `Z21`/`Z22`. **231 properties.**
+
+---
+
 ## 2026-08-07 — the third surface was a thought experiment, and it is withdrawn
 
 `FRD-106` — an OpenAI-compatible surface exposed to callers — is **not wanted**. It was raised to

@@ -85,12 +85,28 @@ def test_upstream_503_passes_through_as_unavailable() -> None:
     assert resp.json()["error"]["status"] == "UNAVAILABLE"
 
 
-def test_upstream_4xx_config_error_is_masked_as_502() -> None:
-    # A 400 from the upstream reflects *our* key/config, not the client's request → generic 502.
+def test_an_upstream_400_is_a_precondition_failure_not_an_outage() -> None:
+    """This test used to assert the opposite, and its own comment gave the reason to change it:
+    "a 400 from the upstream reflects *our* config". It does — and calling that `UNAVAILABLE` sends
+    whoever reads it to the provider's status page instead of to the declaration that is wrong.
+
+    Found live: the catalog declared a thinking mode the server rejects by name, and the caller was
+    told the provider was unavailable.
+    """
     with _raising_client(400) as client:
         resp = client.post("/v1beta/models/mock-1:generateContent", json=_BODY)
-    assert resp.status_code == 502
-    assert resp.json()["error"]["status"] == "UNAVAILABLE"
+    assert resp.status_code == 400
+    assert resp.json()["error"]["status"] == "FAILED_PRECONDITION"
+
+
+def test_an_upstream_credential_failure_stays_masked() -> None:
+    """The half the old test was right about. A 401 is about *our* credentials: the caller cannot
+    act on it, and the provider's message may name the credential itself."""
+    for code in (401, 403):
+        with _raising_client(code) as client:
+            resp = client.post("/v1beta/models/mock-1:generateContent", json=_BODY)
+        assert resp.status_code == 502, code
+        assert resp.json()["error"]["status"] == "UNAVAILABLE"
 
 
 def test_upstream_error_on_embed_maps_status() -> None:

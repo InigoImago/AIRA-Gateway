@@ -2069,6 +2069,22 @@ MUTATIONS = [
         "            requests=1,",
         "gateway/tests/test_ratelimit_routes.py gateway/tests/test_serving_options.py",
     ),
+    Mutation(
+        "Z21",
+        "an upstream 400 is a precondition failure an operator can fix, not an outage",
+        "gateway/src/aira_gateway/api/serving.py",
+        "    if status_code == 400:\n        return UPSTREAM_REFUSED",
+        "    if False:\n        return UPSTREAM_REFUSED",
+        "gateway/tests/test_error_handling.py",
+    ),
+    Mutation(
+        "Z22",
+        "an upstream credential failure stays masked rather than being handed to the caller",
+        "gateway/src/aira_gateway/upstreams/openai/transport.py",
+        '        detail = _reason(response) if response.status_code == 400 else ""',
+        "        detail = _reason(response)",
+        "gateway/tests/test_openai_dialect.py gateway/tests/test_error_handling.py",
+    ),
 ]
 
 

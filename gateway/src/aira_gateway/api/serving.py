@@ -103,6 +103,30 @@ UPSTREAM_STATUS_MAP: dict[int, tuple[int, str]] = {
     504: (504, "DEADLINE_EXCEEDED"),
 }
 
+#: An upstream **400** is the provider saying *this body is invalid* — which means the request we
+#: built from this deployment's catalog is one the model does not accept. That is a configuration
+#: fault, and `502 UNAVAILABLE` sends whoever reads it to the provider's status page instead of to
+#: the declaration that is wrong.
+#:
+#: Found live: the catalog declared a thinking mode the server rejects **by name**, and the caller
+#: received "Upstream returned 400." with status `UNAVAILABLE`. Same reasoning as `NoCapableModel`
+#: answering `FAILED_PRECONDITION` — "every candidate was excluded" and "the provider refused the
+#: body we built" are both fixable by an operator; an outage is not.
+#:
+#: **Only 400.** A 401 or 403 is about *our* credentials, and the test this replaced was right to
+#: mask those: the caller cannot act on them and the provider's message may name the credential.
+#: Those stay a generic 502, and their detail stays in the log.
+UPSTREAM_REFUSED = (400, "FAILED_PRECONDITION")
+
+
+def upstream_status(status_code: int | None) -> tuple[int, str]:
+    mapped = UPSTREAM_STATUS_MAP.get(status_code or 0)
+    if mapped is not None:
+        return mapped
+    if status_code == 400:
+        return UPSTREAM_REFUSED
+    return (502, "UNAVAILABLE")
+
 
 async def guard_before_work(request: Request, *, units: int = 1) -> None:
     """The controls that do not need to know the model — taken before anything is spent.
@@ -232,7 +256,7 @@ def upstream_error(exc: UpstreamError) -> JSONResponse:
     through is a fact about the *upstream*, and both surfaces have to agree on it or the same
     outage would look like two different problems depending on which URL was called.
     """
-    code, status = UPSTREAM_STATUS_MAP.get(exc.status_code or 0, (502, "UNAVAILABLE"))
+    code, status = upstream_status(exc.status_code)
     return _error(code, exc.message, status)
 
 
