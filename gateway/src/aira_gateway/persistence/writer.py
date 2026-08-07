@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -65,6 +66,9 @@ class PendingLog:
     publisher: str | None = None
     region: str | None = None
     api: str = "gemini"
+    #: Bytes the caller sent, as counted by the body-size middleware (`FRD-501`). NULL where the
+    #: count is unknown, never 0 — an unknown size must not be able to look like a small one.
+    request_bytes: int | None = None
 
 
 class RequestLogWriter:
@@ -77,10 +81,15 @@ class RequestLogWriter:
         redactor: Redactor,
         *,
         max_queue: int = 512,
+        on_written: Callable[[str | None], None] | None = None,
     ) -> None:
         self._sessionmaker = sessionmaker
         self._settings = settings
         self._redactor = redactor
+        # The fan-out point of `ADR-0014`: the detector learns which scopes saw traffic from the
+        # row that was going to be written anyway. A callback rather than a second queue, because
+        # the whole cost has to stay "mark three strings".
+        self._on_written = on_written
         self._max_queue = max_queue
         self._queue: asyncio.Queue[PendingLog] = asyncio.Queue(maxsize=max(1, max_queue))
         self._worker: asyncio.Task[None] | None = None
@@ -192,7 +201,12 @@ class RequestLogWriter:
                 publisher=entry.publisher,
                 region=entry.region,
                 api=entry.api,
+                request_bytes=entry.request_bytes,
             )
+        # After the row exists, never before: a detector told about a request that failed to
+        # persist would be measuring traffic the audit trail does not show.
+        if self._on_written is not None:
+            self._on_written(entry.use_case)
 
     async def _may_store_payloads(self, session: AsyncSession, use_case: str | None) -> bool:
         """Whether this request's bodies may be written at all (FRD-404).

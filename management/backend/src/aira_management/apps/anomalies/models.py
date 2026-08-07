@@ -59,6 +59,10 @@ class AnomalyRule(models.Model):
     #: Percent for rate and ratio kinds; a count for event kinds. What it *means* comes from the
     #: kind (`aira_common.anomalies.threshold_unit`), never from a second column.
     threshold = models.PositiveIntegerField(validators=[MinValueValidator(1)])
+    #: The kind's **second** number, when it needs one — today only `payload_size`, which measures
+    #: a share of requests above a byte figure and needs somewhere to keep the byte figure.
+    #: Required where `aira_common.anomalies.PARAMETER_MEANING` lists it, refused everywhere else.
+    parameter = models.PositiveBigIntegerField(null=True, blank=True)
     #: Below this many requests in the window, a rate or a ratio says nothing: one refusal out of
     #: one request is 100 %. Ignored by kinds that are not proportions of anything.
     min_sample = models.PositiveIntegerField(default=DEFAULT_MIN_SAMPLE)

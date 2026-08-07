@@ -86,6 +86,7 @@ CONSUMER = "gateway/tests/test_consumer_apply.py"
 MGMT_RBAC = "management/backend/tests/test_rbac.py management/backend/tests/test_usecases.py"
 ANOMALY_RULES = "management/backend/tests/test_anomaly_rules.py"
 ANOMALY_CONSUMER = "gateway/tests/test_consumer_apply.py"
+ANOMALY_ENGINE = "gateway/tests/test_anomaly_engine.py"
 MGMT_HARDENING = "management/backend/tests/test_hardening.py"
 MGMT_SETTINGS = (
     "management/backend/tests/test_settings.py management/backend/tests/test_hardening.py"
@@ -2152,6 +2153,63 @@ MUTATIONS = [
         '    if "use_case" not in payload:\n        return',
         "    if False:\n        return",
         ANOMALY_CONSUMER,
+    ),
+    # ---- the detection engine (FRD-501) --------------------------------------------------
+    Mutation(
+        "N7",
+        "a rate over too few requests says nothing, rather than 100 percent",
+        "gateway/src/aira_gateway/anomalies/evaluator.py",
+        "        if total < max(rule.min_sample, 1):",
+        "        if False:",
+        ANOMALY_ENGINE,
+    ),
+    Mutation(
+        "N8",
+        "growth from nothing is not an infinite spike",
+        "gateway/src/aira_gateway/anomalies/evaluator.py",
+        "        if was <= 0:\n            continue",
+        "        if was <= 0:\n            was = 1",
+        ANOMALY_ENGINE,
+    ),
+    Mutation(
+        "N9",
+        "a request whose size is unknown is not counted as a small one",
+        "gateway/src/aira_gateway/anomalies/evaluator.py",
+        "        known_only=RequestLog.request_bytes.is_not(None),",
+        "        known_only=None,",
+        ANOMALY_ENGINE,
+    ),
+    Mutation(
+        "N10",
+        "the same finding is not written again inside its own window",
+        "gateway/src/aira_gateway/anomalies/service.py",
+        "        if last is not None and now - last < timedelta(minutes=rule.window_minutes):\n            return None",
+        "        if False:\n            return None",
+        ANOMALY_ENGINE,
+    ),
+    Mutation(
+        "N11",
+        "a rule whose use case saw no traffic is not evaluated",
+        "gateway/src/aira_gateway/anomalies/service.py",
+        "        return [r for r in rules if r.use_case is None or r.use_case in touched]",
+        "        return rules",
+        ANOMALY_ENGINE,
+    ),
+    Mutation(
+        "N12",
+        "an action this stage cannot take is recorded as not taken",
+        "gateway/src/aira_gateway/anomalies/service.py",
+        "action_taken=(RuleAction.ALERT.value if action is RuleAction.ALERT else NOT_ENFORCED),",
+        "action_taken=RuleAction.ALERT.value,",
+        ANOMALY_ENGINE,
+    ),
+    Mutation(
+        "N13",
+        "a payload rule needs its byte figure to measure anything",
+        "management/backend/src/aira_management/apps/anomalies/serializers.py",
+        "        if needs_parameter(kind):",
+        "        if False:",
+        ANOMALY_RULES,
     ),
 ]
 

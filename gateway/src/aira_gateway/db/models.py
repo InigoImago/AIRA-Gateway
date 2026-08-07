@@ -92,6 +92,11 @@ class RequestLog(Base):
     completion_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     total_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: How many bytes the caller sent. Counted by the body-size middleware, which was already
+    #: counting them to enforce the ceiling (`FRD-122` §12) — so this costs nothing new. NULL on
+    #: every row written before `FRD-501`, and such rows are excluded from **both** sides of the
+    #: `payload_size` share, so an old row cannot look like a small one.
+    request_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     trace_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     # What the request cost, in nano-units of the installation currency. NULL means the model
     # had no price on file — deliberately distinct from a genuine zero (FRD-403).
@@ -109,6 +114,41 @@ class RequestLog(Base):
     response_payload: Mapped[dict[str, Any] | None] = mapped_column(
         JSON(none_as_null=True), nullable=True
     )
+
+
+class AnomalyEvent(Base):
+    """One finding: a rule crossed its threshold for one target (`FRD-501`).
+
+    The row says what was **measured**, not merely that something fired. A finding nobody can check
+    is a finding nobody acts on — and the first question anyone asks is "how bad, out of how many".
+    """
+
+    __tablename__ = "anomaly_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+    rule_id: Mapped[int] = mapped_column(Integer, index=True)
+    rule_name: Mapped[str] = mapped_column(String(120))
+    kind: Mapped[str] = mapped_column(String(32), index=True)
+    #: The use case the traffic belonged to. NULL only when a global rule fired on a target that
+    #: spans use cases, which today is never — kept nullable so a future kind is not blocked by a
+    #: column definition.
+    use_case: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    #: What the rule grouped by (`subject` | `credential` | `use_case`) and the value it found.
+    target: Mapped[str] = mapped_column(String(16))
+    target_value: Mapped[str] = mapped_column(String(255), index=True)
+    #: The measurement, its threshold, and how many rows it was drawn from.
+    observed: Mapped[int] = mapped_column(Integer)
+    threshold: Mapped[int] = mapped_column(Integer)
+    sample: Mapped[int] = mapped_column(Integer)
+    window_minutes: Mapped[int] = mapped_column(Integer)
+    #: What was actually done — deliberately separate from the rule's configured action, because
+    #: recording is not enforcing (`ADR-0014` §3) and the row has to say which happened.
+    action_taken: Mapped[str] = mapped_column(String(32), default="alert")
+    #: One sentence a person can read without joining anything.
+    detail: Mapped[str] = mapped_column(String(500), default="")
 
 
 class UseCaseRead(Base):
@@ -207,6 +247,8 @@ class AnomalyRuleRead(Base):
     window_minutes: Mapped[int] = mapped_column(Integer)
     #: Percent for rate and ratio kinds, a count for event kinds. What it means comes from `kind`.
     threshold: Mapped[int] = mapped_column(Integer)
+    #: The kind's second number, when it needs one — today only `payload_size`'s byte figure.
+    parameter: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     #: Below this many requests a rate says nothing. 0 for kinds that are not proportions.
     min_sample: Mapped[int] = mapped_column(Integer, default=0)
     action: Mapped[str] = mapped_column(String(16), default="alert")

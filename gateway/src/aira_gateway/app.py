@@ -25,6 +25,7 @@ from aira_common.observability import (
     trace_context_fields,
 )
 from aira_gateway import __version__
+from aira_gateway.anomalies import AnomalyService
 from aira_gateway.api.gemini.errors import GeminiHTTPError, gemini_error_response
 from aira_gateway.api.gemini.routes import router as gemini_router
 from aira_gateway.api.kira.errors import kira_error_response
@@ -107,7 +108,9 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
         probe = app_.state.upstream_probe
         await probe.probe_once()
         probe.start()
+        await app_.state.anomalies.start()
         yield
+        await app_.state.anomalies.stop()
         await probe.stop()
         # Drained, not dropped: a redeploy must not discard audit rows still in the queue.
         await app_.state.log_writer.stop()
@@ -162,8 +165,20 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
     app.state.redactor = NoOpRedactor()
     # The audit write happens after the response goes out (FRD-405 §4.4); CLAUDE.md requires
     # persistence to stay off the request path and this is what makes that true.
+    # Detection reads the rows the writer produces (`ADR-0014`): the writer tells it which scopes
+    # saw traffic, and the timer does the rest. Constructed before the writer so the callback can
+    # be handed over rather than patched in afterwards.
+    app.state.anomalies = AnomalyService(
+        sessionmaker,
+        interval_seconds=settings.anomaly_interval_seconds,
+        enabled=settings.detect_anomalies,
+    )
     app.state.log_writer = RequestLogWriter(
-        sessionmaker, settings, app.state.redactor, max_queue=settings.log_queue_size
+        sessionmaker,
+        settings,
+        app.state.redactor,
+        max_queue=settings.log_queue_size,
+        on_written=app.state.anomalies.touch,
     )
 
     if otel_enabled:

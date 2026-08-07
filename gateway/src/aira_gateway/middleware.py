@@ -147,12 +147,17 @@ class BodySizeLimitMiddleware:
             return
 
         received = 0
+        # ASGI `state` is the standard channel to the application, and Starlette surfaces it as
+        # `request.state`. The count is already being taken to enforce the ceiling; recording it
+        # is what lets `FRD-501`'s `payload_size` rule measure anything at all.
+        state = scope.setdefault("state", {})
 
         async def counting_receive() -> Message:
             nonlocal received
             message = await receive()
             if message["type"] == "http.request":
                 received += len(message.get("body", b""))
+                state["request_bytes"] = received
                 if received > self.max_bytes:
                     # The other exit: a body that lied about its length, or declared none. Same
                     # refusal, same row — recorded here rather than in the exception handler,

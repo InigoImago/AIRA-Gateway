@@ -14,10 +14,12 @@ from rest_framework import serializers
 from aira_common.anomalies import (
     MAX_ACTION_MINUTES,
     MIN_ACTION_MINUTES,
+    PARAMETER_MEANING,
     RATE_KINDS,
     RATIO_KINDS,
     RuleAction,
     RuleKind,
+    needs_parameter,
     needs_sample,
 )
 from aira_management.apps.anomalies.models import AnomalyRule
@@ -40,6 +42,7 @@ class AnomalyRuleSerializer(serializers.ModelSerializer[AnomalyRule]):
             "kind",
             "window_minutes",
             "threshold",
+            "parameter",
             "min_sample",
             "action",
             "target",
@@ -95,6 +98,21 @@ class AnomalyRuleSerializer(serializers.ModelSerializer[AnomalyRule]):
         else:
             # An expiry on an `alert` would read as though the alert stopped applying.
             attrs["action_minutes"] = None
+
+        if needs_parameter(kind):
+            if not attrs.get("parameter"):
+                raise serializers.ValidationError(
+                    {
+                        "parameter": (
+                            f"Required for '{kind}': the threshold is a share of requests, and "
+                            f"this is the {PARAMETER_MEANING[kind]} the share is measured against."
+                        )
+                    }
+                )
+        elif attrs.get("parameter") is not None:
+            # Refused rather than ignored. A number a rule accepts and never reads is a setting
+            # somebody will tune, and then wonder why nothing changes (`FRD-124`).
+            raise serializers.ValidationError({"parameter": f"'{kind}' takes no second number."})
 
         if not needs_sample(kind):
             # A credential used from a new address is one observation, not a proportion. Requiring

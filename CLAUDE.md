@@ -43,7 +43,7 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
   inevitably do when both were written from the same mental model — and line coverage cannot see
   a *missing requirement*: on 2026-08-05 a review found seven real defects behind a green suite at
   99% coverage. So: **prove a test can fail.** Break the property, watch it go red, restore.
-  `make mutants` (`tools/mutation_check.py`) does this for **239 properties** across auth, budgets,
+  `make mutants` (`tools/mutation_check.py`) does this for **246 properties** across auth, budgets,
   pipeline, retention, the management control plane and the gateway's counters; when
   you fix a bug, add the mutation that reintroduces it. Two traps that cost real defects here:
   a stand-in that is more permissive than the thing it replaces (reuse the real method where you
@@ -656,6 +656,21 @@ the preceding window, because a fixed number is a budget and there is one. A **g
 Security's to author (its effects land on use cases its author cannot see) and **everybody's to
 read**. `use_case` is **NULL**, never "", and an event carrying no scope key is **skipped rather
 than made global**.
+**Stage B (`FRD-501`, 2026-08-07)** — the engine. All seven kinds evaluate against the request log.
+Scheduling: the writer **marks which scopes saw traffic** and a timer evaluates only those — per-row
+evaluation is N queries per request, and a timer over all rules makes a quiet installation with 200
+use cases run 200 pointless queries a minute forever. The **cooldown is the window**. Three
+measurement rules: a rate over too few rows is not evaluated; **growth from nothing is not a spike**
+(an empty previous window as infinite growth makes every use case's first hour an incident); and a
+request of **unknown** size is excluded from *both* sides of the share. `refusal_rate` reads
+`Outcome` directly rather than keeping a second list of "bad" outcomes, and counts `client_gone` —
+one caller hanging up is not our failure, a thousand is the shape a detector exists for. Until
+`FRD-503`, a `block` rule **records that it did not enforce**, in those words. Two findings: a
+kind that needed **two** numbers was declared with one (`payload_size`'s byte figure had nowhere to
+live) — invisible to stage A's 18 tests and six mutations, because **a configuration schema is only
+proved by the code that consumes it**; and `FRD-602`'s scope assertion caught the new endpoint while
+meaning something narrower, so it now says *each endpoint resolves the scope exactly once*, which
+also catches one that resolves it zero times.
 Next candidates: **`FRD-114`** (model metadata — now also carries publisher + default output cap,
 prerequisite for 110–113 and 119), **`FRD-110`** (documents/images — the widest gap),
 **`FRD-115`/`FRD-119`** (Vertex EU + the Anthropic dialect — required), **`FRD-116`** (Vault),

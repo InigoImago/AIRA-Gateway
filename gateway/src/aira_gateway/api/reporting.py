@@ -22,10 +22,12 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import JSONResponse
+from sqlalchemy import select
 
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.auth.dependencies import require_principal
 from aira_gateway.auth.principal import Principal
+from aira_gateway.db.models import AnomalyEvent
 from aira_gateway.reporting.csv_export import BREAKDOWNS, filename, render
 from aira_gateway.reporting.service import ReportingService, Scope
 
@@ -141,4 +143,54 @@ async def reporting(
         # header and one that sniffs the bytes must reach the same conclusion.
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{name}"'},
+    )
+
+
+@router.get("/v1beta/anomalies")
+async def anomalies(
+    request: Request,
+    principal: Principal = Depends(require_principal),
+    limit: int = Query(100, ge=1, le=500),
+) -> JSONResponse:
+    """What the detector has found (`FRD-501` FR-8).
+
+    Scoped by **the same** `visible_scope` the report uses. Not a second rule that happens to
+    agree: a second entry point is a second chance to forget one, which is exactly how an export
+    comes to return more than the screen it was exported from (`FRD-602` §1).
+
+    A global rule's findings are shown to everybody who may see the use case the traffic belonged
+    to. A finding with no use case at all is oversight-only — there is nobody else it is *about*.
+    """
+    scope = visible_scope(principal)
+    stmt = select(AnomalyEvent).order_by(AnomalyEvent.created_at.desc()).limit(limit)
+    if scope is not None:
+        stmt = stmt.where(AnomalyEvent.use_case.in_(list(scope)))
+
+    sessionmaker = request.app.state.db_sessionmaker
+    async with sessionmaker() as session:
+        rows = list((await session.execute(stmt)).scalars().all())
+
+    return JSONResponse(
+        {
+            "events": [
+                {
+                    "id": row.id,
+                    "created_at": row.created_at.isoformat(),
+                    "rule": row.rule_name,
+                    "kind": row.kind,
+                    "use_case": row.use_case,
+                    "target": row.target,
+                    "target_value": row.target_value,
+                    "observed": row.observed,
+                    "threshold": row.threshold,
+                    "sample": row.sample,
+                    "window_minutes": row.window_minutes,
+                    # What was *done*, which `ADR-0014` §3 keeps separate from what was detected.
+                    "action_taken": row.action_taken,
+                    "detail": row.detail,
+                }
+                for row in rows
+            ],
+            "scope": "all" if scope is None else "use_cases",
+        }
     )

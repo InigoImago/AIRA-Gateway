@@ -266,6 +266,7 @@ async def _upsert_anomaly_rule(session: AsyncSession, payload: dict[str, Any]) -
         "kind": payload["kind"],
         "window_minutes": int(payload.get("window_minutes", 15)),
         "threshold": int(payload["threshold"]),
+        "parameter": payload.get("parameter"),
         "min_sample": int(payload.get("min_sample") or 0),
         "action": payload.get("action", "alert"),
         "target": payload.get("target", "subject"),

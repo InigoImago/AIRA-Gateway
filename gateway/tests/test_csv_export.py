@@ -366,16 +366,28 @@ async def test_oversight_exports_every_use_case(stack) -> None:
     assert "vertrieb" in body
 
 
-def test_the_scope_decision_is_made_once_and_the_format_chosen_afterwards() -> None:
+def test_every_endpoint_here_resolves_the_visible_scope_exactly_once() -> None:
     """A second endpoint that queried and formatted is how an export comes to return more than the
-    screen. `visible_scope` is one function, guarded by its own mutations; this asserts the CSV
-    path has not grown a second one."""
+    screen it was exported from. `visible_scope` is one function, guarded by its own mutations.
+
+    Originally this counted the calls in the *module* and meant "the CSV path has not grown its
+    own". `FRD-501` added a second, legitimate endpoint here — the anomaly list, which is scoped by
+    the very same function — and the assertion went red for the right reason and the wrong
+    statement. Now it says what it meant: **each** endpoint in this module resolves the scope
+    exactly once. Which is the stronger property, because it also catches an endpoint that resolves
+    it *zero* times.
+    """
     import inspect
 
     from aira_gateway.api import reporting as module
 
-    source = inspect.getsource(module)
-    assert source.count("visible_scope(principal)") == 1, (
-        "the scope is resolved more than once — one of them will drift"
-    )
-    assert "def render" not in source, "the CSV path grew its own query"
+    endpoints = {route.endpoint for route in module.router.routes}
+    assert endpoints, "no routes found — the assertion would pass by describing nothing"
+    for endpoint in endpoints:
+        calls = inspect.getsource(endpoint).count("visible_scope(principal)")
+        assert calls == 1, (
+            f"{endpoint.__name__} resolves the visible scope {calls} times; "
+            "zero shows more than it should, twice will drift"
+        )
+
+    assert "def render" not in inspect.getsource(module), "the CSV path grew its own query"

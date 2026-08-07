@@ -103,6 +103,26 @@ MIN_ACTION_MINUTES = 1
 MAX_ACTION_MINUTES = 7 * 24 * 60
 
 
+#: Kinds that need a **second** number, and what it means.
+#:
+#: Found while implementing the engine: `payload_size` is "the share of requests above a byte
+#: threshold", and the rule carried one threshold — the share. The byte figure had nowhere to live.
+#: Stage A's model, serializer, API, 18 tests and six mutations were all green, because they tested
+#: that a rule round-trips and nothing had yet tried to *evaluate* one. A configuration schema is
+#: only proved by the code that consumes it.
+#:
+#: Deliberately a map rather than a free-form field: required where it is listed, refused
+#: everywhere else, so it cannot quietly become a second untyped parameter. Still no operators and
+#: still a closed set of kinds — a kind that wants a third number is a code change with a test.
+PARAMETER_MEANING: dict[RuleKind, str] = {
+    RuleKind.PAYLOAD_SIZE: "request bytes",
+}
+
+
+def needs_parameter(kind: RuleKind) -> bool:
+    return kind in PARAMETER_MEANING
+
+
 def threshold_unit(kind: RuleKind) -> str:
     """What the threshold *means* for this kind, in words a form can print.
 

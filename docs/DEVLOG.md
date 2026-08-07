@@ -5,6 +5,65 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-07 — Phase 5, stage B: the engine that reads the rules
+
+`FRD-501`. `FRD-500` let an installation say what abnormal looks like; this measures it. All seven
+kinds evaluate, against the request log — the same rows `FRD-601` reports from, so a detector cannot
+see anything the report cannot.
+
+The scheduling is the part with the engineering in it. Two obvious designs are both wrong:
+evaluating on every persisted row is N queries per request — off the hot path but not off the
+*machine* — and scanning every rule on a timer means a quiet installation with 200 use cases runs
+200 pointless queries a minute forever. So the writer, which touches every row anyway, **marks
+which scopes saw traffic**, and the timer evaluates only those. A quiet installation does no work.
+The set is bounded and dropped on overflow: losing a *hint* delays a finding by one tick, and a
+bounded loss beats unbounded memory in the component whose whole job is to still be running when
+something goes wrong.
+
+The cooldown is the window itself. A 15-minute window evaluated every minute would fire fifteen
+times about the same fifteen minutes.
+
+**A gap in stage A, found by building the thing that consumes it.** `payload_size` is "the share of
+requests above a byte threshold" and the rule carried **one** threshold — the share. The byte figure
+had nowhere to live. Stage A's model, serializer, API, 18 tests and six mutations were all green,
+and every one of them was blind to it, because they tested that a rule *round-trips* and nothing had
+yet tried to *evaluate* one. **A configuration schema is only proved by the code that consumes it.**
+The fix is a nullable `parameter` — required where a kind needs it, refused everywhere else, so it
+cannot quietly become a second free-form field. And the byte count itself had nowhere to come from,
+so the body-size middleware now records what it was already counting to enforce the ceiling.
+
+Three measurement decisions that are easy to get wrong and expensive to get wrong quietly:
+
+- **A rate over too few rows is not evaluated.** One refusal out of one request is 100 %.
+- **Growth from nothing is not a spike.** Treating an empty previous window as infinite growth would
+  make every use case's first hour an incident, and the alert that fires on arrival is the one
+  people switch off before it ever says anything true.
+- **A request whose size is unknown is excluded from both sides of the share** — numerator *and*
+  denominator. Counting an unknown as small would make old traffic look innocent.
+
+`refusal_rate` counts everything that is not `served`, straight from `Outcome` rather than from a
+second list of "bad" outcomes — `FRD-122` already made that enum the one place a control's existence
+is recorded, and a copy here would go stale the first time somebody added a control. `client_gone`
+is deliberately in: one caller hanging up is not our failure, a thousand is exactly the shape a
+detector exists to surface.
+
+Until `FRD-503` lands, a rule configured to block **detects and records that it did not enforce**,
+in those words on the row. A control displayed as active and doing nothing is the defect `FRD-125`
+exists to prevent; saying so is the minimum honest interim.
+
+**An existing architecture assertion caught the new endpoint, and was right for the wrong reason.**
+`FRD-602` left a test asserting that `visible_scope` is resolved exactly once *in the reporting
+module* — meaning "the CSV path did not grow its own". The anomaly list is a second, legitimate
+endpoint scoped by the very same function, so the count went to two and the test went red. It now
+says what it meant: **each endpoint** in that module resolves the scope exactly once — which is the
+stronger property, because it also catches an endpoint that resolves it **zero** times.
+
+30 engine tests, 3 more in Management, migration `0016`, seven mutations (`N7`–`N13`). `N12` came
+back **STALE** rather than surviving — `ruff format` had reflowed the line it pointed at — and was
+re-anchored; a mutation whose anchor moved protects nothing.
+
+---
+
 ## 2026-08-07 — Phase 5 begins: what an installation considers abnormal
 
 `ADR-0014` + `FRD-500`, stage A. The gateway has recorded everything since `FRD-122` and nobody was

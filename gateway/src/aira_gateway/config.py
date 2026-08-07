@@ -46,6 +46,12 @@ class GatewaySettings(BaseAiraSettings):
 
     # Enforce use-case/member usage budgets pre-dispatch (FRD-401).
     enforce_budgets: bool = True
+    #: Anomaly detection (`FRD-501`). Off means no evaluation at all; rules already authored stay
+    #: authored, which is the difference between "switched off" and "deleted".
+    detect_anomalies: bool = True
+    #: How often the detector wakes. It evaluates only the scopes that saw traffic, so a longer
+    #: interval costs findings latency rather than accuracy.
+    anomaly_interval_seconds: float = 60.0
 
     # Shared counter store for rate-limit buckets and budget reservations (ADR-0008 / FRD-405).
     # Empty disables it: rate limits then hold per process instead of across instances, and

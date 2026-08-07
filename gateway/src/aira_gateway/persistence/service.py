@@ -42,6 +42,7 @@ class RequestLogService:
         provider: str | None = None,
         publisher: str | None = None,
         region: str | None = None,
+        request_bytes: int | None = None,
     ) -> RequestLog:
         entry = RequestLog(
             subject=subject,
@@ -71,6 +72,7 @@ class RequestLogService:
             request_payload=request_payload,
             response_payload=response_payload,
             cost_nanos=cost_nanos,
+            request_bytes=request_bytes,
         )
         self._session.add(entry)
         await self._session.commit()

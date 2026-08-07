@@ -43,6 +43,7 @@ def rule_payload(rule: AnomalyRule) -> dict[str, Any]:
         "kind": rule.kind,
         "window_minutes": rule.window_minutes,
         "threshold": rule.threshold,
+        "parameter": rule.parameter,
         "min_sample": rule.min_sample,
         "action": rule.action,
         "target": rule.target,

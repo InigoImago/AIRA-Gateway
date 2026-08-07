@@ -329,3 +329,59 @@ def test_the_str_of_a_rule_says_where_it_applies() -> None:
     assert slug in str(scoped)
     assert "global" in str(everywhere)
     assert everywhere.is_global and not scoped.is_global
+
+
+# ---- the second number a kind may need (FRD-501 §4.4) ----------------------------------------
+
+
+def test_a_kind_that_measures_against_a_size_must_be_given_one() -> None:
+    """Found by building the engine, not by reviewing the schema: `payload_size` is "the share of
+    requests above a byte threshold", and the rule carried one threshold — the share. Stage A's
+    model, API, 18 tests and six mutations were all green, because nothing had yet tried to
+    *evaluate* a rule."""
+    admin = _user("param-admin", "use-case-admin")
+    slug = _use_case(admin, "param-uc")
+
+    refused = _client(admin).post(
+        f"{BASE}{slug}/anomaly-rules/",
+        _rule(name="bulk", kind=RuleKind.PAYLOAD_SIZE.value, threshold=20),
+        format="json",
+    )
+    assert refused.status_code == 400
+    assert "parameter" in refused.data["error"]["details"]
+
+    accepted = _client(admin).post(
+        f"{BASE}{slug}/anomaly-rules/",
+        _rule(name="bulk", kind=RuleKind.PAYLOAD_SIZE.value, threshold=20, parameter=500_000),
+        format="json",
+    )
+    assert accepted.status_code == 201
+    assert accepted.json()["parameter"] == 500_000
+
+
+def test_a_kind_that_takes_no_second_number_refuses_one() -> None:
+    """Refused rather than ignored. A number a rule accepts and never reads is a setting somebody
+    will tune, and then wonder why nothing changes (`FRD-124`)."""
+    admin = _user("noparam-admin", "use-case-admin")
+    slug = _use_case(admin, "noparam-uc")
+
+    response = _client(admin).post(
+        f"{BASE}{slug}/anomaly-rules/", _rule(parameter=500_000), format="json"
+    )
+
+    assert response.status_code == 400
+    assert "parameter" in response.data["error"]["details"]
+
+
+def test_the_byte_figure_travels_to_the_gateway(captured_events) -> None:
+    admin = _user("param-event-admin", "use-case-admin")
+    slug = _use_case(admin, "param-event-uc")
+
+    _client(admin).post(
+        f"{BASE}{slug}/anomaly-rules/",
+        _rule(name="bulk", kind=RuleKind.PAYLOAD_SIZE.value, threshold=20, parameter=500_000),
+        format="json",
+    )
+
+    published = [p for kind, p in captured_events if kind == "anomaly_rule.upserted"]
+    assert published[-1]["parameter"] == 500_000
