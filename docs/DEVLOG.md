@@ -5,6 +5,65 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-07 — Phase 5, stage C: a finding becomes a control
+
+`FRD-503`. `FRD-501` detected and recorded; a rule set to `block` wrote `detected_not_enforced` on
+the row, in those words, because saying so was the only honest interim. This carries it out.
+
+A **suspension** is the written decision `ADR-0014` promised: a target, an action, an expiry, an
+**author** and a **reason**. The last three are what make it a decision rather than a side effect —
+the first thing anyone asks at 03:00 is who did this. The pre-dispatch gate reads it, so a stopped
+caller is refused at the one place every verb passes (`FRD-126`) and does not pay for a classifier
+on the way to being told. Rows are kept after they are lifted: "this caller was blocked for two
+hours last Tuesday" is exactly what an incident review asks.
+
+**An amendment to `ADR-0014`, from building it.** The ADR said the gate would read decisions from
+the shared counter store, seeded from Postgres — by analogy with `FRD-405`. The analogy is wrong. A
+counter is written on *every* request, which is what earns Redis its place; a suspension is written
+when something goes wrong and read on every request, which is a **cache** problem, not a
+shared-state one. A five-second cache over Postgres does it with one query per instance and no
+second system — and survives a Redis outage, which for a control that *stops* traffic is the
+direction that matters. The cost is stated: a lift takes up to the TTL to reach every instance, and
+being slightly late to *remove* a restriction is the harmless direction.
+
+Three smaller decisions:
+
+- **429, not 403.** The credential is valid and the membership is real; the caller is stopped
+  temporarily, and "come back later" is what 429 means. A 403 sends a client off to fix permissions
+  it has no problem with.
+- **`suspended` is its own audit outcome.** Folding it into `rate_limited` would hide "we stopped
+  this caller on purpose" inside "this caller is going too fast", and those want different answers.
+- **The kill switch does not go through Kafka.** Every other piece of configuration is authored in
+  Management and distributed; this one is created directly against the gateway by an oversight role.
+  An incident control that depends on the event bus fails exactly when the bus is the problem, and
+  "traffic is doing something alarming" and "the pipeline between the planes is unhealthy" are not
+  independent events.
+
+**A pattern worth naming, because it has now happened twice.** `throttle` was declared as an action
+and given no rate — the same shape as `FRD-501`'s missing byte figure, found the same way, by
+building the consumer. **An enum member is not a specification.** Adding a value to an action or a
+kind should prompt "what does this one need that the others do not", and the answer belongs in the
+schema before anything ships.
+
+**Two things the existing suite caught, both worth more than the code they rejected.** The
+architecture assertion widened yesterday — "each endpoint in the reporting module resolves the
+visible scope exactly once" — went red on the new suspension endpoints, which resolve it **zero**
+times. Correctly: they are bounded by *role*, not by use case. Two different ways of being safe do
+not belong behind one heading, so they moved to `api/incidents.py`. And the mutation harness caught
+`N19` surviving: every endpoint test in the new file ran with authentication switched off, which
+takes the demo-principal path and returns *before* the role check — so the check itself was
+untested while five tests around it passed. It is now driven with a real principal.
+
+Also: three mutations came back stale because this change edited the lines they pointed at, and one
+(`N15`, "a lifted suspension stops refusing people") **survived correctly** — the load query already
+filters lifted rows, so the in-memory check is the second of two guards. Removed as a mutation and
+kept as code, on the `X3` precedent: a property guarded twice cannot be a mutation, and that is not
+a reason to remove a guard.
+
+25 tests, migration `0017`, five new mutations. `make ci` green.
+
+---
+
 ## 2026-08-07 — Phase 5, stage B: the engine that reads the rules
 
 `FRD-501`. `FRD-500` let an installation say what abnormal looks like; this measures it. All seven

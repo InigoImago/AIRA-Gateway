@@ -119,6 +119,19 @@ PARAMETER_MEANING: dict[RuleKind, str] = {
 }
 
 
+#: Actions that need a number of their own.
+#:
+#: The second time a declared setting turned out to be missing the figure it needs — `payload_size`
+#: was the first (`FRD-501` §4.4). The pattern is worth naming: **an enum member is not a
+#: specification.** Adding a value should prompt "what does this one need that the others do not",
+#: and the answer belongs in the schema before anything ships.
+ACTIONS_NEEDING_RATE = frozenset({RuleAction.THROTTLE})
+
+
+def needs_throttle_rate(action: RuleAction) -> bool:
+    return action in ACTIONS_NEEDING_RATE
+
+
 def needs_parameter(kind: RuleKind) -> bool:
     return kind in PARAMETER_MEANING
 

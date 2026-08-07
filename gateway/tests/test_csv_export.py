@@ -375,7 +375,9 @@ def test_every_endpoint_here_resolves_the_visible_scope_exactly_once() -> None:
     the very same function — and the assertion went red for the right reason and the wrong
     statement. Now it says what it meant: **each** endpoint in this module resolves the scope
     exactly once. Which is the stronger property, because it also catches an endpoint that resolves
-    it *zero* times.
+    it *zero* times — and it did, immediately: `FRD-503`'s suspension endpoints are bounded by
+    **role** rather than by use case, so they belong in `api/incidents.py` and not behind this
+    module's heading. Two different ways of being safe do not share a file.
     """
     import inspect
 

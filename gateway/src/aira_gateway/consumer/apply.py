@@ -271,6 +271,7 @@ async def _upsert_anomaly_rule(session: AsyncSession, payload: dict[str, Any]) -
         "action": payload.get("action", "alert"),
         "target": payload.get("target", "subject"),
         "action_minutes": payload.get("action_minutes"),
+        "throttle_rpm": payload.get("throttle_rpm"),
         "enabled": bool(payload.get("enabled", True)),
     }
     if "use_case" not in payload:

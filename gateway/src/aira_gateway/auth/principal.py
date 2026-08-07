@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from aira_common.roles import is_governance
+from aira_common.roles import has_oversight, is_governance
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,3 +35,13 @@ class Principal:
     def is_governance(self) -> bool:
         """Whether this caller oversees every use case rather than a set of them."""
         return is_governance(self.roles)
+
+    @property
+    def is_oversight(self) -> bool:
+        """Whether this caller may act across use cases in an incident (`FRD-503` FR-6).
+
+        Wider than :attr:`is_governance` by exactly IT Security, which is the role whose job this
+        is — the same split `FRD-206` had to make in the control plane, for the same reason: who
+        may *see* every use case and who may see every *figure* are two questions.
+        """
+        return has_oversight(self.roles)

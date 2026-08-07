@@ -47,8 +47,15 @@ written anyway.
 ### 2. An action is a written decision with an author and an expiry
 
 Detection never reaches into the request path. It **writes a decision** — "this subject is blocked,
-by rule R, until T" — and the pre-dispatch gate reads it, the same way it already reads budgets and
-limits: from the shared counter store, seeded from Postgres on a miss (`ADR-0008`).
+by rule R, until T" — and the pre-dispatch gate reads it.
+
+> **Amended 2026-08-07 by `FRD-503` §4.1.** This said "from the shared counter store, seeded from
+> Postgres on a miss", by analogy with `FRD-405`. Building it showed the analogy is wrong. A counter
+> is written on *every* request, which is why Redis earns its place there; a suspension is written
+> when something goes wrong and read on every request, which is a **cache** problem rather than a
+> shared-state one. It is now a short-lived cache over Postgres — and that is also the safer failure
+> mode: a decision held only in Redis disappears when Redis does, while Postgres is the database the
+> gateway cannot serve a request without anyway.
 
 Three properties are not negotiable:
 
@@ -105,9 +112,10 @@ window and an action in order to say "stop".
   bounded and evidenced, while a slow request path harms everything. Where a limit genuinely must
   be exact and immediate, that is a rate limit or a budget — both already synchronous, both already
   atomic (`FRD-405`).
-- A gateway with no shared counter store falls back to per-instance blocking, in the same shape and
-  with the same honesty as `FRD-405`: `/readyz` reports `degraded`, and the fallback still bounds
-  rather than fails open.
+- ~~A gateway with no shared counter store falls back to per-instance blocking~~ — **no longer
+  applies** after the §2 amendment. A suspension lives in Postgres, so a Redis outage does not
+  reach it at all; what it costs instead is that a *lift* takes up to the cache TTL to reach every
+  instance, and being slightly late to remove a restriction is the harmless direction.
 - Two places can now refuse a request before dispatch. They are deliberately kept in one gate
   (`FRD-126`'s `prepare_for_dispatch`), because a second refusal path is how `:embedContent` came to
   bypass both controls once already.

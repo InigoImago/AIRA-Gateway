@@ -11,7 +11,7 @@ as before this feature existed — this must never start rejecting traffic on up
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -50,7 +50,14 @@ class RateLimitService:
         self._clock = clock
         self._cache: dict[str, tuple[float, list[RateLimitRead]]] = {}
 
-    async def check(self, use_case: str | None, subject: str | None, units: int = 1) -> None:
+    async def check(
+        self,
+        use_case: str | None,
+        subject: str | None,
+        units: int = 1,
+        *,
+        extra: Sequence[BucketRequest] = (),
+    ) -> None:
         """Raise :class:`RateLimited` if the caller is over its configured rate.
 
         ``units`` is what the request weighs — one for an ordinary call, one per text for an
@@ -58,9 +65,15 @@ class RateLimitService:
         a limit of 10 per minute allowing 5 000 texts per minute; the limit would be intact on
         paper and gone in practice, which is a control bypass rather than an inaccuracy.
         """
-        if not self._enforce or not use_case:
+        # A throttle from `FRD-503` is an *extra* bucket, not a replacement: a throttled caller
+        # is still subject to whatever limits already applied, and the two are taken together so
+        # the decision stays all-or-nothing (FR-4).
+        if not self._enforce:
             return
-        buckets = self._applicable(await self._config(use_case), use_case, subject)
+        configured = (
+            self._applicable(await self._config(use_case), use_case, subject) if use_case else []
+        )
+        buckets = [*configured, *extra]
         if not buckets:
             return
 

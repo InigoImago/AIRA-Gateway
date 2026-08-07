@@ -49,6 +49,9 @@ class GatewaySettings(BaseAiraSettings):
     #: Anomaly detection (`FRD-501`). Off means no evaluation at all; rules already authored stay
     #: authored, which is the difference between "switched off" and "deleted".
     detect_anomalies: bool = True
+    #: Whether a suspension actually stops traffic (`FRD-503`). Off records findings and refuses
+    #: nobody — the setting an installation uses while it learns what its rules do.
+    enforce_suspensions: bool = True
     #: How often the detector wakes. It evaluates only the scopes that saw traffic, so a longer
     #: interval costs findings latency rather than accuracy.
     anomaly_interval_seconds: float = 60.0

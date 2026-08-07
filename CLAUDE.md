@@ -43,7 +43,7 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
   inevitably do when both were written from the same mental model — and line coverage cannot see
   a *missing requirement*: on 2026-08-05 a review found seven real defects behind a green suite at
   99% coverage. So: **prove a test can fail.** Break the property, watch it go red, restore.
-  `make mutants` (`tools/mutation_check.py`) does this for **246 properties** across auth, budgets,
+  `make mutants` (`tools/mutation_check.py`) does this for **251 properties** across auth, budgets,
   pipeline, retention, the management control plane and the gateway's counters; when
   you fix a bug, add the mutation that reintroduces it. Two traps that cost real defects here:
   a stand-in that is more permissive than the thing it replaces (reuse the real method where you
@@ -671,6 +671,23 @@ live) — invisible to stage A's 18 tests and six mutations, because **a configu
 proved by the code that consumes it**; and `FRD-602`'s scope assertion caught the new endpoint while
 meaning something narrower, so it now says *each endpoint resolves the scope exactly once*, which
 also catches one that resolves it zero times.
+**Stage C (`FRD-503`, 2026-08-07)** — a finding becomes a control. A **suspension** is the written
+decision `ADR-0014` promised: target, action, expiry, **author**, **reason**; read at the one
+pre-dispatch gate, so a stopped caller does not pay for a classifier before being told; kept after
+being lifted, because "blocked for two hours last Tuesday" is what a review asks. **Amends
+`ADR-0014` §2**: a suspension is read every request and written when something goes wrong, which is
+a *cache* problem, not shared state — so a 5-second cache over **Postgres**, which also survives a
+Redis outage (the right direction for a control that stops traffic); the cost is that a *lift* takes
+up to the TTL, and being late to remove a restriction is harmless. **429 not 403** (the credential is
+valid; "come back later" is what 429 means), **`suspended` is its own audit outcome** (not folded
+into `rate_limited`), and the **kill switch does not go through Kafka** — an incident control that
+depends on the event bus fails exactly when the bus is the problem. A pattern named after happening
+twice: **an enum member is not a specification** (`throttle` had no rate, as `payload_size` had no
+byte figure). Two catches by the existing suite: the reporting module's scope assertion rejected the
+new endpoints for resolving the scope **zero** times — correctly, they are bounded by *role*, so
+they moved to `api/incidents.py`; and `N19` survived because every endpoint test ran with auth off,
+which returns on the demo path **before** the role check — five tests passed around an untested
+check.
 Next candidates: **`FRD-114`** (model metadata — now also carries publisher + default output cap,
 prerequisite for 110–113 and 119), **`FRD-110`** (documents/images — the widest gap),
 **`FRD-115`/`FRD-119`** (Vertex EU + the Anthropic dialect — required), **`FRD-116`** (Vault),

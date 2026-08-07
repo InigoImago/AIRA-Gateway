@@ -40,7 +40,10 @@ async def _rows(app) -> list[RequestLog]:  # noqa: ANN001
 
 
 class _AlwaysLimited:
-    async def check(self, use_case, subject, units=1):  # noqa: ANN001, ANN201
+    async def check(self, use_case, subject, units=1, *, extra=()):  # noqa: ANN001, ANN201
+        # `extra` is part of the real signature (`FRD-503`: a throttle is an additional
+        # bucket). A stand-in narrower than the thing it replaces is how this project has
+        # already lost a defect once — CLAUDE.md §3.
         raise RateLimited("Request rate limit exceeded for use case.", retry_after="7")
 
 

@@ -75,6 +75,9 @@ class AnomalyRule(models.Model):
         blank=True,
         validators=[MinValueValidator(MIN_ACTION_MINUTES), MaxValueValidator(MAX_ACTION_MINUTES)],
     )
+    #: Requests per minute a throttled target is held to. Required for `throttle` and meaningless
+    #: for anything else — an action that reduces a rate has to say to what.
+    throttle_rpm = models.PositiveIntegerField(null=True, blank=True)
     enabled = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

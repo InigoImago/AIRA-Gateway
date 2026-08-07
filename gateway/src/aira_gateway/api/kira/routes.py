@@ -28,6 +28,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import ValidationError
 
 from aira_common.models import Capability
+from aira_gateway.anomalies.suspensions import Suspended
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.api.kira import errors, schemas
 from aira_gateway.api.kira.attribution import resolve as resolve_attribution
@@ -122,7 +123,7 @@ def _error_response(request: Request, exc: Exception) -> JSONResponse:
         response = errors.kira_error_response(
             exc.code, _KIRA_CODE_FOR.get(exc.code, errors.VALIDATION_ERROR), exc.message
         )
-    elif isinstance(exc, RateLimited | BudgetExceeded):
+    elif isinstance(exc, Suspended | RateLimited | BudgetExceeded):
         response = errors.kira_error_response(
             429, errors.EXTERNAL_KI_API_TOO_MANY_REQUEST, exc.message
         )

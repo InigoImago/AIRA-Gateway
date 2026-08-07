@@ -26,8 +26,10 @@ from aira_common.observability import (
 )
 from aira_gateway import __version__
 from aira_gateway.anomalies import AnomalyService
+from aira_gateway.anomalies.suspensions import SuspensionService
 from aira_gateway.api.gemini.errors import GeminiHTTPError, gemini_error_response
 from aira_gateway.api.gemini.routes import router as gemini_router
+from aira_gateway.api.incidents import router as incidents_router
 from aira_gateway.api.kira.errors import kira_error_response
 from aira_gateway.api.kira.routes import BASE as KIRA_BASE
 from aira_gateway.api.kira.routes import router as kira_router
@@ -168,10 +170,16 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
     # Detection reads the rows the writer produces (`ADR-0014`): the writer tells it which scopes
     # saw traffic, and the timer does the rest. Constructed before the writer so the callback can
     # be handed over rather than patched in afterwards.
+    # A suspension is read on every request and written a handful of times a week, so it is a
+    # cache over Postgres rather than shared counter state — `FRD-503` §4.1 amends `ADR-0014` §2
+    # and says why. It also survives a Redis outage, which for a control that *stops* traffic is
+    # the direction that matters.
+    app.state.suspensions = SuspensionService(sessionmaker, enforce=settings.enforce_suspensions)
     app.state.anomalies = AnomalyService(
         sessionmaker,
         interval_seconds=settings.anomaly_interval_seconds,
         enabled=settings.detect_anomalies,
+        suspensions=app.state.suspensions,
     )
     app.state.log_writer = RequestLogWriter(
         sessionmaker,
@@ -199,6 +207,7 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
     app.include_router(pipeline_router)
     app.include_router(usage_router)
     app.include_router(reporting_router)
+    app.include_router(incidents_router)
     # The KIRA surface resolves its own attribution (FRD-107 §5.3): the predecessor has no
     # use-case selector, so the rule is "one membership, or a header" rather than a dependency.
     app.include_router(kira_router)

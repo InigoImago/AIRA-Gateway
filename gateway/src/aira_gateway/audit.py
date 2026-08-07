@@ -48,6 +48,10 @@ class Outcome(StrEnum):
     #: error: the upstream did nothing wrong, and "clients keep hanging up" is a different thing
     #: to investigate from "the provider keeps failing" (`FRD-128`).
     CLIENT_GONE = "client_gone"
+    #: Stopped on purpose, by a rule that fired or by a person in an incident (`FRD-503`). Its own
+    #: value rather than `rate_limited`: "we stopped this caller" and "this caller is going too
+    #: fast" want different answers, and a shared bucket would hide the first inside the second.
+    SUSPENDED = "suspended"
 
 
 #: How the served model was arrived at. ``fallback:N`` names the candidate's position in the chain.

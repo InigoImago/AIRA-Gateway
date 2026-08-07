@@ -151,6 +151,44 @@ class AnomalyEvent(Base):
     detail: Mapped[str] = mapped_column(String(500), default="")
 
 
+class AccessSuspension(Base):
+    """A written decision that some traffic is stopped (`FRD-503`).
+
+    Created by a rule that fired, or by a person in an incident. Three fields are what make it a
+    decision rather than a side effect: **who** (`author`), **why** (`reason`) and **until when**
+    (`expires_at`). An automatic block with none of those is an outage with a good reason, and the
+    first thing anyone asks at 03:00 is who did this.
+
+    Kept after it is lifted rather than deleted: "this caller was blocked for two hours last
+    Tuesday" is exactly the question an incident review asks.
+    """
+
+    __tablename__ = "access_suspensions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+    #: The use case this applies within. NULL means everywhere — an operator stopping a credential
+    #: does not have to know which use cases it is bound to.
+    use_case: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    target: Mapped[str] = mapped_column(String(16))
+    target_value: Mapped[str] = mapped_column(String(255), index=True)
+    action: Mapped[str] = mapped_column(String(16))
+    #: Requests per minute a throttled target is held to. NULL for a block.
+    throttle_rpm: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: When it stops applying. NULL only for one made by a person, who can also lift it — a rule
+    #: cannot, which is why an automatic one always has an expiry (`ADR-0014` §2).
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: ``rule:<name>`` or ``user:<subject>``. Never blank: an unattributable restriction is
+    #: indistinguishable from a fault.
+    author: Mapped[str] = mapped_column(String(255))
+    reason: Mapped[str] = mapped_column(String(500), default="")
+    #: Set when somebody ends it early. The row stays; this is what makes it history.
+    lifted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    lifted_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+
 class UseCaseRead(Base):
     """Gateway read-model of a use case, fed from Management via Kafka (FRD-204)."""
 
@@ -256,6 +294,8 @@ class AnomalyRuleRead(Base):
     #: How long a throttle or block lasts. NULL for `alert`, which does not expire because it
     #: never took anything away.
     action_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: Requests per minute a throttled target is held to. NULL unless the action is `throttle`.
+    throttle_rpm: Mapped[int | None] = mapped_column(Integer, nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
 
 

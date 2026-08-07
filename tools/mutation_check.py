@@ -87,6 +87,7 @@ MGMT_RBAC = "management/backend/tests/test_rbac.py management/backend/tests/test
 ANOMALY_RULES = "management/backend/tests/test_anomaly_rules.py"
 ANOMALY_CONSUMER = "gateway/tests/test_consumer_apply.py"
 ANOMALY_ENGINE = "gateway/tests/test_anomaly_engine.py"
+SUSPENSIONS = "gateway/tests/test_suspensions.py"
 MGMT_HARDENING = "management/backend/tests/test_hardening.py"
 MGMT_SETTINGS = (
     "management/backend/tests/test_settings.py management/backend/tests/test_hardening.py"
@@ -507,7 +508,7 @@ MUTATIONS = [
         "M3",
         "a configured limit is actually enforced",
         "gateway/src/aira_gateway/ratelimit/service.py",
-        "        if not self._enforce or not use_case:\n            return",
+        "        if not self._enforce:\n            return",
         "        if True:\n            return",
         f"{RATELIMIT} {RATELIMIT_ROUTES}",
     ),
@@ -1430,8 +1431,8 @@ MUTATIONS = [
         "E1",
         "a batch of n weighs n against the rate limit, not one",
         "gateway/src/aira_gateway/api/serving.py",
-        "    await request.app.state.rate_limits.check(use_case, subject, units)",
-        "    await request.app.state.rate_limits.check(use_case, subject, 1)",
+        "    await request.app.state.rate_limits.check(use_case, subject, units, extra=throttles)",
+        "    await request.app.state.rate_limits.check(use_case, subject, 1, extra=throttles)",
         EMBEDDING,
     ),
     Mutation(
@@ -2199,8 +2200,8 @@ MUTATIONS = [
         "N12",
         "an action this stage cannot take is recorded as not taken",
         "gateway/src/aira_gateway/anomalies/service.py",
-        "action_taken=(RuleAction.ALERT.value if action is RuleAction.ALERT else NOT_ENFORCED),",
-        "action_taken=RuleAction.ALERT.value,",
+        "        if self.suspensions is None or not rule.action_minutes:",
+        "        if False:",
         ANOMALY_ENGINE,
     ),
     Mutation(
@@ -2210,6 +2211,53 @@ MUTATIONS = [
         "        if needs_parameter(kind):",
         "        if False:",
         ANOMALY_RULES,
+    ),
+    # ---- incident response (FRD-503) -----------------------------------------------------
+    Mutation(
+        "N14",
+        "a suspension that has run out stops refusing people",
+        "gateway/src/aira_gateway/anomalies/suspensions.py",
+        "    return expires > moment",
+        "    return True",
+        SUSPENSIONS,
+    ),
+    # `N15` was here — "a lifted suspension stops refusing people" — and it survived, correctly.
+    # The load query already filters `lifted_at IS NULL`, so a lifted row is never in the cache to
+    # begin with, and the in-memory check is the second of two guards. A property guarded twice
+    # cannot be a mutation, and that is not a reason to remove one of the guards (the `X3`
+    # precedent). The behaviour is still asserted by
+    # `test_a_lifted_suspension_stops_nobody`.
+    Mutation(
+        "N16",
+        "a suspension scoped to one use case does not reach another",
+        "gateway/src/aira_gateway/anomalies/suspensions.py",
+        "    if row.use_case is not None and row.use_case != use_case:\n        return False",
+        "    if False:\n        return False",
+        SUSPENSIONS,
+    ),
+    Mutation(
+        "N17",
+        "being stopped on purpose is recorded as such, not as going too fast",
+        "gateway/src/aira_gateway/api/serving.py",
+        "    if isinstance(exc, Suspended):\n        return Outcome.SUSPENDED",
+        "    if isinstance(exc, Suspended):\n        return Outcome.RATE_LIMITED",
+        SUSPENSIONS,
+    ),
+    Mutation(
+        "N18",
+        "a rule that only alerts takes nothing away",
+        "gateway/src/aira_gateway/anomalies/service.py",
+        "        if action is RuleAction.ALERT:\n            return RuleAction.ALERT.value",
+        "        if False:\n            return RuleAction.ALERT.value",
+        SUSPENSIONS,
+    ),
+    Mutation(
+        "N19",
+        "only an oversight role may stop traffic by hand",
+        "gateway/src/aira_gateway/api/incidents.py",
+        "    if not principal.is_oversight:",
+        "    if False:",
+        "gateway/tests/test_suspensions.py gateway/tests/test_reporting.py",
     ),
 ]
 

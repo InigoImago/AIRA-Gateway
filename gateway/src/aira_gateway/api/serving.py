@@ -29,6 +29,7 @@ from aira_common.logging import get_logger
 from aira_common.models import Capability
 from aira_common.money import cost_nanos
 from aira_common.observability import set_span_attributes
+from aira_gateway.anomalies.suspensions import Suspended
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.api.gemini.errors import gemini_error_response as _error
 from aira_gateway.attachments import AttachmentRejected
@@ -72,6 +73,7 @@ _log = get_logger("aira_gateway")
 #: Every exception a surface must treat as a refusal rather than an unhandled error. Listed once,
 #: so a new control cannot be caught by one surface and escape the other.
 REFUSALS = (
+    Suspended,
     AttachmentRejected,
     ThinkingRejected,
     SchemaRejected,
@@ -148,8 +150,12 @@ async def guard_before_work(request: Request, *, units: int = 1) -> None:
     attribution = getattr(request.state, "attribution", None)
     use_case = getattr(attribution, "use_case", None)
     subject = getattr(attribution, "subject", None)
+    credential = getattr(attribution, "credential", None)
 
-    await request.app.state.rate_limits.check(use_case, subject, units)
+    # First of all: a caller who has been stopped is stopped, and must not pay for a classifier
+    # on the way to being told (`FRD-503` FR-3). Same argument that moved rate limiting here.
+    throttles = await request.app.state.suspensions.check(use_case, subject, credential)
+    await request.app.state.rate_limits.check(use_case, subject, units, extra=throttles)
     await request.app.state.budgets.refuse_if_exhausted(use_case, subject)
     request.state.early_gate_taken = True
 
@@ -776,6 +782,10 @@ _REFUSAL_OUTCOMES: dict[int, Outcome] = {
 
 
 def refusal_outcome(exc: Exception) -> Outcome:
+    # Checked before `RateLimited`, and its own value: "we stopped this caller on purpose" and
+    # "this caller is going too fast" want different answers from whoever reads the report.
+    if isinstance(exc, Suspended):
+        return Outcome.SUSPENDED
     if isinstance(exc, AttachmentRejected | ThinkingRejected | SchemaRejected | EmbeddingRejected):
         return Outcome.INVALID_REQUEST
     if isinstance(exc, NoCapableModel):

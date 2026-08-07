@@ -21,6 +21,7 @@ from aira_common.anomalies import (
     RuleKind,
     needs_parameter,
     needs_sample,
+    needs_throttle_rate,
 )
 from aira_management.apps.anomalies.models import AnomalyRule
 
@@ -47,6 +48,7 @@ class AnomalyRuleSerializer(serializers.ModelSerializer[AnomalyRule]):
             "action",
             "target",
             "action_minutes",
+            "throttle_rpm",
             "enabled",
             "created_at",
             "updated_at",
@@ -98,6 +100,20 @@ class AnomalyRuleSerializer(serializers.ModelSerializer[AnomalyRule]):
         else:
             # An expiry on an `alert` would read as though the alert stopped applying.
             attrs["action_minutes"] = None
+
+        if needs_throttle_rate(action):
+            if not attrs.get("throttle_rpm"):
+                raise serializers.ValidationError(
+                    {
+                        "throttle_rpm": (
+                            "Required for 'throttle': a rate reduced to nothing is a block."
+                        )
+                    }
+                )
+        elif attrs.get("throttle_rpm") is not None:
+            raise serializers.ValidationError(
+                {"throttle_rpm": f"'{action}' does not reduce a rate."}
+            )
 
         if needs_parameter(kind):
             if not attrs.get("parameter"):

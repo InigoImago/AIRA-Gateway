@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from aira_common.anomalies import RuleAction, RuleTarget
 from aira_gateway.anomalies.evaluator import Finding, evaluate_rule
+from aira_gateway.anomalies.suspensions import SuspensionService, suspension_from_rule
 from aira_gateway.db.models import AnomalyEvent, AnomalyRuleRead
 
 _log = structlog.get_logger(__name__)
@@ -27,9 +28,10 @@ _log = structlog.get_logger(__name__)
 #: something goes wrong.
 MAX_TOUCHED = 4096
 
-#: What an event records when the rule asked for something this stage cannot do yet. Said in the
-#: row rather than left to inference: a control displayed as active and doing nothing is the defect
-#: `FRD-125` exists to prevent, and naming it is the minimum honest interim until `FRD-503`.
+#: What an event records when a rule asked for an action that could not be carried out. `FRD-503`
+#: made the ordinary case possible; this remains for the one that is not — a `block` rule whose
+#: `action_minutes` never arrived, say. Said in the row rather than left to inference: a control
+#: displayed as active and doing nothing is the defect `FRD-125` exists to prevent.
 NOT_ENFORCED = "detected_not_enforced"
 
 
@@ -40,6 +42,9 @@ class AnomalyService:
     sessionmaker: async_sessionmaker[AsyncSession]
     interval_seconds: float = 60.0
     enabled: bool = True
+    #: Where a fired rule's decision goes. Optional so the evaluator can be exercised without one,
+    #: and so an installation with enforcement switched off still detects and records.
+    suspensions: SuspensionService | None = None
     #: Use-case slugs seen since the last tick. ``None`` marks traffic with no use case, which a
     #: global rule still measures.
     _touched: set[str | None] = field(default_factory=set)
@@ -111,6 +116,42 @@ class AnomalyService:
         rules = list((await session.execute(stmt)).scalars().all())
         return [r for r in rules if r.use_case is None or r.use_case in touched]
 
+    def _enforce(
+        self,
+        session: AsyncSession,
+        rule: AnomalyRuleRead,
+        finding: Finding,
+        action: RuleAction,
+        now: datetime,
+    ) -> str:
+        """Carry out the rule's action, and return what was **actually** done.
+
+        Recording and enforcing are two facts (`ADR-0014` §3), so the row says which happened
+        rather than repeating what the rule asked for. That is also what makes the alert-first
+        rollout real: "detected, action alert" is a first-class outcome, not a failure to act.
+        """
+        if action is RuleAction.ALERT:
+            return RuleAction.ALERT.value
+        if self.suspensions is None or not rule.action_minutes:
+            # A rule that cannot be carried out says so on the row rather than looking enforced.
+            return NOT_ENFORCED
+        session.add(
+            suspension_from_rule(
+                rule_name=rule.name,
+                use_case=rule.use_case,
+                target=rule.target,
+                target_value=finding.target_value,
+                action=action.value,
+                minutes=rule.action_minutes,
+                throttle_rpm=rule.throttle_rpm,
+                detail=finding.detail,
+                now=now,
+            )
+        )
+        # The writer sees its own decision on the next request rather than after the TTL.
+        self.suspensions.invalidate()
+        return "blocked" if action is RuleAction.BLOCK else "throttled"
+
     def _record(
         self,
         session: AsyncSession,
@@ -131,6 +172,7 @@ class AnomalyService:
         self._last_fired[key] = now
 
         action = RuleAction(rule.action)
+        taken = self._enforce(session, rule, finding, action, now)
         event = AnomalyEvent(
             rule_id=rule.id,
             rule_name=rule.name,
@@ -144,7 +186,7 @@ class AnomalyService:
             threshold=rule.threshold,
             sample=finding.sample,
             window_minutes=rule.window_minutes,
-            action_taken=(RuleAction.ALERT.value if action is RuleAction.ALERT else NOT_ENFORCED),
+            action_taken=taken,
             detail=finding.detail[:500],
         )
         session.add(event)

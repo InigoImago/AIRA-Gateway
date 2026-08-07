@@ -48,6 +48,7 @@ def rule_payload(rule: AnomalyRule) -> dict[str, Any]:
         "action": rule.action,
         "target": rule.target,
         "action_minutes": rule.action_minutes,
+        "throttle_rpm": rule.throttle_rpm,
         "enabled": rule.enabled,
     }
 

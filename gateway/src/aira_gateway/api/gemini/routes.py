@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import ValidationError
 
 from aira_common.logging import get_logger
+from aira_gateway.anomalies.suspensions import Suspended
 from aira_gateway.api.gemini import schemas
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.api.gemini.errors import gemini_error_response as _error
@@ -139,6 +140,13 @@ def _refusal_response(exc: Exception) -> JSONResponse:
         # capability problem somebody can fix; an upstream outage is not, and reporting them as the
         # same status sends whoever reads it to the wrong place.
         return _error(400, str(exc), "FAILED_PRECONDITION")
+    if isinstance(exc, Suspended):
+        # 429, not 403. The credential is valid and the membership is real; the caller is stopped
+        # *temporarily*, and "come back later" is what 429 means. A 403 would send a client off to
+        # fix permissions it has no problem with.
+        return _error(
+            429, exc.message, "RESOURCE_EXHAUSTED", headers={"Retry-After": exc.retry_after}
+        )
     if isinstance(exc, RateLimited):
         return _error(
             429, exc.message, "RESOURCE_EXHAUSTED", headers={"Retry-After": exc.retry_after}
