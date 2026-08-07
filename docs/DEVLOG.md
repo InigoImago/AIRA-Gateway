@@ -81,6 +81,33 @@ The number is the part worth keeping: against the real model, **the classifier's
 as much as the answer it guards**. A use case running an LLM filter was reporting a little over half
 its actual spend.
 
+### Recording it is not enforcing it
+
+Asked afterwards: *do the filter costs actually count against the budget?* They were being written
+to Postgres — the system of record — so reporting was right. `FRD-405`'s guard reads the **shared
+counter**, and a Postgres-only write reaches it only when the counter expires and rebuilds, up to
+`COUNTER_TTL_SECONDS` later. A small cost cap and four requests: the counter read 41 000 against a
+limit of 40 000 and the next request was served.
+
+Both stores now. The live re-run refuses the third request at 40 200, naming the cost budget.
+
+The test written for this **passed against the broken code** on the first attempt, and the reason is
+worth more than the fix: on a *cold* counter the guard seeds from Postgres, so a Postgres-only write
+is visible anyway. The test never reached the path it was named after — the exact trap `CLAUDE.md`
+§3 already lists — and it now warms the counter before it measures anything.
+
+### And a stale number, which is the same defect in prose
+
+`CLAUDE.md` claimed the harness guarded **124** properties. It guarded 220. Every update to that
+figure across this release was a string replacement whose anchor did not match — so each one
+changed nothing, reported success, and moved on. Six no-ops in a row, none of them checked.
+
+That is precisely the failure this release has been about, arriving in the documentation instead of
+in a request: an operation accepted, apparently successful, and not performed. It gets the same
+answer. `tools/tests/test_documented_counts.py` compares the stated figure against the harness and
+fails when they disagree, and `tools/tests` is now in the default `testpaths` — a check nobody runs
+is a check nobody has.
+
 ### Two survivors, and what each of them was
 
 The harness reported two properties undefended on the first full run, and both were my own doing.
@@ -102,7 +129,7 @@ Chasing `Z2` also turned up a second copy of the router's logic — `classify` h
 re-implementing what `classify_text` does, and its `except UpstreamError` branch was already the one
 no test reached. Two copies of one rule, about an hour old. It now delegates.
 
-Mutations `Z1`–`Z9`. **219 properties defended.**
+Mutations `Z1`–`Z10`. **220 properties defended.**
 
 ---
 

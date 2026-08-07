@@ -43,7 +43,7 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
   inevitably do when both were written from the same mental model — and line coverage cannot see
   a *missing requirement*: on 2026-08-05 a review found seven real defects behind a green suite at
   99% coverage. So: **prove a test can fail.** Break the property, watch it go red, restore.
-  `make mutants` (`tools/mutation_check.py`) does this for **124 properties** across auth, budgets,
+  `make mutants` (`tools/mutation_check.py`) does this for **220 properties** across auth, budgets,
   pipeline, retention, the management control plane and the gateway's counters; when
   you fix a bug, add the mutation that reintroduces it. Two traps that cost real defects here:
   a stand-in that is more permissive than the thing it replaces (reuse the real method where you
@@ -529,7 +529,11 @@ request figures and could trip a request limit for traffic nobody sent. The hook
 in `run_pipeline`**, with the collector **passed in like `decisions`**, so a blocked step still
 reports what deciding cost and both surfaces get it. The measured number: **the classifier costs
 roughly as much as the answer it guards** — an LLM-filtered use case was reporting about half its
-real spend.
+real spend. **Recording is not enforcing**: the first version wrote Postgres only, so reporting was
+right and the guard — which reads the **shared counter** (`FRD-405`) — never saw it until the
+counter expired; both stores now, verified live (429 at 40 200 against a 40 000 cap). The test for
+it **passed against the broken code** at first, because on a *cold* counter the guard seeds from
+Postgres: a test that never reached the path it was named after, warmed now.
 **Delivery order is fixed (ROADMAP Phase 8, 2026-08-06)**, derived from the owner's priority
 (KIRA compatibility → model connections → documents → the review findings) and the dependency that
 priority 1 needs priority 3: **`FRD-122` (audit) → `FRD-114` (metadata) → `FRD-115`+`119` (Vertex EU,

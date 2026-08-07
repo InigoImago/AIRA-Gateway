@@ -1952,6 +1952,14 @@ MUTATIONS = [
         "                request_payload=trail.body,\n                response_payload=None,\n                cost_nanos=cost,",
         ACCOUNTING,
     ),
+    Mutation(
+        "Z10",
+        "a pipeline call reaches the counter the guard reads, not only the system of record",
+        "gateway/src/aira_gateway/budgets/service.py",
+        "        if self._ledger is None:\n            return  # degraded",
+        "        if True:\n            return  # degraded",
+        BUDGET_RESERVATION,
+    ),
 ]
 
 

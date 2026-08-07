@@ -414,3 +414,71 @@ async def test_a_use_case_without_budgets_reserves_nothing(sessionmaker, runner)
     assert bool(reservation) is False
     await service.settle(reservation, 10, now=NOW)  # no-op
     assert await _usage(sessionmaker) is None
+
+
+# ---- what a pipeline step spends (FRD-125b) ----------------------------------------------
+
+
+async def test_a_side_call_is_visible_to_the_very_next_guard(sessionmaker, runner) -> None:
+    """**Enforcement, not just reporting.**
+
+    The first version of `book_side_call` wrote Postgres alone. That is the system of record, so
+    reporting was right — and the guard reads the *shared counter*, which never saw the spend until
+    it expired and rebuilt, up to `COUNTER_TTL_SECONDS` later. Found live by setting a small cost
+    cap and watching a use case sail past it: the counter said 41 000 against a limit of 40 000 and
+    the next request was served anyway.
+    """
+    await _budget(sessionmaker, limit_cost_nanos=1_000)
+    service = BudgetService(sessionmaker, ledger=BudgetLedger(runner))
+
+    # **Warm the counter first.** Without this the test proves nothing: on a cold counter the guard
+    # seeds it from Postgres and therefore sees a Postgres-only write anyway — which is exactly why
+    # the first version of this test passed against the code it was written to fail against. Live,
+    # the counter is warm by the second request, and that is when the spend goes missing.
+    reservation = await service.guard("uc", "alice", NOW, estimated=Amounts(requests=1))
+    await service.settle(reservation, 1, cost_nanos=1)
+
+    await service.book_side_call("uc", "alice", tokens=10, cost_nanos=1_000, now=NOW)
+
+    with pytest.raises(BudgetExceeded):
+        await service.guard("uc", "alice", NOW, estimated=Amounts(requests=1))
+
+
+async def test_a_side_call_reaches_the_system_of_record_as_well(sessionmaker, runner) -> None:
+    """Both stores. The counter expires; Postgres is what the reporting and the rebuild read."""
+    await _budget(sessionmaker, limit_cost_nanos=1_000_000)
+    service = BudgetService(sessionmaker, ledger=BudgetLedger(runner))
+
+    await service.book_side_call("uc", "alice", tokens=42, cost_nanos=500, now=NOW)
+
+    usage = await _usage(sessionmaker, "uc:uc", "2026-08")
+    assert usage is not None
+    assert usage.tokens == 42
+    assert usage.cost_nanos == 500
+    # The caller made one request; the classifier is not a second one.
+    assert usage.requests == 0
+
+
+async def test_a_side_call_with_an_unreachable_counter_still_reaches_postgres(
+    sessionmaker,
+) -> None:
+    """The safe direction: the counter is *low*, so a caller is under-charged rather than refused
+    for spend that never happened — and the counter rebuilds from Postgres when it expires."""
+    service = BudgetService(sessionmaker, ledger=BudgetLedger(BrokenRunner()))
+    await _budget(sessionmaker, limit_cost_nanos=1_000_000)
+
+    await service.book_side_call("uc", "alice", tokens=7, cost_nanos=100, now=NOW)
+
+    usage = await _usage(sessionmaker, "uc:uc", "2026-08")
+    assert usage is not None and usage.tokens == 7
+
+
+async def test_nothing_is_booked_for_a_request_with_no_use_case(sessionmaker, runner) -> None:
+    """Unattributed traffic has no budget to charge, and inventing one would put somebody else's
+    spend on a use case that did not ask for it."""
+    await _budget(sessionmaker, limit_cost_nanos=1_000_000)
+    service = BudgetService(sessionmaker, ledger=BudgetLedger(runner))
+
+    await service.book_side_call(None, "alice", tokens=99, cost_nanos=999, now=NOW)
+
+    assert await _usage(sessionmaker, "uc:uc", "2026-08") is None

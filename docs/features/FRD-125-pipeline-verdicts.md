@@ -70,6 +70,8 @@ part (b) is the money it never mentioned.
 - **FR-9** Those tokens and that money are booked against the use case's budgets — with
   `requests=0`, because the caller made **one** request and counting the classifier as a second
   would inflate every request figure and could trip a *request* limit for traffic nobody sent.
+- **FR-9a** Booked into **both** stores: the system of record *and* the shared counter the guard
+  reads. Postgres alone makes the spend visible to reporting and invisible to enforcement.
 - **FR-10** The row is written for a blocked request too.
 - **FR-11** The row never carries the prompt. The classifier is *sent* the caller's text; storing
   it again under a second row would double every retention and redaction question (`FRD-404`,
@@ -112,6 +114,21 @@ The collector is **passed in**, exactly as `decisions` already is, so the spend 
 exception a blocking step raises. That symmetry is not decoration: the two facts have the same
 lifetime and the same failure mode.
 
+### 4.4a Recording it is not enforcing it
+
+The first version of this booked into Postgres alone. Postgres is the system of record, so
+reporting was correct — and `FRD-405`'s guard reads the **shared counter**, which never saw the
+spend until it expired and rebuilt, up to `COUNTER_TTL_SECONDS` later.
+
+Found by asking the question rather than by a test: *does the filter cost count against the budget?*
+A small cost cap and four requests answered it — the counter read 41 000 against a limit of 40 000
+and the next request was served. Both stores are written now, and a live re-run refuses the third
+request at 40 200.
+
+The degraded case keeps the safe direction: if the counter is unreachable, Postgres still has the
+figure and the counter rebuilds from it on expiry. The window is bounded and the counter is *low*,
+so a caller is under-charged rather than refused for spend that never happened.
+
 ### 4.5 What it turned out to cost
 
 Measured against the real model: the classifier's call costs **roughly as much as the answer it
@@ -121,7 +138,7 @@ spend, and its budget counters never saw the difference at all.
 ## 5. Testing
 
 - Hermetic: `test_pipeline_classifiers.py`, `test_pipeline_engine.py`.
-- Mutation: `Z1`–`Z9`, plus `P1`/`P2` **re-anchored** — they pointed at a line this change moved,
+- Mutation: `Z1`–`Z10`, plus `P1`/`P2` **re-anchored** — they pointed at a line this change moved,
   and a mutation whose anchor has moved protects nothing.
 - Integration: the injection that was served is now refused, against the real model.
 
@@ -132,6 +149,12 @@ Two properties came back undefended on the first full run.
 The budget booking was asserted nowhere: every accounting test looked at the **audit row**, and the
 app under test had no budget configured, so booking zero changed nothing under observation. A test
 that configures one and counts now exists.
+
+A third gap did not come from the harness at all, and is the more interesting one: the *first*
+version of the enforcement test passed against the broken code. On a cold counter the guard seeds
+from Postgres, so a Postgres-only write is visible anyway — the test never reached the path it was
+named after. It warms the counter first now. This is the trap `CLAUDE.md` §3 already names, met
+again: *a test whose setup never reaches the path it is named after*.
 
 The classifier's upstream-failure branch was undefended because part (b) **moved the line the
 mutation was anchored to**. The harness said so rather than passing quietly, which is what makes

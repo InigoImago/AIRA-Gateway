@@ -369,12 +369,33 @@ class BudgetService:
         Not a reservation. These tokens are already spent by the time their size is known — the
         pipeline runs before the reservation, because routing has to choose the model the
         reservation is made against. Booking after the fact is the honest description of that.
+
+        **Both stores, not just Postgres.** The first version of this called ``record`` alone,
+        which writes the system of record — so reporting was right and *enforcement was not*: the
+        guard reads the shared counter (`FRD-405`/`ADR-0008`), and the classifier's spend reached
+        it only when that counter expired and rebuilt from Postgres, up to `COUNTER_TTL_SECONDS`
+        later. Found by setting a small cost cap and watching a use case sail past it: the counter
+        said 41 000 against a limit of 40 000 and the next request was served.
         """
         if not use_case or tokens <= 0:
             return
+        now = now or datetime.now(UTC)
         async with self._sessionmaker() as session:
             budgets = await self._applicable(session, use_case, subject)
         await self.record(budgets, tokens, cost_nanos=cost_nanos, now=now, requests=0)
+        if self._ledger is None:
+            return  # degraded to the Postgres path, which the line above already wrote
+        amounts = Amounts(tokens=tokens, requests=0, cost_nanos=cost_nanos or 0)
+        for budget in budgets:
+            try:
+                await self._ledger.adjust(
+                    _scope_key(budget), _period_key(budget.period, now), amounts=amounts
+                )
+            except CountersUnavailable:
+                # Postgres has it, and the counter rebuilds from Postgres when it expires. The
+                # window is bounded and the direction is the safe one — the counter is *low*, so a
+                # caller is under-charged rather than refused for spend that never happened.
+                _log.warning("budget_side_call_adjust_degraded", budget_id=budget.id)
 
     async def usage(self, use_case: str, now: datetime | None = None) -> list[dict[str, Any]]:
         """Current-period usage per budget for a use case (for the UI consumption view, FRD-402).
