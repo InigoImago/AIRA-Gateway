@@ -7,7 +7,8 @@ and would grow with traffic the installation does not control.
 
 Two rules carry over from the budget work and matter as much here:
 
-- **Unpriced is not zero.** A request on a model with no price counts toward ``unpriced_requests``
+- **Unpriced is not zero, and zero is not unknown.** A request *served* on a model with no price
+  counts toward ``unpriced_requests``
   and toward nothing else. A total that quietly absorbs it reads as complete when it is not.
 - **Money is an integer.** Nano-units throughout, rendered as an exact decimal string at the edge.
 
@@ -25,6 +26,7 @@ from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from aira_common.money import format_display
+from aira_gateway.audit import Outcome
 from aira_gateway.db.models import RequestLog
 
 # What a caller may see. ``None`` is "every use case" — governance — and is deliberately distinct
@@ -79,7 +81,32 @@ def _measures() -> list[Any]:
         func.coalesce(func.sum(RequestLog.total_tokens), 0).label("total_tokens"),
         func.coalesce(func.sum(RequestLog.cost_nanos), 0).label("cost_nanos"),
         # A request whose model had no price. Counted, never summed as zero.
-        func.sum(case((RequestLog.cost_nanos.is_(None), 1), else_=0)).label("unpriced_requests"),
+        # Unpriced means **served on a model with no price**, not merely "no cost recorded".
+        #
+        # A refused request also has a NULL cost, and for the opposite reason: nothing was spent,
+        # because nothing ran. Counting both made the console report 105 unpriced requests where
+        # 5 had actually run unpriced — and it made the "spend is a lower bound" caveat permanent,
+        # since every installation refuses some traffic and a warning that is always there is one
+        # nobody reads. Found by looking at the figure after a live round produced refusals.
+        #
+        # The project's own rule, applied in the direction it was missing: unknown is not zero,
+        # and **zero is not unknown**.
+        func.sum(
+            case(
+                (
+                    (RequestLog.cost_nanos.is_(None))
+                    & (
+                        (RequestLog.outcome == Outcome.SERVED)
+                        # A NULL outcome is a row from before `FRD-122`, when only *served*
+                        # requests were logged at all — so it was one, and excluding it would
+                        # quietly change a historical figure.
+                        | (RequestLog.outcome.is_(None))
+                    ),
+                    1,
+                ),
+                else_=0,
+            )
+        ).label("unpriced_requests"),
         # A failed request still consumed a rate limit and possibly an upstream call. It is part
         # of what happened, so it is reported rather than filtered out (FR-6).
         func.sum(case((RequestLog.status >= 400, 1), else_=0)).label("failed_requests"),

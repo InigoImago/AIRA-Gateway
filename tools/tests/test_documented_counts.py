@@ -59,3 +59,28 @@ def test_a_named_mutation_the_documentation_refers_to_still_exists(identifier: s
     """The FRDs cite mutations by name. A citation pointing at nothing is worse than none — it
     reads as evidence."""
     assert f'"{identifier}"' in HARNESS.read_text()
+
+
+def test_every_mutation_has_an_identifier_of_its_own() -> None:
+    """Found while adding a mutation and reusing an id that already existed.
+
+    The id is only a label — every entry runs regardless — so the *checking* was sound. The
+    **reporting** was not: "N3 survived" named two unrelated properties, and a summary that sends
+    somebody to the wrong line is worse than one that says nothing. Thirty-eight had accumulated.
+
+    Later duplicates were renamed rather than the first, because `CLAUDE.md` and the DEVLOG cite
+    ids by name and renaming a cited one breaks the prose that explains why the property exists.
+    """
+    import collections
+    import re
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[2] / "tools/mutation_check.py").read_text()
+    ids = re.findall(r'^    Mutation\(\n        "([A-Za-z0-9]+)"', source, re.M)
+    assert ids, "no mutations found — the pattern stopped matching"
+
+    duplicates = sorted(i for i, n in collections.Counter(ids).items() if n > 1)
+    assert not duplicates, (
+        f"these ids name more than one property: {', '.join(duplicates)}. A report that says "
+        "'X survived' would be ambiguous about which."
+    )

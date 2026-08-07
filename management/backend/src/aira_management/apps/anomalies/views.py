@@ -20,13 +20,13 @@ from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from aira_common.roles import INCIDENT_ROLES
 from aira_management.apps.anomalies.models import AnomalyRule
 from aira_management.apps.anomalies.serializers import AnomalyRuleSerializer
 from aira_management.apps.usecases.access import VIEW, may_manage
 from aira_management.apps.usecases.events import emit
 from aira_management.apps.usecases.models import UseCase
 from aira_management.rbac import has_role, scope_queryset
-from aira_management.roles import Role
 
 
 def rule_payload(rule: AnomalyRule) -> dict[str, Any]:
@@ -54,8 +54,13 @@ def rule_payload(rule: AnomalyRule) -> dict[str, Any]:
 
 
 def may_author_global(user: Any) -> bool:
-    """Who may write a rule that acts everywhere."""
-    return has_role(user, Role.GLOBAL_ADMIN, Role.IT_SECURITY)
+    """Who may write a rule that acts everywhere.
+
+    The set lives in `aira_common.roles` because the *gateway* asks the same question about its
+    kill switch, and the two had already drifted: the gateway used a visibility predicate, so IT
+    Steuerung could stop traffic there while being refused a global rule here.
+    """
+    return has_role(user, *INCIDENT_ROLES)
 
 
 class AnomalyRuleViewSet(viewsets.ModelViewSet[AnomalyRule]):

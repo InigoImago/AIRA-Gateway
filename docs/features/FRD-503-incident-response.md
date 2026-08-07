@@ -132,7 +132,47 @@ schema before anything ships.
 - Mutations for: the expiry being honoured, the lift being honoured, the outcome being `suspended`
   rather than `rate_limited`, and the oversight check.
 
-## 6. Open
+## 6. What a live round found (2026-08-07)
+
+84 cases against the running stack — a real Postgres, a real gateway process, a real model, and the
+two planes actually talking over Kafka. Five defects, none of which the hermetic suites, the
+mutation harness or a green `make ci` could have seen.
+
+**1. Two planes, one question, two answers.** The gateway guarded its kill switch with
+`has_oversight` — a **visibility** predicate — so `it-steuerung` could stop traffic there while
+Management (correctly) refused it a global rule. PRD §154 gives that role every figure and no write
+anywhere. Reusing "may see every use case" for "may stop every use case" is `FRD-206`'s mistake one
+level down. There is now a third set, `INCIDENT_ROLES`, in `aira_common.roles`, and **both planes
+read it**.
+
+**2. The `payload_size` kind measured a column nothing wrote.** The middleware counted the bytes,
+the column existed, and no wire ran between them — so a whole rule kind could never fire on real
+traffic. The hermetic tests seeded the column directly and were green. Two correct halves and no
+wire: the third time this repository has recorded that exact shape.
+
+**3. A refused request was counted as unpriced.** The console reported **105** unpriced requests
+where **5** had actually run on an unpriced model. A refusal has a NULL cost for the *opposite*
+reason — nothing was spent because nothing ran — and counting both made the "spend is a lower
+bound" caveat permanent, which is a warning nobody reads. The project's own rule in the direction it
+was missing: unknown is not zero, and **zero is not unknown**. A NULL *outcome* still counts, because
+that is a row from before `FRD-122`, when only served requests were logged at all.
+
+**4. `aira.anomaly-rules` was created by nothing.** Rules were authored, Management answered 201,
+the relay published, and the broker dropped every one. The only trace was a line in a consumer log.
+This is the **second** time (`FRD-405` shipped `aira.rate-limits` the same way, and the DEVLOG says
+so), and the topic list is written out by hand in three places while the names have a single source
+of truth. So the fix is not a fourth copy: `tools/tests/test_kafka_topics_are_created.py` now checks
+the three against the constants, in both directions.
+
+**5. Thirty-eight mutation ids named more than one property.** Every entry ran, so the checking was
+sound — but a report saying "N3 survived" named two unrelated things, and a summary that sends
+somebody to the wrong line is worse than none. Later duplicates were renamed and the first of each
+kept, because `CLAUDE.md` and the DEVLOG cite ids by name.
+
+Two of the five were mine from this week; three were older and only became visible once something
+actually exercised them. That is the argument for the layer.
+
+## 7. Open
 
 - Alert delivery (`FRD-502`'s console will show events; sending them somewhere is later).
 - A suspension is not distributed to Management, so the console reads it from the gateway. That is

@@ -88,6 +88,8 @@ ANOMALY_RULES = "management/backend/tests/test_anomaly_rules.py"
 ANOMALY_CONSUMER = "gateway/tests/test_consumer_apply.py"
 ANOMALY_ENGINE = "gateway/tests/test_anomaly_engine.py"
 SUSPENSIONS = "gateway/tests/test_suspensions.py"
+REPORTING = "gateway/tests/test_reporting.py"
+TOPICS = "tools/tests/test_kafka_topics_are_created.py"
 MGMT_HARDENING = "management/backend/tests/test_hardening.py"
 MGMT_SETTINGS = (
     "management/backend/tests/test_settings.py management/backend/tests/test_hardening.py"
@@ -1269,8 +1271,8 @@ MUTATIONS = [
         "N3",
         "unpriced traffic is counted apart, never summed into spend as zero",
         "gateway/src/aira_gateway/reporting/service.py",
-        'func.sum(case((RequestLog.cost_nanos.is_(None), 1), else_=0)).label("unpriced_requests")',
-        'func.sum(case((RequestLog.cost_nanos.is_(None), 0), else_=0)).label("unpriced_requests")',
+        "                    (RequestLog.cost_nanos.is_(None))",
+        "                    (False)",
         "gateway/tests/test_reporting.py",
     ),
     Mutation(
@@ -1319,7 +1321,7 @@ MUTATIONS = [
     # The expensive knob on a request: budgets reach 32 768 tokens, billed as output. Three of
     # these are about *money* rather than correctness, which is why they are here at all.
     Mutation(
-        "T5",
+        "T5a",
         "a thinking budget below the model's minimum is refused",
         "gateway/src/aira_gateway/thinking.py",
         "    if minimum is not None and tokens < minimum:",
@@ -1327,7 +1329,7 @@ MUTATIONS = [
         THINKING,
     ),
     Mutation(
-        "T6",
+        "T6a",
         "a thinking budget above the model's maximum is refused",
         "gateway/src/aira_gateway/thinking.py",
         "    if maximum is not None and tokens > maximum:",
@@ -1335,7 +1337,7 @@ MUTATIONS = [
         THINKING,
     ),
     Mutation(
-        "T7",
+        "T7a",
         "a model's declared default thinking is applied when the caller sends none",
         "gateway/src/aira_gateway/thinking.py",
         "    if requested is None:\n        return _default_for(declaration)",
@@ -1343,7 +1345,7 @@ MUTATIONS = [
         THINKING,
     ),
     Mutation(
-        "T8",
+        "T8a",
         "the pre-dispatch reservation includes the resolved thinking budget",
         "gateway/src/aira_gateway/thinking.py",
         "    return setting.tokens or 0",
@@ -1368,7 +1370,7 @@ MUTATIONS = [
     ),
     # ---- structured output (FRD-112) ---------------------------------------------------------
     Mutation(
-        "S1",
+        "S1a",
         "an unknown schema field is refused rather than dropped",
         "gateway/src/aira_gateway/core/schema.py",
         'model_config = ConfigDict(populate_by_name=True, extra="forbid")',
@@ -1376,7 +1378,7 @@ MUTATIONS = [
         RESPONSE_SCHEMA,
     ),
     Mutation(
-        "S2",
+        "S2a",
         "the schema's nesting depth is bounded",
         "gateway/src/aira_gateway/core/schema.py",
         "    if depth > bounds.max_depth:",
@@ -1384,7 +1386,7 @@ MUTATIONS = [
         RESPONSE_SCHEMA,
     ),
     Mutation(
-        "S3",
+        "S3a",
         "the schema's total property count is bounded across the whole tree",
         "gateway/src/aira_gateway/core/schema.py",
         "    if properties > bounds.max_properties:",
@@ -1392,7 +1394,7 @@ MUTATIONS = [
         RESPONSE_SCHEMA,
     ),
     Mutation(
-        "S4",
+        "S4a",
         "the capability is checked against the model dispatched to, not the one requested",
         "gateway/src/aira_gateway/requirements.py",
         "        if declaration.can(Capability.STRUCTURED_OUTPUT):\n            return None",
@@ -1400,7 +1402,7 @@ MUTATIONS = [
         SERVING_OPTIONS,
     ),
     Mutation(
-        "S5",
+        "S5a",
         "a schema always travels with the media type that makes the provider honour it",
         "gateway/src/aira_gateway/upstreams/gemini_mapping.py",
         '        generation_config["responseMimeType"] = "application/json"',
@@ -1408,7 +1410,7 @@ MUTATIONS = [
         SERVING_OPTIONS,
     ),
     Mutation(
-        "S6",
+        "S6a",
         "an incomplete document is refused rather than returned as data",
         "gateway/src/aira_gateway/api/serving.py",
         '    if canonical.response_schema is None or response.finish_reason == "stop":',
@@ -1492,7 +1494,7 @@ MUTATIONS = [
         f"{RATELIMIT} {EMBEDDING}",
     ),
     Mutation(
-        "B8",
+        "B8a",
         "the usage counter is accumulated by the database, not read-modify-written in Python",
         "gateway/src/aira_gateway/budgets/service.py",
         '            "tokens": columns.tokens + tokens,',
@@ -1504,7 +1506,7 @@ MUTATIONS = [
     # O1 is a defect that reached a running system: it was correct while Google was the only
     # vendor and wrong the moment a model name contained a colon.
     Mutation(
-        "O1",
+        "O1a",
         "the verb is split off the *last* colon, so a model name may contain one",
         "gateway/src/aira_gateway/api/gemini/routes.py",
         '    model, separator, method = resource.rpartition(":")',
@@ -1512,7 +1514,7 @@ MUTATIONS = [
         OPENAI_DIALECT,
     ),
     Mutation(
-        "O2",
+        "O2a",
         "a streamed request asks for the usage the vendor otherwise never reports",
         "gateway/src/aira_gateway/upstreams/openai/mapping.py",
         '        body["stream_options"] = {"include_usage": True}',
@@ -1520,7 +1522,7 @@ MUTATIONS = [
         OPENAI_DIALECT,
     ),
     Mutation(
-        "O3",
+        "O3a",
         "usage in a chunk with no choices is read rather than dropped",
         "gateway/src/aira_gateway/upstreams/openai/mapping.py",
         '        return CanonicalChunk(text_delta="", finish_reason=None, usage=usage) if usage else None',  # noqa: E501
@@ -1573,7 +1575,7 @@ MUTATIONS = [
     # counted apart rather than as zero — so getting it wrong would not fail, the spend figure
     # would quietly stop being complete.
     Mutation(
-        "F1",
+        "F1a",
         "a response is attributed to the model the caller named, not to the deployment",
         "gateway/src/aira_gateway/upstreams/foundry/routes.py",
         "        return None",
@@ -1581,7 +1583,7 @@ MUTATIONS = [
         f"{FOUNDRY} {OPENAI_DIALECT}",
     ),
     Mutation(
-        "F2",
+        "F2a",
         "a model with no deployment is named, rather than reaching a 404 that reads as missing",
         "gateway/src/aira_gateway/upstreams/foundry/routes.py",
         "            raise UnknownDeployment(",
@@ -1589,7 +1591,7 @@ MUTATIONS = [
         FOUNDRY,
     ),
     Mutation(
-        "F3",
+        "F3a",
         "the Azure credential goes in its own header, not in Authorization",
         "gateway/src/aira_gateway/upstreams/foundry/__init__.py",
         '            return {"api-key": self._azure_key}',
@@ -1597,7 +1599,7 @@ MUTATIONS = [
         FOUNDRY,
     ),
     Mutation(
-        "F4",
+        "F4a",
         "an endpoint configured without a credential refuses to start",
         "gateway/src/aira_gateway/upstreams/foundry/__init__.py",
         "    if not settings.foundry_api_key:",
@@ -1605,7 +1607,7 @@ MUTATIONS = [
         FOUNDRY,
     ),
     Mutation(
-        "F5",
+        "F5a",
         "deployments in two regions become two adapters, so provenance is not flattened",
         "gateway/src/aira_gateway/upstreams/foundry/__init__.py",
         "        by_region.setdefault(entry.region, []).append(entry)",
@@ -1613,7 +1615,7 @@ MUTATIONS = [
         FOUNDRY,
     ),
     Mutation(
-        "F6",
+        "F6a",
         "a declared region is checked against the one allow-list every cloud shares",
         "gateway/src/aira_gateway/upstreams/foundry/__init__.py",
         "            check_region(entry.region, allowed)",
@@ -1626,7 +1628,7 @@ MUTATIONS = [
     # service that starts, looks healthy, and runs on a stale value — the failure `ADR-0007`
     # established the principle against, extended to every credential.
     Mutation(
-        "V1",
+        "V1a",
         "a configured Vault that cannot be read stops the process rather than falling back",
         "libs/src/aira_common/secrets.py",
         '            raise VaultUnavailable(\n                f"Vault at {self._config.address} is unreachable ({type(exc).__name__})."\n            ) from exc\n\n        if response.status_code != httpx.codes.OK:',  # noqa: E501
@@ -1634,7 +1636,7 @@ MUTATIONS = [
         SECRETS,
     ),
     Mutation(
-        "V2",
+        "V2a",
         "a Vault value wins over the environment",
         "libs/src/aira_common/secrets.py",
         '        merged[name if name.startswith(env_prefix) else f"{env_prefix}{name}"] = value',
@@ -1642,7 +1644,7 @@ MUTATIONS = [
         SECRETS,
     ),
     Mutation(
-        "V3",
+        "V3a",
         "a key present but spelled differently is still found",
         "libs/src/aira_common/secrets.py",
         "        name = key.strip().upper()",
@@ -1650,7 +1652,7 @@ MUTATIONS = [
         SECRETS,
     ),
     Mutation(
-        "V4",
+        "V4a",
         "a null value is absent rather than the string 'None'",
         "libs/src/aira_common/secrets.py",
         "        return {str(key): str(value) for key, value in data.items() if value is not None}",
@@ -1658,7 +1660,7 @@ MUTATIONS = [
         SECRETS,
     ),
     Mutation(
-        "V5",
+        "V5a",
         "a secret-id file that cannot be read is named rather than falling through",
         "libs/src/aira_common/secrets.py",
         "            raise VaultUnavailable(\n                f\"{SECRET_ID_FILE_ENV} points at '{path}', which cannot be read \"",  # noqa: E501
@@ -1666,7 +1668,7 @@ MUTATIONS = [
         SECRETS,
     ),
     Mutation(
-        "V6",
+        "V6a",
         "authenticating with no secret-id at all is refused",
         "libs/src/aira_common/secrets.py",
         "        if not secret_id:",
@@ -1677,7 +1679,7 @@ MUTATIONS = [
     #
     # D1 is the one that keeps a health check from being able to take down a healthy service.
     Mutation(
-        "D1",
+        "D1a",
         "an unreachable upstream degrades readiness rather than failing it",
         "gateway/src/aira_gateway/routes/health.py",
         '            "degraded": not counters_ok or bool(fallbacks) or bool(probe and probe.degraded),',  # noqa: E501
@@ -1685,7 +1687,7 @@ MUTATIONS = [
         DIAGNOSTICS,
     ),
     Mutation(
-        "D2",
+        "D2a",
         "an adapter with no cheap probe is reported unprobed, never as healthy",
         "gateway/src/aira_gateway/diagnostics.py",
         '            return Verdict(name, True, "no probe available; not checked", self._now(), probed=False)',  # noqa: E501
@@ -1693,7 +1695,7 @@ MUTATIONS = [
         DIAGNOSTICS,
     ),
     Mutation(
-        "D3",
+        "D3a",
         "a verdict that has aged out is reported as stale rather than as fine",
         "gateway/src/aira_gateway/diagnostics.py",
         '            "stale": age > stale_after,',
@@ -1701,7 +1703,7 @@ MUTATIONS = [
         DIAGNOSTICS,
     ),
     Mutation(
-        "D4",
+        "D4a",
         "a stale verdict counts as degraded, so a dead prober is visible",
         "gateway/src/aira_gateway/diagnostics.py",
         "            not verdict.ok or (verdict.probed and (now - verdict.at) > self.stale_after)",
@@ -1709,7 +1711,7 @@ MUTATIONS = [
         DIAGNOSTICS,
     ),
     Mutation(
-        "D5",
+        "D5a",
         "a wildcard CORS origin with credentials refuses to start",
         "gateway/src/aira_gateway/app.py",
         '    if "*" in origins and settings.cors_allow_credentials:',
@@ -1717,7 +1719,7 @@ MUTATIONS = [
         DIAGNOSTICS,
     ),
     Mutation(
-        "D6",
+        "D6a",
         "an upstream that never answers becomes a red verdict rather than hanging the probe",
         "gateway/src/aira_gateway/diagnostics.py",
         "            detail = await asyncio.wait_for(ping(), timeout=self.timeout)",
@@ -2108,7 +2110,7 @@ MUTATIONS = [
     ),
     # ---- anomaly rules (FRD-500, ADR-0014) ----------------------------------------------
     Mutation(
-        "N1",
+        "N1a",
         "a new rule only alerts until somebody promotes it",
         "management/backend/src/aira_management/apps/anomalies/models.py",
         "action = models.CharField(max_length=16, choices=ACTION_CHOICES, default=RuleAction.ALERT)",
@@ -2116,7 +2118,7 @@ MUTATIONS = [
         ANOMALY_RULES,
     ),
     Mutation(
-        "N2",
+        "N2a",
         "an action that takes something away must say for how long",
         "management/backend/src/aira_management/apps/anomalies/serializers.py",
         "        if action in (RuleAction.THROTTLE, RuleAction.BLOCK):",
@@ -2124,7 +2126,7 @@ MUTATIONS = [
         ANOMALY_RULES,
     ),
     Mutation(
-        "N3",
+        "N3a",
         "a rate rule keeps its sample floor, so one refusal of one is not 100 percent",
         "management/backend/src/aira_management/apps/anomalies/serializers.py",
         '        elif attrs.get("min_sample", 0) < 1:',
@@ -2132,7 +2134,7 @@ MUTATIONS = [
         ANOMALY_RULES,
     ),
     Mutation(
-        "N4",
+        "N4a",
         "only an oversight role may author a rule that acts everywhere",
         "management/backend/src/aira_management/apps/anomalies/views.py",
         '        if not may_author_global(self.request.user):\n            raise PermissionDenied(\n                "Only IT Security or a Global Administrator may author a global rule. "',
@@ -2140,7 +2142,7 @@ MUTATIONS = [
         ANOMALY_RULES,
     ),
     Mutation(
-        "N5",
+        "N5a",
         "deleting one use case does not switch off detection for every other",
         "gateway/src/aira_gateway/consumer/apply.py",
         "    await session.execute(delete(AnomalyRuleRead).where(AnomalyRuleRead.use_case == slug))",
@@ -2148,7 +2150,7 @@ MUTATIONS = [
         ANOMALY_CONSUMER,
     ),
     Mutation(
-        "N6",
+        "N6a",
         "an event with no scope is skipped rather than made global",
         "gateway/src/aira_gateway/consumer/apply.py",
         '    if "use_case" not in payload:\n        return',
@@ -2253,11 +2255,44 @@ MUTATIONS = [
     ),
     Mutation(
         "N19",
-        "only an oversight role may stop traffic by hand",
+        "only an incident role may stop traffic by hand",
         "gateway/src/aira_gateway/api/incidents.py",
-        "    if not principal.is_oversight:",
+        "    if not principal.may_act_on_incidents:",
         "    if False:",
         "gateway/tests/test_suspensions.py gateway/tests/test_reporting.py",
+    ),
+    # ---- what the live round found (FRD-503 §7) -------------------------------------------
+    Mutation(
+        "N20",
+        "a refused request is not counted as unpriced traffic",
+        "gateway/src/aira_gateway/reporting/service.py",
+        "                    & (\n                        (RequestLog.outcome == Outcome.SERVED)",
+        "                    & (\n                        (RequestLog.outcome != Outcome.SERVED)",
+        REPORTING,
+    ),
+    Mutation(
+        "N21",
+        "a row written before outcomes existed is still counted as unpriced",
+        "gateway/src/aira_gateway/reporting/service.py",
+        "                        | (RequestLog.outcome.is_(None))",
+        "                        | (False)",
+        REPORTING,
+    ),
+    Mutation(
+        "N22",
+        "stopping traffic takes an incident role, not merely a role that may look",
+        "libs/src/aira_common/roles.py",
+        "INCIDENT_ROLES: frozenset[Role] = frozenset({Role.GLOBAL_ADMIN, Role.IT_SECURITY})",
+        "INCIDENT_ROLES: frozenset[Role] = OVERSIGHT_ROLES",
+        "gateway/tests/test_suspensions.py libs/tests/test_roles.py",
+    ),
+    Mutation(
+        "N23",
+        "every topic the code publishes to is one something creates",
+        "Makefile",
+        " aira.anomaly-rules",
+        "",
+        TOPICS,
     ),
 ]
 

@@ -100,6 +100,12 @@ async def _token(client_id: str, secret: str) -> str:
 MEMBER_CLIENT_ID = "aira-integration-tests-member"
 MEMBER_CLIENT_SECRET = "integration-tests-member-secret"
 
+# A third account, carrying `it-security`. Added when a live round asked both planes who may stop
+# traffic and got different answers: `it-steuerung` sees every figure and writes nothing (PRD
+# §154), so the suite needed a caller that may actually act in an incident to test either side.
+SECURITY_CLIENT_ID = "aira-integration-tests-security"
+SECURITY_CLIENT_SECRET = "integration-tests-security-secret"
+
 
 @pytest.fixture
 async def governance_token() -> str:
@@ -111,6 +117,13 @@ async def governance_token() -> str:
 async def member_token() -> str:
     """A real token for a use-case admin — authenticated, but with no oversight."""
     return await _token(MEMBER_CLIENT_ID, MEMBER_CLIENT_SECRET)
+
+
+@pytest.fixture
+async def security_token() -> str:
+    """A real token carrying `it-security` — the role that may stop traffic and author a rule
+    that applies everywhere."""
+    return await _token(SECURITY_CLIENT_ID, SECURITY_CLIENT_SECRET)
 
 
 # ---- a caller bound to a use case (FRD-205) ------------------------------------------------
@@ -152,6 +165,99 @@ class Fixture:
                     "cost": limits.get("limit_cost_nanos"),
                 },
             )
+
+    async def rule(self, **spec: object) -> int:
+        """Write an anomaly rule straight into the gateway's read-model (`FRD-500`).
+
+        The distribution path — Management, Kafka, the consumer — has its own test above; what is
+        under test here is what the *engine* does with a rule, so this puts one where the engine
+        reads it.
+        """
+        rule_id = _read_model_id()
+        values: dict[str, object] = {
+            "id": rule_id,
+            "use_case": self.slug,
+            "name": f"rule-{rule_id}",
+            "kind": "refusal_rate",
+            "window_minutes": 60,
+            "threshold": 50,
+            "parameter": None,
+            "min_sample": 1,
+            "action": "alert",
+            "target": "subject",
+            "action_minutes": None,
+            "throttle_rpm": None,
+            "enabled": True,
+        }
+        values.update(spec)
+        async with self.engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "INSERT INTO anomaly_rules (id, use_case, name, kind, window_minutes,"
+                    " threshold, parameter, min_sample, action, target, action_minutes,"
+                    " throttle_rpm, enabled) VALUES (:id, :use_case, :name, :kind,"
+                    " :window_minutes, :threshold, :parameter, :min_sample, :action, :target,"
+                    " :action_minutes, :throttle_rpm, :enabled)"
+                ),
+                values,
+            )
+        return rule_id
+
+    async def events(self) -> list[dict[str, object]]:
+        async with self.engine.connect() as connection:
+            result = await connection.execute(
+                text(
+                    "SELECT rule_name, kind, use_case, target, target_value, observed, threshold,"
+                    " sample, action_taken, detail FROM anomaly_events"
+                    " WHERE use_case = :slug ORDER BY created_at"
+                ),
+                {"slug": self.slug},
+            )
+            return [dict(row._mapping) for row in result]
+
+    async def suspensions(self) -> list[dict[str, object]]:
+        async with self.engine.connect() as connection:
+            result = await connection.execute(
+                text(
+                    "SELECT id, use_case, target, target_value, action, throttle_rpm, expires_at,"
+                    " author, reason, lifted_at, lifted_by FROM access_suspensions"
+                    " WHERE use_case = :slug OR target_value = :slug ORDER BY created_at"
+                ),
+                {"slug": self.slug},
+            )
+            return [dict(row._mapping) for row in result]
+
+    async def suspend(self, **spec: object) -> str:
+        """Write a suspension directly, for tests about what the *gate* does with one."""
+        import uuid as _uuid
+        from datetime import UTC, datetime, timedelta
+
+        row_id = str(_uuid.uuid4())
+        values: dict[str, object] = {
+            "id": row_id,
+            "use_case": self.slug,
+            "target": "use_case",
+            "target_value": self.slug,
+            "action": "block",
+            "throttle_rpm": None,
+            "expires_at": datetime.now(UTC) + timedelta(hours=1),
+            "author": "user:integration-probe",
+            "reason": "integration test",
+            "lifted_at": None,
+            "lifted_by": None,
+        }
+        values.update(spec)
+        async with self.engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "INSERT INTO access_suspensions (id, use_case, target, target_value, action,"
+                    " throttle_rpm, expires_at, author, reason, lifted_at, lifted_by)"
+                    " VALUES (:id, :use_case, :target, :target_value, :action, :throttle_rpm,"
+                    " :expires_at, :author, :reason, :lifted_at, :lifted_by)"
+                ),
+                values,
+            )
+        return row_id
 
     async def set_store_payloads(self, store: bool) -> None:
         async with self.engine.begin() as connection:
@@ -206,6 +312,9 @@ async def fixture(engine: AsyncEngine):
             "DELETE FROM budgets WHERE use_case = :slug",
             "DELETE FROM budget_usage WHERE scope_key LIKE :like",
             "DELETE FROM rate_limits WHERE use_case = :slug",
+            "DELETE FROM anomaly_events WHERE use_case = :slug",
+            "DELETE FROM anomaly_rules WHERE use_case = :slug",
+            "DELETE FROM access_suspensions WHERE use_case = :slug OR target_value = :slug",
             "DELETE FROM api_keys WHERE use_case = :slug",
             "DELETE FROM use_cases WHERE slug = :slug",
         ):

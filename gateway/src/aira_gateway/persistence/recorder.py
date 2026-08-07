@@ -55,6 +55,22 @@ def _degradation_snapshot(request: Request) -> dict[str, str] | None:
     return None if degradation is None else dict(degradation.features)
 
 
+def _request_bytes(request: Request) -> int | None:
+    """How many bytes the caller sent, or ``None`` when nothing counted them.
+
+    The middleware puts it on the ASGI scope's state. Never a 0 default: `FRD-501`'s
+    `payload_size` rule excludes rows of unknown size from **both** sides of its share, and an
+    unknown that arrived as a zero would make a large request look small.
+
+    Wired here because it was not wired at all — the column existed, the middleware wrote the
+    count, and nothing carried it between them, so the whole `payload_size` kind measured a column
+    that was always NULL. Two correct halves and no wire, invisible to coverage; found by posting
+    a 4 kB body at the running gateway and reading the row.
+    """
+    value = getattr(request.state, "request_bytes", None)
+    return int(value) if isinstance(value, int) else None
+
+
 async def record_request(
     request: Request,
     *,
@@ -122,5 +138,10 @@ async def record_request(
             publisher=provenance[1] if provenance else None,
             region=provenance[2] if provenance else None,
             api=api,
+            # What the caller sent, as counted by the body-size middleware while it enforced the
+            # ceiling. Read here rather than recomputed: the body has already been consumed by the
+            # time a row is written, and re-reading it would be the second copy of a number the
+            # process already has.
+            request_bytes=_request_bytes(request),
         )
     )

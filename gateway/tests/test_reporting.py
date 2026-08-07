@@ -53,6 +53,7 @@ async def _log(
     cost: int | None = 1000,
     status: int = 200,
     latency: int | None = 40,
+    outcome: str | None = None,
 ) -> None:
     async with sessionmaker() as session:
         session.add(
@@ -69,6 +70,7 @@ async def _log(
                 total_tokens=prompt + completion,
                 cost_nanos=cost,
                 latency_ms=latency,
+                outcome=outcome,
                 created_at=when,
             )
         )
@@ -312,3 +314,34 @@ def test_the_report_says_which_scope_it_was_built_with() -> None:
     """So a screen can tell "everything" from "your use cases" without guessing from the rows."""
     with _client() as client:
         assert client.get("/v1beta/reporting").json()["scope"] == "all"
+
+
+async def test_a_refused_request_is_not_counted_as_unpriced(sessionmaker) -> None:
+    """Found live: the console reported **105** unpriced requests where **5** had run unpriced.
+
+    A refused row has a NULL cost for the opposite reason to an unpriced one — nothing was spent
+    because nothing ran. Counting both made the "spend is a lower bound" caveat permanent, and a
+    warning that is always present is one nobody reads. The project's own rule in the direction it
+    was missing: unknown is not zero, and **zero is not unknown**.
+    """
+    await _log(sessionmaker, cost=None, outcome="served")
+    await _log(sessionmaker, cost=None, outcome="rate_limited", status=429)
+    await _log(sessionmaker, cost=None, outcome="budget_exceeded", status=429)
+    await _log(sessionmaker, cost=None, outcome="invalid_request", status=400)
+
+    totals = (await ReportingService(sessionmaker).report(None, AUGUST, SEPTEMBER))["totals"]
+
+    assert totals["requests"] == 4
+    assert totals["unpriced_requests"] == 1
+
+
+async def test_a_row_written_before_outcomes_existed_still_counts_as_unpriced(
+    sessionmaker,
+) -> None:
+    """A NULL outcome predates `FRD-122`, when only served requests were logged at all — so it was
+    one. Excluding it would quietly change a historical figure while fixing a present one."""
+    await _log(sessionmaker, cost=None, outcome=None)
+
+    totals = (await ReportingService(sessionmaker).report(None, AUGUST, SEPTEMBER))["totals"]
+
+    assert totals["unpriced_requests"] == 1

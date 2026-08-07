@@ -86,6 +86,22 @@
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": true,
       "protocol": "openid-connect"
+    },
+    {
+      "clientId": "aira-integration-tests-security",
+      "name": "Integration tests (dev only)",
+      "description": "Service account for the integration suite, carrying it-security. A third account, because who may see every use case and who may stop traffic are different questions.",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "integration-tests-security-secret",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "protocol": "openid-connect",
+      "attributes": {
+        "access.token.lifespan": "300"
+      },
+      "id": "aira-integration-tests-security"
     }
   ],
   "users": [
@@ -226,6 +242,14 @@
       "serviceAccountClientId": "aira-integration-tests-member",
       "realmRoles": [
         "use-case-admin"
+      ]
+    },
+    {
+      "username": "service-account-aira-integration-tests-security",
+      "enabled": true,
+      "serviceAccountClientId": "aira-integration-tests-security",
+      "realmRoles": [
+        "it-security"
       ]
     }
   ],

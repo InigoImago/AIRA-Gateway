@@ -5,6 +5,61 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-07 — 84 live cases against the anomaly work, and five defects
+
+`FRD-500`/`501`/`503` shipped with hermetic tests, 251 mutation properties and a green gate. A
+developer round against the running stack — real Postgres, real gateway process, real model, both
+planes talking over Kafka — found **five defects that none of those could see**. Three of them
+predate this week.
+
+**Two planes, one question, two answers.** The gateway guarded its kill switch with `has_oversight`,
+which is a *visibility* predicate, so `it-steuerung` could stop traffic there while Management
+correctly refused it a global rule. PRD §154 gives that role every figure and **no write anywhere**.
+Reusing "may see every use case" for "may stop every use case" is `FRD-206`'s mistake one level
+down — and the way it surfaced is worth keeping: **asking both planes the same question and
+comparing the answers**. `INCIDENT_ROLES` now lives in `aira_common.roles` and both read it.
+
+**A whole rule kind measured a column nothing wrote.** `payload_size` compares against
+`request_bytes`; the middleware counted the bytes, the column existed, and nothing carried the
+number between them. It could never have fired on real traffic. The hermetic tests seeded the column
+directly and were green — the third time this repository has recorded *two correct halves and no
+wire*, and the second time coverage was blind to it.
+
+**A refused request was counted as unpriced traffic.** The console reported **105** unpriced
+requests where **5** had run on an unpriced model. A refusal has a NULL cost for the opposite reason
+to an unpriced one — nothing was spent because nothing *ran* — and counting both made the "spend is
+a lower bound" caveat permanent, which by this project's own test (`a fully priced period carries no
+caveat`) is a warning nobody reads. The rule stated in the direction it was missing: **unknown is
+not zero, and zero is not unknown.** A NULL *outcome* still counts, because that is a row from
+before `FRD-122`, when only served requests were logged at all — fixing a present figure must not
+quietly change a historical one.
+
+**`aira.anomaly-rules` was created by nothing.** Rules were authored, Management answered 201, the
+relay published, and the broker dropped every message. The only evidence anywhere was
+`Topic ... not found in cluster metadata`, repeated forever in a container nobody watches. This is
+the **second** time — `FRD-405` shipped `aira.rate-limits` the same way and the DEVLOG says so — and
+the topic list is written by hand in three places while the names have one source of truth. The fix
+is therefore not a fourth copy but a check: `tools/tests/test_kafka_topics_are_created.py` compares
+the Makefile, the Compose step and `DEPLOYMENT.md` against the constants, **in both directions**, so
+a topic nothing publishes to is caught as well.
+
+**Thirty-eight mutation ids named more than one property.** Found by reusing `N3`, which already
+existed. Every entry runs regardless, so the checking was sound — but "N3 survived" named two
+unrelated things, and a summary that sends somebody to the wrong line is worse than no summary. The
+*later* duplicate of each pair was renamed and the first kept, because `CLAUDE.md` and the DEVLOG
+cite ids by name and renaming a cited one breaks the prose explaining why the property exists. The
+harness now refuses duplicates.
+
+Two test lessons from writing the round itself, both about **measuring from the wrong moment**: a
+suspension takes up to the cache TTL to reach the gateway, so "a blocked caller consumes no budget"
+and "a blocked caller pays for no classifier" both failed until they counted from *after* the block
+took effect rather than from zero — the requests served while the cache caught up were served
+perfectly correctly. And the round needed a third Keycloak service account (`it-security`), because
+neither existing one may act in an incident — which is the same distinction defect 1 was about,
+arriving from the test side before the fix did.
+
+---
+
 ## 2026-08-07 — Phase 5, stage C: a finding becomes a control
 
 `FRD-503`. `FRD-501` detected and recorded; a rule set to `block` wrote `detected_not_enforced` on

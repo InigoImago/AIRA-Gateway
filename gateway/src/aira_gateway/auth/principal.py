@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from aira_common.roles import has_oversight, is_governance
+from aira_common.roles import has_oversight, is_governance, may_act_on_incidents
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,10 +38,21 @@ class Principal:
 
     @property
     def is_oversight(self) -> bool:
-        """Whether this caller may act across use cases in an incident (`FRD-503` FR-6).
+        """Whether this caller may **see** every use case.
 
-        Wider than :attr:`is_governance` by exactly IT Security, which is the role whose job this
-        is — the same split `FRD-206` had to make in the control plane, for the same reason: who
-        may *see* every use case and who may see every *figure* are two questions.
+        Wider than :attr:`is_governance` by exactly IT Security — the split `FRD-206` had to make
+        in the control plane, for the same reason: who may see every use case and who may see every
+        *figure* are two questions.
         """
         return has_oversight(self.roles)
+
+    @property
+    def may_act_on_incidents(self) -> bool:
+        """Whether this caller may **stop** traffic (`FRD-503` FR-6).
+
+        A third question, and it took a live round to notice it was being answered with the second
+        one. `is_oversight` includes IT Steuerung, which PRD §154 gives every figure and no write
+        anywhere — so the gateway's kill switch was letting a read-only role stop traffic while
+        Management refused it a global rule. Two planes, one question, two answers.
+        """
+        return may_act_on_incidents(self.roles)

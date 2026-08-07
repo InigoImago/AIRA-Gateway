@@ -43,7 +43,7 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
   inevitably do when both were written from the same mental model — and line coverage cannot see
   a *missing requirement*: on 2026-08-05 a review found seven real defects behind a green suite at
   99% coverage. So: **prove a test can fail.** Break the property, watch it go red, restore.
-  `make mutants` (`tools/mutation_check.py`) does this for **251 properties** across auth, budgets,
+  `make mutants` (`tools/mutation_check.py`) does this for **255 properties** across auth, budgets,
   pipeline, retention, the management control plane and the gateway's counters; when
   you fix a bug, add the mutation that reintroduces it. Two traps that cost real defects here:
   a stand-in that is more permissive than the thing it replaces (reuse the real method where you
@@ -688,6 +688,22 @@ new endpoints for resolving the scope **zero** times — correctly, they are bou
 they moved to `api/incidents.py`; and `N19` survived because every endpoint test ran with auth off,
 which returns on the demo path **before** the role check — five tests passed around an untested
 check.
+**84 live cases against Phase 5 (2026-08-07)** — real Postgres, real gateway process, real model,
+both planes over Kafka. **Five defects that 251 mutation properties and a green gate could not
+see**, three of them older than this week. (1) **Two planes, one question, two answers**: the
+gateway's kill switch was guarded by `has_oversight` — a *visibility* predicate — so `it-steuerung`
+could stop traffic there while Management refused it a global rule; `INCIDENT_ROLES` is now one
+definition both read. (2) `payload_size` **measured a column nothing wrote** — the middleware
+counted the bytes, the column existed, no wire between them; the third recorded instance of *two
+correct halves and no wire*. (3) A **refused request was counted as unpriced** (105 reported, 5
+real), making the "lower bound" caveat permanent — *unknown is not zero, and zero is not unknown*;
+a NULL outcome still counts, since that is a pre-`FRD-122` row. (4) **`aira.anomaly-rules` was
+created by nothing** — the second time after `aira.rate-limits`, silent by construction, so a test
+now compares the three hand-written topic lists against the constants **in both directions**. (5)
+**38 mutation ids named more than one property**, making "N3 survived" ambiguous; later duplicates
+renamed, harness now refuses them. Two test lessons, both **measuring from the wrong moment**: a
+suspension takes up to the cache TTL to arrive, so "consumes no budget" and "pays for no classifier"
+must count from *after* the block took effect.
 Next candidates: **`FRD-114`** (model metadata — now also carries publisher + default output cap,
 prerequisite for 110–113 and 119), **`FRD-110`** (documents/images — the widest gap),
 **`FRD-115`/`FRD-119`** (Vertex EU + the Anthropic dialect — required), **`FRD-116`** (Vault),

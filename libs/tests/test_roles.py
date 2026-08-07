@@ -44,3 +44,29 @@ def test_an_unknown_role_is_not_oversight() -> None:
     """A realm that grows a role this code has never heard of must not accidentally be treated
     as governance."""
     assert is_governance(["brand-new-role"]) is False
+
+
+def test_stopping_traffic_is_a_narrower_permission_than_seeing_it() -> None:
+    """Found by a live round asking both planes the same question and getting different answers.
+
+    The gateway guarded its kill switch with `has_oversight` — a *visibility* predicate — so
+    `it-steuerung` could stop traffic there while Management refused it a global rule. PRD §154
+    gives that role every figure and **no write anywhere**.
+    """
+    from aira_common.roles import has_oversight, may_act_on_incidents
+
+    assert has_oversight(["it-steuerung"])
+    assert not may_act_on_incidents(["it-steuerung"]), "a role that may only look can stop traffic"
+
+    for role in ("it-security", "global-admin"):
+        assert may_act_on_incidents([role]), role
+
+    for role in ("use-case-admin", "use-case-user"):
+        assert not may_act_on_incidents([role]), role
+
+
+def test_the_incident_set_is_a_subset_of_the_oversight_set() -> None:
+    """Anybody who may stop traffic may also see it. The reverse is what was wrong."""
+    from aira_common.roles import INCIDENT_ROLES, OVERSIGHT_ROLES
+
+    assert INCIDENT_ROLES < OVERSIGHT_ROLES

@@ -50,6 +50,23 @@ GOVERNANCE_ROLES: frozenset[Role] = frozenset({Role.GLOBAL_ADMIN, Role.IT_STEUER
 OVERSIGHT_ROLES: frozenset[Role] = GOVERNANCE_ROLES | frozenset({Role.IT_SECURITY})
 
 
+# Roles that may **act** across use cases in an incident: stop a caller, lift a suspension, author
+# a rule that applies everywhere.
+#
+# A third set, and the reason is the mistake this replaced. The gateway's kill switch was guarded by
+# `OVERSIGHT_ROLES` — which is a *visibility* predicate — so IT Steuerung could stop traffic, while
+# Management (correctly) refused it a global rule. PRD §154 gives that role every figure and **no
+# write anywhere**; reusing "may see every use case" for "may stop every use case" is `FRD-206`'s
+# mistake one level down, and a live round found it by asking the two planes the same question and
+# getting different answers.
+INCIDENT_ROLES: frozenset[Role] = frozenset({Role.GLOBAL_ADMIN, Role.IT_SECURITY})
+
+
+def may_act_on_incidents(roles: Iterable[str]) -> bool:
+    """True if any of ``roles`` may stop traffic or write a rule that applies everywhere."""
+    return any(role in INCIDENT_ROLES for role in roles)
+
+
 def has_oversight(roles: Iterable[str]) -> bool:
     """True if any of ``roles`` may see every use case (not necessarily every figure)."""
     return any(role in OVERSIGHT_ROLES for role in roles)

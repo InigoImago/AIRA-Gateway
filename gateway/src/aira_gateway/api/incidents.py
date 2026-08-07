@@ -29,10 +29,13 @@ router = APIRouter(tags=["incidents"])
 
 
 def _require_oversight(principal: Principal) -> None:
-    """Only an oversight role may stop traffic by hand (`FRD-503` FR-6).
+    """Only an incident role may stop traffic by hand (`FRD-503` FR-6).
 
     The same roles that may author a global rule (`FRD-500` FR-8), for the same reason: a
-    hand-made suspension is a global rule's effect without the rule.
+    hand-made suspension is a global rule's effect without the rule. **Not** the oversight set —
+    that is a visibility predicate, and it includes IT Steuerung, which PRD §154 gives every figure
+    and no write anywhere. Asking the two planes the same question and getting different answers is
+    how this was found.
     """
     if principal.method == "demo":
         # Authentication is switched off entirely; there is no identity to authorise, and the
@@ -40,7 +43,7 @@ def _require_oversight(principal: Principal) -> None:
         # the same reason — a deployment that has declared it is not checking identity cannot then
         # be asked to check a role.
         return
-    if not principal.is_oversight:
+    if not principal.may_act_on_incidents:
         raise GeminiHTTPError(
             403,
             "Only IT Security or a Global Administrator may suspend or restore access.",
