@@ -616,8 +616,13 @@ hiding Save alone lets somebody rearrange a pipeline for nothing); and **`is_mem
 and visibility are three different answers** — an oversight role sees every use case and must not be
 offered a key, a member administers none and must be. IT Security's empty console was the same
 mistake: `scope_queryset` used one role set for both "sees every use case" and "sees every figure",
-now `OVERSIGHT_ROLES` ⊃ `GOVERNANCE_ROLES`. Also fixed: the session renews itself (an expired token
-reported "invalid credentials" everywhere, which reads as untrustworthy *data*); creating a use case
+now `OVERSIGHT_ROLES` ⊃ `GOVERNANCE_ROLES`. Also fixed: the session renews itself, and when it cannot, **a `401` on
+`/api`/`/gw` sends the reader to the login rather than reporting "invalid credentials" on every
+panel at once** — that reads as the backend rejecting them, and the next thing doubted is the
+figures on the same page; `403` is deliberately untouched (a real answer about a real permission),
+one login starts however many requests fail together, and the path is restored only if `state`
+holds a same-origin path (it survives a round trip through the browser, so treating it as a
+destination would be an open redirect); creating a use case
 is a window that ends on its **settings**, not the list; "slug" became **technical id**, derived
 from the name; the model editor is a window naming its model; reporting cards got short headings
 plus **info buttons** carrying what each figure counts. Two defects were shipped inside this pass

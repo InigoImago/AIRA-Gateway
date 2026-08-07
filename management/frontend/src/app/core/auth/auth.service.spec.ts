@@ -16,8 +16,10 @@ function setup(overrides: Partial<Record<string, unknown>> = {}) {
       return Promise.resolve(true);
     },
     hasValidAccessToken: () => true,
-    initCodeFlow: () => calls.push('initCodeFlow'),
-    logOut: () => calls.push('logOut'),
+    initCodeFlow: (state?: string) => calls.push(`initCodeFlow:${state ?? ''}`),
+    logOut: (noRedirect?: boolean) => calls.push(`logOut:${noRedirect ?? false}`),
+    /** Where the login was started from, handed back after the redirect. */
+    state: '',
     getAccessToken: () => 'token-abc',
     // The renewal half of the facade. Stubbed with the real names rather than left out: a
     // stand-in that silently lacks the method under test is how a session-expiry defect survives
@@ -84,7 +86,97 @@ describe('AuthService', () => {
     const { service, calls } = setup();
     service.login();
     service.logout();
-    expect(calls).toEqual(['initCodeFlow', 'logOut']);
+    // The login carries where it started from, so a session that ends mid-task does not also
+    // cost the reader their place.
+    expect(calls[0]).toMatch(/^initCodeFlow:/);
+    expect(calls[1]).toBe('logOut:false');
+  });
+
+  it('sends a dead session to the login rather than leaving it to fail on every screen', () => {
+    // Restarting Keycloak takes the session with it. Before this, the first request after that
+    // reported "invalid credentials" — on every panel at once, which reads as the backend
+    // rejecting the user rather than as a session that ended.
+    const { service, calls } = setup({ hasValidAccessToken: () => false });
+    service.reauthenticate();
+
+    // The dead token is dropped first, without a redirect of its own: otherwise the guard on the
+    // way back can still see a stored one and the login round-trips for nothing.
+    expect(calls).toEqual(['logOut:true', 'initCodeFlow:/']);
+    expect(service.authenticated()).toBe(false);
+  });
+
+  it('starts one login however many requests fail at once', () => {
+    // A screen makes several calls in parallel. Five 401s starting five logins would leave four
+    // stale `state` entries and a race over which one comes back.
+    const { service, calls } = setup({ hasValidAccessToken: () => false });
+    service.reauthenticate();
+    service.reauthenticate();
+    service.reauthenticate();
+
+    expect(calls.filter((call) => call.startsWith('initCodeFlow')).length).toBe(1);
+  });
+
+  it('gives up on a renewal that cannot succeed, instead of waiting for the next 401', async () => {
+    // The refresh token is gone, or the session was ended in Keycloak. Waiting for a request to
+    // fail means the reader learns about it from an error on the screen they are already reading.
+    let valid = true;
+    const { service, calls, fire } = setup({ hasValidAccessToken: () => valid });
+    await service.init();
+
+    valid = false;
+    fire({ type: 'token_refresh_error' });
+
+    expect(calls).toContain('initCodeFlow:/');
+  });
+
+  it('does not restart the login when a renewal fails but the token is still good', async () => {
+    // A silent-refresh timeout with a token that has not expired yet is a hiccup, not the end of
+    // the session — throwing the reader out over it would be its own defect.
+    const { service, calls, fire } = setup({ hasValidAccessToken: () => true });
+    await service.init();
+
+    fire({ type: 'silent_refresh_timeout' });
+
+    expect(calls.filter((call) => call.startsWith('initCodeFlow'))).toEqual([]);
+    expect(service.authenticated()).toBe(true);
+  });
+});
+
+describe('AuthService — coming back to where the session ended', () => {
+  const pathNow = () => window.location.pathname + window.location.search;
+
+  afterEach(() => window.history.replaceState(null, '', '/'));
+
+  it('restores the path the login was started from', async () => {
+    const { service } = setup({ state: encodeURIComponent('/use-cases/demo-uc?tab=budgets') });
+    await service.init();
+
+    expect(pathNow()).toBe('/use-cases/demo-uc?tab=budgets');
+  });
+
+  it('does nothing when there is nowhere to go back to', async () => {
+    const { service } = setup({ state: '' });
+    await service.init();
+
+    expect(pathNow()).toBe('/');
+  });
+
+  it('refuses anything that is not a same-origin path', async () => {
+    // `state` survives a round trip through the browser, so treating it as a destination would be
+    // an open redirect with extra steps. Both shapes are refused: an absolute URL, and the
+    // protocol-relative form that looks like a path and is not.
+    for (const hostile of ['https://evil.example/steal', '//evil.example/steal']) {
+      const { service } = setup({ state: encodeURIComponent(hostile) });
+      await service.init();
+      expect(pathNow()).toBe('/');
+    }
+  });
+
+  it('leaves the URL alone when it is already the right one', async () => {
+    const { service } = setup({ state: '/' });
+    await service.init();
+
+    expect(pathNow()).toBe('/');
   });
 
   it('exposes the access token, and an empty string when there is none', () => {

@@ -70,6 +70,20 @@ and one of them is destructive.
 Also documented rather than left in the DEVLOG alone: `FRD-130` (the demo showcase), which the
 previous entry referenced without a document existing.
 
+**A session that has ended is a login, not an error.** Reported after the rest of this pass: a
+token going invalid — the tab left open, or Keycloak restarted — produced "invalid credentials" on
+every panel at once. True, and the wrong thing to say: it reads as the backend rejecting the
+person, and the next thing doubted is the figures on the same page. A `401` on `/api` or `/gw` now
+drops the dead token and starts the login, which is the only action available anyway. `403` is
+deliberately left alone — that is a real answer about a real permission, and logging somebody out
+over it would hide the boundary behind a login screen. One login is started however many requests
+fail together, and the path is carried through `state` and restored, but **only if it is a
+same-origin path**: `state` survives a round trip through the browser, so treating it as a
+destination would be an open redirect with extra steps. Two endings, both checked in a browser
+against a real token that was then broken: with the Keycloak session alive the round trip is
+invisible; with it gone — the reported case, reproduced by ending the session through the admin
+API — the login form appears.
+
 **Two defects I shipped and had to be told about.** The smaller one first: the reporting screen's
 new info buttons showed nothing. They carried a `title` attribute — a native tooltip needs a long
 hover, never appears on a touch screen, and is invisible to a keyboard — so a control sat there

@@ -78,6 +78,10 @@ in the gateway URL and in every API key, while the name is not.
 
 **FR-10** — Editing a model in the catalog happens in a window that names the model being edited.
 
+**FR-12** — A `401` on a first-party call sends the reader to the login. A `403` does not. One
+login is started however many requests fail together, and the path is restored afterwards if it is
+a same-origin path.
+
 **FR-11** — A figure in the reporting screen carries a short heading and an info button that shows
 the sentence saying what it counts. **Hovering shows it** — that is what anybody reaching for an
 "i" expects; focus shows it too, for a keyboard; and a click **pins** it, for a touch screen where
@@ -126,7 +130,35 @@ The defect reached the running stack because three test layers ran and the fourt
 change lives only in the fourth. No unit test performs an OIDC redirect. A change to the login flow
 is an e2e change.
 
-### 4.5 The info button that did nothing
+### 4.5 A session that has ended is a login, not an error
+
+Reported from the running console: a token going invalid — left open too long, or Keycloak
+restarted — produced "invalid credentials" on every panel at once. That is a true statement and the
+wrong one to make. It reads as *the backend rejecting this person*, and the next thing doubted is
+the figures on the same page.
+
+A `401` on a first-party call (`/api`, `/gw`) means exactly one thing, and there is exactly one
+action available, so the console takes it: drop the dead token and start the login. Three details
+are load-bearing:
+
+- **`403` is left alone.** That is a real answer about a real permission and the caller is signed
+  in perfectly well; logging them out would hide the boundary behind a login screen — the same
+  mistake as §4.1 in the other direction.
+- **One login, however many requests fail.** A screen makes several calls at once; five 401s
+  starting five logins would leave four stale `state` entries racing over which returns.
+- **The place is kept.** `initCodeFlow` carries the current path, and it is restored on the way
+  back — but only if it is a same-origin path, because `state` survives a round trip through the
+  browser and treating it as a destination would be an open redirect with extra steps.
+
+Renewal failure is handled at the source too: when a silent refresh fails *and* no valid token
+remains, the login starts immediately rather than waiting for the next request to fail on a screen
+the reader is already looking at.
+
+Two endings, both verified in a browser: with the Keycloak session still alive the round trip is
+invisible and the reader never learns anything happened; with the session gone — the case actually
+reported — they land on the login form.
+
+### 4.6 The info button that did nothing
 
 The first version put the explanation in a `title` attribute. It was reported from the running
 console as "the info elements show no information", and that was exactly right: the control was
@@ -142,7 +174,7 @@ Both a unit test and an e2e case assert that using it reveals text, and the e2e 
 hover** — only a browser can tell "renders a tooltip attribute" from "shows the reader anything",
 which is how the first version passed review in the first place.
 
-### 4.6 Two different membership lists
+### 4.7 Two different membership lists
 
 The budgets tab reported "the gateway does not count you as a member of this use case" to a reader
 looking at their own name in the Members tab. Both statements were true: the gateway takes
