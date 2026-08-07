@@ -94,7 +94,12 @@ def _declarations() -> list[dict[str, Any]]:
 @register(name="local_models", order=40)
 def seed_local_models(fresh: bool) -> SeedResult:
     """Declare the local models, if a local endpoint is configured."""
-    if not os.environ.get("AIRA_OLLAMA_URL"):
+    # Either configuration form counts. `AIRA_OLLAMA_URL` is the single-endpoint setting this
+    # contribution was written against; `AIRA_OPENAI_SERVERS` is the named-server form `FRD-123`
+    # moved to when a self-hosted fleet turned out to be several machines. Checking only the first
+    # meant the demo stack — configured with the second — seeded **no models at all**, and the
+    # catalog silently had nothing for the use cases to point at.
+    if not (os.environ.get("AIRA_OLLAMA_URL") or os.environ.get("AIRA_OPENAI_SERVERS")):
         return {"local_models": 0}
 
     if fresh:

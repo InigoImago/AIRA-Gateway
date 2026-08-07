@@ -98,8 +98,18 @@ services:
     environment:
       <<: *management-env
       AIRA_DEMO_MODE: "true"
+      # The showcase declares the local models, so this container has to know whether there is a
+      # local endpoint at all — it is the gateway's setting, read here only as a *signal*.
+      AIRA_OLLAMA_URL: ${AIRA_OLLAMA_URL:-}
+      AIRA_OPENAI_SERVERS: ${AIRA_OPENAI_SERVERS:-}
+      AIRA_SEED_LOCAL_CHAT_MODEL: ${AIRA_DEMO_CHAT_MODEL:-qwen3:0.6b}
+      AIRA_SEED_LOCAL_EMBED_MODEL: ${AIRA_DEMO_EMBED_MODEL:-all-minilm}
     depends_on:
       management-migrate:
+        condition: service_completed_successfully
+      # The showcase declares the local models, and declaring one that has not been pulled would
+      # put a model in the catalog that every request against it fails on (`FRD-130`).
+      ollama-pull:
         condition: service_completed_successfully
     networks: [aira]
     restart: "no"

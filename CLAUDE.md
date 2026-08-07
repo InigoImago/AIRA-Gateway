@@ -547,6 +547,19 @@ right and the guard — which reads the **shared counter** (`FRD-405`) — never
 counter expired; both stores now, verified live (429 at 40 200 against a 40 000 cap). The test for
 it **passed against the broken code** at first, because on a *cold* counter the guard seeds from
 Postgres: a test that never reached the path it was named after, warmed now.
+**A demo somebody can walk through (`FRD-130`, 2026-08-07)** — `make showcase` starts the stack
+with **Ollama in the `demo` profile** (separate pull step, so the health check stays honest), seeds
+**three use cases** chosen so the roles see *different* things (`ucadmin` administers two of three
+on purpose), budgets across **every axis** (cost/tokens/requests × use-case/member × day/month),
+rate limits, pipelines and one API key each — then drives **real traffic** (`tools/demo_traffic.py`)
+including a refused injection, because inserted rows would be a story about the product rather than
+the product. Four first-run defects, all instructive: the seed gated on `AIRA_OLLAMA_URL` while the
+stack uses `AIRA_OPENAI_SERVERS` (empty catalog); **801** leftover test use cases made the list
+useless, so `--fresh` now clears *every* use case; `--fresh` then **permanently revoked** the demo
+keys, because deleting a use case revokes its keys and revocation is terminal — recreating the same
+slug is a **reset, not a retirement**, and the events have to say so; and budgets sized plausibly
+(€0.50/month) sat at 0.02% against a model priced in fractions of a cent, so they are calibrated
+against what the demo traffic actually costs.
 **Developer round against the running model (`FRD-129`, 2026-08-07)** — 47 live cases walking both
 surfaces: ordinary journeys, dropped connections on **every** path, and every figure checked in the
 **database** rather than in the response. Nothing asserts an answer's *content* (that tests the

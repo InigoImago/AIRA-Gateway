@@ -187,7 +187,10 @@ services:
   ollama:
     image: ollama/ollama:latest
     container_name: aira-ollama
-    profiles: ["verify"]
+    # `demo` as well as `verify` (`FRD-130`): a demo whose models are a mock shows the screens but
+    # not the point — the numbers on the spend report have to come from something that actually
+    # counted tokens, or the walkthrough is a slideshow.
+    profiles: ["verify", "demo"]
     volumes:
       - ollama-models:/root/.ollama
     ports:
@@ -201,6 +204,29 @@ services:
       timeout: 10s
       retries: 30
     networks: [aira]
+
+  # Pulls the models the demo declares. Separate from the server so the server's health check stays
+  # honest — a container that is "healthy" only once a multi-hundred-megabyte download finishes
+  # would make every restart look like a hang.
+  ollama-pull:
+    image: ollama/ollama:latest
+    container_name: aira-ollama-pull
+    profiles: ["verify", "demo"]
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        for m in ${AIRA_DEMO_CHAT_MODEL:-qwen3:0.6b} ${AIRA_DEMO_EMBED_MODEL:-all-minilm}; do
+          echo "pulling $$m"
+          ollama pull "$$m"
+        done
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    depends_on:
+      ollama:
+        condition: service_healthy
+    networks: [aira]
+    restart: "no"
 
 volumes:
   pgdata:

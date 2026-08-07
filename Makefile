@@ -48,6 +48,35 @@ up-full: env ## Start EVERYTHING in containers (infra + gateway, management, con
 	$(COMPOSE_FULL) up -d --build
 	@echo "SPA: http://localhost:4200   (login ucadmin / demo-password)"
 
+showcase: env ## Start the full demo: stack, local model, seeded roles/budgets, and real traffic
+	@echo "==> starting the stack (this pulls a model on the first run and takes a few minutes)"
+	$(COMPOSE_FULL) --profile demo up -d --build
+	@echo "==> waiting for the gateway to be ready"
+	@for i in $$(seq 1 60); do \
+		curl -fsS http://localhost:8001/readyz >/dev/null 2>&1 && break; \
+		sleep 2; \
+	done
+	@echo "==> giving the read model a moment to catch up with the seeded config"
+	@sleep 6
+	@echo "==> driving real traffic so the reports are not empty"
+	-uv run python tools/demo_traffic.py
+	@echo ""
+	@echo "  SPA          http://localhost:4200"
+	@echo "  Keycloak     http://localhost:8080  (realm: aira)"
+	@echo ""
+	@echo "  Log in as any of these — password 'demo-password' — to see the same system"
+	@echo "  from a different seat:"
+	@echo ""
+	@echo "    admin      global administrator   every use case, and the only role that may price a model"
+	@echo "    itgov      IT Steuerung           every use case and the whole spend report, read-only"
+	@echo "    itsec      IT Security            the governance view"
+	@echo "    ucadmin    use-case administrator two of the three use cases — 'personalwesen' is invisible"
+	@echo "    ucuser     use-case user          member of 'kundenservice', read-only"
+	@echo ""
+
+showcase-traffic: ## Drive more demo traffic (moves the budget bars)
+	uv run python tools/demo_traffic.py
+
 down-full: ## Stop the full containerised stack (keeps volumes)
 	$(COMPOSE_FULL) down
 

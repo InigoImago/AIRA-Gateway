@@ -5,6 +5,56 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-07 — a demo somebody can walk through
+
+`FRD-130`. `seed_demo` created five roles and one user each, which lets you log in as every role and
+look at five empty screens. This gives each of them something to see, and picks the content so the
+differences between the roles are **visible rather than described**.
+
+Three use cases, each making one governance decision concrete: `kundenservice` stores prompts with
+the shortest retention that still supports an incident review and runs the heuristic injection
+filter; `entwicklung` is higher-volume and carries rate limits instead of a tight budget;
+`personalwesen` has **storage switched off** — the figures are still collected, the prompts are not.
+`ucadmin` deliberately administers only two of the three, because switching to that account and
+finding two instead of three is the fastest way to show the scoping is real rather than a filter in
+the frontend.
+
+Budgets across every axis the UI offers — cost, tokens, requests; use-case and member scope; day and
+month — and `tools/demo_traffic.py` drives **real** requests through the gateway against the local
+model, including one prompt-injection attempt that the filter refuses. Inserted rows would have been
+consistent; they would also have been a story about the product rather than the product.
+
+Ollama joins the `demo` profile with a separate pull step, so the server's health check stays honest
+— a container reported "healthy" only after a multi-hundred-megabyte download makes every restart
+look like a hang.
+
+### Four things the first run got wrong
+
+**The seed declared no models.** `local_models` gated on `AIRA_OLLAMA_URL` while this stack is
+configured with `AIRA_OPENAI_SERVERS` — the named-server form `FRD-123` moved to when a self-hosted
+fleet turned out to be several machines. The catalog came up empty and the use cases pointed at
+nothing. Either form counts now.
+
+**801 use cases.** A demo database accumulates the fixtures of every test run that ever pointed at
+it, and a global administrator opening a list of `burst-3i6g5l` and `dryrun-xkroyc` learns only that
+the list is long. `--fresh` now means *every* use case, not just the ones the seed made.
+
+**And then `--fresh` killed the keys for ever.** Deleting a use case revokes its API keys, and
+revocation is **terminal** in the read model on purpose — `api_key.created` must never resurrect
+one. Announcing a delete for a slug the same run then recreates therefore permanently revoked the
+deterministic demo keys: three use cases, three keys, 401 for ever. Recreating the same slug is a
+**reset, not a retirement**, and the events have to say so. The rule is right; the seed was wrong
+about which event it was sending.
+
+**The budgets showed nothing.** A plausible-looking €0.50 monthly cap against a local model priced
+in fractions of a cent per million tokens sits at 0.02% after a walkthrough — technically correct
+and useless. They are calibrated against what the demo traffic actually costs: after one run the
+bars sit between a third and two thirds, and two more runs reach a limit.
+
+`make showcase` starts the lot and prints who to log in as.
+
+---
+
 ## 2026-08-07 — a developer round against the running model
 
 `FRD-129`. After two structural changes to the request path and three defect fixes, a walk through
