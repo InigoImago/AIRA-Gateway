@@ -375,16 +375,45 @@ describe('isoDay', () => {
 });
 
 describe('ReportingPage — what each figure counts', () => {
-  it('opens the explanation when the info button is used', () => {
-    // Reported from the running console: the info buttons showed nothing. They carried a `title`
-    // attribute — a native tooltip needs a long hover, never appears on a touch screen, and is
-    // invisible to a keyboard. A control that does nothing when used is exactly the defect this
-    // pass was about, committed in the fix for it.
+  it('shows the explanation on hover, and hides it again on leaving', () => {
+    // What anybody reaching for an "i" expects. The first version needed a click; the one before
+    // that was a `title` attribute and showed nothing at all.
+    const { fixture, testid } = setup();
+    const button = testid('info-refused')!;
+
+    expect(testid('help-refused')).toBeNull();
+
+    button.dispatchEvent(new Event('mouseenter'));
+    fixture.detectChanges();
+    expect(testid('help-refused')?.textContent).toContain('never reached a model');
+
+    button.dispatchEvent(new Event('mouseleave'));
+    fixture.detectChanges();
+    expect(testid('help-refused')).toBeNull();
+  });
+
+  it('shows it for a keyboard too, on focus', () => {
+    // A tooltip only a mouse can reach is a tooltip half the readers never see.
+    const { fixture, testid } = setup();
+    const button = testid('info-latency')!;
+
+    button.dispatchEvent(new Event('focus'));
+    fixture.detectChanges();
+    expect(testid('help-latency')).not.toBeNull();
+
+    button.dispatchEvent(new Event('blur'));
+    fixture.detectChanges();
+    expect(testid('help-latency')).toBeNull();
+  });
+
+  it('pins the explanation open when clicked, because a touch screen has no hover', () => {
     const { fixture, testid } = setup();
 
     expect(testid('help-refused')).toBeNull();
 
     testid('info-refused')?.dispatchEvent(new Event('click'));
+    // A click on a touch screen fires no hover, and the pointer leaves straight away.
+    testid('info-refused')?.dispatchEvent(new Event('mouseleave'));
     fixture.detectChanges();
 
     const help = testid('help-refused');
@@ -398,8 +427,10 @@ describe('ReportingPage — what each figure counts', () => {
     const { fixture, testid } = setup();
 
     testid('info-refused')?.dispatchEvent(new Event('click'));
+    testid('info-refused')?.dispatchEvent(new Event('mouseleave'));
     fixture.detectChanges();
     testid('info-tokens')?.dispatchEvent(new Event('click'));
+    testid('info-tokens')?.dispatchEvent(new Event('mouseleave'));
     fixture.detectChanges();
 
     // Six open paragraphs is a wall of text where six figures were.
@@ -407,6 +438,7 @@ describe('ReportingPage — what each figure counts', () => {
     expect(testid('help-tokens')).not.toBeNull();
 
     testid('info-tokens')?.dispatchEvent(new Event('click'));
+    testid('info-tokens')?.dispatchEvent(new Event('mouseleave'));
     fixture.detectChanges();
     expect(testid('help-tokens')).toBeNull();
   });

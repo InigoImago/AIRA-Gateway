@@ -626,7 +626,9 @@ login outright** — the realm forbids offline tokens, the code-to-token exchang
 `not_allowed`, and Keycloak answers *that* without CORS headers, so the browser reported a CORS
 error naming neither the scope nor the setting (the code flow already returns a refresh token; the
 scope asks for one that outlives the session, which a governance console must not hold); and the
-info buttons were a `title` attribute, so they **looked clickable and did nothing** — the very
+info buttons were a `title` attribute, so they **showed nothing at all** (the first repair opened
+them on click, which worked and was still wrong — an "i" is a thing you point at, so it is hover +
+focus + a click that pins, for a touch screen) — the very
 defect the pass was about. Both share one cause: **three test layers ran and the fourth did not**,
 and both changes live only in the fourth. No unit test performs an OIDC redirect, and none can tell
 "renders a tooltip attribute" from "shows the reader anything". A change to the login flow, or to

@@ -603,17 +603,39 @@ $field-label-gap: 0.3rem;
   color: var(--aira-text, currentColor);
 }
 
-/* The explanation an info button opens. Inside the card, under the figure it is about — a
- * tooltip elsewhere on the page would make the reader hunt for what it refers to. */
-.stat__help {
-  margin: 0.5rem 0 0;
-  padding-top: 0.5rem;
-  border-top: 1px solid var(--aira-border);
-  font-size: 0.78rem;
-  line-height: 1.45;
-  color: var(--aira-text-muted);
+/* The explanation, anchored to the "i" it belongs to.
+ *
+ * Positioned rather than in flow: putting it in the card would make the card grow under the
+ * pointer and shove the rest of the row sideways, which is the jumpiness a hover is least
+ * forgiving of. It sits *below* the button so it does not cover the figure it describes. */
+.stat__info-wrap {
+  position: relative;
+  display: inline-flex;
 }
-.stat__info[aria-expanded='true'] {
+.stat__help {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 0.4rem);
+  left: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: min(20rem, 70vw);
+  padding: 0.55rem 0.7rem;
+  background: var(--aira-surface);
+  border: 1px solid var(--aira-border-strong);
+  border-radius: var(--aira-radius-sm);
+  box-shadow: var(--aira-shadow-lg);
+  font-size: 0.78rem;
+  font-weight: 400;
+  line-height: 1.45;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--aira-text);
+  /* The pointer is on the button, not in here — and a panel that swallows clicks would make the
+   * figure underneath unselectable while it is showing. */
+  pointer-events: none;
+}
+.stat__info.is-open {
   color: #fff;
   background: var(--aira-brand);
   border-color: var(--aira-brand);

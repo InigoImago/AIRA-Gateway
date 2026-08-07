@@ -80,30 +80,46 @@
       </div>
 
       <!--
-        Short headings, with the explanation behind an info button that actually opens.
+        Short headings, with the explanation on the info button.
 
         Two things went wrong before this. "Refused by a control" wrapped to two lines and broke
         the card row — and the fix for a heading that does not fit is not a smaller font, it is a
         shorter heading plus somewhere to put the rest. Then that somewhere was a `title`
         attribute, so the button looked clickable and did nothing: a native tooltip needs a long
-        hover, never appears on a touch screen, and is invisible to a keyboard. A control that
-        does nothing when used is the defect this whole pass was about.
+        hover, never appears on a touch screen, and is invisible to a keyboard.
+
+        So: **hovering shows it**, which is what anybody reaching for an "i" expects; focusing it
+        shows it too, for a keyboard; and clicking pins it open, for a touch screen where there is
+        no hover at all. The panel is positioned rather than in flow, so the card does not grow
+        under the pointer and shove the rest of the row sideways.
       -->
       <dl class="stat-row">
         @for (stat of stats(); track stat.key) {
           <div class="stat">
             <dt>
               {{ stat.label }}
-              <button
-                type="button"
-                class="stat__info"
-                [attr.aria-expanded]="openInfo() === stat.key"
-                [attr.aria-label]="'What does ' + stat.label + ' count?'"
-                [attr.data-testid]="'info-' + stat.key"
-                (click)="toggleInfo(stat.key)"
-              >
-                i
-              </button>
+              <span class="stat__info-wrap">
+                <button
+                  type="button"
+                  class="stat__info"
+                  [class.is-open]="shownInfo() === stat.key"
+                  [attr.aria-expanded]="shownInfo() === stat.key"
+                  [attr.aria-label]="'What does ' + stat.label + ' count?'"
+                  [attr.data-testid]="'info-' + stat.key"
+                  (mouseenter)="hoverInfo.set(stat.key)"
+                  (mouseleave)="hoverInfo.set(null)"
+                  (focus)="hoverInfo.set(stat.key)"
+                  (blur)="hoverInfo.set(null)"
+                  (click)="toggleInfo(stat.key)"
+                >
+                  i
+                </button>
+                @if (shownInfo() === stat.key) {
+                  <span class="stat__help" role="note" [attr.data-testid]="'help-' + stat.key">
+                    {{ stat.help }}
+                  </span>
+                }
+              </span>
             </dt>
             <dd [attr.data-testid]="stat.testid">
               {{ stat.value }}
@@ -111,11 +127,6 @@
                 <span class="stat__unit">{{ stat.unit }}</span>
               }
             </dd>
-            @if (openInfo() === stat.key) {
-              <p class="stat__help" role="note" [attr.data-testid]="'help-' + stat.key">
-                {{ stat.help }}
-              </p>
-            }
           </div>
         }
       </dl>

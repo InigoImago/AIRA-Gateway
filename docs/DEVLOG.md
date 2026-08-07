@@ -74,9 +74,13 @@ previous entry referenced without a document existing.
 new info buttons showed nothing. They carried a `title` attribute — a native tooltip needs a long
 hover, never appears on a touch screen, and is invisible to a keyboard — so a control sat there
 looking clickable and did nothing when used. That is the exact defect this pass was written to fix,
-committed inside the fix for it. It now opens a paragraph inside the card, and an e2e case asserts
-that using it *reveals text*, because only a real browser can tell "renders a tooltip attribute"
-from "shows the reader anything".
+committed inside the fix for it. The first repair opened it on click, which worked and was still
+the wrong answer — an "i" is a thing you point at, and the report had said so. It now shows on
+**hover**, on **focus** for a keyboard, and stays pinned on a click for a touch screen, which has
+no hover to offer; the panel is positioned rather than in flow, so the card does not grow under the
+pointer. An e2e case exercises it as a real hover, because only a browser can tell "renders a
+tooltip attribute" from "shows the reader anything" — which is how the `title` version passed
+review at all.
 
 **The larger one: the console would not load at all.** The
 session-renewal fix (above) added `offline_access` to the requested scopes to get a refresh token.

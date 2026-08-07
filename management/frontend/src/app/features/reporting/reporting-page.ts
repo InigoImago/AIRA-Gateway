@@ -162,8 +162,17 @@ export class ReportingPage implements OnInit {
       'Average and maximum, end to end, for the period. Not a percentile: that would need a Postgres-only function, and the hermetic tests run on SQLite.',
   };
 
-  /** Which explanation is open, if any. One at a time: six open paragraphs is a wall of text. */
+  /**
+   * Which explanation is showing, and why.
+   *
+   * Hover is what anybody reaching for an "i" expects, so `hoverInfo` follows the pointer (and the
+   * keyboard, through focus). But a touch screen has no hover at all, so a click **pins** one open
+   * — `openInfo` — and it stays until it is clicked again. One at a time either way: six open
+   * paragraphs is a wall of text where six figures were.
+   */
+  protected readonly hoverInfo = signal<string | null>(null);
   protected readonly openInfo = signal<string | null>(null);
+  protected readonly shownInfo = computed(() => this.hoverInfo() ?? this.openInfo());
 
   protected toggleInfo(key: string): void {
     this.openInfo.update((current) => (current === key ? null : key));

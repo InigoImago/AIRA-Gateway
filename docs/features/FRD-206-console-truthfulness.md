@@ -78,11 +78,12 @@ in the gateway URL and in every API key, while the name is not.
 
 **FR-10** — Editing a model in the catalog happens in a window that names the model being edited.
 
-**FR-11** — A figure in the reporting screen carries a short heading and an info button that
-**opens** the sentence saying what it counts, inside the card, under the figure it is about. Not a
-`title` attribute: a native tooltip needs a long hover, never appears on a touch screen and is
-invisible to a keyboard, so the button looked clickable and did nothing — the defect this whole
-document is about, committed in the fix for it. One explanation is open at a time.
+**FR-11** — A figure in the reporting screen carries a short heading and an info button that shows
+the sentence saying what it counts. **Hovering shows it** — that is what anybody reaching for an
+"i" expects; focus shows it too, for a keyboard; and a click **pins** it, for a touch screen where
+there is no hover at all. Not a `title` attribute: a native tooltip needs a long hover, never
+appears on a touch screen and is invisible to a keyboard. One explanation at a time, and the panel
+is positioned rather than in flow, so the card does not grow under the pointer.
 
 ## 4. Behaviour and decisions
 
@@ -129,10 +130,17 @@ is an e2e change.
 
 The first version put the explanation in a `title` attribute. It was reported from the running
 console as "the info elements show no information", and that was exactly right: the control was
-there, it responded to nothing, and the reader is left assuming the screen is broken. It now
-toggles a paragraph inside the card, `aria-expanded` says which, and both the unit test and an e2e
-case assert that using it *reveals text* — the second because only a real browser can tell
-"renders a tooltip attribute" from "shows the reader anything".
+there, it responded to nothing, and the reader is left assuming the screen is broken.
+
+The second version opened it on click. That worked and was still the wrong answer — an "i" is a
+thing you point at, and the reader had said so. It now shows on **hover**, on **focus** for a
+keyboard, and stays **pinned** on a click for a touch screen, which has no hover to offer. The
+panel is absolutely positioned: in flow it would grow the card under the pointer and shove the rest
+of the row, which is the jumpiness a hover is least forgiving of.
+
+Both a unit test and an e2e case assert that using it reveals text, and the e2e one uses a **real
+hover** — only a browser can tell "renders a tooltip attribute" from "shows the reader anything",
+which is how the first version passed review in the first place.
 
 ### 4.6 Two different membership lists
 
