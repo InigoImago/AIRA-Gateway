@@ -21,6 +21,7 @@ PIPELINE_TOPIC = "aira.pipelines"
 BUDGET_TOPIC = "aira.budgets"
 RATE_LIMIT_TOPIC = "aira.rate-limits"
 MODEL_TOPIC = "aira.models"
+ANOMALY_RULE_TOPIC = "aira.anomaly-rules"
 
 EVENT_TYPE_HEADER = "event_type"
 

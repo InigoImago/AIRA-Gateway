@@ -24,6 +24,9 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 
 from aira_common.apikeys import generate_api_key
+from aira_management.apps.anomalies.models import AnomalyRule
+from aira_management.apps.anomalies.serializers import AnomalyRuleSerializer
+from aira_management.apps.anomalies.views import upsert_use_case_rule
 from aira_management.apps.apikeys.models import ApiKey
 from aira_management.apps.apikeys.serializers import ApiKeySerializer, IssueApiKeySerializer
 from aira_management.apps.budgets.models import Budget
@@ -362,6 +365,41 @@ class UseCaseViewSet(viewsets.ModelViewSet[UseCase]):
             )
             emit("ratelimit.upserted", _rate_limit_payload(limit, usecase.slug))
         return Response(RateLimitSerializer(limit).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["get", "post"], url_path="anomaly-rules")
+    def anomaly_rules(self, request: Request, slug: str | None = None) -> Response:
+        """List or upsert the anomaly rules of this use case (FRD-500).
+
+        Members read; admins define. Global rules are **not** listed here — they are visible on
+        `/api/v1/anomaly-rules/` and are not this use case's to change, and mixing them in would
+        offer an edit that the server refuses.
+        """
+        usecase = self.get_object()
+        if request.method == "GET":
+            rules = AnomalyRule.objects.filter(use_case=usecase)
+            return Response(AnomalyRuleSerializer(rules, many=True).data)
+        # `request.data` is typed as "a dict or a list" because a DRF body can be either. A rule
+        # is one object; a list here is a malformed request, and saying so beats a 500.
+        if not isinstance(request.data, dict):
+            raise ValidationError({"anomaly_rule": ["Send one rule, not a list."]})
+        return upsert_use_case_rule(request.user, usecase, request.data)
+
+    @action(detail=True, methods=["delete"], url_path="anomaly-rules/(?P<rule_id>[0-9]+)")
+    def delete_anomaly_rule(
+        self, request: Request, slug: str | None = None, rule_id: str | None = None
+    ) -> Response:
+        usecase = self.get_object()
+        if not self._may_manage(usecase):
+            raise PermissionDenied("You cannot edit the anomaly rules of this use case.")
+        assert rule_id is not None  # the URL route guarantees a numeric id
+        rule = AnomalyRule.objects.filter(use_case=usecase, pk=int(rule_id)).first()
+        if rule is None:
+            raise ValidationError({"anomaly_rule": [f"No rule '{rule_id}' for this use case."]})
+        with transaction.atomic():
+            rule_pk = rule.pk
+            rule.delete()
+            emit("anomaly_rule.deleted", {"id": rule_pk, "use_case": usecase.slug})
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
     @action(detail=True, methods=["delete"], url_path="rate-limits/(?P<limit_id>[0-9]+)")
     def delete_rate_limit(

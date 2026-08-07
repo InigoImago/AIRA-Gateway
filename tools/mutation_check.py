@@ -84,6 +84,8 @@ ATTRIBUTION = "gateway/tests/test_attribution.py"
 HARDENING = "gateway/tests/test_hardening.py"
 CONSUMER = "gateway/tests/test_consumer_apply.py"
 MGMT_RBAC = "management/backend/tests/test_rbac.py management/backend/tests/test_usecases.py"
+ANOMALY_RULES = "management/backend/tests/test_anomaly_rules.py"
+ANOMALY_CONSUMER = "gateway/tests/test_consumer_apply.py"
 MGMT_HARDENING = "management/backend/tests/test_hardening.py"
 MGMT_SETTINGS = (
     "management/backend/tests/test_settings.py management/backend/tests/test_hardening.py"
@@ -2101,6 +2103,55 @@ MUTATIONS = [
         '            "is_member": is_member(user, obj),',
         '            "is_member": True,',
         MGMT_RBAC,
+    ),
+    # ---- anomaly rules (FRD-500, ADR-0014) ----------------------------------------------
+    Mutation(
+        "N1",
+        "a new rule only alerts until somebody promotes it",
+        "management/backend/src/aira_management/apps/anomalies/models.py",
+        "action = models.CharField(max_length=16, choices=ACTION_CHOICES, default=RuleAction.ALERT)",
+        "action = models.CharField(max_length=16, choices=ACTION_CHOICES, default=RuleAction.BLOCK)",
+        ANOMALY_RULES,
+    ),
+    Mutation(
+        "N2",
+        "an action that takes something away must say for how long",
+        "management/backend/src/aira_management/apps/anomalies/serializers.py",
+        "        if action in (RuleAction.THROTTLE, RuleAction.BLOCK):",
+        "        if False:",
+        ANOMALY_RULES,
+    ),
+    Mutation(
+        "N3",
+        "a rate rule keeps its sample floor, so one refusal of one is not 100 percent",
+        "management/backend/src/aira_management/apps/anomalies/serializers.py",
+        '        elif attrs.get("min_sample", 0) < 1:',
+        "        elif False:",
+        ANOMALY_RULES,
+    ),
+    Mutation(
+        "N4",
+        "only an oversight role may author a rule that acts everywhere",
+        "management/backend/src/aira_management/apps/anomalies/views.py",
+        '        if not may_author_global(self.request.user):\n            raise PermissionDenied(\n                "Only IT Security or a Global Administrator may author a global rule. "',
+        '        if False:\n            raise PermissionDenied(\n                "Only IT Security or a Global Administrator may author a global rule. "',
+        ANOMALY_RULES,
+    ),
+    Mutation(
+        "N5",
+        "deleting one use case does not switch off detection for every other",
+        "gateway/src/aira_gateway/consumer/apply.py",
+        "    await session.execute(delete(AnomalyRuleRead).where(AnomalyRuleRead.use_case == slug))",
+        "    await session.execute(delete(AnomalyRuleRead))",
+        ANOMALY_CONSUMER,
+    ),
+    Mutation(
+        "N6",
+        "an event with no scope is skipped rather than made global",
+        "gateway/src/aira_gateway/consumer/apply.py",
+        '    if "use_case" not in payload:\n        return',
+        "    if False:\n        return",
+        ANOMALY_CONSUMER,
     ),
 ]
 

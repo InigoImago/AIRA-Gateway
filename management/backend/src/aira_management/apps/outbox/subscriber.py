@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from aira_common.kafka import (
+    ANOMALY_RULE_TOPIC,
     API_KEY_TOPIC,
     BUDGET_TOPIC,
     MEMBERSHIP_TOPIC,
@@ -35,6 +36,8 @@ _TOPIC_FOR = {
     "ratelimit.deleted": RATE_LIMIT_TOPIC,
     "model.upserted": MODEL_TOPIC,
     "model.deleted": MODEL_TOPIC,
+    "anomaly_rule.upserted": ANOMALY_RULE_TOPIC,
+    "anomaly_rule.deleted": ANOMALY_RULE_TOPIC,
 }
 
 

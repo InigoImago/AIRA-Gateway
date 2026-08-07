@@ -11,6 +11,7 @@ import asyncio
 import sys
 
 from aira_common.kafka import (
+    ANOMALY_RULE_TOPIC,
     API_KEY_TOPIC,
     BUDGET_TOPIC,
     EVENT_TYPE_HEADER,
@@ -47,6 +48,7 @@ async def run_consumer(settings: GatewaySettings) -> None:  # pragma: no cover
         PIPELINE_TOPIC,
         BUDGET_TOPIC,
         RATE_LIMIT_TOPIC,
+        ANOMALY_RULE_TOPIC,
         MODEL_TOPIC,
         bootstrap_servers=settings.kafka_bootstrap_servers,
         group_id="aira-gateway",

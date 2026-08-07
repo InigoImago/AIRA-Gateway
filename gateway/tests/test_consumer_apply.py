@@ -11,6 +11,7 @@ from aira_gateway.consumer.apply import apply_event
 from aira_gateway.consumer.worker import decode_event_type
 from aira_gateway.db.base import build_engine, build_sessionmaker, create_all
 from aira_gateway.db.models import (
+    AnomalyRuleRead,
     ApiKey,
     BudgetRead,
     BudgetUsage,
@@ -340,3 +341,88 @@ def test_decode_event_type() -> None:
     assert decode_event_type([(EVENT_TYPE_HEADER, b"usecase.upserted")]) == "usecase.upserted"
     assert decode_event_type([("other", b"x")]) is None
     assert decode_event_type(None) is None
+
+
+# ---- anomaly rules (FRD-500) -----------------------------------------------------------------
+
+
+def _rule_event(rule_id: int, **over):
+    payload = {
+        "id": rule_id,
+        "use_case": "demo-uc",
+        "name": f"rule-{rule_id}",
+        "kind": "refusal_rate",
+        "window_minutes": 15,
+        "threshold": 40,
+        "min_sample": 20,
+        "action": "alert",
+        "target": "subject",
+        "action_minutes": None,
+        "enabled": True,
+    }
+    payload.update(over)
+    return payload
+
+
+async def test_an_anomaly_rule_arrives_and_is_replaced_in_place(make_session) -> None:
+    async with make_session() as session:
+        await apply_event(session, "anomaly_rule.upserted", _rule_event(7))
+        await apply_event(
+            session,
+            "anomaly_rule.upserted",
+            _rule_event(7, threshold=55, action="block", target="credential", action_minutes=60),
+        )
+
+    rows = await _all(make_session, AnomalyRuleRead)
+    assert len(rows) == 1
+    assert rows[0].threshold == 55
+    assert rows[0].action == "block"
+    assert rows[0].action_minutes == 60
+
+
+async def test_a_global_rule_stores_no_use_case_at_all(make_session) -> None:
+    """NULL means everywhere. An empty string would be a use case named "" — matching nothing
+    while looking like it matched everything."""
+    async with make_session() as session:
+        await apply_event(
+            session, "anomaly_rule.upserted", _rule_event(8, use_case=None, kind="new_source_ip")
+        )
+
+    rows = await _all(make_session, AnomalyRuleRead)
+    assert [row.use_case for row in rows] == [None]
+
+
+async def test_an_event_without_a_scope_is_skipped_rather_than_made_global(make_session) -> None:
+    """An older Management sending no `use_case` key at all would be read as "everywhere" if the
+    default were `None` — and widening the reach of a rule that can block traffic is the wrong way
+    to be forgiving about a malformed event."""
+    async with make_session() as session:
+        await apply_event(
+            session,
+            "anomaly_rule.upserted",
+            {"id": 9, "name": "half an event", "kind": "refusal_rate", "threshold": 40},
+        )
+
+    assert await _all(make_session, AnomalyRuleRead) == []
+
+
+async def test_deleting_a_use_case_removes_its_rules_and_leaves_the_global_ones(
+    make_session,
+) -> None:
+    async with make_session() as session:
+        await apply_event(session, "anomaly_rule.upserted", _rule_event(10, use_case="doomed-uc"))
+        await apply_event(session, "anomaly_rule.upserted", _rule_event(11, use_case=None))
+        await apply_event(session, "usecase.deleted", {"slug": "doomed-uc"})
+
+    rows = await _all(make_session, AnomalyRuleRead)
+    # A cascade that swept the global rules away would let deleting one use case switch off
+    # detection for every other.
+    assert [row.id for row in rows] == [11]
+
+
+async def test_a_deleted_rule_is_gone(make_session) -> None:
+    async with make_session() as session:
+        await apply_event(session, "anomaly_rule.upserted", _rule_event(12))
+        await apply_event(session, "anomaly_rule.deleted", {"id": 12})
+
+    assert await _all(make_session, AnomalyRuleRead) == []

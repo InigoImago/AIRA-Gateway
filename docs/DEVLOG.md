@@ -5,6 +5,61 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-07 — Phase 5 begins: what an installation considers abnormal
+
+`ADR-0014` + `FRD-500`, stage A. The gateway has recorded everything since `FRD-122` and nobody was
+watching. Phase 5 carries three of the owner's central features (PRD §1.1) — anomaly detection,
+incident response, and blocking dangerous requests beyond the injection filter — and they are the
+*evidence* half of the product. The governance half is built.
+
+The design decision came first, because the two halves pull opposite ways. Detection worth having
+looks **across requests**: a caller whose refusal rate jumped, a use case whose spend tripled
+overnight, a credential suddenly used from a new address. Response worth having happens **before**
+the damage. §3 forbids putting analysis on the request path, and an engine that can only describe
+what already went out is a report rather than a control.
+
+`ADR-0014` settles it: **detection is asynchronous, enforcement is not, and they meet at a written
+decision.** Evaluation is fed by the request log — the same rows, so a detector cannot see anything
+the report cannot, and "the alert says X but the report says Y" is not a reachable state. It also
+means detection sees **refusals**, which is where much of the signal is: a thousand rate-limited
+requests *is* the anomaly, and a detector fed only served traffic would be blind to exactly the
+caller worth noticing. Actions are written decisions with an **author**, an **expiry** and a
+**record** — an automatic block with none of those is an outage with a good reason.
+
+This stage is the rule itself: what to watch, over what window, above what threshold, and what to
+do then. Seven kinds, a **closed** vocabulary on the same argument as `FRD-114`'s capability flags
+— the tempting alternative is a rule engine (field, operator, value), and it fails on the first
+review: `p95_latency > 900` reads perfectly and is unimplementable against a store with no
+percentile function, which `FRD-601` already ran into and said so.
+
+Three decisions worth keeping:
+
+- **`alert` is the default, and that is a safety property.** A detection system whose first setting
+  is `block` blocks the wrong thing once and is then switched off forever. A rule is a hypothesis
+  about what abnormal looks like until somebody has watched it be right. Deliberately the opposite
+  default from `FRD-125`'s classifier, for a reason that generalises: *that* control had already
+  been chosen, configured and displayed as active, so failing open made it a badge without a
+  control.
+- **A ratio is not a threshold.** `spend_spike` compares against the preceding window rather than a
+  fixed number, because a fixed number is a budget and there is already one. What it catches is a
+  change of *shape* — €4/day for a month then €40 today is worth a look under a €100 cap, and no cap
+  expresses that without being lowered until it refuses normal traffic.
+- **A global rule is IT Security's to author.** Its effects land on use cases its author may not be
+  able to see, so the *API* says so rather than the UI (`FRD-206`'s rule, applied to a second
+  surface). A global rule is nonetheless **visible to everybody** — a rule that can block your
+  traffic is a rule you are entitled to know about, whoever wrote it.
+
+Two shapes that cost nothing now and would have cost a debugging session later: `use_case` is
+**NULL** for a global rule rather than an empty string, because "" is a use case named "" that
+matches nothing while looking like it matches everything — and a consumer event that carries no
+`use_case` key at all is **skipped rather than treated as global**, since widening the reach of a
+rule that can block traffic is the wrong way to be forgiving about a malformed event.
+
+18 Management tests, 5 gateway consumer tests, six mutations (`N1`–`N6`, all caught), migration
+`0015`. Next: `FRD-501`, the engine that reads them.
+
+---
+
 ## 2026-08-07 — the console stops promising what the server refuses
 
 `FRD-206`. A walkthrough of the running console, role by role, produced fourteen findings. Most were

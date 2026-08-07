@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from aira_common.money import to_nanos
 from aira_gateway.db.models import (
+    AnomalyRuleRead,
     ApiKey,
     BudgetRead,
     BudgetUsage,
@@ -56,6 +57,10 @@ async def apply_event(session: AsyncSession, event_type: str, payload: dict[str,
         await _upsert_rate_limit(session, payload)
     elif event_type == "ratelimit.deleted":
         await _delete_rate_limit(session, payload["id"])
+    elif event_type == "anomaly_rule.upserted":
+        await _upsert_anomaly_rule(session, payload)
+    elif event_type == "anomaly_rule.deleted":
+        await _delete_anomaly_rule(session, payload["id"])
     elif event_type == "model.upserted":
         await _upsert_model(session, payload)
     elif event_type == "model.deleted":
@@ -110,6 +115,10 @@ async def _delete_usecase(session: AsyncSession, slug: str) -> None:
     await session.execute(update(ApiKey).where(ApiKey.use_case == slug).values(is_active=False))
     await session.execute(delete(BudgetRead).where(BudgetRead.use_case == slug))
     await session.execute(delete(RateLimitRead).where(RateLimitRead.use_case == slug))
+    # A rule scoped to this use case goes with it; a **global** rule does not, and the filter says
+    # so explicitly. `use_case IS NULL` means "everywhere", and a cascade that swept those away
+    # would let deleting one use case silently switch off detection for every other.
+    await session.execute(delete(AnomalyRuleRead).where(AnomalyRuleRead.use_case == slug))
     await session.execute(delete(PipelineConfigRead).where(PipelineConfigRead.use_case == slug))
     # Usage counters are keyed by scope, not by a foreign key: "uc:<slug>" for the whole use case
     # and "member:<slug>:<subject>" for each member.
@@ -244,6 +253,36 @@ async def _upsert_rate_limit(session: AsyncSession, payload: dict[str, Any]) -> 
 
 async def _delete_rate_limit(session: AsyncSession, limit_id: int) -> None:
     await session.execute(delete(RateLimitRead).where(RateLimitRead.id == limit_id))
+
+
+async def _upsert_anomaly_rule(session: AsyncSession, payload: dict[str, Any]) -> None:
+    existing = await session.get(AnomalyRuleRead, payload["id"])
+    fields = {
+        # `None` means the rule is global. An older Management that sends no key at all would be
+        # read as global, which is the wrong default for a rule that can block traffic — so a
+        # missing key is treated as a malformed event and the rule is skipped rather than widened.
+        "use_case": payload.get("use_case"),
+        "name": payload.get("name", ""),
+        "kind": payload["kind"],
+        "window_minutes": int(payload.get("window_minutes", 15)),
+        "threshold": int(payload["threshold"]),
+        "min_sample": int(payload.get("min_sample") or 0),
+        "action": payload.get("action", "alert"),
+        "target": payload.get("target", "subject"),
+        "action_minutes": payload.get("action_minutes"),
+        "enabled": bool(payload.get("enabled", True)),
+    }
+    if "use_case" not in payload:
+        return
+    if existing is None:
+        session.add(AnomalyRuleRead(id=payload["id"], **fields))
+    else:
+        for key, value in fields.items():
+            setattr(existing, key, value)
+
+
+async def _delete_anomaly_rule(session: AsyncSession, rule_id: int) -> None:
+    await session.execute(delete(AnomalyRuleRead).where(AnomalyRuleRead.id == rule_id))
 
 
 #: Declaration fields, with the value applied when the event does not carry them at all.

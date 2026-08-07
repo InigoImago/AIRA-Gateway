@@ -187,6 +187,36 @@ class RateLimitRead(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
+class AnomalyRuleRead(Base):
+    """Gateway read-model of an anomaly rule, fed from Management (`FRD-500`).
+
+    ``use_case`` is nullable and that is the whole point: ``NULL`` means the rule applies
+    everywhere. Deliberately not an empty string, which would be a use case named "" and would
+    match nothing while looking like it matched everything.
+
+    Everything the engine needs is here, because the gateway never asks Management while a request
+    is in flight (`FRD-500` FR-7) — the same rule the model catalog follows.
+    """
+
+    __tablename__ = "anomaly_rules"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    use_case: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    kind: Mapped[str] = mapped_column(String(32), index=True)
+    window_minutes: Mapped[int] = mapped_column(Integer)
+    #: Percent for rate and ratio kinds, a count for event kinds. What it means comes from `kind`.
+    threshold: Mapped[int] = mapped_column(Integer)
+    #: Below this many requests a rate says nothing. 0 for kinds that are not proportions.
+    min_sample: Mapped[int] = mapped_column(Integer, default=0)
+    action: Mapped[str] = mapped_column(String(16), default="alert")
+    target: Mapped[str] = mapped_column(String(16), default="subject")
+    #: How long a throttle or block lasts. NULL for `alert`, which does not expire because it
+    #: never took anything away.
+    action_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
 class BudgetUsage(Base):
     """Running usage per scope+period, accounted by the gateway to enforce budgets (FRD-401)."""
 

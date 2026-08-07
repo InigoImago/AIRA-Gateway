@@ -24,3 +24,4 @@ Each ADR is immutable once **Accepted** — to change a decision, add a new ADR 
 | 0011 | [Upstreams: platform, dialect, and what a model name means](ADR-0011-upstreams-platform-dialect-identity.md) | Accepted | 2026-08-06 |
 | 0012 | [One catalog over many platforms, and what "supports documents" then means](ADR-0012-one-catalog-many-platforms.md) | Accepted | 2026-08-06 |
 | 0013 | [The gateway provides auditable model access, not agents](ADR-0013-auditable-model-access-not-agents.md) | Accepted | 2026-08-06 |
+| 0014 | [Detection is asynchronous; enforcement is not](ADR-0014-detection-is-asynchronous-enforcement-is-not.md) | Accepted | 2026-08-07 |

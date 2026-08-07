@@ -43,7 +43,7 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
   inevitably do when both were written from the same mental model — and line coverage cannot see
   a *missing requirement*: on 2026-08-05 a review found seven real defects behind a green suite at
   99% coverage. So: **prove a test can fail.** Break the property, watch it go red, restore.
-  `make mutants` (`tools/mutation_check.py`) does this for **233 properties** across auth, budgets,
+  `make mutants` (`tools/mutation_check.py`) does this for **239 properties** across auth, budgets,
   pipeline, retention, the management control plane and the gateway's counters; when
   you fix a bug, add the mutation that reintroduces it. Two traps that cost real defects here:
   a stand-in that is more permissive than the thing it replaces (reuse the real method where you
@@ -640,6 +640,22 @@ and both changes live only in the fourth. No unit test performs an OIDC redirect
 whether a control does something when used, **is an e2e change**. That run also updated 16 e2e
 tests whose screens this pass deliberately moved — five rewritten rather than repaired, because
 their *meaning* changed.
+**Phase 5 begun (`ADR-0014` + `FRD-500`, 2026-08-07)** — the *evidence* half. `ADR-0014`:
+**detection is asynchronous, enforcement is not, and they meet at a written decision.** Evaluation
+is fed by the **request log** — the same rows the report reads, so a detector cannot see anything
+the report cannot, and it sees **refusals**, which is where much of the signal is (a thousand
+rate-limited requests *is* the anomaly). An action is a decision with an **author**, an **expiry**
+and a **record**; without those an automatic block is an outage with a good reason. Stage A is the
+rule: seven kinds in a **closed** vocabulary (`aira_common.anomalies`) — a field/operator/value rule
+engine fails on the first review, since `p95_latency > 900` reads fine and is unimplementable
+against a store with no percentile function. **`alert` is the default and that is a safety
+property** (a system whose first setting is `block` blocks wrongly once and is switched off
+forever — deliberately the opposite of `FRD-125`'s classifier, because *that* control had already
+been chosen and displayed as active). **A ratio is not a threshold**: `spend_spike` compares against
+the preceding window, because a fixed number is a budget and there is one. A **global** rule is IT
+Security's to author (its effects land on use cases its author cannot see) and **everybody's to
+read**. `use_case` is **NULL**, never "", and an event carrying no scope key is **skipped rather
+than made global**.
 Next candidates: **`FRD-114`** (model metadata — now also carries publisher + default output cap,
 prerequisite for 110–113 and 119), **`FRD-110`** (documents/images — the widest gap),
 **`FRD-115`/`FRD-119`** (Vertex EU + the Anthropic dialect — required), **`FRD-116`** (Vault),
