@@ -91,6 +91,31 @@ UPSTREAM_STATUS_MAP: dict[int, tuple[int, str]] = {
 }
 
 
+async def guard_before_work(request: Request, *, units: int = 1) -> None:
+    """The controls that do not need to know the model — taken before anything is spent.
+
+    `enforce_pre_dispatch` says in its own docstring that "rate limiting comes first: the whole
+    point of a limit is that the upstream call never happens", and it was not true. The pipeline
+    runs *before* it and can make a model call of its own, so a rate-limited or over-budget caller
+    was refused **after** paying for a classifier. Measured against a 20 000 cost limit: one served
+    request, seven refused, 72 400 spent — the refusals cost more than the answer.
+
+    Both controls here are answerable without the model, which is why they can move and the
+    reservation cannot: the reservation is made against the model routing chooses.
+
+    Called **once, before the verb branch**, so every verb takes it. Putting it inside
+    `run_pipeline` would have been tidier and would have left `:embedContent` unlimited again —
+    embeddings have no pipeline. That verb is the reason this project writes controls on the path
+    every branch takes rather than inside one of them (`FRD-405` B3).
+    """
+    attribution = getattr(request.state, "attribution", None)
+    use_case = getattr(attribution, "use_case", None)
+    subject = getattr(attribution, "subject", None)
+
+    await request.app.state.rate_limits.check(use_case, subject, units)
+    await request.app.state.budgets.refuse_if_exhausted(use_case, subject)
+
+
 async def enforce_pre_dispatch(
     request: Request,
     *,
@@ -100,11 +125,15 @@ async def enforce_pre_dispatch(
     units: int = 1,
     extra_tokens: int = 0,
 ) -> Reservation:
-    """Every control a request must clear before anything expensive happens.
+    """The reservation — the control that has to know which model will serve the request.
 
-    Rate limiting comes first: the whole point of a limit is that the upstream call never
-    happens. The budget then reserves what the request is expected to consume, so requests in
-    flight are visible to each other's check instead of all passing the same stale figure.
+    Rate limiting and the "already over budget" check moved to :func:`guard_before_work`, which
+    runs before the pipeline; they need no model, and leaving them here meant a refused request had
+    already paid for a classifier call. What stays is the reservation, which cannot move: it is
+    made against the model **routing** chooses, so it has to happen after the pipeline.
+
+    The reservation is what makes requests in flight visible to each other's check instead of all
+    passing the same stale figure.
 
     ``units`` is how many requests this call *is* — one, except for an embedding batch, which is
     one per text (`FRD-113` FR-6). ``extra_tokens`` is consumption no property of the body
@@ -115,7 +144,6 @@ async def enforce_pre_dispatch(
     use_case = getattr(attribution, "use_case", None)
     subject = getattr(attribution, "subject", None)
 
-    await request.app.state.rate_limits.check(use_case, subject, units)
     expected = await estimate(
         request,
         model=model,

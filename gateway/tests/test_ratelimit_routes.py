@@ -88,6 +88,12 @@ class _TrackingBudgets:
     # the thing it stands in for.
     hold = BudgetService.hold
 
+    # `FRD-125c` added a pre-pipeline check to the real service. Inherited rather than stubbed
+    # out: a stand-in more permissive than the thing it replaces is how a control comes to be
+    # tested against something that cannot refuse. It needs no session here because these stands
+    # in carry no budgets, so the real method returns immediately.
+    refuse_if_exhausted = BudgetService.refuse_if_exhausted
+
 
 def test_over_the_rate_limit_returns_429_with_retry_after() -> None:
     app = create_app(GatewaySettings(auth_required=False))
@@ -235,6 +241,12 @@ class _BlockingBudgets:
         reservation.resolved = True
 
     hold = BudgetService.hold
+
+    # `FRD-125c` added a pre-pipeline check to the real service. Inherited rather than stubbed
+    # out: a stand-in more permissive than the thing it replaces is how a control comes to be
+    # tested against something that cannot refuse. It needs no session here because these stands
+    # in carry no budgets, so the real method returns immediately.
+    refuse_if_exhausted = BudgetService.refuse_if_exhausted
 
 
 def test_embedding_is_rate_limited_like_everything_else() -> None:

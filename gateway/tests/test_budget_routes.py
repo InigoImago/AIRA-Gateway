@@ -33,6 +33,12 @@ class _BlockingBudgets:
 
     hold = BudgetService.hold
 
+    # `FRD-125c` added a pre-pipeline check to the real service. Inherited rather than stubbed
+    # out: a stand-in more permissive than the thing it replaces is how a control comes to be
+    # tested against something that cannot refuse. It needs no session here because these stands
+    # in carry no budgets, so the real method returns immediately.
+    refuse_if_exhausted = BudgetService.refuse_if_exhausted
+
 
 class _RecordingBudgets:
     def __init__(self) -> None:
@@ -55,6 +61,12 @@ class _RecordingBudgets:
         self.released += 1
 
     hold = BudgetService.hold
+
+    # `FRD-125c` added a pre-pipeline check to the real service. Inherited rather than stubbed
+    # out: a stand-in more permissive than the thing it replaces is how a control comes to be
+    # tested against something that cannot refuse. It needs no session here because these stands
+    # in carry no budgets, so the real method returns immediately.
+    refuse_if_exhausted = BudgetService.refuse_if_exhausted
 
 
 def test_over_budget_returns_429() -> None:

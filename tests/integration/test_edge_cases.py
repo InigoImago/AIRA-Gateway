@@ -360,7 +360,13 @@ async def test_a_selector_that_is_not_this_keys_use_case_is_refused(
         ({"temperature": -5}, (200, 400)),
         ({"temperature": 99}, (200, 400)),
         ({"temperature": "hot"}, (400,)),
-        ({"unknownFutureField": "value"}, (200,)),
+        # `FRD-124` **reversed** this. It read `(200,)` — a field nobody modelled was ignored, per
+        # `FRD-100` FR-7, on the argument that real Gemini clients send extra keys. Measured, that
+        # leniency cost more than it bought: of twelve fields a Google client can legitimately
+        # send, eleven were accepted and silently dropped, and Google's own API is strict anyway.
+        # Left in place with the new expectation rather than deleted, because the reversal is the
+        # kind of thing a future reader should meet as a decision, not as an absence.
+        ({"unknownFutureField": "value"}, (400,)),
         ({}, (200,)),
     ],
 )

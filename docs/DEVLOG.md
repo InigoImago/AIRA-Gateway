@@ -81,6 +81,36 @@ The number is the part worth keeping: against the real model, **the classifier's
 as much as the answer it guards**. A use case running an LLM filter was reporting a little over half
 its actual spend.
 
+### The refusal that was billed for
+
+Follow-up question from the owner — *do the filter costs count against the budget?* — and then a
+measurement of what "over budget" actually did. The pipeline ran **before** the budget guard, so a
+use case one request past its limit kept running its LLM injection filter on every subsequent
+request: all refused with a 429, all billed for the classifier. A 20 000 cost limit, one served
+request, seven refused, **72 400 spent and still climbing**. A client with a retry loop spends
+without bound. That is a denial-of-wallet wearing a budget's name.
+
+`guard_before_work` runs the two controls that need no model — the rate limit, and *is this use case
+already over* — before the pipeline. The reservation stays where it was, because it is made against
+the model routing chooses. Same probe now: spend stops at **25 600** and does not move across six
+further refusals.
+
+The owner's decision, asked and recorded: a bounded overshoot is an acceptable price for the
+security step running. What was never acceptable was the unbounded one.
+
+Two drafts died on old lessons. The gate belongs **before the verb branch**, not inside
+`run_pipeline` — embeddings have no pipeline, so the tidier placement would have left
+`:embedContent` unlimited, the same verb and the same way as `FRD-405` B3. And `units` has to be
+computed before the gate: the first draft took one unit early and *commented* that the batch weight
+was taken again later. It was not. A batch of 500 metered as one request, by a comment asserting a
+rule the code did not have — caught by a test that already existed, which is the only reason this
+paragraph is about a draft rather than about production.
+
+Also: four budget stand-ins in the test suite had to inherit the new method rather than stub it.
+A stand-in more permissive than the thing it replaces is how a control comes to be tested against
+something that cannot refuse — `CLAUDE.md` §3 names it, and adding a method to the real service is
+exactly when it bites.
+
 ### Recording it is not enforcing it
 
 Asked afterwards: *do the filter costs actually count against the budget?* They were being written

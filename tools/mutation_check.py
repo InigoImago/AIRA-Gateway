@@ -1960,6 +1960,22 @@ MUTATIONS = [
         "        if True:\n            return  # degraded",
         BUDGET_RESERVATION,
     ),
+    Mutation(
+        "Z11",
+        "an already-exhausted budget refuses before the pipeline can spend anything",
+        "gateway/src/aira_gateway/api/gemini/routes.py",
+        "    await guard_before_work(request, units=units)",
+        "    pass",
+        f"{ACCOUNTING} gateway/tests/test_serving_options.py",
+    ),
+    Mutation(
+        "Z12",
+        "the early gate weighs a batch as the many requests it is",
+        "gateway/src/aira_gateway/api/gemini/routes.py",
+        "    units = embed_request.size if embed_request is not None else 1",
+        "    units = 1",
+        "gateway/tests/test_serving_options.py",
+    ),
 ]
 
 

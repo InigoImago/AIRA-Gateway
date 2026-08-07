@@ -42,11 +42,17 @@ part (b) is the money it never mentioned.
 - Its tokens and money count against the use case's budget.
 - A step that *blocked* still records what deciding to block cost.
 
+**Goals (part c — the refusal must not be paid for)**
+- A caller who is already over budget, or over a rate limit, is refused **before** any pipeline
+  step can call a model.
+
 **Non-Goals**
 - Making the LLM filter accurate. That is the classifier model's job — see §9.
 - Reserving classifier tokens in advance. They are already spent by the time their size is known,
   because the pipeline runs *before* the reservation — routing has to choose the model the
   reservation is made against. Booking after the fact is the honest description of that.
+- Preventing a *small* overshoot. See §4.6: the owner's decision is that a bounded overshoot is an
+  acceptable price for the security step running, and this FRD does not try to remove it.
 
 ## 3. Functional Requirements
 
@@ -134,6 +140,34 @@ so a caller is under-charged rather than refused for spend that never happened.
 Measured against the real model: the classifier's call costs **roughly as much as the answer it
 guards**. A use case running an LLM filter was therefore reporting a little over half its actual
 spend, and its budget counters never saw the difference at all.
+
+### 4.6 The overshoot, bounded — and the owner's decision
+
+Booking after the fact means a use case can end a period slightly over its limit. Asked directly,
+the owner's answer was that this is acceptable: *going a little over the budget is worth it to
+have the security step run.* Recorded here so nobody later "fixes" it into refusing requests before
+their filter has run, which is the trade in the other direction.
+
+What was **not** acceptable, and was the state of the code, is an *unbounded* overshoot. The
+pipeline ran before the budget guard, so a use case one request past its limit kept running its LLM
+filter on every subsequent request — all refused with a 429, all billed for the classifier. Measured
+against a 20 000 cost limit: one served request, seven refused, **72 400 spent**, still climbing. A
+client with a retry loop spends without bound; that is a denial-of-wallet, not a budget.
+
+`guard_before_work` closes it: the two controls that need no model — the rate limit, and *is this
+use case already over* — run before the pipeline. The same probe now stops at **25 600** and stays
+there across six further refusals. The remaining overshoot is what was in flight when the limit was
+crossed, which is the "little over" the owner agreed to.
+
+Two details cost a draft each, and both are old lessons:
+
+- The gate sits **before the verb branch**, not inside `run_pipeline`. Embeddings have no pipeline,
+  so the tidier placement would have left `:embedContent` unlimited — the same verb, the same way,
+  as `FRD-405` B3.
+- `units` is computed **before** the gate. The first draft took one unit early and claimed in a
+  comment that the batch weight was taken again later. It was not; a batch of 500 was metered as
+  one request. A comment asserting a rule the code does not have, caught by a test that already
+  existed.
 
 ## 5. Testing
 

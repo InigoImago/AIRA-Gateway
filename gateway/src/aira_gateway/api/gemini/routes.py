@@ -37,6 +37,7 @@ from aira_gateway.api.serving import (
     elapsed_ms,
     embedding_bounds,
     enforce_pre_dispatch,
+    guard_before_work,
     provenance,
     refusal_outcome,
     registry_of,
@@ -254,6 +255,10 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
         raise GeminiHTTPError(400, "Request body is not valid JSON.", "INVALID_ARGUMENT") from None
     trail.body = body
 
+    # Before the branch, so **every** verb takes it: the controls that need no model. Below the
+    # branch is where a generate request runs its pipeline, and the pipeline can call a model —
+    # so a caller refused after that point has already been charged for the refusal.
+    #
     # Parse and prepare per method, then run the pre-dispatch controls once for all of them.
     canonical: CanonicalRequest | None = None
     fallbacks: tuple[str, ...] = ()
@@ -266,13 +271,6 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
             raise GeminiHTTPError(400, _first_error(exc), "INVALID_ARGUMENT") from exc
         canonical = gemini_to_canonical(model, gemini_request, bounds=schema_bounds(request))
         check_not_empty(canonical)
-
-        canonical, fallbacks = await run_pipeline(request, canonical, trail)
-
-        # Routing may have changed the model — resolve the effective provider.
-        provider = registry_of(request).provider_for(canonical.model)
-        if provider is None:
-            raise GeminiHTTPError(404, f"Model '{canonical.model}' not found.", "NOT_FOUND")
     elif method in ("embedContent", "batchEmbedContents"):
         try:
             entries = (
@@ -285,6 +283,22 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
         embed_request = gemini_to_embedding(model, entries)
     else:
         raise GeminiHTTPError(400, f"Unknown method '{method}'.", "INVALID_ARGUMENT")
+
+    units = embed_request.size if embed_request is not None else 1
+
+    # Parsed, weighed, and *then* the controls that need no model — before the pipeline, which can
+    # make a model call of its own. Refusing after that point means the refusal was paid for.
+    # Weighed first because a batch weighs what it is (`FRD-113` FR-6): taking one unit here and
+    # the rest later would meter a batch of 500 as a single request for as long as it takes to run
+    # the pipeline, and a first draft of this did exactly that until a test said so.
+    await guard_before_work(request, units=units)
+
+    if canonical is not None:
+        canonical, fallbacks = await run_pipeline(request, canonical, trail)
+        # Routing may have changed the model — resolve the effective provider.
+        provider = registry_of(request).provider_for(canonical.model)
+        if provider is None:
+            raise GeminiHTTPError(404, f"Model '{canonical.model}' not found.", "NOT_FOUND")
 
     # One gate for every method. Keeping these inside the generateContent branch is how
     # `:embedContent` ended up unlimited and unbudgeted — a caller only had to pick the other
@@ -307,7 +321,6 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
     if embed_request is not None:
         embed_request = validate_embedding(embed_request, declaration, embedding_bounds(request))
 
-    units = embed_request.size if embed_request is not None else 1
     reservation = await enforce_pre_dispatch(
         request,
         model=effective_model,

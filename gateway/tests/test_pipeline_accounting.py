@@ -269,3 +269,59 @@ async def test_the_pipeline_call_is_not_counted_as_a_second_request() -> None:
             usage = list((await session.execute(select(BudgetUsage))).scalars())
 
     assert usage[0].requests == 1
+
+
+# == a refusal must not be paid for (FRD-125c) ===================================================
+
+
+class _Exhausted:
+    """A budget service that refuses before anything has been spent."""
+
+    async def refuse_if_exhausted(self, use_case, subject, now=None):  # noqa: ANN001, ANN201
+        from aira_gateway.budgets.errors import BudgetExceeded
+
+        raise BudgetExceeded("Cost budget exhausted for use_case (month).")
+
+    async def guard(self, use_case, subject, *, estimated=None):  # noqa: ANN001, ANN201
+        raise AssertionError("the reservation should never be reached")
+
+    async def book_side_call(self, *args, **kwargs):  # noqa: ANN002, ANN003, ANN201
+        raise AssertionError("nothing should have been spent")
+
+
+async def test_an_exhausted_budget_refuses_before_the_pipeline_spends_anything() -> None:
+    """**The denial-of-wallet this closes.**
+
+    The pipeline ran *before* the budget guard, so a use case one request over its limit kept
+    running its LLM injection filter on every subsequent request — every one refused with a 429,
+    every one billed for the classifier. Measured live: a 20 000 limit, one served request, seven
+    refused, and 72 400 spent. A client with a retry loop spends without bound.
+    """
+    guard = _Guard()
+    app = _app(_filter(action="flag"), guard)
+    app.state.budgets = _Exhausted()
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1beta/models/guard:generateContent", json=_BODY, headers={"x-aira-use-case": "demo"}
+        )
+
+    assert response.status_code == 429
+    assert guard.calls == 0, "the classifier ran for a request that was never going to be served"
+
+
+async def test_the_embedding_verb_takes_the_same_early_gate() -> None:
+    """The gate sits before the verb branch rather than inside `run_pipeline`, because embeddings
+    have no pipeline — and a control that applies to some verbs and not others is exactly how
+    `:embedContent` ended up unlimited (`FRD-405` B3)."""
+    app = _app(_filter(action="flag"), _Guard())
+    app.state.budgets = _Exhausted()
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1beta/models/guard:embedContent",
+            json={"content": {"parts": [{"text": "hi"}]}},
+            headers={"x-aira-use-case": "demo"},
+        )
+
+    assert response.status_code == 429

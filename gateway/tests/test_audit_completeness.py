@@ -16,6 +16,7 @@ from sqlalchemy import select
 from aira_gateway.app import create_app
 from aira_gateway.audit import Outcome, decision_summary
 from aira_gateway.budgets.errors import BudgetExceeded
+from aira_gateway.budgets.service import BudgetService
 from aira_gateway.config import GatewaySettings
 from aira_gateway.db.models import ApiKey, RequestLog
 from aira_gateway.ratelimit.errors import RateLimited
@@ -48,6 +49,11 @@ class _AlwaysOverBudget:
         raise BudgetExceeded("Budget exceeded for use case.")
 
 
+
+    # `FRD-125c` added a pre-pipeline check to the real service. Inherited rather than stubbed out:
+    # a stand-in more permissive than the thing it replaces is how a control comes to be tested
+    # against something that cannot refuse. These stands-in carry no budgets, so it returns at once.
+    refuse_if_exhausted = BudgetService.refuse_if_exhausted
 class _FailingProvider:
     def models(self) -> list[UpstreamModel]:
         return [UpstreamModel("mock-1", "mock-1", ("generateContent",))]

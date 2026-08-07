@@ -347,6 +347,31 @@ class BudgetService:
                 )
             await session.commit()
 
+    async def refuse_if_exhausted(
+        self, use_case: str | None, subject: str | None, now: datetime | None = None
+    ) -> None:
+        """Refuse a use case that is **already** over a limit, before anything is spent on it.
+
+        Not a reservation and not a substitute for `guard` — concurrent requests stay invisible to
+        each other here, which is the whole reason the reservation exists. This runs earlier and
+        answers a cheaper question: *has this use case already spent its allowance?* That question
+        needs no model, so it can be asked before routing, before the pipeline, before anything
+        costs money.
+
+        It exists because it turned out the answer was being paid for. A use case one request over
+        its cost limit kept running its LLM injection filter on every subsequent request — all of
+        them refused with a 429, all of them billed for the classifier call. Measured: a 20 000
+        limit, one served request, seven refused, and 72 400 spent. A client with a retry loop
+        spends without bound.
+        """
+        if not use_case:
+            return
+        now = now or datetime.now(UTC)
+        async with self._sessionmaker() as session:
+            budgets = await self._applicable(session, use_case, subject)
+            if budgets:
+                await self._check_only(session, budgets, now)
+
     async def book_side_call(
         self,
         use_case: str | None,
