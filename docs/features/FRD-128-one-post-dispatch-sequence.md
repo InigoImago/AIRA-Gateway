@@ -2,7 +2,7 @@
 
 > Phase: 8 (structural) · Status: **Done (2026-08-07)** · Owner: AIRA · Last updated: 2026-08-07
 > Related: `FRD-126` (the half before dispatch), `FRD-122` (audit), `FRD-405` (reservations),
-> `FRD-110` (the shield), `FRD-127`, `FRD-106` (the third surface)
+> `FRD-110` (the shield), `FRD-127`
 
 ## 1. Summary
 
@@ -84,6 +84,13 @@ silently stopped intercepting when the write moved; the other counted calls to `
 delegating stand-in that `hold`'s internal `self.release(...)` never passes through. Both now read
 the row and the counter. A test coupled to *where* something happens goes quiet when it moves,
 instead of failing.
+
+## 6a. Scope
+
+The third surface that prompted this line of work (`FRD-106`) was **withdrawn by the owner on
+2026-08-07**: it was a thought experiment, not a plan. What this change fixed is in the code that
+already exists — four of six paths losing the audit row on a dropped connection. See `FRD-126`'s
+scope decision.
 
 ## 7. Open Questions
 

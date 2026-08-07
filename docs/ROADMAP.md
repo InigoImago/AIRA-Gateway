@@ -232,6 +232,13 @@ overruled rather than discovered:
 | `FRD-602` | CSV export of the usage report | follows `FRD-601` ✓ |
 | `FRD-107` | The KIRA wire format itself | **Stage A done (2026-08-06)**, and it carries documents because `FRD-110` landed first. Stage B (thinking, structured output, embedding options) follows those FRDs. |
 
+**Withdrawn (2026-08-07):** the OpenAI-compatible **surface** (`FRD-106`) is not wanted. It was
+raised as a thought experiment about generalisation and served that purpose — `FRD-126` and
+`FRD-128` came out of it — but no OpenAI-shaped API will be exposed to callers. The OpenAI *wire
+dialect* stays, as an **upstream** (`ADR-0011`): Azure and the self-deploy fleet speak it, and that
+is unaffected. The two are different things and only one of them was ever deferred rather than
+declined.
+
 **Out of scope for now:** the OpenAI-compatible surface (`FRD-106`) — deferred by decision on
 2026-08-06 so the parity programme is not competing with a second new contract.
 

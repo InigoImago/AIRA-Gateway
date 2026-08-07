@@ -169,7 +169,9 @@ in Management (`GET/PUT /use-cases/{slug}/pipeline`) → `aira.pipelines` Kafka 
 `use-cases/:slug/pipeline` with **inline help + a test panel** (client-side live preview + real
 **dry-run** via `POST /v1beta/pipeline:dryRun`, `/gw` proxy). **Phase 3 core (pipeline) delivered.**
 Backlog: `FRD-307` (Global-Admin-approved model catalog + builder pickers, documented), drag-drop/
-parallel branches, authenticated dry-run, `FRD-106` (OpenAI surface).
+parallel branches, authenticated dry-run. (`FRD-106`, an OpenAI-compatible **surface**, was
+**withdrawn on 2026-08-07** — it was a thought experiment about generalisation, and the OpenAI
+*dialect* as an **upstream** is unaffected.)
 **Phase 4 (Budgets & Quotas) in progress:** `FRD-400` done — Management `budgets` app + `GET/POST/
 DELETE /use-cases/{slug}/budgets` (scope use_case|member, period day|month, token/request limits) →
 `aira.budgets` Kafka → gateway `budgets` read-model (migration 0005). `FRD-401` done — gateway

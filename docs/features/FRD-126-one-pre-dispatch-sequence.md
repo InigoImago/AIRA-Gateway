@@ -1,7 +1,7 @@
 # FRD-126 — A surface parses; the layer decides
 
 > Phase: 8 (structural) · Status: **Done (2026-08-07)** · Owner: AIRA · Last updated: 2026-08-07
-> Related: `ADR-0010` (a second surface), `FRD-107`, `FRD-405`, `FRD-125`, `FRD-106` (the third)
+> Related: `ADR-0010` (a second surface), `FRD-107`, `FRD-405`, `FRD-125`, `FRD-127`, `FRD-128`
 
 ## 1. Summary
 
@@ -29,7 +29,8 @@ next: *if a third surface is added, does it write those six steps a third time?*
 **Goals**
 - One function owns the pre-dispatch order; a surface calls it and cannot get the order wrong.
 - A surface module contains none of the individual steps, and a test says so.
-- `FRD-106`'s OpenAI surface inherits the sequence instead of reproducing it.
+- A future surface would inherit the sequence instead of reproducing it. (No such surface
+  is planned — see the scope decision at the end.)
 
 **Non-Goals**
 - Changing what any of the steps do. This is a move, and the test suite is the evidence: **887
@@ -115,10 +116,10 @@ recommended order is
 
 1. close the KIRA streaming gap (small, standalone) — **done, `FRD-127`**,
 2. consolidate the post-dispatch sequence the way this FRD consolidated the pre-dispatch one — **done, `FRD-128`**,
-3. then `FRD-106`.
+3. and only *then* a third surface, if one were ever wanted.
 
-Doing `FRD-106` first would mean a seventh copy of that sequence, and a third chance to make the
-same mistake.
+Doing a third surface first would have meant a seventh copy of that sequence, and a third chance to
+make the same mistake. Steps 1 and 2 were done; step 3 was **withdrawn** — see below.
 
 ## 8. Open Questions
 
@@ -126,3 +127,21 @@ same mistake.
   path. The generator's lifetime is the hard part, and it is exactly the part that has been got
   wrong before — which argues for doing it deliberately rather than as a side effect of adding a
   surface.
+
+## Scope decision (2026-08-07): the third surface is **not** wanted
+
+`FRD-106` — an OpenAI-compatible surface exposed to callers — was **withdrawn by the owner**, and
+the reason matters for how this FRD reads. It was raised as a *thought experiment*: "if a third
+surface were added, would it write those six steps a third time?" The answer was yes, and that
+answer is what produced this change. The surface itself was never the goal.
+
+So this FRD's justification does not rest on a surface nobody is building. It rests on what the
+consolidation found in the code that already exists:
+
+- four of six paths lost the audit row when a caller hung up mid-answer (`FRD-128`),
+- the KIRA surface had no rate limiting at all after one control moved (`FRD-125c`),
+- the KIRA streaming path never received the disconnect fix Gemini earned (`FRD-127`).
+
+None of those needed a third surface to be real. Recorded here so a future reader does not treat
+the consolidation as speculative work for a feature that was cancelled — and does not resurrect
+`FRD-106` on the strength of a "recommended order" written before the decision.

@@ -5,6 +5,29 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-07 — the third surface was a thought experiment, and it is withdrawn
+
+`FRD-106` — an OpenAI-compatible surface exposed to callers — is **not wanted**. It was raised to
+push a question about generalisation, and it did its job: *if a third surface were added, would it
+write those six steps a third time?* Yes. That answer produced `FRD-126` and `FRD-128`.
+
+Worth separating two things that share a name. The OpenAI **wire dialect** stays and is untouched:
+Azure Foundry and the self-deployed fleet speak it, as an *upstream* (`ADR-0011`). What is
+withdrawn is an OpenAI-shaped **API surface** pointed at callers. Only one of those was ever
+deferred rather than declined, and the ROADMAP now says which.
+
+The consolidation does not need the surface to justify itself, and the docs now say so rather than
+leaving a reader to infer that two structural changes were speculative work for a cancelled
+feature. What they actually fixed was already in the code:
+
+- four of six paths lost the audit row when a caller hung up mid-answer,
+- the KIRA surface had no rate limiting at all after one control moved one function over,
+- the KIRA streaming path never received the disconnect fix the Gemini one earned.
+
+None of that needed a third surface to be real. The hypothetical was the lens, not the reason.
+
+---
+
 ## 2026-08-07 — a request the caller abandoned is still a request that happened
 
 `FRD-128`, the second of the three steps, and it started with a question rather than a failure:
