@@ -47,6 +47,15 @@ services:
       AIRA_OLLAMA_MODELS: ${AIRA_OLLAMA_MODELS:-}
       AIRA_OLLAMA_EMBEDDING_MODELS: ${AIRA_OLLAMA_EMBEDDING_MODELS:-}
       AIRA_OLLAMA_REGION: ${AIRA_OLLAMA_REGION:-}
+      # Missing until 2026-08-08: the setting existed in `config.py` and the compose file never
+      # passed it, so raising it changed nothing and the default was the only value any
+      # containerised deployment could have. A knob that is not wired is worse than an absent one
+      # — somebody turns it and believes the result.
+      AIRA_OLLAMA_TIMEOUT_SECONDS: ${AIRA_OLLAMA_TIMEOUT_SECONDS:-}
+      # The same gap, twice more. Neither adapter is configured in this stack, which is exactly why
+      # nobody noticed: an unpassed setting is invisible until somebody depends on it.
+      AIRA_VERTEX_TIMEOUT_SECONDS: ${AIRA_VERTEX_TIMEOUT_SECONDS:-}
+      AIRA_FOUNDRY_TIMEOUT_SECONDS: ${AIRA_FOUNDRY_TIMEOUT_SECONDS:-}
       AIRA_ALLOWED_REGIONS: ${AIRA_ALLOWED_REGIONS:-}
       AIRA_OTEL_ENABLED: ${AIRA_OTEL_ENABLED:-false}
       AIRA_OTEL_ENDPOINT: http://otel-collector:4318

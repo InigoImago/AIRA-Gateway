@@ -191,6 +191,14 @@ services:
     # not the point — the numbers on the spend report have to come from something that actually
     # counted tokens, or the walkthrough is a slideshow.
     profiles: ["verify", "demo"]
+    environment:
+      # Measured on 2026-08-08 while wiring up a coding assistant (`FRD-131`/`FRD-132`): with the
+      # default single slot, a client that issues two requests at once has the second waiting for
+      # the whole of the first — and an agent issues several per instruction. On CPU that turns a
+      # queue into a read timeout upstream, which reads like a broken gateway and is not one.
+      OLLAMA_NUM_PARALLEL: "2"
+      # Keep the model resident between turns. Reloading a 2.5 GB model costs more than the answer.
+      OLLAMA_KEEP_ALIVE: "30m"
     volumes:
       - ollama-models:/root/.ollama
     ports:

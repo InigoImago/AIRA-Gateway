@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from pydantic import model_validator
 from pydantic.fields import FieldInfo
 from pydantic_settings import (
     BaseSettings,
@@ -72,6 +73,33 @@ class BaseAiraSettings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _empty_means_unset(cls, values: Any) -> Any:
+        """An empty environment variable is **absent**, not a value — for non-string settings.
+
+        Docker Compose passes optional variables as `${AIRA_X:-}`, which expands to an *empty
+        string* when nobody set one. For a string setting that is harmless and is what the whole
+        compose file already relies on. For a number it is fatal: pydantic cannot parse `""` as a
+        float, and the process refuses to start with a validation error naming a variable the
+        operator never touched.
+
+        Found on 2026-08-08 by adding two timeout settings to the compose file the same way every
+        string setting is added, and watching the gateway stop booting. The idiom is not going to
+        change — so the settings tolerate it, and only where it cannot mean anything else.
+
+        Deliberately **not** applied to `str` fields: there, an empty value is a real answer, and
+        dropping it would silently substitute a non-empty default for a deployment that meant to
+        clear the setting (`AIRA_CORS_ORIGINS=` is exactly that).
+        """
+        if not isinstance(values, dict):
+            return values
+        return {
+            key: value
+            for key, value in values.items()
+            if not (value == "" and _is_non_string_field(cls, key))
+        }
 
     @classmethod
     def settings_customise_sources(
@@ -150,3 +178,15 @@ class BaseAiraSettings(BaseSettings):
 
     otel_sample_ratio: float = 1.0
     """Trace sampling ratio (parent-based); 1.0 = sample everything."""
+
+
+def _is_non_string_field(model: type[BaseSettings], name: str) -> bool:
+    """Whether ``name`` is a declared field whose type is not ``str``.
+
+    Aliases and unknown keys answer False: an empty value for something this model does not
+    declare is not ours to reinterpret.
+    """
+    field = model.model_fields.get(name)
+    if field is None:
+        return False
+    return field.annotation is not str

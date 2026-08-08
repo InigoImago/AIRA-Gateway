@@ -43,6 +43,9 @@ THINKING_BY_MODEL: dict[str, dict[str, Any]] = {
     # switches off the *separation*, and the thoughts arrive as the answer. `FRD-111` refuses a
     # request asking for a mode a model does not declare, which is the outcome that helps.
     "qwen3:4b": {"modes": ["low", "medium", "high"]},
+    # `qwen2.5-coder` is deliberately **absent**: it is not a reasoning model, so it has no
+    # thinking modes to declare, and the table's own rule — a model nobody has measured gets no
+    # declaration — produces exactly the right answer for it.
 }
 
 
