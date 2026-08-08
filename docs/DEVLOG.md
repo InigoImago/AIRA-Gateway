@@ -3695,3 +3695,52 @@ and the integration layer is not part of `make ci`'s hermetic half, so nothing h
 **searches** rather than scanning, which it needed anyway: with hundreds of use cases in that
 database, page one would not have contained a slug created a second earlier however the body were
 shaped. The e2e round hit the identical trap with `ensureUseCase` on the same day.
+
+## 2026-08-08 (later) — Stage A: OpenCode against the gateway, and a thinking mode that was not
+
+`FRD-132` stage A, run rather than reasoned about. Ollama in the stack, `qwen3:4b` pulled because
+it declares `tools`, a use case with a bounded API key, OpenCode 1.18.15 from npm pointed at the
+**existing Gemini surface** via `@ai-sdk/google` with an overridden `baseURL`
+(`tools/opencode/opencode.json`).
+
+**The answer is B1: no new surface is needed.** Provider resolution, base URL, auth, model
+selection, plain generation and SSE streaming all worked unmodified, and the client failed at
+exactly one thing — `tools`, refused by name with the message `FRD-124` gave it. Reaching that
+refusal is the successful outcome: everything up to the missing capability held, and the missing
+capability is `FRD-131`, already specified. `FRD-106` stays withdrawn, and this run is the evidence
+that was absent when it was withdrawn.
+
+**One trivial instruction produced three gateway requests** — one served, one refused, one
+`client_gone` — every one of them on the audit trail. §5's warning about assistants is now a number
+instead of a caution: limits and budgets sized for a chatbot are wrong for this shape by a
+multiple, and "requests" on the reporting screen counts a different thing here.
+
+**The finding that had nothing to do with surfaces.** `reasoning_effort: "none"` does not mean "do
+not think"; it means "do not emit a separate reasoning channel", and those are the same thing only
+on some models. Measured on one Ollama, one prompt, within a minute of each other:
+
+| | `qwen3:0.6b` | `qwen3:4b` |
+|---|---|---|
+| field omitted | 115 tokens, content `"OK"` | 132 tokens, content `"OK"` |
+| `"none"` | **3 tokens**, content `"OK."` | **103 tokens, content = 480 chars of raw chain-of-thought** |
+| `"minimal"` | — | **400** `invalid reasoning value` |
+
+The dialect maps `disabled` → `"none"` on a measurement recorded in the code — against the 0.6B
+model, where it is correct. On the 4B model of the **same family, same server, same minute**, the
+same mapping returns somebody's thinking *as the answer*, billed, with a 200. And the seed declared
+`disabled` as the **default** for whatever model was configured, so this was the ordinary path, not
+an edge case. A coding assistant against it would have received "Hmm, the user just asked me…" as
+every answer.
+
+Fixed as **data, not code**: both seeds now key the thinking declaration by model, from a
+measurement, and a model nobody has measured gets no thinking declaration at all (`FRD-114` FR-7 —
+absence of information is not permission). `qwen3:4b` no longer offers `disabled`, so `FRD-111`
+refuses a request asking for it **by name**, which beats a 200 carrying reasoning. `minimal` is
+gone from the `tools/` seed as well: the identical correction had been made in the *Management*
+seed on 2026-08-06 and the second copy was never updated — one definition, two files, one of them
+fixed.
+
+The rule worth carrying: **a capability belongs to a model, not to a family, a vendor or a
+runtime.** A declaration measured against one model is not evidence about its siblings, and the
+seed that writes one declaration for "whatever model is configured" is the mechanism that turns a
+measurement into an assumption.

@@ -32,6 +32,19 @@ EMBED_MODEL = os.environ.get("AIRA_SEED_LOCAL_EMBED_MODEL", "all-minilm")
 #: Loud enough to survive being pasted into a report. `FRD-123` FR-5.
 FICTITIOUS = "[local, fictitious price]"
 
+#: Thinking modes **per model**, each measured against this Ollama on 2026-08-08. A model that is
+#: absent here is declared with no thinking at all, which is the baseline and nothing more.
+THINKING_BY_MODEL: dict[str, dict[str, Any]] = {
+    "qwen3:0.6b": {
+        "modes": ["disabled", "low", "medium", "high"],
+        "default": {"mode": "disabled"},
+    },
+    # No `disabled`: `reasoning_effort: "none"` does not switch thinking off on this model, it
+    # switches off the *separation*, and the thoughts arrive as the answer. `FRD-111` refuses a
+    # request asking for a mode a model does not declare, which is the outcome that helps.
+    "qwen3:4b": {"modes": ["low", "medium", "high"]},
+}
+
 
 def _declarations() -> list[dict[str, Any]]:
     return [
@@ -49,7 +62,11 @@ def _declarations() -> list[dict[str, Any]]:
             "output_price_per_million": Decimal("0.400000"),
             # `structured_output` is measured too: this dialect takes a named `json_schema`, and
             # the running model returns a document that satisfies one.
-            "capabilities": ["generate", "structured_output", "thinking"],
+            "capabilities": (
+                ["generate", "structured_output", "thinking"]
+                if CHAT_MODEL in THINKING_BY_MODEL
+                else ["generate", "structured_output"]
+            ),
             "max_output_tokens": 4096,
             "default_max_output_tokens": 512,
             # **Measured, not guessed.** This block was deliberately empty until an integration
@@ -66,10 +83,19 @@ def _declarations() -> list[dict[str, Any]]:
             #
             # `attachments` stays undeclared: this endpoint carries images in the dialect, but no
             # local model here has been measured reading one.
-            "thinking": {
-                "modes": ["disabled", "low", "medium", "high"],
-                "default": {"mode": "disabled"},
-            },
+            #   **Corrected again on 2026-08-08, and this time the correction is structural.**
+            #   The set above was measured against `qwen3:0.6b` and then asserted about whatever
+            #   model `AIRA_SEED_LOCAL_CHAT_MODEL` happens to name. Against `qwen3:4b`, on the
+            #   same server in the same minute, `disabled` is **wrong**: the dialect maps it to
+            #   `reasoning_effort: "none"`, and that model reads `none` as "emit no separate
+            #   reasoning channel" rather than "do not think" — so 103 tokens of raw
+            #   chain-of-thought come back **as the answer**, with a 200 and nothing to say why.
+            #   The 0.6B model answers the same request in 3 tokens.
+            #
+            #   So the declaration is keyed by model, and a model nobody has measured gets **no
+            #   thinking declaration at all** (`FRD-114` FR-7 — absence of information is not
+            #   permission). A capability belongs to a model, not to a family or a runtime.
+            "thinking": THINKING_BY_MODEL.get(CHAT_MODEL),
             "numeric_id": 9001,
         },
         {

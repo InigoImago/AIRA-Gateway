@@ -32,6 +32,33 @@ CHAT_INPUT = 100_000_000
 CHAT_OUTPUT = 400_000_000
 EMBED_PRICE = 10_000_000
 
+#: What each model was **measured** to do, on 2026-08-08 against this Ollama. Keyed by model,
+#: because two models of the *same family on the same server in the same minute* answered the same
+#: field differently — and a declaration is a claim about a model, not about a vendor.
+#:
+#:   qwen3:0.6b  `reasoning_effort: "none"` → 3 completion tokens, content "OK." — genuinely off.
+#:   qwen3:4b    `reasoning_effort: "none"` → 103 tokens and 480 characters of raw chain-of-thought
+#:               **as the answer**, with no separate `reasoning` field. `none` does not mean "do
+#:               not think" on this model; it means "do not emit a separate reasoning channel", so
+#:               the thoughts become the answer. `disabled` is therefore **not declared** for it —
+#:               `FRD-111` then refuses a request asking for it by name, which is a far better
+#:               outcome than a 200 carrying somebody's reasoning.
+#:   both        `minimal` is refused **by name** by the server (`high|medium|low|max|none`).
+#:
+#: A model that is not in this table gets **no thinking declaration at all**: absence of
+#: information is not permission (`FRD-114` FR-7), and the baseline is that the model thinks
+#: however it likes and the gateway strips the separate reasoning field.
+THINKING_BY_MODEL: dict[str, dict] = {
+    "qwen3:0.6b": {
+        "modes": ["disabled", "low", "medium", "high"],
+        "default": {"mode": "disabled"},
+    },
+    "qwen3:4b": {
+        "modes": ["low", "medium", "high"],
+    },
+}
+
+
 DECLARATIONS = [
     {
         "model": CHAT_MODEL,
@@ -48,10 +75,12 @@ DECLARATIONS = [
         "capabilities": ["generate", "structured_output", "thinking"],
         # This dialect takes an effort level and no token budget, so `limited` is deliberately not
         # offered — the adapter refuses it rather than rounding it (`FRD-111` §5.2).
-        "thinking": {
-            "modes": ["disabled", "minimal", "low", "medium", "high"],
-            "default": {"mode": "disabled"},
-        },
+        #
+        # **Which modes, though, is a property of the model and not of the family** — see
+        # `THINKING_BY_MODEL` below. This entry used to hard-code one set for whatever model was
+        # configured, which is how a fact measured against a 0.6B model came to be asserted about
+        # a 4B one that behaves differently.
+        "thinking": None,  # filled in from the measured table
         "publisher": "local",
         "platform": "ollama",
         "hosting": "self_deployed",
@@ -82,6 +111,21 @@ async def main() -> None:
     try:
         async with engine.begin() as connection:
             for row in DECLARATIONS:
+                if "thinking" in row:
+                    # Measured or absent — never inherited from a sibling model.
+                    measured = THINKING_BY_MODEL.get(str(row["model"]))
+                    if measured is None:
+                        row.pop("thinking")
+                        row["capabilities"] = [
+                            c
+                            for c in row["capabilities"]
+                            if c != "thinking"  # type: ignore[union-attr]
+                        ]
+                        print(
+                            f"note: {row['model']} has no measured thinking modes — declaring none"
+                        )
+                    else:
+                        row["thinking"] = measured
                 await connection.execute(
                     text("DELETE FROM model_catalog WHERE model = :model"), {"model": row["model"]}
                 )

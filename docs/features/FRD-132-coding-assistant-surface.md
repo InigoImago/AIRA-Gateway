@@ -1,6 +1,6 @@
 # FRD-132 — Which surface a coding assistant needs, measured rather than assumed
 
-> Phase: 9 · Status: **Draft** · Owner: Vadim Scheibe · Last updated: 2026-08-08
+> Phase: 9 · Status: **Stage A done (2026-08-08) — B1: no new surface needed** · Owner: Vadim Scheibe · Last updated: 2026-08-08
 > Related: `FRD-131` (tool calling — the prerequisite), `FRD-106` (OpenAI surface, withdrawn
 > 2026-08-07), `FRD-107` (the KIRA surface, as the precedent for adding one), `FRD-123` (the
 > OpenAI dialect, already built as an upstream), `ADR-0011`
@@ -11,7 +11,12 @@ Connecting coding assistants — OpenCode first — is a named use case. `FRD-13
 possible; this FRD answers the question one step out: **does such a client need a surface we do not
 have?**
 
-The honest answer today is *nobody here knows*, and this project has a scar for exactly this shape.
+**Answered on 2026-08-08 by running it — see §9. The Gemini surface serves OpenCode; no new
+surface is needed, and the only gap is tool calling (`FRD-131`).** The reasoning that got us to
+measure rather than choose is kept below, because it is why the answer is trustworthy.
+
+The honest answer *before that run* was nobody here knows, and this project has a scar for exactly
+this shape.
 `FRD-124` found eleven request fields that returned 200 and did nothing, and every one of them was
 found by **sending a request**, not by reading code. `FRD-125` found a filter that was configured,
 displayed and inert. The `FRD-406` review found a use-case bypass that four green verification
@@ -129,3 +134,104 @@ than for prose.
 - Whether OpenCode's model listing expects fields we do not serve. Stage A answers it.
 - Whether the assistant needs `stop_sequences` or `seed` semantics we refuse per dialect
   (`FRD-124`) — a refusal a client cannot work around would change the surface decision.
+
+---
+
+## 9. Stage A: the run (2026-08-08)
+
+Ollama in the stack, `qwen3:4b` pulled because it declares `tools`; the gateway serving it as
+`gpu-b`; a use case `coding-assistant` with an API key (30 days, the new default); OpenCode
+**1.18.15** installed from npm and pointed at the Gemini surface with `tools/opencode/opencode.json`.
+
+### 9.1 The answer to the question this stage exists for
+
+**B1. The existing Gemini surface serves OpenCode.** No new surface is needed, and `FRD-106` stays
+withdrawn. Provider resolution, the `baseURL` override, authentication, model selection, plain
+generation and SSE streaming all worked unmodified. The client failed at exactly one thing:
+
+```
+$ OPENCODE_CONFIG=.../opencode.json opencode run "Reply with the single word OK."
+> build · qwen3:4b
+Error: Value error, 'tools' is not served by this gateway: this gateway provides direct model
+access and does not execute tools (ADR-0013). Silently ignoring the declaration would return
+prose where a function call was expected
+```
+
+Reaching that refusal **is** the successful outcome: it means everything up to the missing
+capability held, and the missing capability is `FRD-131`, already written.
+
+### 9.2 The wire, measured by hand
+
+Sent directly, so the evidence does not depend on the client:
+
+```
+GET /v1beta/models                    -> 200; 5 models
+[plain generate]                      -> 200  finishReason STOP, usage reported
+[with a system instruction]           -> 200
+[with tools]                          -> 400  INVALID_ARGUMENT, 'tools' is not served
+[with toolConfig]                     -> 400  same refusal, named
+[streaming ?alt=sse]                  -> 200  18 SSE lines
+```
+
+The gateway's own access log for the OpenCode run, with the model name percent-encoded by the
+client — a colon in a model name survives the round trip, which is the defect `FRD-123` recorded:
+
+```
+POST /v1beta/models/qwen3%3A4b%3AgenerateContent        200 OK
+POST /v1beta/models/qwen3%3A4b%3AstreamGenerateContent  200 OK
+POST /v1beta/models/qwen3%3A4b%3AstreamGenerateContent  400 Bad Request
+```
+
+### 9.3 Three requests for one instruction, and every one of them audited
+
+`request_logs`, filtered to the use case:
+
+| operation | outcome | tokens |
+|---|---|---|
+| `generateContent` | `served` | 176 |
+| `streamGenerateContent` | `invalid_request` | — |
+| `streamGenerateContent` | `client_gone` | — |
+
+**One trivial instruction produced three gateway requests**, of which one was the assistant's own
+housekeeping. §5's warning is now a number rather than a caution: limits and budgets calibrated for
+a chatbot are wrong for this use-case shape by a multiple, and the `requests` figure on the
+reporting screen counts a different thing here. The refused and abandoned calls are both on the
+audit trail, which is `FRD-122` doing its job — a refusal that left no row would have made this
+table say the assistant sent one request.
+
+### 9.4 What stage A found that had nothing to do with surfaces
+
+**`reasoning_effort: "none"` does not mean "do not think" — it means "do not emit a separate
+reasoning channel", and the two are the same thing only on some models.** Measured on this Ollama,
+same minute, one prompt, `max_tokens: 400`:
+
+| | `qwen3:0.6b` | `qwen3:4b` |
+|---|---|---|
+| field omitted | 115 tokens, content `"OK"`, reasoning separated | 132 tokens, content `"OK"`, reasoning separated |
+| `reasoning_effort: "none"` | **3 tokens**, content `"OK."` | **103 tokens, content = 480 characters of raw chain-of-thought** |
+| `reasoning_effort: "low"` | 105 tokens, content `"OK"` | 123 tokens, content `"OK"` |
+| `reasoning_effort: "minimal"` | — | **400**, `invalid reasoning value` |
+
+The dialect maps `disabled` → `"none"`, on a measurement recorded in the code against the 0.6B
+model, where it is correct. On the 4B model of the *same family on the same server* the same
+mapping returns somebody's thinking as the answer, billed, with a 200 — and the seed declared
+`disabled` as the **default** for whatever model was configured, so it was the ordinary path.
+
+Fixed as data rather than as code: both seeds now key the thinking declaration **by model**, from a
+measurement, and a model nobody has measured is declared with no thinking at all (`FRD-114` FR-7).
+`qwen3:4b` therefore does not offer `disabled`, and `FRD-111` refuses a request asking for it by
+name — which is a far better answer than a 200 carrying reasoning. `minimal` is gone from the
+`tools/` seed too; the same correction had been made in the *Management* seed on 2026-08-06 and the
+second copy was never updated.
+
+The rule worth carrying: **a capability belongs to a model, not to a family, a vendor or a
+runtime** — and a declaration measured against one model is not evidence about its siblings.
+
+### 9.5 Consequently
+
+- Stage B is **not needed**. B1 holds; `FRD-106` stays withdrawn, and this run is the evidence that
+  was missing when it was.
+- `FRD-131` is the whole of the remaining work for this use case, and its shape is unchanged by
+  what was measured here.
+- The `tools/opencode/` config and README are kept as the harness for re-running this after
+  `FRD-131` lands.

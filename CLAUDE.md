@@ -862,6 +862,24 @@ consequences: an assistant makes **many model calls per human instruction** (the
 scale, except the calls are genuinely the caller's), so limits calibrated for a chatbot trip at once;
 and **a tool result is content the model reads** and the injection filter cannot see — `FRD-110`'s
 blind spot one step sharper.
+**Stage A is run (`FRD-132`, 2026-08-08) — and the answer is B1: no new surface.** OpenCode 1.18.15
+against the **existing Gemini surface** (`@ai-sdk/google` with an overridden `baseURL`,
+`tools/opencode/opencode.json`): provider, auth, model selection, generation and SSE streaming all
+worked unmodified, and it failed at exactly one thing — `tools`, refused by name. Reaching that
+refusal *is* the successful outcome. `FRD-106` stays withdrawn, and this run is the evidence that
+was missing when it was. **One trivial instruction produced three gateway requests** (served,
+refused, `client_gone`), all audited — the assistant-shape warning is now a number.
+**The finding that had nothing to do with surfaces**: `reasoning_effort: "none"` does not mean "do
+not think", it means "do not emit a separate reasoning channel", and those coincide only on some
+models. Same Ollama, same minute: `qwen3:0.6b` answers `"OK."` in **3 tokens**; `qwen3:4b` returns
+**480 characters of raw chain-of-thought as the answer**, billed, with a 200 — and the seed
+declared `disabled` as the *default* for whatever model was configured, so that was the ordinary
+path. Fixed as **data**: both seeds now key thinking by model from a measurement, and an unmeasured
+model is declared with **no thinking at all** (`FRD-114` FR-7). `minimal` also survived in the
+`tools/` seed after the identical correction had been made in the *Management* seed on 2026-08-06 —
+one definition, two files, one fixed. The rule: **a capability belongs to a model, not to a family,
+a vendor or a runtime**, and a seed that writes one declaration for "whatever is configured" is the
+mechanism that turns a measurement into an assumption.
 Next candidates: **`FRD-114`** (model metadata — now also carries publisher + default output cap,
 prerequisite for 110–113 and 119), **`FRD-110`** (documents/images — the widest gap),
 **`FRD-115`/`FRD-119`** (Vertex EU + the Anthropic dialect — required), **`FRD-116`** (Vault),
