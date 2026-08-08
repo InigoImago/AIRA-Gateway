@@ -774,26 +774,24 @@ def test_anthropic_carries_a_call_and_its_result_as_blocks() -> None:
     assert {"type": "tool_result", "tool_use_id": "c1", "content": "print(1)"} in blocks
 
 
-def test_anthropic_reads_a_call_back_but_not_the_structured_one() -> None:
-    """The subtlety of this dialect: `aira_structured_output` is a `tool_use` block too. Returning
-    it as a tool call would hand the caller a function they never declared."""
-    from aira_gateway.upstreams.vertex.anthropic_mapping import (
-        STRUCTURED_TOOL,
-        anthropic_to_canonical,
-    )
+def test_anthropic_reports_every_tool_use_block_as_a_call() -> None:
+    """Simplified on 2026-08-08. There used to be a block to filter out — the structured-output
+    tool — and the document is a text block now, so every `tool_use` block in a response is
+    something the caller declared."""
+    from aira_gateway.upstreams.vertex.anthropic_mapping import anthropic_to_canonical
 
     data = {
-        "content": [
-            {"type": "tool_use", "id": "c1", "name": "read_file", "input": {"path": "a"}},
-            {"type": "tool_use", "id": "c2", "name": STRUCTURED_TOOL, "input": {"x": 1}},
-        ],
+        "content": [{"type": "tool_use", "id": "c1", "name": "read_file", "input": {"path": "a"}}],
         "stop_reason": "tool_use",
         "usage": {"input_tokens": 1, "output_tokens": 2},
     }
 
     assert [call.name for call in anthropic_to_canonical(data, "m").tool_calls] == ["read_file"]
-    # And a structured request reports no tool calls at all: its one block *is* the answer.
-    assert anthropic_to_canonical(data, "m", structured=True).tool_calls == ()
+    # And a structured request reports it too: the model calling a function *instead of* answering
+    # is a legitimate outcome the caller has to be able to see.
+    assert [
+        call.name for call in anthropic_to_canonical(data, "m", structured=True).tool_calls
+    ] == ["read_file"]
 
 
 def test_anthropic_reassembles_a_streamed_call() -> None:
@@ -825,39 +823,20 @@ def test_anthropic_reassembles_a_streamed_call() -> None:
     assert final.tool_calls[0].arguments == {"path": "hello.py"}
 
 
-def test_a_streamed_structured_document_still_arrives_as_text() -> None:
-    """The behaviour `FRD-112` relies on, and the one most at risk from the change above: for the
-    structured tool the identical fragments *are* the answer."""
-    from aira_gateway.upstreams.vertex.anthropic_mapping import STRUCTURED_TOOL, StreamAssembler
-
-    assembler = StreamAssembler()
-    assembler.feed(
-        {
-            "type": "content_block_start",
-            "content_block": {"type": "tool_use", "id": "s1", "name": STRUCTURED_TOOL},
-        }
-    )
-    emitted = assembler.feed(
-        {
-            "type": "content_block_delta",
-            "delta": {"type": "input_json_delta", "partial_json": '{"a":1}'},
-        }
-    )
-
-    assert emitted is not None
-    assert emitted.text_delta == '{"a":1}'
-
-
-def test_a_dialect_that_cannot_carry_both_is_skipped_by_name() -> None:
-    """Not a mapping error but a **dispatch** decision: the candidate is excluded before it is
-    asked, and an exhausted chain says so."""
-    from aira_gateway.requirements import ToolsAndSchemaTogether
+def test_a_schema_this_dialect_cannot_express_skips_the_candidate() -> None:
+    """What replaced `ToolsAndSchemaTogether` when the provider gained a schema parameter: the
+    conflict between tools and a schema is gone, and what remains is that this dialect's schema
+    vocabulary is **narrower** than the one our surface accepts."""
+    from aira_gateway.core.schema import parse as parse_schema
+    from aira_gateway.requirements import SchemaExpressible
+    from aira_gateway.upstreams.vertex.anthropic_mapping import schema_refusal
 
     class _Registry:
         def provider_for(self, model: str):  # noqa: ANN202, ARG002
-            return type("P", (), {"tools_with_schema": False})()
+            return type("P", (), {"schema_refusal": staticmethod(schema_refusal)})()
 
-    refusal = asyncio.run(ToolsAndSchemaTogether(_Registry()).refusal("claude"))
+    constrained = parse_schema({"type": "STRING", "pattern": "^x+$"})
+    refusal = asyncio.run(SchemaExpressible(_Registry(), constrained).refusal("claude"))
 
     assert refusal is not None
-    assert "*as* a tool call" in refusal
+    assert "pattern" in refusal

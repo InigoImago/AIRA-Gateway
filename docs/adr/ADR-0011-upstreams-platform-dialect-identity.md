@@ -62,7 +62,7 @@ Transport   Vertex        │ Foundry            │ GenerativeLanguage
 
 Dialect     Gemini        │ Anthropic          │ OpenAI
             contents[]    │ messages+system    │ messages[]
-            responseSchema│ forced tool call   │ response_format json_schema
+            responseSchema│ output_config      │ response_format json_schema
             thinkingBudget│ thinking.budget    │ reasoning_effort
 
 Resolver    name → (endpoint, addressing, underlying model for pricing)
@@ -93,11 +93,23 @@ resource *X*, deployment *Y*, priced as underlying model *Z*. Two consequences:
   traffic is counted apart rather than as free — so the mistake would be quiet.
 
 **3. Capability declarations say *whether*, never *how*.**
-Three vendors now produce structured output by three unrelated mechanisms — a schema parameter, a
-forced tool call, a `json_schema` response format — and control reasoning by two shapes (a token
-budget, an effort level). `FRD-114`'s flags stay booleans; the mechanism lives in the dialect. This
-was already the rule (`FRD-119` §5.5); Foundry is what makes it non-negotiable, because the third
-mechanism is where a "how" leaking into the catalog would have become permanent.
+Three vendors produce structured output by three unrelated mechanisms — `responseSchema`,
+`output_config.format`, a `json_schema` response format — and control reasoning by two shapes (a
+token budget, an effort level). `FRD-114`'s flags stay booleans; the mechanism lives in the
+dialect. Foundry is what made it non-negotiable, because the third mechanism is where a "how"
+leaking into the catalog would have become permanent.
+
+**And on 2026-08-08 the rule paid for itself.** Anthropic's mechanism was a **forced tool call**
+when `FRD-119` was written — the vendor had no schema parameter, and the documented way to obtain
+a document was one pinned tool. They have since added `output_config.format`, and the change cost
+**one adapter file**: no catalog entry moved, no event was republished, no capability flag changed
+meaning, and no caller noticed. A `structured_output` flag that had recorded *how* would have had
+to be migrated across two planes and a Kafka topic to say the same thing it already said.
+
+The corollary is worth stating too, because it is the part that is easy to get wrong: a mechanism
+recorded in a *dialect* is a fact with an expiry date, and it must be written as one. `FRD-119`
+§5.5 asserted "Anthropic has no schema parameter" as though it were a property of the world rather
+than of a version. It is corrected there rather than quietly rewritten.
 
 ## Consequences
 

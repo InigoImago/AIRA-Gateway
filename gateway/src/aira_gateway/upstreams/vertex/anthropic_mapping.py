@@ -33,7 +33,7 @@ from aira_gateway.core.canonical import (
     ToolCallPart,
     ToolResultPart,
 )
-from aira_gateway.core.schema import to_json_schema
+from aira_gateway.core.schema import ResponseSchema, to_json_schema
 from aira_gateway.upstreams.base import DialectUnsupported
 
 #: The finish reason for "the model answered, but not with the document that was asked for".
@@ -132,18 +132,13 @@ def canonical_to_anthropic(request: CanonicalRequest, *, max_tokens: int) -> dic
                 )
             body["thinking"] = {"type": "enabled", "budget_tokens": budget}
     if request.tools:
-        # The caller's own functions. **Never together with a response schema** — that would need
-        # this same field for two purposes and silently lose one of them, which is why
-        # `ToolsAndSchemaTogether` skips this candidate before dispatch. Reaching both here would
-        # mean a requirement was not applied, so the assertion is the mapping's own backstop.
-        if request.response_schema is not None:  # pragma: no cover - the chain skips this first
-            raise DialectUnsupported(
-                "This dialect expresses a response schema as a forced tool call and cannot carry "
-                "the caller's tools in the same request."
-            )
         body["tools"] = [
             {
                 "name": tool.name,
+                # `strict` asks the provider to guarantee the arguments match the schema. Requested
+                # rather than assumed: the matrix has a whole row for arguments that do not parse,
+                # and this removes one cause of it without removing the handling.
+                "strict": True,
                 "description": tool.description,
                 "input_schema": (
                     to_json_schema(tool.parameters)
@@ -153,27 +148,34 @@ def canonical_to_anthropic(request: CanonicalRequest, *, max_tokens: int) -> dic
             }
             for tool in request.tools
         ]
-        # No `tool_choice`: the model decides. `AUTO` is what the surface accepts and the others
-        # are refused there (`FRD-131`), so pinning anything here would be inventing an instruction
-        # the caller never gave.
+        # No `tool_choice`: the model decides. `AUTO` is what the surface accepts and the other
+        # modes are refused there, so pinning anything here would invent an instruction nobody gave.
     if request.response_schema is not None:
-        # Anthropic has **no schema parameter**. The equivalent is a forced tool call: one tool
-        # whose input schema is the caller's, `tool_choice` pinned to it, and the model's tool
-        # input read back as the document. One capability, three mechanisms (`ADR-0011` rule 3).
-        body["tools"] = [
-            {
-                "name": STRUCTURED_TOOL,
-                "description": "Return the answer as a document matching this schema.",
-                "input_schema": to_json_schema(request.response_schema),
+        # **A first-class parameter, separate from `tools`** — checked against the API on
+        # 2026-08-08. This used to be a forced tool call, and that was correct when `FRD-119` was
+        # written: the dialect had no schema field, so the documented way to get a document was to
+        # declare one tool and pin `tool_choice` to it.
+        #
+        # It also made the two mutually exclusive, because the caller's functions and our schema
+        # needed the *same field*. That exclusion was never our design and is now gone: both travel
+        # together, the model may call a tool **or** answer with the document, and `stop_reason`
+        # says which.
+        body["output_config"] = {
+            "format": {
+                "type": "json_schema",
+                "schema": schema_for_anthropic(request.response_schema),
             }
-        ]
-        body["tool_choice"] = {"type": "tool", "name": STRUCTURED_TOOL}
+        }
     return body
 
 
-#: The single tool a structured request pins the model to. Named rather than anonymous so the
-#: response mapper can tell "the model used our tool" from "the model called something else".
-STRUCTURED_TOOL = "aira_structured_output"
+#: What this dialect's schema support does **not** cover (checked against the API on 2026-08-08).
+#: Our `ResponseSchema` is Google's vocabulary and is wider, so a schema that works on one provider
+#: is not automatically expressible here — `ADR-0012` §3's case exactly, and the answer is the same
+#: one: skip the candidate **by name** rather than send a constraint that will be dropped.
+UNSUPPORTED_SCHEMA_FIELDS = frozenset(
+    {"minimum", "maximum", "min_length", "max_length", "min_items", "max_items", "pattern"}
+)
 
 #: Anthropic distinguishes an image from a document, and the type is not interchangeable — an
 #: image block carrying a PDF is refused by the API, not silently coerced.
@@ -253,31 +255,92 @@ def finish_reason(stop_reason: Any) -> str:
     return _STOP_REASONS.get(str(stop_reason), "stop")
 
 
-def structured_document(content: Any) -> str | None:
-    """The document the forced tool call carries, or ``None`` if the model did not call it.
+def schema_for_anthropic(schema: ResponseSchema) -> dict[str, Any]:
+    """Our schema in the shape this provider requires.
 
-    ``None`` is a real path with this mechanism rather than a defensive one: a model that answers
-    with prose instead of calling the tool **has not satisfied the schema**, and returning its
-    prose as though it were the document is exactly the failure `FRD-112` FR-6 is about.
+    Two obligations it adds over plain JSON Schema, both checked against the API: every object must
+    carry `additionalProperties: false`, and every object must list its `required` fields. They are
+    filled in here rather than demanded of the caller — a Gemini-shaped schema is a legitimate
+    request, and this is a translation, not a constraint the caller broke.
     """
-    if not isinstance(content, list):
+    tightened = _tighten(to_json_schema(schema))
+    assert isinstance(tightened, dict)  # a schema's root is an object by construction
+    return tightened
+
+
+def _tighten(node: Any) -> Any:
+    if not isinstance(node, dict):
+        return node
+    out = {key: _tighten(value) for key, value in node.items()}
+    if out.get("type") == "object":
+        properties = out.get("properties") or {}
+        out["additionalProperties"] = False
+        # Absent `required` means "everything is optional" in JSON Schema and is rejected here, so
+        # the honest translation of an unqualified object is that all of its properties are needed.
+        out.setdefault("required", list(properties))
+    if isinstance(out.get("properties"), dict):
+        out["properties"] = {k: _tighten(v) for k, v in out["properties"].items()}
+    return out
+
+
+def schema_refusal(schema: ResponseSchema) -> str | None:
+    """Why this dialect cannot express ``schema``, or ``None``.
+
+    Read by the dispatch chain (`ADR-0012` §3) so an inexpressible schema **skips the candidate**
+    instead of being sent with its constraints quietly dropped — which is `FRD-112`'s whole point,
+    one layer down.
+    """
+    used = sorted(
+        field for field in UNSUPPORTED_SCHEMA_FIELDS if getattr(schema, field, None) is not None
+    )
+    nested = list((schema.properties or {}).values())
+    if schema.items is not None:
+        nested.append(schema.items)
+    nested.extend(schema.any_of or ())
+    for child in nested:
+        deeper = schema_refusal(child)
+        if deeper is not None:
+            return deeper
+    if not used:
         return None
-    for block in content:
-        if (
-            isinstance(block, dict)
-            and block.get("type") == "tool_use"
-            and (block.get("name") == STRUCTURED_TOOL)
-        ):
-            return json.dumps(block.get("input"), separators=(",", ":"))
-    return None
+    return (
+        f"this dialect's structured output does not support {', '.join(used)}, and a schema sent "
+        "without them would be satisfied by an answer the caller's constraint excludes"
+    )
+
+
+def structured_document(content: Any) -> str | None:
+    """The document, which now arrives as an ordinary **text block**.
+
+    It used to be the input of a forced tool call. The provider gained a first-class schema
+    parameter, so that mechanism — and the reason a schema and the caller's tools could not coexist
+    — is gone.
+
+    **It must still be JSON.** With the forced tool, "the model answered in prose instead" was
+    visible for free: there was no tool call to read. Now prose and a document arrive through the
+    same channel, and returning the prose as though it were the document is exactly what `FRD-112`
+    FR-6 exists to prevent — the caller's code calls `JSON.parse` on it and fails somewhere else
+    entirely. So the text is parsed here, and a text that is not a document is **not one**.
+
+    The provider states the JSON is guaranteed. This does not take that on trust: a guarantee that
+    is checked costs one parse, and a guarantee that is assumed costs a support case.
+    """
+    text = answer_text(content).strip()
+    if not text:
+        return None
+    try:
+        json.loads(text)
+    except ValueError:
+        return None
+    return text
 
 
 def tool_calls_of(content: Any) -> tuple[ToolCallPart, ...]:
-    """The caller's tool calls in a response — **excluding** the structured-output one.
+    """The caller's tool calls in a response.
 
-    That exclusion is the whole subtlety of this dialect: `aira_structured_output` is a `tool_use`
-    block too, and returning it as a tool call would hand the caller an invented function they
-    never declared, while `structured_document` reads the same block as the answer.
+    No exclusion any more: the structured document is a text block, so every `tool_use` block in a
+    response is something the caller declared. That simplification is the whole point of the
+    2026-08-08 rewrite — a mechanism disappeared instead of one being added.
     """
     if not isinstance(content, list):
         return ()
@@ -286,7 +349,7 @@ def tool_calls_of(content: Any) -> tuple[ToolCallPart, ...]:
         if not isinstance(block, dict) or block.get("type") != "tool_use":
             continue
         name = str(block.get("name") or "")
-        if not name or name == STRUCTURED_TOOL:
+        if not name:
             continue
         arguments = block.get("input")
         calls.append(
@@ -310,6 +373,18 @@ def anthropic_to_canonical(
         if document is None:
             # Surfaced as an abnormal finish reason rather than as text, so the surface refuses it
             # instead of handing the caller prose that will fail to parse in their code.
+            calls = tool_calls_of(data.get("content"))
+            if calls:
+                # Not a failure: with a schema *and* tools in one request the model may legitimately
+                # call a function instead of answering, and `stop_reason` says so. Reporting that
+                # as an unsatisfied schema would turn a normal agent turn into an error.
+                return CanonicalResponse(
+                    model=model,
+                    text="",
+                    finish_reason=reason,
+                    usage=usage_of(data.get("usage")),
+                    tool_calls=calls,
+                )
             return CanonicalResponse(
                 model=model,
                 text="",
@@ -326,9 +401,9 @@ def anthropic_to_canonical(
         text=text,
         finish_reason=reason,
         usage=usage_of(data.get("usage")),
-        # Empty for a structured request: its one `tool_use` block *is* the answer, and reporting
-        # it as a call would hand the caller a function they never declared.
-        tool_calls=() if structured else tool_calls_of(data.get("content")),
+        # Reported for a structured request too: the model may call a function *instead of*
+        # answering, which is now a legitimate outcome the caller has to be able to see.
+        tool_calls=tool_calls_of(data.get("content")),
     )
 
 
@@ -360,14 +435,15 @@ class StreamAssembler:
             return None
 
         if kind == "content_block_start":
-            # **`input_json_delta` means two different things on this dialect**, and only this
-            # event says which. For a structured request the open block is `aira_structured_output`
-            # and its fragments *are* the answer, streamed as text — the behaviour `FRD-112` relies
-            # on and which must not change. For one of the caller's own tools the identical
-            # fragments are the call's arguments and must be accumulated, never emitted as text: a
-            # client would otherwise receive `{"pa`, `th": "he` as the model's reply.
+            # `input_json_delta` belongs to a `tool_use` block and carries a call's arguments,
+            # which must be accumulated and never emitted as text — a client would otherwise
+            # receive `{"pa`, `th": "he` as the model's reply.
+            #
+            # It used to mean two things: the structured document arrived through the same event,
+            # and only this one said which. The document is a text block now, so the ambiguity is
+            # gone rather than handled.
             block = event.get("content_block") or {}
-            if block.get("type") == "tool_use" and block.get("name") != STRUCTURED_TOOL:
+            if block.get("type") == "tool_use":
                 self._open_call = {
                     "id": str(block.get("id") or ""),
                     "name": str(block.get("name") or ""),

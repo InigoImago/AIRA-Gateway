@@ -121,7 +121,7 @@ graph LR
 ```
 
 A green test proves the code and the test agree — which they inevitably do when both came from the
-same idea. So each property is broken on purpose and the tests are required to notice: **300
+same idea. So each property is broken on purpose and the tests are required to notice: **301
 properties** are guarded that way. The layers above unit exist because each has caught defects the
 one below structurally could not — most recently a use-case bypass on one of the two API surfaces
 that 271 mutation properties, a green gate and three other layers all missed, and that a single

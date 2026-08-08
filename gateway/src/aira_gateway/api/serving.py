@@ -60,9 +60,9 @@ from aira_gateway.requirements import (
     RegionAllowed,
     Requirement,
     SamplingExpressible,
+    SchemaExpressible,
     StructuredOutputSupported,
     ThinkingHonoured,
-    ToolsAndSchemaTogether,
     ToolsSupported,
     permits,
 )
@@ -290,14 +290,15 @@ def requirements_for(request: Request, canonical: CanonicalRequest | None) -> Pe
         checks.append(MediaTypesSupported(catalog_of(request), canonical.media_types))
     if canonical is not None and canonical.response_schema is not None:
         checks.append(StructuredOutputSupported(catalog_of(request)))
+        # Whether the *model* offers structured output, and whether the *dialect* can carry this
+        # particular schema, are two questions — `ADR-0011` rule 3 in its usual shape.
+        checks.append(SchemaExpressible(registry_of(request), canonical.response_schema))
     if canonical is not None and canonical.thinking is not None:
         checks.append(ThinkingHonoured(catalog_of(request), canonical.thinking))
     if canonical is not None and canonical.sampling_requested:
         checks.append(SamplingExpressible(registry_of(request), canonical.sampling_requested))
     if canonical is not None and canonical.tools:
         checks.append(ToolsSupported(catalog_of(request)))
-        if canonical.response_schema is not None:
-            checks.append(ToolsAndSchemaTogether(registry_of(request)))
     return permits(checks)
 
 

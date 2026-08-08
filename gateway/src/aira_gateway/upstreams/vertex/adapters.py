@@ -22,6 +22,7 @@ from aira_gateway.core.canonical import (
     CanonicalRequest,
     CanonicalResponse,
 )
+from aira_gateway.core.schema import ResponseSchema
 from aira_gateway.upstreams.base import UpstreamError, UpstreamModel
 from aira_gateway.upstreams.gemini_mapping import (
     SAMPLING as GEMINI_SAMPLING,
@@ -41,6 +42,9 @@ from aira_gateway.upstreams.vertex.anthropic_mapping import (
     StreamAssembler,
     anthropic_to_canonical,
     canonical_to_anthropic,
+)
+from aira_gateway.upstreams.vertex.anthropic_mapping import (
+    schema_refusal as anthropic_schema_refusal,
 )
 from aira_gateway.upstreams.vertex.transport import VertexTransport
 
@@ -144,11 +148,15 @@ class VertexAnthropicAdapter:
         self._default_max_tokens = default_max_tokens
 
     sampling_controls = ANTHROPIC_SAMPLING
-    #: **False, and this is the interesting one.** Structured output on this dialect *is* a
-    #: forced tool call (`FRD-119` §5.5), so a request carrying both would need one field for
-    #: two purposes and would silently lose one of them. The chain skips this candidate
-    #: instead; either half arriving alone is served normally.
-    tools_with_schema = False
+    #: A schema and the caller's tools are **separate parameters** here, as of the API checked on
+    #: 2026-08-08 (`output_config.format` beside `tools`). They travel together; the model may call
+    #: a function or answer with the document, and `stop_reason` says which.
+    tools_with_schema = True
+
+    @staticmethod
+    def schema_refusal(schema: ResponseSchema) -> str | None:
+        """This dialect's schema vocabulary is narrower than ours (`ADR-0012` §3)."""
+        return anthropic_schema_refusal(schema)
 
     def models(self) -> list[UpstreamModel]:
         return [

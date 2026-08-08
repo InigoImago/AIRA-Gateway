@@ -40,7 +40,6 @@ from aira_gateway.upstreams.vertex.adapters import (
 )
 from aira_gateway.upstreams.vertex.anthropic_mapping import (
     SCHEMA_UNSATISFIED,
-    STRUCTURED_TOOL,
     StreamAssembler,
     answer_text,
     anthropic_to_canonical,
@@ -525,29 +524,74 @@ def test_a_budget_that_does_not_fit_the_output_allowance_is_refused() -> None:
 
 
 def test_a_schema_becomes_a_forced_tool_call() -> None:
-    """The vendor has no schema parameter at all. One capability, three mechanisms — and the
-    mechanism stays here, in the dialect, rather than in a catalog every plane reads."""
+    """**Rewritten on 2026-08-08.** This asserted a forced tool call, which was the correct
+    mechanism when `FRD-119` was written: the dialect had no schema parameter, so the documented
+    way to get a document was one pinned tool. It has `output_config.format` now, checked against
+    the API, and the whole mechanism — along with the reason a schema and the caller's tools could
+    not coexist — is gone."""
     schema = parse_schema({"type": "OBJECT", "properties": {"a": {"type": "STRING"}}})
     body = canonical_to_anthropic(
         _request().model_copy(update={"response_schema": schema}), max_tokens=1024
     )
 
-    assert body["tool_choice"] == {"type": "tool", "name": STRUCTURED_TOOL}
-    assert body["tools"][0]["input_schema"]["properties"]["a"]["type"] == "string"
+    assert body["output_config"]["format"]["type"] == "json_schema"
+    assert body["output_config"]["format"]["schema"]["properties"]["a"]["type"] == "string"
+    # The provider requires both of these on every object and rejects a schema without them; they
+    # are filled in here rather than demanded of a caller whose schema is perfectly valid.
+    assert body["output_config"]["format"]["schema"]["additionalProperties"] is False
+    assert body["output_config"]["format"]["schema"]["required"] == ["a"]
+    assert "tool_choice" not in body
 
 
-def test_the_document_is_read_back_out_of_the_tool_call() -> None:
+def test_the_document_is_read_back_out_of_the_text_block() -> None:
+    """Where the forced tool used to put it in its input, the provider now returns the document as
+    an ordinary text block — so reading it is the same as reading any other answer."""
     payload = {
-        "content": [{"type": "tool_use", "name": STRUCTURED_TOOL, "input": {"a": "x"}}],
-        "stop_reason": "tool_use",
+        "content": [{"type": "text", "text": '{"a": "x"}'}],
+        "stop_reason": "end_turn",
         "usage": {"input_tokens": 1, "output_tokens": 2},
     }
     response = anthropic_to_canonical(payload, "claude-1", structured=True)
 
     assert json.loads(response.text) == {"a": "x"}
-    # `tool_use` is this mechanism's *success*; reporting it verbatim would make every structured
-    # answer look abnormal to the finish-reason check that refuses truncated documents.
     assert response.finish_reason == "stop"
+
+
+def test_a_schema_and_the_callers_tools_now_travel_together() -> None:
+    """The exclusion was never our design: it existed only because one field had to serve two
+    purposes. Both are separate parameters now, and the model may do either."""
+    from aira_gateway.core.canonical import ToolDeclaration
+
+    schema = parse_schema({"type": "OBJECT", "properties": {"a": {"type": "STRING"}}})
+    body = canonical_to_anthropic(
+        _request().model_copy(
+            update={
+                "response_schema": schema,
+                "tools": (ToolDeclaration(name="read_file"),),
+            }
+        ),
+        max_tokens=1024,
+    )
+
+    assert body["output_config"]["format"]["type"] == "json_schema"
+    assert [tool["name"] for tool in body["tools"]] == ["read_file"]
+    assert body["tools"][0]["strict"] is True
+
+
+def test_a_schema_this_dialect_cannot_express_skips_the_candidate() -> None:
+    """What survived the simplification, and it is real: this vocabulary is **narrower** than the
+    one our surface accepts. A constraint sent and dropped produces an answer that satisfies the
+    schema the caller sent and not the one they meant (`ADR-0012` §3)."""
+    from aira_gateway.upstreams.vertex.anthropic_mapping import schema_refusal
+
+    permissive = parse_schema({"type": "OBJECT", "properties": {"a": {"type": "STRING"}}})
+    constrained = parse_schema(
+        {"type": "OBJECT", "properties": {"a": {"type": "STRING", "pattern": "^x+$"}}}
+    )
+
+    assert schema_refusal(permissive) is None
+    refusal = schema_refusal(constrained)
+    assert refusal is not None and "pattern" in refusal
 
 
 def test_a_model_that_answered_in_prose_did_not_satisfy_the_schema() -> None:
@@ -564,12 +608,34 @@ def test_a_model_that_answered_in_prose_did_not_satisfy_the_schema() -> None:
     assert response.finish_reason == SCHEMA_UNSATISFIED
 
 
-def test_a_tool_call_that_is_not_ours_is_not_the_document() -> None:
+def test_a_tool_call_instead_of_a_document_is_a_normal_turn_now() -> None:
+    """**Inverted on 2026-08-08, deliberately.** Under the forced-tool mechanism a call to anything
+    but our tool meant the schema went unsatisfied — there was nothing else it could mean, because
+    the schema *was* the tool. With `output_config` a request can carry both, so a model calling a
+    function instead of answering is an ordinary agent turn and reporting it as a failed schema
+    would break the exchange."""
     payload = {
-        "content": [{"type": "tool_use", "name": "something_else", "input": {"a": "x"}}],
+        "content": [{"type": "tool_use", "id": "c1", "name": "read_file", "input": {"a": "x"}}],
         "stop_reason": "tool_use",
         "usage": {},
     }
+    response = anthropic_to_canonical(payload, "c", structured=True)
+
+    assert response.finish_reason != SCHEMA_UNSATISFIED
+    assert [call.name for call in response.tool_calls] == ["read_file"]
+
+
+def test_prose_where_a_document_was_promised_is_still_refused() -> None:
+    """The guarantee that had to survive the rewrite. Under the old mechanism "the model answered
+    in prose" was visible for free — there was no tool call to read. Now prose and a document
+    arrive through the same text block, so the text is parsed: a text that is not a document is
+    not one, whatever the provider guarantees."""
+    payload = {
+        "content": [{"type": "text", "text": "Sure! Here is your JSON..."}],
+        "stop_reason": "end_turn",
+        "usage": {},
+    }
+
     assert anthropic_to_canonical(payload, "c", structured=True).finish_reason == SCHEMA_UNSATISFIED
 
 

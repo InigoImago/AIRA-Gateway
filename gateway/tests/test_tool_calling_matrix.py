@@ -425,43 +425,45 @@ def test_finishing_twice_does_not_repeat_the_calls() -> None:
     assert calls.finish() == ()
 
 
-def test_anthropic_keeps_the_two_meanings_of_one_event_apart() -> None:
-    """The collision this dialect has and no other: `input_json_delta` carries the **structured
-    document** for one block and a **tool call's arguments** for another, and only
-    `content_block_start` says which. Both directions asserted in one test, because the risk is
-    that a change fixes one and silently swaps the other."""
-    from aira_gateway.upstreams.vertex.anthropic_mapping import STRUCTURED_TOOL, StreamAssembler
+def test_anthropic_argument_fragments_are_never_streamed_as_text() -> None:
+    """**Rewritten on 2026-08-08, and the rewrite is the news.** This case used to assert that
+    `input_json_delta` was disambiguated by `content_block_start`, because the same event carried
+    the structured document for one block and a call's arguments for another. The provider gained
+    a first-class schema parameter, the document is a text block now, and the ambiguity is *gone*
+    rather than handled — the test that guarded it is deleted rather than kept passing.
 
-    tool = StreamAssembler()
-    tool.feed(
+    What remains is the one meaning: argument fragments, which must be accumulated and never sent
+    to the client as the model's reply."""
+    from aira_gateway.upstreams.vertex.anthropic_mapping import StreamAssembler
+
+    assembler = StreamAssembler()
+    assembler.feed(
         {
             "type": "content_block_start",
             "content_block": {"type": "tool_use", "id": "c1", "name": "read_file"},
         }
     )
+
     assert (
-        tool.feed(
+        assembler.feed(
             {
                 "type": "content_block_delta",
                 "delta": {"type": "input_json_delta", "partial_json": '{"p":1}'},
             }
         )
         is None
-    ), "a tool call's arguments must never be streamed as the model's text"
+    )
 
-    document = StreamAssembler()
-    document.feed(
-        {
-            "type": "content_block_start",
-            "content_block": {"type": "tool_use", "id": "s1", "name": STRUCTURED_TOOL},
-        }
+
+def test_a_structured_document_streams_as_ordinary_text() -> None:
+    """And the other half: with the schema now a request parameter, the document arrives through
+    `text_delta` like any other answer — no special case, which is why there is none left."""
+    from aira_gateway.upstreams.vertex.anthropic_mapping import StreamAssembler
+
+    emitted = StreamAssembler().feed(
+        {"type": "content_block_delta", "delta": {"type": "text_delta", "text": '{"a":1}'}}
     )
-    emitted = document.feed(
-        {
-            "type": "content_block_delta",
-            "delta": {"type": "input_json_delta", "partial_json": '{"a":1}'},
-        }
-    )
+
     assert emitted is not None and emitted.text_delta == '{"a":1}'
 
 

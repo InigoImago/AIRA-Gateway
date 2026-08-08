@@ -2662,21 +2662,40 @@ MUTATIONS = [
         '"raw": str(trail.body)}',
         TOOLS,
     ),
-    Mutation(
-        "T27",
-        "Anthropic's structured-output tool is not reported as a caller's tool call",
-        "gateway/src/aira_gateway/upstreams/vertex/anthropic_mapping.py",
-        "        if not name or name == STRUCTURED_TOOL:",
-        "        if not name:",
-        TOOLS,
-    ),
+    # `T27` **deleted** on 2026-08-08, not re-anchored. It defended "the structured-output tool is
+    # not reported as a caller's tool call" — a property that existed only because that tool
+    # existed. The provider gained `output_config`, the forced tool went, and with it the thing
+    # this mutation protected. The harness reported it STALE within the hour, which is the second
+    # time in one evening that it caught a rule outliving its mechanism (`T28` was the first).
+    # A mutation whose subject is gone cannot fail, and one that cannot fail is a green light
+    # about nothing.
     Mutation(
         "T28",
-        "a dialect that expresses a schema as a tool call cannot also carry the caller's tools",
+        "a schema this dialect cannot express skips the candidate rather than losing a constraint",
         "gateway/src/aira_gateway/requirements.py",
-        '        if getattr(provider, "tools_with_schema", False):',
-        "        if True:",
-        TOOLS,
+        "        refusal: str | None = check(self._schema)\n        return refusal",
+        "        return None",
+        "gateway/tests/test_tool_calling.py gateway/tests/test_vertex.py",
+    ),
+    # `T28` was re-anchored on 2026-08-08 rather than kept: it defended `ToolsAndSchemaTogether`,
+    # which no longer exists — Anthropic gained a schema parameter and the conflict it guarded
+    # against went with the mechanism that caused it. A mutation defending a deleted rule is worse
+    # than no mutation: it reports green about nothing.
+    Mutation(
+        "T29",
+        "prose is not a document, whatever the provider guarantees",
+        "gateway/src/aira_gateway/upstreams/vertex/anthropic_mapping.py",
+        "    try:\n        json.loads(text)\n    except ValueError:\n        return None\n    return text",
+        "    return text",
+        "gateway/tests/test_vertex.py",
+    ),
+    Mutation(
+        "T30",
+        "the provider's required schema tightenings are added, not assumed",
+        "gateway/src/aira_gateway/upstreams/vertex/anthropic_mapping.py",
+        '        out["additionalProperties"] = False',
+        "        pass",
+        "gateway/tests/test_vertex.py",
     ),
 ]
 

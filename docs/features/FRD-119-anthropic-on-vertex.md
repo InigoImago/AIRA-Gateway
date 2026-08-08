@@ -19,7 +19,7 @@ Anthropic models on Vertex are invoked through `:rawPredict` / `:streamRawPredic
 | Output cap | `maxOutputTokens`, optional | `max_tokens`, **required** |
 | Attachments | `inlineData{mimeType,data}` | content blocks `image` / `document` with a `source` |
 | Thinking | `thinkingConfig.thinkingBudget` | `thinking{type,budget_tokens}`, **budget < max_tokens**, and thoughts are **returned** |
-| Structured output | `responseSchema` | **none** — done with a forced tool call |
+| Structured output | `responseSchema` | `output_config.format` (since 2026-08-08; **was** a forced tool call — see §5.5) |
 | Usage | `usageMetadata.promptTokenCount/...` | `usage.input_tokens/output_tokens` |
 | Streaming | SSE of partial `GenerateContentResponse` | SSE of typed events (`content_block_delta`, `message_delta`, …) |
 | Embeddings | yes | **none** |
@@ -46,7 +46,8 @@ provider-agnostic. Until now "two surfaces, two upstreams" meant two spellings o
   question.
 - **Returning thinking blocks to callers.** `FRD-111` §2 already decided this for Gemini; Anthropic
   makes it live, because it returns them by default when thinking is enabled (§5.4).
-- Tool use as a caller-facing feature. It is used *internally* for structured output (§5.5);
+- ~~Tool use as a caller-facing feature.~~ **Delivered by `FRD-131` on 2026-08-08**, on this
+  dialect as on the other two. It was used *internally* for structured output until §5.5 changed;
   exposing it is its own FRD.
 - Embeddings. Anthropic has none; `FRD-114`'s capability declaration is what stops a request from
   ever getting here (§5.7).
@@ -72,7 +73,7 @@ provider-agnostic. Until now "two surfaces, two upstreams" meant two spellings o
 - **FR-5 Thinking** maps to `thinking{type:"enabled",budget_tokens}`, with the **budget strictly
   below `max_tokens`** and validated before dispatch (§5.4).
 - **FR-6 Thinking blocks are consumed, never returned.** §5.4.
-- **FR-7 Structured output via a forced tool call.** §5.5.
+- **FR-7 Structured output via `output_config.format`.** §5.5 — via a forced tool call until 2026-08-08.
 - **FR-8 Usage mapping.** `input_tokens`/`output_tokens` → canonical prompt/completion. Cache-read
   and cache-creation token fields, where present, are **recorded and not silently folded into the
   input count** — same rule as unpriced traffic: a figure we do not understand is not zero.
@@ -138,7 +139,66 @@ This is a case where a mapping omission would leak the exact category of content
 handle, so it gets its own test asserting that a known thinking string appears in no response body,
 no audit row and no span.
 
-### 5.5 Structured output without `responseSchema`
+### 5.5 Structured output — **corrected 2026-08-08, and one claim in it is unverified**
+
+> **Verified against Vertex on 2026-08-08.** The correction below was first written from the
+> first-party API documentation, which this adapter does not talk to — we reach Claude through
+> **Vertex `:rawPredict`** with `anthropic_version: "vertex-2023-10-16"`, a version pinned in 2023.
+> The doubt was real and is now settled by Vertex's own documentation: its Claude structured-output
+> page uses `output_config.format` **in a request body carrying exactly that pinned version**. The
+> passthrough supports it.
+>
+> Recorded because the doubt was the right instinct and nearly went unstated: the previous mechanism
+> was *known* to work on this transport, the new one was a claim from a document about a different
+> endpoint, and "the docs say so" is the shape of mistake this project keeps writing down. It took
+> one fetch to turn a claim into a check.
+>
+> **Still not sent to a live endpoint** — there are no Vertex credentials here, so the wire body is
+> proved by documentation and hermetic tests, not by a 200.
+
+The Messages API now has a **first-class structured-output parameter**, separate from `tools`
+(checked against the API on 2026-08-08, no beta header required):
+
+```jsonc
+"output_config": { "format": { "type": "json_schema", "schema": { … } } },
+"tools":         [ { "name": "…", "strict": true, "input_schema": { … } } ]
+```
+
+So the adapter sends `output_config.format`, the document comes back as an ordinary **text block**,
+and three things disappeared rather than being maintained:
+
+- the `aira_structured_output` tool and the pinned `tool_choice`;
+- the filter that kept that tool out of the caller's reported tool calls;
+- the `input_json_delta` ambiguity in the stream assembler, where one event meant *the document*
+  for one block and *a call's arguments* for another.
+
+**And the exclusion went with them.** `FRD-131` had to skip an Anthropic candidate whenever a
+request carried both a schema and the caller's own tools, because both needed the same field. They
+are separate parameters now: both travel, the model may call a function **or** answer with the
+document, and `stop_reason` says which. That exclusion was never our design — it was this
+mechanism's shadow.
+
+Two obligations the new parameter adds, filled in by the adapter rather than demanded of the
+caller, whose Gemini-shaped schema is a perfectly valid request: every object must carry
+`additionalProperties: false`, and every object must list its `required` fields.
+
+**One thing had to be *added* to keep a guarantee.** Under the forced tool, "the model answered in
+prose instead" was visible for free — there was no tool call to read. Now prose and a document
+arrive through the same text block, so the adapter **parses the text**: a text that is not JSON is
+not a document, whatever the provider guarantees, and the request is reported `SCHEMA_UNSATISFIED`
+exactly as before. A guarantee that is checked costs one parse; a guarantee that is assumed costs a
+support case.
+
+**What survives from the old reasoning, and it is the durable half:** this dialect's schema
+vocabulary is *narrower* than the one our surface accepts — no `minimum`/`maximum`, no
+`minLength`/`maxLength`, no `pattern`, no recursion. A schema using them is not sent with its
+constraints quietly dropped; the candidate is **skipped by name** (`SchemaExpressible`, `ADR-0012`
+§3). A caller who constrained a value with `pattern` and receives an unconstrained answer has been
+quietly misled, and that was true under either mechanism.
+
+---
+
+*Original text, superseded:*
 
 Anthropic has no schema parameter. The established technique is a **forced tool call**: define one
 tool whose `input_schema` is the caller's schema, set `tool_choice` to that tool, and read the
