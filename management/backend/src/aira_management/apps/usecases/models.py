@@ -64,3 +64,39 @@ class UseCaseMembership(models.Model):
 
     def __str__(self) -> str:
         return f"{self.user} in {self.use_case} ({self.role})"
+
+
+class UseCaseGroupGrant(models.Model):
+    """Access granted to a **Keycloak group** rather than to a person (`FRD-209`).
+
+    The path is whatever the realm uses — `/ai/kundenservice`, `/abteilungen/vertrieb/nord`. AIRA
+    imposes no naming convention on somebody else's directory, and never writes to it: who is in
+    the group stays the identity provider's answer, which is the entire point. A grant that reaches
+    nobody today may reach somebody tomorrow without anything here changing.
+
+    The object permissions are assigned to a **Django group** mirroring the path, so
+    `django-guardian` resolves user-and-group permissions in one query and every existing predicate
+    (`scope_queryset`, `may_admin`, `may_manage`) keeps working untouched. A second permission path
+    beside guardian's would be a second chance to forget one.
+    """
+
+    ADMIN = UseCaseMembership.ADMIN
+    USER = UseCaseMembership.USER
+    #: The same two values a user grant has. A third level is a real idea and not this one.
+    ROLE_CHOICES = UseCaseMembership.ROLE_CHOICES
+
+    use_case = models.ForeignKey(UseCase, on_delete=models.CASCADE, related_name="group_grants")
+    #: Keycloak's group path, exactly as the token reports it.
+    group_path = models.CharField(max_length=255)
+    role = models.CharField(max_length=16, choices=ROLE_CHOICES, default=USER)
+    #: Who granted it, kept for the same reason a suspension keeps its author: a review asks.
+    granted_by = models.CharField(max_length=150, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["use_case", "group_path"], name="unique_group_grant")
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.group_path} in {self.use_case} ({self.role})"

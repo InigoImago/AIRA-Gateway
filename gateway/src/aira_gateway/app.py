@@ -37,6 +37,7 @@ from aira_gateway.api.pipeline import router as pipeline_router
 from aira_gateway.api.reporting import router as reporting_router
 from aira_gateway.api.usage import router as usage_router
 from aira_gateway.auth.dependencies import require_attribution
+from aira_gateway.auth.grants import GroupGrantResolver
 from aira_gateway.auth.oidc import build_oidc_validator
 from aira_gateway.auth.service import ApiKeyService
 from aira_gateway.budgets.ledger import BudgetLedger
@@ -175,6 +176,10 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
     # and says why. It also survives a Redis outage, which for a control that *stops* traffic is
     # the direction that matters.
     app.state.suspensions = SuspensionService(sessionmaker, enforce=settings.enforce_suspensions)
+    # Which use cases a token's Keycloak groups have been granted (`FRD-209`). Read on every
+    # authenticated OIDC request, written rarely — a cache over the read-model, the same shape as
+    # the suspension cache above.
+    app.state.group_grants = GroupGrantResolver(sessionmaker)
     app.state.anomalies = AnomalyService(
         sessionmaker,
         interval_seconds=settings.anomaly_interval_seconds,

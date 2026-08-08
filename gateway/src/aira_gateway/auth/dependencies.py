@@ -6,6 +6,8 @@ same resolver. On failure a Gemini-shaped 401 is raised.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from fastapi import Depends, Request
 
 from aira_common.observability import set_span_attributes
@@ -41,8 +43,27 @@ async def resolve_principal(request: Request) -> Principal | None:
     # Otherwise treat it as an OIDC bearer (JWT), if OIDC is configured.
     validator: OidcValidator | None = request.app.state.oidc_validator
     if validator is not None:
-        return validator.validate(token)
+        principal = validator.validate(token)
+        return await _with_group_grants(request, principal) if principal else None
     return None
+
+
+async def _with_group_grants(request: Request, principal: Principal) -> Principal:
+    """Add the use cases this caller's Keycloak groups have been *granted* (`FRD-209`).
+
+    The union of two routes: the `/use-cases/<slug>` convention the token resolves on its own, and
+    the explicit grants in the read-model. A caller who is a member twice over is a member; where
+    the roles differ the stronger wins, because an access decision that depends on which row was
+    read first is not a decision anybody can review.
+    """
+    resolver = getattr(request.app.state, "group_grants", None)
+    if resolver is None or not principal.groups:
+        return principal
+    granted = await resolver.use_cases(principal.groups)
+    if not granted:
+        return principal
+    merged = tuple(dict.fromkeys([*principal.use_cases, *granted]))
+    return replace(principal, use_cases=merged)
 
 
 async def require_principal(request: Request) -> Principal:

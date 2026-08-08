@@ -293,6 +293,16 @@ the console cannot offer an action the server refuses. An agreement test attempt
 requires the status to match what the object reported.
 ([`FRD-206`](features/FRD-206-console-truthfulness.md))
 
+**Who reaches a use case, and how the two planes agree about it.** A grant binds a **principal** —
+a Keycloak group or a person — to a use case with a role. A group grant assigns the object
+permissions to a Django group mirroring the Keycloak path, and every authenticated request syncs the
+caller's group paths onto their Django groups, so `django-guardian` answers user-and-group
+permissions in one query and the predicates above needed no change. The gateway resolves the same
+question from the token's `groups` claim against a read-model table fed over Kafka, with the
+`/use-cases/<slug>` convention still resolving from the token alone. The two routes are a **union**
+and the stronger role wins; both rules live once, in `aira_common.access`.
+([`FRD-209`](features/FRD-209-access-by-group.md))
+
 **The SPA's screens**, and which plane each reads: use-case list/detail (management), the pipeline
 builder (management, dry-run against the gateway), budgets and rate limits (management, consumption
 from the gateway), models and prices (management), reporting and its CSV export (gateway), the
@@ -314,7 +324,7 @@ response). ([`FRD-207`](features/FRD-207-console-legibility.md))
 | Store | Holds | Why this one |
 |---|---|---|
 | `aira_mgmt` (Postgres) | use cases, memberships, keys (hashed), pipelines, budgets, limits, rules, catalog, outbox | System of record for **configuration** |
-| `aira_gateway` (Postgres) | read-model of all of the above, plus `request_logs`, `anomaly_events`, `access_suspensions`, `budget_usage` | System of record for **what happened**; the gateway cannot serve without it |
+| `aira_gateway` (Postgres) | read-model of all of the above, plus `use_case_groups`, `request_logs`, `anomaly_events`, `access_suspensions`, `budget_usage` | System of record for **what happened**; the gateway cannot serve without it |
 | Redis | rate-limit buckets, budget reservations | Shared counters across replicas; written on **every** request ([`ADR-0008`](adr/ADR-0008-redis-shared-counters.md)) |
 | Kafka | compacted config topics | Ordered, replayable configuration distribution |
 | Vault | credentials | Read as a **settings source**, never injected into `os.environ` ([`FRD-116`](features/FRD-116-vault-secrets.md)) |

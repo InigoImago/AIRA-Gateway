@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Group
 from django.db import transaction
 from django.db.models import QuerySet
 from django.utils import timezone
@@ -50,14 +51,16 @@ from aira_management.apps.usecases.access import (
     may_manage,
 )
 from aira_management.apps.usecases.events import emit
-from aira_management.apps.usecases.models import UseCase, UseCaseMembership
+from aira_management.apps.usecases.models import UseCase, UseCaseGroupGrant, UseCaseMembership
 from aira_management.apps.usecases.serializers import (
     AddMemberSerializer,
+    GrantGroupSerializer,
     MembershipSerializer,
+    UseCaseGroupGrantSerializer,
     UseCaseSerializer,
 )
 from aira_management.pagination import ConsolePagination, apply_search
-from aira_management.rbac import IsUseCaseAdmin, scope_queryset
+from aira_management.rbac import IsUseCaseAdmin, django_group_name, scope_queryset
 
 # One definition, in `access.py`, because the console asks the same questions to decide what to
 # put on screen — see the module docstring there.
@@ -66,16 +69,22 @@ _CHANGE = _CHANGE_PERM
 _MANAGE = _MANAGE_PERM
 
 
-def _grant(user: Any, usecase: UseCase, role: str) -> None:
-    assign_perm(_VIEW, user, usecase)
+def _grant(holder: Any, usecase: UseCase, role: str) -> None:
+    """Assign the object permissions for ``role``.
+
+    ``holder`` is a user **or a Django group** — guardian takes either, and that is the whole
+    mechanism behind group grants (`FRD-209` §2.2). Writing a second permission path for groups
+    would be a second chance to forget one.
+    """
+    assign_perm(_VIEW, holder, usecase)
     if role == UseCaseMembership.ADMIN:
-        assign_perm(_CHANGE, user, usecase)
-        assign_perm(_MANAGE, user, usecase)
+        assign_perm(_CHANGE, holder, usecase)
+        assign_perm(_MANAGE, holder, usecase)
 
 
-def _revoke(user: Any, usecase: UseCase) -> None:
+def _revoke(holder: Any, usecase: UseCase) -> None:
     for perm in (_VIEW, _CHANGE, _MANAGE):
-        remove_perm(perm, user, usecase)
+        remove_perm(perm, holder, usecase)
 
 
 def _snapshot(usecase: UseCase) -> dict[str, Any]:
@@ -205,6 +214,67 @@ class UseCaseViewSet(viewsets.ModelViewSet[UseCase]):
                 {"slug": usecase.slug, "username": user.get_username(), "role": role},
             )
         return Response(MembershipSerializer(membership).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["get", "post"], url_path="groups")
+    def group_grants(self, request: Request, slug: str | None = None) -> Response:
+        """List or grant access to a **Keycloak group** (`FRD-209`).
+
+        Reading is open to anybody who may see the use case: who can reach it is not a secret from
+        its own members, and hiding it makes "why can that person call this" unanswerable without
+        a database.
+        """
+        usecase = self.get_object()
+        if request.method == "GET":
+            grants = usecase.group_grants.all().order_by("group_path")
+            return Response(UseCaseGroupGrantSerializer(grants, many=True).data)
+
+        if not self._may_manage(usecase):
+            raise PermissionDenied("You cannot manage access to this use case.")
+        payload = GrantGroupSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        path = payload.validated_data["group_path"]
+        role = payload.validated_data["role"]
+
+        with transaction.atomic():
+            grant, _created = UseCaseGroupGrant.objects.update_or_create(
+                use_case=usecase,
+                group_path=path,
+                defaults={"role": role, "granted_by": request.user.get_username()},
+            )
+            group, _made = Group.objects.get_or_create(name=django_group_name(path))
+            # Revoked first, so lowering a grant from admin to user actually lowers it. An
+            # `assign_perm` on top of the old set would leave the stronger permissions in place —
+            # a demotion that demotes nothing is worse than none, because it reads as done.
+            _revoke(group, usecase)
+            _grant(group, usecase, role)
+            emit("use_case_group.granted", {"slug": usecase.slug, "group": path, "role": role})
+        return Response(UseCaseGroupGrantSerializer(grant).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["delete"], url_path="groups/revoke")
+    def revoke_group_grant(self, request: Request, slug: str | None = None) -> Response:
+        """Revoke a group grant.
+
+        The path arrives in the **query string**, not the URL path: a Keycloak group path contains
+        slashes, and encoding it into a path segment produces a route that works until somebody
+        has a group two levels deep.
+        """
+        usecase = self.get_object()
+        if not self._may_manage(usecase):
+            raise PermissionDenied("You cannot manage access to this use case.")
+        path = str(request.query_params.get("group_path", "")).strip()
+        grant = UseCaseGroupGrant.objects.filter(use_case=usecase, group_path=path).first()
+        if grant is None:
+            raise ValidationError({"group_path": [f"'{path}' is not granted on this use case."]})
+
+        with transaction.atomic():
+            grant.delete()
+            group = Group.objects.filter(name=django_group_name(path)).first()
+            if group is not None:
+                # Only the group's permissions. Somebody who also holds a direct grant keeps it —
+                # revoking one route must not silently close another (`FRD-209` FR-5).
+                _revoke(group, usecase)
+            emit("use_case_group.revoked", {"slug": usecase.slug, "group": path})
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
     @action(detail=True, methods=["delete"], url_path="members/(?P<username>[^/.]+)")
     def remove_member(

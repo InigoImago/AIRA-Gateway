@@ -30,6 +30,12 @@ class Principal:
     label: str | None = None
     use_cases: tuple[str, ...] = ()
     roles: tuple[str, ...] = ()
+    #: The Keycloak group paths the token carried, verbatim (`FRD-209`).
+    #:
+    #: Kept rather than resolved on the spot because resolving needs a read-model lookup, and the
+    #: validator is synchronous and has no database. The paths are the raw fact; which use cases
+    #: they reach is a decision made one layer out, where the grants are.
+    groups: tuple[str, ...] = ()
 
     @property
     def is_governance(self) -> bool:

@@ -8,6 +8,8 @@ import {
   ApiKey,
   Budget,
   BudgetUsage,
+  DirectoryResults,
+  GroupGrant,
   RateLimit,
   CatalogModel,
   DryRunResult,
@@ -69,6 +71,36 @@ export class UseCaseService {
 
   members(slug: string): Observable<Membership[]> {
     return this.http.get<Membership[]>(`${this.base}${seg(slug)}/members/`);
+  }
+
+  /** Access granted to Keycloak groups on this use case (`FRD-209`). */
+  groupGrants(slug: string): Observable<GroupGrant[]> {
+    return this.http.get<GroupGrant[]>(`${this.base}${seg(slug)}/groups/`);
+  }
+
+  grantGroup(slug: string, groupPath: string, role: string): Observable<GroupGrant> {
+    return this.http.post<GroupGrant>(`${this.base}${seg(slug)}/groups/`, {
+      group_path: groupPath,
+      role,
+    });
+  }
+
+  /**
+   * Revoke a group grant.
+   *
+   * The path travels in the **query string**: a Keycloak group path contains slashes, and encoding
+   * one into a path segment produces a route that works until somebody has a group two levels
+   * deep.
+   */
+  revokeGroup(slug: string, groupPath: string): Observable<void> {
+    return this.http.delete<void>(`${this.base}${seg(slug)}/groups/revoke/`, {
+      params: { group_path: groupPath },
+    });
+  }
+
+  /** Search Keycloak for groups and people a grant could name (`FRD-209` §3). */
+  directory(query: string): Observable<DirectoryResults> {
+    return this.http.get<DirectoryResults>('/api/v1/directory/', { params: { q: query } });
   }
 
   addMember(slug: string, username: string, role: string): Observable<Membership> {

@@ -56,6 +56,7 @@ Deliverables:
 - Config event schema (Management → Gateway) v1 over Kafka; Gateway read-model skeleton.
 
 FRDs: `FRD-200-mgmt-backend-foundation`, `FRD-201-keycloak-rbac`, `FRD-202-usecase-crud`,
+[`FRD-209`](features/FRD-209-access-by-group.md) (access by Keycloak group, with a directory search),
 `FRD-203-angular-shell`, `FRD-204-config-distribution-kafka`,
 `FRD-205-api-key-issuance` (self-service API-key issuance in Management + `api_key.*` Kafka events →
 Gateway read-model; the Gateway keeps validation only — see ADR-0006).

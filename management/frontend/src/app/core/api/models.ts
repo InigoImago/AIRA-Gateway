@@ -50,6 +50,40 @@ export interface UseCase {
   updated_at?: string;
 }
 
+/** One thing a grant can name — a Keycloak group, or a person (`FRD-209`). */
+export interface DirectoryEntry {
+  kind: 'group' | 'user';
+  /** What the grant stores: a group path, or a username. */
+  id: string;
+  label: string;
+  detail: string;
+}
+
+export interface DirectoryResults {
+  results: DirectoryEntry[];
+  /**
+   * Where the answer came from. `local` means Keycloak could not be asked and this is what
+   * Management already knows — a real subset, never a guess, and the console says so because
+   * "no results" from a degraded directory and "no such group" are different answers.
+   */
+  source: 'keycloak' | 'local' | 'none';
+  hint?: string;
+}
+
+/** Access granted to a Keycloak group rather than to a person (`FRD-209`). */
+export interface GroupGrant {
+  group_path: string;
+  role: 'admin' | 'user';
+  granted_by: string;
+  /**
+   * How many people **Management has seen sign in** this grant currently reaches — not the
+   * group's true size, which only the identity provider knows. It exists so a grant naming a
+   * group that reaches nobody is visible rather than silently inert.
+   */
+  reaches: number;
+  created_at?: string;
+}
+
 export interface Membership {
   username: string;
   role: string;

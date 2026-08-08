@@ -23,6 +23,17 @@
           "name": "other-uc"
         }
       ]
+    },
+    {
+      "name": "abteilungen",
+      "subGroups": [
+        {
+          "name": "kundendienst"
+        },
+        {
+          "name": "entwicklung"
+        }
+      ]
     }
   ],
   "clients": [
@@ -73,7 +84,21 @@
       "protocol": "openid-connect",
       "attributes": {
         "access.token.lifespan": "300"
-      }
+      },
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "config": {
+            "full.path": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "claim.name": "groups"
+          }
+        }
+      ]
     },
     {
       "clientId": "aira-integration-tests-member",
@@ -85,7 +110,21 @@
       "standardFlowEnabled": false,
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": true,
-      "protocol": "openid-connect"
+      "protocol": "openid-connect",
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "config": {
+            "full.path": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "claim.name": "groups"
+          }
+        }
+      ]
     },
     {
       "clientId": "aira-integration-tests-security",
@@ -101,7 +140,47 @@
       "attributes": {
         "access.token.lifespan": "300"
       },
-      "id": "aira-integration-tests-security"
+      "id": "aira-integration-tests-security",
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "config": {
+            "full.path": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "claim.name": "groups"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "aira-integration-tests-admin",
+      "name": "Integration tests, non-governance (dev only)",
+      "description": "Service account for the integration suite, carrying global-admin. A fourth account, because a group grant needs somebody to make it and somebody without oversight to receive it.",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "integration-tests-admin-secret",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "protocol": "openid-connect",
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "config": {
+            "full.path": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "claim.name": "groups"
+          }
+        }
+      ]
     }
   ],
   "users": [
@@ -204,7 +283,8 @@
       ],
       "groups": [
         "/use-cases/kundenservice",
-        "/use-cases/demo-uc"
+        "/use-cases/demo-uc",
+        "/abteilungen/kundendienst"
       ]
     },
     {
@@ -242,6 +322,9 @@
       "serviceAccountClientId": "aira-integration-tests-member",
       "realmRoles": [
         "use-case-admin"
+      ],
+      "groups": [
+        "/abteilungen/kundendienst"
       ]
     },
     {
@@ -250,6 +333,14 @@
       "serviceAccountClientId": "aira-integration-tests-security",
       "realmRoles": [
         "it-security"
+      ]
+    },
+    {
+      "username": "service-account-aira-integration-tests-admin",
+      "enabled": true,
+      "serviceAccountClientId": "aira-integration-tests-admin",
+      "realmRoles": [
+        "global-admin"
       ]
     }
   ],

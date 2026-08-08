@@ -170,9 +170,10 @@ test.describe('Form alignment', () => {
 
     await createUseCase(page, slug, 'Alignment probe');
 
+    // The access panel's picker is a filter row, not a disclosure — it is always there for
+    // somebody who may grant, so there is nothing to open first (`FRD-209`).
     await page.goto(`/use-cases/${slug}?tab=members`);
-    await page.click('button:has-text("Add member")');
-    await expectFormControlsAligned(page, 'add member');
+    await expectFormControlsAligned(page, 'grant access');
 
     await page.goto(`/use-cases/${slug}?tab=keys`);
     await page.click('button:has-text("Issue key")');

@@ -43,7 +43,7 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
   inevitably do when both were written from the same mental model — and line coverage cannot see
   a *missing requirement*: on 2026-08-05 a review found seven real defects behind a green suite at
   99% coverage. So: **prove a test can fail.** Break the property, watch it go red, restore.
-  `make mutants` (`tools/mutation_check.py`) does this for **261 properties** across auth, budgets,
+  `make mutants` (`tools/mutation_check.py`) does this for **271 properties** across auth, budgets,
   pipeline, retention, the management control plane and the gateway's counters; when
   you fix a bug, add the mutation that reintroduces it. Two traps that cost real defects here:
   a stand-in that is more permissive than the thing it replaces (reuse the real method where you
@@ -652,6 +652,26 @@ and both changes live only in the fourth. No unit test performs an OIDC redirect
 whether a control does something when used, **is an e2e change**. That run also updated 16 e2e
 tests whose screens this pass deliberately moved — five rewritten rather than repaired, because
 their *meaning* changed.
+**Access follows the group (`FRD-209`, 2026-08-08)** — membership was granted one person at a time
+*and* had **two answers that disagreed**: the gateway read Keycloak groups `/use-cases/<slug>`,
+Management read its own rows, and a use case created in the console produced only the second (the
+defect `FRD-208`'s round surfaced). A grant now binds a **principal** — a group or a person — to a
+use case with a role. The mechanism is the keeper: **guardian assigns object permissions to a user
+*or a Django group***, so a group grant assigns them to a Django group mirroring the Keycloak path
+and every request syncs the caller's paths onto their Django groups (as `FRD-201` already does for
+roles) — `scope_queryset`, `may_admin`, `may_manage` needed **no change**. Two rules live in
+`aira_common.access` so neither plane restates them: the routes are a **union**, and where roles
+differ **the stronger wins**. Degradation refuses. The console has **one** picker for groups and
+people (the question is "who should get this"), and without an admin client it falls back to what
+Management knows **and says so**. **AIRA never writes to the directory.** The live round found three
+defects of one family — *a correct half with nothing carrying it across*: (1) `use_case_group.granted`
+had **no topic**, and `record_to_outbox` returns **silently** for unknown types — the **third**
+instance after `aira.rate-limits` and `aira.anomaly-rules`, so a test now parses every `emit(...)`
+and compares it against the map **in both directions**, which immediately found `pipeline.deleted`
+as a **topic with no emitter**; (2) a **compacted** topic keyed by slug alone let a second grant
+**erase the first** from the log; (3) **a token with no `groups` claim grants nothing** — the mapper
+was on the SPA client and none of the service accounts (now in `INTEGRATIONS.md`). A fourth came from
+tightening a weak assertion: a grant on the bare realm root `/` was accepted and can never match.
 **Paging that is real, and a rule somebody can change (`FRD-208`, 2026-08-08)** — `FRD-207`'s
 search and paging were **client-side**, and the useful question is where that matters: one list of
 three. The **use-case list** is unbounded (801 seen) *and* its serializer answers three permissions

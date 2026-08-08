@@ -104,7 +104,15 @@ MEMBER_CLIENT_SECRET = "integration-tests-member-secret"
 # traffic and got different answers: `it-steuerung` sees every figure and writes nothing (PRD
 # §154), so the suite needed a caller that may actually act in an incident to test either side.
 SECURITY_CLIENT_ID = "aira-integration-tests-security"
-SECURITY_CLIENT_SECRET = "integration-tests-security-secret"
+SECURITY_CLIENT_SECRET = "integration-tests-security-secret"  # noqa: S105
+
+# A fourth account, carrying `global-admin`. Added by `FRD-209`: proving that a **group** grant
+# reaches somebody needs two identities — one that may create a use case and grant access, and one
+# with *no oversight* that reaches it only through the group. `it-steuerung` cannot create;
+# `use-case-admin` creating its own use case becomes its member directly, which is the thing not
+# being tested.
+ADMIN_CLIENT_ID = "aira-integration-tests-admin"
+ADMIN_CLIENT_SECRET = "integration-tests-admin-secret"  # noqa: S105
 
 
 @pytest.fixture
@@ -117,6 +125,12 @@ async def governance_token() -> str:
 async def member_token() -> str:
     """A real token for a use-case admin — authenticated, but with no oversight."""
     return await _token(MEMBER_CLIENT_ID, MEMBER_CLIENT_SECRET)
+
+
+@pytest.fixture
+async def admin_token() -> str:
+    """A real token carrying `global-admin` — may create a use case and grant access to it."""
+    return await _token(ADMIN_CLIENT_ID, ADMIN_CLIENT_SECRET)
 
 
 @pytest.fixture

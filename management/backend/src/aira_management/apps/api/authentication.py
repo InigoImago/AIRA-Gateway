@@ -23,7 +23,7 @@ from rest_framework.request import Request
 from aira_common.oidc import JwtVerifier, build_jwks_client
 from aira_management.apps.api.models import OidcIdentity
 from aira_management.config.runtime import get_settings
-from aira_management.rbac import sync_user_roles
+from aira_management.rbac import sync_user_groups, sync_user_roles
 
 _BEARER = "bearer "
 
@@ -56,7 +56,12 @@ class KeycloakJWTAuthentication(BaseAuthentication):
         if not subject:
             raise AuthenticationFailed("Token has no subject.")
         user = self._provision_user(str(subject), claims)
-        sync_user_roles(user, claims)  # Keycloak realm roles are the source of truth
+        # Keycloak is the source of truth for both: which roles this person holds, and which
+        # groups they are in. The second is what makes a group grant reach them (`FRD-209`), and
+        # it is re-read on every request so leaving a department takes effect on the next token
+        # rather than whenever somebody remembers to edit an access list here.
+        sync_user_roles(user, claims)
+        sync_user_groups(user, claims)
         return user, claims
 
     def authenticate_header(self, request: Request) -> str:

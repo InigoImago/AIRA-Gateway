@@ -5,6 +5,67 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-08 — access follows the group, and three things that carried nothing (`FRD-209`)
+
+Access to a use case was granted **one person at a time**, by username. Two things were wrong with
+that, and they were the same thing from two sides: it does not survive somebody joining or leaving a
+department, and there were already **two answers** to "is this person a member" that disagreed — the
+gateway read Keycloak groups `/use-cases/<slug>`, Management read its own rows, and a use case
+created in the console produced only the second. That is exactly the defect `FRD-208`'s round
+surfaced, where an administrator opened their own use case's Traces tab and was told, correctly,
+that the identity provider did not consider them a member.
+
+**A grant now binds a principal to a use case, and a principal is a group or a person.** A group is
+whatever path the realm actually uses — `/abteilungen/vertrieb/nord` — with a role (`user` or
+`admin`). AIRA reads the directory and never writes to it: who is in the group stays the identity
+provider's answer, which is the entire point.
+
+The mechanism is the part worth keeping: **`django-guardian` assigns object permissions to a user
+*or a Django group*.** So a group grant assigns them to a Django group mirroring the Keycloak path,
+and every authenticated request syncs the caller's group paths onto their Django groups — exactly as
+`FRD-201` already does for roles. `scope_queryset`, `may_admin` and `may_manage` then needed **no
+change at all**. A second permission path beside guardian's would have been a second chance to
+forget one, which is the mistake the two planes had already made about membership.
+
+Two rules written into `aira_common.access` so neither plane can restate them differently: the two
+routes are a **union** (being a member twice over is being a member) and where roles differ **the
+stronger wins** — an access decision that depended on which row was read first is not a decision
+anybody can review. And degradation refuses: if the read-model cannot be read, the naming convention
+still resolves from the token alone, and somebody who was a member *only* by grant is refused.
+
+The console gets **one** picker for both kinds, because the question is "who should get this", not
+"am I about to name a group or a person". Without an admin client it falls back to what Management
+already knows and **says so** — "no results" from a directory nobody could reach reads exactly like
+"no such group".
+
+**Then the live round found three defects, all of the same family: a correct half with nothing
+carrying it to the other side.**
+
+1. **An event with no topic — the third instance of this shape here.** The first grant was written,
+   listed and shown in the console, and reached the gateway *never*. `record_to_outbox` matches
+   against a hand-written map and **returns silently** for anything unknown — deliberate, so an
+   older Management does not crash on a newer event, and precisely what made the missing entry
+   invisible. `aira.rate-limits` and `aira.anomaly-rules` were both previously topics created by
+   nothing. There is now a test that parses every `emit(...)` in the source and compares it against
+   the map **in both directions** — and the reverse half immediately found **`pipeline.deleted`: a
+   topic with no emitter**, dead configuration that reads as a working path.
+2. **A compacted topic needs a key per grant.** Two grants on one use case keyed by the slug alone
+   meant the second erased the first from the log, so a gateway rebuilding its read-model would
+   silently lose access somebody holds. The key is `slug|group_path` now.
+3. **A token with no `groups` claim grants nothing.** The mapper was on the SPA client and none of
+   the service accounts, so their tokens carried no groups at all. A configuration requirement of
+   the feature rather than a bug in it — now in `INTEGRATIONS.md`, in the dev realm, and asserted
+   live.
+
+A fourth came from refusing to leave an assertion weak: a grant on the bare realm root `/` was
+accepted, and can **never** match — every path a token reports begins with a name — so it was
+permanently inert while reading to a person as "the whole realm". Refused now.
+
+Counts: 36 shared-library, 38 Management, 14 gateway and 21 console tests; **85 live cases** in the
+`FRD-129` style; 7 Playwright cases; mutations `N30`–`N39` (271 properties).
+
+---
+
 ## 2026-08-08 — paging that is real, and a rule somebody can change (`FRD-208`)
 
 Asked directly whether the search and paging `FRD-207` added were real or client-side, the honest

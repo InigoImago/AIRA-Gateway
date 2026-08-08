@@ -67,6 +67,9 @@ masks anything inside them**. `Redactor` is a no-op hook that has been in place 
 - **Per-request browsing** in the reporting screen is blocked on it ([`ADR-0009`](adr/ADR-0009-gateway-knows-roles.md)):
   showing stored prompts to people who are precisely *not* members of the use case that produced
   them is exactly what redaction exists to make safe.
+- Membership had **two answers that disagreed** — the gateway read Keycloak groups, Management read
+  its own rows. Closed by [`FRD-209`](features/FRD-209-access-by-group.md): a grant names a group or
+  a person, and both planes resolve it from the same vocabulary.
 - The **IT Security console** (`FRD-502`) would need it to show a payload; it was built to show
   **metadata only** instead, so it is not blocked — but "what was actually in that prompt" is a
   question the console still cannot answer, and the investigator has to ask the use case.

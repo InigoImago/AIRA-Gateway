@@ -20,6 +20,7 @@ from aira_gateway.db.models import (
     ModelRead,
     PipelineConfigRead,
     RateLimitRead,
+    UseCaseGroupRead,
     UseCaseMemberRead,
     UseCaseRead,
 )
@@ -41,6 +42,10 @@ async def apply_event(session: AsyncSession, event_type: str, payload: dict[str,
         await _upsert_member(session, payload)
     elif event_type == "membership.removed":
         await _remove_member(session, payload["slug"], payload["username"])
+    elif event_type == "use_case_group.granted":
+        await _upsert_group_grant(session, payload)
+    elif event_type == "use_case_group.revoked":
+        await _remove_group_grant(session, payload["slug"], payload["group"])
     elif event_type == "api_key.created":
         await _upsert_api_key(session, payload)
     elif event_type == "api_key.revoked":
@@ -114,6 +119,9 @@ async def _delete_usecase(session: AsyncSession, slug: str) -> None:
     """
     await session.execute(update(ApiKey).where(ApiKey.use_case == slug).values(is_active=False))
     await session.execute(delete(BudgetRead).where(BudgetRead.use_case == slug))
+    # Group grants go too. Leaving one would let a re-created slug silently inherit access an
+    # entire department still holds — the same defect the keys had, one route further out.
+    await session.execute(delete(UseCaseGroupRead).where(UseCaseGroupRead.use_case_slug == slug))
     await session.execute(delete(RateLimitRead).where(RateLimitRead.use_case == slug))
     # A rule scoped to this use case goes with it; a **global** rule does not, and the filter says
     # so explicitly. `use_case IS NULL` means "everywhere", and a cascade that swept those away
@@ -130,6 +138,32 @@ async def _delete_usecase(session: AsyncSession, slug: str) -> None:
     )
     await session.execute(delete(UseCaseMemberRead).where(UseCaseMemberRead.use_case_slug == slug))
     await session.execute(delete(UseCaseRead).where(UseCaseRead.slug == slug))
+
+
+async def _upsert_group_grant(session: AsyncSession, payload: dict[str, Any]) -> None:
+    result = await session.execute(
+        select(UseCaseGroupRead).where(
+            UseCaseGroupRead.use_case_slug == payload["slug"],
+            UseCaseGroupRead.group_path == payload["group"],
+        )
+    )
+    row = result.scalar_one_or_none()
+    role = payload.get("role", "user")
+    if row is None:
+        session.add(
+            UseCaseGroupRead(use_case_slug=payload["slug"], group_path=payload["group"], role=role)
+        )
+    else:
+        row.role = role
+
+
+async def _remove_group_grant(session: AsyncSession, slug: str, group_path: str) -> None:
+    await session.execute(
+        delete(UseCaseGroupRead).where(
+            UseCaseGroupRead.use_case_slug == slug,
+            UseCaseGroupRead.group_path == group_path,
+        )
+    )
 
 
 async def _upsert_member(session: AsyncSession, payload: dict[str, Any]) -> None:

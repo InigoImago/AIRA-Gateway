@@ -14,6 +14,7 @@ import {
 import { UseCaseService } from '../../core/api/use-case.service';
 import { PageFeedback } from '../../core/ui/page-feedback';
 import { BudgetsTab } from './budgets-tab';
+import { AccessPanel } from './access-panel';
 import { RulesTab } from './rules-tab';
 import { TracesTab } from './traces-tab';
 import { WarningsTab } from './warnings-tab';
@@ -36,7 +37,16 @@ const TABS: readonly Tab[] = [
 
 @Component({
   selector: 'app-use-case-detail',
-  imports: [FormsModule, RouterLink, BudgetsTab, RateLimitsTab, RulesTab, WarningsTab, TracesTab],
+  imports: [
+    FormsModule,
+    RouterLink,
+    AccessPanel,
+    BudgetsTab,
+    RateLimitsTab,
+    RulesTab,
+    WarningsTab,
+    TracesTab,
+  ],
   templateUrl: './use-case-detail.html',
   // Provided here, not in root: the banner belongs to this page, and every panel on it reports
   // into the same one rather than announcing its own outcome separately.
@@ -129,10 +139,7 @@ export class UseCaseDetail implements OnInit {
         this.loading.set(false);
       },
     });
-    this.service.members(this.slug).subscribe({
-      next: (members) => this.members.set(members),
-      error: (response: unknown) => this.feedback.fail(response, 'Could not load the members.'),
-    });
+    this.reloadMembers();
     this.loadKeys();
     this.loadBudgets();
     this.loadRateLimits();
@@ -176,37 +183,17 @@ export class UseCaseDetail implements OnInit {
   }
 
   // -- members -------------------------------------------------------------------------
+  //
+  // Adding and removing moved into `access-panel` with `FRD-209`: a grant names a group or a
+  // person, and splitting the two across two owners is how one of them quietly loses a rule the
+  // other gained. The parent keeps the **load**, because the tab count has to exist before the
+  // tab is opened.
 
-  protected canAddMember(): boolean {
-    return !!this.memberUsername().trim() && !this.feedback.busy();
-  }
-
-  protected addMember(): void {
-    if (!this.canAddMember()) {
-      return;
-    }
-    const username = this.memberUsername().trim();
-    this.feedback.run(this.service.addMember(this.slug, username, this.memberRole()), {
-      failure: 'Could not add the member.',
-      success: () => {
-        this.feedback.succeed(`${username} was added.`);
-        this.memberUsername.set('');
-        this.showAddMember.set(false);
-        this.load();
-      },
-    });
-  }
-
-  protected removeMember(username: string): void {
-    if (!this.confirmService.ask(`Remove ${username} from this use case?`)) {
-      return;
-    }
-    this.feedback.run(this.service.removeMember(this.slug, username), {
-      failure: `Could not remove ${username}.`,
-      success: () => {
-        this.feedback.succeed(`${username} was removed.`);
-        this.load();
-      },
+  /** Re-read the members after the access panel changed one. */
+  protected reloadMembers(): void {
+    this.service.members(this.slug).subscribe({
+      next: (members) => this.members.set(members),
+      error: (response: unknown) => this.feedback.fail(response, 'Could not load the members.'),
     });
   }
 

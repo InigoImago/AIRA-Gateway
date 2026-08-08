@@ -43,7 +43,12 @@ class OidcValidator:
             subject=str(subject),
             method="oidc",
             credential=str(client)[:64] if client else None,
+            # The `/use-cases/<slug>` convention, resolvable from the token alone (`FRD-102`).
+            # Group *grants* are added a layer out, where the read-model is — see
+            # `auth/grants.py`. Union, not replacement: this route keeps working, including when
+            # the read-model cannot be read.
             use_cases=usecases_from_groups(groups),
+            groups=tuple(str(group) for group in groups if isinstance(group, str)),
             roles=realm_roles(claims),
         )
 

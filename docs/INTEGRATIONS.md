@@ -75,16 +75,55 @@ AIRA needs **one realm** with five roles, one group hierarchy, and two clients.
 Realm roles are the **source of truth**. On authentication they are synced onto Django groups;
 removing a role in Keycloak removes it in AIRA on the next login.
 
-### Groups — data-plane membership
+### Groups — who reaches which use case
+
+**Your group names are yours.** A use case's access list names whatever paths your realm actually
+uses — `/abteilungen/vertrieb/nord`, `/ai/kundenservice` — and AIRA grants them a role
+(`user` or `admin`) in the console. Somebody joining or leaving the group takes effect on their
+next token, without anybody editing a list here. See
+[`FRD-209`](features/FRD-209-access-by-group.md).
+
+A naming convention also still works, and needs no configuration at all:
 
 ```
 /use-cases/<slug>
 ```
 
-A user in `/use-cases/kundenservice` may call the gateway attributed to that use case. This is a
-**different list** from the member list in the console: Management's membership grants
-*control-plane* rights (object permissions), the Keycloak group grants *data-plane* access. Being in
-one does not put you in the other, and the console says so where it matters.
+A user in `/use-cases/kundenservice` reaches that use case by the name alone. It is one route in,
+not the only one, and the two are a **union** — where the roles differ, the stronger wins.
+
+**AIRA never writes to your directory.** It does not create groups, add people to them or delete
+them. Group membership stays your system's answer.
+
+#### The one setting this depends on
+
+> **The access token must carry a `groups` claim, with full paths.**
+
+Without it a group grant reaches nobody — silently, because a token with no groups is
+indistinguishable from a token whose owner is in none. Add a **group-membership** protocol mapper
+to every client whose tokens AIRA sees, including service accounts:
+
+| Field | Value |
+|---|---|
+| Mapper type | Group Membership |
+| Token Claim Name | `groups` |
+| Full group path | **on** |
+| Add to access token | on |
+
+The dev realm has it on the SPA client and on the test service accounts. A realm that has it on
+only some of them produces a feature that works for some callers and not others, which is the
+hardest shape of all to diagnose.
+
+#### Searching your directory (optional)
+
+To let the console **search** your groups and users when granting access, give AIRA a read-only
+service account and set `AIRA_DIRECTORY_CLIENT_ID` / `AIRA_DIRECTORY_CLIENT_SECRET`. It needs
+`view-users` and `query-groups` on the realm — nothing else, and it is never used for anything but
+a search.
+
+Without it the console still works: it offers the people who have signed in and the groups already
+granted somewhere, and **says that is what it is showing**. It cannot invent a group nobody has
+used, so on a fresh installation the first grant of a new group has to be typed.
 
 ### Clients
 
@@ -107,8 +146,9 @@ one does not put you in the other, and the console says so where it matters.
 - **Client description length**: Keycloak stores it in `varchar(255)`. A longer one breaks the
   realm import, and the failure looks like Keycloak not starting.
 
-> ✅ five realm roles · `/use-cases/<slug>` groups · a public PKCE client with pinned URIs · password
-> grant off · issuer reachable from both services
+> ✅ five realm roles · a **`groups` claim with full paths on every client** · a public PKCE client
+> with pinned URIs · password grant off · issuer reachable from both services · *(optional)* a
+> read-only service account for directory search
 
 ---
 

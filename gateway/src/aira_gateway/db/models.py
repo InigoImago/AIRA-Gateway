@@ -217,6 +217,23 @@ class UseCaseMemberRead(Base):
     role: Mapped[str] = mapped_column(String(16), default="user")
 
 
+class UseCaseGroupRead(Base):
+    """Gateway read-model of access granted to a **Keycloak group** (`FRD-209`).
+
+    The gateway cannot ask Management on the request path (`FRD-204`), so a group grant arrives the
+    same way members, keys, budgets and limits do — over Kafka, into a table this side owns.
+    """
+
+    __tablename__ = "use_case_groups"
+    __table_args__ = (UniqueConstraint("use_case_slug", "group_path", name="uq_group_grant"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    use_case_slug: Mapped[str] = mapped_column(String(64), index=True)
+    #: Keycloak's group path, exactly as a token reports it.
+    group_path: Mapped[str] = mapped_column(String(255), index=True)
+    role: Mapped[str] = mapped_column(String(16), default="user")
+
+
 class PipelineConfigRead(Base):
     """Gateway read-model of a use case's pre-dispatch pipeline, fed from Management (FRD-300)."""
 

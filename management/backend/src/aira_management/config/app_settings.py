@@ -43,6 +43,31 @@ class ManagementSettings(BaseAiraSettings):
     oidc_audience: str = ""
     oidc_jwks_uri: str = ""
 
+    # Directory search (`FRD-209`). A **read-only** service account with `view-users` and
+    # `query-groups` on the realm — the least it can be given. Absent by default: without it the
+    # console falls back to what Management already knows and says so, rather than pretending the
+    # search is complete.
+    directory_client_id: str = ""
+    directory_client_secret: str = ""
+
+    @property
+    def oidc_issuer_base(self) -> str:
+        """The Keycloak root, derived from the issuer (`.../realms/<realm>`).
+
+        Derived rather than configured separately: two settings for one server is two settings to
+        get out of step, and the admin API lives beside the realm the issuer already names.
+        """
+        issuer = self.oidc_issuer.rstrip("/")
+        marker = "/realms/"
+        return issuer.split(marker)[0] if marker in issuer else issuer
+
+    @property
+    def oidc_realm(self) -> str:
+        """The realm name, from the issuer."""
+        issuer = self.oidc_issuer.rstrip("/")
+        marker = "/realms/"
+        return issuer.split(marker)[-1] if marker in issuer else ""
+
     def jwks_uri(self) -> str:
         """Return the JWKS URI, deriving it from the issuer when not set explicitly."""
         if self.oidc_jwks_uri:

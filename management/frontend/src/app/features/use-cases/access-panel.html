@@ -1,0 +1,205 @@
+<div class="card" role="tabpanel">
+  <div class="spread">
+    <h3 class="section-title" style="margin: 0">
+      Access
+      <app-info-hint label="access to this use case" testid="access-scope" [wide]="true">
+        Who may call the gateway as this use case, and see it here. A grant names either a
+        <strong>Keycloak group</strong> — whoever is in it, now and later, without anybody editing
+        this list — or <strong>one person</strong>. <em>User</em> may make requests and read the
+        figures; <em>admin</em> may additionally change members, keys, pipeline, budgets, limits and
+        rules. Membership in the group is the identity provider's answer: AIRA reads it and never
+        writes it.
+      </app-info-hint>
+    </h3>
+  </div>
+
+  @if (!canManage()) {
+    <p class="muted" style="margin: 0.25rem 0 0" data-testid="access-readonly">
+      You can see who has access. Granting and revoking it is done by somebody who administers this
+      use case.
+    </p>
+  }
+
+  <!-- ── The picker ───────────────────────────────────────────────────────────────────────── -->
+  @if (canManage()) {
+    <div class="filter-row" style="margin-top: 0.9rem; position: relative">
+      <div class="field grow">
+        <label for="access-search">Grant access to</label>
+        <input
+          id="access-search"
+          type="search"
+          [value]="query()"
+          (input)="search($any($event.target).value)"
+          placeholder="a group or a person — type at least two letters"
+          autocomplete="off"
+          data-testid="access-search"
+        />
+        <span class="field__hint">
+          @if (searching()) {
+            Searching…
+          } @else if (source() === 'local') {
+            <!-- Said rather than implied. An empty list from a directory nobody could reach reads
+                 exactly like "no such group", and those are different answers to act on. -->
+            <strong>The identity provider could not be searched.</strong> Showing what this console
+            already knows: people who have signed in, and groups already granted somewhere.
+          } @else if (hint()) {
+            {{ hint() }}
+          } @else {
+            A group grant follows the group — somebody joining or leaving takes effect on their next
+            sign-in.
+          }
+        </span>
+      </div>
+
+      <div class="field">
+        <label for="access-role">As</label>
+        <select
+          id="access-role"
+          name="role"
+          [ngModel]="role()"
+          (ngModelChange)="role.set($event)"
+          data-testid="access-role"
+        >
+          <option value="user">user — may use it</option>
+          <option value="admin">admin — may change it</option>
+        </select>
+      </div>
+
+      <button
+        type="button"
+        class="btn btn--primary"
+        [disabled]="!picked() || feedback.busy()"
+        (click)="grant()"
+        data-testid="access-grant"
+        style="margin-bottom: 0.05rem"
+      >
+        {{ feedback.busy() ? 'Granting…' : 'Grant' }}
+      </button>
+    </div>
+
+    @if (results().length) {
+      <ul class="picker" role="listbox" data-testid="access-results">
+        @for (entry of results(); track entry.kind + entry.id) {
+          <li>
+            <button type="button" class="picker__item" role="option" (click)="pick(entry)">
+              <span class="badge" [class.badge--warning]="entry.kind === 'group'">
+                {{ entry.kind }}
+              </span>
+              <span class="picker__label">{{ entry.label }}</span>
+              <span class="picker__detail">{{ entry.detail || entry.id }}</span>
+            </button>
+          </li>
+        }
+      </ul>
+    } @else if (query().trim().length >= 2 && !searching()) {
+      <p class="muted" style="margin: 0.4rem 0 0" data-testid="access-no-match">
+        Nothing matches “{{ query() }}”.
+        @if (source() === 'local') {
+          The identity provider could not be searched, so this is only what the console already
+          knows — the group may well exist.
+        }
+      </p>
+    }
+  }
+
+  <!-- ── Who has access now ───────────────────────────────────────────────────────────────── -->
+  @if (loading()) {
+    <p class="loading" style="margin-top: 1rem">
+      <span class="spinner" aria-hidden="true"></span>
+      Loading access…
+    </p>
+  } @else if (!grants().length && !members().length) {
+    <p class="empty" data-testid="no-access">
+      Nobody has been granted access yet. Until somebody is, only Global Administrators and the
+      oversight roles can see this use case — and nobody can make a request as it.
+    </p>
+  } @else {
+    <div class="table-wrap" style="margin-top: 1rem">
+      <table class="table">
+        <thead>
+          <tr>
+            <th scope="col">Who</th>
+            <th scope="col">Kind</th>
+            <th scope="col">Role</th>
+            <th scope="col">Reaches</th>
+            <th scope="col"><span class="sr-only">Actions</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (grant of grants(); track grant.group_path) {
+            <tr>
+              <td>
+                <code>{{ grant.group_path }}</code>
+                @if (grant.granted_by) {
+                  <div class="muted" style="font-size: 0.78rem">
+                    granted by {{ grant.granted_by }}
+                  </div>
+                }
+              </td>
+              <td><span class="badge badge--warning">group</span></td>
+              <td>{{ grant.role }}</td>
+              <td class="nowrap">
+                <!--
+                  A grant to a group that matches nobody is silently inert: nothing fails, nobody
+                  gets access, and an access list that showed it identically to a working one
+                  could not be audited. This says how many known people it reaches — and is
+                  careful to say *known*, since the true size is the identity provider's answer.
+                -->
+                @if (grant.reaches === 0) {
+                  <span class="badge badge--muted" [attr.data-testid]="'reaches-' + grant.role">
+                    nobody yet
+                  </span>
+                } @else {
+                  {{ grant.reaches }} signed in
+                }
+              </td>
+              <td class="table__actions">
+                <div class="actions">
+                  @if (canManage()) {
+                    <button
+                      type="button"
+                      class="btn btn--sm btn--danger"
+                      [disabled]="feedback.busy()"
+                      [attr.aria-label]="'Revoke ' + grant.group_path"
+                      [attr.data-testid]="'revoke-group'"
+                      (click)="revokeGroup(grant)"
+                    >
+                      Revoke
+                    </button>
+                  }
+                </div>
+              </td>
+            </tr>
+          }
+
+          @for (member of members(); track member.username) {
+            <tr>
+              <td>
+                <code>{{ member.username }}</code>
+              </td>
+              <td><span class="badge badge--muted">person</span></td>
+              <td>{{ member.role }}</td>
+              <td class="nowrap"><span class="muted">—</span></td>
+              <td class="table__actions">
+                <div class="actions">
+                  @if (canManage()) {
+                    <button
+                      type="button"
+                      class="btn btn--sm btn--danger"
+                      [disabled]="feedback.busy()"
+                      [attr.aria-label]="'Remove ' + member.username"
+                      data-testid="revoke-member"
+                      (click)="revokeMember(member)"
+                    >
+                      Remove
+                    </button>
+                  }
+                </div>
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  }
+</div>

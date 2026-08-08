@@ -157,7 +157,22 @@ export async function ensureUseCase(page: Page, slug: string, name: string) {
   await expect(page.locator('table.table').or(page.locator('.empty')).first()).toBeVisible({
     timeout: 30_000,
   });
-  if ((await page.locator(`code:has-text("${slug}")`).count()) === 0) {
+
+  // Searched, not scanned. The list is paged at the server now (`FRD-208`), so "not on this page"
+  // and "does not exist" are different facts — and taking the first for the second made this
+  // helper try to create a use case that was already there, three pages further on.
+  const search = page.locator('[data-testid="use-case-search"]');
+  if (await search.count()) {
+    await search.fill(slug);
+    await expect(
+      page
+        .locator(`code:text-is("${slug}")`)
+        .or(page.locator('[data-testid="use-case-no-match"]'))
+        .first(),
+    ).toBeVisible({ timeout: 30_000 });
+  }
+
+  if ((await page.locator(`code:text-is("${slug}")`).count()) === 0) {
     await createUseCase(page, slug, name);
   }
   return slug;

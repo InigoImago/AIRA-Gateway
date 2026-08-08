@@ -57,6 +57,8 @@ environment ([§7](#7-secrets-from-vault)).
 | `AIRA_OIDC_JWKS_URI` | *(derived)* | Only when it is not `<issuer>/protocol/openid-connect/certs`. |
 | `AIRA_REQUIRE_USE_CASE` | `false` | Refuse an authenticated request that names no use case. Turn it **on** once every caller is migrated: without a use case there is nothing to budget, limit or attribute. |
 | `AIRA_TRUST_FORWARDED_FOR` | `false` | Read the client IP from `X-Forwarded-For`. Only enable behind a proxy you control — otherwise any caller can write any address into your audit trail. |
+| `AIRA_DIRECTORY_CLIENT_ID` | — | Management only. A **read-only** Keycloak service account (`view-users`, `query-groups`) so the console can search your groups and people when granting access (`FRD-209`). Without it the console offers what it already knows and says so. |
+| `AIRA_DIRECTORY_CLIENT_SECRET` | — | Its secret. From Vault in any real deployment. |
 
 ### Storage and retention
 

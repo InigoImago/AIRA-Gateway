@@ -13,28 +13,34 @@ test.describe('Use-case management', () => {
     await expect(page.locator('[role="dialog"]')).toHaveCount(0);
     await expect(page.locator('h2')).toContainText('Flow probe');
 
+    // Adding somebody moved into the access panel with `FRD-209`: a grant names a **group or a
+    // person**, and the picker is how either is chosen. Typing a username into a bare field was
+    // the shape that let a grant name somebody who does not exist.
     await page.goto(`/use-cases/${slug}?tab=members`);
-    await page.click('button:has-text("Add member")');
-    await page.fill('#member-user', 'ucuser');
-    await page.click('form button[type="submit"]');
+    await page.fill('[data-testid="access-search"]', 'ucuser');
+    const results = page.locator('[data-testid="access-results"]');
+    await expect(results).toBeVisible({ timeout: 20_000 });
+    await results.locator('button').first().click();
+    await page.click('[data-testid="access-grant"]');
 
     await expect(page.locator('table')).toContainText('ucuser');
-    await expect(page.locator('[role="status"]')).toContainText('ucuser was added');
+    await expect(page.locator('[role="status"]')).toContainText('granted');
   });
 
-  test('explains why an unknown username cannot be added', async ({ page }) => {
+  test('a name that matches nobody cannot be granted at all', async ({ page }) => {
+    // This used to submit and read back the server's refusal. `FRD-209` moved the boundary
+    // earlier: a grant names something **chosen from the directory**, so a name that matches
+    // nothing never reaches a request. That is the better failure — the earlier one was a round
+    // trip to be told what the picker already knew.
     await login(page, USERS.useCaseAdmin);
     const slug = uniqueSlug('unknown');
     await createUseCase(page, slug, 'Unknown member probe');
 
     await page.goto(`/use-cases/${slug}?tab=members`);
-    await page.click('button:has-text("Add member")');
-    await page.fill('#member-user', 'nobody-here');
-    await page.click('form button[type="submit"]');
+    await page.fill('[data-testid="access-search"]', 'nobody-here-at-all');
 
-    // The server's own wording, not a generic failure — and the form keeps the input.
-    await expect(page.locator('[role="alert"]')).toContainText('nobody-here');
-    await expect(page.locator('#member-user')).toHaveValue('nobody-here');
+    await expect(page.locator('[data-testid="access-no-match"]')).toBeVisible({ timeout: 20_000 });
+    await expect(page.locator('[data-testid="access-grant"]')).toBeDisabled();
   });
 
   test('issues a key once and revokes it after confirmation', async ({ page }) => {

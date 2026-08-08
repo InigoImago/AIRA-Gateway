@@ -32,9 +32,55 @@ def sync_user_roles(user: Any, claims: dict[str, Any]) -> None:
             user.groups.remove(group)
 
 
+#: Django groups that mirror a Keycloak group path are prefixed, so they can never collide with
+#: the five role groups — a realm with a group literally called `it-security` must not hand out the
+#: role by accident.
+KEYCLOAK_GROUP_PREFIX = "kc:"
+
+
+def django_group_name(path: str) -> str:
+    """The Django group that carries a Keycloak group's object permissions."""
+    return f"{KEYCLOAK_GROUP_PREFIX}{path}"
+
+
+def sync_user_groups(user: Any, claims: dict[str, Any]) -> None:
+    """Make the user's Django group membership match the Keycloak groups in the token.
+
+    This is what makes group grants work at all, and it is the whole trick: `django-guardian`
+    already resolves object permissions for a user **and their groups** in one query, so once the
+    token's groups are Django groups, `scope_queryset`, `may_admin` and `may_manage` need no change
+    whatsoever. A second permission path beside guardian's would be a second chance to forget one —
+    which is precisely the mistake the two planes already made about membership (`FRD-209` §1).
+
+    The token is the source of truth on every request, exactly as it is for roles: somebody removed
+    from a group in Keycloak loses access on their next token, without anything here being told.
+    """
+    raw = claims.get("groups")
+    paths = {path for path in (raw if isinstance(raw, list) else []) if isinstance(path, str)}
+    wanted = {django_group_name(path) for path in paths}
+
+    for name in wanted:
+        group, _created = Group.objects.get_or_create(name=name)
+        user.groups.add(group)
+
+    # Removed as well as added. A membership that only ever grows is an access list that survives
+    # somebody leaving the department, which is the failure this feature exists to prevent.
+    stale = user.groups.filter(name__startswith=KEYCLOAK_GROUP_PREFIX).exclude(name__in=wanted)
+    for group in stale:
+        user.groups.remove(group)
+
+
 def role_slugs(user: Any) -> set[str]:
-    """Return the AIRA role slugs the user currently holds (their group names)."""
-    return set(user.groups.values_list("name", flat=True))
+    """Return the AIRA role slugs the user currently holds.
+
+    Keycloak-mirror groups are excluded by their prefix: they carry object permissions, not roles,
+    and a realm group named after a role must not become one.
+    """
+    return {
+        name
+        for name in user.groups.values_list("name", flat=True)
+        if not name.startswith(KEYCLOAK_GROUP_PREFIX)
+    }
 
 
 def has_role(user: Any, *roles: Role) -> bool:

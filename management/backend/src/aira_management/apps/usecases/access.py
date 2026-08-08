@@ -15,8 +15,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from aira_management.apps.usecases.models import UseCase, UseCaseMembership
-from aira_management.rbac import has_role
+from aira_management.apps.usecases.models import UseCase, UseCaseGroupGrant, UseCaseMembership
+from aira_management.rbac import KEYCLOAK_GROUP_PREFIX, has_role
 from aira_management.roles import Role
 
 VIEW = "usecases.view_usecase"
@@ -45,4 +45,28 @@ def is_member(user: Any, usecase: UseCase) -> bool:
         return True
     if not getattr(user, "is_authenticated", False):
         return False
-    return UseCaseMembership.objects.filter(use_case=usecase, user=user).exists()
+    if UseCaseMembership.objects.filter(use_case=usecase, user=user).exists():
+        return True
+    # A group grant makes somebody a member without any row naming them — that is the point of
+    # `FRD-209`. Asking only about direct rows here would have let the console offer an API key to
+    # somebody the server would refuse, which is the `FRD-206` defect wearing a new hat.
+    return UseCaseGroupGrant.objects.filter(
+        use_case=usecase, group_path__in=held_group_paths(user)
+    ).exists()
+
+
+def held_group_paths(user: Any) -> list[str]:
+    """The Keycloak group paths this user's last token carried.
+
+    Read back out of the Django groups `sync_user_groups` writes, rather than from the token: the
+    predicates here are called from places that have a user and no request, and a permission that
+    can only be evaluated where the token happens to be in scope is a permission that gets
+    evaluated inconsistently.
+    """
+    if not getattr(user, "is_authenticated", False):
+        return []
+    return [
+        name[len(KEYCLOAK_GROUP_PREFIX) :]
+        for name in user.groups.values_list("name", flat=True)
+        if name.startswith(KEYCLOAK_GROUP_PREFIX)
+    ]

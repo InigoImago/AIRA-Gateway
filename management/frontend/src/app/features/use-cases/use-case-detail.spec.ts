@@ -49,6 +49,8 @@ interface Detail {
   storePayloads: { set: (v: boolean) => void; (): boolean };
   retentionError: () => string | null;
   retentionChanged: () => boolean;
+  canManage: () => boolean;
+  isMember: () => boolean;
   canSaveRetention: () => boolean;
   saveRetention: () => void;
   useCase: () => UseCase | null;
@@ -92,6 +94,7 @@ function setup(overrides: Overrides = {}, confirmAnswer = true, queryTab: string
     // Each panel loads its own; the parent only opens it. Stubbed here so the walkthrough below
     // can visit all eight — which is the point of it.
     useCaseRules: () => of([]),
+    groupGrants: () => of([]),
     anomalies: () => of({ events: [], next_cursor: null, scope: 'use_cases' }),
     suspensions: () => of({ suspensions: [] }),
     traces: () => of({ traces: [], next_cursor: null, scope: 'use_cases' }),
@@ -228,45 +231,6 @@ describe('UseCaseDetail', () => {
 
   // ---- members ---------------------------------------------------------------------
 
-  it('adds a member and reports it', () => {
-    const { component, calls } = setup();
-    component.memberUsername.set('  bob  ');
-    component.addMember();
-    expect(calls).toContain('addMember:bob');
-    expect(component.feedback.notice()).toBe('bob was added.');
-  });
-
-  it('refuses to submit an empty member form', () => {
-    const { component, calls } = setup();
-    component.memberUsername.set('   ');
-    expect(component.canAddMember()).toBe(false);
-    component.addMember();
-    expect(calls).toEqual([]);
-  });
-
-  it('keeps the member form open and shows why the server refused', () => {
-    const { component } = setup({ addMember: httpError(400, "Unknown user 'bob'.") });
-    component.showAddMember.set(true);
-    component.memberUsername.set('bob');
-    component.addMember();
-    expect(component.feedback.error()).toBe("Unknown user 'bob'.");
-    expect(component.showAddMember()).toBe(true);
-    expect(component.memberUsername()).toBe('bob');
-  });
-
-  it('asks before removing a member and does nothing when declined', () => {
-    const { component, calls } = setup({}, false);
-    component.removeMember('bob');
-    expect(calls).toEqual([]);
-  });
-
-  it('removes a member once confirmed', () => {
-    const { component, calls } = setup();
-    component.removeMember('bob');
-    expect(calls).toContain('removeMember:bob');
-    expect(component.feedback.notice()).toBe('bob was removed.');
-  });
-
   // ---- API keys --------------------------------------------------------------------
 
   it('issues a key, reveals it once, and closes the form', () => {
@@ -348,17 +312,6 @@ describe('UseCaseDetail', () => {
   });
 
   // ---- budgets ---------------------------------------------------------------------
-
-  it('blocks concurrent mutations while one is in flight', () => {
-    // The busy flag lives on the shared PageFeedback now, so one panel's mutation
-    // disables the controls of every panel on the page — which is the intent: two
-    // saves racing against the same use case is not something to make easy.
-    const { component } = setup({ addMember: new Observable<Membership>(() => undefined) });
-    component.memberUsername.set('bob');
-    component.addMember();
-    expect(component.feedback.busy()).toBe(true);
-    expect(component.canAddMember()).toBe(false);
-  });
 });
 
 describe('UseCaseDetail rendering', () => {
@@ -377,29 +330,6 @@ describe('UseCaseDetail rendering', () => {
     harness.fixture.detectChanges();
     return harness;
   }
-
-  it('renders the members table with roles and remove actions', () => {
-    const { text, html } = render({ members: of(MEMBERS) }, 'members');
-    expect(text()).toContain('alice');
-    expect(text()).toContain('bob');
-    expect(html().querySelectorAll('tbody tr').length).toBe(2);
-    expect(html().querySelector('[aria-label="Remove alice"]')).not.toBeNull();
-    // Wide tables scroll inside their card instead of widening the page.
-    expect(html().querySelector('.table-wrap')).not.toBeNull();
-  });
-
-  it('renders the add-member form only once opened', () => {
-    const harness = render({}, 'members');
-    expect(harness.html().querySelector('#member-user')).toBeNull();
-
-    harness.component.showAddMember.set(true);
-    harness.fixture.detectChanges();
-    const input = harness.html().querySelector('#member-user');
-    expect(input).not.toBeNull();
-    // Every control is reachable by its label.
-    expect(harness.html().querySelector('label[for="member-user"]')).not.toBeNull();
-    expect(harness.html().querySelector('label[for="member-role"]')).not.toBeNull();
-  });
 
   it('distinguishes active from revoked keys', () => {
     const { text, html } = render({ apiKeys: of(KEYS) }, 'keys');
@@ -456,32 +386,6 @@ describe('UseCaseDetail interactions', () => {
     expect(harness.component.tab()).toBe('budgets');
     click(harness.fixture, '#tab-overview');
     expect(harness.component.tab()).toBe('overview');
-  });
-
-  it('toggles the disclosure forms from their buttons', () => {
-    const harness = setup();
-    harness.component.selectTab('members');
-    harness.fixture.detectChanges();
-
-    click(harness.fixture, '[aria-expanded="false"]');
-    expect(harness.component.showAddMember()).toBe(true);
-    expect(harness.fixture.nativeElement.querySelector('#member-user')).not.toBeNull();
-
-    click(harness.fixture, '[aria-expanded="true"]');
-    expect(harness.component.showAddMember()).toBe(false);
-  });
-
-  it('submits the member form on submit', () => {
-    const harness = setup();
-    harness.component.selectTab('members');
-    harness.component.showAddMember.set(true);
-    harness.component.memberUsername.set('bob');
-    harness.fixture.detectChanges();
-
-    const form = (harness.fixture.nativeElement as HTMLElement).querySelector('form');
-    form?.dispatchEvent(new Event('submit'));
-    harness.fixture.detectChanges();
-    expect(harness.calls).toContain('addMember:bob');
   });
 
   it('removes a member from its row button', () => {
@@ -687,9 +591,10 @@ describe('UseCaseDetail — what a reader may do', () => {
     harness.fixture.detectChanges();
     expect(html().textContent).toContain('ada');
     expect(html().querySelector('[aria-label="Remove ada"]')).toBeNull();
-    expect(html().textContent).not.toContain('+ Add member');
-    // …and says who does it, instead of leaving a table with no explanation.
-    expect(html().querySelector('[data-testid="members-readonly"]')).not.toBeNull();
+    // The picker is not there at all — granting is not something a reader can start.
+    expect(html().querySelector('[data-testid="access-search"]')).toBeNull();
+    // …and it says who does it, instead of leaving a table with no explanation.
+    expect(html().querySelector('[data-testid="access-readonly"]')).not.toBeNull();
 
     harness.component.selectTab('keys');
     harness.fixture.detectChanges();
@@ -787,7 +692,7 @@ describe('UseCaseDetail — every tab has a panel behind it', () => {
   // nothing, while every unit test passed. This walks all eight.
   const PANELS: [string, string][] = [
     ['overview', '[aria-labelledby="tab-overview"]'],
-    ['members', 'table'],
+    ['members', 'app-access-panel'],
     ['keys', 'table'],
     ['budgets', 'app-budgets-tab'],
     ['rate-limits', 'app-rate-limits-tab'],
@@ -818,5 +723,42 @@ describe('UseCaseDetail — every tab has a panel behind it', () => {
     ).warningCount.set(3);
     harness.fixture.detectChanges();
     expect(harness.html().querySelector('#tab-warnings .tab__count')?.textContent).toContain('3');
+  });
+});
+
+describe('UseCaseDetail — retention', () => {
+  it('offers no save until something actually changed', () => {
+    // A Save that is always available teaches nobody whether their edit took: the button looks
+    // the same before and after.
+    const harness = setup();
+    expect(harness.component.canSaveRetention()).toBe(false);
+
+    harness.component.retentionDays.set(30);
+    expect(harness.component.canSaveRetention()).toBe(true);
+  });
+
+  it('counts switching payload storage off as a change', () => {
+    // It is the more consequential of the two settings, and forgetting it here would make the
+    // switch look inert.
+    const harness = setup();
+    harness.component.storePayloads.set(false);
+
+    expect(harness.component.canSaveRetention()).toBe(true);
+  });
+
+  it('does nothing when asked to save a change that is not there', () => {
+    const harness = setup();
+    harness.component.saveRetention();
+
+    expect(harness.calls.filter((call) => call.startsWith('update:'))).toEqual([]);
+  });
+
+  it('assumes the safe answer when the server reports no permissions at all', () => {
+    // An older server, or a serializer that lost the field: the console must not decide it may
+    // do everything. "Absence of information is not permission" (`FRD-114`).
+    const harness = setup({ get: of({ slug: 'demo-uc', name: 'Demo' } as unknown as UseCase) });
+
+    expect(harness.component.canManage()).toBe(false);
+    expect(harness.component.isMember()).toBe(false);
   });
 });

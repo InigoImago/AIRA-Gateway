@@ -234,102 +234,19 @@
     </div>
   }
 
-  <!-- Members -->
+  <!--
+    Who can reach this use case. Rewritten by `FRD-209`: a grant names a **Keycloak group** or a
+    person, and one panel handles both — because the question is "who should get this", not "am I
+    about to name a group or a person". Two panels would make somebody choose the mechanism before
+    they have chosen the recipient.
+  -->
   @if (tab() === 'members') {
-    <div class="card" role="tabpanel" aria-labelledby="tab-members">
-      <div class="spread">
-        <h3 class="section-title" style="margin: 0">Members</h3>
-        @if (canManage()) {
-          <button
-            type="button"
-            class="btn btn--sm"
-            [attr.aria-expanded]="showAddMember()"
-            (click)="showAddMember.set(!showAddMember())"
-          >
-            {{ showAddMember() ? 'Cancel' : '+ Add member' }}
-          </button>
-        }
-      </div>
-      @if (!canManage()) {
-        <p class="muted" style="margin: 0.25rem 0 0" data-testid="members-readonly">
-          You can see who belongs to this use case. Adding and removing members is done by its
-          administrators.
-        </p>
-      }
-
-      @if (showAddMember() && canManage()) {
-        <form class="form-inline disclosure" (ngSubmit)="addMember()">
-          <div class="field grow">
-            <label for="member-user">Username</label>
-            <input
-              id="member-user"
-              name="username"
-              [ngModel]="memberUsername()"
-              (ngModelChange)="memberUsername.set($event)"
-              placeholder="username"
-              autocomplete="off"
-            />
-            <span class="field__hint"
-              >Must already exist — users appear after their first login.</span
-            >
-          </div>
-          <div class="field">
-            <label for="member-role">Role</label>
-            <select
-              id="member-role"
-              name="role"
-              [ngModel]="memberRole()"
-              (ngModelChange)="memberRole.set($event)"
-            >
-              <option value="user">user</option>
-              <option value="admin">admin</option>
-            </select>
-          </div>
-          <button type="submit" class="btn btn--primary" [disabled]="!canAddMember()">Add</button>
-        </form>
-      }
-
-      <div class="table-wrap" style="margin-top: 1rem">
-        <table class="table">
-          <thead>
-            <tr>
-              <th scope="col">User</th>
-              <th scope="col">Role</th>
-              <th scope="col"><span class="sr-only">Actions</span></th>
-            </tr>
-          </thead>
-          <tbody>
-            @for (member of members(); track member.username) {
-              <tr>
-                <td>{{ member.username }}</td>
-                <td>
-                  <span class="badge badge--muted">{{ member.role }}</span>
-                </td>
-                <td class="table__actions">
-                  <div class="actions">
-                    @if (canManage()) {
-                      <button
-                        type="button"
-                        class="btn btn--sm btn--danger"
-                        [disabled]="feedback.busy()"
-                        [attr.aria-label]="'Remove ' + member.username"
-                        (click)="removeMember(member.username)"
-                      >
-                        Remove
-                      </button>
-                    }
-                  </div>
-                </td>
-              </tr>
-            } @empty {
-              <tr>
-                <td class="table__empty" colspan="3">No members yet.</td>
-              </tr>
-            }
-          </tbody>
-        </table>
-      </div>
-    </div>
+    <app-access-panel
+      [slug]="slug"
+      [canManage]="canManage()"
+      [members]="members()"
+      (changed)="reloadMembers()"
+    />
   }
 
   <!-- API keys -->
