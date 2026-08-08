@@ -106,6 +106,20 @@ function setup(
     component: fixture.componentInstance as unknown as Catalog,
     text: () => (fixture.nativeElement as HTMLElement).textContent ?? '',
     html: () => fixture.nativeElement as HTMLElement,
+    testid: (id: string) =>
+      (fixture.nativeElement as HTMLElement).querySelector(`[data-testid="${id}"]`),
+    click: (selector: string) => {
+      (fixture.nativeElement as HTMLElement).querySelector<HTMLElement>(selector)?.click();
+      fixture.detectChanges();
+    },
+    type: (id: string, value: string) => {
+      const input = (fixture.nativeElement as HTMLElement).querySelector<HTMLInputElement>(
+        `[data-testid="${id}"]`,
+      )!;
+      input.value = value;
+      input.dispatchEvent(new Event('input'));
+      fixture.detectChanges();
+    },
   };
 }
 
@@ -401,5 +415,53 @@ describe('ModelCatalog — declarations (FRD-114)', () => {
     page.component.toggleCapability('thinking', false);
 
     expect(page.component.capabilities()).toEqual(['generate']);
+  });
+});
+
+describe('ModelCatalog — finding one among many', () => {
+  function models(count: number): CatalogModel[] {
+    return Array.from({ length: count }, (_, index) => ({
+      ...FLASH,
+      name: `model-${index}`,
+      provider: index % 2 === 0 ? 'vertex' : 'ollama',
+    }));
+  }
+
+  it('searches by model name and by provider', () => {
+    // "What do we serve on Vertex" is as common a question here as "what does this model cost".
+    const harness = setup({ models: of(models(4)) });
+
+    harness.type('model-search', 'model-2');
+    expect(harness.html().querySelectorAll('tbody tr').length).toBe(1);
+
+    harness.type('model-search', 'ollama');
+    expect(harness.html().querySelectorAll('tbody tr').length).toBe(2);
+  });
+
+  it('says a search found nothing, and how big the catalog is', () => {
+    const harness = setup({ models: of(models(3)) });
+    harness.type('model-search', 'zzz');
+
+    expect(harness.testid('model-no-match')?.textContent).toContain('catalog holds 3');
+  });
+
+  it('pages a catalog that has outgrown one screen', () => {
+    const harness = setup({ models: of(models(60)) });
+
+    expect(harness.html().querySelectorAll('tbody tr').length).toBe(25);
+    harness.click('[data-testid="pager-next"]');
+    expect(harness.text()).toContain('26–50 of 60 models');
+  });
+
+  it('keeps a row and its buttons in the same row', () => {
+    // `display: flex` on a `<td>` stops it being a table cell: it leaves the row's height and
+    // baseline and floats free of the row it belongs to, which reads as two lists side by side.
+    // The cell stays a cell and the flexing happens one element in.
+    const harness = setup({ models: of(models(1)) });
+    const actions = harness.html().querySelector('.table__actions');
+
+    expect(actions).not.toBeNull();
+    expect(getComputedStyle(actions!).display).not.toBe('flex');
+    expect(actions!.querySelector('.actions')).not.toBeNull();
   });
 });

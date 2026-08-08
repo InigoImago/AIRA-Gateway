@@ -5,6 +5,80 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-08 — the console holds still, and says what its controls do (`FRD-207`)
+
+`FRD-206` made the console stop promising what the server refuses. A walkthrough of the running
+console asked the next question — *can I actually read this?* — and produced twelve findings. Two
+of them turned out to be defects rather than polish, and both are the same shape.
+
+**The jiggle was one element, and it was measurable.** A `PerformanceObserver` on `layout-shift`
+reported **five shifts in forty seconds on the security console, every one of them the Refresh
+button**: the stamp beside it changes width — "updating…" against "updated 12s ago", "9s" against
+"10s" — twice a tick. That is why it was hard to name: a few pixels, nothing appears to *happen*,
+and the reader is left with an impression rather than an observation. The stamp now reserves its
+widest form with tabular figures, and "refreshing" is a dot that fades in space it already
+occupies. The observer reports nothing at all now.
+
+**The navigation marker was never applied.** `app.html` carried `routerLinkActive="is-active"` on
+every item and `app.ts` did not import `RouterLinkActive`. Angular does not complain about an
+attribute matching no directive — it is inert markup — so the class was never set and the
+`.is-active` rule had been styling nothing for as long as the shell has existed. **The same shape
+as `FRD-502`'s `Live` two days earlier: a declaration that is silently inert**, invisible to every
+unit test and obvious in a browser.
+
+Also a real layout defect: `.table__actions` was `display: flex` **on the `<td>`**. A cell made a
+flex container stops participating in its row — it leaves the row's height and baseline — which is
+exactly the "break between a model row and its own Edit/Delete buttons" that was reported. And the
+trace filter row was `align-items: center`, so a bare checkbox beside a field with a label above it
+sat on a different line from the control it is read as a pair with; a filter row aligns on the
+**bottom**, where the controls are. Both measured afterwards rather than eyeballed.
+
+**A finding opens, and a rule says what it does.** Six columns is as much as a table can be read
+at, so the other six fields go under the row. `rule-language.ts` turns a rule into English, which
+is safe to write only because the vocabulary is **closed**: seven kinds, one meaning each. It keeps
+two things honest — **a ratio is not a threshold** (`spend_spike` at 300 is "three times the window
+before", not 300 euros; `FRD-500` chose a ratio because a fixed number is a budget and there
+already is one), and **`alert` is not enforcement** (`ADR-0014`), with `detected_not_enforced`
+saying in words that the block was asked for, not applied, and the traffic continued.
+
+Rules can now be **edited** — threshold, window, sample, action and its duration or rate, and
+whether it watches at all. **Not the kind and not the name**: a kind decides what a threshold
+*means*, so changing it in place would silently reinterpret a number somebody chose deliberately.
+Authority follows `FRD-206`: a global rule to an incident role, and a use-case rule named as
+belonging to its use case rather than guessed at, because object-level permission is not in the
+token. The kill switch explains its reach on hover — one caller, one key, one use case, and
+**no switch for the installation**, which is a deliberate absence. And the line reading *kept,
+because "blocked for two hours last Tuesday" is what a review asks* — a note to the author sitting
+where a sentence for the reader belongs — was rewritten.
+
+**Reporting shows one table at a time.** Four stacked breakdowns made the page long enough that its
+own export control scrolled out of sight, and left two ideas of "which table": one for the screen
+and one for the file. The selector governs both now. `by_outcome` is shown and not exported, and
+says so — the CSV renderer takes three breakdowns (`FRD-602`), and a button that looks ready and
+answers 400 is the defect `FRD-206` was about. The token, spend and latency columns carry their
+definitions, including *why* prompt and completion are shown apart: they are priced apart.
+
+**Search and paging** on the breakdowns, the catalog and the use-case overview, extracted into
+`core/ui/table-view`. A live round found **801** use cases in one installation, which made the
+overview useless without a line of it being wrong. Two rules encoded: searching returns to page one
+(a filter applied on page 4 that leaves you there shows an empty table), and the reader is always
+told what they are not seeing — the pager renders even on a single page, because a control that
+appears only once a list grows teaches nobody it exists.
+
+The explanation hint was **written twice in a week** and the second copy promptly collided with the
+first on a `data-testid`; it is now `core/ui/info-hint`, one pinned at a time page-wide, since the
+panels are overlays and two open cover each other.
+
+One test lesson: the first e2e for the rule editor **skipped itself** when the installation had no
+rules — so the part of this pass with the most behaviour in it would have been exercised in a
+browser exactly never. It creates its own rule now. *A test that skips when the data is
+inconvenient reports green about nothing.*
+
+Also noted, not fixed: `/api/v1/use-cases/` computes object-level permissions per row, so hundreds
+of use cases take many seconds to answer. Search and paging make that survivable, not fast.
+
+---
+
 ## 2026-08-08 — a console for the evidence, and what actually happened per request (`FRD-502`)
 
 Phase 5 built rules (`FRD-500`), an engine (`FRD-501`) and enforcement (`FRD-503`), and none of it

@@ -14,13 +14,15 @@ import { CAPABILITIES, Capability, CatalogModel, Me } from '../../core/api/model
 import { MeService } from '../../core/api/me.service';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { ConfirmService } from '../../core/ui/confirm.service';
+import { TablePager } from '../../core/ui/table-pager';
+import { TableView } from '../../core/ui/table-view';
 
 /** An amount as people type it: "0.075", "10", "10,50". Kept as text end to end. */
 const AMOUNT = /^\d+([.,]\d{1,6})?$/;
 
 @Component({
   selector: 'app-model-catalog',
-  imports: [FormsModule],
+  imports: [FormsModule, TablePager],
   templateUrl: './model-catalog.html',
   // Escape closes the editor. A window with no way out but the mouse is a window somebody gets
   // stuck in.
@@ -32,6 +34,21 @@ export class ModelCatalog implements OnInit {
   private readonly confirmService = inject(ConfirmService);
 
   protected readonly models = signal<CatalogModel[]>([]);
+
+  /**
+   * The catalog, searched and paged.
+   *
+   * A model catalog is a list that only grows: four families across three platforms, plus every
+   * locally served model, each as its own row. Somebody arriving to fix one price should be able
+   * to type part of its name rather than scroll past ninety.
+   *
+   * The name **and** the provider are searchable, because "what do we serve on Vertex" is as
+   * common a question here as "what does gemini-2.0-flash cost".
+   */
+  protected readonly view = new TableView<CatalogModel>(
+    this.models,
+    (model) => `${model.name} ${model.display_name ?? ''} ${model.provider ?? ''}`,
+  );
   protected readonly loading = signal(true);
   protected readonly busy = signal(false);
   protected readonly error = signal<string | null>(null);

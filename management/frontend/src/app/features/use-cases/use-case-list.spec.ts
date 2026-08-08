@@ -81,12 +81,26 @@ function setup(
     component.showCreate.set(true);
     fixture.detectChanges();
   }
+  const element = fixture.nativeElement as HTMLElement;
   return {
     fixture,
     created,
     navigated,
     component,
-    text: () => (fixture.nativeElement as HTMLElement).textContent ?? '',
+    element,
+    text: () => element.textContent ?? '',
+    testid: (id: string) => element.querySelector(`[data-testid="${id}"]`),
+    click: (selector: string) => {
+      element.querySelector<HTMLElement>(selector)?.click();
+      fixture.detectChanges();
+    },
+    /** Type into a search box the way a person does — an `input` event, not a property set. */
+    type: (id: string, value: string) => {
+      const input = element.querySelector<HTMLInputElement>(`[data-testid="${id}"]`)!;
+      input.value = value;
+      input.dispatchEvent(new Event('input'));
+      fixture.detectChanges();
+    },
   };
 }
 
@@ -244,5 +258,53 @@ describe('UseCaseList form', () => {
       'true',
     );
     expect(html.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled).toBe(true);
+  });
+});
+
+describe('UseCaseList — finding one among many', () => {
+  it('searches by name and by technical id', () => {
+    // One is what a person calls it, the other is what their systems quote — somebody arriving
+    // from a log line has the second and not the first.
+    const harness = setup({
+      open: false,
+      list: of([
+        { slug: 'kundenservice', name: 'Customer service' },
+        { slug: 'entwicklung', name: 'Engineering' },
+      ] as unknown as UseCase[]),
+    });
+
+    harness.type('use-case-search', 'Customer');
+    expect(harness.text()).toContain('Customer service');
+    expect(harness.text()).not.toContain('Engineering');
+
+    harness.type('use-case-search', 'entwick');
+    expect(harness.text()).toContain('Engineering');
+    expect(harness.text()).not.toContain('Customer service');
+  });
+
+  it('says a search found nothing, and how much there was to search', () => {
+    const harness = setup({
+      open: false,
+      list: of([{ slug: 'a', name: 'A' }] as unknown as UseCase[]),
+    });
+
+    harness.type('use-case-search', 'zzz');
+    expect(harness.testid('use-case-no-match')?.textContent).toContain('1 in total');
+  });
+
+  it('pages a long list rather than printing all of it', () => {
+    // A live round found 801 use cases in one installation. Nothing about the screen was wrong,
+    // and it was unusable.
+    const many = Array.from({ length: 60 }, (_, index) => ({
+      slug: `uc-${index}`,
+      name: `Use case ${index}`,
+    })) as unknown as UseCase[];
+    const harness = setup({ open: false, list: of(many) });
+
+    expect(harness.element.querySelectorAll('tbody tr').length).toBe(25);
+    expect(harness.text()).toContain('1–25 of 60 use cases');
+
+    harness.click('[data-testid="pager-next"]');
+    expect(harness.text()).toContain('26–50 of 60');
   });
 });

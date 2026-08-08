@@ -301,6 +301,12 @@ themselves through one primitive, `core/ui/live.ts`: it polls, it stops on destr
 is hidden, it never stacks a request behind a slow one, and it shows the reader how stale the view is
 with a switch to turn it off ([`FRD-502`](features/FRD-502-security-console-and-traces.md)).
 
+Three primitives are shared across those screens rather than written per page, each because the
+second copy went wrong: `core/ui/live.ts` (polling that stops, is visible and never stacks),
+`core/ui/info-hint` (the hover/focus/pin explanation beside a figure or a control) and
+`core/ui/table-view` + `table-pager` (search and paging, client-side, for lists that arrive in one
+response). ([`FRD-207`](features/FRD-207-console-legibility.md))
+
 ---
 
 ## 6. Data stores, and what each is for

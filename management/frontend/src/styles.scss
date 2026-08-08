@@ -323,12 +323,25 @@ $field-label-gap: 0.3rem;
 /* Keep action buttons on one line so the column does not collapse into a stack. */
 /* A row's actions. `gap` rather than `white-space: nowrap` alone: "Edit" and "Remove" flush
  * against each other invite the wrong one, and the destructive one is the one that gets hit. */
+/* A cell of buttons.
+ *
+ * This used to be `display: flex` on the `<td>` itself, and that is what put a visible break
+ * between a row and its own Edit/Delete buttons: a table cell made a flex container stops being a
+ * table cell, so it leaves the row's height and baseline and floats free of the row it belongs
+ * to. On a table of models each row's actions sat slightly off from the row, which reads as two
+ * lists side by side rather than one table.
+ *
+ * The cell stays a cell; the flexing happens one element in. */
 .table .table__actions {
-  display: flex;
+  text-align: right;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.table .table__actions > .actions {
+  display: inline-flex;
   justify-content: flex-end;
   align-items: center;
   gap: 0.4rem;
-  white-space: nowrap;
 }
 .table th {
   font-size: 0.75rem;
@@ -433,9 +446,17 @@ $field-label-gap: 0.3rem;
     outline: 2px solid var(--aira-brand);
     outline-offset: -2px;
   }
+  /* A 2px underline in a brand colour was the whole signal, and on a bar of six tabs it reads as
+   * decoration rather than as "you are here". Weight, a background and a thicker rule make the
+   * selected one obvious at a glance — the question "which section am I in" should never need a
+   * second look. */
   &.is-active {
     color: var(--aira-brand-strong);
+    background: var(--aira-brand-soft, rgba(37, 99, 235, 0.08));
     border-bottom-color: var(--aira-brand);
+    border-bottom-width: 3px;
+    border-top-left-radius: var(--aira-radius-sm);
+    border-top-right-radius: var(--aira-radius-sm);
   }
 }
 .tab__count {
@@ -578,68 +599,9 @@ $field-label-gap: 0.3rem;
   color: var(--aira-text-muted);
 }
 
-/* The "i" beside a figure. A governance console is read by people deciding whether a control is
- * working, and a number whose definition is guessed at gets argued about instead of acted on —
- * but a heading long enough to define itself is a heading that wraps and breaks the row. This is
- * where the rest of the sentence goes. */
-.stat__info {
-  flex: 0 0 auto;
-  width: 1.05rem;
-  height: 1.05rem;
-  padding: 0;
-  border: 1px solid var(--aira-border);
-  border-radius: 50%;
-  background: transparent;
-  color: var(--aira-text-muted);
-  font-size: 0.68rem;
-  font-weight: 700;
-  line-height: 1;
-  font-style: italic;
-  cursor: pointer;
-}
-.stat__info:hover,
-.stat__info:focus-visible {
-  border-color: var(--aira-accent, currentColor);
-  color: var(--aira-text, currentColor);
-}
-
-/* The explanation, anchored to the "i" it belongs to.
- *
- * Positioned rather than in flow: putting it in the card would make the card grow under the
- * pointer and shove the rest of the row sideways, which is the jumpiness a hover is least
- * forgiving of. It sits *below* the button so it does not cover the figure it describes. */
-.stat__info-wrap {
-  position: relative;
-  display: inline-flex;
-}
-.stat__help {
-  position: absolute;
-  z-index: 30;
-  top: calc(100% + 0.4rem);
-  left: 50%;
-  transform: translateX(-50%);
-  width: max-content;
-  max-width: min(20rem, 70vw);
-  padding: 0.55rem 0.7rem;
-  background: var(--aira-surface);
-  border: 1px solid var(--aira-border-strong);
-  border-radius: var(--aira-radius-sm);
-  box-shadow: var(--aira-shadow-lg);
-  font-size: 0.78rem;
-  font-weight: 400;
-  line-height: 1.45;
-  letter-spacing: 0;
-  text-transform: none;
-  color: var(--aira-text);
-  /* The pointer is on the button, not in here — and a panel that swallows clicks would make the
-   * figure underneath unselectable while it is showing. */
-  pointer-events: none;
-}
-.stat__info.is-open {
-  color: #fff;
-  background: var(--aira-brand);
-  border-color: var(--aira-brand);
-}
+/* The "i" beside a figure lives in `core/ui/info-hint` now — see `.info-hint` below. It was
+ * written twice within a week, here and on a table header, which is one time more than a
+ * hover-plus-focus-plus-pin interaction should be got right. */
 
 /* The unit under a paired figure — "prompt / completion" belongs with the number, not in the
  * heading where it doubled the heading's length. */
@@ -767,13 +729,58 @@ fieldset.bare {
 /* ---- live views (FRD-502) ---------------------------------------------------------- */
 
 /* Liveness is a state the reader owns, so it is on the page rather than implied. */
+/* A live view must not move under the reader.
+ *
+ * Measured rather than guessed: a `PerformanceObserver` on `layout-shift` reported the Refresh
+ * button shifting on **every tick**, because the stamp beside it changes width — "updating…" is
+ * narrower than "updated 12s ago", and "9s" is narrower than "10s". Five shifts in forty seconds
+ * is the "jiggle" somebody sees without being able to name it, and the smallest ones are the most
+ * unsettling because nothing appears to have happened.
+ *
+ * So the strip is fixed: the stamp reserves its widest form, digits are tabular so they cannot
+ * change width, and "refreshing" is a dot that fades in the space already occupied rather than a
+ * word that replaces one of a different length. */
 .live {
   gap: 0.6rem;
+  align-items: center;
 }
 .live__stamp {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
   font-size: 0.78rem;
   font-variant-numeric: tabular-nums;
-  min-width: 8ch;
+  /* Wide enough for "updated 59m ago" so nothing after it ever moves. */
+  min-width: 15ch;
+  white-space: nowrap;
+}
+.live__dot {
+  flex: 0 0 auto;
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: 50%;
+  background: var(--aira-brand);
+  /* Present but invisible when idle: removing it would give the space back and move the text. */
+  opacity: 0;
+  transition: opacity 120ms linear;
+}
+.live__dot.is-busy {
+  opacity: 1;
+  animation: aira-pulse 1s ease-in-out infinite;
+}
+@keyframes aira-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .live__dot.is-busy {
+    animation: none;
+  }
 }
 
 /* A timestamp or an id that wraps turns one row into two and makes a table unscannable. */
@@ -793,4 +800,203 @@ fieldset.bare {
   background: var(--aira-danger-soft);
   color: var(--aira-danger);
   border-color: #fecaca;
+}
+
+/* ---- a row of filters (FRD-206 follow-up) ------------------------------------------ */
+
+/* `form-row--spaced` centres its children, which is right until one of them is a field with a
+ * label above its control. Then the bare checkbox sits at the *middle* of the taller field and
+ * the select sits visibly lower than it — the two controls a reader reads as a pair are on two
+ * different lines. So a filter row aligns on the **bottom**, where the controls actually are,
+ * and every item carries a label so the heading row lines up too. */
+.filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 1.1rem 1.4rem;
+}
+/* A checkbox has no label above it of its own; this keeps its box on the controls' line. */
+.filter-row .checkline {
+  padding-bottom: 0.55rem;
+}
+
+/* ---- the "i" that carries the rest of a sentence ---------------------------------- */
+
+.info-hint {
+  position: relative;
+  display: inline-flex;
+  vertical-align: middle;
+  margin-left: 0.3rem;
+}
+.info-hint__button {
+  flex: 0 0 auto;
+  width: 1.05rem;
+  height: 1.05rem;
+  padding: 0;
+  border: 1px solid var(--aira-border-strong);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--aira-text-muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1;
+  font-style: italic;
+  cursor: pointer;
+}
+.info-hint__button:hover,
+.info-hint__button:focus-visible {
+  border-color: var(--aira-brand);
+  color: var(--aira-text);
+}
+.info-hint__button.is-open {
+  color: #fff;
+  background: var(--aira-brand);
+  border-color: var(--aira-brand);
+}
+/* Absolutely positioned, so the row does not grow under the pointer and shove its neighbours —
+ * the same jumpiness a hover is least forgiving of. */
+.info-hint__panel {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 0.4rem);
+  left: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: min(22rem, 70vw);
+  padding: 0.55rem 0.7rem;
+  background: var(--aira-surface);
+  border: 1px solid var(--aira-border-strong);
+  border-radius: var(--aira-radius-sm);
+  box-shadow: var(--aira-shadow-lg);
+  font-size: 0.78rem;
+  font-weight: 400;
+  line-height: 1.45;
+  letter-spacing: 0;
+  text-transform: none;
+  text-align: left;
+  color: var(--aira-text);
+  /* The pointer belongs to the button; a panel that swallowed clicks would make whatever is
+   * underneath unselectable while it shows. */
+  pointer-events: none;
+}
+.info-hint__panel--wide {
+  max-width: min(30rem, 80vw);
+}
+/* Near the right edge a centred panel would leave the viewport; the last cells of a table are
+ * exactly where the explanations are needed most. */
+th:last-child .info-hint__panel,
+td:last-child .info-hint__panel {
+  left: auto;
+  right: 0;
+  transform: none;
+}
+
+/* ---- searching and paging a table -------------------------------------------------- */
+
+.table-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.75rem 1.4rem;
+  margin-bottom: 0.75rem;
+}
+.search {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  min-width: min(18rem, 100%);
+}
+.search input {
+  width: 100%;
+}
+
+.pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  margin-top: 0.75rem;
+  font-size: 0.8rem;
+  color: var(--aira-text-muted);
+}
+.pager__controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.pager__position {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ---- a row that opens ------------------------------------------------------------- */
+
+/* A table row is a summary. When the answer to "why did this fire" is four more fields, they go
+ * under the row rather than into it: a table wide enough to hold everything is a table nobody can
+ * read, and a modal loses the row it came from. */
+.row-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  color: var(--aira-brand-strong);
+  text-align: left;
+  cursor: pointer;
+}
+.row-toggle:hover {
+  text-decoration: underline;
+}
+.row-toggle__caret {
+  display: inline-block;
+  font-size: 0.7rem;
+  transition: transform 120ms ease;
+}
+.row-toggle__caret.is-open {
+  transform: rotate(90deg);
+}
+tr.is-open > * {
+  background: var(--aira-brand-soft, rgba(37, 99, 235, 0.06));
+}
+.row-detail > td {
+  background: var(--aira-surface-muted, #f8fafc);
+  border-top: none;
+}
+.detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: 0.6rem 1.5rem;
+  margin: 0;
+  padding: 0.35rem 0 0.15rem;
+}
+.detail-grid > div {
+  min-width: 0;
+}
+.detail-grid dt {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--aira-text-muted);
+}
+.detail-grid dd {
+  margin: 0.15rem 0 0;
+  font-size: 0.85rem;
+  /* Ids, model names and reasons are long and unbroken; a cell that cannot break makes the whole
+   * table scroll sideways. */
+  overflow-wrap: anywhere;
+}
+.detail-sentence {
+  margin: 0.75rem 0 0;
+  padding: 0.55rem 0.7rem;
+  background: var(--aira-surface);
+  border: 1px solid var(--aira-border);
+  border-radius: var(--aira-radius-sm);
+  font-size: 0.85rem;
+  line-height: 1.5;
 }

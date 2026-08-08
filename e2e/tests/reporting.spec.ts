@@ -71,10 +71,19 @@ test.describe('Reporting', () => {
     await login(page, USERS.governance);
     await page.goto('/reporting');
     await expect(page.locator('[data-testid="scope"]')).toContainText('Every use case');
-    // The write is off the hot path (FRD-405), so the row appears a moment after the response.
-    await expect(page.locator(`code:has-text("${slug}")`).first()).toBeVisible({
-      timeout: 30_000,
-    });
+    // Searched for, not scrolled to. The breakdown is paged now (`FRD-207`), so on an installation
+    // with hundreds of use cases a fresh one is not on page one — which is the whole reason the
+    // search box exists. The write is also off the hot path (`FRD-405`), so the row appears a
+    // moment after the response; retrying the search covers both.
+    await expect
+      .poll(
+        async () => {
+          await page.fill('[data-testid="breakdown-search"]', slug);
+          return page.locator(`code:text-is("${slug}")`).count();
+        },
+        { timeout: 30_000, message: 'the use case never appeared in the governance report' },
+      )
+      .toBeGreaterThan(0);
 
     await logout(page);
     // ucuser is a member of `demo-uc` only — not of this slug, in the realm or anywhere else.
@@ -86,7 +95,11 @@ test.describe('Reporting', () => {
     await expect(page.locator('[data-testid="scope"]')).toContainText('Your use cases only');
     await expect(page.locator('[data-testid="total-requests"]')).toBeVisible();
     await expect(page.locator('[role="alert"]')).toHaveCount(0);
-    await expect(page.locator(`code:has-text("${slug}")`)).toHaveCount(0);
+    // Searched for as well, so "not visible" cannot mean "on another page". If this member could
+    // see it at all, the search would find it.
+    const search = page.locator('[data-testid="breakdown-search"]');
+    if (await search.count()) await search.fill(slug);
+    await expect(page.locator(`code:text-is("${slug}")`)).toHaveCount(0);
   });
 
   test('the report opens on the current month and can be pointed at another period', async ({
@@ -133,30 +146,30 @@ test.describe('Reporting', () => {
     await login(page, USERS.governance);
     await page.goto('/reporting');
 
-    await expect(page.locator('[data-testid="help-refused"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="help-stat-refused"]')).toHaveCount(0);
 
-    await page.hover('[data-testid="info-refused"]');
-    await expect(page.locator('[data-testid="help-refused"]')).toBeVisible();
-    await expect(page.locator('[data-testid="help-refused"]')).toContainText(
+    await page.hover('[data-testid="info-stat-refused"]');
+    await expect(page.locator('[data-testid="help-stat-refused"]')).toBeVisible();
+    await expect(page.locator('[data-testid="help-stat-refused"]')).toContainText(
       'never reached a model',
     );
 
     // Moving away puts it back.
     await page.hover('h2');
-    await expect(page.locator('[data-testid="help-refused"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="help-stat-refused"]')).toHaveCount(0);
   });
 
   test('and clicking pins it, for a screen with no hover at all', async ({ page }) => {
     await login(page, USERS.governance);
     await page.goto('/reporting');
 
-    await page.click('[data-testid="info-tokens"]');
+    await page.click('[data-testid="info-stat-tokens"]');
     await page.hover('h2');
-    await expect(page.locator('[data-testid="help-tokens"]')).toBeVisible();
+    await expect(page.locator('[data-testid="help-stat-tokens"]')).toBeVisible();
 
-    await page.click('[data-testid="info-tokens"]');
+    await page.click('[data-testid="info-stat-tokens"]');
     await page.hover('h2');
-    await expect(page.locator('[data-testid="help-tokens"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="help-stat-tokens"]')).toHaveCount(0);
   });
 
   test('the report fits a narrow viewport instead of scrolling the page sideways', async ({

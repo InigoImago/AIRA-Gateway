@@ -1,5 +1,8 @@
-import { Component, computed, input } from '@angular/core';
+import { Component, computed, effect, input } from '@angular/core';
 import { ReportRow } from '../../core/api/models';
+import { InfoHint } from '../../core/ui/info-hint';
+import { TablePager } from '../../core/ui/table-pager';
+import { TableView } from '../../core/ui/table-view';
 
 /**
  * One breakdown of a report — by use case, by model or by member (FRD-601).
@@ -13,6 +16,7 @@ import { ReportRow } from '../../core/api/models';
  */
 @Component({
   selector: 'app-breakdown-table',
+  imports: [InfoHint, TablePager],
   templateUrl: './breakdown-table.html',
 })
 export class BreakdownTable {
@@ -21,11 +25,33 @@ export class BreakdownTable {
   readonly rows = input.required<ReportRow[]>();
   /** Shown when there is nothing, in the terms of this particular breakdown. */
   readonly emptyText = input('Nothing in this period.');
+  /** What one row is, in plural — read out by the pager: "1–25 of 80 use cases". */
+  readonly noun = input('rows');
 
-  /** The largest spend in the breakdown, so every bar is drawn against the same scale. */
+  /**
+   * Searched and paged. A breakdown by member on an installation with four hundred people is a
+   * table nobody scrolls; the answer is a way to ask for the row you want, not a taller page.
+   */
+  protected readonly view = new TableView<ReportRow>(this.rows, (row) => row.key);
+
+  /**
+   * The largest spend in the breakdown, so every bar is drawn against the same scale.
+   *
+   * Over **all** rows, not the page: a bar rescaled per page would make the smallest row on page
+   * three look like the biggest spender in the report.
+   */
   protected readonly peak = computed(() =>
     this.rows().reduce((most, row) => Math.max(most, row.cost_nanos), 0),
   );
+
+  constructor() {
+    // A new period, or a different breakdown, is a different list — staying on page 4 of it shows
+    // an empty table that reads as "no data".
+    effect(() => {
+      this.rows();
+      this.view.page.set(1);
+    });
+  }
 
   protected share(row: ReportRow): number {
     const peak = this.peak();

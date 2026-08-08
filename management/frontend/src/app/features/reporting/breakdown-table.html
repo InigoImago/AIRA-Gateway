@@ -4,63 +4,116 @@
   @if (rows().length === 0) {
     <p class="table__empty">{{ emptyText() }}</p>
   } @else {
-    <div class="table-wrap">
-      <table class="table">
-        <caption class="sr-only">
-          Spend and usage by
-          {{
-            label().toLowerCase()
-          }}
-        </caption>
-        <thead>
-          <tr>
-            <th scope="col">{{ label() }}</th>
-            <th scope="col">Spend</th>
-            <th scope="col">Requests</th>
-            <th scope="col">Prompt / completion tokens</th>
-            <th scope="col">Latency (avg / max)</th>
-          </tr>
-        </thead>
-        <tbody>
-          @for (row of rows(); track row.key) {
-            <tr>
-              <th scope="row">
-                <code>{{ row.key }}</code>
-              </th>
-              <td>
-                <strong>{{ row.cost }}</strong>
-                @if (incomplete(row)) {
-                  <span
-                    class="muted"
-                    [title]="
-                      row.unpriced_requests +
-                      ' request(s) ran on a model with no price on file. Their cost is unknown, not zero.'
-                    "
-                    >+ {{ row.unpriced_requests }} unpriced</span
-                  >
-                }
-                <div class="progress" aria-hidden="true">
-                  <div class="progress__bar" [style.width.%]="share(row)"></div>
-                </div>
-              </td>
-              <td>
-                {{ row.requests }}
-                @if (row.failed_requests > 0) {
-                  <span class="muted">({{ row.failed_requests }} failed)</span>
-                }
-              </td>
-              <td>{{ row.prompt_tokens }} / {{ row.completion_tokens }}</td>
-              <td>
-                @if (row.avg_latency_ms === null) {
-                  <span class="muted">—</span>
-                } @else {
-                  {{ row.avg_latency_ms }} ms / {{ row.max_latency_ms }} ms
-                }
-              </td>
-            </tr>
-          }
-        </tbody>
-      </table>
+    <div class="table-tools">
+      <label class="search">
+        <span>Find a {{ label().toLowerCase() }}</span>
+        <input
+          type="search"
+          [value]="view.query()"
+          (input)="view.search($any($event.target).value)"
+          [attr.placeholder]="'part of a ' + label().toLowerCase() + ' name'"
+          data-testid="breakdown-search"
+          autocomplete="off"
+        />
+      </label>
     </div>
+
+    @if (view.matches().length === 0) {
+      <p class="table__empty" data-testid="breakdown-no-match">
+        Nothing here matches “{{ view.query() }}”. There {{ rows().length === 1 ? 'is' : 'are' }}
+        {{ rows().length }} row(s) in this period.
+      </p>
+    } @else {
+      <div class="table-wrap">
+        <table class="table">
+          <caption class="sr-only">
+            Spend and usage by
+            {{
+              label().toLowerCase()
+            }}
+          </caption>
+          <thead>
+            <tr>
+              <th scope="col">{{ label() }}</th>
+              <th scope="col">
+                Spend
+                <app-info-hint label="spend" testid="table-spend">
+                  What the requests in this row cost, from the price on file for each model at the
+                  time it answered. A model with no price on file is counted separately, never as
+                  zero — where that happened the row says “+ N unpriced” and the figure here is a
+                  lower bound.
+                </app-info-hint>
+              </th>
+              <th scope="col">Requests</th>
+              <th scope="col">
+                Prompt / completion tokens
+                <app-info-hint
+                  label="prompt and completion tokens"
+                  testid="table-tokens"
+                  [wide]="true"
+                >
+                  A token is roughly three quarters of a word. <strong>Prompt</strong> is what went
+                  <em>in</em> — the question, the system instructions and any attached document.
+                  <strong>Completion</strong> is what came <em>out</em>, including any reasoning the
+                  model did before answering. They are shown apart because they are priced apart:
+                  output usually costs several times more than input, which is why a row with modest
+                  prompt tokens can still be the expensive one.
+                </app-info-hint>
+              </th>
+              <th scope="col">
+                Latency (avg / max)
+                <app-info-hint label="latency" testid="table-latency">
+                  How long the gateway took to answer, end to end — average and slowest. Average and
+                  maximum rather than a percentile, because a percentile is not computable on every
+                  store this runs against, and a figure that quietly means something else on a
+                  different database is worse than a plainer one.
+                </app-info-hint>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (row of view.rows(); track row.key) {
+              <tr>
+                <th scope="row">
+                  <code>{{ row.key }}</code>
+                </th>
+                <td>
+                  <strong>{{ row.cost }}</strong>
+                  @if (incomplete(row)) {
+                    <span
+                      class="muted"
+                      [title]="
+                        row.unpriced_requests +
+                        ' request(s) ran on a model with no price on file. Their cost is unknown, not zero.'
+                      "
+                      >+ {{ row.unpriced_requests }} unpriced</span
+                    >
+                  }
+                  <div class="progress" aria-hidden="true">
+                    <div class="progress__bar" [style.width.%]="share(row)"></div>
+                  </div>
+                </td>
+                <td>
+                  {{ row.requests }}
+                  @if (row.failed_requests > 0) {
+                    <span class="muted">({{ row.failed_requests }} failed)</span>
+                  }
+                </td>
+                <td>{{ row.prompt_tokens }} / {{ row.completion_tokens }}</td>
+                <td>
+                  @if (row.avg_latency_ms === null) {
+                    <span class="muted">—</span>
+                  } @else {
+                    {{ row.avg_latency_ms }} ms / {{ row.max_latency_ms }} ms
+                  }
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+
+      <app-table-pager [view]="view" [noun]="noun()" testid="breakdown-pager" />
+    }
   }
 </div>

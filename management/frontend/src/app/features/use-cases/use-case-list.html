@@ -24,30 +24,54 @@
         }
       </p>
     } @else {
-      <div class="table-wrap">
-        <table class="table">
-          <thead>
-            <tr>
-              <th scope="col">Name</th>
-              <!-- "Slug" is our word, not the reader's. What it *is* to them is the identifier
-                   their systems will quote. -->
-              <th scope="col">Technical id</th>
-            </tr>
-          </thead>
-          <tbody>
-            @for (useCase of useCases(); track useCase.slug) {
-              <tr>
-                <td>
-                  <a [routerLink]="['/use-cases', useCase.slug]">{{ useCase.name }}</a>
-                </td>
-                <td>
-                  <code>{{ useCase.slug }}</code>
-                </td>
-              </tr>
-            }
-          </tbody>
-        </table>
+      <div class="table-tools" style="padding: 0.9rem 1rem 0">
+        <label class="search">
+          <span>Find a use case</span>
+          <input
+            type="search"
+            [value]="view.query()"
+            (input)="view.search($any($event.target).value)"
+            placeholder="part of a name or a technical id"
+            data-testid="use-case-search"
+            autocomplete="off"
+          />
+        </label>
       </div>
+
+      @if (!view.matches().length) {
+        <p class="empty" data-testid="use-case-no-match">
+          No use case matches “{{ view.query() }}”. There are {{ useCases().length }} in total.
+        </p>
+      } @else {
+        <div class="table-wrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th scope="col">Name</th>
+                <!-- "Slug" is our word, not the reader's. What it *is* to them is the identifier
+                   their systems will quote. -->
+                <th scope="col">Technical id</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (useCase of view.rows(); track useCase.slug) {
+                <tr>
+                  <td>
+                    <a [routerLink]="['/use-cases', useCase.slug]">{{ useCase.name }}</a>
+                  </td>
+                  <td>
+                    <code>{{ useCase.slug }}</code>
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+
+        <div style="padding: 0 1rem 0.9rem">
+          <app-table-pager [view]="view" noun="use cases" testid="use-case-pager" />
+        </div>
+      }
     }
   </div>
 </div>

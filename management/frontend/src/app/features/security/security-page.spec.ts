@@ -1,5 +1,5 @@
 import { TestBed } from '@angular/core/testing';
-import { Observable, of, throwError } from 'rxjs';
+import { Observable, Subject, of, throwError } from 'rxjs';
 import { AnomalyEvent, AnomalyRule, Me, Suspension } from '../../core/api/models';
 import { MeService } from '../../core/api/me.service';
 import { UseCaseService } from '../../core/api/use-case.service';
@@ -61,6 +61,7 @@ interface Options {
   rules?: AnomalyRule[];
   suspend?: Observable<Suspension>;
   lift?: Observable<Suspension>;
+  update?: Observable<AnomalyRule>;
   confirmAnswer?: boolean;
 }
 
@@ -78,6 +79,14 @@ function setup(options: Options = {}) {
     liftSuspension: (id: string) => {
       calls.push(`lift:${id}`);
       return options.lift ?? of({ ...SUSPENSION, lifted_at: 'now', lifted_by: 'user:itsec' });
+    },
+    updateRule: (id: number, changes: Record<string, unknown>) => {
+      calls.push(`update:${id}:${JSON.stringify(changes)}`);
+      return options.update ?? of(RULE);
+    },
+    deleteRule: (id: number) => {
+      calls.push(`delete-rule:${id}`);
+      return of(undefined);
     },
   };
   TestBed.configureTestingModule({
@@ -412,5 +421,276 @@ describe('SecurityPage — reading a rule', () => {
     expect((fixture.nativeElement as HTMLElement).textContent).toContain(
       'Could not load the anomaly rules.',
     );
+  });
+});
+
+describe('SecurityPage — a finding opens', () => {
+  it('shows what was measured, and what was done, in words', () => {
+    // A finding nobody can check is a finding nobody acts on. Six columns is as much as a table
+    // can be read at, so the rest goes under the row rather than into it.
+    const harness = setup();
+    expect(harness.testid('event-detail-e1')).toBeNull();
+
+    harness.click('[data-testid="event-toggle-e1"]');
+
+    const detail = harness.testid('event-detail-e1')?.textContent ?? '';
+    expect(detail).toContain('15 minutes');
+    expect(detail).toContain('kundenservice');
+    expect(detail).toContain('20 request(s)');
+    // And what the system actually did about it — `ADR-0014` keeps that apart from what it found.
+    expect(harness.text()).toContain('nothing was taken away');
+  });
+
+  it('closes again, so a long table does not fill with open rows', () => {
+    const harness = setup();
+    harness.click('[data-testid="event-toggle-e1"]');
+    harness.click('[data-testid="event-toggle-e1"]');
+
+    expect(harness.testid('event-detail-e1')).toBeNull();
+  });
+
+  it('names the rule behind the finding when the reader can see it too', () => {
+    const harness = setup({
+      events: [{ ...EVENT, rule: 'new address', kind: 'new_source_ip' }],
+      rules: [RULE],
+    });
+    harness.click('[data-testid="event-toggle-e1"]');
+
+    expect(harness.text()).toContain('The rule behind it');
+  });
+});
+
+describe('SecurityPage — a rule opens and can be changed', () => {
+  function onRules(options: Options = {}) {
+    const harness = setup(options);
+    (harness.component as unknown as { tab: { set: (v: string) => void } }).tab.set('rules');
+    harness.fixture.detectChanges();
+    return harness;
+  }
+
+  it('says what the rule does rather than printing its kind', () => {
+    // `new_source_ip` and two bare numbers is enough for whoever wrote the rule and nothing for
+    // whoever has to decide, at eleven at night, whether the alert in front of them matters.
+    const harness = onRules();
+    harness.click('[data-testid="rule-toggle-1"]');
+
+    const detail = harness.testid('rule-detail-1')?.textContent ?? '';
+    expect(detail).toContain('address that has not been seen before');
+    expect(detail).toContain('per API key');
+    expect(detail).toContain('60 minutes');
+  });
+
+  it('offers Edit to an incident role and explains the absence to everyone else', () => {
+    const allowed = onRules({ roles: ['it-security'] });
+    allowed.click('[data-testid="rule-toggle-1"]');
+    expect(allowed.testid('rule-edit-1')).not.toBeNull();
+
+    const readOnly = onRules({ roles: ['it-steuerung'] });
+    readOnly.click('[data-testid="rule-toggle-1"]');
+    expect(readOnly.testid('rule-edit-1')).toBeNull();
+    expect(readOnly.testid('rule-readonly-1')?.textContent).toContain('IT Security');
+  });
+
+  it('points a use-case rule at the use case rather than guessing the permission', () => {
+    // Object-level permission is not in the token, so the console cannot answer "may I edit this"
+    // for a use-case rule. Saying where it is edited beats offering a button that answers 403.
+    const harness = onRules({ rules: [{ ...RULE, is_global: false, use_case: 'uc-a' }] });
+    harness.click('[data-testid="rule-toggle-1"]');
+
+    expect(harness.testid('rule-edit-1')).toBeNull();
+    expect(harness.testid('rule-readonly-1')?.textContent).toContain('uc-a');
+  });
+
+  it('saves the fields somebody actually changes, and never the kind', () => {
+    // A rule's kind decides what its threshold *means*. Changing it in place would silently
+    // reinterpret a number somebody chose deliberately — a different kind is a different rule.
+    const harness = onRules();
+    harness.click('[data-testid="rule-toggle-1"]');
+    harness.click('[data-testid="rule-edit-1"]');
+
+    const component = harness.component as unknown as {
+      editThreshold: { set: (v: number) => void };
+      editAction: { set: (v: string) => void };
+      saveRule: (rule: AnomalyRule) => void;
+    };
+    component.editThreshold.set(5);
+    component.editAction.set('block');
+    component.saveRule(RULE);
+
+    const sent = harness.calls.find((call) => call.startsWith('update:1:'));
+    expect(sent).toBeDefined();
+    const body = JSON.parse(sent!.slice('update:1:'.length));
+    expect(body.threshold).toBe(5);
+    expect(body.action).toBe('block');
+    // Sent unchanged, because the server validates the threshold against the kind: a PATCH that
+    // omitted it would be validated against the default rather than against this rule.
+    expect(body.kind).toBe(RULE.kind);
+  });
+
+  it('asks before deleting a rule, and says what stops being watched', () => {
+    const declined = onRules({ confirmAnswer: false });
+    (declined.component as unknown as { removeRule: (r: AnomalyRule) => void }).removeRule(RULE);
+    expect(declined.calls).toEqual([]);
+
+    const accepted = onRules({ confirmAnswer: true });
+    (accepted.component as unknown as { removeRule: (r: AnomalyRule) => void }).removeRule(RULE);
+    expect(accepted.calls).toContain('delete-rule:1');
+  });
+});
+
+describe('SecurityPage — saying what a control is', () => {
+  it('explains how far the kill switch reaches, and how far it does not', () => {
+    // "Stop traffic" is a verb with no object until you press it, and a reader has to know the
+    // object before they can decide whether to use it. There is deliberately no switch for the
+    // installation, and the explanation says so.
+    const harness = setup();
+    (harness.component as unknown as { tab: { set: (v: string) => void } }).tab.set('suspensions');
+    harness.fixture.detectChanges();
+
+    harness.click('[data-testid="info-stop-scope"]');
+    const help = harness.testid('help-stop-scope')?.textContent ?? '';
+    expect(help).toContain('one caller');
+    expect(help).toContain('one API key');
+    expect(help).toContain('one whole use case');
+    expect(help).toContain('no switch for the');
+  });
+
+  it('describes the history in terms the reader shares', () => {
+    // It used to read: `kept, because "blocked for two hours last Tuesday" is what a review asks`
+    // — a note to whoever wrote the code, in the place where a sentence for the reader belongs.
+    const lifted = { ...SUSPENSION, id: 's2', lifted_at: '2026-08-08T11:00:00Z' };
+    const harness = setup({ suspensions: of({ suspensions: [lifted] }) });
+    (harness.component as unknown as { tab: { set: (v: string) => void } }).tab.set('suspensions');
+    harness.fixture.detectChanges();
+
+    const summary = harness.testid('past-summary')?.textContent ?? '';
+    expect(summary).toContain('Earlier decisions');
+    expect(summary).toContain('who stopped what, when, and why');
+    expect(summary).not.toContain('last Tuesday');
+  });
+});
+
+describe('SecurityPage — the rule editor', () => {
+  function editing(over: Partial<AnomalyRule> = {}) {
+    const harness = setup({ rules: [{ ...RULE, ...over }] });
+    (harness.component as unknown as { tab: { set: (v: string) => void } }).tab.set('rules');
+    harness.fixture.detectChanges();
+    harness.click('[data-testid="rule-toggle-1"]');
+    harness.click('[data-testid="rule-edit-1"]');
+    return harness;
+  }
+
+  it('shows the byte figure only for the kind that has one', () => {
+    // `payload_size` needs two numbers and every other kind needs one. A form that showed the
+    // second everywhere would invite a value the engine never reads.
+    expect(editing({ kind: 'payload_size' }).testid('edit-parameter-1')).not.toBeNull();
+    expect(editing({ kind: 'refusal_rate' }).testid('edit-parameter-1')).toBeNull();
+  });
+
+  it('asks for a duration and a rate only when the action needs them', () => {
+    const harness = editing();
+    const component = harness.component as unknown as { editAction: { set: (v: string) => void } };
+
+    expect(harness.testid('edit-minutes-1')).toBeNull();
+
+    component.editAction.set('block');
+    harness.fixture.detectChanges();
+    expect(harness.testid('edit-minutes-1')).not.toBeNull();
+    expect(harness.testid('edit-rpm-1')).toBeNull();
+
+    component.editAction.set('throttle');
+    harness.fixture.detectChanges();
+    // A throttle without a rate is not a decision (`FRD-503` §7).
+    expect(harness.testid('edit-rpm-1')).not.toBeNull();
+  });
+
+  it('opens with the rule as it is, not with an empty form', () => {
+    const harness = editing({ threshold: 42, window_minutes: 90, min_sample: 7, enabled: false });
+    const component = harness.component as unknown as {
+      editThreshold: () => number | null;
+      editWindow: () => number | null;
+      editSample: () => number | null;
+      editEnabled: () => boolean;
+    };
+
+    expect(component.editThreshold()).toBe(42);
+    expect(component.editWindow()).toBe(90);
+    expect(component.editSample()).toBe(7);
+    expect(component.editEnabled()).toBe(false);
+  });
+
+  it('abandons an edit when the row is closed', () => {
+    // Otherwise a hidden form saves fields the reader can no longer see.
+    const harness = editing();
+    harness.click('[data-testid="rule-toggle-1"]');
+
+    expect((harness.component as unknown as { editing: () => number | null }).editing()).toBeNull();
+  });
+
+  it('can switch a rule off without deleting it', () => {
+    // Deleting stops the watching *and* loses the intent; switching off keeps the rule for
+    // whoever asks later why it is not firing.
+    const harness = editing();
+    const component = harness.component as unknown as {
+      editEnabled: { set: (v: boolean) => void };
+      saveRule: (rule: AnomalyRule) => void;
+    };
+    component.editEnabled.set(false);
+    component.saveRule(RULE);
+
+    const sent = harness.calls.find((call) => call.startsWith('update:1:'))!;
+    expect(JSON.parse(sent.slice('update:1:'.length)).enabled).toBe(false);
+  });
+
+  it('says the change takes a moment to reach the gateway', () => {
+    const harness = editing();
+    (harness.component as unknown as { saveRule: (r: AnomalyRule) => void }).saveRule(RULE);
+
+    expect(
+      (
+        harness.component as unknown as { feedback: { notice: () => string | null } }
+      ).feedback.notice(),
+    ).toContain('few seconds');
+  });
+});
+
+describe('SecurityPage — while something is in flight', () => {
+  it('says it is saving, and refuses a second press', () => {
+    // Two saves from one intent is how a form that looks stuck gets pressed twice.
+    const pending = new Subject<AnomalyRule>();
+    const harness = setup({ update: pending as unknown as Observable<AnomalyRule> });
+    (harness.component as unknown as { tab: { set: (v: string) => void } }).tab.set('rules');
+    harness.fixture.detectChanges();
+    harness.click('[data-testid="rule-toggle-1"]');
+    harness.click('[data-testid="rule-edit-1"]');
+
+    (harness.component as unknown as { saveRule: (r: AnomalyRule) => void }).saveRule(RULE);
+    harness.fixture.detectChanges();
+
+    const save = harness.testid('rule-save-1') as HTMLButtonElement;
+    expect(save.textContent).toContain('Saving…');
+    expect(save.disabled).toBe(true);
+    pending.complete();
+  });
+
+  it('shows a bare threshold for a kind that has no unit', () => {
+    // "Undeclared means the baseline and nothing more": a kind this console has not met shows the
+    // number and no unit, rather than borrowing one that would be wrong.
+    const harness = setup({ rules: [{ ...RULE, kind: 'future_kind' }] });
+    (harness.component as unknown as { tab: { set: (v: string) => void } }).tab.set('rules');
+    harness.fixture.detectChanges();
+    harness.click('[data-testid="rule-toggle-1"]');
+    harness.click('[data-testid="rule-edit-1"]');
+
+    expect(harness.text()).toContain('as counted');
+  });
+
+  it('does not print an empty reason as a blank cell in the history', () => {
+    const expired = { ...SUSPENSION, id: 's9', reason: '', expires_at: '2020-01-01T00:00:00Z' };
+    const harness = setup({ suspensions: of({ suspensions: [expired] }) });
+    (harness.component as unknown as { tab: { set: (v: string) => void } }).tab.set('suspensions');
+    harness.fixture.detectChanges();
+
+    expect(harness.text()).toContain('expired');
   });
 });

@@ -6,7 +6,10 @@
         <input type="checkbox" [checked]="live.enabled()" (change)="live.toggle()" />
         Live
       </label>
-      <span class="muted live__stamp">{{ 'updated ' + ago() }}</span>
+      <span class="muted live__stamp">
+        <span class="live__dot" [class.is-busy]="live.refreshing()" aria-hidden="true"></span>
+        updated {{ ago() }}
+      </span>
     </div>
   </div>
 

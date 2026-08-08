@@ -2,6 +2,7 @@ import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Report } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
+import { InfoHint } from '../../core/ui/info-hint';
 import { PageFeedback } from '../../core/ui/page-feedback';
 import { BreakdownTable } from './breakdown-table';
 
@@ -57,7 +58,7 @@ export function windowFor(preset: Preset, today: Date): { from: string; to: stri
  */
 @Component({
   selector: 'app-reporting-page',
-  imports: [FormsModule, BreakdownTable],
+  imports: [FormsModule, BreakdownTable, InfoHint],
   templateUrl: './reporting-page.html',
   // One banner for the page, the same rule as the use-case detail.
   providers: [PageFeedback],
@@ -138,7 +139,72 @@ export class ReportingPage implements OnInit {
   }
 
   /** Which table the spreadsheet contains. A CSV is one table, so it is chosen, not guessed. */
-  protected readonly exportBreakdown = signal<'use_case' | 'model' | 'member'>('use_case');
+  /**
+   * Which breakdown is on screen — **and** the one an export downloads.
+   *
+   * It used to be four tables stacked, plus a fourth selector that only governed the download. A
+   * page long enough that its own export control scrolls out of sight is a page nobody reads to
+   * the bottom of, and two ideas of "which table" is one more than there should be: the file and
+   * the screen now cannot disagree, which is the same argument `FRD-602` makes for CSV being a
+   * *rendering* of the report rather than its own endpoint.
+   */
+  protected readonly exportBreakdown = signal<'use_case' | 'model' | 'member' | 'outcome'>(
+    'use_case',
+  );
+
+  /** What the chosen breakdown is called, and what one of its rows is. */
+  protected readonly breakdownLabel = computed(
+    () =>
+      ({
+        use_case: 'Use case',
+        model: 'Model',
+        member: 'Member',
+        outcome: 'Outcome',
+      })[this.exportBreakdown()],
+  );
+  protected readonly breakdownNoun = computed(
+    () =>
+      ({
+        use_case: 'use cases',
+        model: 'models',
+        member: 'members',
+        outcome: 'outcomes',
+      })[this.exportBreakdown()],
+  );
+  protected readonly breakdownEmpty = computed(
+    () =>
+      ({
+        use_case: 'No traffic from any use case in this period.',
+        model: 'No model was called in this period.',
+        member: 'Nobody made a request in this period.',
+        outcome: 'Nothing happened in this period.',
+      })[this.exportBreakdown()],
+  );
+
+  /** The rows of the chosen breakdown. */
+  protected readonly breakdownRows = computed(() => {
+    const report = this.report();
+    if (!report) return [];
+    switch (this.exportBreakdown()) {
+      case 'model':
+        return report.by_model;
+      case 'member':
+        return report.by_member;
+      case 'outcome':
+        return report.by_outcome;
+      default:
+        return report.by_use_case;
+    }
+  });
+
+  /**
+   * Whether the chosen breakdown can be downloaded.
+   *
+   * `by_outcome` is on screen but **not** an export: the CSV renderer takes three breakdowns
+   * (`FRD-602`), and offering a fourth would produce a 400 from a button that looked ready. An
+   * action that cannot be carried out is worse than an absent one.
+   */
+  protected readonly exportable = computed(() => this.exportBreakdown() !== 'outcome');
   /**
    * What each figure counts, in one sentence.
    *
@@ -162,21 +228,10 @@ export class ReportingPage implements OnInit {
       'Average and maximum, end to end, for the period. Not a percentile: that would need a Postgres-only function, and the hermetic tests run on SQLite.',
   };
 
-  /**
-   * Which explanation is showing, and why.
-   *
-   * Hover is what anybody reaching for an "i" expects, so `hoverInfo` follows the pointer (and the
-   * keyboard, through focus). But a touch screen has no hover at all, so a click **pins** one open
-   * — `openInfo` — and it stays until it is clicked again. One at a time either way: six open
-   * paragraphs is a wall of text where six figures were.
-   */
-  protected readonly hoverInfo = signal<string | null>(null);
-  protected readonly openInfo = signal<string | null>(null);
-  protected readonly shownInfo = computed(() => this.hoverInfo() ?? this.openInfo());
-
-  protected toggleInfo(key: string): void {
-    this.openInfo.update((current) => (current === key ? null : key));
-  }
+  // The hover/focus/pin behaviour that used to live here is now `core/ui/info-hint`. It was
+  // written twice within a week — here and on a table header — which is one time more than a
+  // three-way interaction should be got right. Each hint owns its own state now, so "one at a
+  // time" is no longer enforced; six open at once is a reader deliberately opening six.
 
   /**
    * The headline figures, as data rather than as six near-identical blocks of markup.

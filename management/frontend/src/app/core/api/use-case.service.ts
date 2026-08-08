@@ -226,6 +226,21 @@ export class UseCaseService {
     return this.http.get<AnomalyRule[]>('/api/v1/anomaly-rules/');
   }
 
+  /**
+   * Change a rule. The server decides who may: a global rule needs an incident role, a use-case
+   * rule needs to manage that use case (`AnomalyRuleViewSet._guard`).
+   *
+   * `PATCH`, not `PUT`: a rule has thirteen fields and most edits touch one of them. Sending the
+   * whole object back would make every save a chance to overwrite a field the form never showed.
+   */
+  updateRule(id: number, changes: Partial<AnomalyRule>): Observable<AnomalyRule> {
+    return this.http.patch<AnomalyRule>(`/api/v1/anomaly-rules/${id}/`, changes);
+  }
+
+  deleteRule(id: number): Observable<void> {
+    return this.http.delete<void>(`/api/v1/anomaly-rules/${id}/`);
+  }
+
   /** Current-period consumption per budget, from the gateway. */
   budgetUsage(slug: string): Observable<{ usage: BudgetUsage[] }> {
     return this.http.get<{ usage: BudgetUsage[] }>(`/gw/v1beta/usage/${seg(slug)}`);

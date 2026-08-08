@@ -98,28 +98,9 @@
           <div class="stat">
             <dt>
               {{ stat.label }}
-              <span class="stat__info-wrap">
-                <button
-                  type="button"
-                  class="stat__info"
-                  [class.is-open]="shownInfo() === stat.key"
-                  [attr.aria-expanded]="shownInfo() === stat.key"
-                  [attr.aria-label]="'What does ' + stat.label + ' count?'"
-                  [attr.data-testid]="'info-' + stat.key"
-                  (mouseenter)="hoverInfo.set(stat.key)"
-                  (mouseleave)="hoverInfo.set(null)"
-                  (focus)="hoverInfo.set(stat.key)"
-                  (blur)="hoverInfo.set(null)"
-                  (click)="toggleInfo(stat.key)"
-                >
-                  i
-                </button>
-                @if (shownInfo() === stat.key) {
-                  <span class="stat__help" role="note" [attr.data-testid]="'help-' + stat.key">
-                    {{ stat.help }}
-                  </span>
-                }
-              </span>
+              <app-info-hint [label]="stat.label" [testid]="'stat-' + stat.key" [wide]="true">
+                {{ stat.help }}
+              </app-info-hint>
             </dt>
             <dd [attr.data-testid]="stat.testid">
               {{ stat.value }}
@@ -140,61 +121,59 @@
       }
     </div>
 
-    <section class="panel" data-testid="export">
-      <h3>Export</h3>
-      <p class="hint">
-        The same figures as a spreadsheet, for the period above and the caller's own scope — a
-        download shows exactly what this screen shows, never more.
-      </p>
-      <div class="form-row form-row--spaced">
-        <label for="export-breakdown">Table</label>
-        <select
-          id="export-breakdown"
-          [ngModel]="exportBreakdown()"
-          (ngModelChange)="exportBreakdown.set($event)"
-          data-testid="export-breakdown"
-        >
-          <option value="use_case">By use case</option>
-          <option value="model">By model</option>
-          <option value="member">By member</option>
-        </select>
-        <button
-          type="button"
-          class="btn btn--primary"
-          (click)="download()"
-          [disabled]="exporting() || !canLoad()"
-          data-testid="export-download"
-        >
-          {{ exporting() ? 'Preparing…' : 'Download CSV' }}
-        </button>
+    <!--
+      One table, chosen here. Four stacked breakdowns made the page long enough that its own
+      export control scrolled out of sight — and there were then two ideas of "which table",
+      one for the screen and one for the file. Now the file is whatever is on screen.
+    -->
+    <div class="card">
+      <div class="filter-row">
+        <div class="field">
+          <label for="export-breakdown">Break the period down by</label>
+          <select
+            id="export-breakdown"
+            [ngModel]="exportBreakdown()"
+            (ngModelChange)="exportBreakdown.set($event)"
+            data-testid="export-breakdown"
+          >
+            <option value="use_case">Use case</option>
+            <option value="model">Model</option>
+            <option value="member">Member</option>
+            <option value="outcome">Outcome</option>
+          </select>
+        </div>
+        @if (exportable()) {
+          <button
+            type="button"
+            class="btn btn--primary"
+            (click)="download()"
+            [disabled]="exporting() || !canLoad()"
+            data-testid="export-download"
+            style="margin-bottom: 0.05rem"
+          >
+            {{ exporting() ? 'Preparing…' : 'Download this table (CSV)' }}
+          </button>
+        } @else {
+          <!-- Said rather than discovered by a 400: the CSV renderer takes three breakdowns
+               (`FRD-602`), and a button that looks ready and is not is the defect `FRD-206`
+               was written about. -->
+          <span class="muted" data-testid="export-unavailable" style="padding-bottom: 0.6rem">
+            The outcome breakdown is shown here but not exported. Pick use case, model or member to
+            download a file.
+          </span>
+        }
       </div>
-      <!-- Said rather than discovered. The file is RFC 4180 so every tool and script reads it;
-           a German Excel will ask which separator to use, and being told beforehand is the
-           difference between a quirk and a bug report. -->
-      <p class="hint">
-        UTF-8, comma-separated (RFC 4180). Excel may ask you to confirm the separator.
+      <p class="hint" style="margin-top: 0.5rem">
+        A download is exactly this table, for the period above and your own scope — never more.
+        UTF-8, comma-separated (RFC 4180); Excel may ask you to confirm the separator.
       </p>
-    </section>
+    </div>
 
     <app-breakdown-table
-      label="Use case"
-      [rows]="report.by_use_case"
-      emptyText="No traffic from any use case in this period."
-    />
-    <app-breakdown-table
-      label="Model"
-      [rows]="report.by_model"
-      emptyText="No model was called in this period."
-    />
-    <app-breakdown-table
-      label="Member"
-      [rows]="report.by_member"
-      emptyText="Nobody made a request in this period."
-    />
-    <app-breakdown-table
-      label="Outcome"
-      [rows]="report.by_outcome"
-      emptyText="Nothing happened in this period."
+      [label]="breakdownLabel()"
+      [rows]="breakdownRows()"
+      [noun]="breakdownNoun()"
+      [emptyText]="breakdownEmpty()"
     />
   }
 </div>

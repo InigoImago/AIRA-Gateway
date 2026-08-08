@@ -295,17 +295,19 @@
                   <span class="badge badge--muted">{{ member.role }}</span>
                 </td>
                 <td class="table__actions">
-                  @if (canManage()) {
-                    <button
-                      type="button"
-                      class="btn btn--sm btn--danger"
-                      [disabled]="feedback.busy()"
-                      [attr.aria-label]="'Remove ' + member.username"
-                      (click)="removeMember(member.username)"
-                    >
-                      Remove
-                    </button>
-                  }
+                  <div class="actions">
+                    @if (canManage()) {
+                      <button
+                        type="button"
+                        class="btn btn--sm btn--danger"
+                        [disabled]="feedback.busy()"
+                        [attr.aria-label]="'Remove ' + member.username"
+                        (click)="removeMember(member.username)"
+                      >
+                        Remove
+                      </button>
+                    }
+                  </div>
                 </td>
               </tr>
             } @empty {
@@ -415,17 +417,19 @@
                   }
                 </td>
                 <td class="table__actions">
-                  @if (key.is_active && canManage()) {
-                    <button
-                      type="button"
-                      class="btn btn--sm btn--danger"
-                      [disabled]="feedback.busy()"
-                      [attr.aria-label]="'Revoke key ' + key.prefix"
-                      (click)="revokeKey(key.prefix)"
-                    >
-                      Revoke
-                    </button>
-                  }
+                  <div class="actions">
+                    @if (key.is_active && canManage()) {
+                      <button
+                        type="button"
+                        class="btn btn--sm btn--danger"
+                        [disabled]="feedback.busy()"
+                        [attr.aria-label]="'Revoke key ' + key.prefix"
+                        (click)="revokeKey(key.prefix)"
+                      >
+                        Revoke
+                      </button>
+                    }
+                  </div>
                 </td>
               </tr>
             } @empty {

@@ -20,8 +20,12 @@
         />
         Live
       </label>
+      <!-- See `styles.scss` .live__stamp: a stamp whose text changes width moves the button
+           beside it on every tick, which is the "jiggle" a reader notices without being able to
+           name it. Measured with a layout-shift observer, not guessed. -->
       <span class="muted live__stamp" data-testid="live-stamp">
-        {{ live.refreshing() ? 'updating…' : 'updated ' + ago() }}
+        <span class="live__dot" [class.is-busy]="live.refreshing()" aria-hidden="true"></span>
+        updated {{ ago() }}
       </span>
       <button type="button" class="btn btn--sm" (click)="refreshNow()">Refresh</button>
     </div>
@@ -101,10 +105,26 @@
             </thead>
             <tbody>
               @for (event of events(); track event.id) {
-                <tr>
+                <tr [class.is-open]="openEvent() === event.id">
                   <td class="nowrap">{{ event.created_at | date: 'short' }}</td>
                   <td>
-                    {{ event.rule }}
+                    <!--
+                      The row opens rather than widening. Six columns is already as much as a
+                      table can be read at; the answer to "why did this fire" is another six
+                      fields, and a finding nobody can check is a finding nobody acts on.
+                    -->
+                    <button
+                      type="button"
+                      class="row-toggle"
+                      [attr.aria-expanded]="openEvent() === event.id"
+                      [attr.data-testid]="'event-toggle-' + event.id"
+                      (click)="toggleEvent(event.id)"
+                    >
+                      <span class="row-toggle__caret" [class.is-open]="openEvent() === event.id"
+                        >▶</span
+                      >
+                      {{ event.rule }}
+                    </button>
                     <div class="muted" style="font-size: 0.78rem">{{ event.kind }}</div>
                   </td>
                   <td>{{ event.use_case ?? '—' }}</td>
@@ -113,8 +133,7 @@
                     <div class="muted" style="font-size: 0.78rem">{{ event.target }}</div>
                   </td>
                   <td>
-                    <!-- The numbers it was drawn from, not just that it fired: a finding nobody
-                         can check is a finding nobody acts on. -->
+                    <!-- The numbers it was drawn from, not just that it fired. -->
                     <strong>{{ event.observed }}</strong> vs {{ event.threshold }}
                     <div class="muted" style="font-size: 0.78rem">
                       over {{ event.sample }} request(s), {{ event.window_minutes }} min
@@ -139,6 +158,70 @@
                     }
                   </td>
                 </tr>
+                @if (openEvent() === event.id) {
+                  <tr class="row-detail">
+                    <td colspan="6">
+                      <p
+                        class="detail-sentence"
+                        [attr.data-testid]="'event-detail-' + event.id"
+                        style="margin-top: 0"
+                      >
+                        {{ explainEvent(event) }}
+                      </p>
+                      <p class="detail-sentence">{{ explainAction(event) }}</p>
+                      <dl class="detail-grid">
+                        <div>
+                          <dt>Rule</dt>
+                          <dd>{{ event.rule }}</dd>
+                        </div>
+                        <div>
+                          <dt>Kind</dt>
+                          <dd>
+                            <code>{{ event.kind }}</code>
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>Raised about</dt>
+                          <dd>
+                            <code>{{ event.target_value }}</code> ({{ event.target }})
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>Use case</dt>
+                          <dd>{{ event.use_case ?? 'none — a global rule' }}</dd>
+                        </div>
+                        <div>
+                          <dt>Window</dt>
+                          <dd>{{ event.window_minutes }} minutes</dd>
+                        </div>
+                        <div>
+                          <dt>Requests judged</dt>
+                          <dd>{{ event.sample }}</dd>
+                        </div>
+                        <div>
+                          <dt>Detected at</dt>
+                          <dd>{{ event.created_at | date: 'medium' }}</dd>
+                        </div>
+                        <div>
+                          <dt>Finding id</dt>
+                          <dd>
+                            <code>{{ event.id }}</code>
+                          </dd>
+                        </div>
+                      </dl>
+                      @if (event.detail) {
+                        <p class="detail-sentence">
+                          <span class="muted">As the engine recorded it: </span>{{ event.detail }}
+                        </p>
+                      }
+                      @if (ruleOf(event); as rule) {
+                        <p class="detail-sentence">
+                          <span class="muted">The rule behind it: </span>{{ explain(rule) }}
+                        </p>
+                      }
+                    </td>
+                  </tr>
+                }
               }
             </tbody>
           </table>
@@ -151,7 +234,26 @@
   @if (tab() === 'suspensions') {
     <div class="card" role="tabpanel">
       <div class="spread">
-        <h3 class="section-title" style="margin: 0">Stopped traffic</h3>
+        <h3 class="section-title" style="margin: 0">
+          Stopped traffic
+          <!--
+            "Stop traffic" is a verb with no object until you press it, and the object matters: a
+            reader has to know *how far* it reaches before they can decide whether to use it. It
+            never stops the installation — there is no such control, deliberately, because an
+            operator control that can take the whole gateway down is an outage waiting for a bad
+            afternoon.
+          -->
+          <app-info-hint label="stopping traffic" testid="stop-scope" [wide]="true">
+            An immediate, manual refusal — the kill switch of <code>FRD-503</code>. It reaches
+            <strong>one caller</strong> (a username or service account),
+            <strong>one API key</strong> (by its prefix), or <strong>one whole use case</strong>.
+            There is no switch for the installation: everything here is scoped, on purpose. Stopped
+            requests are answered <strong>429</strong> — the credential is still valid, they are
+            being told to come back later — and each is recorded with the outcome
+            <code>suspended</code>, so an investigation afterwards can see exactly what was refused.
+            It takes a few seconds to reach every gateway instance, and lifting one takes the same.
+          </app-info-hint>
+        </h3>
         @if (canStop()) {
           <button
             type="button"
@@ -265,17 +367,19 @@
                 </td>
                 <td>{{ row.reason || '—' }}</td>
                 <td class="table__actions">
-                  @if (canStop()) {
-                    <button
-                      type="button"
-                      class="btn btn--sm"
-                      [disabled]="feedback.busy()"
-                      [attr.aria-label]="'Restore access for ' + row.target_value"
-                      (click)="lift(row)"
-                    >
-                      Restore
-                    </button>
-                  }
+                  <div class="actions">
+                    @if (canStop()) {
+                      <button
+                        type="button"
+                        class="btn btn--sm"
+                        [disabled]="feedback.busy()"
+                        [attr.aria-label]="'Restore access for ' + row.target_value"
+                        (click)="lift(row)"
+                      >
+                        Restore
+                      </button>
+                    }
+                  </div>
                 </td>
               </tr>
             } @empty {
@@ -289,9 +393,15 @@
 
       @if (past().length) {
         <details style="margin-top: 1rem">
-          <summary class="muted">
-            {{ past().length }} lifted or expired — kept, because "blocked for two hours last
-            Tuesday" is what a review asks
+          <!--
+            This used to read: `kept, because "blocked for two hours last Tuesday" is what a review
+            asks`. That is a note to whoever wrote the code, not a sentence for whoever is reading
+            the screen — the reasoning belongs here, and what the reader needs is what the section
+            contains.
+          -->
+          <summary class="muted" data-testid="past-summary">
+            Earlier decisions ({{ past().length }}) — already lifted or expired. Kept as a record of
+            who stopped what, when, and why.
           </summary>
           <div class="table-wrap" style="margin-top: 0.5rem">
             <table class="table">
@@ -338,8 +448,24 @@
             </thead>
             <tbody>
               @for (rule of rules(); track rule.id) {
-                <tr>
-                  <td>{{ rule.name }}</td>
+                <tr [class.is-open]="openRule() === rule.id">
+                  <td>
+                    <!-- A rule is a policy that can stop somebody's traffic. Printing its kind
+                         and two numbers tells whoever wrote it what it does and tells nobody
+                         else. Opening it says so in a sentence. -->
+                    <button
+                      type="button"
+                      class="row-toggle"
+                      [attr.aria-expanded]="openRule() === rule.id"
+                      [attr.data-testid]="'rule-toggle-' + rule.id"
+                      (click)="toggleRule(rule.id)"
+                    >
+                      <span class="row-toggle__caret" [class.is-open]="openRule() === rule.id"
+                        >▶</span
+                      >
+                      {{ rule.name }}
+                    </button>
+                  </td>
                   <td>
                     @if (rule.is_global) {
                       <span class="badge badge--warning">everywhere</span>
@@ -355,6 +481,7 @@
                   </td>
                   <td>
                     {{ rule.threshold }}
+                    <span class="muted" style="font-size: 0.78rem">{{ unit(rule) }}</span>
                     @if (rule.parameter) {
                       <div class="muted" style="font-size: 0.78rem">
                         above {{ rule.parameter }} bytes
@@ -375,6 +502,218 @@
                     }
                   </td>
                 </tr>
+
+                @if (openRule() === rule.id) {
+                  <tr class="row-detail">
+                    <td colspan="5">
+                      <p
+                        class="detail-sentence"
+                        style="margin-top: 0"
+                        [attr.data-testid]="'rule-detail-' + rule.id"
+                      >
+                        {{ explain(rule) }}
+                      </p>
+
+                      @if (editing() !== rule.id) {
+                        <dl class="detail-grid">
+                          <div>
+                            <dt>Kind</dt>
+                            <dd>
+                              <code>{{ rule.kind }}</code>
+                            </dd>
+                          </div>
+                          <div>
+                            <dt>Raised about</dt>
+                            <dd>{{ rule.target }}</dd>
+                          </div>
+                          <div>
+                            <dt>Window</dt>
+                            <dd>{{ rule.window_minutes }} minutes</dd>
+                          </div>
+                          <div>
+                            <dt>Threshold</dt>
+                            <dd>{{ rule.threshold }} {{ unit(rule) }}</dd>
+                          </div>
+                          <div>
+                            <dt>Smallest sample</dt>
+                            <dd>
+                              @if (rule.min_sample > 0) {
+                                {{ rule.min_sample }} request(s)
+                              } @else {
+                                not set — judged on any number of requests
+                              }
+                            </dd>
+                          </div>
+                          <div>
+                            <dt>State</dt>
+                            <dd>{{ rule.enabled ? 'watching' : 'switched off' }}</dd>
+                          </div>
+                        </dl>
+
+                        <div class="actions" style="margin-top: 0.85rem">
+                          @if (mayEdit(rule)) {
+                            <button
+                              type="button"
+                              class="btn btn--sm"
+                              [attr.data-testid]="'rule-edit-' + rule.id"
+                              (click)="startEdit(rule)"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              class="btn btn--sm btn--danger"
+                              [attr.data-testid]="'rule-delete-' + rule.id"
+                              (click)="removeRule(rule)"
+                            >
+                              Delete
+                            </button>
+                          } @else if (rule.is_global) {
+                            <!-- Withheld, and it names who does it: an action nobody can carry
+                                 out is worse than an absent one (`FRD-206`). -->
+                            <span class="muted" [attr.data-testid]="'rule-readonly-' + rule.id">
+                              A rule that applies everywhere is changed by IT Security or a Global
+                              Administrator.
+                            </span>
+                          } @else {
+                            <span class="muted" [attr.data-testid]="'rule-readonly-' + rule.id">
+                              This rule belongs to <code>{{ rule.use_case }}</code> and is changed
+                              on that use case, by somebody who administers it.
+                            </span>
+                          }
+                        </div>
+                      } @else {
+                        <!--
+                          The fields somebody actually changes. Not the kind and not the name: a
+                          rule's kind decides what its threshold *means*, so changing it in place
+                          would silently reinterpret a number somebody chose deliberately. A
+                          different kind is a different rule.
+                        -->
+                        <form class="form-inline" (ngSubmit)="saveRule(rule)">
+                          <div class="field">
+                            <label [attr.for]="'edit-threshold-' + rule.id">Threshold</label>
+                            <input
+                              [attr.id]="'edit-threshold-' + rule.id"
+                              type="number"
+                              name="threshold"
+                              min="1"
+                              [ngModel]="editThreshold()"
+                              (ngModelChange)="editThreshold.set($event)"
+                              [attr.data-testid]="'edit-threshold-' + rule.id"
+                            />
+                            <span class="field__hint">{{ unit(rule) || 'as counted' }}</span>
+                          </div>
+                          <div class="field">
+                            <label [attr.for]="'edit-window-' + rule.id">Window (minutes)</label>
+                            <input
+                              [attr.id]="'edit-window-' + rule.id"
+                              [attr.data-testid]="'edit-window-' + rule.id"
+                              type="number"
+                              name="window"
+                              min="1"
+                              [ngModel]="editWindow()"
+                              (ngModelChange)="editWindow.set($event)"
+                            />
+                          </div>
+                          <div class="field">
+                            <label [attr.for]="'edit-sample-' + rule.id">Smallest sample</label>
+                            <input
+                              [attr.id]="'edit-sample-' + rule.id"
+                              [attr.data-testid]="'edit-sample-' + rule.id"
+                              type="number"
+                              name="sample"
+                              min="0"
+                              [ngModel]="editSample()"
+                              (ngModelChange)="editSample.set($event)"
+                            />
+                            <span class="field__hint">
+                              Below this many requests the rule is not judged at all.
+                            </span>
+                          </div>
+                          @if (rule.kind === 'payload_size') {
+                            <div class="field">
+                              <label [attr.for]="'edit-parameter-' + rule.id">Larger than</label>
+                              <input
+                                [attr.id]="'edit-parameter-' + rule.id"
+                                [attr.data-testid]="'edit-parameter-' + rule.id"
+                                type="number"
+                                name="parameter"
+                                min="1"
+                                [ngModel]="editParameter()"
+                                (ngModelChange)="editParameter.set($event)"
+                              />
+                              <span class="field__hint">bytes</span>
+                            </div>
+                          }
+                          <div class="field">
+                            <label [attr.for]="'edit-action-' + rule.id">Then</label>
+                            <select
+                              [attr.id]="'edit-action-' + rule.id"
+                              name="action"
+                              [ngModel]="editAction()"
+                              (ngModelChange)="editAction.set($event)"
+                              [attr.data-testid]="'edit-action-' + rule.id"
+                            >
+                              <option value="alert">record it (take nothing away)</option>
+                              <option value="throttle">slow the traffic down</option>
+                              <option value="block">stop the traffic</option>
+                            </select>
+                          </div>
+                          @if (editAction() !== 'alert') {
+                            <div class="field">
+                              <label [attr.for]="'edit-minutes-' + rule.id">For (minutes)</label>
+                              <input
+                                [attr.id]="'edit-minutes-' + rule.id"
+                                [attr.data-testid]="'edit-minutes-' + rule.id"
+                                type="number"
+                                name="minutes"
+                                min="1"
+                                [ngModel]="editMinutes()"
+                                (ngModelChange)="editMinutes.set($event)"
+                              />
+                              <span class="field__hint">Empty means until somebody lifts it.</span>
+                            </div>
+                          }
+                          @if (editAction() === 'throttle') {
+                            <div class="field">
+                              <label [attr.for]="'edit-rpm-' + rule.id">Slowed to</label>
+                              <input
+                                [attr.id]="'edit-rpm-' + rule.id"
+                                [attr.data-testid]="'edit-rpm-' + rule.id"
+                                type="number"
+                                name="rpm"
+                                min="1"
+                                [ngModel]="editRpm()"
+                                (ngModelChange)="editRpm.set($event)"
+                              />
+                              <span class="field__hint">
+                                requests a minute — a throttle without a rate is not a decision.
+                              </span>
+                            </div>
+                          }
+                          <label class="checkline" style="padding-bottom: 0.55rem">
+                            <input
+                              type="checkbox"
+                              [checked]="editEnabled()"
+                              (change)="editEnabled.set($any($event.target).checked)"
+                              [attr.data-testid]="'edit-enabled-' + rule.id"
+                            />
+                            Watching
+                          </label>
+                          <button
+                            type="submit"
+                            class="btn btn--primary"
+                            [disabled]="feedback.busy()"
+                            [attr.data-testid]="'rule-save-' + rule.id"
+                          >
+                            {{ feedback.busy() ? 'Saving…' : 'Save' }}
+                          </button>
+                          <button type="button" class="btn" (click)="cancelEdit()">Cancel</button>
+                        </form>
+                      }
+                    </td>
+                  </tr>
+                }
               }
             </tbody>
           </table>

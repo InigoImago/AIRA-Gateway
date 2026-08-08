@@ -1,6 +1,6 @@
 import { Component, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import { of, throwError } from 'rxjs';
+import { Subject, of, throwError } from 'rxjs';
 import { Trace, TracePage } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { PageFeedback } from '../../core/ui/page-feedback';
@@ -290,5 +290,72 @@ describe('TracesTab — reading one row', () => {
   it('shows the trace id, which is what correlates this row with the logs', () => {
     expect(one({ trace_id: 'deadbeef' }).text()).toContain('deadbeef');
     expect(one({ trace_id: null }).text()).toContain('—');
+  });
+});
+
+describe('TracesTab — the live strip', () => {
+  it('keeps the busy state in the space it already occupies', () => {
+    // Measured with a layout-shift observer, not guessed: the stamp swapping "updating…" for
+    // "updated 12s ago" moved the button beside it on every tick. That is the jiggle a reader
+    // notices without being able to name it, and the smallest ones are the most unsettling
+    // because nothing appears to have happened.
+    const harness = setup();
+    const stamp = harness.testid('traces-stamp');
+
+    expect(stamp?.textContent).toContain('updated');
+    expect(stamp?.querySelector('.live__dot')).not.toBeNull();
+    // The word never changes — only the dot's class does.
+    expect(stamp?.textContent).not.toContain('updating');
+  });
+});
+
+describe('TracesTab — while a page is in flight', () => {
+  it('says it is loading, and refuses a second press', () => {
+    const pending = new Subject<TracePage>();
+    TestBed.resetTestingModule();
+    let first = true;
+    TestBed.configureTestingModule({
+      imports: [Host],
+      providers: [
+        {
+          provide: UseCaseService,
+          useValue: {
+            traces: () => {
+              if (first) {
+                first = false;
+                return of({ traces: [trace()], next_cursor: 'c1', scope: 'all' } as TracePage);
+              }
+              return pending;
+            },
+          },
+        },
+      ],
+    });
+    const fixture = TestBed.createComponent(Host);
+    fixture.detectChanges();
+    const element = fixture.nativeElement as HTMLElement;
+
+    element.querySelector<HTMLElement>('[data-testid="load-more"]')!.click();
+    fixture.detectChanges();
+
+    const button = element.querySelector<HTMLButtonElement>('[data-testid="load-more"]')!;
+    expect(button.textContent).toContain('Loading…');
+    expect(button.disabled).toBe(true);
+    pending.complete();
+  });
+
+  it('does not print a routing note when there was no routing', () => {
+    const harness = setup({
+      pages: [
+        {
+          traces: [trace({ model: 'a', requested_model: 'b', model_selection: null })],
+          next_cursor: null,
+          scope: 'all',
+        },
+      ],
+    });
+
+    expect(harness.text()).toContain('asked for b');
+    expect(harness.text()).not.toContain('·');
   });
 });

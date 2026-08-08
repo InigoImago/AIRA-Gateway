@@ -1,5 +1,5 @@
 import { Component, OnInit, inject, signal } from '@angular/core';
-import { RouterLink, RouterOutlet } from '@angular/router';
+import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { MeService } from './core/api/me.service';
 import { Me } from './core/api/models';
 import { AuthService } from './core/auth/auth.service';
@@ -22,7 +22,11 @@ const ROLE_EXPLANATIONS: Record<string, string> = {
 
 @Component({
   selector: 'app-root',
-  imports: [RouterOutlet, RouterLink],
+  // `RouterLinkActive` was missing, and Angular does not complain: an attribute that matches no
+  // directive is simply inert markup. Every nav item carried `routerLinkActive="is-active"` and
+  // none of them ever got the class, so the navigation could not say which area you were in — for
+  // as long as the shell has existed. The `is-active` rule in `app.scss` was styling nothing.
+  imports: [RouterOutlet, RouterLink, RouterLinkActive],
   templateUrl: './app.html',
   styleUrl: './app.scss',
 })

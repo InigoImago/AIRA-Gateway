@@ -11,8 +11,11 @@
         />
         Live
       </label>
-      <span class="muted live__stamp">
-        {{ live.refreshing() ? 'updating…' : 'updated ' + ago() }}
+      <!-- Fixed width, and the busy state is a dot rather than a word of a different length: a
+           stamp that changes width moves everything after it once a tick. -->
+      <span class="muted live__stamp" data-testid="traces-stamp">
+        <span class="live__dot" [class.is-busy]="live.refreshing()" aria-hidden="true"></span>
+        updated {{ ago() }}
       </span>
     </div>
   </div>
@@ -28,7 +31,13 @@
     panels into a page with six places to look.
   -->
 
-  <div class="form-row form-row--spaced" style="margin-top: 0.75rem">
+  <!--
+    A filter row, not a centred one. `form-row--spaced` centres its children, and a bare checkbox
+    beside a field with a label above its control ends up on a different line from the control it
+    is read as a pair with. This aligns on the bottom, where the controls are, and both items
+    carry a heading so the top line matches too.
+  -->
+  <div class="filter-row" style="margin-top: 0.75rem">
     <label class="checkline">
       <input
         type="checkbox"

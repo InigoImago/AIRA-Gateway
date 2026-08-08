@@ -35,74 +35,100 @@
     } @else if (!models().length) {
       <p class="empty">No models in the catalog yet.</p>
     } @else {
-      <div class="table-wrap">
-        <table class="table">
-          <thead>
-            <tr>
-              <th scope="col">Model</th>
-              <th scope="col">Provider</th>
-              <th scope="col">Capabilities</th>
-              <th scope="col">Input / 1M</th>
-              <th scope="col">Output / 1M</th>
-              <th scope="col"><span class="sr-only">Actions</span></th>
-            </tr>
-          </thead>
-          <tbody>
-            @for (model of models(); track model.name) {
-              <tr>
-                <td>
-                  <code>{{ model.name }}</code>
-                  @if (model.display_name) {
-                    <div class="muted" style="font-size: 0.8rem">{{ model.display_name }}</div>
-                  }
-                </td>
-                <td>{{ model.provider || '—' }}</td>
-                <td>
-                  @if (model.is_declared) {
-                    <span class="muted" style="font-size: 0.8rem">{{
-                      (model.capabilities ?? []).join(', ')
-                    }}</span>
-                  } @else {
-                    <span class="badge badge--warning">undeclared</span>
-                  }
-                  @if (model.deprecated) {
-                    <span class="badge badge--danger">deprecated</span>
-                  }
-                </td>
-                <td>
-                  @if (model.is_priced) {
-                    {{ model.input_price_per_million }}
-                  } @else {
-                    <span class="badge badge--warning">no price</span>
-                  }
-                </td>
-                <td>{{ model.is_priced ? model.output_price_per_million : '—' }}</td>
-                <td class="table__actions">
-                  @if (canEdit()) {
-                    <button
-                      type="button"
-                      class="btn btn--sm"
-                      [attr.aria-label]="'Edit ' + model.name"
-                      (click)="edit(model)"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      type="button"
-                      class="btn btn--sm btn--danger"
-                      [disabled]="busy()"
-                      [attr.aria-label]="'Remove ' + model.name"
-                      (click)="remove(model)"
-                    >
-                      Remove
-                    </button>
-                  }
-                </td>
-              </tr>
-            }
-          </tbody>
-        </table>
+      <div class="table-tools" style="padding: 0.9rem 1rem 0">
+        <label class="search">
+          <span>Find a model</span>
+          <input
+            type="search"
+            [value]="view.query()"
+            (input)="view.search($any($event.target).value)"
+            placeholder="part of a model name, or a provider"
+            data-testid="model-search"
+            autocomplete="off"
+          />
+        </label>
       </div>
+
+      @if (!view.matches().length) {
+        <p class="empty" data-testid="model-no-match">
+          No model matches “{{ view.query() }}”. The catalog holds {{ models().length }}.
+        </p>
+      } @else {
+        <div class="table-wrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th scope="col">Model</th>
+                <th scope="col">Provider</th>
+                <th scope="col">Capabilities</th>
+                <th scope="col">Input / 1M</th>
+                <th scope="col">Output / 1M</th>
+                <th scope="col"><span class="sr-only">Actions</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (model of view.rows(); track model.name) {
+                <tr>
+                  <td>
+                    <code>{{ model.name }}</code>
+                    @if (model.display_name) {
+                      <div class="muted" style="font-size: 0.8rem">{{ model.display_name }}</div>
+                    }
+                  </td>
+                  <td>{{ model.provider || '—' }}</td>
+                  <td>
+                    @if (model.is_declared) {
+                      <span class="muted" style="font-size: 0.8rem">{{
+                        (model.capabilities ?? []).join(', ')
+                      }}</span>
+                    } @else {
+                      <span class="badge badge--warning">undeclared</span>
+                    }
+                    @if (model.deprecated) {
+                      <span class="badge badge--danger">deprecated</span>
+                    }
+                  </td>
+                  <td>
+                    @if (model.is_priced) {
+                      {{ model.input_price_per_million }}
+                    } @else {
+                      <span class="badge badge--warning">no price</span>
+                    }
+                  </td>
+                  <td>{{ model.is_priced ? model.output_price_per_million : '—' }}</td>
+                  <td class="table__actions">
+                    <div class="actions">
+                      @if (canEdit()) {
+                        <button
+                          type="button"
+                          class="btn btn--sm"
+                          [attr.aria-label]="'Edit ' + model.name"
+                          (click)="edit(model)"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          class="btn btn--sm btn--danger"
+                          [disabled]="busy()"
+                          [attr.aria-label]="'Remove ' + model.name"
+                          (click)="remove(model)"
+                        >
+                          Remove
+                        </button>
+                      }
+                    </div>
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+
+        <div style="padding: 0 1rem 0.9rem">
+          <app-table-pager [view]="view" noun="models" testid="model-pager" />
+        </div>
+      }
     }
   </div>
 

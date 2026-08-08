@@ -5,8 +5,10 @@ import { AnomalyEvent, AnomalyRule, Me, Suspension } from '../../core/api/models
 import { MeService } from '../../core/api/me.service';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { ConfirmService } from '../../core/ui/confirm.service';
+import { InfoHint } from '../../core/ui/info-hint';
 import { Live, agoLabel } from '../../core/ui/live';
 import { PageFeedback } from '../../core/ui/page-feedback';
+import { describeAction, describeEvent, describeRule, unitOf } from './rule-language';
 
 /** How often the console refreshes itself. Findings change at human speed. */
 const REFRESH_SECONDS = 15;
@@ -25,7 +27,7 @@ const REFRESH_SECONDS = 15;
  */
 @Component({
   selector: 'app-security-page',
-  imports: [DatePipe, FormsModule],
+  imports: [DatePipe, FormsModule, InfoHint],
   templateUrl: './security-page.html',
   providers: [PageFeedback, Live],
 })
@@ -42,6 +44,25 @@ export class SecurityPage implements OnInit {
   protected readonly rules = signal<AnomalyRule[]>([]);
   protected readonly loading = signal(true);
   protected readonly tab = signal<'findings' | 'suspensions' | 'rules'>('findings');
+
+  /**
+   * Which row is open, by id. A table row is a summary; the answer to "why did this fire" is four
+   * more fields, and a table wide enough to hold them is a table nobody can read.
+   */
+  protected readonly openEvent = signal<string | null>(null);
+  protected readonly openRule = signal<number | null>(null);
+
+  // The rule editor. One rule at a time, and the fields a person actually changes: what counts as
+  // too much, over how long, how many requests it takes to be worth judging, and what to do.
+  protected readonly editing = signal<number | null>(null);
+  protected readonly editThreshold = signal<number | null>(null);
+  protected readonly editWindow = signal<number | null>(null);
+  protected readonly editSample = signal<number | null>(null);
+  protected readonly editParameter = signal<number | null>(null);
+  protected readonly editAction = signal<string>('alert');
+  protected readonly editMinutes = signal<number | null>(null);
+  protected readonly editRpm = signal<number | null>(null);
+  protected readonly editEnabled = signal(true);
 
   // The kill-switch form. Signals, because the app is zoneless.
   protected readonly showStop = signal(false);
@@ -84,6 +105,120 @@ export class SecurityPage implements OnInit {
       },
     );
     this.loadSuspensions();
+    this.loadRules();
+  }
+
+  /** What a rule does, in a sentence — see `rule-language.ts` for why this is not the raw kind. */
+  protected explain(rule: AnomalyRule): string {
+    return describeRule(rule);
+  }
+
+  /** What a threshold is counted in — "% of requests" reads very differently from "× as much". */
+  protected unit(rule: AnomalyRule): string {
+    return unitOf(rule.kind);
+  }
+
+  /** What a finding measured, against what, over how many requests. */
+  protected explainEvent(event: AnomalyEvent): string {
+    return describeEvent(event);
+  }
+
+  /** What was *done* about it — `ADR-0014` keeps that apart from what was detected. */
+  protected explainAction(event: AnomalyEvent): string {
+    return describeAction(event);
+  }
+
+  /** The rule a finding came from, when it is one this caller can also see. */
+  protected ruleOf(event: AnomalyEvent): AnomalyRule | undefined {
+    return this.rules().find((rule) => rule.name === event.rule && rule.kind === event.kind);
+  }
+
+  protected toggleEvent(id: string): void {
+    this.openEvent.update((open) => (open === id ? null : id));
+  }
+
+  protected toggleRule(id: number): void {
+    this.openRule.update((open) => (open === id ? null : id));
+    // Closing a rule abandons an edit in progress rather than leaving a hidden form that would
+    // save fields the reader can no longer see.
+    if (this.openRule() !== id) this.editing.set(null);
+  }
+
+  /**
+   * Whether this caller may change this rule.
+   *
+   * A **global** rule needs an incident role, which is the same predicate the server enforces
+   * with. A **use-case** rule needs to manage that use case, and object-level permission is not in
+   * the token — so rather than guess, the console says where that rule is edited. `FRD-206`: an
+   * action nobody can carry out is worse than an absent one.
+   */
+  protected mayEdit(rule: AnomalyRule): boolean {
+    return rule.is_global && this.canStop();
+  }
+
+  protected startEdit(rule: AnomalyRule): void {
+    this.editing.set(rule.id);
+    this.editThreshold.set(rule.threshold);
+    this.editWindow.set(rule.window_minutes);
+    this.editSample.set(rule.min_sample);
+    this.editParameter.set(rule.parameter);
+    this.editAction.set(rule.action);
+    this.editMinutes.set(rule.action_minutes);
+    this.editRpm.set(rule.throttle_rpm);
+    this.editEnabled.set(rule.enabled);
+  }
+
+  protected cancelEdit(): void {
+    this.editing.set(null);
+  }
+
+  protected saveRule(rule: AnomalyRule): void {
+    this.feedback.run(
+      this.service.updateRule(rule.id, {
+        threshold: this.editThreshold() ?? rule.threshold,
+        window_minutes: this.editWindow() ?? rule.window_minutes,
+        min_sample: this.editSample() ?? 0,
+        parameter: this.editParameter(),
+        action: this.editAction(),
+        action_minutes: this.editMinutes(),
+        throttle_rpm: this.editRpm(),
+        enabled: this.editEnabled(),
+        // Sent unchanged because the server validates the pair — a threshold is only meaningful
+        // against its kind, and a PATCH that omitted the kind would be validated against the
+        // default rather than against this rule.
+        kind: rule.kind,
+        name: rule.name,
+      }),
+      {
+        failure: 'Could not save this rule.',
+        success: () => {
+          this.feedback.succeed(
+            `"${rule.name}" saved. It reaches the gateway within a few seconds.`,
+          );
+          this.editing.set(null);
+          this.loadRules();
+        },
+      },
+    );
+  }
+
+  protected removeRule(rule: AnomalyRule): void {
+    const question =
+      `Delete the rule "${rule.name}"? Nothing will be watched for it afterwards, and ` +
+      `findings it already produced are kept.`;
+    if (!this.confirmService.ask(question)) return;
+    this.feedback.run(this.service.deleteRule(rule.id), {
+      failure: 'Could not delete this rule.',
+      success: () => {
+        this.feedback.succeed(`"${rule.name}" deleted.`);
+        this.openRule.set(null);
+        this.editing.set(null);
+        this.loadRules();
+      },
+    });
+  }
+
+  protected loadRules(): void {
     this.service.globalRules().subscribe({
       next: (rules) => this.rules.set(rules),
       error: (response: unknown) =>

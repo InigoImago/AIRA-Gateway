@@ -14,6 +14,8 @@ import { errorMessage } from '../../core/api/error-message';
 import { Me, UseCase } from '../../core/api/models';
 import { MeService } from '../../core/api/me.service';
 import { UseCaseService } from '../../core/api/use-case.service';
+import { TablePager } from '../../core/ui/table-pager';
+import { TableView } from '../../core/ui/table-view';
 
 /** Mirrors the server-side slug validator, so the rule is stated before the request fails. */
 const SLUG_PATTERN = /^[a-z0-9-]+$/;
@@ -42,7 +44,7 @@ export function slugify(name: string): string {
 
 @Component({
   selector: 'app-use-case-list',
-  imports: [FormsModule, RouterLink],
+  imports: [FormsModule, RouterLink, TablePager],
   templateUrl: './use-case-list.html',
   host: { '(document:keydown.escape)': 'closeCreate()' },
 })
@@ -52,6 +54,19 @@ export class UseCaseList implements OnInit {
   private readonly router = inject(Router);
 
   protected readonly useCases = signal<UseCase[]>([]);
+
+  /**
+   * The list, searched and paged.
+   *
+   * Not a nicety: a live round found **801** use cases in one installation, which made this
+   * overview unusable without a single line of it being wrong. A list that only grows needs a way
+   * to ask for the row you want — the name *or* the technical id, since one is what a person
+   * calls it and the other is what their systems quote.
+   */
+  protected readonly view = new TableView<UseCase>(
+    this.useCases,
+    (useCase) => `${useCase.name} ${useCase.slug}`,
+  );
   protected readonly loading = signal(true);
   protected readonly creating = signal(false);
   protected readonly error = signal<string | null>(null);

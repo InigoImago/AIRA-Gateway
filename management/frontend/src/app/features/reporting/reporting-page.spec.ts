@@ -91,15 +91,29 @@ describe('ReportingPage', () => {
     expect(text()).toContain('Reporting');
   });
 
-  it('renders the totals and all three breakdowns', () => {
+  it('renders the totals and the chosen breakdown', () => {
     const { text, testid } = setup();
 
     expect(testid('total-cost')?.textContent).toContain('3.75');
     expect(testid('total-requests')?.textContent).toContain('4');
-    // One row from each breakdown, so a missing panel cannot pass as a rendered page.
+    // Use case is where the page starts, and only that table is on screen: four stacked
+    // breakdowns made the page long enough that its own export control scrolled out of sight.
     expect(text()).toContain('demo-uc');
-    expect(text()).toContain('mock-1');
-    expect(text()).toContain('alice');
+    expect(text()).not.toContain('mock-1');
+  });
+
+  it('swaps the table when another breakdown is chosen', () => {
+    const harness = setup();
+    const component = harness.component;
+
+    component.exportBreakdown.set('model');
+    harness.fixture.detectChanges();
+    expect(harness.text()).toContain('mock-1');
+    expect(harness.text()).not.toContain('demo-uc');
+
+    component.exportBreakdown.set('member');
+    harness.fixture.detectChanges();
+    expect(harness.text()).toContain('alice');
   });
 
   it('says whether the caller is seeing everything or only their own use cases', () => {
@@ -135,11 +149,29 @@ describe('ReportingPage', () => {
     expect(testid('total-refused')?.textContent?.trim()).toBe('0');
   });
 
-  it('renders the outcome breakdown alongside the other three', () => {
-    const { text } = setup(of(report({ by_outcome: [row({ key: 'rate_limited', requests: 7 })] })));
+  it('shows the outcome breakdown, and says plainly that it is not exported', () => {
+    // The CSV renderer takes three breakdowns (`FRD-602`). A download button that looked ready
+    // and answered 400 is the defect `FRD-206` was written about — so the button is replaced by
+    // the reason, naming the three that do work.
+    const harness = setup(of(report({ by_outcome: [row({ key: 'rate_limited', requests: 7 })] })));
+    harness.component.exportBreakdown.set('outcome');
+    harness.fixture.detectChanges();
 
-    expect(text()).toContain('By outcome');
-    expect(text()).toContain('rate_limited');
+    expect(harness.text()).toContain('By outcome');
+    expect(harness.text()).toContain('rate_limited');
+    expect(harness.testid('export-download')).toBeNull();
+    expect(harness.testid('export-unavailable')?.textContent).toContain('not exported');
+  });
+
+  it('downloads the table that is on screen, never a different one', () => {
+    // Two ideas of "which table" — one for the screen and one for the file — is one more than
+    // there should be, and is how an export comes to disagree with the report it came from.
+    const harness = setup();
+    harness.component.exportBreakdown.set('member');
+    harness.fixture.detectChanges();
+    harness.component.download();
+
+    expect(harness.exports.at(-1)?.breakdown).toBe('member');
   });
 
   it('shows the unpriced caveat only when there is unpriced traffic', () => {
@@ -379,68 +411,68 @@ describe('ReportingPage — what each figure counts', () => {
     // What anybody reaching for an "i" expects. The first version needed a click; the one before
     // that was a `title` attribute and showed nothing at all.
     const { fixture, testid } = setup();
-    const button = testid('info-refused')!;
+    const button = testid('info-stat-refused')!;
 
-    expect(testid('help-refused')).toBeNull();
+    expect(testid('help-stat-refused')).toBeNull();
 
     button.dispatchEvent(new Event('mouseenter'));
     fixture.detectChanges();
-    expect(testid('help-refused')?.textContent).toContain('never reached a model');
+    expect(testid('help-stat-refused')?.textContent).toContain('never reached a model');
 
     button.dispatchEvent(new Event('mouseleave'));
     fixture.detectChanges();
-    expect(testid('help-refused')).toBeNull();
+    expect(testid('help-stat-refused')).toBeNull();
   });
 
   it('shows it for a keyboard too, on focus', () => {
     // A tooltip only a mouse can reach is a tooltip half the readers never see.
     const { fixture, testid } = setup();
-    const button = testid('info-latency')!;
+    const button = testid('info-stat-latency')!;
 
     button.dispatchEvent(new Event('focus'));
     fixture.detectChanges();
-    expect(testid('help-latency')).not.toBeNull();
+    expect(testid('help-stat-latency')).not.toBeNull();
 
     button.dispatchEvent(new Event('blur'));
     fixture.detectChanges();
-    expect(testid('help-latency')).toBeNull();
+    expect(testid('help-stat-latency')).toBeNull();
   });
 
   it('pins the explanation open when clicked, because a touch screen has no hover', () => {
     const { fixture, testid } = setup();
 
-    expect(testid('help-refused')).toBeNull();
+    expect(testid('help-stat-refused')).toBeNull();
 
-    testid('info-refused')?.dispatchEvent(new Event('click'));
+    testid('info-stat-refused')?.dispatchEvent(new Event('click'));
     // A click on a touch screen fires no hover, and the pointer leaves straight away.
-    testid('info-refused')?.dispatchEvent(new Event('mouseleave'));
+    testid('info-stat-refused')?.dispatchEvent(new Event('mouseleave'));
     fixture.detectChanges();
 
-    const help = testid('help-refused');
+    const help = testid('help-stat-refused');
     expect(help).not.toBeNull();
     // The sentence has to say the thing the short heading cannot: these never reached a model.
     expect(help?.textContent).toContain('never reached a model');
-    expect(testid('info-refused')?.getAttribute('aria-expanded')).toBe('true');
+    expect(testid('info-stat-refused')?.getAttribute('aria-expanded')).toBe('true');
   });
 
   it('closes on a second use, and shows one explanation at a time', () => {
     const { fixture, testid } = setup();
 
-    testid('info-refused')?.dispatchEvent(new Event('click'));
-    testid('info-refused')?.dispatchEvent(new Event('mouseleave'));
+    testid('info-stat-refused')?.dispatchEvent(new Event('click'));
+    testid('info-stat-refused')?.dispatchEvent(new Event('mouseleave'));
     fixture.detectChanges();
-    testid('info-tokens')?.dispatchEvent(new Event('click'));
-    testid('info-tokens')?.dispatchEvent(new Event('mouseleave'));
+    testid('info-stat-tokens')?.dispatchEvent(new Event('click'));
+    testid('info-stat-tokens')?.dispatchEvent(new Event('mouseleave'));
     fixture.detectChanges();
 
     // Six open paragraphs is a wall of text where six figures were.
-    expect(testid('help-refused')).toBeNull();
-    expect(testid('help-tokens')).not.toBeNull();
+    expect(testid('help-stat-refused')).toBeNull();
+    expect(testid('help-stat-tokens')).not.toBeNull();
 
-    testid('info-tokens')?.dispatchEvent(new Event('click'));
-    testid('info-tokens')?.dispatchEvent(new Event('mouseleave'));
+    testid('info-stat-tokens')?.dispatchEvent(new Event('click'));
+    testid('info-stat-tokens')?.dispatchEvent(new Event('mouseleave'));
     fixture.detectChanges();
-    expect(testid('help-tokens')).toBeNull();
+    expect(testid('help-stat-tokens')).toBeNull();
   });
 
   it('still renders every figure, with its unit beside the number rather than in the heading', () => {
@@ -463,5 +495,39 @@ describe('ReportingPage — what each figure counts', () => {
 
     expect(text()).toContain('—');
     expect(element.textContent).not.toContain('average / maximum');
+  });
+});
+
+describe('ReportingPage — each breakdown names itself', () => {
+  it('titles the table, the pager and the empty state in its own terms', () => {
+    // "No traffic from any use case" and "Nobody made a request" are different sentences about
+    // different things; one empty state for all four would be wrong three times out of four.
+    const empty = report({ by_use_case: [], by_model: [], by_member: [], by_outcome: [] });
+
+    const harness = setup(of(empty));
+    expect(harness.text()).toContain('No traffic from any use case');
+
+    harness.component.exportBreakdown.set('model');
+    harness.fixture.detectChanges();
+    expect(harness.text()).toContain('By model');
+    expect(harness.text()).toContain('No model was called');
+
+    harness.component.exportBreakdown.set('member');
+    harness.fixture.detectChanges();
+    expect(harness.text()).toContain('By member');
+    expect(harness.text()).toContain('Nobody made a request');
+
+    harness.component.exportBreakdown.set('outcome');
+    harness.fixture.detectChanges();
+    expect(harness.text()).toContain('By outcome');
+    expect(harness.text()).toContain('Nothing happened in this period');
+  });
+
+  it('counts the rows of whichever breakdown is shown', () => {
+    const harness = setup(of(report({ by_member: [row({ key: 'alice' }), row({ key: 'bob' })] })));
+    harness.component.exportBreakdown.set('member');
+    harness.fixture.detectChanges();
+
+    expect(harness.text()).toContain('1–2 of 2 members');
   });
 });

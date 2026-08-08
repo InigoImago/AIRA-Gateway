@@ -652,6 +652,30 @@ and both changes live only in the fourth. No unit test performs an OIDC redirect
 whether a control does something when used, **is an e2e change**. That run also updated 16 e2e
 tests whose screens this pass deliberately moved — five rewritten rather than repaired, because
 their *meaning* changed.
+**The console holds still and says what its controls do (`FRD-207`, 2026-08-08)** — `FRD-206`
+stopped the console promising what the server refuses; a walkthrough asked the next question, *can
+I read this?*, and produced twelve findings. Two were defects of the same shape — **a declaration
+that is silently inert**. The "jiggle" was **measured**, not guessed: a `layout-shift` observer
+reported five shifts in forty seconds, every one the Refresh button, because the live stamp changes
+width twice a tick ("updating…" vs "updated 12s ago"; "9s" vs "10s"); the stamp now reserves its
+widest form and busy is a dot in space it already occupies. And `routerLinkActive` was **never
+imported**, so the nav marker had been styling nothing since the shell existed — Angular does not
+complain about an attribute matching no directive. Also: `.table__actions` was `display:flex` **on
+the `<td>`**, which stops a cell participating in its row (the reported "break" between a model row
+and its buttons), and a filter row centred a bare checkbox against a labelled field, putting a pair
+of controls on two lines. **A finding opens** (six columns is as much as a table can be read at) and
+**a rule says what it does in English** — safe only because the vocabulary is closed;
+`rule-language.ts` keeps *a ratio is not a threshold* and *`alert` is not enforcement* intact.
+**Rules are editable** except their kind and name: a kind decides what a threshold *means*, so
+changing it in place silently reinterprets a chosen number. Reporting shows **one breakdown at a
+time** and exports what is on screen (four stacked tables scrolled the export control out of sight
+and left two ideas of "which table"); `by_outcome` is shown, not exported, and says so. Search +
+paging (`core/ui/table-view`) after a live round found **801** use cases; searching returns to page
+one, and the pager renders even on a single page. The hover explanation was **written twice in a
+week** and collided on a `data-testid` — now `core/ui/info-hint`, one pinned at a time. Test lesson:
+the first rule-editor e2e **skipped itself** when no rules existed, so the richest new behaviour
+would have been browser-tested never — *a test that skips when the data is inconvenient reports
+green about nothing.*
 **Phase 5 begun (`ADR-0014` + `FRD-500`, 2026-08-07)** — the *evidence* half. `ADR-0014`:
 **detection is asynchronous, enforcement is not, and they meet at a written decision.** Evaluation
 is fed by the **request log** — the same rows the report reads, so a detector cannot see anything

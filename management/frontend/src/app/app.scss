@@ -97,9 +97,17 @@
       text-decoration: none;
     }
 
+    /* A 2px rule in a brand colour, on a bar of five items, reads as decoration rather than as
+     * "you are here" — the question "which section am I in" was needing a second look. Weight, a
+     * tinted background and a thicker rule answer it at a glance. */
     &.is-active {
       color: var(--aira-brand-strong);
+      background: var(--aira-brand-soft);
       border-bottom-color: var(--aira-brand);
+      border-bottom-width: 3px;
+      font-weight: 700;
+      border-top-left-radius: var(--aira-radius-sm);
+      border-top-right-radius: var(--aira-radius-sm);
     }
 
     &:focus-visible {
