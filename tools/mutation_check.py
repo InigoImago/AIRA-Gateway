@@ -2395,6 +2395,14 @@ MUTATIONS = [
         "        stmt = stmt",
         "gateway/tests/test_traces.py",
     ),
+    Mutation(
+        "N45",
+        "an id claimed by two models is refused, not resolved by whichever row was read first",
+        "gateway/src/aira_gateway/catalog.py",
+        "        if len(names) > 1:",
+        "        if False:",
+        "gateway/tests/test_kira_surface.py",
+    ),
     # ---- access by group (FRD-209) ----------------------------------------------------------
     Mutation(
         "N30",
