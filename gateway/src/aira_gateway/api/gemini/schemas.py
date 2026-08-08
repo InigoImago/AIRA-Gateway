@@ -18,6 +18,7 @@ by name, with the reason; unknown → refused, naming the field.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -225,6 +226,12 @@ _REQUEST_NOT_SERVED = {
 }
 
 
+#: What every provider accepts as a function name. Checked **here**, at our boundary, so a caller
+#: gets an error naming the field instead of a provider error naming nothing — the same argument
+#: `FRD-112` makes for parsing a schema rather than forwarding it blindly.
+_FUNCTION_NAME = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
 class FunctionDeclaration(BaseModel):
     """A function the caller offers the model (`FRD-131`).
 
@@ -237,6 +244,16 @@ class FunctionDeclaration(BaseModel):
     name: str
     description: str = ""
     parameters: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def _usable_name(self) -> FunctionDeclaration:
+        if not _FUNCTION_NAME.match(self.name):
+            raise ValueError(
+                f"'{self.name}' is not a usable function name. Providers accept letters, digits, "
+                "'_' and '-', up to 64 characters — a name outside that is rejected downstream "
+                "with a message that names neither the tool nor the field."
+            )
+        return self
 
 
 class Tool(BaseModel):
@@ -293,6 +310,27 @@ class GenerateContentRequest(BaseModel):
     #: Accepted for `AUTO` — which is what the model does anyway — and refused by name for the
     #: modes that would change the answer and are not implemented.
     toolConfig: ToolConfig | None = None
+
+    @model_validator(mode="after")
+    def _distinct_tool_names(self) -> GenerateContentRequest:
+        """Two functions cannot share a name.
+
+        A model asked for `read` when two `read`s were declared has given an answer nobody can
+        route — and the caller would execute *one of them*, chosen by whichever their code found
+        first. Refused here rather than at the provider, which accepts the request and leaves the
+        ambiguity to be discovered by a wrong file being read.
+        """
+        seen: set[str] = set()
+        for tool in self.tools:
+            for declaration in tool.functionDeclarations:
+                if declaration.name in seen:
+                    raise ValueError(
+                        f"'{declaration.name}' is declared twice. A call to it could not be "
+                        "matched to one function, and the caller would run whichever they found "
+                        "first."
+                    )
+                seen.add(declaration.name)
+        return self
 
     @model_validator(mode="before")
     @classmethod

@@ -197,8 +197,12 @@ services:
       # the whole of the first — and an agent issues several per instruction. On CPU that turns a
       # queue into a read timeout upstream, which reads like a broken gateway and is not one.
       OLLAMA_NUM_PARALLEL: "2"
-      # Keep the model resident between turns. Reloading a 2.5 GB model costs more than the answer.
-      OLLAMA_KEEP_ALIVE: "30m"
+      # Keep the model resident between turns — but **not for half an hour**. The first attempt
+      # set 30m, and with two slots that pinned two models (7.8 GB) in a 15 GB box for the rest of
+      # the session: load average 103, 118 MB free, and the *frontend test suite* started timing
+      # out at 5 seconds a case. A caching setting made a test suite fail, which is the kind of
+      # coupling nobody looks for. Ollama's own default is 5m and it is the right trade here.
+      OLLAMA_KEEP_ALIVE: "5m"
     volumes:
       - ollama-models:/root/.ollama
     ports:

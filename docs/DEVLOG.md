@@ -3873,3 +3873,66 @@ appended to only after a run, and a model absent from it declares no tool callin
 chain refuses it by name rather than letting prose reach a client that will parse it as a call.
 That entry was written for `qwen2.5:7b` while it was still downloading and taken out again before
 the file was saved: the fourth instance in one evening of the same reflex.
+
+## 2026-08-08 (night, later) — tool calling on all three dialects, and a matrix instead of anecdotes
+
+**Gemini and Anthropic now carry tool calls too.** Both had raised `DialectUnsupported` since the
+part union widened; the catalog capability kept a tool request away from them, so nothing was
+broken — the feature simply only existed on one of three wire formats.
+
+Two dialect facts worth keeping. **Google sends no call id** and matches a result to a call by
+*name*, so an id is generated deterministically — otherwise a conversation begun there could not be
+continued on the two dialects that require one. And **`functionResponse.response` is an object**,
+not a string, so a result is parsed back and a non-JSON one wrapped; the canonical model keeps text
+because two of three want it. Google also sends a function call **whole in one chunk**: no
+accumulator was written for it, because a mechanism defending against a problem a wire format does
+not have is a mechanism nobody will maintain correctly.
+
+**Anthropic is where the collision the FRD predicted actually lives.** `input_json_delta` means two
+different things on that dialect and only `content_block_start` says which: for a structured
+request the fragments **are** the answer and stream as text (`FRD-112` depends on it), for one of
+the caller's tools the identical fragments are arguments and must be accumulated — streaming them
+as text would send `{"pa`, `th": "he` to the client as the model's reply. And `aira_structured_
+output` is itself a `tool_use` block, filtered out of the reported calls: returning it would hand
+the caller a function they never declared.
+
+The **tools-plus-schema conflict is a dispatch decision, not a mapping error**: structured output
+on that dialect *is* a forced tool call, so one field would have to serve two purposes and one of
+them would silently lose. `ToolsAndSchemaTogether` skips the candidate by name, exactly as
+`SamplingExpressible` does for `top_k`, and each adapter declares `tools_with_schema` — absent
+means "cannot".
+
+### The matrix
+
+Asked whether the edge cases were covered, the honest answer was **no, not systematically** —
+individual cases existed, a matrix did not. `test_tool_calling_matrix.py` is organised by *where in
+the path* × *what is wrong with it*: the declaration, the replayed turn, the model's answer, the
+stream, governance, and the audit row seen as evidence. Writing it found three things the code had
+never decided:
+
+- **a function name nothing can call** (empty, or with spaces and dots) was accepted and would have
+  been rejected downstream with a message naming neither the tool nor the field;
+- **the same name declared twice** was accepted — and a call to it cannot be matched to one
+  function, so the caller would run whichever their code found first;
+- an **empty `tools: []`** must stay identical to sending none, or a client that always includes
+  the field is refused by the use-case gate for asking nothing.
+
+The first two are now refused at the surface, where parsing belongs. One deliberate **non**-decision
+is recorded too: a tool result answering no call in the history is carried, not policed —
+`ADR-0013` says the gateway governs model access, not the caller's conversation.
+
+The matrix also caught a sloppy assertion of my own: `"functionCall" not in response.text` passed
+for the wrong reason, because `Part` serialises all four shapes and the string appears as a null
+field. Asserted on the parsed answer now.
+
+### And a caching setting made a test suite fail
+
+`make ci` went red on **twelve frontend tests**, all timing out at five seconds. Nothing to do with
+the code: `uptime` said load average **103** and 118 MB free. `OLLAMA_KEEP_ALIVE=30m`, which I set
+an hour earlier so an agent loop would not reload its model between turns, had pinned **two models
+(7.8 GB)** in a 15 GB box for half an hour, with `NUM_PARALLEL=2` making it two rather than one.
+
+Lowered to Ollama's own default of 5 minutes, and the models unloaded: 9 GB free, 502 frontend
+tests green. The lesson is the coupling itself — a *caching* setting starved a *test suite*, and
+nobody would look there. A knob that trades memory for latency needs a number that fits the machine
+it runs on, not the workload that motivated it.

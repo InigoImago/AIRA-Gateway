@@ -220,6 +220,38 @@ class SamplingExpressible:
         )
 
 
+class ToolsAndSchemaTogether:
+    """Some dialects cannot carry a caller's tools **and** a response schema in one request.
+
+    A property of the dialect, like `SamplingExpressible`, and for a sharper reason. Anthropic has
+    no schema parameter at all: `FRD-119` §5.5 implements structured output *as* a forced tool
+    call, pinning `tool_choice` to one tool whose input schema is the caller's. A request that also
+    declares its own functions would need the same field for two purposes, and whichever won, the
+    other would be **silently lost** — either the caller's functions vanish, or the answer comes
+    back as prose where a document was promised.
+
+    So the candidate is skipped by name. An exhausted chain then answers `400 FAILED_PRECONDITION`
+    naming both, which an operator can act on: route that use case at a model whose dialect keeps
+    the two apart.
+    """
+
+    def __init__(self, registry: ProviderRegistry) -> None:
+        self._registry = registry
+
+    async def refusal(self, model: str) -> str | None:
+        provider = self._registry.provider_for(model)
+        if provider is None:
+            return None  # dispatch already reports an unserved model, and says it better
+        # Declared per adapter, and **absent means "cannot"** — the same floor every other
+        # capability uses, so an adapter that forgets refuses rather than silently mixing them.
+        if getattr(provider, "tools_with_schema", False):
+            return None
+        return (
+            "the dialect serving this model expresses a response schema *as* a tool call, so it "
+            "cannot carry the caller's own tools in the same request without losing one of them"
+        )
+
+
 def permits(requirements: Sequence[Requirement]) -> Callable[[str], Awaitable[str | None]]:
     """Combine requirements into the predicate the dispatch chain takes.
 

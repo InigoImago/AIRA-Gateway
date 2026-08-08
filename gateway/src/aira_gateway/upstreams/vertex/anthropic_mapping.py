@@ -30,6 +30,8 @@ from aira_gateway.core.canonical import (
     DataPart,
     Role,
     TextPart,
+    ToolCallPart,
+    ToolResultPart,
 )
 from aira_gateway.core.schema import to_json_schema
 from aira_gateway.upstreams.base import DialectUnsupported
@@ -129,6 +131,31 @@ def canonical_to_anthropic(request: CanonicalRequest, *, max_tokens: int) -> dic
                     "output allowance — the budget is drawn from it."
                 )
             body["thinking"] = {"type": "enabled", "budget_tokens": budget}
+    if request.tools:
+        # The caller's own functions. **Never together with a response schema** — that would need
+        # this same field for two purposes and silently lose one of them, which is why
+        # `ToolsAndSchemaTogether` skips this candidate before dispatch. Reaching both here would
+        # mean a requirement was not applied, so the assertion is the mapping's own backstop.
+        if request.response_schema is not None:  # pragma: no cover - the chain skips this first
+            raise DialectUnsupported(
+                "This dialect expresses a response schema as a forced tool call and cannot carry "
+                "the caller's tools in the same request."
+            )
+        body["tools"] = [
+            {
+                "name": tool.name,
+                "description": tool.description,
+                "input_schema": (
+                    to_json_schema(tool.parameters)
+                    if tool.parameters is not None
+                    else {"type": "object", "properties": {}}
+                ),
+            }
+            for tool in request.tools
+        ]
+        # No `tool_choice`: the model decides. `AUTO` is what the surface accepts and the others
+        # are refused there (`FRD-131`), so pinning anything here would be inventing an instruction
+        # the caller never gave.
     if request.response_schema is not None:
         # Anthropic has **no schema parameter**. The equivalent is a forced tool call: one tool
         # whose input schema is the caller's, `tool_choice` pinned to it, and the model's tool
@@ -165,15 +192,19 @@ def _content_blocks(message: CanonicalMessage) -> list[dict[str, Any]]:
         if isinstance(part, TextPart):
             blocks.append({"type": "text", "text": part.text})
             continue
-        if not isinstance(part, DataPart):
-            # See the same guard in the Gemini adapter. Tool blocks on this dialect are
-            # `tool_use`/`tool_result` and are **not built yet**; a model that does not declare
-            # `tools` is skipped before dispatch, so reaching this is a declaration that outran
-            # the mapping.
-            raise DialectUnsupported(
-                "This adapter does not carry tool calls. A model declaring the capability cannot "
-                "serve the request through it."
+        if isinstance(part, ToolCallPart):
+            blocks.append(
+                {"type": "tool_use", "id": part.id, "name": part.name, "input": part.arguments}
             )
+            continue
+        if isinstance(part, ToolResultPart):
+            # `tool_result` belongs to the **user** turn on this dialect and names the call by id.
+            blocks.append(
+                {"type": "tool_result", "tool_use_id": part.call_id, "content": part.content}
+            )
+            continue
+        if not isinstance(part, DataPart):  # pragma: no cover - the union is closed above
+            raise DialectUnsupported(f"Unsupported part {type(part).__name__}.")
         kind = "document" if part.media_type in _DOCUMENT_TYPES else "image"
         blocks.append(
             {
@@ -241,6 +272,33 @@ def structured_document(content: Any) -> str | None:
     return None
 
 
+def tool_calls_of(content: Any) -> tuple[ToolCallPart, ...]:
+    """The caller's tool calls in a response — **excluding** the structured-output one.
+
+    That exclusion is the whole subtlety of this dialect: `aira_structured_output` is a `tool_use`
+    block too, and returning it as a tool call would hand the caller an invented function they
+    never declared, while `structured_document` reads the same block as the answer.
+    """
+    if not isinstance(content, list):
+        return ()
+    calls: list[ToolCallPart] = []
+    for index, block in enumerate(content):
+        if not isinstance(block, dict) or block.get("type") != "tool_use":
+            continue
+        name = str(block.get("name") or "")
+        if not name or name == STRUCTURED_TOOL:
+            continue
+        arguments = block.get("input")
+        calls.append(
+            ToolCallPart(
+                id=str(block.get("id") or f"{name}-{index}"),
+                name=name,
+                arguments=arguments if isinstance(arguments, dict) else {},
+            )
+        )
+    return tuple(calls)
+
+
 def anthropic_to_canonical(
     data: dict[str, Any], model: str, *, structured: bool = False
 ) -> CanonicalResponse:
@@ -264,7 +322,13 @@ def anthropic_to_canonical(
         reason = "stop" if reason == "tool_use" else reason
 
     return CanonicalResponse(
-        model=model, text=text, finish_reason=reason, usage=usage_of(data.get("usage"))
+        model=model,
+        text=text,
+        finish_reason=reason,
+        usage=usage_of(data.get("usage")),
+        # Empty for a structured request: its one `tool_use` block *is* the answer, and reporting
+        # it as a call would hand the caller a function they never declared.
+        tool_calls=() if structured else tool_calls_of(data.get("content")),
     )
 
 
@@ -281,6 +345,10 @@ class StreamAssembler:
         self._prompt = 0
         self._completion = 0
         self._finish: str | None = None
+        #: The `tool_use` block currently open, if it is one of the **caller's** tools: its id,
+        #: its name, and the `input_json_delta` fragments seen so far.
+        self._open_call: dict[str, str] | None = None
+        self._calls: list[ToolCallPart] = []
 
     def feed(self, event: dict[str, Any]) -> CanonicalChunk | None:
         kind = event.get("type")
@@ -291,9 +359,32 @@ class StreamAssembler:
             self._completion = usage.completion_tokens
             return None
 
+        if kind == "content_block_start":
+            # **`input_json_delta` means two different things on this dialect**, and only this
+            # event says which. For a structured request the open block is `aira_structured_output`
+            # and its fragments *are* the answer, streamed as text — the behaviour `FRD-112` relies
+            # on and which must not change. For one of the caller's own tools the identical
+            # fragments are the call's arguments and must be accumulated, never emitted as text: a
+            # client would otherwise receive `{"pa`, `th": "he` as the model's reply.
+            block = event.get("content_block") or {}
+            if block.get("type") == "tool_use" and block.get("name") != STRUCTURED_TOOL:
+                self._open_call = {
+                    "id": str(block.get("id") or ""),
+                    "name": str(block.get("name") or ""),
+                    "arguments": "",
+                }
+            return None
+
+        if kind == "content_block_stop":
+            self._finish_call()
+            return None
+
         if kind == "content_block_delta":
             delta = event.get("delta") or {}
             # `thinking_delta` is discarded here for the same reason `answer_text` drops the block.
+            if delta.get("type") == "input_json_delta" and self._open_call is not None:
+                self._open_call["arguments"] += str(delta.get("partial_json") or "")
+                return None
             if delta.get("type") in ("text_delta", "input_json_delta"):
                 text = str(delta.get("text") or delta.get("partial_json") or "")
                 return CanonicalChunk(text_delta=text) if text else None
@@ -307,11 +398,37 @@ class StreamAssembler:
             return None
 
         if kind == "message_stop":
+            # Anything still open is finished first: a provider that ends the message without a
+            # closing event would otherwise drop the last call entirely.
+            self._finish_call()
             return CanonicalChunk(
                 text_delta="",
                 finish_reason=self._finish or "stop",
                 usage=CanonicalUsage(
                     prompt_tokens=self._prompt, completion_tokens=self._completion
                 ),
+                # Whole, on the chunk that ends the message (`FRD-131` FR-6). Half a function call
+                # is not a smaller function call.
+                tool_calls=tuple(self._calls),
             )
         return None
+
+    def _finish_call(self) -> None:
+        """Close the open `tool_use` block, if the fragments amount to a usable call."""
+        open_call = self._open_call
+        self._open_call = None
+        if open_call is None or not open_call["name"]:
+            return
+        try:
+            arguments = json.loads(open_call["arguments"]) if open_call["arguments"] else {}
+        except TypeError, ValueError:
+            # The name is kept: the caller can see *that* the model asked for it and decide, and a
+            # dropped call would hide a model's mistake behind ours.
+            arguments = {}
+        self._calls.append(
+            ToolCallPart(
+                id=open_call["id"] or open_call["name"],
+                name=open_call["name"],
+                arguments=arguments if isinstance(arguments, dict) else {},
+            )
+        )

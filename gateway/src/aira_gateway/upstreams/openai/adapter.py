@@ -74,6 +74,8 @@ class OpenAIAdapter:
         self._embedding = list(embedding_models or [])
 
     sampling_controls = OPENAI_SAMPLING
+    #: `response_format` and `tools` are separate fields in this dialect.
+    tools_with_schema = True
 
     def models(self) -> list[UpstreamModel]:
         return [

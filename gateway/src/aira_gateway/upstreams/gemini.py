@@ -51,6 +51,8 @@ class GeminiUpstream:
         ]
 
     sampling_controls = GEMINI_SAMPLING
+    #: A schema parameter and a tools field are separate here.
+    tools_with_schema = True
 
     def models(self) -> list[UpstreamModel]:
         return list(self._models)

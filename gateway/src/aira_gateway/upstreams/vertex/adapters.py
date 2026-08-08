@@ -78,6 +78,9 @@ class VertexGeminiAdapter:
         self._models = {model.name: model for model in models}
 
     sampling_controls = GEMINI_SAMPLING
+    #: Google has a schema *parameter*, so the caller's tools and a response schema are two
+    #: different fields and can travel together (`FRD-131` FR-5).
+    tools_with_schema = True
 
     def models(self) -> list[UpstreamModel]:
         return [
@@ -141,6 +144,11 @@ class VertexAnthropicAdapter:
         self._default_max_tokens = default_max_tokens
 
     sampling_controls = ANTHROPIC_SAMPLING
+    #: **False, and this is the interesting one.** Structured output on this dialect *is* a
+    #: forced tool call (`FRD-119` §5.5), so a request carrying both would need one field for
+    #: two purposes and would silently lose one of them. The chain skips this candidate
+    #: instead; either half arriving alone is served normally.
+    tools_with_schema = False
 
     def models(self) -> list[UpstreamModel]:
         return [

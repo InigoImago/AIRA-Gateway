@@ -8,6 +8,7 @@ a different question than the one asked.
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 from aira_gateway.api.gemini import schemas
@@ -642,3 +643,221 @@ async def test_arguments_are_never_recorded_in_the_metadata_column() -> None:
         rows = await _rows(app)
 
     assert "secret-argument-value" not in str(rows[-1].tool_calls)
+
+
+# ---- the other two dialects (`FRD-131` FR-5) --------------------------------------------------
+#
+# One capability, three wire formats. The OpenAI dialect is above; these are the two that reach
+# Vertex, and the Anthropic one is where the interesting collision lives: structured output on that
+# dialect **is** a forced tool call, so the same field would have to serve two purposes.
+
+
+def _tool_request(**extra: object) -> CanonicalRequest:
+    values: dict[str, object] = {
+        "model": "m",
+        "messages": [CanonicalMessage(role=Role.USER, text="read hello.py")],
+        "tools": (ToolDeclaration(name="read_file", parameters=parse({"type": "object"})),),
+    }
+    values.update(extra)
+    return CanonicalRequest(**values)  # type: ignore[arg-type]
+
+
+# -- Gemini as an upstream ---------------------------------------------------------------------
+
+
+def test_the_gemini_upstream_sends_function_declarations() -> None:
+    from aira_gateway.upstreams.gemini_mapping import canonical_to_gemini_request
+
+    body = canonical_to_gemini_request(_tool_request())
+
+    assert body["tools"][0]["functionDeclarations"][0]["name"] == "read_file"
+
+
+def test_the_gemini_upstream_reads_a_call_back() -> None:
+    from aira_gateway.upstreams.gemini_mapping import gemini_response_to_canonical
+
+    response = gemini_response_to_canonical(
+        {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [{"functionCall": {"name": "read_file", "args": {"path": "a"}}}]
+                    },
+                    "finishReason": "STOP",
+                }
+            ],
+            "usageMetadata": {"promptTokenCount": 1, "candidatesTokenCount": 2},
+        },
+        "m",
+    )
+
+    assert response.tool_calls[0].name == "read_file"
+    # Google sends no id; one is generated so the other two dialects, which require one, can serve
+    # the next turn of the same conversation.
+    assert response.tool_calls[0].id
+
+
+def test_a_tool_result_becomes_an_object_for_google() -> None:
+    """`functionResponse.response` is an **object** on this wire format. The canonical model keeps
+    the result as text because two of three dialects want one, so it is parsed back here — and a
+    non-JSON result is wrapped rather than rejected."""
+    from aira_gateway.upstreams.gemini_mapping import canonical_to_gemini_request
+
+    body = canonical_to_gemini_request(
+        _tool_request(
+            messages=[
+                CanonicalMessage(
+                    role=Role.USER,
+                    parts=[ToolResultPart(call_id="c1", name="read_file", content="plain text")],
+                )
+            ]
+        )
+    )
+
+    assert body["contents"][0]["parts"][0]["functionResponse"]["response"] == {
+        "result": "plain text"
+    }
+
+
+def test_the_gemini_upstream_carries_a_call_on_a_stream_chunk() -> None:
+    """Whole, in one chunk — this wire format has no fragmentation, and inventing an accumulator
+    for it would be a mechanism defending against a problem it does not have."""
+    from aira_gateway.upstreams.gemini_mapping import gemini_chunk_to_canonical
+
+    chunk = gemini_chunk_to_canonical(
+        {
+            "candidates": [
+                {"content": {"parts": [{"functionCall": {"name": "read_file", "args": {}}}]}}
+            ]
+        }
+    )
+
+    assert chunk.tool_calls[0].name == "read_file"
+
+
+# -- Anthropic ---------------------------------------------------------------------------------
+
+
+def test_anthropic_sends_the_callers_tools() -> None:
+    from aira_gateway.upstreams.vertex.anthropic_mapping import canonical_to_anthropic
+
+    body = canonical_to_anthropic(_tool_request(), max_tokens=100)
+
+    assert body["tools"][0]["name"] == "read_file"
+    assert "input_schema" in body["tools"][0]
+    # The model decides. Pinning `tool_choice` here would invent an instruction the caller never
+    # gave — the surface only accepts `AUTO`.
+    assert "tool_choice" not in body
+
+
+def test_anthropic_carries_a_call_and_its_result_as_blocks() -> None:
+    from aira_gateway.upstreams.vertex.anthropic_mapping import canonical_to_anthropic
+
+    body = canonical_to_anthropic(
+        _tool_request(
+            messages=[
+                CanonicalMessage(
+                    role=Role.MODEL,
+                    parts=[ToolCallPart(id="c1", name="read_file", arguments={"path": "a"})],
+                ),
+                CanonicalMessage(
+                    role=Role.USER,
+                    parts=[ToolResultPart(call_id="c1", name="read_file", content="print(1)")],
+                ),
+            ]
+        ),
+        max_tokens=100,
+    )
+
+    blocks = [block for message in body["messages"] for block in message["content"]]
+    assert {"type": "tool_use", "id": "c1", "name": "read_file", "input": {"path": "a"}} in blocks
+    assert {"type": "tool_result", "tool_use_id": "c1", "content": "print(1)"} in blocks
+
+
+def test_anthropic_reads_a_call_back_but_not_the_structured_one() -> None:
+    """The subtlety of this dialect: `aira_structured_output` is a `tool_use` block too. Returning
+    it as a tool call would hand the caller a function they never declared."""
+    from aira_gateway.upstreams.vertex.anthropic_mapping import (
+        STRUCTURED_TOOL,
+        anthropic_to_canonical,
+    )
+
+    data = {
+        "content": [
+            {"type": "tool_use", "id": "c1", "name": "read_file", "input": {"path": "a"}},
+            {"type": "tool_use", "id": "c2", "name": STRUCTURED_TOOL, "input": {"x": 1}},
+        ],
+        "stop_reason": "tool_use",
+        "usage": {"input_tokens": 1, "output_tokens": 2},
+    }
+
+    assert [call.name for call in anthropic_to_canonical(data, "m").tool_calls] == ["read_file"]
+    # And a structured request reports no tool calls at all: its one block *is* the answer.
+    assert anthropic_to_canonical(data, "m", structured=True).tool_calls == ()
+
+
+def test_anthropic_reassembles_a_streamed_call() -> None:
+    """`input_json_delta` means two different things on this dialect, and only `content_block_start`
+    says which. For the caller's own tool the fragments are arguments and must be accumulated —
+    emitting them as text would send `{"pa`, `th": "he` to the client as the model's reply."""
+    from aira_gateway.upstreams.vertex.anthropic_mapping import StreamAssembler
+
+    assembler = StreamAssembler()
+    assembler.feed({"type": "message_start", "message": {"usage": {"input_tokens": 5}}})
+    assembler.feed(
+        {
+            "type": "content_block_start",
+            "content_block": {"type": "tool_use", "id": "c1", "name": "read_file"},
+        }
+    )
+    for fragment in ('{"pa', 'th": "he', 'llo.py"}'):
+        emitted = assembler.feed(
+            {
+                "type": "content_block_delta",
+                "delta": {"type": "input_json_delta", "partial_json": fragment},
+            }
+        )
+        assert emitted is None, "argument fragments must never be streamed as text"
+    assembler.feed({"type": "content_block_stop"})
+    final = assembler.feed({"type": "message_stop"})
+
+    assert final is not None
+    assert final.tool_calls[0].arguments == {"path": "hello.py"}
+
+
+def test_a_streamed_structured_document_still_arrives_as_text() -> None:
+    """The behaviour `FRD-112` relies on, and the one most at risk from the change above: for the
+    structured tool the identical fragments *are* the answer."""
+    from aira_gateway.upstreams.vertex.anthropic_mapping import STRUCTURED_TOOL, StreamAssembler
+
+    assembler = StreamAssembler()
+    assembler.feed(
+        {
+            "type": "content_block_start",
+            "content_block": {"type": "tool_use", "id": "s1", "name": STRUCTURED_TOOL},
+        }
+    )
+    emitted = assembler.feed(
+        {
+            "type": "content_block_delta",
+            "delta": {"type": "input_json_delta", "partial_json": '{"a":1}'},
+        }
+    )
+
+    assert emitted is not None
+    assert emitted.text_delta == '{"a":1}'
+
+
+def test_a_dialect_that_cannot_carry_both_is_skipped_by_name() -> None:
+    """Not a mapping error but a **dispatch** decision: the candidate is excluded before it is
+    asked, and an exhausted chain says so."""
+    from aira_gateway.requirements import ToolsAndSchemaTogether
+
+    class _Registry:
+        def provider_for(self, model: str):  # noqa: ANN202, ARG002
+            return type("P", (), {"tools_with_schema": False})()
+
+    refusal = asyncio.run(ToolsAndSchemaTogether(_Registry()).refusal("claude"))
+
+    assert refusal is not None
+    assert "*as* a tool call" in refusal

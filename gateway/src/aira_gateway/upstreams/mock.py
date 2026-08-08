@@ -48,6 +48,10 @@ class MockProvider:
     #: practice and the one adapter that forgot would be the one that mattered.
     sampling_controls = frozenset(SAMPLING_CONTROLS)
 
+    #: The mock keeps a schema and the caller's tools apart, as Gemini and the OpenAI dialect do.
+    #: Declared rather than inherited, for the reason the sampling set above is (`FRD-131` FR-5).
+    tools_with_schema = True
+
     def models(self) -> list[UpstreamModel]:
         return [self._model]
 

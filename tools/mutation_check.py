@@ -117,6 +117,7 @@ CSV_EXPORT = "gateway/tests/test_csv_export.py"
 THINKING = "gateway/tests/test_thinking.py gateway/tests/test_serving_options.py"
 RESPONSE_SCHEMA = "gateway/tests/test_response_schema.py gateway/tests/test_serving_options.py"
 EMBEDDING = "gateway/tests/test_embedding_options.py gateway/tests/test_serving_options.py"
+TOOLS = "gateway/tests/test_tool_calling.py gateway/tests/test_tool_parts.py"
 SELECTOR = "gateway/tests/test_selector_never_grants.py"
 DEPLOYMENT_SAFETY = "gateway/tests/test_deployment_safety.py"
 ACCESS_LOGS = "libs/tests/test_access_log_redaction.py"
@@ -2602,6 +2603,80 @@ MUTATIONS = [
         "        days = expires_in_days if expires_in_days is not None else _default_key_days()",
         "        days = expires_in_days if expires_in_days is not None else 0",
         KEY_EXPIRY,
+    ),
+    # ---- tool calling across the dialects (`FRD-131`, 2026-08-08) --------------------------
+    Mutation(
+        "T20",
+        "a use case that has not enabled tool calling cannot declare functions",
+        "gateway/src/aira_gateway/api/serving.py",
+        "    if record is None or not record.tools_enabled:",
+        "    if False:",
+        TOOLS,
+    ),
+    Mutation(
+        "T21",
+        "a model that does not declare tool calling is skipped rather than answering in prose",
+        "gateway/src/aira_gateway/requirements.py",
+        "        if declaration.can(Capability.TOOLS):\n            return None",
+        "        if True:\n            return None",
+        TOOLS,
+    ),
+    Mutation(
+        "T22",
+        "a streamed tool call is reassembled from its fragments, never emitted in pieces",
+        "gateway/src/aira_gateway/upstreams/openai/mapping.py",
+        '                entry["arguments"] += str(function["arguments"])',
+        '                entry["arguments"] = str(function["arguments"])',
+        TOOLS,
+    ),
+    Mutation(
+        "T23",
+        "the audit row records what the model asked to have run",
+        "gateway/src/aira_gateway/api/serving.py",
+        "        tool_calls=tool_summary(trail),",
+        "        tool_calls=None,",
+        TOOLS,
+    ),
+    Mutation(
+        "T24",
+        "the streamed exit records its tool calls too, not only the buffered one",
+        "gateway/src/aira_gateway/api/gemini/routes.py",
+        "                        streamed_calls.extend(call.name for call in chunk.tool_calls)",
+        "                        pass",
+        TOOLS,
+    ),
+    Mutation(
+        "T25",
+        "a streamed tool call reaches the client, not only the audit row",
+        "gateway/src/aira_gateway/api/gemini/routes.py",
+        "        for call in chunk.tool_calls\n    )",
+        "        for call in ()\n    )",
+        TOOLS,
+    ),
+    Mutation(
+        "T26",
+        "arguments never reach the metadata column",
+        "gateway/src/aira_gateway/audit.py",
+        '    return {"declared": trail.tools_declared, "called": list(trail.tool_calls)}',
+        '    return {"declared": trail.tools_declared, "called": list(trail.tool_calls), '
+        '"raw": str(trail.body)}',
+        TOOLS,
+    ),
+    Mutation(
+        "T27",
+        "Anthropic's structured-output tool is not reported as a caller's tool call",
+        "gateway/src/aira_gateway/upstreams/vertex/anthropic_mapping.py",
+        "        if not name or name == STRUCTURED_TOOL:",
+        "        if not name:",
+        TOOLS,
+    ),
+    Mutation(
+        "T28",
+        "a dialect that expresses a schema as a tool call cannot also carry the caller's tools",
+        "gateway/src/aira_gateway/requirements.py",
+        '        if getattr(provider, "tools_with_schema", False):',
+        "        if True:",
+        TOOLS,
     ),
 ]
 

@@ -62,6 +62,7 @@ from aira_gateway.requirements import (
     SamplingExpressible,
     StructuredOutputSupported,
     ThinkingHonoured,
+    ToolsAndSchemaTogether,
     ToolsSupported,
     permits,
 )
@@ -295,6 +296,8 @@ def requirements_for(request: Request, canonical: CanonicalRequest | None) -> Pe
         checks.append(SamplingExpressible(registry_of(request), canonical.sampling_requested))
     if canonical is not None and canonical.tools:
         checks.append(ToolsSupported(catalog_of(request)))
+        if canonical.response_schema is not None:
+            checks.append(ToolsAndSchemaTogether(registry_of(request)))
     return permits(checks)
 
 
