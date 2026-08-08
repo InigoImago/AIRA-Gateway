@@ -112,9 +112,11 @@ it nothing. Now built:
 All three refresh themselves; the reader can switch that off and sees how stale the view is.
 
 **What is still open here**: alert *delivery* (mail, webhook) is not built — the console is where a
-finding is seen, not where it is sent; and trace search by subject or credential is not built (the
-filters are outcome and window). Traces carry **metadata only**, which is a deliberate scope line
-rather than a gap — see 3.1.
+finding is seen, not where it is sent. Trace search **was** open and is not any more (2026-08-08):
+the list filters by outcome, refusals, API key prefix, subject, source address, "only my requests"
+and "only tool calls" — the address one served, and offered, only to a role that may act on an
+incident. Traces carry **metadata only**, which is a deliberate scope line rather than a gap — see
+3.1 — and now include the **tool calls** a request made: names and a count, never arguments.
 
 ---
 

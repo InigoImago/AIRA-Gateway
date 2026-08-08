@@ -13,6 +13,16 @@ cheapest thing that could possibly work. If it does, no new surface is needed at
 If it does not, what breaks — and exactly where — is the evidence that decides between an
 OpenAI-compatible surface (B2, reviving the withdrawn `FRD-106`) and an Anthropic-shaped one (B3).
 
+## The console generates this file now (2026-08-08)
+
+Since `FRD-132` §10, the API-keys panel offers **Copy OpenCode config** and **Download
+opencode.json** on a key it has just issued — built at that moment because the plaintext exists for
+exactly that moment, and naming only models whose catalog entry **declares** `tools`.
+
+Use that if you want a working assistant. This directory stays as the **harness**: it is what
+re-runs the `FRD-132` measurement against a changed gateway, and it is hand-editable in ways a
+generated file deliberately is not.
+
 ## Running it
 
 ```bash
