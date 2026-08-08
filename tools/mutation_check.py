@@ -1273,12 +1273,15 @@ MUTATIONS = [
         "gateway/tests/test_reporting.py",
     ),
     Mutation(
+        # Re-anchored 2026-08-08: the predicate became `is_oversight` when IT Security turned out
+        # to be reading an empty console. The property is unchanged — a role that sees everything
+        # must not be narrowed to its own memberships — so this is re-anchored, not removed.
         "N2",
         "oversight is what grants the view across use cases, not merely being authenticated",
         "gateway/src/aira_gateway/api/reporting.py",
-        "    if principal.is_governance:\n        return None",
-        "    if principal.is_governance:\n        return principal.use_cases",
-        "gateway/tests/test_reporting.py",
+        "    if principal.is_oversight:\n        return None",
+        "    if principal.is_oversight:\n        return principal.use_cases",
+        "gateway/tests/test_reporting.py gateway/tests/test_traces.py",
     ),
     Mutation(
         "N3",
@@ -2351,6 +2354,47 @@ MUTATIONS = [
         "    if False:\n        stmt = stmt.where(AnomalyEvent.use_case == use_case)",
         "gateway/tests/test_anomaly_engine.py",
     ),
+    # ---- what an incident is allowed to ask (FRD-131 FR-7, FRD-502) -------------------------
+    Mutation(
+        "N40",
+        "IT Security's own console is not empty — the wider role decides who sees everything",
+        "gateway/src/aira_gateway/api/reporting.py",
+        "    if principal.is_oversight:\n        return None",
+        "    if principal.is_governance:\n        return None",
+        "gateway/tests/test_traces.py gateway/tests/test_reporting.py",
+    ),
+    Mutation(
+        "N41",
+        "the calling machine's address is shown only to a role that may act on an incident",
+        "gateway/src/aira_gateway/api/reporting.py",
+        "    fields = TRACE_FIELDS + (INCIDENT_FIELDS if principal.may_act_on_incidents else ())",
+        "    fields = TRACE_FIELDS + INCIDENT_FIELDS",
+        "gateway/tests/test_traces.py",
+    ),
+    Mutation(
+        "N42",
+        "a filter nobody may use is refused, never quietly ignored",
+        "gateway/src/aira_gateway/api/reporting.py",
+        "        if not principal.may_act_on_incidents:\n            # Refused rather than ignored.",
+        "        if False:\n            # Refused rather than ignored.",
+        "gateway/tests/test_traces.py",
+    ),
+    Mutation(
+        "N43",
+        "'only my own requests' means the caller's identity, not everybody's",
+        "gateway/src/aira_gateway/api/reporting.py",
+        "        stmt = stmt.where(RequestLog.subject == principal.subject)",
+        "        stmt = stmt",
+        "gateway/tests/test_traces.py",
+    ),
+    Mutation(
+        "N44",
+        "'only tool turns' excludes the requests where the model asked for nothing",
+        "gateway/src/aira_gateway/api/reporting.py",
+        "        stmt = stmt.where(RequestLog.tool_calls.is_not(None))",
+        "        stmt = stmt",
+        "gateway/tests/test_traces.py",
+    ),
     # ---- access by group (FRD-209) ----------------------------------------------------------
     Mutation(
         "N30",
@@ -2725,7 +2769,32 @@ def _pytest(selection: str) -> bool:
 
 def main() -> int:
     _recover()
-    selections = sorted({mutation.tests for mutation in MUTATIONS})
+    # `--only A1,B2` runs a subset. Added 2026-08-08 after a five-mutation change cost a full
+    # 306-property run: the whole set is what CI checks, and the whole set is not what somebody
+    # iterating on one property needs. The baseline check narrows with it, or the subset run pays
+    # for suites it never touches.
+    wanted: set[str] | None = None
+    for argument in sys.argv[1:]:
+        if argument.startswith("--only="):
+            wanted = {ident.strip() for ident in argument.removeprefix("--only=").split(",")}
+        elif argument == "--only":
+            index = sys.argv.index(argument)
+            wanted = {ident.strip() for ident in sys.argv[index + 1].split(",")}
+        elif argument.startswith("-"):
+            print(f"Unknown option {argument!r}. The only one is --only=A1,B2.")
+            return 2
+
+    chosen = [m for m in MUTATIONS if wanted is None or m.ident in wanted]
+    if wanted is not None:
+        missing = wanted - {m.ident for m in chosen}
+        if missing:
+            # Refused rather than silently skipped: a typo that runs nothing looks exactly like a
+            # subset that passes.
+            print(f"No such mutation: {', '.join(sorted(missing))}")
+            return 2
+        print(f"Running {len(chosen)} of {len(MUTATIONS)} properties.", flush=True)
+
+    selections = sorted({mutation.tests for mutation in chosen})
     print("Checking the baseline is green before trusting any result…", flush=True)
     for selection in selections:
         if not _pytest(selection):
@@ -2735,7 +2804,7 @@ def main() -> int:
 
     survivors: list[Mutation] = []
 
-    for mutation in MUTATIONS:
+    for mutation in chosen:
         path = ROOT / mutation.path
         original = path.read_text()
         if mutation.old not in original:
@@ -2758,12 +2827,12 @@ def main() -> int:
 
     print()
     if survivors:
-        print(f"{len(survivors)} of {len(MUTATIONS)} properties are undefended:")
+        print(f"{len(survivors)} of {len(chosen)} properties are undefended:")
         for mutation in survivors:
             print(f"  {mutation.ident}  {mutation.property_defended}")
         print("\nEach one is a property no test would notice losing. Add the test.")
         return 1
-    print(f"All {len(MUTATIONS)} properties are defended by at least one test.")
+    print(f"All {len(chosen)} properties are defended by at least one test.")
     return 0
 
 

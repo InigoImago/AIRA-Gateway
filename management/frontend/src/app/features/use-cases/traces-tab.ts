@@ -1,7 +1,10 @@
 import { DatePipe } from '@angular/common';
-import { Component, OnInit, inject, input, signal } from '@angular/core';
+import { Component, DestroyRef, OnInit, computed, inject, input, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { Subject, debounceTime, distinctUntilChanged } from 'rxjs';
+import { MeService } from '../../core/api/me.service';
 import { Trace } from '../../core/api/models';
+import { mayActOnIncidents } from '../../core/auth/roles';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { InfoHint } from '../../core/ui/info-hint';
 import { Live, agoLabel } from '../../core/ui/live';
@@ -9,6 +12,9 @@ import { PageFeedback } from '../../core/ui/page-feedback';
 
 const REFRESH_SECONDS = 10;
 const PAGE = 50;
+/** Long enough that a typed address is one question, short enough to feel immediate. Nine letters
+ *  must not be nine round trips (`FRD-208`). */
+const TYPING_PAUSE_MS = 300;
 
 /**
  * What actually happened, request by request (`FRD-502` FR-9–12, `FRD-131` FR-7).
@@ -36,6 +42,8 @@ export class TracesTab implements OnInit {
   readonly slug = input.required<string>();
 
   private readonly service = inject(UseCaseService);
+  private readonly meService = inject(MeService);
+  private readonly destroyRef = inject(DestroyRef);
   protected readonly feedback = inject(PageFeedback);
   protected readonly live = inject(Live);
 
@@ -63,6 +71,18 @@ export class TracesTab implements OnInit {
   /** "Only my own requests", offered to every role including those that see everything: somebody
    *  checking what *they* did should not have to read past everybody else. */
   protected readonly mine = signal(false);
+  /** Which system: the API key's prefix, which is what an audit row carries and what a console
+   *  can safely show — the secret half never leaves the moment it was issued. */
+  protected readonly credential = signal('');
+  /** Which machine. Refused by the server for anyone without an incident role, so the field is
+   *  offered on the same condition rather than left to fail on use. */
+  protected readonly sourceIp = signal('');
+
+  /** Console-side, and deliberately the **same** predicate the gateway enforces with — a role list
+   *  restated by hand is how `it-steuerung` came to stop traffic in one plane and not the other. */
+  protected readonly mayInvestigate = computed(() => mayActOnIncidents(this.me()?.roles));
+  private readonly me = signal<{ roles: string[] } | null>(null);
+  private readonly typed = new Subject<void>();
 
   /** The closed vocabulary, so nobody has to remember it (`FRD-122`). */
   protected readonly outcomes = [
@@ -81,6 +101,26 @@ export class TracesTab implements OnInit {
 
   ngOnInit(): void {
     this.startLive();
+    // Which controls to offer. A failure here leaves the incident fields hidden, which is the safe
+    // direction: the server would refuse them anyway, and a field that 403s is worse than none.
+    this.meService.get().subscribe({
+      next: (me) => this.me.set(me),
+      error: () => undefined,
+    });
+    const typing = this.typed
+      .pipe(debounceTime(TYPING_PAUSE_MS), distinctUntilChanged())
+      .subscribe(() => this.startLive());
+    this.destroyRef.onDestroy(() => typing.unsubscribe());
+  }
+
+  protected setCredential(value: string): void {
+    this.credential.set(value);
+    this.typed.next();
+  }
+
+  protected setSourceIp(value: string): void {
+    this.sourceIp.set(value);
+    this.typed.next();
   }
 
   /**
@@ -121,6 +161,8 @@ export class TracesTab implements OnInit {
       refusalsOnly: this.refusalsOnly(),
       toolsOnly: this.toolsOnly(),
       mine: this.mine(),
+      credential: this.credential().trim(),
+      sourceIp: this.sourceIp().trim(),
       limit: PAGE,
     };
   }

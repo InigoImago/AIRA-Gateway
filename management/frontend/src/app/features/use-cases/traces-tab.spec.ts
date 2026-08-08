@@ -2,6 +2,7 @@ import { Component, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { Subject, of, throwError } from 'rxjs';
 import { Trace, TracePage } from '../../core/api/models';
+import { MeService } from '../../core/api/me.service';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { PageFeedback } from '../../core/ui/page-feedback';
 import { TracesTab } from './traces-tab';
@@ -47,6 +48,8 @@ class Host {
 }
 
 interface Options {
+  /** What `/me` answers. Absent means a role with no incident authority. */
+  roles?: string[];
   pages?: TracePage[];
   failMore?: boolean;
 }
@@ -59,6 +62,10 @@ function setup(options: Options = {}) {
   TestBed.configureTestingModule({
     imports: [Host],
     providers: [
+      {
+        provide: MeService,
+        useValue: { get: () => of({ roles: options.roles ?? ['use-case-admin'] }) },
+      },
       {
         provide: UseCaseService,
         useValue: {
@@ -398,6 +405,44 @@ describe('TracesTab — while a page is in flight', () => {
     click('tools-only');
 
     expect(queries.some((query) => query['toolsOnly'] === true)).toBe(true);
+  });
+
+  it('offers the source address only where the server would answer it', () => {
+    /** `FRD-206`: an action nobody can carry out is worse than an absent one. The server refuses
+     *  this filter without an incident role, so the console must not put it on screen — and the
+     *  predicate is the shared one, not a role list retyped here. */
+    const investigator = setup({ roles: ['it-security'] });
+    expect(investigator.testid('trace-source-ip')).not.toBeNull();
+
+    const administrator = setup({ roles: ['use-case-admin'] });
+    expect(administrator.testid('trace-source-ip')).toBeNull();
+    // …while everything an administrator *may* ask stays available to them.
+    expect(administrator.testid('trace-credential')).not.toBeNull();
+  });
+
+  it('withholds the incident field when the role could not be read', () => {
+    /** The safe direction. A failed `/me` that left the field on screen would produce a control
+     *  that 403s, and the reader would conclude the recording is broken. */
+    const { testid } = setup({ roles: [] });
+
+    expect(testid('trace-source-ip')).toBeNull();
+  });
+
+  it('waits for a pause before asking, and asks with what was typed', async () => {
+    /** Nine letters must not be nine round trips (`FRD-208`) — and the address has to arrive
+     *  trimmed, or a trailing space asks about a machine that does not exist. */
+    const { tab, queries } = setup({ roles: ['it-security'] });
+    const before = queries.length;
+
+    (tab as unknown as { setSourceIp: (v: string) => void }).setSourceIp(' 10.0.0.7 ');
+    (tab as unknown as { setSourceIp: (v: string) => void }).setSourceIp('10.0.0.7 ');
+    expect(queries.length).toBe(before);
+
+    await new Promise((resolve) => setTimeout(resolve, 400));
+
+    const asked = queries.filter((query) => query['sourceIp']);
+    expect(asked.length).toBe(1);
+    expect(asked[0]['sourceIp']).toBe('10.0.0.7');
   });
 
   it('carries the filters onto the next page', () => {

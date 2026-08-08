@@ -25,6 +25,10 @@ from .conftest import GATEWAY_URL
 pytestmark = pytest.mark.integration
 
 MODEL = "qwen3:0.6b"
+#: A model whose catalog entry **declares** tool calling. It has to be a different one: `qwen3:0.6b`
+#: does not, and the gateway refuses it by name rather than answering in prose — which is the
+#: `FRD-131` rule working, not a fixture problem.
+TOOL_MODEL = "qwen2.5:3b"
 SHORT = {"generationConfig": {"maxOutputTokens": 8}}
 
 
@@ -185,3 +189,152 @@ async def test_a_malformed_cursor_is_answered_rather_than_crashed(governance_tok
 
     assert response.status_code == 400
     assert "cursor" in response.json()["error"]["message"]
+
+
+# ═══ what an incident may ask, against real roles (FRD-502 FR-10a–c, FRD-131 FR-7) ═════════════
+#
+# The hermetic suite overrides the principal, so every role it tests is one a test constructed.
+# Here the roles come from Keycloak, which is the only place the mapping from a realm role to
+# `is_oversight` / `may_act_on_incidents` is actually exercised — and it is the mapping that was
+# wrong on 2026-08-08, when `visible_scope` asked the narrower predicate and IT Security's own
+# console came back empty.
+
+
+async def test_it_security_sees_every_use_case_and_not_an_empty_screen(
+    fixture, security_token
+) -> None:
+    """The defect this test exists for: IT Security is *oversight* but not *governance*, and the
+    scope function asked for the wrong one — so the role whose job is investigating saw nothing."""
+    async with httpx.AsyncClient(timeout=180.0) as client:
+        assert (await _generate(client, fixture)).status_code == 200
+        for _ in range(20):
+            body = await _traces(client, security_token, use_case=fixture.slug)
+            if body["traces"]:
+                break
+
+    assert body["scope"] == "all", "IT Security must not be scoped to its own memberships"
+    assert body["traces"], "IT Security saw no trace of a request that certainly happened"
+
+
+async def test_the_calling_machine_is_shown_to_an_incident_role_and_withheld_otherwise(
+    fixture, security_token, governance_token
+) -> None:
+    """`source_ip` identifies a machine rather than a use case. `it-steuerung` sees every figure
+    and may not act on an incident — **visibility and authority are different answers**."""
+    async with httpx.AsyncClient(timeout=180.0) as client:
+        assert (await _generate(client, fixture)).status_code == 200
+        for _ in range(20):
+            security = await _traces(client, security_token, use_case=fixture.slug)
+            if security["traces"]:
+                break
+        oversight = await _traces(client, governance_token, use_case=fixture.slug)
+
+    assert "source_ip" in security["traces"][0]
+    assert oversight["traces"], "the oversight role should still see the request itself"
+    assert "source_ip" not in oversight["traces"][0], (
+        "a role that may not act on an incident was handed the calling machine's address"
+    )
+
+
+async def test_filtering_by_address_is_refused_rather_than_ignored(governance_token) -> None:
+    """A filter that silently does nothing lets somebody conclude an address made no requests —
+    the opposite of what the screen just told them. Refusal is the honest answer."""
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(
+            f"{GATEWAY_URL}/v1beta/traces",
+            headers={"Authorization": f"Bearer {governance_token}"},
+            params={"source_ip": "10.0.0.7"},
+        )
+
+    assert response.status_code == 403
+    assert "source address" in response.json()["error"]["message"].lower()
+
+
+async def test_a_filter_narrows_and_never_widens(fixture, member_token) -> None:
+    """Every filter is applied after `visible_scope`. No combination of them may reach a use case
+    the caller could not already see — which is the property an added parameter is most likely to
+    break, because each one is written next to the last."""
+    async with httpx.AsyncClient(timeout=180.0) as client:
+        assert (await _generate(client, fixture)).status_code == 200
+        for params in (
+            {"mine": "true"},
+            {"tools_only": "true"},
+            {"credential": "abcd"},
+            {"subject": "somebody-else"},
+        ):
+            body = await _traces(client, member_token, use_case="does-not-exist", **params)
+            assert body["traces"] == [], f"{params} reached outside the caller's scope"
+            assert body["in_scope"] is False
+
+
+async def test_only_my_own_requests_is_offered_to_a_role_that_sees_everything(
+    fixture, governance_token
+) -> None:
+    """A reader checking what *they* did should not have to read past everybody else — and the
+    filter must be a real question to the server, not a label."""
+    async with httpx.AsyncClient(timeout=180.0) as client:
+        assert (await _generate(client, fixture)).status_code == 200
+        for _ in range(20):
+            everybody = await _traces(client, governance_token, use_case=fixture.slug)
+            if everybody["traces"]:
+                break
+        mine = await _traces(client, governance_token, use_case=fixture.slug, mine="true")
+
+    # The traffic was made by the *fixture's* API key, not by the governance reader, so "mine"
+    # must exclude it. Asserting the filter changes the answer is the point; asserting a count
+    # would be asserting how much other traffic the stack happens to hold.
+    assert everybody["traces"], "no traffic to filter"
+    assert all(row["subject"] != everybody["traces"][0]["subject"] for row in mine["traces"]), (
+        "'only my own requests' returned somebody else's"
+    )
+
+
+async def test_a_trace_carries_the_functions_the_model_was_offered(
+    fixture, governance_token
+) -> None:
+    """`FRD-131` FR-7: names and a count, never the arguments. Proved on a request that really
+    declared a tool, because the column is filled in by the recorder."""
+    await fixture.enable_tools()
+    async with httpx.AsyncClient(timeout=180.0) as client:
+        response = await client.post(
+            f"{GATEWAY_URL}/v1beta/models/{TOOL_MODEL}:generateContent",
+            headers=fixture.headers(),
+            json={
+                "contents": [{"parts": [{"text": "What is the weather in Berlin?"}]}],
+                "tools": [
+                    {
+                        "functionDeclarations": [
+                            {
+                                "name": "get_weather",
+                                "description": "Current weather for a city",
+                                "parameters": {
+                                    "type": "object",
+                                    "properties": {"city": {"type": "string"}},
+                                },
+                            }
+                        ]
+                    }
+                ],
+                **SHORT,
+            },
+            timeout=180.0,
+        )
+        if response.status_code == 404:
+            # The model is not deployed in this stack. Named, never a bare skip — a skip that hides
+            # a wrong toggle would report green about nothing (`FRD-207`).
+            pytest.skip(f"{TOOL_MODEL} is not available in this stack")
+        assert response.status_code == 200, response.text
+
+        for _ in range(20):
+            body = await _traces(client, governance_token, use_case=fixture.slug, tools_only="true")
+            rows = [row for row in body["traces"] if row.get("tool_calls")]
+            if rows:
+                break
+
+    assert rows, "a request that declared a function left no record of having declared one"
+    recorded = rows[0]["tool_calls"]
+    assert recorded["declared"] == 1
+    # Names only. The arguments are the caller's content and belong to `FRD-406`, not to a list
+    # anybody with an oversight role can read.
+    assert all(isinstance(name, str) for name in recorded.get("called", []))
+    assert "arguments" not in recorded

@@ -235,3 +235,30 @@ runtime** — and a declaration measured against one model is not evidence about
   what was measured here.
 - The `tools/opencode/` config and README are kept as the harness for re-running this after
   `FRD-131` lands.
+
+## 10. The configuration button (2026-08-08)
+
+The measurement harness under `tools/opencode/` is a file a developer edits by hand. That is fine
+for measuring and wrong for using: the person who needs it is the one who has just issued a key,
+and they have the key for **one moment**.
+
+So the config is generated **at issuance**, on the API-keys panel, with *copy* and *download*:
+
+- **It carries the plaintext key**, which is the only reason the timing matters. Offered on any
+  later screen — the key list, a settings page — it could only contain a placeholder, and a
+  placeholder is what somebody pastes and then spends twenty minutes debugging. The screen says the
+  file *is* a credential.
+- **It names only models whose catalog entry declares `tools`** (`FRD-114`, `ADR-0012`: undeclared
+  means unsupported). Read from the catalog at load rather than hard-coded, because "declares tool
+  calling" is a measured fact that changes. An assistant pointed at a model that answers in prose is
+  exactly the failure `FRD-131` exists to prevent, and it fails as a confident wrong answer with a
+  200.
+- **It disappears with the key.** Pressing *Done* clears the buttons along with the plaintext;
+  leaving them would mean the credential is retrievable from a page that has just said it is not.
+- If the catalog cannot be read, or declares no tool-capable model, the file still names one and
+  stays editable — an empty `models` block is a config that fails with no clue why.
+
+Tested at three layers, deliberately: the unit tests fix the *content* (the key, the base URL, the
+model filter, the fallbacks); the e2e test proves the button produces an actual **file** with
+parseable JSON in it — the distinction that `FRD-206` shipped a defect on, when an info button was
+a `title` attribute and rendered nothing at all while every unit test passed.

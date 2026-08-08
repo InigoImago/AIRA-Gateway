@@ -280,6 +280,20 @@ class Fixture:
                 {"store": store, "slug": self.slug},
             )
 
+    async def enable_tools(self) -> None:
+        """Turn on tool calling for this use case (`FRD-131` FR-3, default **off**).
+
+        Written into the read-model directly, like the key and the budgets above: what is under
+        test here is the gateway's behaviour, and the toggle's distribution path has its own suite.
+        A test that *skipped* when tools were off would report green about nothing — the lesson
+        `FRD-207` wrote down when a rule-editor test skipped itself whenever no rules existed.
+        """
+        async with self.engine.begin() as connection:
+            await connection.execute(
+                text("UPDATE use_cases SET tools_enabled = true WHERE slug = :slug"),
+                {"slug": self.slug},
+            )
+
     async def rows(self) -> list[dict[str, object]]:
         async with self.engine.connect() as connection:
             result = await connection.execute(

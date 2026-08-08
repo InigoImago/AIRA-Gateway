@@ -3936,3 +3936,66 @@ Lowered to Ollama's own default of 5 minutes, and the models unloaded: 9 GB free
 tests green. The lesson is the coupling itself — a *caching* setting starved a *test suite*, and
 nobody would look there. A knob that trades memory for latency needs a number that fits the machine
 it runs on, not the workload that motivated it.
+
+## 2026-08-08 (night, last) — the console side of it: who may ask what, and a config that runs
+
+Three things the owner asked for before going to sleep: collect as much about AI usage as
+possible, show each role only what it may see (with a *"only my own requests"* toggle even for
+those who see everything), let IT Security find a compromised client or system as fast as
+possible, and put a button on API-key issuance that produces an OpenCode configuration. Tool calls
+first, because that is where an assistant's behaviour actually shows.
+
+### The reporting screen IT Security could not read
+
+`visible_scope` — the one function `FRD-601` deliberately put the visibility rule in — asked
+`principal.is_governance`. Governance and oversight differ by exactly one role: **IT Security**.
+So the role whose job is investigating an incident got the "you are in no use case" branch: an
+**empty** report and an **empty** trace list, on the screen built for it.
+
+It survived because every test asserting "an oversight role sees everything" used a *global admin*,
+which satisfies both predicates. It was found while writing a test for something else entirely,
+which is the third time this month that a defect has come out of a test aimed elsewhere. `N40`
+mutates the predicate back and both suites now catch it.
+
+### What a trace has to carry before it is evidence
+
+`tool_calls` joins the row (`FRD-131` FR-7), and the list learned the filters an investigation
+actually opens with: **which system** (the API key's prefix), **whose identity**, **which
+machine**, plus *only my own requests* and *only the turns where the model asked for a function*.
+
+Two rules decided the shape:
+
+- **`source_ip` is a different kind of fact.** It identifies a machine, not a use case, so it is in
+  `INCIDENT_FIELDS` and reaches only a role that may act on an incident. Asking to filter by it
+  without one is **refused with a 403, not ignored** — a filter that silently does nothing lets
+  somebody conclude an address made no requests, which is the opposite of what the screen told
+  them.
+- **A filter must not widen the scope.** Every one of them is applied *after* `visible_scope`, so
+  "only my own requests" narrows and can never reveal.
+
+The console offers the address field on the same condition, and the predicate is now **one
+definition** (`core/auth/roles.ts`) rather than a role list retyped in the screen that needs it —
+`it-security`/`global-admin` had been written by hand in the security console, which is precisely
+the shape of the 2026-08-07 finding where `it-steuerung` could stop traffic in one plane and not
+the other.
+
+### A configuration built at the only moment it can be
+
+The OpenCode config is generated **at issuance**, because the plaintext key exists for exactly
+that moment. Offered on any later screen it could only carry a placeholder — and a placeholder is
+what somebody pastes and then debugs for twenty minutes. It names only models whose catalog entry
+**declares** `tools`: `FRD-114`'s rule at the console, where undeclared means unsupported. An
+assistant pointed at a model that answers in prose is the failure `FRD-131` exists to prevent.
+
+### The defect the tests found
+
+`loadMore` rebuilt its query by hand, so page two was fetched **without** the filters page one was
+fetched under — the reader turned the page and silently got back the rows they had just excluded.
+One list, two questions, no error anywhere. Both call sites now read a single `query()`; shown to
+fail against the old code before the fix went in.
+
+That is `FRD-126`, `FRD-206`, `FRD-602` and the KIRA membership bypass in one sentence again: **a
+rule restated by hand at a second call site is a rule that will disagree with itself.** The fix is
+never "remember both" — it is one function with two callers.
+
+Frontend: 524 tests, branch coverage back above its gate by adding tests, not by moving it.

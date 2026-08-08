@@ -78,10 +78,28 @@ look at says so before it is opened.
 
 **FR-9** — A **Traces** tab: one row per request, newest first. Columns: time, operation, model
 (served, and requested when they differ), status, outcome, tokens (prompt/completion), cost,
-latency, and the **trace id**.
+latency, the **trace id**, and — since `FRD-131` FR-7 — the **tool calls**: how many functions were
+offered and which the model asked for, **names only**. "Offered and none called" and "never
+offered" are rendered as different things, because only one of them is a model behaving oddly.
 
 **FR-10** — Filterable by outcome, and by "refusals only" — the shape somebody investigating
 actually asks for.
+
+**FR-10a** *(added 2026-08-08, with `FRD-131` FR-7)* — and by the four questions an incident
+actually opens with: **which system** (the API key's prefix), **whose identity** (`subject`),
+**which machine** (`source_ip`), and **which turns involved a function call** (`tools_only`).
+Plus `mine`, offered to every role including those that see everything — somebody checking what
+*they* did should not have to read past everybody else.
+
+**FR-10b** — **`source_ip` is not an ordinary column.** It identifies a machine rather than a use
+case, so it is served only to a role that may act on an incident (the gateway's `INCIDENT_ROLES`,
+one definition, not a second list). Requesting that filter without one is **refused with a 403,
+never quietly ignored**: a filter that silently does nothing lets a reader conclude an address made
+no requests, which is the opposite of what the screen just told them. The console withholds the
+field on the same predicate, so no reader is offered a control that refuses on use (`FRD-206`).
+
+**FR-10c** — **A filter narrows; it can never widen.** Every one is applied after `visible_scope`,
+so no combination of them reaches a use case the caller could not already see.
 
 **FR-11** — **No payloads, ever.** Not behind a click, not truncated, not on hover.
 

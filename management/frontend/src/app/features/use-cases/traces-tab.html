@@ -66,6 +66,43 @@
       Only my requests
     </label>
     <div class="field">
+      <label for="trace-credential">API key</label>
+      <input
+        id="trace-credential"
+        type="text"
+        placeholder="prefix, e.g. 7f2a"
+        [ngModel]="credential()"
+        (ngModelChange)="setCredential($event)"
+        data-testid="trace-credential"
+      />
+    </div>
+    @if (mayInvestigate()) {
+      <!--
+        Which machine. The first question of an incident, and the last thing a use case's own
+        members need — the server answers `403` for anyone else, so offering the field to them
+        would be `FRD-206`'s defect: a control that refuses the moment it is used.
+      -->
+      <div class="field">
+        <label for="trace-source-ip">
+          Source address
+          <app-info-hint
+            label="What the source address is"
+            testid="hint-source-ip"
+            text="The address AIRA saw the request come from. Offered to IT Security and Global
+                  Administrators, because it identifies a machine rather than a use case."
+          />
+        </label>
+        <input
+          id="trace-source-ip"
+          type="text"
+          placeholder="10.0.0.7"
+          [ngModel]="sourceIp()"
+          (ngModelChange)="setSourceIp($event)"
+          data-testid="trace-source-ip"
+        />
+      </div>
+    }
+    <div class="field">
       <label for="trace-outcome">Outcome</label>
       <select
         id="trace-outcome"

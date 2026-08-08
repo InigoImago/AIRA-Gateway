@@ -11,6 +11,7 @@ import { Live, agoLabel } from '../../core/ui/live';
 import { PageFeedback } from '../../core/ui/page-feedback';
 import { RuleForm } from './rule-form';
 import { describeAction, describeEvent, describeRule, unitOf } from './rule-language';
+import { mayActOnIncidents } from '../../core/auth/roles';
 
 /** How often the console refreshes itself. Findings change at human speed. */
 const REFRESH_SECONDS = 15;
@@ -75,10 +76,7 @@ export class SecurityPage implements OnInit {
    * The gateway guarded its kill switch with a visibility predicate once, and a live round found
    * it by asking both planes the same question and getting different answers.
    */
-  protected readonly canStop = computed(() => {
-    const roles = this.me()?.roles ?? [];
-    return roles.includes('it-security') || roles.includes('global-admin');
-  });
+  protected readonly canStop = computed(() => mayActOnIncidents(this.me()?.roles));
 
   protected readonly active = computed(() =>
     this.suspensions().filter((row) => !row.lifted_at && !this.hasExpired(row)),
