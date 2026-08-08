@@ -29,6 +29,7 @@ interface Overrides {
   addMember?: Observable<Membership>;
   removeMember?: Observable<void>;
   issueApiKey?: Observable<unknown>;
+  models?: Observable<unknown>;
   revokeApiKey?: Observable<void>;
   createBudget?: Observable<Budget>;
   deleteBudget?: Observable<void>;
@@ -61,6 +62,9 @@ interface Detail {
   memberRole: { set: (v: string) => void; (): string };
   keyLabel: { set: (v: string) => void; (): string };
   keyExpiresInDays: { set: (v: string) => void; (): string };
+  configCopied: { set: (v: boolean) => void; (): boolean };
+  openCodeConfig: (issued: unknown) => string;
+  copyOpenCodeConfig: (issued: unknown) => void;
   budgetScope: { set: (v: 'use_case' | 'member') => void; (): string };
   budgetSubject: { set: (v: string) => void; (): string };
   budgetTokens: { set: (v: number | null) => void; (): number | null };
@@ -80,7 +84,7 @@ interface Detail {
   copyKey: (value: string) => void;
   copied: () => boolean;
   copyFailed: () => boolean;
-  issued: () => unknown;
+  issued: () => { api_key: string } | null;
   dismissIssued: () => void;
   usedFor: (b: Budget) => BudgetUsage;
   pct: (used: number, limit: number | null | undefined) => number;
@@ -116,6 +120,11 @@ function setup(overrides: Overrides = {}, confirmAnswer = true, queryTab: string
       calls.push(`removeMember:${username}`);
       return overrides.removeMember ?? of(undefined as unknown as void);
     },
+    // The catalog, read on init so the OpenCode config can name the models that actually declare
+    // tool calling. Present here because the component legitimately calls it — a harness missing a
+    // method the component uses is the third stand-in today to fail for that reason.
+    models: () =>
+      overrides.models ?? of([{ name: 'qwen2.5:3b', capabilities: ['generate', 'tools'] }]),
     issueApiKey: (_s: string, label: string, expiresInDays?: number | null) => {
       calls.push(`issueApiKey:${label}:${expiresInDays ?? 'never'}`);
       return (
@@ -791,5 +800,127 @@ describe('UseCaseDetail — retention', () => {
 
     expect(harness.component.canManage()).toBe(false);
     expect(harness.component.isMember()).toBe(false);
+  });
+
+  // ---- the OpenCode configuration (`FRD-132`) ----------------------------------------------
+  //
+  // Built at issuance because the plaintext exists for exactly that moment. A configuration
+  // offered on any later screen could only carry a placeholder, and a config file with a
+  // placeholder in it is one somebody pastes and then debugs for twenty minutes.
+
+  it('builds a configuration carrying the key that was just issued', () => {
+    const { component } = setup();
+    component.issueKey();
+
+    const config = JSON.parse(component.openCodeConfig(component.issued()!));
+
+    expect(config.provider.aira.options.apiKey).toBe('aira_ab_cd');
+    expect(config.provider.aira.options.baseURL).toContain('/gw/v1beta');
+  });
+
+  it('names only the models that declare tool calling', () => {
+    /** An assistant cannot use a model that answers in prose, so offering one in its config would
+     *  be an invitation to the failure `FRD-131` exists to prevent. */
+    const { component } = setup();
+    component.issueKey();
+
+    const config = JSON.parse(component.openCodeConfig(component.issued()!));
+
+    expect(Object.keys(config.provider.aira.models)).toEqual(['qwen2.5:3b']);
+    expect(config.model).toBe('aira/qwen2.5:3b');
+  });
+
+  it('falls back to a named model rather than an empty provider', () => {
+    /** A catalog that has not loaded, or has no tool-capable model, must still produce a file
+     *  somebody can edit — an empty `models` block is a config that fails with no clue why. */
+    const { component } = setup({ models: of([]) });
+    component.issueKey();
+
+    const config = JSON.parse(component.openCodeConfig(component.issued()!));
+
+    expect(config.model).toContain('aira/');
+  });
+
+  it('does not offer a model whose catalog entry declares no capabilities', () => {
+    /** `FRD-114`'s rule at the console: **undeclared means unsupported**. Absence of information
+     *  is not permission — an entry that says nothing must not be read as saying "tools". */
+    const { component } = setup({
+      models: of([{ name: 'silent-model' }, { name: 'qwen2.5:3b', capabilities: ['tools'] }]),
+    });
+    component.issueKey();
+
+    const config = JSON.parse(component.openCodeConfig(component.issued()!));
+
+    expect(Object.keys(config.provider.aira.models)).toEqual(['qwen2.5:3b']);
+  });
+
+  it('still issues a key when the catalog cannot be read', () => {
+    /** The catalog is a nicety on this form; the key is the point. A failed read must not take the
+     *  screen down with it — deliberately silent, and the config falls back to a named model. */
+    const { component } = setup({ models: throwError(() => ({ status: 503 })) });
+    component.issueKey();
+
+    expect(component.issued()).not.toBeNull();
+    expect(component.openCodeConfig(component.issued()!)).toContain('aira/');
+  });
+
+  it('says so when the clipboard will not take the configuration', () => {
+    /** Outside a secure context there is no clipboard. The file is still downloadable, so the
+     *  button must report why rather than appear to have worked — `FRD-206`: an action that
+     *  silently does nothing reads as a broken console. */
+    const { component } = setup();
+    component.issueKey();
+    Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true });
+
+    component.copyOpenCodeConfig(component.issued()!);
+
+    expect(component.copyFailed()).toBe(true);
+    expect(component.configCopied()).toBe(false);
+  });
+
+  it('reports a rejected write of the configuration', async () => {
+    const { component } = setup();
+    component.issueKey();
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: () => Promise.reject(new Error('denied')) },
+      configurable: true,
+    });
+
+    component.copyOpenCodeConfig(component.issued()!);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(component.copyFailed()).toBe(true);
+  });
+
+  it('confirms a configuration that reached the clipboard', async () => {
+    const { component } = setup();
+    component.issueKey();
+    let written = '';
+    Object.defineProperty(navigator, 'clipboard', {
+      value: {
+        writeText: (value: string) => {
+          written = value;
+          return Promise.resolve();
+        },
+      },
+      configurable: true,
+    });
+
+    component.copyOpenCodeConfig(component.issued()!);
+    await Promise.resolve();
+
+    expect(component.configCopied()).toBe(true);
+    expect(written).toContain('aira_ab_cd');
+  });
+
+  it('forgets the copied state when the key is dismissed', () => {
+    const { component } = setup();
+    component.issueKey();
+    component.configCopied.set(true);
+    component.dismissIssued();
+
+    expect(component.configCopied()).toBe(false);
+    expect(component.issued()).toBeNull();
   });
 });

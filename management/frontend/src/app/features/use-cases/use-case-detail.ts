@@ -141,6 +141,15 @@ export class UseCaseDetail implements OnInit {
       this.tab.set(requested);
     }
     this.load();
+    // Which models can actually be used by an assistant. Read from the catalog rather than
+    // hard-coded, because "declares tool calling" is a measured fact that changes (`FRD-131`).
+    this.service.models().subscribe({
+      next: (models) =>
+        this.toolModels.set(
+          models.filter((m) => (m.capabilities ?? []).includes('tools')).map((m) => m.name),
+        ),
+      error: () => undefined,
+    });
     this.meService.get().subscribe({
       next: (me) => {
         if (me.api_key_default_days) {
@@ -260,9 +269,71 @@ export class UseCaseDetail implements OnInit {
     );
   }
 
+  /**
+   * The OpenCode configuration for the key that was just issued (`FRD-132`).
+   *
+   * Generated **here and now** because the plaintext exists for exactly this moment: it is shown
+   * once and never retrievable, so a configuration offered on any later screen could only contain
+   * a placeholder — and a config file with a placeholder in it is one somebody pastes and then
+   * debugs for twenty minutes.
+   *
+   * The key is written into the file rather than referenced from the environment, which is the
+   * opposite of what `tools/opencode/opencode.json` does. Deliberate: that one lives in a
+   * repository, this one is downloaded to a workstation for a single developer. The banner says
+   * so, because a file with a credential in it should never be a surprise to its owner.
+   */
+  protected openCodeConfig(issued: IssuedApiKey): string {
+    return JSON.stringify(
+      {
+        $schema: 'https://opencode.ai/config.json',
+        provider: {
+          aira: {
+            npm: '@ai-sdk/google',
+            name: 'AIRA Gateway',
+            options: { baseURL: `${window.location.origin}/gw/v1beta`, apiKey: issued.api_key },
+            models: Object.fromEntries(
+              this.toolModels().map((model) => [model, { name: `${model} via AIRA` }]),
+            ),
+          },
+        },
+        model: `aira/${this.toolModels()[0] ?? 'qwen2.5:3b'}`,
+      },
+      null,
+      2,
+    );
+  }
+
+  /** Models the catalog declares able to call tools — the only ones an assistant can use. */
+  protected readonly toolModels = signal<string[]>([]);
+
+  protected downloadOpenCodeConfig(issued: IssuedApiKey): void {
+    const blob = new Blob([this.openCodeConfig(issued)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'opencode.json';
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  protected copyOpenCodeConfig(issued: IssuedApiKey): void {
+    const clipboard = typeof navigator === 'undefined' ? undefined : navigator.clipboard;
+    if (!clipboard) {
+      this.copyFailed.set(true);
+      return;
+    }
+    void clipboard.writeText(this.openCodeConfig(issued)).then(
+      () => this.configCopied.set(true),
+      () => this.copyFailed.set(true),
+    );
+  }
+
+  protected readonly configCopied = signal(false);
+
   protected dismissIssued(): void {
     this.issued.set(null);
     this.copied.set(false);
+    this.configCopied.set(false);
     this.copyFailed.set(false);
   }
 

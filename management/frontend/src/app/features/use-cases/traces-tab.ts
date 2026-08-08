@@ -3,6 +3,7 @@ import { Component, OnInit, inject, input, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Trace } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
+import { InfoHint } from '../../core/ui/info-hint';
 import { Live, agoLabel } from '../../core/ui/live';
 import { PageFeedback } from '../../core/ui/page-feedback';
 
@@ -10,7 +11,7 @@ const REFRESH_SECONDS = 10;
 const PAGE = 50;
 
 /**
- * What actually happened, request by request (`FRD-502` FR-9–12).
+ * What actually happened, request by request (`FRD-502` FR-9–12, `FRD-131` FR-7).
  *
  * **Metadata only — never a payload.** That is not the same thing as the per-request browsing
  * `ADR-0009` deferred: that reasoning is about showing *stored prompts* to *non-members*, and this
@@ -23,7 +24,7 @@ const PAGE = 50;
  */
 @Component({
   selector: 'app-traces-tab',
-  imports: [DatePipe, FormsModule],
+  imports: [DatePipe, FormsModule, InfoHint],
   templateUrl: './traces-tab.html',
   // `Live` is provided **here**, on the component, and not in the root injector: a timer that
   // outlives the screen that started it is a timer nobody stops. `PageFeedback` is deliberately
@@ -53,9 +54,15 @@ export class TracesTab implements OnInit {
   protected readonly loading = signal(true);
   protected readonly loadingMore = signal(false);
 
-  // Filters. The two an investigation actually asks for.
+  // Filters. The ones an investigation actually asks for.
   protected readonly refusalsOnly = signal(false);
   protected readonly outcome = signal('');
+  /** Only the turns where the model asked for a function — the fastest way to what an agent has
+   *  been trying to do (`FRD-131` FR-7). */
+  protected readonly toolsOnly = signal(false);
+  /** "Only my own requests", offered to every role including those that see everything: somebody
+   *  checking what *they* did should not have to read past everybody else. */
+  protected readonly mine = signal(false);
 
   /** The closed vocabulary, so nobody has to remember it (`FRD-122`). */
   protected readonly outcomes = [
@@ -86,13 +93,7 @@ export class TracesTab implements OnInit {
     this.loading.set(true);
     this.live.start(
       REFRESH_SECONDS,
-      () =>
-        this.service.traces({
-          useCase: this.slug(),
-          outcome: this.outcome(),
-          refusalsOnly: this.refusalsOnly(),
-          limit: PAGE,
-        }),
+      () => this.service.traces(this.query()),
       (page) => {
         // Replaced wholesale, and the list is keyed by row id, so Angular reuses the DOM it
         // already has: a refresh that rebuilt the table would scroll the reader to the top every
@@ -103,6 +104,35 @@ export class TracesTab implements OnInit {
         this.loading.set(false);
       },
     );
+  }
+
+  /**
+   * Every filter, in one place.
+   *
+   * Written once because the first page and the next one must ask the **same** question: a cursor
+   * came from a particular filter set, and paging with a different one appends rows the reader has
+   * just excluded — one list, two meanings, and no error anywhere. Two hand-written call sites is
+   * how that starts.
+   */
+  private query(): Record<string, unknown> {
+    return {
+      useCase: this.slug(),
+      outcome: this.outcome(),
+      refusalsOnly: this.refusalsOnly(),
+      toolsOnly: this.toolsOnly(),
+      mine: this.mine(),
+      limit: PAGE,
+    };
+  }
+
+  protected toggleTools(value: boolean): void {
+    this.toolsOnly.set(value);
+    this.startLive();
+  }
+
+  protected toggleMine(value: boolean): void {
+    this.mine.set(value);
+    this.startLive();
   }
 
   protected setOutcome(value: string): void {
@@ -128,25 +158,17 @@ export class TracesTab implements OnInit {
     if (!next || this.loadingMore()) return;
     this.live.enabled.set(false);
     this.loadingMore.set(true);
-    this.service
-      .traces({
-        useCase: this.slug(),
-        outcome: this.outcome(),
-        refusalsOnly: this.refusalsOnly(),
-        cursor: next,
-        limit: PAGE,
-      })
-      .subscribe({
-        next: (page) => {
-          this.traces.update((rows) => [...rows, ...page.traces]);
-          this.cursor.set(page.next_cursor);
-          this.loadingMore.set(false);
-        },
-        error: (response: unknown) => {
-          this.loadingMore.set(false);
-          this.feedback.fail(response, 'Could not load more requests.');
-        },
-      });
+    this.service.traces({ ...this.query(), cursor: next }).subscribe({
+      next: (page) => {
+        this.traces.update((rows) => [...rows, ...page.traces]);
+        this.cursor.set(page.next_cursor);
+        this.loadingMore.set(false);
+      },
+      error: (response: unknown) => {
+        this.loadingMore.set(false);
+        this.feedback.fail(response, 'Could not load more requests.');
+      },
+    });
   }
 
   protected ago(): string {

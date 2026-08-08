@@ -47,6 +47,24 @@
       />
       Refusals only
     </label>
+    <label class="checkline">
+      <input
+        type="checkbox"
+        [checked]="toolsOnly()"
+        (change)="toggleTools($any($event.target).checked)"
+        data-testid="tools-only"
+      />
+      Tool calls only
+    </label>
+    <label class="checkline">
+      <input
+        type="checkbox"
+        [checked]="mine()"
+        (change)="toggleMine($any($event.target).checked)"
+        data-testid="mine-only"
+      />
+      Only my requests
+    </label>
     <div class="field">
       <label for="trace-outcome">Outcome</label>
       <select
@@ -100,6 +118,15 @@
             <th scope="col">Tokens</th>
             <th scope="col">Cost</th>
             <th scope="col">Latency</th>
+            <th scope="col">
+              Tools
+              <app-info-hint
+                label="What tool calls are"
+                text="What the model asked the caller to run, and how many functions it was
+                      offered. Names only — never the arguments, which are the caller's content
+                      and live under the use case's payload storage and retention."
+              />
+            </th>
             <th scope="col">Trace</th>
           </tr>
         </thead>
@@ -140,6 +167,19 @@
               </td>
               <td class="nowrap">{{ cost(row) }}</td>
               <td class="nowrap">{{ row.latency_ms === null ? '—' : row.latency_ms + ' ms' }}</td>
+              <td>
+                @if (row.tool_calls; as tools) {
+                  @if (tools.called.length) {
+                    <span class="badge badge--warning">{{ tools.called.join(', ') }}</span>
+                  } @else {
+                    <!-- "offered ten and asked for none" and "offered none" are different events,
+                         and only one of them is a model behaving oddly. -->
+                    <span class="muted">{{ tools.declared }} offered, none called</span>
+                  }
+                } @else {
+                  <span class="muted">—</span>
+                }
+              </td>
               <td>
                 <span class="trace-id">{{ row.trace_id ?? '—' }}</span>
               </td>

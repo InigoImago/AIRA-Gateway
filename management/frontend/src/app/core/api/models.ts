@@ -207,7 +207,12 @@ export interface BudgetUsage {
 }
 
 /** What a model may be asked to do (FRD-114). Flags say *whether*, never *how*. */
-export type Capability = 'generate' | 'embed' | 'structured_output' | 'thinking' | 'attachments';
+// Mirrors `aira_common.models.Capability`. A second definition, and it drifted the first time the
+// Python one grew: `tools` was added there (`FRD-131`) and the console could not name it. The
+// mismatch surfaced as a compile error rather than as silence, which is the only reason it is a
+// footnote — a value the console cannot express is a value it cannot show a reader.
+export type Capability =
+  'generate' | 'embed' | 'structured_output' | 'thinking' | 'attachments' | 'tools';
 
 export const CAPABILITIES: readonly Capability[] = [
   'generate',
@@ -354,6 +359,11 @@ export interface Trace {
   subject: string;
   credential: string | null;
   use_case: string | null;
+  /** What the model asked to have run (`FRD-131` FR-7) — **names and counts, never arguments**. */
+  tool_calls: { declared: number; called: string[] } | null;
+  /** Only sent to an incident role. Absent for everybody else, which is why it is optional here
+   *  rather than nullable: "the column is not for you" and "the row has no address" differ. */
+  source_ip?: string | null;
 }
 
 export interface TracePage {

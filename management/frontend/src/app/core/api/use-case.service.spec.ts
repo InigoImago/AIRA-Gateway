@@ -290,6 +290,73 @@ describe('UseCaseService', () => {
     full.flush({ traces: [], next_cursor: null, scope: 'use_cases' });
   });
 
+  it('sends the filters an incident starts with', () => {
+    /** Which system, whose identity, which machine — plus "only mine" and "only tool turns"
+     *  (`FRD-131` FR-7). Each is asked for **by name**, so the server bounds the result; a browser
+     *  filter over one page would answer a busy installation with whatever happened to load. */
+    service
+      .traces({
+        credential: 'ab',
+        subject: 'alice',
+        sourceIp: '10.0.0.7',
+        mine: true,
+        toolsOnly: true,
+      })
+      .subscribe();
+
+    const request = http.expectOne((r) => r.url === '/gw/v1beta/traces').request;
+    expect(request.params.get('credential')).toBe('ab');
+    expect(request.params.get('subject')).toBe('alice');
+    expect(request.params.get('source_ip')).toBe('10.0.0.7');
+    expect(request.params.get('mine')).toBe('true');
+    expect(request.params.get('tools_only')).toBe('true');
+  });
+
+  it('omits a filter that is off rather than sending it as false', () => {
+    /** `mine=false` and an absent `mine` are the same intent and must be the same request: a
+     *  parameter present with a falsy value is one more thing the server has to agree with us
+     *  about. */
+    service.traces({ mine: false, toolsOnly: false, credential: '' }).subscribe();
+
+    const request = http.expectOne((r) => r.url === '/gw/v1beta/traces').request;
+    expect(request.params.has('mine')).toBe(false);
+    expect(request.params.has('tools_only')).toBe(false);
+    expect(request.params.has('credential')).toBe(false);
+  });
+
+  it('asks the server for a page of use cases, and only searches when there is a term', () => {
+    service.listPage('', 2).subscribe();
+    const bare = http.expectOne((r) => r.url === '/api/v1/use-cases/').request;
+    expect(bare.params.get('page')).toBe('2');
+    expect(bare.params.has('q')).toBe(false);
+
+    service.listPage('vertrieb', 1).subscribe();
+    expect(http.expectOne((r) => r.url === '/api/v1/use-cases/').request.params.get('q')).toBe(
+      'vertrieb',
+    );
+  });
+
+  it('leaves the expiry out when the caller named none', () => {
+    /** NULL means never (`ADR-0015`), and an omitted field is how the server is told to apply its
+     *  own default — sending `0` would be a request for a key that expires immediately. */
+    service.issueApiKey('uc-a', 'laptop').subscribe();
+    expect(http.expectOne((r) => r.method === 'POST').request.body).toEqual({ label: 'laptop' });
+
+    service.issueApiKey('uc-a', 'laptop', 30).subscribe();
+    expect(http.expectOne((r) => r.method === 'POST').request.body).toEqual({
+      label: 'laptop',
+      expires_in_days: 30,
+    });
+  });
+
+  it('asks for findings by use case rather than sifting the newest hundred', () => {
+    service.anomalies(10, 'uc-a', 'c1').subscribe();
+    const request = http.expectOne((r) => r.url === '/gw/v1beta/anomalies').request;
+    expect(request.params.get('use_case')).toBe('uc-a');
+    expect(request.params.get('cursor')).toBe('c1');
+    expect(request.params.get('limit')).toBe('10');
+  });
+
   it('reads anomaly rules from management, not from the gateway', () => {
     // The rule is authored in the control plane; the finding is produced in the data plane. Asking
     // the wrong plane would work in a demo and return a stale copy in production.

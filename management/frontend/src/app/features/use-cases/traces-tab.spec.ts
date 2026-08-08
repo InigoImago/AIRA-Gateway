@@ -28,6 +28,7 @@ function trace(over: Partial<Trace> = {}): Trace {
     subject: 'ada',
     credential: 'aira_ab12',
     use_case: 'uc-a',
+    tool_calls: null,
     ...over,
   };
 }
@@ -357,5 +358,72 @@ describe('TracesTab — while a page is in flight', () => {
 
     expect(harness.text()).toContain('asked for b');
     expect(harness.text()).not.toContain('·');
+  });
+  // ---- what an incident needs to see (`FRD-131` FR-7, `FRD-502`) ---------------------------
+
+  it('shows the functions the model asked for', () => {
+    const { text } = setup({
+      pages: [
+        {
+          traces: [trace({ tool_calls: { declared: 3, called: ['read_file', 'bash'] } })],
+          next_cursor: null,
+          scope: 'all',
+        },
+      ],
+    });
+
+    expect(text()).toContain('read_file');
+  });
+
+  it('distinguishes "offered and not used" from "never offered"', () => {
+    /** Two different events, and only one of them is a model behaving oddly. A row showing a dash
+     *  for both would hide the interesting one. */
+    const { text } = setup({
+      pages: [
+        {
+          traces: [trace({ tool_calls: { declared: 4, called: [] } })],
+          next_cursor: null,
+          scope: 'all',
+        },
+      ],
+    });
+
+    expect(text()).toContain('4 offered, none called');
+  });
+
+  it('asks the server for tool turns rather than filtering what it already has', () => {
+    /** Asserted by watching the **request**: a client-side filter would pass a "the right rows are
+     *  on screen" test too, while showing the reader one page of whatever happened to be loaded. */
+    const { click, queries } = setup();
+    click('tools-only');
+
+    expect(queries.some((query) => query['toolsOnly'] === true)).toBe(true);
+  });
+
+  it('carries the filters onto the next page', () => {
+    /** The cursor came from *this* filter set. Paging with a different one appends rows the reader
+     *  has just excluded — one list, two questions, and no error anywhere. */
+    const { click, queries } = setup({
+      pages: [
+        // Three, because switching the filter reloads the first page: the third response is the
+        // one the cursor is spent on.
+        { traces: [trace()], next_cursor: 'c1', scope: 'all' },
+        { traces: [trace()], next_cursor: 'c1', scope: 'all' },
+        { traces: [trace({ id: 't2' })], next_cursor: null, scope: 'all' },
+      ],
+    });
+    click('tools-only');
+    click('load-more');
+
+    const paged = queries.filter((query) => query['cursor']);
+    expect(paged.length).toBeGreaterThan(0);
+    expect(paged.every((query) => query['toolsOnly'] === true)).toBe(true);
+  });
+
+  it('asks the server for my own requests', () => {
+    const { click, queries } = setup();
+    click('mine-only');
+
+    expect(queries.some((query) => query['mine'] === true)).toBe(true);
   });
 });

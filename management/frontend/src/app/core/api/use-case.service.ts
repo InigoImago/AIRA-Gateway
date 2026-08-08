@@ -274,6 +274,14 @@ export class UseCaseService {
     useCase?: string;
     outcome?: string;
     refusalsOnly?: boolean;
+    /** The three an incident starts with: which system, whose identity, which machine. */
+    credential?: string;
+    subject?: string;
+    sourceIp?: string;
+    /** Only my own requests — offered to every role, including those that see everything. */
+    mine?: boolean;
+    /** Only the turns where the model asked for a function. */
+    toolsOnly?: boolean;
     cursor?: string;
     limit?: number;
   }): Observable<TracePage> {
@@ -281,6 +289,11 @@ export class UseCaseService {
     if (options.useCase) params['use_case'] = options.useCase;
     if (options.outcome) params['outcome'] = options.outcome;
     if (options.refusalsOnly) params['refusals_only'] = true;
+    if (options.credential) params['credential'] = options.credential;
+    if (options.subject) params['subject'] = options.subject;
+    if (options.sourceIp) params['source_ip'] = options.sourceIp;
+    if (options.mine) params['mine'] = true;
+    if (options.toolsOnly) params['tools_only'] = true;
     if (options.cursor) params['cursor'] = options.cursor;
     return this.http.get<TracePage>('/gw/v1beta/traces', { params });
   }

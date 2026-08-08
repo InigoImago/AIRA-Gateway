@@ -323,10 +323,31 @@
             <button type="button" class="btn btn--sm btn--primary" (click)="copyKey(key.api_key)">
               {{ copied() ? 'Copied ✓' : 'Copy' }}
             </button>
+            <button
+              type="button"
+              class="btn btn--sm"
+              (click)="copyOpenCodeConfig(key)"
+              data-testid="copy-opencode"
+            >
+              {{ configCopied() ? 'Config copied ✓' : 'Copy OpenCode config' }}
+            </button>
+            <button
+              type="button"
+              class="btn btn--sm"
+              (click)="downloadOpenCodeConfig(key)"
+              data-testid="download-opencode"
+            >
+              Download opencode.json
+            </button>
             <button type="button" class="btn btn--sm btn--ghost" (click)="dismissIssued()">
               Done
             </button>
           </div>
+          <span class="field__hint">
+            The OpenCode configuration is built now, while the key exists: it is shown once and
+            never retrievable, so a config offered later could only carry a placeholder.
+            <strong>It contains the key</strong> — treat the file as the credential it is.
+          </span>
           @if (copyFailed()) {
             <span class="field__hint field__hint--error">
               This browser would not let the page write to the clipboard — select the key above and
