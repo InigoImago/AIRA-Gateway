@@ -940,6 +940,15 @@ which a Google client reads as "unknown error": now **400 `INVALID_ARGUMENT` nam
 with KIRA keeping its own envelope. `N40`–`N44`; **`N2` was stale, not undefended** — its anchor
 named the predicate this change renamed, so the harness replaced nothing and reported a property no
 test would notice losing. `tools/mutation_check.py` gained `--only=`.
+The live round that followed found two more: **an id that identified two models** — the seed writes
+a *fixed* KIRA number for "the local chat model" and had been run for a second one, so
+`MultipleResultsFound` reached the caller as a **500**; the resolver now refuses an ambiguous id
+(`503`, `FRD-114` FR-6a — `ADR-0011`'s ambiguous routing table one level down, since picking a row
+would answer, bill and audit under a model the caller never named) and the seed **releases** the id
+before taking it. And FastAPI was answering query-parameter errors in its **own** `422`/`detail`
+shape, which a Google client reads as "unknown error": now **400 `INVALID_ARGUMENT` naming the
+parameter**, each surface in its own envelope — the routing-handler finding of 2026-08-06, one layer
+in.
 
 Next candidates: **`FRD-114`** (model metadata — now also carries publisher + default output cap,
 prerequisite for 110–113 and 119), **`FRD-110`** (documents/images — the widest gap),

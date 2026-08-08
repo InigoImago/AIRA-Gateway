@@ -4023,3 +4023,25 @@ picks the envelope by path, like the routing one; the KIRA branch is **unreachab
 published surface today**, which is stated in the test rather than left for somebody to discover,
 because the next KIRA route with a typed parameter would otherwise answer in Gemini's envelope
 silently.
+
+### An id that identified two models
+
+The same round put a **500** on the predecessor's surface: `MultipleResultsFound`, because two
+catalog rows claimed numeric id `9001`. `tools/seed_local_catalog.py` writes a **fixed** id for
+"the local chat model", and it had been run for a second one — so both kept it, and every KIRA
+request naming that id failed. Silently created: the seed printed success, and the gateway's
+read-model has no unique constraint (Management does, but this script writes past it).
+
+Fixed at all three places it could have been stopped. The **resolver refuses** — this is
+`ADR-0011`'s ambiguous routing table one level down, and picking a row would answer, bill and audit
+under a model the caller never named, with nothing in the response looking wrong; `503`, because
+the installation is misconfigured and an administrator can fix it, with the two model names in the
+log rather than in the answer. The **seed releases the id** before taking it, since the number names
+a *role* and re-running for a different model must move it — fixed rather than derived, because a
+caller's configuration holds that number and changing it would break them silently. And the live
+catalog was cleaned.
+
+Two integration rows were **retired rather than deleted**: `tools` sat on the "fields this gateway
+does not serve" lists until `FRD-131` served it this morning. The requirement did not go away, it
+moved — a use case without the toggle refuses a declaration by name — and a row deleted without a
+comment reads as a requirement somebody dropped.

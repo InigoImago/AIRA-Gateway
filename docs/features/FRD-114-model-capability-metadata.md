@@ -100,6 +100,14 @@ usable, and `FRD-113` cannot tell a supported task type from a typo.
 - **FR-6 Numeric alias.** An optional stable integer id per model, for the predecessor's
   `model_id`. **Only meaningful if `FRD-107` is built** (`ADR-0010`); it is otherwise unused and
   should be dropped with it.
+- **FR-6a Unique, and refused when it is not** *(added 2026-08-08, after a live 500)*. Management
+  enforces uniqueness where the declaration is written, but the gateway's read-model does not, and
+  a seed script that writes past Management left two rows claiming `9001`. The resolver now
+  **refuses an ambiguous id** (`503`, an administrator's fault, model names logged and not
+  disclosed) rather than returning whichever row was read first: that choice would answer, bill and
+  audit under a model the caller never named, and nothing in the response would look wrong. This is
+  `ADR-0011`'s "an ambiguous routing table refuses to boot", one level down — the same rule, because
+  it is the same hazard.
 - **FR-7 Missing metadata fails closed.** See §5.3.
 - **FR-8 Distributed, not queried.** The gateway reads its own read-model, never calls Management
   on the request path. This is the existing pattern and the reason the gateway survives a
