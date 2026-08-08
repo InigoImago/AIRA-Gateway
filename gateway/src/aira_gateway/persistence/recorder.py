@@ -86,6 +86,7 @@ async def record_request(
     requested_model: str | None = None,
     model_selection: str | None = None,
     pipeline_decisions: list[dict[str, Any]] | None = None,
+    tool_calls: dict[str, Any] | None = None,
     provenance: tuple[str, str, str] | None = None,
     api: str = "gemini",
 ) -> None:
@@ -133,6 +134,7 @@ async def record_request(
             requested_model=requested_model,
             model_selection=model_selection,
             pipeline_decisions=pipeline_decisions,
+            tool_calls=tool_calls,
             degraded=_degradation_snapshot(request),
             provider=provenance[0] if provenance else None,
             publisher=provenance[1] if provenance else None,

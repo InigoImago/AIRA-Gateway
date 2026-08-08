@@ -91,6 +91,18 @@ class RequestLog(Base):
     outcome: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     #: Which pipeline steps ran and what each decided — never the classifier's reasoning text.
     pipeline_decisions: Mapped[Any | None] = mapped_column(JSON(none_as_null=True), nullable=True)
+    #: What the model asked to have run, and how much it was offered (`FRD-131` FR-7).
+    #:
+    #: **Names and counts only, never arguments.** Arguments are caller content: they belong under
+    #: `store_payloads`, inside the retention clock and behind `FRD-406`'s redaction, not in a
+    #: metadata column that no clock covers. The shape is `{"declared": n, "called": [name, …]}`,
+    #: written through an allow-list for the reason `FRD-122` gives — a fact recorded in one place
+    #: is a fact a later change cannot quietly widen.
+    #:
+    #: `declared` is worth as much as `called`: "the model was offered ten functions and asked for
+    #: none" and "it was offered none" are different events, and only one of them is a model
+    #: behaving oddly.
+    tool_calls: Mapped[Any | None] = mapped_column(JSON(none_as_null=True), nullable=True)
     #: Which controls were running on a fallback while this request was handled (FRD-405).
     degraded: Mapped[Any | None] = mapped_column(JSON(none_as_null=True), nullable=True)
     prompt_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)

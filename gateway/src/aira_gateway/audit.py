@@ -101,6 +101,20 @@ class AuditTrail:
     decisions: list[dict[str, Any]] = field(default_factory=list)
     #: The parsed request body, so a refusal can be recorded with what was actually sent.
     body: dict[str, Any] | None = None
+    #: How many functions the caller offered this request (`FRD-131` FR-7). Zero for the ordinary
+    #: request, and worth recording because "offered ten, asked for none" and "offered none" are
+    #: different events — only one of them is a model behaving oddly.
+    tools_declared: int = 0
+    #: The names the model asked to have run, in order. **Names only**: arguments are caller
+    #: content and belong under `store_payloads`, inside the retention clock and behind `FRD-406`'s
+    #: redaction — not in a metadata column no clock covers.
+    #:
+    #: Lives on the trail rather than on either surface, for the reason `FRD-126` gives: the
+    #: streaming path and the buffered path are two exits, and a fact recorded at one of them is a
+    #: fact eventually missing from the other. It was, in fact, missing from the streamed one for
+    #: the length of an afternoon — the audit row of a real assistant turn read `{"text": ""}`,
+    #: because a streamed tool call has no text delta to accumulate and nothing else looked.
+    tool_calls: list[str] = field(default_factory=list)
     #: Model calls made *by the pipeline*, not by the caller. Recorded even when the request was
     #: then refused — a filter that blocked still spent the tokens it took to decide that, and a
     #: use case running a blocking filter over rejected traffic is paying for exactly those.
@@ -154,3 +168,15 @@ def decision_summary(decisions: list[dict[str, Any]]) -> list[dict[str, Any]] | 
         for decision in decisions
     ]
     return [entry for entry in kept if entry] or None
+
+
+def tool_summary(trail: AuditTrail) -> dict[str, Any] | None:
+    """What this request offered and what the model asked for, or ``None`` if neither.
+
+    An **allow-list**, in the shape `FRD-122` established: what reaches the column is enumerated
+    here and nowhere else, so a later change cannot start persisting a tool's arguments by
+    forgetting to exclude them.
+    """
+    if not trail.tools_declared and not trail.tool_calls:
+        return None
+    return {"declared": trail.tools_declared, "called": list(trail.tool_calls)}

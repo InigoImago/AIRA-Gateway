@@ -144,7 +144,16 @@ class MockProvider:
         for start in range(0, len(words), _STREAM_WORDS_PER_CHUNK):
             delta = " ".join(words[start : start + _STREAM_WORDS_PER_CHUNK])
             yield CanonicalChunk(text_delta=f"{delta} ")
-        yield CanonicalChunk(text_delta="", finish_reason=full.finish_reason, usage=full.usage)
+        # Tool calls ride the **final** chunk, whole, exactly as a real dialect delivers them
+        # (`FRD-131` FR-6). A mock that streamed text and dropped the call would leave the entire
+        # streamed path untested — which is how the audit gap this comment sits next to survived
+        # stages 1-4 and was found against a running model instead.
+        yield CanonicalChunk(
+            text_delta="",
+            finish_reason=full.finish_reason,
+            usage=full.usage,
+            tool_calls=full.tool_calls,
+        )
 
     async def embed(self, request: CanonicalEmbeddingRequest) -> list[list[float]]:
         """One vector per text, of the requested width.

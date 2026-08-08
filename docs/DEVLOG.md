@@ -3814,3 +3814,62 @@ ten plus a long system prompt. That is model speed, not a gateway defect: the sa
 correctly when given the time. Tool calls on the **Vertex** dialects (Gemini upstream, Anthropic)
 are not built either; both refuse a tool part by name, and the catalog capability keeps such a model
 out of a tool request in the first place.
+
+## 2026-08-08 (night) — `FRD-131` FR-7: the audit row learns what the model asked for
+
+Stages 1–4 were called done, and a live OpenCode run said otherwise. The audit row of a real
+assistant turn read `{"text": ""}` and nothing else.
+
+**The cause is worth keeping.** The streaming path builds its stored response by accumulating
+`text_delta`. A tool call has **no text delta** — the answer *is* the call — so the row was
+literally correct and completely useless: tokens and cost recorded, and no trace of what the model
+asked to have run. The buffered path stored it in full, because the whole response object went into
+the payload. One feature, two exits, one of them blind: `FRD-126`'s lesson arriving through a door
+it had not been pointed at.
+
+For a coding assistant this is not a detail. Every such client streams, so *every* tool call in
+real traffic was unrecorded — and "which functions did the model ask to run" is exactly the
+question `ADR-0013` promises the gateway can answer. A platform whose point is auditable model
+access had the least auditable part be the one that matters most.
+
+**Closed as one fact on the trail, not two at the exits.** `AuditTrail` gains `tools_declared` and
+`tool_calls`; `Accounting.served()` records the names, so both exits get it by calling the same
+method rather than by each remembering; `tool_summary()` is an **allow-list** in the shape
+`FRD-122` established — names and counts only. Arguments stay out: they are caller content and
+belong under `store_payloads`, inside the retention clock and behind `FRD-406`'s redaction, not in
+a metadata column no clock covers. Migration `0021`.
+
+`declared` is recorded beside `called` because **"offered ten functions and asked for none" and
+"offered none" are different events**, and only one of them is a model behaving oddly. A request
+that declares nothing stores NULL — a column that is never NULL stops being evidence of anything.
+
+**And the client was not receiving them either.** The chunk mapper carried only `text_delta`, so a
+streamed tool call reached nobody: the audit was blind *and* the answer was lost. Both fixed
+together, which is the honest framing — recording something is not the same as delivering it.
+
+The mock now emits a tool call on the final chunk, exactly as a real dialect does. Without that the
+streamed path had no hermetic coverage at all, which is how the gap survived stages 1–4 and had to
+be found against a running model.
+
+Verified live, same command as before:
+
+```
+streamGenerateContent  545   NULL                                  ← the client's own title call
+streamGenerateContent  2099  {"declared": 10, "called": ["read"]}
+streamGenerateContent  2115  {"declared": 10, "called": []}
+```
+
+**Model selection, measured.** `qwen3:4b` calls tools correctly and spends 352 completion tokens
+and 86 seconds doing it, almost all of it discarded reasoning. `qwen2.5-coder:7b` is fast and
+**cannot call tools at all** — it returns the JSON as prose with `tool_calls: null`, while
+`ollama show` lists `tools` as a capability. `qwen2.5:3b` calls correctly in **2 seconds and 21
+tokens**, a factor of 43 against qwen3:4b with better arguments. `qwen2.5:0.5b` called correctly
+once and was then used to argue that the family can do it at any size; asked again it answered in
+prose, then called with invented arguments, once naming a parameter that is not in the schema.
+
+Which produced the rule the seed now states: **a vendor's capability flag is a claim, not
+evidence, and one successful call is not a capability.** `TOOLS_BY_MODEL` holds what was *seen*, is
+appended to only after a run, and a model absent from it declares no tool calling — so the dispatch
+chain refuses it by name rather than letting prose reach a client that will parse it as a call.
+That entry was written for `qwen2.5:7b` while it was still downloading and taken out again before
+the file was saved: the fourth instance in one evening of the same reflex.

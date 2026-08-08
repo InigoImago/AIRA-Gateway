@@ -61,6 +61,7 @@ class PendingLog:
     requested_model: str | None = None
     model_selection: str | None = None
     pipeline_decisions: list[dict[str, Any]] | None = None
+    tool_calls: dict[str, Any] | None = None
     degraded: dict[str, str] | None = None
     provider: str | None = None
     publisher: str | None = None
@@ -196,6 +197,7 @@ class RequestLogWriter:
                 requested_model=entry.requested_model,
                 model_selection=entry.model_selection,
                 pipeline_decisions=entry.pipeline_decisions,
+                tool_calls=entry.tool_calls,
                 degraded=entry.degraded,
                 provider=entry.provider,
                 publisher=entry.publisher,

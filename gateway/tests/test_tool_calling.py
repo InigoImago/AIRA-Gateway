@@ -495,3 +495,150 @@ async def test_a_second_turn_carrying_the_result_gets_prose() -> None:
 
     assert response.status_code == 200, response.text
     assert "acted on the tool result" in response.text
+
+
+# ---- the audit row (`FRD-131` FR-7) -----------------------------------------------------------
+#
+# Found live, after stages 1-4 were "done": a real assistant turn stored `{"text": ""}` and nothing
+# else. A streamed tool call has **no text delta** to accumulate — the answer *is* the call — so a
+# row built from the accumulated text alone says nothing about what the model asked to have run.
+# For a client that streams, which is every coding assistant, that is the whole audit trail of the
+# feature missing.
+
+
+async def _rows(app) -> list:
+    from sqlalchemy import select
+
+    from aira_gateway.db.models import RequestLog
+
+    async with app.state.db_sessionmaker() as session:
+        result = await session.execute(select(RequestLog).order_by(RequestLog.created_at))
+        return list(result.scalars())
+
+
+async def test_a_buffered_tool_call_is_on_the_audit_row() -> None:
+    from fastapi.testclient import TestClient
+
+    app = _app()
+    with TestClient(app) as client:
+        await _use_case(app, "audit-uc", tools_enabled=True)
+        await _declare_tools(app)
+        assert (
+            client.post(
+                "/v1beta/models/mock-1:generateContent",
+                json=BODY,
+                headers={"x-aira-use-case": "audit-uc"},
+            ).status_code
+            == 200
+        )
+        rows = await _rows(app)
+
+    assert rows[-1].tool_calls == {"declared": 1, "called": ["read_file"]}
+
+
+async def test_a_streamed_tool_call_is_on_the_audit_row_too() -> None:
+    """**The one that was missing.** Same fact, other exit — the property `FRD-126` exists for."""
+    from fastapi.testclient import TestClient
+
+    app = _app()
+    with TestClient(app) as client:
+        await _use_case(app, "audit-uc2", tools_enabled=True)
+        await _declare_tools(app)
+        response = client.post(
+            "/v1beta/models/mock-1:streamGenerateContent?alt=sse",
+            json=BODY,
+            headers={"x-aira-use-case": "audit-uc2"},
+        )
+        assert response.status_code == 200, response.text
+        rows = await _rows(app)
+
+    assert rows[-1].tool_calls == {"declared": 1, "called": ["read_file"]}
+
+
+async def test_a_streamed_tool_call_reaches_the_client() -> None:
+    """Recording it is not the same as delivering it. Without the chunk mapper carrying the call,
+    a client would receive the answer's tokens and never the call — which for an assistant is the
+    entire answer."""
+    from fastapi.testclient import TestClient
+
+    app = _app()
+    with TestClient(app) as client:
+        await _use_case(app, "audit-uc3", tools_enabled=True)
+        await _declare_tools(app)
+        response = client.post(
+            "/v1beta/models/mock-1:streamGenerateContent?alt=sse",
+            json=BODY,
+            headers={"x-aira-use-case": "audit-uc3"},
+        )
+
+    assert "functionCall" in response.text
+    assert "read_file" in response.text
+
+
+async def test_a_request_that_declared_tools_and_got_none_says_so() -> None:
+    """ "Offered ten functions and asked for none" and "offered none" are different events, and
+    only one of them is a model behaving oddly. Both are recorded."""
+    from fastapi.testclient import TestClient
+
+    app = _app()
+    with TestClient(app) as client:
+        await _use_case(app, "audit-uc4", tools_enabled=True)
+        await _declare_tools(app)
+        client.post(
+            "/v1beta/models/mock-1:generateContent",
+            json={
+                **BODY,
+                "contents": [
+                    {"role": "user", "parts": [{"text": "read it"}]},
+                    {
+                        "role": "model",
+                        "parts": [{"functionCall": {"name": "read_file", "args": {}}}],
+                    },
+                    {
+                        "role": "user",
+                        "parts": [{"functionResponse": {"name": "read_file", "response": {}}}],
+                    },
+                ],
+            },
+            headers={"x-aira-use-case": "audit-uc4"},
+        )
+        rows = await _rows(app)
+
+    assert rows[-1].tool_calls == {"declared": 1, "called": []}
+
+
+async def test_an_ordinary_request_records_nothing_about_tools() -> None:
+    """A column that is never NULL stops being evidence of anything."""
+    from fastapi.testclient import TestClient
+
+    app = _app()
+    with TestClient(app) as client:
+        client.post(
+            "/v1beta/models/mock-1:generateContent",
+            json={"contents": [{"parts": [{"text": "hi"}]}]},
+        )
+        rows = await _rows(app)
+
+    assert rows[-1].tool_calls is None
+
+
+async def test_arguments_are_never_recorded_in_the_metadata_column() -> None:
+    """Arguments are caller content: they belong under `store_payloads`, inside the retention clock
+    and behind `FRD-406`'s redaction — not in a column no clock covers."""
+    from fastapi.testclient import TestClient
+
+    app = _app()
+    with TestClient(app) as client:
+        await _use_case(app, "audit-uc5", tools_enabled=True)
+        await _declare_tools(app)
+        client.post(
+            "/v1beta/models/mock-1:generateContent",
+            json={
+                **BODY,
+                "contents": [{"parts": [{"text": "secret-argument-value"}]}],
+            },
+            headers={"x-aira-use-case": "audit-uc5"},
+        )
+        rows = await _rows(app)
+
+    assert "secret-argument-value" not in str(rows[-1].tool_calls)

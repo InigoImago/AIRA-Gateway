@@ -327,7 +327,12 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
                 # the outcome is reported, so a refused answer is released rather than booked.
                 check_structured_result(canonical, canonical_response)
                 payload = canonical_to_gemini(canonical_response).model_dump()
-                acct.served(canonical_response.model, canonical_response.usage, payload)
+                acct.served(
+                    canonical_response.model,
+                    canonical_response.usage,
+                    payload,
+                    [call.name for call in canonical_response.tool_calls],
+                )
             return JSONResponse(payload, headers=deprecation_headers(declaration))
         sse = request.query_params.get("alt") == "sse"
         return _stream_response(
@@ -362,10 +367,23 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
 
 def _chunk_to_gemini(chunk: CanonicalChunk, model: str) -> schemas.GenerateContentResponse:
     usage = chunk.usage
+    # A chunk carries a text delta, or completed tool calls, or both. The calls arrive whole on
+    # the chunk that ends the message (`FRD-131` FR-6) — never in pieces, because half a function
+    # call is not a smaller function call. Without this the client sees the answer's *tokens*
+    # streamed and never the call itself, which for an assistant is the entire answer.
+    parts: list[schemas.Part] = []
+    if chunk.text_delta or not chunk.tool_calls:
+        parts.append(schemas.Part(text=chunk.text_delta))
+    parts.extend(
+        schemas.Part(
+            functionCall=schemas.FunctionCall(name=call.name, args=call.arguments, id=call.id)
+        )
+        for call in chunk.tool_calls
+    )
     return schemas.GenerateContentResponse(
         candidates=[
             schemas.Candidate(
-                content=schemas.Content(role="model", parts=[schemas.Part(text=chunk.text_delta)]),
+                content=schemas.Content(role="model", parts=parts),
                 finishReason=(chunk.finish_reason.upper() if chunk.finish_reason else ""),
                 index=0,
             )
@@ -404,6 +422,9 @@ def _stream_response(
             started=started,
         ) as acct:
             parts: list[str] = []
+            #: Names only, and accumulated across chunks because a provider may finish several
+            #: calls at different moments. `FRD-131` FR-7.
+            streamed_calls: list[str] = []
             final_usage = None
             separator = ""
             # A stream that dies half way still has 200 in its (already sent) headers; the audit
@@ -417,6 +438,7 @@ def _stream_response(
                     async for chunk in provider.stream_generate(canonical):
                         if chunk.usage is not None:
                             final_usage = chunk.usage
+                        streamed_calls.extend(call.name for call in chunk.tool_calls)
                         parts.append(chunk.text_delta)
                         payload = _chunk_to_gemini(chunk, canonical.model).model_dump_json()
                         if sse:
@@ -441,7 +463,13 @@ def _stream_response(
                 # chargeable and is *released*: settling would still book one request, and a use
                 # case with a request limit would lose allowance to an upstream outage.
                 if final_usage is not None:
-                    acct.served(canonical.model, final_usage, {"text": "".join(parts)})
+                    # The names as well as the text. A streamed tool call has **no text delta** to
+                    # accumulate — the answer *is* the call — so a row built from `parts` alone
+                    # reads `{"text": ""}` and the audit trail has nothing about what the model
+                    # asked to have run. Measured on a real assistant turn before this line existed.
+                    acct.served(
+                        canonical.model, final_usage, {"text": "".join(parts)}, streamed_calls
+                    )
                 acct.status = status
                 if status != 200:
                     acct.outcome = Outcome.UPSTREAM_ERROR

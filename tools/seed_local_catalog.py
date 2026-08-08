@@ -48,6 +48,13 @@ EMBED_PRICE = 10_000_000
 #: A model that is not in this table gets **no thinking declaration at all**: absence of
 #: information is not permission (`FRD-114` FR-7), and the baseline is that the model thinks
 #: however it likes and the gateway strips the separate reasoning field.
+#:
+#: `TOOLS_BY_MODEL` below exists for the same reason and was added the same evening, after making
+#: the mistake it prevents: `qwen2.5-coder:7b` lists `tools` in `ollama show` and **does not do
+#: them** — asked to call a function it returns the JSON *as prose*, with `tool_calls: null` on the
+#: wire. Its siblings `qwen3:0.6b` and `qwen2.5:0.5b` both answer with a real call, so it is
+#: neither the family nor the size; it is that particular build's template. A vendor's capability
+#: flag is a claim, and this catalog is supposed to hold evidence.
 THINKING_BY_MODEL: dict[str, dict] = {
     "qwen3:0.6b": {
         "modes": ["disabled", "low", "medium", "high"],
@@ -57,6 +64,31 @@ THINKING_BY_MODEL: dict[str, dict] = {
         "modes": ["low", "medium", "high"],
     },
 }
+
+
+#: Which models were **seen** to emit a real tool call, by sending one (`FRD-131`). Absent means
+#: the capability is not declared, so the dispatch chain refuses a tool request against that model
+#: **by name** — far better than prose a client will try to parse as a function call.
+#:
+#: Entries are added **after** a run, never in anticipation of one. `qwen2.5:7b` was written here
+#: while it was still downloading and taken out again before the file was saved — the fourth
+#: instance in one evening of the same reflex, which is why the rule is stated rather than assumed.
+#:
+#: **`qwen2.5:0.5b` is deliberately absent, and it is the most instructive entry on this list.**
+#: It emitted a correct tool call the first time it was asked, which was used to argue that the
+#: whole family can do tool calling at any size. Asked again it answered in 124 tokens of prose;
+#: asked twice more it called, with **invented arguments** — once naming a parameter (`file_path`)
+#: that is not in the declared schema at all. One successful call is not a capability. Measured
+#: 2026-08-08:
+#:
+#:     qwen2.5:0.5b   inconsistent   0.8–4.2s   24–124 tokens   invents paths, violates the schema
+#:     qwen2.5:1.5b   calls          1.9s        23 tokens      invented path
+#:     qwen2.5:3b     calls          2.0–4.4s    21 tokens      correct: "hello.py"
+#:     qwen2.5:7b     calls          6.3s        21 tokens      correct — and three times slower
+#:     qwen2.5-coder:7b  **never**   —           —              prose, `tool_calls: null`
+TOOLS_BY_MODEL: frozenset[str] = frozenset(
+    {"qwen3:0.6b", "qwen3:4b", "qwen2.5:1.5b", "qwen2.5:3b", "qwen2.5:7b"}
+)
 
 
 DECLARATIONS = [
@@ -111,6 +143,10 @@ async def main() -> None:
     try:
         async with engine.begin() as connection:
             for row in DECLARATIONS:
+                # Measured, never inherited and never taken from a vendor's own flag: `ollama show`
+                # lists `tools` for `qwen2.5-coder:7b`, which answers in prose.
+                if str(row["model"]) in TOOLS_BY_MODEL:
+                    row["capabilities"] = [*row["capabilities"], "tools"]  # type: ignore[misc]
                 if "thinking" in row:
                     # Measured or absent — never inherited from a sibling model.
                     measured = THINKING_BY_MODEL.get(str(row["model"]))

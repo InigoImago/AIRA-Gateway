@@ -880,6 +880,43 @@ model is declared with **no thinking at all** (`FRD-114` FR-7). `minimal` also s
 one definition, two files, one fixed. The rule: **a capability belongs to a model, not to a family,
 a vendor or a runtime**, and a seed that writes one declaration for "whatever is configured" is the
 mechanism that turns a measurement into an assumption.
+**Tool calling (`FRD-131`, 2026-08-08) — carried, never executed, off by default.** Four stages,
+each run against the whole suite before the next: tool call and tool result join `FRD-110`'s
+ordered-parts union; the Gemini surface carries `functionCall`/`functionResponse`; the OpenAI
+dialect handles the trap the FRD named in advance (**a streamed call arrives fragmented** — name
+once, arguments as string pieces across deltas, reassembled by index and emitted whole); and
+`tools_enabled` is **per use case, default off**, with a catalog capability checked **per hop** so
+a fallback skips an incapable candidate rather than answering in prose. One existing rule had to
+change and it is the telling one: `is_empty` refused a request with no text and no attachment, and
+**the second turn of every agent exchange is exactly that**. **mypy caught what no test could** —
+three adapters treated "not a text part" as "an attachment", an `AttributeError` waiting on two
+upstreams; `DialectUnsupported` moved to `upstreams/base.py` rather than being imported from a
+sibling dialect, the import the architecture assertion caught once before.
+**`FRD-132` stage A: B1 — no new surface.** OpenCode 1.18.15 against the **existing Gemini
+surface** worked unmodified except for `tools`; `FRD-106` stays withdrawn, and this run is the
+evidence that was missing when it was. **A measurement then corrected a rule I had asserted**:
+`toolConfig` was refused outright because its modes "hold on one vendor and silently do not on
+another" — and a real client sends `AUTO` on every request, which *is* the default. It is carried
+now; `ANY`/`NONE` are refused **because they are not built**, an honest reason.
+**Then the live run found what stages 1–4 had missed, and it was the important one.** A real
+assistant turn's audit row read `{"text": ""}`: the streaming path builds its stored response from
+`text_delta`, and a tool call **has none** — the answer *is* the call. Every tool call in real
+traffic (every assistant streams) was unrecorded, which is precisely the question `ADR-0013`
+promises can be answered. Closed as **one fact on the trail**, not two at the exits: `AuditTrail`
+carries `tools_declared`/`tool_calls`, `Accounting.served()` records them so both exits get it by
+calling the same method, and `tool_summary()` is an allow-list — **names and counts only**, because
+arguments are caller content and belong under `store_payloads` behind retention and redaction
+(migration `0021`). `declared` sits beside `called` because *offered ten and asked for none* and
+*offered none* are different events. The client was not receiving streamed calls either — the chunk
+mapper carried only text — so recording and delivering were fixed together.
+**Model selection is measured, and it produced a rule.** `qwen2.5:3b` calls tools in **2s/21
+tokens**; `qwen3:4b` in 86s/352, nearly all discarded reasoning; **`qwen2.5-coder:7b` cannot call
+tools at all** and returns the JSON as prose, while `ollama show` lists `tools` as a capability;
+`qwen2.5:0.5b` called correctly once, then answered in prose, then invented arguments and a
+parameter name outside the schema. Hence: **a vendor's capability flag is a claim, not evidence,
+and one successful call is not a capability.** `TOOLS_BY_MODEL` holds what was *seen* and is
+appended to only after a run — an entry for `qwen2.5:7b` was written while it was still downloading
+and removed before the file was saved.
 Next candidates: **`FRD-114`** (model metadata — now also carries publisher + default output cap,
 prerequisite for 110–113 and 119), **`FRD-110`** (documents/images — the widest gap),
 **`FRD-115`/`FRD-119`** (Vertex EU + the Anthropic dialect — required), **`FRD-116`** (Vault),

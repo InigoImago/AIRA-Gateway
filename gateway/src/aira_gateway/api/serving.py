@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
@@ -33,7 +33,7 @@ from aira_gateway.anomalies.suspensions import Suspended
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.api.gemini.errors import gemini_error_response as _error
 from aira_gateway.attachments import AttachmentRejected
-from aira_gateway.audit import AuditTrail, Outcome, decision_summary
+from aira_gateway.audit import AuditTrail, Outcome, decision_summary, tool_summary
 from aira_gateway.budgets.errors import BudgetExceeded
 from aira_gateway.budgets.ledger import Amounts
 from aira_gateway.budgets.service import Reservation
@@ -629,13 +629,27 @@ class Accounting:
     #: What this call weighed against a request-limited budget: one, or one per text in a batch.
     requests: int = 1
 
-    def served(self, model: str, usage: CanonicalUsage | None, payload: dict[str, Any]) -> None:
+    #: Set by `accounting`, so `served` can record a tool call without either exit having to
+    #: remember to. Both exits calling the same method is the point: `FRD-126`'s lesson is that a
+    #: fact recorded at one `return` is a fact eventually missing from another, and this one *was*
+    #: missing from the streamed exit — a real assistant turn stored `{"text": ""}` and no more.
+    trail: AuditTrail | None = None
+
+    def served(
+        self,
+        model: str,
+        usage: CanonicalUsage | None,
+        payload: dict[str, Any],
+        tool_calls: Sequence[str] = (),
+    ) -> None:
         self.model = model
         self.usage = usage
         self.payload = payload
         self.status = 200
         self.outcome = Outcome.SERVED
         self.produced = True
+        if tool_calls and self.trail is not None:
+            self.trail.tool_calls = list(tool_calls)
 
     def embedded(self, model: str, payload: dict[str, Any], *, units: int) -> None:
         """Vectors, which cost tokens nobody reports. Weighed as the many requests it is."""
@@ -680,7 +694,10 @@ async def accounting(
     request against somebody who received nothing would spend a request limit on a caller who hung
     up, or on an upstream outage.
     """
-    state = Accounting(model=prepared.model)
+    state = Accounting(model=prepared.model, trail=trail)
+    # The declaration is a property of the request and is known here, before dispatch — recorded
+    # once for every surface and every verb, rather than at whichever exit remembers.
+    trail.tools_declared = len(prepared.canonical.tools) if prepared.canonical is not None else 0
     record = True
     # The accounting runs **inside** `hold`, not around it. Outside, `hold` sees an unresolved
     # reservation on the way out and gives it back — and then the settle books it again. One
@@ -760,6 +777,9 @@ async def _settle_and_record(
         requested_model=trail.requested_model,
         model_selection=trail.selection,
         pipeline_decisions=decision_summary(trail.decisions),
+        # Both exits pass through here (`FRD-126`), which is the only reason the streamed path
+        # gets this for free — it did not, for an afternoon, and the row read `{"text": ""}`.
+        tool_calls=tool_summary(trail),
         provenance=provenance(request, model),
         api=api,
     )
