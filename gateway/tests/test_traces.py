@@ -314,3 +314,110 @@ def test_the_page_size_is_bounded() -> None:
     """An unbounded page invites a caller who mistyped a number to ask for the whole table."""
     with _client() as client:
         assert client.get("/v1beta/traces?limit=100000").status_code == 422
+
+
+# ---- what an incident needs, and who may see it (2026-08-08) ---------------------------------
+#
+# "Find a compromised client or system as fast as possible" is the question this view exists for.
+# Three columns answer it — which system (`credential`, the API key prefix), which machine
+# (`source_ip`), whose identity (`subject`) — and a fourth says what the model was asked to *do*.
+
+
+def _incident() -> Principal:
+    return Principal(subject="sec", method="oidc", roles=("it-security",))
+
+
+def _oversight_caller() -> Principal:
+    return Principal(subject="gov", method="oidc", roles=("it-steuerung",))
+
+
+def _member_caller() -> Principal:
+    return Principal(subject="alice", method="oidc", use_cases=("uc-a",))
+
+
+def test_tool_calls_are_on_the_trace() -> None:
+    """The most-asked question of this view: a governed *model* is evidenced by tokens and cost, a
+    governed *agent* by what it tried to do."""
+    with _client(_incident()) as client:
+        _fill(client, _row(tool_calls={"declared": 3, "called": ["read_file"]}))
+        rows = client.get("/v1beta/traces").json()["traces"]
+
+    assert rows[0]["tool_calls"] == {"declared": 3, "called": ["read_file"]}
+
+
+def test_only_the_turns_where_the_model_asked_for_something() -> None:
+    with _client(_incident()) as client:
+        _fill(
+            client, _row(tool_calls={"declared": 1, "called": ["read_file"]}), _row(seconds_ago=1)
+        )
+        rows = client.get("/v1beta/traces?tools_only=true").json()["traces"]
+
+    assert len(rows) == 1
+    assert rows[0]["tool_calls"]["called"] == ["read_file"]
+
+
+def test_an_incident_role_sees_the_source_address() -> None:
+    with _client(_incident()) as client:
+        _fill(client, _row(source_ip="203.0.113.9"))
+        rows = client.get("/v1beta/traces").json()["traces"]
+
+    assert rows[0]["source_ip"] == "203.0.113.9"
+
+
+def test_everybody_else_does_not() -> None:
+    """`source_ip` is the first question of an incident and personal data the rest of the time. An
+    oversight role gets every column but that one."""
+    with _client(_oversight_caller()) as client:
+        _fill(client, _row(source_ip="203.0.113.9"))
+        rows = client.get("/v1beta/traces").json()["traces"]
+
+    assert rows
+    assert "source_ip" not in rows[0]
+
+
+def test_filtering_by_address_is_refused_rather_than_ignored() -> None:
+    """A filter that silently does nothing lets somebody conclude an address made no requests —
+    the opposite of what they were told."""
+    with _client(_oversight_caller()) as client:
+        _fill(client, _row(source_ip="203.0.113.9"))
+        status = client.get("/v1beta/traces?source_ip=203.0.113.9").status_code
+
+    assert status == 403
+
+
+def test_an_incident_role_follows_one_system_across_use_cases() -> None:
+    """The credential is an API key **prefix** — the public half — and it identifies a calling
+    *system* rather than a person. Following it is how a compromised integration is isolated."""
+    with _client(_incident()) as client:
+        _fill(
+            client,
+            _row(credential="abcd1234", use_case="uc-a"),
+            _row(credential="abcd1234", use_case="uc-b", seconds_ago=1),
+            _row(credential="different", seconds_ago=2),
+        )
+        rows = client.get("/v1beta/traces?credential=abcd1234").json()["traces"]
+
+    assert len(rows) == 2
+    assert {row["use_case"] for row in rows} == {"uc-a", "uc-b"}
+
+
+def test_only_my_own_requests() -> None:
+    """Offered to every role, including the ones that see everything: an administrator checking
+    what *they* did should not have to read past everybody else."""
+    caller = Principal(subject="alice", method="oidc", roles=("it-security",))
+    with _client(caller) as client:
+        _fill(client, _row(subject="alice"), _row(subject="grace", seconds_ago=1))
+        rows = client.get("/v1beta/traces?mine=true").json()["traces"]
+
+    assert [row["subject"] for row in rows] == ["alice"]
+
+
+def test_a_filter_cannot_widen_the_scope() -> None:
+    """**The property that matters most here.** Every filter narrows; none may reach a use case the
+    caller cannot see — a filter that bypassed the scope would be a tenant boundary with a query
+    parameter for a door."""
+    with _client(_member_caller()) as client:
+        _fill(client, _row(use_case="somebody-elses", credential="abcd1234"))
+        rows = client.get("/v1beta/traces?credential=abcd1234").json()["traces"]
+
+    assert rows == []

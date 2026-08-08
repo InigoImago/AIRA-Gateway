@@ -45,8 +45,22 @@ def visible_scope(principal: Principal) -> Scope:
     ``None`` means every one of them and is deliberately distinct from ``()``, which means none.
     Returning the wrong one of those is the single mistake here that would show an installation's
     whole spend to somebody entitled to one use case.
+
+    **`is_oversight`, not `is_governance` — corrected 2026-08-08.** They differ by exactly one role:
+    IT Security. Asking the narrower predicate meant the role whose job is investigating an incident
+    saw an **empty** reporting screen and an **empty** trace list — not a refusal, which would at
+    least have been a question, but nothing, which reads as "no traffic exists".
+
+    This is `FRD-206`'s defect arriving in the other plane. It was found there in the console
+    (`scope_queryset` used one role set for both "sees every use case" and "sees every figure") and
+    fixed there with `OVERSIGHT_ROLES ⊃ GOVERNANCE_ROLES`; the gateway kept the narrow one. One
+    definition, two planes, one of them corrected — the shape this project has now recorded four
+    times.
+
+    Found by writing a test for a *different* feature: an incident role filtering traces by source
+    address got no rows, and the reason was one predicate up.
     """
-    if principal.is_governance:
+    if principal.is_oversight:
         return None
     if principal.method == "demo":
         # Authentication is switched off entirely; there is no identity to scope by, and the
@@ -257,7 +271,22 @@ TRACE_FIELDS = (
     "subject",
     "credential",
     "use_case",
+    #: What the model asked to have run (`FRD-131` FR-7). **Names and counts, never arguments** —
+    #: the column itself holds no more than that, so exposing it here cannot leak content.
+    #:
+    #: The most-asked question of this whole view: a governed *model* is evidenced by tokens and
+    #: cost, a governed *agent* is evidenced by what it tried to do.
+    "tool_calls",
 )
+
+#: Fields only an incident role sees (`FRD-502` FR-12, added 2026-08-08).
+#:
+#: `source_ip` answers "which machine is doing this", which is the first question of an incident and
+#: personal data the rest of the time. It is therefore not in the list above: a use-case
+#: administrator investigating their own traffic gets everything except the address, and IT Security
+#: gets the address as well. Two different answers to "what may I see", kept apart rather than
+#: merged into the more permissive one.
+INCIDENT_FIELDS = ("source_ip",)
 
 #: Rows per page. Enough to fill a screen twice, few enough that a live refresh is cheap.
 TRACE_PAGE = 50
@@ -302,6 +331,19 @@ async def traces(
     use_case: str = Query("", max_length=64),
     outcome: str = Query("", max_length=32),
     refusals_only: bool = Query(False),
+    # The three questions an incident starts with: which system, which machine, whose identity.
+    # `credential` is an API key **prefix** — the public half, already stored unhashed — and it is
+    # what identifies a calling *system* rather than a person (`FRD-122`).
+    credential: str = Query("", max_length=64),
+    source_ip: str = Query("", max_length=64),
+    subject: str = Query("", max_length=255),
+    #: "Only my own requests." Offered to every role including the ones that see everything: an
+    #: administrator checking what *they* did should not have to read past everybody else, and a
+    #: view narrowable only by somebody else's identity is a view nobody uses on themselves.
+    mine: bool = Query(False),
+    #: Only requests where the model asked for a function. The fastest way to the rows that matter
+    #: when the question is "what has this agent been trying to do".
+    tools_only: bool = Query(False),
     limit: int = Query(TRACE_PAGE, ge=1, le=MAX_TRACE_PAGE),
     cursor: str = Query("", max_length=128),
 ) -> JSONResponse:
@@ -316,7 +358,8 @@ async def traces(
     "there is nothing here" and "you may not look" are different answers.
     """
     scope = visible_scope(principal)
-    stmt = select(*(getattr(RequestLog, field) for field in TRACE_FIELDS))
+    fields = TRACE_FIELDS + (INCIDENT_FIELDS if principal.may_act_on_incidents else ())
+    stmt = select(*(getattr(RequestLog, field) for field in fields))
 
     if scope is not None:
         allowed = list(scope)
@@ -333,6 +376,25 @@ async def traces(
         stmt = stmt.where(RequestLog.outcome == outcome)
     if refusals_only:
         stmt = stmt.where(RequestLog.outcome != Outcome.SERVED.value)
+    if credential:
+        stmt = stmt.where(RequestLog.credential == credential)
+    if subject:
+        stmt = stmt.where(RequestLog.subject == subject)
+    if source_ip:
+        if not principal.may_act_on_incidents:
+            # Refused rather than ignored. A filter that silently does nothing lets somebody
+            # conclude an address made no requests, which is the opposite of what they were told.
+            raise GeminiHTTPError(
+                403,
+                "Filtering by source address is available to IT Security and Global "
+                "Administrators.",
+                "PERMISSION_DENIED",
+            )
+        stmt = stmt.where(RequestLog.source_ip == source_ip)
+    if mine:
+        stmt = stmt.where(RequestLog.subject == principal.subject)
+    if tools_only:
+        stmt = stmt.where(RequestLog.tool_calls.is_not(None))
 
     if cursor:
         at, row_id = _parse_cursor(cursor)

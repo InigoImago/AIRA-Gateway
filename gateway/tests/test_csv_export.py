@@ -21,6 +21,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from aira_gateway.app import create_app
+from aira_gateway.auth.principal import Principal
 from aira_gateway.config import GatewaySettings
 from aira_gateway.reporting.csv_export import BOM, UnknownBreakdown, filename, render
 
@@ -298,24 +299,27 @@ def _as(app: Any, principal: Any) -> TestClient:
     return TestClient(app)
 
 
-class _Member:
+#: **Real `Principal`s, not stand-ins** — corrected 2026-08-08.
+#:
+#: These were hand-written classes carrying `is_governance` and the fields the endpoint reads. The
+#: day `visible_scope` started asking `is_oversight` instead, they raised `AttributeError` and five
+#: exports failed — not because the code was wrong, but because a stand-in cannot follow a
+#: predicate it does not have.
+#:
+#: CLAUDE.md §3 already names this trap from the other direction ("a stand-in that is more
+#: permissive than the thing it replaces"); this is the same trap with the sign flipped, and the
+#: same answer: use the real class, which then cannot drift from it.
+
+
+def _member() -> Principal:
     """A caller entitled to one use case and holding no oversight role."""
-
-    subject = "member"
-    method = "oidc"
-    credential = "test"
-    use_cases = ("kundenservice",)
-    roles: tuple[str, ...] = ()
-    is_governance = False
+    return Principal(
+        subject="member", method="oidc", credential="test", use_cases=("kundenservice",)
+    )
 
 
-class _Governance:
-    subject = "auditor"
-    method = "oidc"
-    credential = "test"
-    use_cases: tuple[str, ...] = ()
-    roles = ("it-steuerung",)
-    is_governance = True
+def _governance() -> Principal:
+    return Principal(subject="auditor", method="oidc", credential="test", roles=("it-steuerung",))
 
 
 @pytest.mark.parametrize("breakdown", ["use_case", "model", "member"])
@@ -330,7 +334,7 @@ async def test_a_caller_without_oversight_exports_only_their_own_use_cases(
     would leak the model and member names rather than the use case's — the same disclosure wearing
     a different column heading.
     """
-    with _as(stack, _Member()) as client:
+    with _as(stack, _member()) as client:
         response = client.get(
             "/v1beta/reporting", headers={"Accept": "text/csv"}, params={"breakdown": breakdown}
         )
@@ -345,7 +349,7 @@ async def test_a_caller_without_oversight_exports_only_their_own_use_cases(
 async def test_the_same_caller_sees_the_same_use_cases_in_json_and_in_csv(stack) -> None:
     """The formats are two renderings of one answer. If they could disagree, the safe one would be
     the one everybody reads and the leaky one the one that gets forwarded."""
-    with _as(stack, _Member()) as client:
+    with _as(stack, _member()) as client:
         as_json = client.get("/v1beta/reporting").json()
         as_csv = client.get("/v1beta/reporting", headers={"Accept": "text/csv"}).content.decode()
 
@@ -359,7 +363,7 @@ async def test_the_same_caller_sees_the_same_use_cases_in_json_and_in_csv(stack)
 async def test_oversight_exports_every_use_case(stack) -> None:
     """The other half of the rule. A test that only showed somebody being *excluded* would pass
     against an export that returned nothing at all to anyone."""
-    with _as(stack, _Governance()) as client:
+    with _as(stack, _governance()) as client:
         body = client.get("/v1beta/reporting", headers={"Accept": "text/csv"}).content.decode()
 
     assert "kundenservice" in body
