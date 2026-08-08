@@ -310,10 +310,20 @@ def test_a_malformed_cursor_says_so() -> None:
     assert "cursor" in response.json()["error"]["message"]
 
 
-def test_the_page_size_is_bounded() -> None:
-    """An unbounded page invites a caller who mistyped a number to ask for the whole table."""
+def test_the_page_size_is_bounded_and_says_so_in_this_api_s_words() -> None:
+    """An unbounded page invites a caller who mistyped a number to ask for the whole table.
+
+    **400, in the error envelope** — this asserted `422` until 2026-08-08, when a live round
+    noticed the framework was answering in its own `{"detail": [...]}` shape. A Google client reads
+    `error.code` and `error.message`, so a `detail` array reads as "unknown error" and the caller
+    never learns the limit has a maximum.
+    """
     with _client() as client:
-        assert client.get("/v1beta/traces?limit=100000").status_code == 422
+        response = client.get("/v1beta/traces?limit=100000")
+
+    assert response.status_code == 400
+    assert response.json()["error"]["status"] == "INVALID_ARGUMENT"
+    assert "limit" in response.json()["error"]["message"]
 
 
 # ---- what an incident needs, and who may see it (2026-08-08) ---------------------------------

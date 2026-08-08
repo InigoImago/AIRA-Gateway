@@ -1,3 +1,4 @@
+from fastapi import Query
 from fastapi.testclient import TestClient
 
 from aira_gateway.app import create_app
@@ -141,3 +142,60 @@ def test_unexpected_error_on_non_api_returns_envelope() -> None:
     assert resp.status_code == 500
     assert resp.json()["error"]["code"] == "internal_error"
     assert "internal secret" not in resp.text
+
+
+# ---- a parameter the server will not take (2026-08-08) --------------------------------------
+#
+# FastAPI answers query validation with `422` and its own `{"detail": [...]}` list — a shape no
+# other error on this API uses. A Google client reads `error.code` and `error.message`, so it
+# reports "unknown error" and the caller never learns that `limit` has a maximum. The same finding
+# as the routing handler, one layer in; found by a live round asking for `limit=100000`.
+
+
+def test_a_rejected_query_parameter_uses_the_surface_s_envelope_and_names_the_field() -> None:
+    app = create_app(GatewaySettings(auth_required=False))
+    with TestClient(app) as client:
+        resp = client.get("/v1beta/traces", params={"limit": 100_000})
+
+    assert resp.status_code == 400, "the caller's job is to fix the request"
+    body = resp.json()
+    assert body["error"]["status"] == "INVALID_ARGUMENT"
+    # Naming the parameter is the whole point: "validation failed" is a correct answer and a
+    # useless one when six parameters could be at fault.
+    assert "limit" in body["error"]["message"]
+
+
+def test_the_kira_surface_answers_a_bad_body_in_its_own_shape() -> None:
+    """Two surfaces, two contracts (`FRD-129`). KIRA's routes parse their own bodies and answer
+    `422` in the predecessor's envelope — deliberately, since a client migrating by changing a URL
+    must keep getting the errors it already handles. What must never appear is the *framework's*
+    shape."""
+    app = create_app(GatewaySettings(auth_required=False))
+    with TestClient(app) as client:
+        resp = client.post("/kira/api/external/chat", json={"model_id": "not-an-integer"})
+
+    body = resp.json()
+    assert resp.status_code == 422
+    assert body["code"] == "VALIDATION_ERROR"
+    assert "model_id" in str(body["details"])
+    assert "detail" not in body, "the framework's own shape reached a KIRA client"
+
+
+def test_a_rejected_parameter_on_a_kira_path_uses_the_kira_envelope() -> None:
+    """Every KIRA route reads its parameters raw today, so this branch is unreachable through the
+    published surface — and that is exactly why it is asserted here rather than assumed. The next
+    route that takes a typed parameter would otherwise answer KIRA clients in Gemini's envelope,
+    silently, which is the `FRD-129` finding that produced the routing handler above."""
+    app = create_app(GatewaySettings(auth_required=False))
+
+    @app.get("/kira/api/external/probe")
+    async def _probe(count: int = Query(..., le=5)) -> None:  # pragma: no cover - shape only
+        return None
+
+    with TestClient(app) as client:
+        resp = client.get("/kira/api/external/probe", params={"count": 99})
+
+    body = resp.json()
+    assert resp.status_code == 400
+    assert body["code"] == "INVALID_REQUEST"
+    assert "count" in body["message"]

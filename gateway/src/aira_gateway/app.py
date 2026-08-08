@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import Depends, FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -322,6 +323,33 @@ def _register_exception_handlers(app: FastAPI) -> None:
             return gemini_error_response(exc.status_code, detail, status)
         envelope = ErrorResponse(error=ErrorDetail(code="not_found", message=detail))
         return JSONResponse(status_code=exc.status_code, content=envelope.model_dump())
+
+    @app.exception_handler(RequestValidationError)
+    async def _handle_validation_error(
+        request: Request, exc: RequestValidationError
+    ) -> JSONResponse:
+        """A parameter the server will not accept, in the envelope of the surface it was sent to.
+
+        The same finding as the routing handler above, one layer in: FastAPI answers `422` with its
+        own ``{"detail": [...]}`` list, which is a different shape from every other error this API
+        produces. A Google client reads `error.code` and `error.message`; handed a `detail` array it
+        reports "unknown error" and the caller never learns that `limit` has a maximum of 200.
+
+        **400, not 422.** The caller's job is to fix the request, and `INVALID_ARGUMENT` is the
+        status the rest of this surface uses for exactly that. The message **names the parameter**,
+        because "validation failed" is the answer that turns a two-minute fix into a support
+        conversation.
+        """
+        first = exc.errors()[0] if exc.errors() else {}
+        location = [str(part) for part in first.get("loc", ()) if part not in ("query", "body")]
+        field = ".".join(location) or "request"
+        message = f"{field}: {first.get('msg', 'is not acceptable')}."
+        if request.url.path.startswith(KIRA_BASE):
+            return kira_error_response(400, "INVALID_REQUEST", message)
+        if request.url.path.startswith("/v1beta"):
+            return gemini_error_response(400, message, "INVALID_ARGUMENT")
+        envelope = ErrorResponse(error=ErrorDetail(code="invalid_request", message=message))
+        return JSONResponse(status_code=400, content=envelope.model_dump())
 
     @app.exception_handler(Exception)
     async def _handle_unexpected(request: Request, exc: Exception) -> JSONResponse:

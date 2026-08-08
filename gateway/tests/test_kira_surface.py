@@ -638,3 +638,33 @@ async def test_a_truncated_document_is_refused_on_the_streaming_path_too() -> No
     # The failure cannot change the status — headers are already sent — so what is asserted is
     # that no `completed` event carrying the truncated document was emitted.
     assert "completed" not in body
+
+
+# ---- an id that identifies two models (2026-08-08) -------------------------------------------
+
+
+async def test_an_ambiguous_model_id_is_refused_rather_than_resolved_by_luck() -> None:
+    """Two catalog entries claiming one integer id.
+
+    Found live: a seed run for a second local model reused `9001`, and the resolver's
+    `scalar_one_or_none()` raised — a **500** on the predecessor's surface, for a caller who did
+    nothing wrong. Picking one of the two would have been worse: the answer would be served, billed
+    and audited under a model the caller never named, and nothing in the response would look wrong.
+    That is `ADR-0011`'s ambiguous routing table, in the catalog.
+
+    503, because the installation is misconfigured and an administrator can fix it — and the two
+    model names stay in the log, since which models an installation runs is not this surface's to
+    disclose.
+    """
+    app = _app()
+    with TestClient(app) as client:
+        await _catalogue(app, model="one-1", numeric_id=9001)
+        await _catalogue(app, model="two-2", numeric_id=9001)
+
+        response = client.post(f"{BASE}/chat", json=_chat(model_id=9001))
+
+    assert response.status_code == 503
+    body = response.json()
+    assert body["code"] == "MODEL_NOT_FOUND"
+    assert "uniquely" in body["message"]
+    assert "one-1" not in response.text and "two-2" not in response.text

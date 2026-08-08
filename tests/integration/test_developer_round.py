@@ -444,7 +444,10 @@ async def test_a_control_the_dialect_cannot_express_is_refused_by_name(fixture) 
 @pytest.mark.parametrize(
     ("field", "value", "expected"),
     [
-        ("tools", [{"functionDeclarations": [{"name": "f", "parameters": {}}]}], "tools"),
+        # `tools` was on this list until `FRD-131` served it (2026-08-08). The property did not
+        # disappear — it moved: a use case **without** the toggle refuses a declaration by name,
+        # asserted in `test_agent_round.py`. Left here as a comment because a row deleted without
+        # one reads as a requirement that was dropped.
         ("safetySettings", [{"category": "HARM_CATEGORY_HARASSMENT"}], "safetySettings"),
         ("cachedContent", "cachedContents/abc", "cachedContent"),
         ("quantumMode", True, "quantumMode"),

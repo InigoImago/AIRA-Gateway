@@ -3999,3 +3999,27 @@ rule restated by hand at a second call site is a rule that will disagree with it
 never "remember both" — it is one function with two callers.
 
 Frontend: 524 tests, branch coverage back above its gate by adding tests, not by moving it.
+
+### The edge round, and an error shape nobody could read
+
+31 live cases over the new surface, each asserting the three things `test_edge_cases.py` asserts:
+never a 500, a status the caller can act on, and a message that names the problem. Two shapes were
+worth walking twice — every combination of filters (contradictory, empty, absurd) must **narrow**,
+and a tool call's *arguments* must never reach the metadata column, because a file path or a
+customer number is content and this list is readable by every oversight role.
+
+One finding, from `limit=100000`: FastAPI answered **422** with its own `{"detail": [...]}` list.
+Every other error this API produces is `{"error": {code, message, status}}`, so a Google client
+handed the framework's shape reports "unknown error" and the caller never learns that `limit` has a
+maximum of 200. That is the *same* finding as the routing handler added on 2026-08-06 — a wrong
+URL answered in the framework's shape — one layer in, and it had been there since the first typed
+query parameter.
+
+Now **400 `INVALID_ARGUMENT`, naming the parameter**. 400 rather than 422 because the caller's job
+is to fix the request, which is what the rest of the surface says with that number. The KIRA
+surface keeps its own `422` + `code`/`details` envelope — its routes parse their own bodies, and a
+client migrating by changing a URL must keep receiving the errors it already handles. The handler
+picks the envelope by path, like the routing one; the KIRA branch is **unreachable through the
+published surface today**, which is stated in the test rather than left for somebody to discover,
+because the next KIRA route with a typed parameter would otherwise answer in Gemini's envelope
+silently.

@@ -19,6 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -30,6 +31,22 @@ from aira_common.models import (
     parse_capabilities,
 )
 from aira_gateway.db.models import ModelRead
+
+_log = structlog.get_logger(__name__)
+
+
+class AmbiguousModelId(Exception):
+    """Two catalog entries claim the same KIRA integer id.
+
+    A configuration fault, not a caller's mistake — which is why it is raised rather than resolved.
+    Choosing one would answer, bill and audit under a model the caller never named, and nothing in
+    the response would look wrong.
+    """
+
+    def __init__(self, numeric_id: int, models: list[str]) -> None:
+        self.numeric_id = numeric_id
+        self.models = models
+        super().__init__(f"Model id {numeric_id} is claimed by {', '.join(models)}.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -198,7 +215,23 @@ class ModelCatalog:
             result = await session.execute(
                 select(ModelRead.model).where(ModelRead.numeric_id == numeric_id)
             )
-            return result.scalar_one_or_none()
+            names: list[str] = [str(row[0]) for row in result.all()]
+        if not names:
+            return None
+        if len(names) > 1:
+            # An **ambiguous** id, which is the routing-table problem of `ADR-0011` in the catalog:
+            # picking one would silently send a caller's traffic to whichever row was read first,
+            # and bill it accordingly. Management enforces uniqueness where the declaration is
+            # written; this is the read-model's side of the same rule, and it was reached — a seed
+            # run for a second local model reused an id, and `scalar_one_or_none()` answered the
+            # KIRA surface with an unhandled 500 (2026-08-08).
+            _log.error(
+                "ambiguous_numeric_model_id",
+                numeric_id=numeric_id,
+                models=sorted(names),
+            )
+            raise AmbiguousModelId(numeric_id, sorted(names))
+        return names[0]
 
     async def exceeds_output_cap(self, model: str, requested: int | None) -> int | None:
         """The model's cap if ``requested`` is above it, else ``None``.

@@ -58,7 +58,7 @@ from aira_gateway.audit import AuditTrail, Outcome, decision_summary
 from aira_gateway.auth.dependencies import require_principal
 from aira_gateway.auth.principal import Principal
 from aira_gateway.budgets.errors import BudgetExceeded
-from aira_gateway.catalog import ModelDeclaration
+from aira_gateway.catalog import AmbiguousModelId, ModelDeclaration
 from aira_gateway.core.canonical import CanonicalResponse
 from aira_gateway.core.schema import SchemaRejected
 from aira_gateway.embedding import DEFAULT_TASK_TYPE, EmbeddingRejected
@@ -194,7 +194,20 @@ def _thinking_config(declaration: ModelDeclaration) -> schemas.ThinkingConfig | 
 
 
 async def _resolve_model(request: Request, model_id: int) -> str:
-    name = await catalog_of(request).by_numeric_id(model_id)
+    try:
+        name = await catalog_of(request).by_numeric_id(model_id)
+    except AmbiguousModelId as exc:
+        # Two entries claim this id. **503, not 500 and not a served answer**: the installation is
+        # misconfigured, the caller did nothing wrong, and picking one of the two would answer,
+        # bill and audit under a model they never named — with nothing in the response looking
+        # wrong. The models are named in the log, never to the caller: which models an
+        # installation runs is not this surface's to disclose (the catalog logs them once).
+        raise errors.KiraError(
+            503,
+            errors.MODEL_NOT_FOUND,
+            f"Model id {model_id} is not uniquely assigned in this installation's catalog. "
+            "An administrator has to resolve it.",
+        ) from exc
     if name is None:
         raise errors.KiraError(
             404,

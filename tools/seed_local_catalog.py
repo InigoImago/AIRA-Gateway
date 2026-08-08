@@ -22,6 +22,14 @@ from sqlalchemy import text
 from aira_gateway.config import GatewaySettings
 from aira_gateway.db.base import build_engine
 
+#: The two KIRA-style integer ids this script owns. They name a **role** — "the local chat model",
+#: "the local embedding model" — not a particular model, so re-running for a different model
+#: *moves* the id rather than adding a second claim to it. Fixed rather than derived because a
+#: caller's configuration holds the number, and changing it would break them silently.
+CHAT_NUMERIC_ID = 9001
+EMBED_NUMERIC_ID = 9002
+
+
 CHAT_MODEL = os.environ.get("AIRA_SEED_LOCAL_CHAT_MODEL", "qwen3:0.6b")
 EMBED_MODEL = os.environ.get("AIRA_SEED_LOCAL_EMBED_MODEL", "all-minilm")
 REGION = os.environ.get("AIRA_OLLAMA_REGION", "on-premises")
@@ -118,7 +126,7 @@ DECLARATIONS = [
         "hosting": "self_deployed",
         "max_output_tokens": 4096,
         "default_max_output_tokens": 512,
-        "numeric_id": 9001,
+        "numeric_id": CHAT_NUMERIC_ID,
     },
     {
         "model": EMBED_MODEL,
@@ -133,7 +141,7 @@ DECLARATIONS = [
         # Task types are **not** declared, because this dialect has none — and `FRD-113` refuses an
         # undeclared one rather than sending a field the endpoint would ignore.
         "embedding": {"supports_batch": True},
-        "numeric_id": 9002,
+        "numeric_id": EMBED_NUMERIC_ID,
     },
 ]
 
@@ -164,6 +172,19 @@ async def main() -> None:
                         row["thinking"] = measured
                 await connection.execute(
                     text("DELETE FROM model_catalog WHERE model = :model"), {"model": row["model"]}
+                )
+                # …and release the id from whatever held it before. The id names a *role*, so a
+                # second run for a different chat model has to move it — leaving both rows was the
+                # 2026-08-08 defect: two entries claiming 9001, the resolver unable to answer, and
+                # every KIRA request naming that id refused. Silent, because the seed printed
+                # success and the read-model has no unique constraint (Management does, but this
+                # script writes past it).
+                await connection.execute(
+                    text(
+                        "UPDATE model_catalog SET numeric_id = NULL"
+                        " WHERE numeric_id = :id AND model <> :model"
+                    ),
+                    {"id": row["numeric_id"], "model": row["model"]},
                 )
                 columns = ", ".join(row)
                 placeholders = ", ".join(f":{name}" for name in row)

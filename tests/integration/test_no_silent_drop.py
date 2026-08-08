@@ -116,7 +116,9 @@ async def test_thinking_switched_off_is_switched_off(fixture) -> None:
 @pytest.mark.parametrize(
     ("field", "value"),
     [
-        ("tools", [{"functionDeclarations": [{"name": "f", "parameters": {}}]}]),
+        # `tools` left this list when `FRD-131` served it (2026-08-08). "Not silently dropped" is
+        # still the requirement, and it is now asserted where the field lives: a use case without
+        # the toggle refuses a declaration **by name** (`test_agent_round.py`).
         ("safetySettings", [{"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"}]),
         ("cachedContent", "cachedContents/abc"),
     ],

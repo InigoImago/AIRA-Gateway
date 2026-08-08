@@ -43,7 +43,7 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
   inevitably do when both were written from the same mental model — and line coverage cannot see
   a *missing requirement*: on 2026-08-05 a review found seven real defects behind a green suite at
   99% coverage. So: **prove a test can fail.** Break the property, watch it go red, restore.
-  `make mutants` (`tools/mutation_check.py`) does this for **301 properties** across auth, budgets,
+  `make mutants` (`tools/mutation_check.py`) does this for **306 properties** across auth, budgets,
   pipeline, retention, the management control plane and the gateway's counters; when
   you fix a bug, add the mutation that reintroduces it. Two traps that cost real defects here:
   a stand-in that is more permissive than the thing it replaces (reuse the real method where you
@@ -917,6 +917,30 @@ parameter name outside the schema. Hence: **a vendor's capability flag is a clai
 and one successful call is not a capability.** `TOOLS_BY_MODEL` holds what was *seen* and is
 appended to only after a run — an entry for `qwen2.5:7b` was written while it was still downloading
 and removed before the file was saved.
+**Tool calls become evidence, and the console can ask for them (2026-08-08)** — the audit row
+carries `tool_calls` (**names and a count, never the arguments** — a file path is content, and this
+list is readable by every oversight role), and `GET /v1beta/traces` learned the four questions an
+incident opens with: which system (`credential`), whose identity (`subject`), **which machine**
+(`source_ip`), and which turns involved a function call — plus `mine`, offered even to roles that
+see everything. Two rules: **`source_ip` is served only to a role that may act on an incident**, and
+asking for it without one is **refused with a 403, never ignored** (a filter that silently does
+nothing lets a reader conclude an address made no requests); and **a filter narrows, never widens**
+— all of them apply after `visible_scope`. The console offers the field on the same predicate,
+which now has **one** definition in the SPA (`core/auth/roles.ts`) instead of a role list retyped in
+each screen. An **OpenCode configuration** is generated at key issuance — the only moment the
+plaintext exists — naming only models whose catalog **declares** `tools`.
+Three defects, each found by a different layer: `visible_scope` asked `is_governance` where the role
+that needed it was **IT Security**, so the console built for investigating an incident came back
+**empty** (every existing test of "oversight sees everything" used a global admin, which satisfies
+both predicates); `loadMore` rebuilt its query by hand and paged **without** the filters page one
+was fetched under; and adding two controls to a four-control filter row reintroduced `FRD-207`'s
+wrap — caught only for `it-steuerung`, while the widest case is IT Security's six controls. A live
+round then found the framework answering query-parameter errors in its **own** `422`/`detail` shape,
+which a Google client reads as "unknown error": now **400 `INVALID_ARGUMENT` naming the parameter**,
+with KIRA keeping its own envelope. `N40`–`N44`; **`N2` was stale, not undefended** — its anchor
+named the predicate this change renamed, so the harness replaced nothing and reported a property no
+test would notice losing. `tools/mutation_check.py` gained `--only=`.
+
 Next candidates: **`FRD-114`** (model metadata — now also carries publisher + default output cap,
 prerequisite for 110–113 and 119), **`FRD-110`** (documents/images — the widest gap),
 **`FRD-115`/`FRD-119`** (Vertex EU + the Anthropic dialect — required), **`FRD-116`** (Vault),
