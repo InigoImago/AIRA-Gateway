@@ -95,8 +95,10 @@ FRDs: `FRD-400-budget-model`, `FRD-401-budget-enforcement`, `FRD-402-budget-ui`.
 Deliverables:
 - **Anomaly rules** self-service: rate-based, size-based, data-leak detection.
 - Detection pipeline (gateway signals → Kafka → evaluation) and **AnomalyEvent** store.
-- **IT Security console**: cross-use-case anomaly overview, **mark/block** requests, scoped
-  visibility (payload redaction), dedicated IT Security role.
+- **IT Security console** ✅ (`FRD-502`, 2026-08-08): cross-use-case findings, suspensions and the
+  kill switch, the rules behind them, warnings per use case for the members who could fix the cause,
+  and a per-use-case request view — all refreshing live. Scoped visibility is **metadata only**;
+  showing a payload still waits on `FRD-406`.
 - **Incident response** engine: configurable **throttle / alert / block** per rule.
 
 - **Model smoke tests and jailbreak batteries** — `FRD-504`, written 2026-08-06: evidence about how
@@ -104,7 +106,8 @@ Deliverables:
   our filter catch it; direct: does the model resist it). Reports a **rate over repeated attempts**,
   never a verdict, because a model that refuses nine times out of ten is the finding.
 
-FRDs: `FRD-500-anomaly-rules`, `FRD-501-anomaly-detection-engine`, `FRD-502-it-security-console`,
+FRDs: `FRD-500-anomaly-rules`, `FRD-501-anomaly-detection-engine`,
+[`FRD-502`](features/FRD-502-security-console-and-traces.md),
 `FRD-503-incident-response`, [`FRD-504`](features/FRD-504-model-smoke-tests.md).
 
 **Phase 5 carries three of the owner's seventeen central features** (PRD §1.1): incident response,

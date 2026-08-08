@@ -1,0 +1,95 @@
+<div class="card" role="tabpanel">
+  <div class="spread">
+    <h3 class="section-title" style="margin: 0">Warnings</h3>
+    <div class="row live">
+      <label class="checkline" title="Refresh automatically">
+        <input type="checkbox" [checked]="live.enabled()" (change)="live.toggle()" />
+        Live
+      </label>
+      <span class="muted live__stamp">{{ 'updated ' + ago() }}</span>
+    </div>
+  </div>
+
+  <p class="muted" style="margin: 0.25rem 0 0">
+    What the anomaly rules have found about this use case. Every finding says what was measured and
+    how many requests it was drawn from, so it can be checked rather than taken on trust.
+  </p>
+
+  <!-- The fact a member most needs, and the one that explains everything else on the screen. -->
+  @for (row of stopped(); track row.id) {
+    <p class="callout callout--danger" role="alert" data-testid="stopped-banner">
+      <strong>This use case is stopped.</strong>
+      {{ row.action === 'throttle' ? 'Throttled to ' + row.throttle_rpm + '/min' : 'Blocked' }} by
+      <code>{{ row.author }}</code
+      >{{ row.reason ? ' — ' + row.reason : '' }}.
+      {{
+        row.expires_at ? 'Until ' + (row.expires_at | date: 'short') + '.' : 'Until it is lifted.'
+      }}
+    </p>
+  }
+
+  @if (loading()) {
+    <p class="loading">
+      <span class="spinner" aria-hidden="true"></span>
+      Loading warnings…
+    </p>
+  } @else if (!inScope()) {
+    <!-- "Nothing found" and "you can see nothing" are different facts. See `traces-tab.html`. -->
+    <p class="empty" data-testid="not-in-scope">
+      <strong>Your account is not a member of this use case in the identity provider</strong>, so
+      the gateway shows you none of its findings. That membership comes from the SSO group
+      <code>/use-cases/{{ slug() }}</code
+      >, which is separate from the members list on this page.
+    </p>
+  } @else if (!events().length) {
+    <p class="empty" data-testid="no-warnings">
+      Nothing has crossed a threshold for this use case.
+    </p>
+  } @else {
+    <div class="table-wrap" style="margin-top: 1rem">
+      <table class="table">
+        <thead>
+          <tr>
+            <th scope="col">When</th>
+            <th scope="col">Rule</th>
+            <th scope="col">About</th>
+            <th scope="col">Measured</th>
+            <th scope="col">Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (event of events(); track event.id) {
+            <tr>
+              <td class="nowrap">{{ event.created_at | date: 'short' }}</td>
+              <td>
+                {{ event.rule }}
+                <div class="muted" style="font-size: 0.78rem">{{ event.kind }}</div>
+              </td>
+              <td>
+                <code>{{ event.target_value }}</code>
+                <div class="muted" style="font-size: 0.78rem">{{ event.target }}</div>
+              </td>
+              <td>
+                <strong>{{ event.observed }}</strong> vs {{ event.threshold }}
+                <div class="muted" style="font-size: 0.78rem">
+                  over {{ event.sample }} request(s), {{ event.window_minutes }} min
+                </div>
+              </td>
+              <td>
+                @if (event.action_taken === 'alert') {
+                  <span class="badge badge--muted">recorded</span>
+                } @else if (event.action_taken === 'blocked') {
+                  <span class="badge badge--danger">blocked</span>
+                } @else if (event.action_taken === 'throttled') {
+                  <span class="badge badge--warning">throttled</span>
+                } @else {
+                  <span class="badge badge--warning">not enforced</span>
+                }
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  }
+</div>

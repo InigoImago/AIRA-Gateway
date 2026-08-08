@@ -2,6 +2,8 @@ import { HttpClient } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import {
+  AnomalyEvent,
+  AnomalyRule,
   ApiKey,
   Budget,
   BudgetUsage,
@@ -13,6 +15,9 @@ import {
   PipelineConfig,
   Report,
   UseCase,
+  Suspension,
+  Trace,
+  TracePage,
 } from './models';
 
 /**
@@ -149,6 +154,76 @@ export class UseCaseService {
       headers: { Accept: 'text/csv' },
       responseType: 'blob',
     });
+  }
+
+  /**
+   * What the detector has found (`FRD-501` FR-8).
+   *
+   * Scoped by the caller's token: an oversight role sees every use case, a member sees the ones
+   * they belong to, and somebody with neither gets an empty list rather than a refusal.
+   */
+  anomalies(
+    limit = 100,
+    useCase?: string,
+  ): Observable<{ events: AnomalyEvent[]; scope: string; in_scope?: boolean }> {
+    const params: Record<string, string | number> = { limit };
+    // Asked for by name rather than filtered in the browser: a console that fetched the newest
+    // hundred findings and kept the matching ones would show a quiet use case nothing on a busy
+    // installation, because somebody else's findings pushed its own off the end.
+    if (useCase) params['use_case'] = useCase;
+    return this.http.get<{ events: AnomalyEvent[]; scope: string; in_scope?: boolean }>(
+      '/gw/v1beta/anomalies',
+      { params },
+    );
+  }
+
+  /** Traffic that is currently stopped, and what was stopped before (`FRD-503`). */
+  suspensions(): Observable<{ suspensions: Suspension[] }> {
+    return this.http.get<{ suspensions: Suspension[] }>('/gw/v1beta/suspensions');
+  }
+
+  /** Stop a subject, a credential or a use case. Needs an incident role; the server decides. */
+  suspend(body: {
+    target: string;
+    target_value: string;
+    action?: string;
+    throttle_rpm?: number | null;
+    minutes?: number | null;
+    reason?: string;
+    use_case?: string | null;
+  }): Observable<Suspension> {
+    return this.http.post<Suspension>('/gw/v1beta/suspensions', body);
+  }
+
+  /** Lift one. The row is kept and stamped, never deleted. */
+  liftSuspension(id: string): Observable<Suspension> {
+    return this.http.delete<Suspension>(`/gw/v1beta/suspensions/${seg(id)}`);
+  }
+
+  /**
+   * What actually happened, request by request (`FRD-502`).
+   *
+   * Metadata only — never a payload. Paged by cursor rather than offset for the reason the type
+   * comment gives.
+   */
+  traces(options: {
+    useCase?: string;
+    outcome?: string;
+    refusalsOnly?: boolean;
+    cursor?: string;
+    limit?: number;
+  }): Observable<TracePage> {
+    const params: Record<string, string | number | boolean> = { limit: options.limit ?? 50 };
+    if (options.useCase) params['use_case'] = options.useCase;
+    if (options.outcome) params['outcome'] = options.outcome;
+    if (options.refusalsOnly) params['refusals_only'] = true;
+    if (options.cursor) params['cursor'] = options.cursor;
+    return this.http.get<TracePage>('/gw/v1beta/traces', { params });
+  }
+
+  /** Anomaly rules that apply everywhere, plus the ones on use cases the caller may see. */
+  globalRules(): Observable<AnomalyRule[]> {
+    return this.http.get<AnomalyRule[]>('/api/v1/anomaly-rules/');
   }
 
   /** Current-period consumption per budget, from the gateway. */

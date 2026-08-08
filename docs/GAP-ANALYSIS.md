@@ -67,7 +67,9 @@ masks anything inside them**. `Redactor` is a no-op hook that has been in place 
 - **Per-request browsing** in the reporting screen is blocked on it ([`ADR-0009`](adr/ADR-0009-gateway-knows-roles.md)):
   showing stored prompts to people who are precisely *not* members of the use case that produced
   them is exactly what redaction exists to make safe.
-- The **IT Security console** (`FRD-502`) needs scoped payload visibility for the same reason.
+- The **IT Security console** (`FRD-502`) would need it to show a payload; it was built to show
+  **metadata only** instead, so it is not blocked — but "what was actually in that prompt" is a
+  question the console still cannot answer, and the investigator has to ask the use case.
 
 **Mitigations that exist**: a retention period, and switching payload storage off entirely. Neither
 masks anything in a payload that *is* kept.
@@ -76,21 +78,25 @@ masks anything in a payload that *is* kept.
 
 ---
 
-### 3.2 The IT Security console does not exist — `FRD-502`
+### 3.2 ~~The IT Security console does not exist~~ — closed by `FRD-502` (2026-08-08)
 
-Phase 5 built the rules, the engine and the enforcement. **The screen is missing.** IT Security can
-author a use-case rule in the existing UI, but findings, suspensions and the kill switch are
-reachable **only over the API**:
+Phase 5 built the rules, the engine and the enforcement, and the screen was missing — the shape of
+the defect [`FRD-206`](features/FRD-206-console-truthfulness.md) fixed: a role whose console shows
+it nothing. Now built:
 
-| Exists as an API | No screen |
+| API | Screen |
 |---|---|
-| `GET /v1beta/anomalies` | — |
-| `GET/POST/DELETE /v1beta/suspensions` | — |
-| global anomaly rules (`/api/v1/anomaly-rules/`) | — |
+| `GET /v1beta/anomalies` | **Security → Findings**, and **Warnings** per use case |
+| `GET/POST/DELETE /v1beta/suspensions` | **Security → Suspensions**, with the kill switch |
+| global anomaly rules (`/api/v1/anomaly-rules/`) | **Security → Rules** |
+| `GET /v1beta/traces` *(new)* | **Traces** per use case |
 
-This is exactly the shape of the defect [`FRD-206`](features/FRD-206-console-truthfulness.md) fixed:
-a role whose console shows it nothing. IT Security now *sees* every use case, but the thing its job
-is actually about has no view.
+All three refresh themselves; the reader can switch that off and sees how stale the view is.
+
+**What is still open here**: alert *delivery* (mail, webhook) is not built — the console is where a
+finding is seen, not where it is sent; and trace search by subject or credential is not built (the
+filters are outcome and window). Traces carry **metadata only**, which is a deliberate scope line
+rather than a gap — see 3.1.
 
 ---
 
@@ -201,15 +207,16 @@ are not obvious:
 ```mermaid
 graph LR
     r["FRD-406<br/>redaction"] --> browse["per-request browsing<br/><i>ADR-0009</i>"]
-    r --> console["FRD-502<br/>IT Security console"]
-    detect["FRD-500/501/503<br/><i>built</i>"] --> console
-    console --> useful["findings somebody<br/>actually looks at"]
+    r --> payload["payload visibility in<br/>the trace view"]
+    detect["FRD-500/501/503<br/><i>built</i>"] --> console["FRD-502 console<br/><i>built</i>"]
+    console --> deliver["FRD-505?<br/>alert delivery"]
     smoke["FRD-504<br/>smoke tests"] --> evidence["evidence about the<br/><i>models</i>, not just about us"]
 
     style r fill:#dc2626,color:#fff
-    style console fill:#f59e0b
+    style console fill:#16a34a,color:#fff
+    style detect fill:#16a34a,color:#fff
 ```
 
 `FRD-406` is the only item that unblocks two others, and it is the only one where the product
-currently makes a promise it does not keep. `FRD-502` is the one that turns work already done into
-work somebody can use. Everything else is breadth.
+currently makes a promise it does not keep. `FRD-502` **is now built** — it turned work already
+done into work somebody can use. Everything else is breadth.

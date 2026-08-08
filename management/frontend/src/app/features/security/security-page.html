@@ -1,0 +1,385 @@
+<div class="stack">
+  <div class="spread">
+    <div>
+      <h2 style="margin: 0">Security</h2>
+      <p class="muted" style="margin: 0.25rem 0 0">
+        What the detector has found, what is stopped right now, and the rules that apply everywhere.
+      </p>
+    </div>
+    <!--
+      Live, and visibly so. A screen that changes under somebody who did not ask it to is a screen
+      they stop trusting — so the state is on the page and the reader can switch it off.
+    -->
+    <div class="row live">
+      <label class="checkline" title="Refresh this page automatically">
+        <input
+          type="checkbox"
+          [checked]="live.enabled()"
+          (change)="live.toggle()"
+          data-testid="live-toggle"
+        />
+        Live
+      </label>
+      <span class="muted live__stamp" data-testid="live-stamp">
+        {{ live.refreshing() ? 'updating…' : 'updated ' + ago() }}
+      </span>
+      <button type="button" class="btn btn--sm" (click)="refreshNow()">Refresh</button>
+    </div>
+  </div>
+
+  @if (feedback.error(); as message) {
+    <p class="callout callout--danger" role="alert">{{ message }}</p>
+  }
+  @if (feedback.notice(); as message) {
+    <p class="callout" role="status">{{ message }}</p>
+  }
+
+  @if (active().length) {
+    <p class="callout callout--warning" data-testid="active-banner">
+      <strong>{{ active().length }}</strong> suspension(s) are in force right now.
+    </p>
+  }
+
+  <div class="tabs" role="tablist" aria-label="Security sections">
+    <button
+      type="button"
+      class="tab"
+      role="tab"
+      [attr.aria-selected]="tab() === 'findings'"
+      [class.is-active]="tab() === 'findings'"
+      (click)="tab.set('findings')"
+    >
+      Findings <span class="tab__count">{{ events().length }}</span>
+    </button>
+    <button
+      type="button"
+      class="tab"
+      role="tab"
+      [attr.aria-selected]="tab() === 'suspensions'"
+      [class.is-active]="tab() === 'suspensions'"
+      (click)="tab.set('suspensions')"
+    >
+      Suspensions <span class="tab__count">{{ active().length }}</span>
+    </button>
+    <button
+      type="button"
+      class="tab"
+      role="tab"
+      [attr.aria-selected]="tab() === 'rules'"
+      [class.is-active]="tab() === 'rules'"
+      (click)="tab.set('rules')"
+    >
+      Rules <span class="tab__count">{{ rules().length }}</span>
+    </button>
+  </div>
+
+  <!-- ── Findings ─────────────────────────────────────────────────────────────────────────── -->
+  @if (tab() === 'findings') {
+    <div class="card" style="padding: 0" role="tabpanel">
+      @if (loading()) {
+        <p class="loading" style="padding: 1rem">
+          <span class="spinner" aria-hidden="true"></span>
+          Loading findings…
+        </p>
+      } @else if (!events().length) {
+        <p class="empty">
+          Nothing has crossed a threshold. A quiet detector and an absent one look the same from
+          here — the <strong>Rules</strong> tab says which this is.
+        </p>
+      } @else {
+        <div class="table-wrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th scope="col">When</th>
+                <th scope="col">Rule</th>
+                <th scope="col">Use case</th>
+                <th scope="col">About</th>
+                <th scope="col">Measured</th>
+                <th scope="col">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (event of events(); track event.id) {
+                <tr>
+                  <td class="nowrap">{{ event.created_at | date: 'short' }}</td>
+                  <td>
+                    {{ event.rule }}
+                    <div class="muted" style="font-size: 0.78rem">{{ event.kind }}</div>
+                  </td>
+                  <td>{{ event.use_case ?? '—' }}</td>
+                  <td>
+                    <code>{{ event.target_value }}</code>
+                    <div class="muted" style="font-size: 0.78rem">{{ event.target }}</div>
+                  </td>
+                  <td>
+                    <!-- The numbers it was drawn from, not just that it fired: a finding nobody
+                         can check is a finding nobody acts on. -->
+                    <strong>{{ event.observed }}</strong> vs {{ event.threshold }}
+                    <div class="muted" style="font-size: 0.78rem">
+                      over {{ event.sample }} request(s), {{ event.window_minutes }} min
+                    </div>
+                  </td>
+                  <td>
+                    @switch (event.action_taken) {
+                      @case ('alert') {
+                        <span class="badge badge--muted">recorded</span>
+                      }
+                      @case ('blocked') {
+                        <span class="badge badge--danger">blocked</span>
+                      }
+                      @case ('throttled') {
+                        <span class="badge badge--warning">throttled</span>
+                      }
+                      @default {
+                        <span class="badge badge--warning" title="{{ event.action_taken }}">
+                          not enforced
+                        </span>
+                      }
+                    }
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    </div>
+  }
+
+  <!-- ── Suspensions ──────────────────────────────────────────────────────────────────────── -->
+  @if (tab() === 'suspensions') {
+    <div class="card" role="tabpanel">
+      <div class="spread">
+        <h3 class="section-title" style="margin: 0">Stopped traffic</h3>
+        @if (canStop()) {
+          <button
+            type="button"
+            class="btn btn--sm btn--danger"
+            [attr.aria-expanded]="showStop()"
+            (click)="showStop.set(!showStop())"
+            data-testid="stop-toggle"
+          >
+            {{ showStop() ? 'Cancel' : 'Stop traffic' }}
+          </button>
+        }
+      </div>
+
+      @if (!canStop()) {
+        <p class="muted" style="margin: 0.25rem 0 0" data-testid="stop-readonly">
+          You can see everything that is stopped and why. Stopping and restoring traffic is done by
+          IT Security or a Global Administrator.
+        </p>
+      }
+
+      @if (showStop() && canStop()) {
+        <form class="form-inline disclosure" (ngSubmit)="stop()">
+          <div class="field">
+            <label for="stop-target">Stop a</label>
+            <select
+              id="stop-target"
+              name="target"
+              [ngModel]="target()"
+              (ngModelChange)="target.set($event)"
+            >
+              <option value="subject">caller</option>
+              <option value="credential">credential (API key)</option>
+              <option value="use_case">whole use case</option>
+            </select>
+          </div>
+          <div class="field grow">
+            <label for="stop-value">Which one</label>
+            <input
+              id="stop-value"
+              name="target_value"
+              [ngModel]="targetValue()"
+              (ngModelChange)="targetValue.set($event)"
+              placeholder="a username, a key prefix, or a use-case id"
+              autocomplete="off"
+            />
+          </div>
+          <div class="field grow">
+            <label for="stop-reason">Reason</label>
+            <input
+              id="stop-reason"
+              name="reason"
+              [ngModel]="reason()"
+              (ngModelChange)="reason.set($event)"
+              placeholder="what you saw"
+              autocomplete="off"
+            />
+            <span class="field__hint">Kept with the decision, and read by whoever reviews it.</span>
+          </div>
+          <div class="field">
+            <label for="stop-minutes">For (minutes)</label>
+            <input
+              id="stop-minutes"
+              name="minutes"
+              type="number"
+              min="1"
+              [ngModel]="minutes()"
+              (ngModelChange)="minutes.set($event)"
+              placeholder="until lifted"
+            />
+            <span class="field__hint">Empty means until somebody lifts it.</span>
+          </div>
+          <button type="submit" class="btn btn--danger" [disabled]="!canSubmit()">
+            {{ feedback.busy() ? 'Stopping…' : 'Stop' }}
+          </button>
+        </form>
+      }
+
+      <div class="table-wrap" style="margin-top: 1rem">
+        <table class="table" data-testid="active-suspensions">
+          <thead>
+            <tr>
+              <th scope="col">Target</th>
+              <th scope="col">Action</th>
+              <th scope="col">Until</th>
+              <th scope="col">By</th>
+              <th scope="col">Reason</th>
+              <th scope="col"><span class="sr-only">Actions</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (row of active(); track row.id) {
+              <tr>
+                <td>
+                  <code>{{ row.target_value }}</code>
+                  <div class="muted" style="font-size: 0.78rem">
+                    {{ row.target }}{{ row.use_case ? ' · ' + row.use_case : ' · everywhere' }}
+                  </div>
+                </td>
+                <td>
+                  @if (row.action === 'throttle') {
+                    <span class="badge badge--warning">{{ row.throttle_rpm }}/min</span>
+                  } @else {
+                    <span class="badge badge--danger">blocked</span>
+                  }
+                </td>
+                <td class="nowrap">
+                  {{ row.expires_at ? (row.expires_at | date: 'short') : 'until lifted' }}
+                </td>
+                <td>
+                  <code>{{ row.author }}</code>
+                </td>
+                <td>{{ row.reason || '—' }}</td>
+                <td class="table__actions">
+                  @if (canStop()) {
+                    <button
+                      type="button"
+                      class="btn btn--sm"
+                      [disabled]="feedback.busy()"
+                      [attr.aria-label]="'Restore access for ' + row.target_value"
+                      (click)="lift(row)"
+                    >
+                      Restore
+                    </button>
+                  }
+                </td>
+              </tr>
+            } @empty {
+              <tr>
+                <td class="table__empty" colspan="6">Nothing is stopped.</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+
+      @if (past().length) {
+        <details style="margin-top: 1rem">
+          <summary class="muted">
+            {{ past().length }} lifted or expired — kept, because "blocked for two hours last
+            Tuesday" is what a review asks
+          </summary>
+          <div class="table-wrap" style="margin-top: 0.5rem">
+            <table class="table">
+              <tbody>
+                @for (row of past(); track row.id) {
+                  <tr>
+                    <td>
+                      <code>{{ row.target_value }}</code>
+                    </td>
+                    <td>{{ row.author }}</td>
+                    <td>{{ row.reason || '—' }}</td>
+                    <td class="nowrap">
+                      {{ row.lifted_at ? 'lifted by ' + row.lifted_by : 'expired' }}
+                    </td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        </details>
+      }
+    </div>
+  }
+
+  <!-- ── Rules ────────────────────────────────────────────────────────────────────────────── -->
+  @if (tab() === 'rules') {
+    <div class="card" style="padding: 0" role="tabpanel">
+      @if (!rules().length) {
+        <p class="empty">
+          No anomaly rules. Nothing is being watched — which is why an empty findings list means
+          nothing on its own.
+        </p>
+      } @else {
+        <div class="table-wrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th scope="col">Rule</th>
+                <th scope="col">Applies to</th>
+                <th scope="col">Watches</th>
+                <th scope="col">Threshold</th>
+                <th scope="col">Then</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (rule of rules(); track rule.id) {
+                <tr>
+                  <td>{{ rule.name }}</td>
+                  <td>
+                    @if (rule.is_global) {
+                      <span class="badge badge--warning">everywhere</span>
+                    } @else {
+                      {{ rule.use_case }}
+                    }
+                  </td>
+                  <td>
+                    {{ rule.kind }}
+                    <div class="muted" style="font-size: 0.78rem">
+                      {{ rule.window_minutes }} min window
+                    </div>
+                  </td>
+                  <td>
+                    {{ rule.threshold }}
+                    @if (rule.parameter) {
+                      <div class="muted" style="font-size: 0.78rem">
+                        above {{ rule.parameter }} bytes
+                      </div>
+                    }
+                  </td>
+                  <td>
+                    <span
+                      class="badge"
+                      [class.badge--muted]="rule.action === 'alert'"
+                      [class.badge--danger]="rule.action === 'block'"
+                      [class.badge--warning]="rule.action === 'throttle'"
+                    >
+                      {{ rule.action }}
+                    </span>
+                    @if (!rule.enabled) {
+                      <span class="badge badge--muted">off</span>
+                    }
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    </div>
+  }
+</div>

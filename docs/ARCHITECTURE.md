@@ -293,6 +293,14 @@ the console cannot offer an action the server refuses. An agreement test attempt
 requires the status to match what the object reported.
 ([`FRD-206`](features/FRD-206-console-truthfulness.md))
 
+**The SPA's screens**, and which plane each reads: use-case list/detail (management), the pipeline
+builder (management, dry-run against the gateway), budgets and rate limits (management, consumption
+from the gateway), models and prices (management), reporting and its CSV export (gateway), the
+**Security console** and per-use-case **Warnings** and **Traces** (gateway). The last three refresh
+themselves through one primitive, `core/ui/live.ts`: it polls, it stops on destroy and while the tab
+is hidden, it never stacks a request behind a slow one, and it shows the reader how stale the view is
+with a switch to turn it off ([`FRD-502`](features/FRD-502-security-console-and-traces.md)).
+
 ---
 
 ## 6. Data stores, and what each is for

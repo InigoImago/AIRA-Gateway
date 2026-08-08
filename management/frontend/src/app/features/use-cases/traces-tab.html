@@ -1,0 +1,160 @@
+<div class="card" role="tabpanel">
+  <div class="spread">
+    <h3 class="section-title" style="margin: 0">Requests</h3>
+    <div class="row live">
+      <label class="checkline" title="Refresh automatically">
+        <input
+          type="checkbox"
+          [checked]="live.enabled()"
+          (change)="live.toggle()"
+          data-testid="traces-live"
+        />
+        Live
+      </label>
+      <span class="muted live__stamp">
+        {{ live.refreshing() ? 'updating…' : 'updated ' + ago() }}
+      </span>
+    </div>
+  </div>
+
+  <p class="muted" style="margin: 0.25rem 0 0">
+    Every request this use case made, newest first — who, which model, how it ended, what it cost.
+    <strong>Prompts and responses are not shown here</strong>, whatever the retention settings say.
+  </p>
+
+  <!--
+    No error banner here: failures report through the page's single `PageFeedback`, which the parent
+    renders at the top. One banner per page — a panel that grows its own turns a page with six
+    panels into a page with six places to look.
+  -->
+
+  <div class="form-row form-row--spaced" style="margin-top: 0.75rem">
+    <label class="checkline">
+      <input
+        type="checkbox"
+        [checked]="refusalsOnly()"
+        (change)="toggleRefusals($any($event.target).checked)"
+        data-testid="refusals-only"
+      />
+      Refusals only
+    </label>
+    <div class="field">
+      <label for="trace-outcome">Outcome</label>
+      <select
+        id="trace-outcome"
+        name="outcome"
+        [ngModel]="outcome()"
+        (ngModelChange)="setOutcome($event)"
+      >
+        <option value="">any</option>
+        @for (value of outcomes; track value) {
+          <option [value]="value">{{ value }}</option>
+        }
+      </select>
+    </div>
+  </div>
+
+  @if (loading()) {
+    <p class="loading">
+      <span class="spinner" aria-hidden="true"></span>
+      Loading requests…
+    </p>
+  } @else if (!inScope()) {
+    <!--
+      A different empty from "nothing has happened yet", and it must say which. The gateway reads
+      membership from the identity provider's groups, not from this console's members list, so a
+      use case created here can be perfectly busy and still show its own administrator nothing.
+      Naming the cause is the difference between "somebody has to add me to a group" and "the
+      recording is broken" — and a reader who concludes the second stops trusting every other
+      figure on the page.
+    -->
+    <p class="empty" data-testid="not-in-scope">
+      <strong>Your account is not a member of this use case in the identity provider</strong>, so
+      the gateway shows you none of its requests. Membership for reading requests comes from the SSO
+      group <code>/use-cases/{{ slug() }}</code
+      >, which is separate from the members list on this page — ask a Global Administrator to add
+      you there.
+    </p>
+  } @else if (!traces().length) {
+    <p class="empty" data-testid="no-traces">
+      No requests match. Traffic appears here within seconds of arriving.
+    </p>
+  } @else {
+    <div class="table-wrap" style="margin-top: 1rem">
+      <table class="table">
+        <thead>
+          <tr>
+            <th scope="col">When</th>
+            <th scope="col">Operation</th>
+            <th scope="col">Model</th>
+            <th scope="col">Outcome</th>
+            <th scope="col">Tokens</th>
+            <th scope="col">Cost</th>
+            <th scope="col">Latency</th>
+            <th scope="col">Trace</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (row of traces(); track row.id) {
+            <tr>
+              <td class="nowrap">{{ row.created_at | date: 'short' }}</td>
+              <td>
+                {{ row.operation }}
+                <div class="muted" style="font-size: 0.78rem">{{ row.subject }}</div>
+              </td>
+              <td>
+                <code>{{ row.model }}</code>
+                <!-- Requested and served both, when they differ: with a fallback chain they do,
+                     and "why did that model answer" has no answer without the pair. -->
+                @if (row.requested_model && row.requested_model !== row.model) {
+                  <div class="muted" style="font-size: 0.78rem">
+                    asked for {{ row.requested_model }}
+                    @if (row.model_selection) {
+                      · {{ row.model_selection }}
+                    }
+                  </div>
+                }
+              </td>
+              <td>
+                @if (served(row)) {
+                  <span class="badge badge--success">served</span>
+                } @else {
+                  <span class="badge badge--danger">{{ row.outcome ?? row.status }}</span>
+                }
+              </td>
+              <td class="nowrap">
+                @if (row.prompt_tokens === null && row.completion_tokens === null) {
+                  —
+                } @else {
+                  {{ row.prompt_tokens ?? 0 }} / {{ row.completion_tokens ?? 0 }}
+                }
+              </td>
+              <td class="nowrap">{{ cost(row) }}</td>
+              <td class="nowrap">{{ row.latency_ms === null ? '—' : row.latency_ms + ' ms' }}</td>
+              <td>
+                <span class="trace-id">{{ row.trace_id ?? '—' }}</span>
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+
+    @if (cursor()) {
+      <div class="row" style="margin-top: 0.75rem">
+        <button
+          type="button"
+          class="btn btn--sm"
+          [disabled]="loadingMore()"
+          (click)="loadMore()"
+          data-testid="load-more"
+        >
+          {{ loadingMore() ? 'Loading…' : 'Load older' }}
+        </button>
+        <span class="muted" style="font-size: 0.78rem">
+          Loading older requests pauses the live refresh, so what you are reading stays put.
+        </span>
+      </div>
+    }
+  }
+</div>

@@ -22,12 +22,13 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import JSONResponse
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 
 from aira_gateway.api.gemini.errors import GeminiHTTPError
+from aira_gateway.audit import Outcome
 from aira_gateway.auth.dependencies import require_principal
 from aira_gateway.auth.principal import Principal
-from aira_gateway.db.models import AnomalyEvent
+from aira_gateway.db.models import AnomalyEvent, RequestLog
 from aira_gateway.reporting.csv_export import BREAKDOWNS, filename, render
 from aira_gateway.reporting.service import ReportingService, Scope
 
@@ -151,6 +152,7 @@ async def anomalies(
     request: Request,
     principal: Principal = Depends(require_principal),
     limit: int = Query(100, ge=1, le=500),
+    use_case: str = Query("", max_length=64),
 ) -> JSONResponse:
     """What the detector has found (`FRD-501` FR-8).
 
@@ -162,9 +164,19 @@ async def anomalies(
     to. A finding with no use case at all is oversight-only — there is nobody else it is *about*.
     """
     scope = visible_scope(principal)
+    if use_case and scope is not None and use_case not in scope:
+        # Same answer, and the same reason, as the trace view: emptiness rather than a refusal,
+        # with `in_scope` saying which of the two empties this is (see `_out_of_scope`).
+        return JSONResponse({"events": [], "scope": "use_cases", "in_scope": False})
+
     stmt = select(AnomalyEvent).order_by(AnomalyEvent.created_at.desc()).limit(limit)
     if scope is not None:
         stmt = stmt.where(AnomalyEvent.use_case.in_(list(scope)))
+    # Filtered here rather than in the browser: a console that fetched the newest hundred findings
+    # and kept the ones matching its slug would show a busy installation's quiet use case nothing,
+    # because its findings were pushed off the end by somebody else's.
+    if use_case:
+        stmt = stmt.where(AnomalyEvent.use_case == use_case)
 
     sessionmaker = request.app.state.db_sessionmaker
     async with sessionmaker() as session:
@@ -192,5 +204,148 @@ async def anomalies(
                 for row in rows
             ],
             "scope": "all" if scope is None else "use_cases",
+            "in_scope": True,
+        }
+    )
+
+
+#: What a trace row exposes. A **allow-list**, not an exclusion list: a column added to
+#: `request_logs` tomorrow must not appear here because somebody forgot to exclude it, and the two
+#: columns that must never appear (`request_payload`, `response_payload`) are exactly the ones a
+#: forgotten exclusion would leak (`FRD-502` FR-11).
+TRACE_FIELDS = (
+    "id",
+    "created_at",
+    "operation",
+    "api",
+    "model",
+    "requested_model",
+    "model_selection",
+    "status",
+    "outcome",
+    "prompt_tokens",
+    "completion_tokens",
+    "total_tokens",
+    "latency_ms",
+    "cost_nanos",
+    "provider",
+    "region",
+    "trace_id",
+    "subject",
+    "credential",
+    "use_case",
+)
+
+#: Rows per page. Enough to fill a screen twice, few enough that a live refresh is cheap.
+TRACE_PAGE = 50
+MAX_TRACE_PAGE = 200
+
+
+def _parse_cursor(cursor: str) -> tuple[datetime, str]:
+    """``<iso8601>|<id>`` — a timestamp alone is not a cursor.
+
+    Two rows can share a millisecond, and under an appending table an offset page shows some rows
+    twice and skips others (`FRD-502` §4.2). The id makes the ordering total.
+    """
+    stamp, _, row_id = cursor.partition("|")
+    if not row_id:
+        raise GeminiHTTPError(
+            400, "'cursor' is not a cursor from this endpoint.", "INVALID_ARGUMENT"
+        )
+    return _parse(stamp, "cursor"), row_id
+
+
+def _out_of_scope() -> dict[str, object]:
+    """The answer when the caller's visible scope does not cover what was asked for.
+
+    Still an empty list and still a 200 — "there is nothing here" and "you may not look" stay
+    indistinguishable, which is the point of answering emptiness rather than 403 (`FRD-601`).
+    But `in_scope: false` says *which of the two empties this is* without naming anything: the
+    caller learns about **their own** visibility, not about the existence of a use case.
+
+    It exists because of what the live round showed. Membership reaches the gateway from Keycloak
+    **groups** (`FRD-102`), and a use case created in the console does not create one — so its
+    administrator opens the trace view and reads "no requests match" while the traffic is right
+    there. An empty state that states the wrong reason is worse than one that states none: the
+    reader concludes the recording is broken, and then distrusts every figure on the page.
+    """
+    return {"traces": [], "next_cursor": None, "scope": "use_cases", "in_scope": False}
+
+
+@router.get("/v1beta/traces")
+async def traces(
+    request: Request,
+    principal: Principal = Depends(require_principal),
+    use_case: str = Query("", max_length=64),
+    outcome: str = Query("", max_length=32),
+    refusals_only: bool = Query(False),
+    limit: int = Query(TRACE_PAGE, ge=1, le=MAX_TRACE_PAGE),
+    cursor: str = Query("", max_length=128),
+) -> JSONResponse:
+    """What actually happened, request by request (`FRD-502`).
+
+    **Metadata only.** Not the prompt, not the response, not a snippet of either — see `FRD-502` §2
+    for why this is not the per-request browsing `ADR-0009` deferred until `FRD-406`: that
+    reasoning is about showing *stored prompts* to *non-members*, and this is neither.
+
+    Scoped by the same `visible_scope` the report uses. A member sees their use case, an oversight
+    role sees every one, and a caller with neither gets an **empty list rather than a refusal** —
+    "there is nothing here" and "you may not look" are different answers.
+    """
+    scope = visible_scope(principal)
+    stmt = select(*(getattr(RequestLog, field) for field in TRACE_FIELDS))
+
+    if scope is not None:
+        allowed = list(scope)
+        if not allowed:
+            return JSONResponse(_out_of_scope())
+        stmt = stmt.where(RequestLog.use_case.in_(allowed))
+    if use_case:
+        if scope is not None and use_case not in scope:
+            # Asking about somebody else's use case is answered as emptiness, not as a refusal:
+            # a 403 here would confirm the use case exists to somebody who may not see it.
+            return JSONResponse(_out_of_scope())
+        stmt = stmt.where(RequestLog.use_case == use_case)
+    if outcome:
+        stmt = stmt.where(RequestLog.outcome == outcome)
+    if refusals_only:
+        stmt = stmt.where(RequestLog.outcome != Outcome.SERVED.value)
+
+    if cursor:
+        at, row_id = _parse_cursor(cursor)
+        # Written out rather than as a row comparison: SQLite has no tuple comparison, and the
+        # hermetic tests run on SQLite while production runs on Postgres. Paging exercised against
+        # only one of the two is paging tested on one of the two.
+        stmt = stmt.where(
+            or_(
+                RequestLog.created_at < at,
+                and_(RequestLog.created_at == at, RequestLog.id < row_id),
+            )
+        )
+
+    stmt = stmt.order_by(RequestLog.created_at.desc(), RequestLog.id.desc()).limit(limit + 1)
+
+    sessionmaker = request.app.state.db_sessionmaker
+    async with sessionmaker() as session:
+        rows = list((await session.execute(stmt)).mappings().all())
+
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    traces = [
+        {
+            field: (value.isoformat() if isinstance(value, datetime) else value)
+            for field, value in row.items()
+        }
+        for row in rows
+    ]
+    next_cursor = (
+        f"{rows[-1]['created_at'].isoformat()}|{rows[-1]['id']}" if has_more and rows else None
+    )
+    return JSONResponse(
+        {
+            "traces": traces,
+            "next_cursor": next_cursor,
+            "scope": "all" if scope is None else "use_cases",
+            "in_scope": True,
         }
     )

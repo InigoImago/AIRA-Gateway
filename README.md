@@ -121,7 +121,7 @@ graph LR
 ```
 
 A green test proves the code and the test agree — which they inevitably do when both came from the
-same idea. So each property is broken on purpose and the tests are required to notice: **255
+same idea. So each property is broken on purpose and the tests are required to notice: **261
 properties** are guarded that way. The layers above unit exist because each has caught defects the
 one below structurally could not — most recently, five defects that 251 mutation properties and a
 green gate all missed. → [`docs/TESTING.md`](docs/TESTING.md)
@@ -137,13 +137,13 @@ auth, attribution, persistence, streaming and tracing; the control plane with RB
 distribution; the Angular console; the pre-dispatch pipeline; budgets and cost control; rate
 limiting; Vault; the KIRA compatibility surface; documents; Vertex EU with Gemini and Anthropic;
 reporting and CSV export; and — from Phase 5 — anomaly rules, the detection engine and incident
-response with a kill switch.
+response with a kill switch, its console, and a per-use-case request view.
 
-Phase 5 is **not finished**: the IT Security console (`FRD-502`) is not built, so findings,
-suspensions and the kill switch are reachable only over the API.
+Phase 5 is **not finished**: alert *delivery* (mail, webhook) is not built — the console is where a
+finding is seen, not where it is sent — and model smoke tests (`FRD-504`) are not built.
 
-**Known gaps, stated rather than implied** — content redaction (`FRD-406`), the IT Security console
-(`FRD-502`), model smoke tests (`FRD-504`), Foundry against a real Azure subscription, and
+**Known gaps, stated rather than implied** — content redaction (`FRD-406`), alert delivery,
+model smoke tests (`FRD-504`), Foundry against a real Azure subscription, and
 pagination. Each with its consequences: [`docs/GAP-ANALYSIS.md`](docs/GAP-ANALYSIS.md).
 
 ---

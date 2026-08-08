@@ -5,6 +5,91 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-08 — a console for the evidence, and what actually happened per request (`FRD-502`)
+
+Phase 5 built rules (`FRD-500`), an engine (`FRD-501`) and enforcement (`FRD-503`), and none of it
+had a screen. That put IT Security in exactly the position `FRD-206` was written about: a role whose
+console shows it nothing. Two screens close it.
+
+**The IT Security console** (`/security`) — findings with the numbers they were drawn from, what is
+stopped right now, and the rules that produced them, all three in one place because a finding read
+without its rule is a number without a claim, and an empty findings list means nothing until the
+page says whether anything is being watched at all. It keeps **two permissions apart**, which is the
+mistake this project has already made once: *seeing* every use case is an oversight role, *stopping*
+traffic is an incident role. `it-steuerung` gets the whole view and no kill switch, and the page
+names who does — an action nobody can carry out is worse than an absent one.
+
+**Warnings, per use case** — the same findings, scoped, for the people who could actually fix the
+cause. A warning only IT Security can see is a warning nobody who could change the prompt, the limit
+or the client ever reads. The tab leads with "this use case is stopped", because without it a wall
+of 429s reads as a broken gateway.
+
+**Traces** — `GET /v1beta/traces`, and a tab per use case: every request, newest first, with who,
+which model, how it ended, what it cost. **Metadata only, never a payload** — and that is *not* the
+per-request browsing `ADR-0009` deferred: that reasoning is about showing stored prompts to
+non-members, and this shows neither prompts nor anything to a non-member. `FRD-406` still blocks
+what it always blocked. The field list is an **allow-list**, so a column added to `request_logs`
+tomorrow cannot appear here because somebody forgot to exclude it, and the two that must never
+appear are exactly the ones a forgotten exclusion would leak.
+
+Three decisions worth keeping:
+
+- **Cursor paging, not offset.** Rows arrive while somebody reads; under an appending table an
+  offset page shows some rows twice and skips others, *invisibly* — the reader simply gets a wrong
+  list. The cursor is `(created_at, id)`, because two rows can share a millisecond and a timestamp
+  alone would either repeat one or lose one. Written out rather than as a row comparison: SQLite has
+  no tuple comparison, and paging exercised against only one of the two stores is paging tested on
+  one of the two.
+- **Live by polling, and visibly so.** `core/ui/live.ts` is one primitive with three guarantees, each
+  a way live views go wrong: it **stops** (on destroy, and while the tab is hidden — a console left
+  open overnight must not be a load generator), it is **visible** (the reader sees "updated 12s ago"
+  and can switch it off, because a screen that changes under somebody who did not ask it to is a
+  screen they stop trusting), and it **never stacks** (a tick during a slow response is skipped, not
+  queued, or a refresh interval becomes a load test against the endpoint already struggling).
+  Server-sent events would push, and would also need a long-lived connection per open console
+  through whatever proxy sits in front, a reconnect story, and a second delivery path for facts that
+  already have one.
+- **Scope resolved once, at the edge.** Traces reuse `visible_scope` — the same function the report
+  and the CSV export use. `FRD-602`'s assertion (each endpoint resolves the scope exactly once)
+  caught the new endpoint immediately.
+
+The test that earned its place before it was written: `Live`'s teardown case failed with **seven
+ticks after destroy**. The harness had provided the service in the testing module while every real
+screen provides it on the component, and `DestroyRef` resolves to whichever injector created it — an
+environment-level one outlives every component. **A harness that configures a service differently
+from production tests a different service.** Fixed on both sides: the harness mirrors production,
+and the timer now stops explicitly rather than only where it happens to be provided correctly.
+
+Mutations `N24`–`N29` cover the payload exclusion, the scope, the cursor tie-break, the `limit + 1`
+that decides whether a next page exists, and the two-kinds-of-empty distinction below
+(**261 properties**). 21 gateway tests, 56 new frontend tests, 7 live integration cases, 7
+Playwright cases; the frontend gate stays where it was.
+
+**Then the browser found two more**, both invisible to 356 green frontend tests. `Live` is
+`@Injectable()` without `providedIn: 'root'` — deliberately, so a poll cannot outlive its screen —
+and **neither tab declared it**, so in production both panels failed to construct and rendered
+nothing at all while every unit test passed on a harness that provided it. And an empty tab was
+**stating the wrong reason**: the gateway reads use-case membership from Keycloak *groups*
+(`FRD-102`), which creating a use case in this console does not create, so its own administrator
+read "no requests match" about a use case with traffic in it. Both endpoints now return `in_scope`
+and both tabs name the group somebody has to be added to — `in_scope` describes the **caller's own
+visibility** and nothing else, so it confirms nothing about whether a use case exists and the reason
+a 403 was refused still holds. `/v1beta/anomalies` gained a `use_case` filter in passing, because
+the tab had been keeping the matching findings out of the newest hundred — on a busy installation
+that is how a quiet use case comes to be told nothing crossed a threshold.
+
+**And a flake that had been there all along.** `make mutants` refused to run — red baseline on
+`test_log_writer.py`. `test_a_full_queue_writes_inline_instead_of_dropping` fails about one run in
+five with *"cannot operate on a closed database"*, which reads as a defect in the writer and is not
+one: in-memory SQLite behind a `StaticPool` hands every session the **same** connection, and that
+test's whole subject is an inline write happening *while* the worker writes. The module docstring
+had warned about it in prose; the test then did it anyway. It now runs on a file-backed database,
+where each session gets its own connection as it does on Postgres, so the overlap the test is about
+is legal. Asserting the invariant without the overlap would have been testing something else and
+calling it this.
+
+---
+
 ## 2026-08-07 — documentation, and a licence
 
 A reader arriving at this repository had a 96-line README, a `DEPLOYMENT.md` and forty ADRs and

@@ -6,6 +6,9 @@ export const USERS = {
   useCaseAdmin: { username: 'ucadmin', password: 'demo-password' },
   useCaseUser: { username: 'ucuser', password: 'demo-password' },
   governance: { username: 'itgov', password: 'demo-password' },
+  // `it-security`. A separate account from `itgov` on purpose: who may *see* every use case and
+  // who may *stop* traffic are different questions, and the console keeps them apart.
+  security: { username: 'itsec', password: 'demo-password' },
 } as const;
 
 /**

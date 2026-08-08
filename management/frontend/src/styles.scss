@@ -763,3 +763,34 @@ fieldset.bare {
   padding: 0;
   min-width: 0;
 }
+
+/* ---- live views (FRD-502) ---------------------------------------------------------- */
+
+/* Liveness is a state the reader owns, so it is on the page rather than implied. */
+.live {
+  gap: 0.6rem;
+}
+.live__stamp {
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  min-width: 8ch;
+}
+
+/* A timestamp or an id that wraps turns one row into two and makes a table unscannable. */
+.nowrap {
+  white-space: nowrap;
+}
+
+/* A trace id is long, unbroken and worth copying. */
+.trace-id {
+  font-family: var(--aira-mono);
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
+/* A count that means "look at this", rather than "there are this many". */
+.tab__count--alert {
+  background: var(--aira-danger-soft);
+  color: var(--aira-danger);
+  border-color: #fecaca;
+}

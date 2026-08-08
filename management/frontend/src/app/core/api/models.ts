@@ -225,3 +225,102 @@ export interface Report {
   /** Why requests ended the way they did — `served`, `rate_limited`, … (FRD-122). */
   by_outcome: ReportRow[];
 }
+
+/** One finding: a rule crossed its threshold for one target (`FRD-501`). */
+export interface AnomalyEvent {
+  id: string;
+  created_at: string;
+  rule: string;
+  kind: string;
+  use_case: string | null;
+  target: string;
+  target_value: string;
+  /** What was measured, the threshold it crossed, and how many rows it was drawn from. A finding
+   * nobody can check is a finding nobody acts on. */
+  observed: number;
+  threshold: number;
+  sample: number;
+  window_minutes: number;
+  /** What was **done** — kept separate from what the rule asked for (`ADR-0014` §3). */
+  action_taken: string;
+  detail: string;
+}
+
+/** A written decision that some traffic is stopped (`FRD-503`). */
+export interface Suspension {
+  id: string;
+  created_at: string | null;
+  use_case: string | null;
+  target: string;
+  target_value: string;
+  action: string;
+  throttle_rpm: number | null;
+  expires_at: string | null;
+  /** `rule:<name>` or `user:<subject>` — never blank. */
+  author: string;
+  reason: string;
+  lifted_at: string | null;
+  lifted_by: string | null;
+}
+
+/**
+ * One request, as metadata (`FRD-502`).
+ *
+ * **No payloads.** Not the prompt, not the response, not a snippet — that is what `FRD-406` still
+ * blocks, and it is a different thing from showing what happened.
+ */
+export interface Trace {
+  id: string;
+  created_at: string;
+  operation: string;
+  api: string;
+  model: string;
+  requested_model: string | null;
+  model_selection: string | null;
+  status: number;
+  outcome: string | null;
+  prompt_tokens: number | null;
+  completion_tokens: number | null;
+  total_tokens: number | null;
+  latency_ms: number | null;
+  cost_nanos: number | null;
+  provider: string | null;
+  region: string | null;
+  trace_id: string | null;
+  subject: string;
+  credential: string | null;
+  use_case: string | null;
+}
+
+export interface TracePage {
+  traces: Trace[];
+  /** `null` when this is the last page. A cursor, not an offset: rows arrive while somebody
+   * reads, and an offset under an appending table shows some rows twice and skips others. */
+  next_cursor: string | null;
+  scope: 'all' | 'use_cases';
+  /**
+   * False when the caller's visibility does not cover what was asked for — which is a different
+   * empty from "nothing has happened yet", and the screen must not print the second when it means
+   * the first. Optional so an older gateway (which sends neither) is read as "in scope", the
+   * behaviour that was there before.
+   */
+  in_scope?: boolean;
+}
+
+/** An anomaly rule as the gateway and Management both understand it (`FRD-500`). */
+export interface AnomalyRule {
+  id: number;
+  use_case: string | null;
+  is_global: boolean;
+  name: string;
+  kind: string;
+  window_minutes: number;
+  threshold: number;
+  parameter: number | null;
+  min_sample: number;
+  action: string;
+  target: string;
+  action_minutes: number | null;
+  throttle_rpm: number | null;
+  enabled: boolean;
+}

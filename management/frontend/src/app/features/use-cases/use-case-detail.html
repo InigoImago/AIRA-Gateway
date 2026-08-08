@@ -83,6 +83,31 @@
     >
       Rate limits <span class="tab__count">{{ rateLimits().length }}</span>
     </button>
+    <button
+      type="button"
+      class="tab"
+      role="tab"
+      id="tab-warnings"
+      [attr.aria-selected]="tab() === 'warnings'"
+      [class.is-active]="tab() === 'warnings'"
+      (click)="selectTab('warnings')"
+    >
+      Warnings
+      @if (warningCount()) {
+        <span class="tab__count tab__count--alert">{{ warningCount() }}</span>
+      }
+    </button>
+    <button
+      type="button"
+      class="tab"
+      role="tab"
+      id="tab-traces"
+      [attr.aria-selected]="tab() === 'traces'"
+      [class.is-active]="tab() === 'traces'"
+      (click)="selectTab('traces')"
+    >
+      Requests
+    </button>
   </div>
 
   <!-- Overview -->
@@ -425,6 +450,16 @@
       [canManage]="canManage()"
       (changed)="loadBudgets()"
     />
+  }
+
+  <!-- Warnings about this use case (FRD-502) -->
+  @if (tab() === 'warnings') {
+    <app-warnings-tab [slug]="slug" (countChanged)="warningCount.set($event)" />
+  }
+
+  <!-- What actually happened, request by request (FRD-502) -->
+  @if (tab() === 'traces') {
+    <app-traces-tab [slug]="slug" />
   }
 
   <!-- Rate limits (FRD-405) -->

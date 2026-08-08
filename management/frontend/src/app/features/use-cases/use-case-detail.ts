@@ -14,16 +14,26 @@ import {
 import { UseCaseService } from '../../core/api/use-case.service';
 import { PageFeedback } from '../../core/ui/page-feedback';
 import { BudgetsTab } from './budgets-tab';
+import { TracesTab } from './traces-tab';
+import { WarningsTab } from './warnings-tab';
 import { RateLimitsTab } from './rate-limits-tab';
 import { ConfirmService } from '../../core/ui/confirm.service';
 
-type Tab = 'overview' | 'members' | 'keys' | 'budgets' | 'rate-limits';
+type Tab = 'overview' | 'members' | 'keys' | 'budgets' | 'rate-limits' | 'warnings' | 'traces';
 
-const TABS: readonly Tab[] = ['overview', 'members', 'keys', 'budgets', 'rate-limits'];
+const TABS: readonly Tab[] = [
+  'overview',
+  'members',
+  'keys',
+  'budgets',
+  'rate-limits',
+  'warnings',
+  'traces',
+];
 
 @Component({
   selector: 'app-use-case-detail',
-  imports: [FormsModule, RouterLink, BudgetsTab, RateLimitsTab],
+  imports: [FormsModule, RouterLink, BudgetsTab, RateLimitsTab, WarningsTab, TracesTab],
   templateUrl: './use-case-detail.html',
   // Provided here, not in root: the banner belongs to this page, and every panel on it reports
   // into the same one rather than announcing its own outcome separately.
@@ -50,6 +60,9 @@ export class UseCaseDetail implements OnInit {
   protected readonly usageUnavailable = signal(false);
   /** Why consumption is missing: refused by the gateway, or not reachable at all. */
   protected readonly usageRefused = signal(false);
+  /** How many findings are about this use case. Owned here so the tab badge is right before the
+   * tab is opened — the same reason loading stays in the parent (`CLAUDE.md` §3). */
+  protected readonly warningCount = signal(0);
 
   /** One banner per page, shared with every panel it contains. */
   protected readonly feedback = inject(PageFeedback);

@@ -40,6 +40,27 @@ async def sessionmaker():
     await engine.dispose()
 
 
+@pytest.fixture
+async def concurrent_sessionmaker(tmp_path):
+    """A database that can take **two writers at once**.
+
+    The module docstring's warning is not advice, it is a constraint: in-memory SQLite behind a
+    `StaticPool` hands every session the *same* connection, so a test that deliberately makes the
+    worker and an inline write overlap is putting two transactions on one connection, and the
+    result is undefined — it fails perhaps one run in five with "cannot operate on a closed
+    database", which reads as a defect in the writer and is not one.
+
+    A file gives each session its own connection, like Postgres does, so the overlap the test is
+    *about* becomes legal. The alternative — asserting the invariant without the overlap — would
+    be testing something else and calling it this.
+    """
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'writer.db'}")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    yield async_sessionmaker(engine, expire_on_commit=False)
+    await engine.dispose()
+
+
 def _entry(operation: str = "generateContent", use_case: str | None = None) -> PendingLog:
     return PendingLog(
         subject="alice",
@@ -116,10 +137,14 @@ async def test_shutdown_drains_rather_than_discarding(sessionmaker) -> None:
 # ---- the awkward moments -------------------------------------------------------------------
 
 
-async def test_a_full_queue_writes_inline_instead_of_dropping(sessionmaker) -> None:
+async def test_a_full_queue_writes_inline_instead_of_dropping(concurrent_sessionmaker) -> None:
     """Losing rows under load would lose exactly the ones from the incident somebody later has
-    to reconstruct. Backpressure on the caller producing the load is the better trade."""
-    writer = _writer(sessionmaker, max_queue=1)
+    to reconstruct. Backpressure on the caller producing the load is the better trade.
+
+    On the file-backed database, because this is the one test whose whole subject is an inline
+    write happening *while* the worker writes — see `concurrent_sessionmaker`.
+    """
+    writer = _writer(concurrent_sessionmaker, max_queue=1)
     await writer.start()
 
     for index in range(20):
@@ -131,7 +156,7 @@ async def test_a_full_queue_writes_inline_instead_of_dropping(sessionmaker) -> N
     assert writer.written_inline > 0
 
     await writer.stop()
-    assert len(await _rows(sessionmaker)) == 20
+    assert len(await _rows(concurrent_sessionmaker)) == 20
 
 
 async def test_a_row_submitted_while_stopping_is_not_lost(sessionmaker) -> None:

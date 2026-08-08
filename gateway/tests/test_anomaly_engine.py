@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 
@@ -16,6 +17,8 @@ from aira_gateway.anomalies import AnomalyService, evaluate_rule
 from aira_gateway.anomalies.service import NOT_ENFORCED
 from aira_gateway.app import create_app
 from aira_gateway.audit import Outcome
+from aira_gateway.auth.dependencies import require_principal
+from aira_gateway.auth.principal import Principal
 from aira_gateway.config import GatewaySettings
 from aira_gateway.db.base import build_engine, build_sessionmaker, create_all
 from aira_gateway.db.models import AnomalyEvent, AnomalyRuleRead, RequestLog
@@ -496,6 +499,43 @@ def test_the_endpoint_lists_what_was_found() -> None:
     assert body["events"][0]["observed"] == 90
     # The row says what was *done*, which `ADR-0014` §3 keeps separate from what was detected.
     assert body["events"][0]["action_taken"] == "alert"
+
+
+def test_the_endpoint_answers_about_one_use_case_when_asked() -> None:
+    """Filtered at the server, not in the browser.
+
+    A console that fetched the newest hundred findings and kept the matching ones would show a
+    quiet use case nothing on a busy installation — its own findings pushed off the end by
+    somebody else's, and the screen saying "nothing has crossed a threshold" about it.
+    """
+    with _api() as client:
+        sessions = client.app.state.db_sessionmaker
+        with anyio.from_thread.start_blocking_portal() as portal:
+            portal.call(_event, sessions)
+            portal.call(functools.partial(_event, use_case="other-uc"), sessions)
+
+        mine = client.get("/v1beta/anomalies?use_case=demo-uc").json()
+
+    assert [event["use_case"] for event in mine["events"]] == ["demo-uc"]
+    assert mine["in_scope"] is True
+
+
+def test_asking_about_an_invisible_use_case_is_an_empty_that_says_so() -> None:
+    """The same two-kinds-of-empty distinction the trace view makes, for the same reason: a screen
+    that prints "nothing found" when it means "you can see nothing here" sends its reader looking
+    for a bug in the detector."""
+    caller = Principal(subject="alice", method="oidc", use_cases=("demo-uc",))
+    app = create_app(GatewaySettings(auth_required=False))
+    app.dependency_overrides[require_principal] = lambda: caller
+    with TestClient(app) as client:
+        sessions = client.app.state.db_sessionmaker
+        with anyio.from_thread.start_blocking_portal() as portal:
+            portal.call(functools.partial(_event, use_case="other-uc"), sessions)
+
+        body = client.get("/v1beta/anomalies?use_case=other-uc").json()
+
+    assert body["events"] == []
+    assert body["in_scope"] is False
 
 
 def test_the_endpoint_requires_a_credential() -> None:

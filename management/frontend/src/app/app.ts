@@ -44,6 +44,18 @@ export class App implements OnInit {
   }
 
   /**
+   * Whether this caller may see the security console — **seeing**, not acting.
+   *
+   * `it-steuerung` belongs here and may stop nothing; the console itself keeps that apart, because
+   * conflating "may look" with "may act" is a mistake this project has made once already.
+   */
+  protected hasOversight(): boolean {
+    return (
+      this.hasRole('it-security') || this.hasRole('it-steuerung') || this.hasRole('global-admin')
+    );
+  }
+
+  /**
    * Which hat the signed-in person is wearing, in words rather than in realm slugs.
    *
    * Half of what a role-based console has to answer is "why can I not do this", and the first step

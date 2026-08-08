@@ -228,4 +228,72 @@ describe('UseCaseService', () => {
       .expectOne('/gw/v1beta/usage/uc')
       .flush({ usage: [{ id: 1, used_tokens: 5, used_requests: 2 }] });
   });
+  // ---- FRD-502/503: findings, suspensions, traces -----------------------------------------------
+
+  it('reads findings from the gateway, which is where the request log lives', () => {
+    service.anomalies(25).subscribe((page) => expect(page.events.length).toBe(0));
+    const req = http.expectOne((r) => r.url === '/gw/v1beta/anomalies');
+    expect(req.request.params.get('limit')).toBe('25');
+    req.flush({ events: [], scope: 'all' });
+  });
+
+  it('posts a suspension and deletes it by id', () => {
+    service.suspend({ target: 'subject', target_value: 'ada', reason: 'probing' }).subscribe();
+    const post = http.expectOne('/gw/v1beta/suspensions');
+    expect(post.request.method).toBe('POST');
+    expect(post.request.body).toEqual({
+      target: 'subject',
+      target_value: 'ada',
+      reason: 'probing',
+    });
+    post.flush({ id: 's1' });
+
+    service.liftSuspension('s1').subscribe();
+    const del = http.expectOne('/gw/v1beta/suspensions/s1');
+    expect(del.request.method).toBe('DELETE');
+    del.flush({ id: 's1', lifted_at: 'now' });
+  });
+
+  it('encodes a suspension id rather than pasting it into a path', () => {
+    // Ids come back from the server, but a path built by concatenation is a path that breaks the
+    // first time one contains a slash — and this one restores access.
+    service.liftSuspension('a/b').subscribe();
+    http.expectOne('/gw/v1beta/suspensions/a%2Fb').flush({});
+  });
+
+  it('sends only the trace filters that were actually set', () => {
+    // An empty filter sent as an empty string is not the same request: the server would read it as
+    // "outcome equals nothing" and answer with nothing.
+    service.traces({ useCase: 'uc-a' }).subscribe();
+    const bare = http.expectOne((r) => r.url === '/gw/v1beta/traces');
+    expect(bare.request.params.get('use_case')).toBe('uc-a');
+    expect(bare.request.params.has('outcome')).toBe(false);
+    expect(bare.request.params.has('refusals_only')).toBe(false);
+    expect(bare.request.params.has('cursor')).toBe(false);
+    expect(bare.request.params.get('limit')).toBe('50');
+    bare.flush({ traces: [], next_cursor: null, scope: 'use_cases' });
+
+    service
+      .traces({
+        useCase: 'uc-a',
+        outcome: 'rate_limited',
+        refusalsOnly: true,
+        cursor: 'c1',
+        limit: 5,
+      })
+      .subscribe();
+    const full = http.expectOne((r) => r.url === '/gw/v1beta/traces');
+    expect(full.request.params.get('outcome')).toBe('rate_limited');
+    expect(full.request.params.get('refusals_only')).toBe('true');
+    expect(full.request.params.get('cursor')).toBe('c1');
+    expect(full.request.params.get('limit')).toBe('5');
+    full.flush({ traces: [], next_cursor: null, scope: 'use_cases' });
+  });
+
+  it('reads anomaly rules from management, not from the gateway', () => {
+    // The rule is authored in the control plane; the finding is produced in the data plane. Asking
+    // the wrong plane would work in a demo and return a stale copy in production.
+    service.globalRules().subscribe((rules) => expect(rules).toEqual([]));
+    http.expectOne('/api/v1/anomaly-rules/').flush([]);
+  });
 });

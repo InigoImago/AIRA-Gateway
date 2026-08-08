@@ -43,7 +43,7 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
   inevitably do when both were written from the same mental model — and line coverage cannot see
   a *missing requirement*: on 2026-08-05 a review found seven real defects behind a green suite at
   99% coverage. So: **prove a test can fail.** Break the property, watch it go red, restore.
-  `make mutants` (`tools/mutation_check.py`) does this for **255 properties** across auth, budgets,
+  `make mutants` (`tools/mutation_check.py`) does this for **261 properties** across auth, budgets,
   pipeline, retention, the management control plane and the gateway's counters; when
   you fix a bug, add the mutation that reintroduces it. Two traps that cost real defects here:
   a stand-in that is more permissive than the thing it replaces (reuse the real method where you
@@ -716,6 +716,30 @@ now compares the three hand-written topic lists against the constants **in both 
 renamed, harness now refuses them. Two test lessons, both **measuring from the wrong moment**: a
 suspension takes up to the cache TTL to arrive, so "consumes no budget" and "pays for no classifier"
 must count from *after* the block took effect.
+**Stage D (`FRD-502`, 2026-08-08) — the screens.** Phase 5 had rules, an engine and enforcement and
+no console, which is `FRD-206`'s complaint exactly. Three views: an **IT Security console**
+(findings with the numbers they were drawn from, what is stopped now, and the rules — all three
+together, because a finding without its rule is a number without a claim and an empty findings list
+means nothing until the page says whether anything is watched); **Warnings per use case**, because a
+warning only IT Security can see is one nobody who could fix the cause ever reads, leading with "this
+use case is stopped" since otherwise a wall of 429s reads as a broken gateway; and **Traces** —
+`GET /v1beta/traces` plus a tab, every request with who/which model/how it ended/what it cost.
+**Metadata only, never a payload** — not the browsing `ADR-0009` deferred (that is *stored prompts*
+to *non-members*; this is neither), and the field list is an **allow-list** so a column added
+tomorrow cannot leak by a forgotten exclusion. **Cursor paging, not offset**: rows arrive while
+somebody reads, and an offset page over an appending table repeats some and skips others
+*invisibly*; the cursor is `(created_at, id)` because two rows share a millisecond, written out
+rather than as a row comparison since SQLite has no tuple comparison and the hermetic tests run
+there. Live is **polling** (`core/ui/live.ts`) with three guarantees, each a way live views fail: it
+**stops** (on destroy, and while the tab is hidden), it is **visible** ("updated 12s ago", and the
+reader can switch it off), and it **never stacks** (a tick during a slow response is skipped, or the
+refresh becomes a load test against the endpoint already struggling). The console keeps
+**visibility and authority apart** — `it-steuerung` sees everything and is offered no kill switch,
+and the page names who performs it. One test lesson: `Live`'s teardown case failed with seven ticks
+after destroy because the harness provided the service in the *testing module* while every screen
+provides it on the *component* — `DestroyRef` resolves to whichever injector created it, and an
+environment one outlives every component. **A harness that configures a service differently from
+production tests a different service.** `N24`–`N27`.
 Next candidates: **`FRD-114`** (model metadata — now also carries publisher + default output cap,
 prerequisite for 110–113 and 119), **`FRD-110`** (documents/images — the widest gap),
 **`FRD-115`/`FRD-119`** (Vertex EU + the Anthropic dialect — required), **`FRD-116`** (Vault),

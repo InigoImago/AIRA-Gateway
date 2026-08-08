@@ -30,6 +30,19 @@
   >
   <a class="aira-nav__item" routerLink="/reporting" routerLinkActive="is-active">Reporting</a>
   <!--
+    The tab an oversight role could not previously be given, because there was nothing behind it.
+    `FRD-502` built the screen; a tab that does not respond is what `FRD-206` removed.
+  -->
+  @if (hasOversight()) {
+    <a
+      class="aira-nav__item"
+      routerLink="/security"
+      routerLinkActive="is-active"
+      data-testid="nav-security"
+      >Security</a
+    >
+  }
+  <!--
     Screens that do not exist yet used to sit here as disabled tabs, one per oversight role. They
     read as broken navigation — somebody logs in as the administrator, sees "Administration", and
     finds it does not respond. A tab that cannot be clicked teaches nothing except that something

@@ -25,6 +25,11 @@ export const routes: Routes = [
     loadComponent: () => import('./features/reporting/reporting-page').then((m) => m.ReportingPage),
   },
   {
+    path: 'security',
+    canActivate: [authGuard],
+    loadComponent: () => import('./features/security/security-page').then((m) => m.SecurityPage),
+  },
+  {
     path: 'use-cases/:slug/pipeline',
     canActivate: [authGuard],
     loadComponent: () =>

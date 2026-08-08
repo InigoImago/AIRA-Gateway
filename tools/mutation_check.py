@@ -2294,6 +2294,55 @@ MUTATIONS = [
         "",
         TOPICS,
     ),
+    # ---- the trace overview (FRD-502) -------------------------------------------------------
+    Mutation(
+        "N24",
+        "a trace carries no payload, whatever the retention settings stored",
+        "gateway/src/aira_gateway/api/reporting.py",
+        'TRACE_FIELDS = (\n    "id",',
+        'TRACE_FIELDS = (\n    "request_payload",\n    "response_payload",\n    "id",',
+        "gateway/tests/test_traces.py",
+    ),
+    Mutation(
+        "N25",
+        "a trace list is scoped to the use cases the caller is in",
+        "gateway/src/aira_gateway/api/reporting.py",
+        "        stmt = stmt.where(RequestLog.use_case.in_(allowed))\n    if use_case:",
+        "        stmt = stmt\n    if use_case:",
+        "gateway/tests/test_traces.py",
+    ),
+    Mutation(
+        "N26",
+        "paging by (timestamp, id) shows no row twice when two share a moment",
+        "gateway/src/aira_gateway/api/reporting.py",
+        "                and_(RequestLog.created_at == at, RequestLog.id < row_id),",
+        "                and_(RequestLog.created_at == at, RequestLog.id <= row_id),",
+        "gateway/tests/test_traces.py",
+    ),
+    Mutation(
+        "N28",
+        "an empty answer says whether it means 'nothing happened' or 'you see nothing'",
+        "gateway/src/aira_gateway/api/reporting.py",
+        'return {"traces": [], "next_cursor": None, "scope": "use_cases", "in_scope": False}',
+        'return {"traces": [], "next_cursor": None, "scope": "use_cases", "in_scope": True}',
+        "gateway/tests/test_traces.py",
+    ),
+    Mutation(
+        "N29",
+        "findings are asked for by use case, not filtered out of a global page",
+        "gateway/src/aira_gateway/api/reporting.py",
+        "    if use_case:\n        stmt = stmt.where(AnomalyEvent.use_case == use_case)",
+        "    if False:\n        stmt = stmt.where(AnomalyEvent.use_case == use_case)",
+        "gateway/tests/test_anomaly_engine.py",
+    ),
+    Mutation(
+        "N27",
+        "a page says there is more only when there is",
+        "gateway/src/aira_gateway/api/reporting.py",
+        "    stmt = stmt.order_by(RequestLog.created_at.desc(), RequestLog.id.desc()).limit(limit + 1)",
+        "    stmt = stmt.order_by(RequestLog.created_at.desc(), RequestLog.id.desc()).limit(limit)",
+        "gateway/tests/test_traces.py",
+    ),
 ]
 
 
