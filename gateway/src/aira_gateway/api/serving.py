@@ -45,6 +45,7 @@ from aira_gateway.core.canonical import (
     CanonicalUsage,
 )
 from aira_gateway.core.schema import SchemaBounds, SchemaRejected
+from aira_gateway.db.models import UseCaseRead
 from aira_gateway.embedding import EmbeddingBounds, EmbeddingRejected
 from aira_gateway.embedding import estimated_tokens as embedding_tokens
 from aira_gateway.embedding import validate as validate_embedding
@@ -61,6 +62,7 @@ from aira_gateway.requirements import (
     SamplingExpressible,
     StructuredOutputSupported,
     ThinkingHonoured,
+    ToolsSupported,
     permits,
 )
 from aira_gateway.residency import parse_allowed
@@ -291,6 +293,8 @@ def requirements_for(request: Request, canonical: CanonicalRequest | None) -> Pe
         checks.append(ThinkingHonoured(catalog_of(request), canonical.thinking))
     if canonical is not None and canonical.sampling_requested:
         checks.append(SamplingExpressible(registry_of(request), canonical.sampling_requested))
+    if canonical is not None and canonical.tools:
+        checks.append(ToolsSupported(catalog_of(request)))
     return permits(checks)
 
 
@@ -360,6 +364,40 @@ def check_not_empty(canonical: CanonicalRequest) -> None:
             "The request carries no text and no attachment. It would be billed for an answer to "
             "nothing.",
             "INVALID_ARGUMENT",
+        )
+
+
+async def check_tools_permitted(request: Request, canonical: CanonicalRequest) -> None:
+    """A use case may declare functions only if somebody turned that on (`FRD-131` FR-3).
+
+    **Free for every request that declares nothing**, which is nearly all of them: the read only
+    happens when `tools` is non-empty, so a chatbot pays no price for a capability it never uses.
+
+    Refused with `FAILED_PRECONDITION` rather than `PERMISSION_DENIED`: the caller's credential is
+    fine and the request is well formed — what is missing is a *configuration* somebody can change,
+    and the message says who. `ADR-0012`'s vocabulary, for the same reason `NoCapableModel` uses
+    it: operator-fixable is not the same answer as "you may not".
+    """
+    if not canonical.tools:
+        return
+    use_case = getattr(getattr(request.state, "attribution", None), "use_case", None)
+    if use_case is None:
+        raise GeminiHTTPError(
+            400,
+            "Tool calling is configured per use case, and this request names none. Send it with a "
+            "use case that has tool calling enabled.",
+            "FAILED_PRECONDITION",
+        )
+    sessionmaker = request.app.state.db_sessionmaker
+    async with sessionmaker() as session:
+        record = await session.get(UseCaseRead, use_case)
+    if record is None or not record.tools_enabled:
+        raise GeminiHTTPError(
+            400,
+            f"Use case '{use_case}' has not enabled tool calling. An administrator of the use "
+            "case can turn it on; it is off by default so that only the use cases which need "
+            "functions can declare them.",
+            "FAILED_PRECONDITION",
         )
 
 
@@ -517,6 +555,10 @@ async def prepare_for_dispatch(
     """
     if canonical is not None:
         check_not_empty(canonical)
+        # Before the bucket and the pipeline. A request that can never succeed should not spend
+        # the caller's rate-limit allowance on the way to being refused, and it must not pay for
+        # a classifier call (`FRD-125b`) either.
+        await check_tools_permitted(request, canonical)
 
     units = embed.size if embed is not None else 1
 

@@ -50,7 +50,54 @@ class DataPart(BaseModel):
         return len(self.data)
 
 
-CanonicalPart = TextPart | DataPart
+class ToolCallPart(BaseModel):
+    """The model asking for a function to be run — **by the caller, never by us** (`FRD-131`).
+
+    Nothing here is executed. `ADR-0013` allows a declaration to be carried through and forbids
+    running anything, and this part is the model's half of that: a name and arguments, forwarded to
+    whoever asked. The caller decides whether to run it, runs it on their own machine, and sends
+    the outcome back as a :class:`ToolResultPart` in the next turn.
+
+    ``id`` is the provider's correlation handle. Anthropic and OpenAI both require the result to
+    name the call it answers, and Gemini matches by function name instead — so an id is generated
+    where a provider does not supply one, rather than leaving the other two unable to reply.
+    """
+
+    id: str
+    name: str
+    #: Parsed, not raw text. Every dialect either sends an object or a JSON string of one, and
+    #: keeping both shapes would push that difference into every consumer.
+    arguments: dict[str, Any] = {}
+
+
+class ToolResultPart(BaseModel):
+    """What running it produced, on its way back to the model.
+
+    **This is content the model reads**, and the injection filter cannot see it (`FRD-131` §8):
+    a file, a fetched page, a command's output — each is a route into a model that is about to
+    propose the next command. Named here so the risk sits beside the type that carries it.
+    """
+
+    call_id: str
+    name: str
+    content: str
+
+
+CanonicalPart = TextPart | DataPart | ToolCallPart | ToolResultPart
+
+
+class ToolDeclaration(BaseModel):
+    """A function the caller is offering, described so a model can decide to ask for it.
+
+    ``parameters`` reuses :class:`ResponseSchema` rather than taking a free-form dict, for the same
+    three reasons `FRD-112` gives: the bounds need something to count, an unknown field becomes an
+    error naming the field at our boundary, and both surfaces map onto one model instead of each
+    inventing their own. It is likewise **forwarded, never executed**.
+    """
+
+    name: str
+    description: str = ""
+    parameters: ResponseSchema | None = None
 
 
 class CanonicalMessage(BaseModel):
@@ -85,6 +132,14 @@ class CanonicalMessage(BaseModel):
     @property
     def attachments(self) -> list[DataPart]:
         return [part for part in self.parts if isinstance(part, DataPart)]
+
+    @property
+    def tool_calls(self) -> list[ToolCallPart]:
+        return [part for part in self.parts if isinstance(part, ToolCallPart)]
+
+    @property
+    def tool_results(self) -> list[ToolResultPart]:
+        return [part for part in self.parts if isinstance(part, ToolResultPart)]
 
 
 class Thinking(BaseModel):
@@ -145,6 +200,10 @@ class CanonicalRequest(BaseModel):
     #: **forwarded, never executed** — re-validating the response would mean running
     #: caller-supplied regexes over provider output on the hot path.
     response_schema: ResponseSchema | None = None
+    #: Functions the caller is offering the model (`FRD-131`). Carried to the provider and back,
+    #: **never executed** (`ADR-0013`). Empty is the ordinary case and stays free of any cost: a
+    #: request that declares nothing behaves exactly as it did before this field existed.
+    tools: tuple[ToolDeclaration, ...] = ()
 
     def last_user_text(self) -> str:
         for message in reversed(self.messages):
@@ -186,8 +245,16 @@ class CanonicalRequest(BaseModel):
 
         Whitespace counts as empty on purpose: a caller whose template rendered to a newline has
         the same bug as one that rendered to nothing.
+
+        **A tool result counts as content** (`FRD-131`). The second turn of an assistant's exchange
+        is often nothing but "here is what `read_file` returned" — no prose at all — and judging
+        that "asks nothing" would refuse the ordinary middle of every agent conversation.
         """
-        return not any(message.text.strip() for message in self.messages) and not self.attachments
+        return (
+            not any(message.text.strip() for message in self.messages)
+            and not self.attachments
+            and not any(message.tool_results for message in self.messages)
+        )
 
 
 class CanonicalEmbeddingRequest(BaseModel):
@@ -226,11 +293,21 @@ class CanonicalResponse(BaseModel):
     text: str
     finish_reason: str = "stop"
     usage: CanonicalUsage
+    #: What the model asked to have run (`FRD-131`). A turn can carry text, tool calls, or both —
+    #: several at once, because all three vendors can return more than one and a single-call field
+    #: would need replacing the first time one did.
+    tool_calls: tuple[ToolCallPart, ...] = ()
 
 
 class CanonicalChunk(BaseModel):
-    """A streaming delta. The final chunk carries ``finish_reason`` and ``usage``."""
+    """A streaming delta. The final chunk carries ``finish_reason`` and ``usage``.
+
+    ``tool_calls`` appears on the chunk that **completes** them, never in pieces. The OpenAI dialect
+    streams a call's arguments fragmented across chunks (`FRD-131` FR-6), and a mapper that passed
+    each fragment on would emit several half-formed calls that no client could use.
+    """
 
     text_delta: str
     finish_reason: str | None = None
     usage: CanonicalUsage | None = None
+    tool_calls: tuple[ToolCallPart, ...] = ()

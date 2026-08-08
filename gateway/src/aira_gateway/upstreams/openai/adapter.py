@@ -25,6 +25,7 @@ from aira_gateway.upstreams.openai.mapping import (
     SAMPLING as OPENAI_SAMPLING,
 )
 from aira_gateway.upstreams.openai.mapping import (
+    StreamedToolCalls,
     canonical_to_openai,
     canonical_to_openai_embedding,
     embedding_values,
@@ -104,14 +105,22 @@ class OpenAIAdapter:
 
     async def stream_generate(self, request: CanonicalRequest) -> AsyncIterator[CanonicalChunk]:
         body = self._named(canonical_to_openai(request, stream=True), request.model)
+        # Tool calls arrive fragmented across deltas and are assembled here, because assembling
+        # them is *stateful* and the per-chunk mapper is deliberately not (`FRD-131` FR-6).
+        calls = StreamedToolCalls()
         async with self._transport.stream(self._routes.chat(request.model), body) as response:
             async for line in response.aiter_lines():
                 payload = parse_sse_line(line)
                 if payload is None:
                     continue
+                calls.add(_tool_call_deltas(payload))
                 chunk = openai_chunk_to_canonical(payload)
-                if chunk is not None:
-                    yield chunk
+                if chunk is None:
+                    continue
+                if chunk.finish_reason is not None and calls.pending:
+                    # Emitted whole, on the chunk that ends the message — never in pieces.
+                    chunk = chunk.model_copy(update={"tool_calls": calls.finish()})
+                yield chunk
 
     @property
     def probe_name(self) -> str:
@@ -135,3 +144,15 @@ class OpenAIAdapter:
         body = self._named(canonical_to_openai_embedding(request), request.model)
         data = await self._transport.post(self._routes.embed(request.model), body)
         return embedding_values(data)
+
+
+def _tool_call_deltas(payload: dict[str, Any]) -> Any:
+    """The `delta.tool_calls` of one SSE payload, or nothing.
+
+    Its own function so the stream loop reads as what it is — accumulate, then map — rather than
+    burying two levels of optional indexing in a condition.
+    """
+    choices = payload.get("choices") or []
+    if not choices:
+        return ()
+    return (choices[0].get("delta") or {}).get("tool_calls") or ()

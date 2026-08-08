@@ -73,6 +73,32 @@ class RegionAllowed:
         return None
 
 
+class ToolsSupported:
+    """The model must be able to answer with a function call (`FRD-131` FR-4).
+
+    The same argument as :class:`MediaTypesSupported`, one field over. A model that cannot do tool
+    calling, sent a request that declares tools, answers in **prose** — and a client whose entire
+    loop is built on parsing a function call either errors on the spot or, worse, tries to read the
+    prose as one. Either way the caller is told nothing about why.
+
+    Checked at **every hop**: a chain whose first candidate can do tools and whose fallback cannot
+    would otherwise turn a fallback into a silent downgrade, which is the failure `ADR-0012` §3
+    exists to prevent.
+    """
+
+    def __init__(self, catalog: ModelCatalog) -> None:
+        self._catalog = catalog
+
+    async def refusal(self, model: str) -> str | None:
+        declaration = await self._catalog.declaration(model)
+        if declaration.can(Capability.TOOLS):
+            return None
+        return (
+            f"'{model}' does not declare tool calling, so it would answer this request in prose "
+            "where a function call was expected."
+        )
+
+
 class MediaTypesSupported:
     """The model must be able to read every attachment the request carries (`ADR-0012` §3).
 

@@ -22,6 +22,10 @@ class Capability(StrEnum):
     STRUCTURED_OUTPUT = "structured_output"
     THINKING = "thinking"
     ATTACHMENTS = "attachments"
+    #: The model can be given functions and answer by asking for one (`FRD-131`). Undeclared means
+    #: unsupported, like every other flag here — a model whose catalog entry is silent is not
+    #: assumed capable, it is skipped by name.
+    TOOLS = "tools"
 
 
 class ThinkingMode(StrEnum):

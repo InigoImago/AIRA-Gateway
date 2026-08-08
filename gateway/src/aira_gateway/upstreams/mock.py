@@ -24,6 +24,7 @@ from aira_gateway.core.canonical import (
     CanonicalRequest,
     CanonicalResponse,
     CanonicalUsage,
+    ToolCallPart,
 )
 from aira_gateway.core.schema import ResponseSchema, SchemaType
 from aira_gateway.upstreams.base import UpstreamModel
@@ -51,6 +52,8 @@ class MockProvider:
         return [self._model]
 
     async def generate(self, request: CanonicalRequest) -> CanonicalResponse:
+        if request.tools:
+            return self._tool_call(request)
         if request.response_schema is not None:
             return self._structured(request)
 
@@ -75,6 +78,39 @@ class MockProvider:
         )
         return CanonicalResponse(
             model=request.model, text=" ".join(words), finish_reason=finish_reason, usage=usage
+        )
+
+    def _tool_call(self, request: CanonicalRequest) -> CanonicalResponse:
+        """Answer a request that declares tools by **asking for the first one** (`FRD-131`).
+
+        The mock honours what it is given, and this is the option where that matters most: without
+        it, tool calling would only ever be exercised against a model nobody has in CI — which is
+        exactly the state `FRD-110` refused to leave attachments in.
+
+        Deterministic, so a test can assert on it: the first declared function, with each of its
+        required properties filled from the caller's own prompt. A model choosing *not* to call is
+        also a real answer, and a request whose last turn already carries a tool result gets prose
+        instead — otherwise the mock would loop forever and no test could end.
+        """
+        if any(message.tool_results for message in request.messages):
+            usage = CanonicalUsage(prompt_tokens=self._prompt_tokens(request), completion_tokens=6)
+            return CanonicalResponse(
+                model=request.model,
+                text=f"[mock:{request.model}] acted on the tool result",
+                usage=usage,
+            )
+
+        tool = request.tools[0]
+        properties = (tool.parameters.properties or {}) if tool.parameters is not None else {}
+        prompt = request.last_user_text().strip()[:60]
+        arguments = dict.fromkeys(properties, prompt)
+        usage = CanonicalUsage(prompt_tokens=self._prompt_tokens(request), completion_tokens=8)
+        return CanonicalResponse(
+            model=request.model,
+            text="",
+            finish_reason="tool_use",
+            usage=usage,
+            tool_calls=(ToolCallPart(id=f"mock-{tool.name}", name=tool.name, arguments=arguments),),
         )
 
     def _structured(self, request: CanonicalRequest) -> CanonicalResponse:

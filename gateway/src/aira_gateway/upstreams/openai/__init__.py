@@ -20,9 +20,8 @@ import httpx
 
 from aira_gateway.config import GatewaySettings
 from aira_gateway.residency import check_region, parse_allowed
-from aira_gateway.upstreams.base import Upstream
+from aira_gateway.upstreams.base import DialectUnsupported, Upstream
 from aira_gateway.upstreams.openai.adapter import OpenAIAdapter
-from aira_gateway.upstreams.openai.mapping import DialectUnsupported
 from aira_gateway.upstreams.openai.transport import OpenAITransport
 
 __all__ = [

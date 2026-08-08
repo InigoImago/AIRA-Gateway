@@ -1,0 +1,497 @@
+"""Tool calling end to end through the Gemini surface and the OpenAI dialect (`FRD-131`).
+
+Two properties run through everything here. **Nothing is executed** — the gateway is a courier for
+a declaration one way and a request-to-run the other. And **nothing is silently dropped**: a turn
+that carries a tool result must reach the model, because a conversation missing its middle answers
+a different question than the one asked.
+"""
+
+from __future__ import annotations
+
+import json
+
+from aira_gateway.api.gemini import schemas
+from aira_gateway.api.gemini.mapping import canonical_to_gemini, gemini_to_canonical
+from aira_gateway.core.canonical import (
+    CanonicalMessage,
+    CanonicalRequest,
+    CanonicalResponse,
+    CanonicalUsage,
+    Role,
+    ToolCallPart,
+    ToolDeclaration,
+    ToolResultPart,
+)
+from aira_gateway.core.schema import parse
+from aira_gateway.upstreams.openai.mapping import (
+    StreamedToolCalls,
+    canonical_to_openai,
+    openai_to_canonical,
+)
+
+DECLARATION = {
+    "name": "read_file",
+    "description": "Read a file.",
+    "parameters": {"type": "object", "properties": {"path": {"type": "string"}}},
+}
+
+
+def _gemini_request(**extra: object) -> schemas.GenerateContentRequest:
+    body: dict[str, object] = {"contents": [{"role": "user", "parts": [{"text": "read hello.py"}]}]}
+    body.update(extra)
+    return schemas.GenerateContentRequest.model_validate(body)
+
+
+# ---- the Gemini surface, in ------------------------------------------------------------------
+
+
+def test_a_declaration_reaches_the_canonical_request() -> None:
+    request = gemini_to_canonical(
+        "m", _gemini_request(tools=[{"functionDeclarations": [DECLARATION]}])
+    )
+
+    assert [tool.name for tool in request.tools] == ["read_file"]
+    assert request.tools[0].parameters is not None
+
+
+def test_a_declaration_is_parsed_with_the_schema_parser() -> None:
+    """The same parser, bounds and error vocabulary a `responseSchema` gets: it is caller-supplied
+    structure with caller-controlled recursion, arriving through another field."""
+    request = gemini_to_canonical(
+        "m", _gemini_request(tools=[{"functionDeclarations": [DECLARATION]}])
+    )
+    schema = request.tools[0].parameters
+    assert schema is not None
+    assert schema.properties is not None and "path" in schema.properties
+
+
+def test_a_replayed_call_and_result_survive_the_round_trip() -> None:
+    """The middle of every agent exchange. Before `FRD-131` both parts were refused, and the
+    refusal was right — dropping them would have deleted a turn from the conversation."""
+    request = gemini_to_canonical(
+        "m",
+        _gemini_request(
+            contents=[
+                {"role": "user", "parts": [{"text": "read hello.py"}]},
+                {
+                    "role": "model",
+                    "parts": [{"functionCall": {"name": "read_file", "args": {"path": "a"}}}],
+                },
+                {
+                    "role": "user",
+                    "parts": [
+                        {
+                            "functionResponse": {
+                                "name": "read_file",
+                                "response": {"text": "print(1)"},
+                            }
+                        }
+                    ],
+                },
+            ]
+        ),
+    )
+
+    assert request.messages[1].tool_calls[0].arguments == {"path": "a"}
+    assert "print(1)" in request.messages[2].tool_results[0].content
+
+
+def test_a_call_gets_an_id_even_though_google_sends_none() -> None:
+    """Google matches a result to a call by name; the other two dialects require an id. Without
+    one generated here, a conversation begun on this surface could not be continued anywhere."""
+    request = gemini_to_canonical(
+        "m",
+        _gemini_request(
+            contents=[
+                {"role": "model", "parts": [{"functionCall": {"name": "read_file", "args": {}}}]}
+            ]
+        ),
+    )
+
+    assert request.messages[0].tool_calls[0].id
+
+
+# ---- the Gemini surface, out -----------------------------------------------------------------
+
+
+def test_a_tool_call_is_rendered_as_a_function_call_part() -> None:
+    response = canonical_to_gemini(
+        CanonicalResponse(
+            model="m",
+            text="",
+            usage=CanonicalUsage(prompt_tokens=1, completion_tokens=1),
+            tool_calls=(ToolCallPart(id="c1", name="read_file", arguments={"path": "a"}),),
+        )
+    )
+
+    part = response.candidates[0].content.parts[0]
+    assert part.functionCall is not None
+    assert part.functionCall.name == "read_file"
+    assert part.functionCall.args == {"path": "a"}
+
+
+def test_text_and_a_call_in_one_answer_keep_their_order() -> None:
+    response = canonical_to_gemini(
+        CanonicalResponse(
+            model="m",
+            text="I will read it.",
+            usage=CanonicalUsage(prompt_tokens=1, completion_tokens=1),
+            tool_calls=(ToolCallPart(id="c1", name="read_file", arguments={}),),
+        )
+    )
+
+    parts = response.candidates[0].content.parts
+    assert parts[0].text == "I will read it."
+    assert parts[1].functionCall is not None
+
+
+def test_an_ordinary_answer_is_shaped_exactly_as_before() -> None:
+    """The regression guard: every response that existed before this feature must be byte-for-byte
+    what it was."""
+    response = canonical_to_gemini(
+        CanonicalResponse(
+            model="m", text="hi", usage=CanonicalUsage(prompt_tokens=1, completion_tokens=2)
+        )
+    )
+
+    parts = response.candidates[0].content.parts
+    assert len(parts) == 1
+    assert parts[0].text == "hi"
+    assert parts[0].functionCall is None
+
+
+# ---- the OpenAI dialect ----------------------------------------------------------------------
+
+
+def test_declarations_become_this_dialects_tools() -> None:
+    body = canonical_to_openai(
+        CanonicalRequest(
+            model="m",
+            messages=[CanonicalMessage(role=Role.USER, text="hi")],
+            tools=(ToolDeclaration(name="read_file", parameters=parse({"type": "object"})),),
+        )
+    )
+
+    assert body["tools"][0]["type"] == "function"
+    assert body["tools"][0]["function"]["name"] == "read_file"
+
+
+def test_a_request_without_tools_carries_no_tools_key() -> None:
+    """An absent field and an empty list are different requests to several implementations."""
+    body = canonical_to_openai(
+        CanonicalRequest(model="m", messages=[CanonicalMessage(role=Role.USER, text="hi")])
+    )
+
+    assert "tools" not in body
+
+
+def test_a_tool_result_becomes_its_own_message_with_the_tool_role() -> None:
+    """One canonical turn is not one wire message here: this API carries each result as a message
+    of its own, keyed to the call it answers."""
+    body = canonical_to_openai(
+        CanonicalRequest(
+            model="m",
+            messages=[
+                CanonicalMessage(role=Role.USER, text="read it"),
+                CanonicalMessage(
+                    role=Role.MODEL,
+                    parts=[ToolCallPart(id="c1", name="read_file", arguments={"path": "a"})],
+                ),
+                CanonicalMessage(
+                    role=Role.USER,
+                    parts=[ToolResultPart(call_id="c1", name="read_file", content="print(1)")],
+                ),
+            ],
+        )
+    )
+
+    assert body["messages"][1]["tool_calls"][0]["id"] == "c1"
+    # Arguments travel as a JSON *string* in this dialect, not as an object.
+    assert json.loads(body["messages"][1]["tool_calls"][0]["function"]["arguments"]) == {
+        "path": "a"
+    }
+    assert body["messages"][2] == {"role": "tool", "tool_call_id": "c1", "content": "print(1)"}
+
+
+def test_a_returned_call_has_its_arguments_parsed() -> None:
+    response = openai_to_canonical(
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "c1",
+                                "function": {
+                                    "name": "read_file",
+                                    "arguments": '{"path": "hello.py"}',
+                                },
+                            }
+                        ],
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 2},
+        },
+        "m",
+    )
+
+    assert response.tool_calls[0].arguments == {"path": "hello.py"}
+    assert response.finish_reason == "tool_use"
+
+
+def test_unparseable_arguments_keep_the_name_rather_than_failing_the_request() -> None:
+    """A model occasionally produces arguments that are not valid JSON. The caller can see *that*
+    it asked for `read_file` and decide; a 502 would hide the model's mistake behind ours."""
+    response = openai_to_canonical(
+        {
+            "choices": [
+                {
+                    "message": {
+                        "tool_calls": [
+                            {"id": "c1", "function": {"name": "read_file", "arguments": "{oops"}}
+                        ]
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+        },
+        "m",
+    )
+
+    assert response.tool_calls[0].name == "read_file"
+    assert response.tool_calls[0].arguments == {}
+
+
+# ---- the streaming trap, which is why this class exists ---------------------------------------
+
+
+def test_arguments_split_across_deltas_are_reassembled() -> None:
+    """**The trap `FRD-131` named before anything was built.** A streamed tool call arrives in
+    pieces: the name once, then the arguments as string fragments. A mapper that forwarded each
+    delta would emit several half-formed calls, none of them parseable."""
+    calls = StreamedToolCalls()
+    calls.add([{"index": 0, "id": "c1", "function": {"name": "read_file", "arguments": ""}}])
+    calls.add([{"index": 0, "function": {"arguments": '{"pa'}}])
+    calls.add([{"index": 0, "function": {"arguments": 'th": "he'}}])
+    calls.add([{"index": 0, "function": {"arguments": 'llo.py"}'}}])
+
+    finished = calls.finish()
+
+    assert len(finished) == 1
+    assert finished[0].arguments == {"path": "hello.py"}
+
+
+def test_two_calls_in_one_stream_are_kept_apart_by_index() -> None:
+    """`index` is the only key on every delta — `id` and `name` arrive once. Accumulating by
+    anything else would merge two calls into one."""
+    calls = StreamedToolCalls()
+    calls.add(
+        [{"index": 0, "id": "a", "function": {"name": "read_file", "arguments": '{"p":"1"}'}}]
+    )
+    calls.add(
+        [{"index": 1, "id": "b", "function": {"name": "read_file", "arguments": '{"p":"2"}'}}]
+    )
+
+    finished = calls.finish()
+
+    assert [call.arguments["p"] for call in finished] == ["1", "2"]
+
+
+def test_a_stream_carrying_no_calls_accumulates_nothing() -> None:
+    calls = StreamedToolCalls()
+    calls.add(None)
+    calls.add([])
+
+    assert not calls.pending
+    assert calls.finish() == ()
+
+
+def test_a_fragment_with_no_name_is_dropped_rather_than_guessed_at() -> None:
+    """Half a function call is not a smaller function call, it is a different one."""
+    calls = StreamedToolCalls()
+    calls.add([{"index": 0, "function": {"arguments": '{"path":'}}])
+
+    assert calls.finish() == ()
+
+
+# ---- the toggle: least privilege is the default, not a setting somebody remembers --------------
+
+
+def _app():
+    from aira_gateway.app import create_app
+    from aira_gateway.config import GatewaySettings
+
+    return create_app(GatewaySettings(auth_required=False, enforce_budgets=False, log_queue_size=0))
+
+
+async def _use_case(app, slug: str, *, tools_enabled: bool) -> None:
+    from aira_gateway.db.models import UseCaseRead
+
+    async with app.state.db_sessionmaker() as session:
+        session.add(UseCaseRead(slug=slug, name=slug, tools_enabled=tools_enabled))
+        await session.commit()
+
+
+async def _declare_tools(app, model: str = "mock-1") -> None:
+    """The catalog decides, not the adapter (`FRD-114`). Undeclared means unsupported, so a model
+    that can do tool calling still has to *say* so before the chain will send it one."""
+    from aira_gateway.db.models import ModelRead
+
+    async with app.state.db_sessionmaker() as session:
+        session.add(ModelRead(model=model, capabilities=["generate", "tools"]))
+        await session.commit()
+
+
+BODY = {
+    "contents": [{"parts": [{"text": "read hello.py"}]}],
+    "tools": [{"functionDeclarations": [DECLARATION]}],
+}
+
+
+async def test_a_use_case_that_has_not_enabled_tools_is_refused_by_name() -> None:
+    from fastapi.testclient import TestClient
+
+    app = _app()
+    with TestClient(app) as client:
+        await _use_case(app, "plain-uc", tools_enabled=False)
+        response = client.post(
+            "/v1beta/models/mock-1:generateContent",
+            json=BODY,
+            headers={"x-aira-use-case": "plain-uc"},
+        )
+
+    assert response.status_code == 400
+    body = response.json()["error"]
+    assert body["status"] == "FAILED_PRECONDITION"
+    # Names the use case *and* who can change it — a refusal nobody can act on is a wall.
+    assert "plain-uc" in body["message"]
+    assert "administrator" in body["message"]
+
+
+async def test_a_use_case_that_has_enabled_them_gets_through() -> None:
+    from fastapi.testclient import TestClient
+
+    app = _app()
+    with TestClient(app) as client:
+        await _use_case(app, "agent-uc", tools_enabled=True)
+        await _declare_tools(app)
+        response = client.post(
+            "/v1beta/models/mock-1:generateContent",
+            json=BODY,
+            headers={"x-aira-use-case": "agent-uc"},
+        )
+
+    assert response.status_code == 200, response.text
+
+
+async def test_an_unknown_use_case_is_refused_rather_than_assumed_permissive() -> None:
+    """Absence of a row is absence of permission. A read-model that has not caught up yet must not
+    be read as consent."""
+    from fastapi.testclient import TestClient
+
+    app = _app()
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1beta/models/mock-1:generateContent",
+            json=BODY,
+            headers={"x-aira-use-case": "never-heard-of-it"},
+        )
+
+    assert response.status_code == 400
+
+
+async def test_a_request_without_tools_never_reads_the_use_case_row() -> None:
+    """The ordinary request pays nothing for a capability it does not use — no use case configured
+    at all, and it still succeeds exactly as before."""
+    from fastapi.testclient import TestClient
+
+    app = _app()
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1beta/models/mock-1:generateContent",
+            json={"contents": [{"parts": [{"text": "hi"}]}]},
+            headers={"x-aira-use-case": "no-such-use-case"},
+        )
+
+    assert response.status_code == 200, response.text
+
+
+# ---- the capability: a fallback must not answer without tools ---------------------------------
+
+
+async def test_a_model_that_does_not_declare_tools_is_refused_by_name() -> None:
+    """Undeclared means unsupported (`ADR-0012`). The alternative is a model answering in prose to
+    a client whose entire loop is built on parsing a function call."""
+    from fastapi.testclient import TestClient
+
+    app = _app()
+    with TestClient(app) as client:
+        await _use_case(app, "agent-uc2", tools_enabled=True)
+        # No catalog row at all: the model is undeclared, which is not permission.
+        response = client.post(
+            "/v1beta/models/mock-1:generateContent",
+            json=BODY,
+            headers={"x-aira-use-case": "agent-uc2"},
+        )
+
+    assert response.status_code == 400
+    assert "does not declare tool calling" in response.text
+    assert "mock-1" in response.text
+
+
+async def test_the_mock_answers_a_tool_request_with_a_call() -> None:
+    """The mock honours what it is given, or tool calling would only ever be exercised against a
+    model nobody has in CI — the state `FRD-110` refused to leave attachments in."""
+    from fastapi.testclient import TestClient
+
+    app = _app()
+    with TestClient(app) as client:
+        await _use_case(app, "agent-uc3", tools_enabled=True)
+        await _declare_tools(app)
+        response = client.post(
+            "/v1beta/models/mock-1:generateContent",
+            json=BODY,
+            headers={"x-aira-use-case": "agent-uc3"},
+        )
+
+    assert response.status_code == 200, response.text
+    part = response.json()["candidates"][0]["content"]["parts"][0]
+    assert part["functionCall"]["name"] == "read_file"
+
+
+async def test_a_second_turn_carrying_the_result_gets_prose() -> None:
+    """The exchange has to be able to *end*. A mock that always asked for another call would loop
+    forever and no test could assert on the outcome."""
+    from fastapi.testclient import TestClient
+
+    app = _app()
+    with TestClient(app) as client:
+        await _use_case(app, "agent-uc4", tools_enabled=True)
+        await _declare_tools(app)
+        response = client.post(
+            "/v1beta/models/mock-1:generateContent",
+            json={
+                **BODY,
+                "contents": [
+                    {"role": "user", "parts": [{"text": "read hello.py"}]},
+                    {
+                        "role": "model",
+                        "parts": [{"functionCall": {"name": "read_file", "args": {"path": "a"}}}],
+                    },
+                    {
+                        "role": "user",
+                        "parts": [
+                            {"functionResponse": {"name": "read_file", "response": {"t": "print"}}}
+                        ],
+                    },
+                ],
+            },
+            headers={"x-aira-use-case": "agent-uc4"},
+        )
+
+    assert response.status_code == 200, response.text
+    assert "acted on the tool result" in response.text

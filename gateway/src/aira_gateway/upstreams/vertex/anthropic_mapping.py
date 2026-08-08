@@ -27,10 +27,12 @@ from aira_gateway.core.canonical import (
     CanonicalRequest,
     CanonicalResponse,
     CanonicalUsage,
+    DataPart,
     Role,
     TextPart,
 )
 from aira_gateway.core.schema import to_json_schema
+from aira_gateway.upstreams.base import DialectUnsupported
 
 #: The finish reason for "the model answered, but not with the document that was asked for".
 #: Its own value rather than an error, so it travels through the same path every other abnormal
@@ -163,6 +165,15 @@ def _content_blocks(message: CanonicalMessage) -> list[dict[str, Any]]:
         if isinstance(part, TextPart):
             blocks.append({"type": "text", "text": part.text})
             continue
+        if not isinstance(part, DataPart):
+            # See the same guard in the Gemini adapter. Tool blocks on this dialect are
+            # `tool_use`/`tool_result` and are **not built yet**; a model that does not declare
+            # `tools` is skipped before dispatch, so reaching this is a declaration that outran
+            # the mapping.
+            raise DialectUnsupported(
+                "This adapter does not carry tool calls. A model declaring the capability cannot "
+                "serve the request through it."
+            )
         kind = "document" if part.media_type in _DOCUMENT_TYPES else "image"
         blocks.append(
             {

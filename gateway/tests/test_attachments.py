@@ -196,8 +196,11 @@ async def test_a_text_only_request_still_reaches_every_model() -> None:
 @pytest.mark.parametrize(
     ("part", "fragment"),
     [
-        ({}, "either 'text' or 'inlineData'"),
-        ({"text": "a", "inlineData": {"mimeType": "text/plain", "data": "YQ=="}}, "not both"),
+        # The property is unchanged — exactly one shape per part. The message now names four
+        # shapes rather than two, because `FRD-131` added `functionCall` and `functionResponse`.
+        ({}, "exactly one of"),
+        ({"text": "a", "inlineData": {"mimeType": "text/plain", "data": "YQ=="}}, "exactly one of"),
+        ({"text": "a", "functionCall": {"name": "f"}}, "exactly one of"),
     ],
 )
 async def test_a_part_must_carry_exactly_one_kind(part: dict[str, Any], fragment: str) -> None:

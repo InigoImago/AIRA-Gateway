@@ -13,8 +13,14 @@ gateway accepts is a promise, and accepting a field is a promise to honour it.
 Three shapes of answer:
 
     portable and supported     → carried to the dialect       (`topP`, `seed`, `stopSequences`, …)
-    known but out of scope     → refused, saying why          (`tools`, `safetySettings`, …)
+    known but out of scope     → refused, saying why          (`toolConfig`, `safetySettings`, …)
     the dialect cannot say it  → the candidate is skipped     (`top_k` on OpenAI, `seed` on Claude)
+
+**`tools` moved from the second row to the first on 2026-08-08** (`FRD-131`). It was refused
+because the canonical core had nowhere to put a declaration, and the refusal cited `ADR-0013` —
+which forbids *executing* a tool and has always allowed carrying one through. The refusal was the
+right answer to a missing capability and the wrong answer once the capability exists. Nothing about
+the rule changed; one field changed rows, and the cases below moved with it.
 """
 
 from __future__ import annotations
@@ -30,11 +36,11 @@ from aira_gateway.config import GatewaySettings
 from aira_gateway.core.canonical import SAMPLING_CONTROLS, CanonicalMessage, CanonicalRequest, Role
 from aira_gateway.core.schema import SchemaBounds
 from aira_gateway.requirements import SamplingExpressible
-from aira_gateway.upstreams.base import ProviderRegistry
+from aira_gateway.upstreams.base import DialectUnsupported, ProviderRegistry
 from aira_gateway.upstreams.gemini_mapping import SAMPLING as GEMINI_SAMPLING
 from aira_gateway.upstreams.gemini_mapping import canonical_to_gemini_request
 from aira_gateway.upstreams.openai.mapping import SAMPLING as OPENAI_SAMPLING
-from aira_gateway.upstreams.openai.mapping import DialectUnsupported, canonical_to_openai
+from aira_gateway.upstreams.openai.mapping import canonical_to_openai
 from aira_gateway.upstreams.vertex.anthropic_mapping import SAMPLING as ANTHROPIC_SAMPLING
 from aira_gateway.upstreams.vertex.anthropic_mapping import canonical_to_anthropic
 
@@ -65,8 +71,9 @@ def _base(**config: object) -> dict:
 @pytest.mark.parametrize(
     ("field", "value", "expected"),
     [
-        ("tools", [{"functionDeclarations": [{"name": "f"}]}], "does not execute tools"),
-        ("toolConfig", {"functionCallingConfig": {"mode": "ANY"}}, "out of scope"),
+        # `AUTO` is carried — it is the default, and a real client sends it on every request.
+        # `ANY` changes the answer, is spelled differently by each dialect, and is not built.
+        ("toolConfig", {"functionCallingConfig": {"mode": "ANY"}}, "not served"),
         ("cachedContent", "cachedContents/abc", "context caching"),
         ("safetySettings", [{"category": "HARM_CATEGORY_HARASSMENT"}], "safety"),
     ],
@@ -74,9 +81,12 @@ def _base(**config: object) -> dict:
 def test_a_field_this_gateway_does_not_serve_is_refused_and_says_why(
     field: str, value: object, expected: str
 ) -> None:
-    """All four were served with a 200 and dropped. `tools` is the sharpest: a caller declares a
-    function, receives prose describing what the function would do, and has no way to tell that
-    from a model choosing not to call it."""
+    """All of these were served with a 200 and dropped.
+
+    `toolConfig` stays refused now that `tools` is carried, and for a reason of its own: its modes
+    hold on one vendor and silently do not on another, so a caller who forced a function call would
+    sometimes get a suggestion instead — with nothing in the response to say which they got.
+    """
     status, message = _post({**_base(), field: value})
     assert status == 400
     assert field in message
@@ -105,16 +115,17 @@ def test_a_generation_config_field_this_gateway_does_not_serve_is_refused(
 @pytest.mark.parametrize(
     "part",
     [
-        {"functionCall": {"name": "f", "args": {}}},
-        {"functionResponse": {"name": "f", "response": {}}},
         {"executableCode": {"language": "PYTHON", "code": "1"}},
         {"fileData": {"mimeType": "application/pdf", "fileUri": "gs://b/o"}},
     ],
 )
 def test_a_part_shape_this_gateway_does_not_serve_is_refused(part: dict) -> None:
-    """One level below `tools`, and worse: a `functionResponse` part that is dropped removes a turn
-    from the conversation, so the model answers a question the caller did not ask — and the answer
-    reads perfectly."""
+    """`functionCall` and `functionResponse` left this list with `FRD-131` — they are carried, and
+    `test_tool_calling.py` asserts the round trip that replaced this refusal.
+
+    What remains is the part shape that asks a *provider* to run something on our behalf, which is
+    the `ADR-0013` boundary proper and does not move.
+    """
     status, message = _post({"contents": [{"role": "user", "parts": [part]}]})
     assert status == 400
 

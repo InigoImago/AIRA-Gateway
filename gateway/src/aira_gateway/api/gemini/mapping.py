@@ -5,6 +5,8 @@ Kept free of FastAPI so they are trivially unit-testable and reusable.
 
 from __future__ import annotations
 
+import json
+
 from aira_common.models import ThinkingMode
 from aira_gateway.api.gemini import schemas
 from aira_gateway.attachments import (
@@ -25,6 +27,9 @@ from aira_gateway.core.canonical import (
     Role,
     TextPart,
     Thinking,
+    ToolCallPart,
+    ToolDeclaration,
+    ToolResultPart,
 )
 from aira_gateway.core.schema import SchemaBounds
 from aira_gateway.core.schema import parse as parse_schema
@@ -51,7 +56,32 @@ def _canonical_parts(content: schemas.Content, limits: Limits, offset: int) -> l
         if part.text is not None:
             parts.append(TextPart(text=part.text))
             continue
-        assert part.inlineData is not None  # the schema validator guarantees one or the other
+        if part.functionCall is not None:
+            # Google matches a result to a call by name and sends no id; the other dialects
+            # require one. Generated here so a conversation begun on this surface can be replayed
+            # anywhere — deterministic in the name so a client that echoes it back still matches.
+            call = part.functionCall
+            parts.append(
+                ToolCallPart(
+                    id=call.id or f"{call.name}-{index}",
+                    name=call.name,
+                    arguments=call.args,
+                )
+            )
+            continue
+        if part.functionResponse is not None:
+            result = part.functionResponse
+            parts.append(
+                ToolResultPart(
+                    call_id=result.id or result.name,
+                    name=result.name,
+                    # Serialised once, here, rather than in each adapter: two dialects want a
+                    # string and one wants an object, and the round trip has to be stable.
+                    content=json.dumps(result.response, ensure_ascii=False),
+                )
+            )
+            continue
+        assert part.inlineData is not None  # the schema validator guarantees one of the shapes
         media_type = part.inlineData.mimeType
         check_media_type(media_type, limits, index=index)
         data = decode(part.inlineData.data, index=index)
@@ -104,6 +134,21 @@ def gemini_to_canonical(
         presence_penalty=config.presencePenalty if config else None,
         frequency_penalty=config.frequencyPenalty if config else None,
         stop_sequences=tuple(config.stopSequences or ()) if config else (),
+        # `FRD-131`. Parsed with the same parser and the same bounds a `responseSchema` gets: it
+        # is caller-supplied structure with caller-controlled recursion, arriving by another door.
+        tools=tuple(
+            ToolDeclaration(
+                name=declaration.name,
+                description=declaration.description,
+                parameters=(
+                    parse_schema(declaration.parameters, bounds)
+                    if declaration.parameters is not None
+                    else None
+                ),
+            )
+            for tool in request.tools
+            for declaration in tool.functionDeclarations
+        ),
     )
 
 
@@ -181,10 +226,26 @@ def gemini_to_embedding(
 
 def canonical_to_gemini(response: CanonicalResponse) -> schemas.GenerateContentResponse:
     """Map a canonical response back to a Gemini ``GenerateContentResponse``."""
+    # Text first, then any calls — the order the model produced them in, and the order a client
+    # reading parts sequentially expects. A response with **only** calls carries no text part at
+    # all rather than an empty one: `Part` requires exactly one shape, and an empty string is a
+    # different claim from "the model said nothing and asked for something instead".
+    parts: list[schemas.Part] = []
+    if response.text:
+        parts.append(schemas.Part(text=response.text))
+    parts.extend(
+        schemas.Part(
+            functionCall=schemas.FunctionCall(name=call.name, args=call.arguments, id=call.id)
+        )
+        for call in response.tool_calls
+    )
+    if not parts:
+        parts.append(schemas.Part(text=""))
+
     return schemas.GenerateContentResponse(
         candidates=[
             schemas.Candidate(
-                content=schemas.Content(role="model", parts=[schemas.Part(text=response.text)]),
+                content=schemas.Content(role="model", parts=parts),
                 finishReason=response.finish_reason.upper(),
                 index=0,
             )

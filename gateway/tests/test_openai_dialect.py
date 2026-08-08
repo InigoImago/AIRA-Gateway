@@ -37,7 +37,12 @@ from aira_gateway.core.canonical import (
 )
 from aira_gateway.core.schema import parse as parse_schema
 from aira_gateway.residency import RegionNotAllowed
-from aira_gateway.upstreams.base import AmbiguousModel, ProviderRegistry, UpstreamError
+from aira_gateway.upstreams.base import (
+    AmbiguousModel,
+    DialectUnsupported,
+    ProviderRegistry,
+    UpstreamError,
+)
 from aira_gateway.upstreams.openai import (
     ServerSpecInvalid,
     build_openai_upstreams,
@@ -45,7 +50,6 @@ from aira_gateway.upstreams.openai import (
 )
 from aira_gateway.upstreams.openai.adapter import OpenAIAdapter
 from aira_gateway.upstreams.openai.mapping import (
-    DialectUnsupported,
     canonical_to_openai,
     canonical_to_openai_embedding,
     embedding_values,

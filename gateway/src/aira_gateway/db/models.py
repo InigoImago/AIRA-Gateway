@@ -207,6 +207,10 @@ class UseCaseRead(Base):
     # kept once written (FRD-404).
     store_payloads: Mapped[bool] = mapped_column(Boolean, default=True)
     retention_days: Mapped[int] = mapped_column(Integer, default=7)
+    #: Whether this use case may declare functions for the model to call (`FRD-131`). **Default
+    #: false**, and the default is the feature: least privilege is not a setting somebody remembers
+    #: to switch off, it is the state a use case starts in.
+    tools_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

@@ -114,3 +114,20 @@ class ProviderRegistry:
 
     def get_model(self, name: str) -> UpstreamModel | None:
         return self._models.get(name)
+
+
+class DialectUnsupported(Exception):
+    """The request asks for something this wire format cannot express faithfully.
+
+    Raised at mapping time rather than dropped. It should be unreachable in practice — a model that
+    cannot do a thing does not declare the capability, and `FRD-114` refuses the request before
+    dispatch — so reaching it means a catalog entry claims something its dialect cannot deliver,
+    which is exactly the state that must not fail quietly.
+
+    **Lives here rather than in a dialect** (moved 2026-08-08). It was defined in the OpenAI
+    mapping, which was fine while only that dialect raised it — and the moment `FRD-131` widened
+    the part union, the Gemini and Anthropic adapters needed it too and would have imported it
+    *from a sibling dialect*. That is the import the architecture assertion caught once before,
+    with `to_json_schema`, and the answer is the same: a thing every dialect needs was never one
+    dialect's to own.
+    """

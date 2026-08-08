@@ -33,11 +33,14 @@ from aira_gateway.core.canonical import (
     CanonicalRequest,
     CanonicalResponse,
     CanonicalUsage,
+    DataPart,
     Role,
     TextPart,
     Thinking,
+    ToolCallPart,
 )
 from aira_gateway.core.schema import ResponseSchema, to_json_schema
+from aira_gateway.upstreams.base import DialectUnsupported
 
 _ROLE = {Role.SYSTEM: "system", Role.USER: "user", Role.MODEL: "assistant"}
 
@@ -72,16 +75,6 @@ _REASONING_EFFORT = {
 }
 
 
-class DialectUnsupported(Exception):
-    """The request asks for something this wire format cannot express faithfully.
-
-    Raised at mapping time rather than dropped. It should be unreachable in practice — a model that
-    cannot do a thing does not declare the capability, and `FRD-114` refuses the request before
-    dispatch — so reaching it means a catalog entry claims something its dialect cannot deliver,
-    which is exactly the state that must not fail quietly.
-    """
-
-
 def _content(message: CanonicalMessage) -> str | list[dict[str, Any]]:
     """Canonical parts → OpenAI content.
 
@@ -96,6 +89,11 @@ def _content(message: CanonicalMessage) -> str | list[dict[str, Any]]:
     for part in message.parts:
         if isinstance(part, TextPart):
             parts.append({"type": "text", "text": part.text})
+            continue
+        if not isinstance(part, DataPart):
+            # Tool parts are carried by `_wire_messages`, which handles them *before* asking for
+            # content — they never reach here. Explicit rather than implied: this loop used to
+            # treat "not text" as "an attachment", and `FRD-131` made that untrue.
             continue
         if not part.media_type.startswith("image/"):
             # `ADR-0012`'s central case: GPT-shaped models read images and **not** documents. The
@@ -117,6 +115,62 @@ def _content(message: CanonicalMessage) -> str | list[dict[str, Any]]:
     return parts
 
 
+def _wire_messages(request: CanonicalRequest) -> list[dict[str, Any]]:
+    """Canonical messages → this dialect's message list, which is **not** one-to-one.
+
+    A canonical message carries ordered parts; this API carries a tool call as a field on an
+    assistant message and each tool *result* as a message of its own with `role: "tool"`. So one
+    canonical turn holding two results becomes two wire messages, and the order has to survive —
+    a provider matches results to calls by id, but a model reading its own history reads the list.
+    """
+    out: list[dict[str, Any]] = []
+    for message in request.messages:
+        calls = message.tool_calls
+        results = message.tool_results
+        if not calls and not results:
+            out.append({"role": _ROLE[message.role], "content": _content(message)})
+            continue
+        if calls:
+            entry: dict[str, Any] = {"role": "assistant", "content": message.text or None}
+            entry["tool_calls"] = [
+                {
+                    "id": call.id,
+                    "type": "function",
+                    # Arguments travel as a **JSON string** in this dialect, not as an object.
+                    # The canonical model keeps them parsed, so the conversion happens once, here.
+                    "function": {
+                        "name": call.name,
+                        "arguments": json.dumps(call.arguments, ensure_ascii=False),
+                    },
+                }
+                for call in calls
+            ]
+            out.append(entry)
+        for result in results:
+            out.append({"role": "tool", "tool_call_id": result.call_id, "content": result.content})
+    return out
+
+
+def _wire_tools(request: CanonicalRequest) -> list[dict[str, Any]]:
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": (
+                    to_json_schema(tool.parameters)
+                    if tool.parameters is not None
+                    # A function that takes no arguments still needs a schema here; several
+                    # implementations reject a declaration without one.
+                    else {"type": "object", "properties": {}}
+                ),
+            },
+        }
+        for tool in request.tools
+    ]
+
+
 def canonical_to_openai(request: CanonicalRequest, *, stream: bool = False) -> dict[str, Any]:
     """Build a `/v1/chat/completions` body.
 
@@ -125,11 +179,10 @@ def canonical_to_openai(request: CanonicalRequest, *, stream: bool = False) -> d
     """
     body: dict[str, Any] = {
         "model": request.model,
-        "messages": [
-            {"role": _ROLE[message.role], "content": _content(message)}
-            for message in request.messages
-        ],
+        "messages": _wire_messages(request),
     }
+    if request.tools:
+        body["tools"] = _wire_tools(request)
     if request.temperature is not None:
         body["temperature"] = request.temperature
     if request.max_output_tokens is not None:
@@ -245,6 +298,35 @@ def answer_of(message: dict[str, Any]) -> str:
     return str(message.get("content") or "")
 
 
+def tool_calls_of(raw: Any) -> tuple[ToolCallPart, ...]:
+    """This dialect's tool calls → canonical, with the arguments parsed.
+
+    Arguments arrive as a **JSON string**, and a model occasionally produces one that does not
+    parse — a truncated stream, or simply a bad generation. That is mapped to empty arguments with
+    the name intact rather than raising: the caller can see *that* the model asked for `read_file`
+    and decide what to do, whereas a 502 would hide a model's mistake behind ours.
+    """
+    calls: list[ToolCallPart] = []
+    for index, entry in enumerate(raw or ()):
+        function = entry.get("function") or {}
+        name = str(function.get("name") or "")
+        if not name:
+            continue
+        raw_arguments = function.get("arguments")
+        try:
+            parsed = json.loads(raw_arguments) if raw_arguments else {}
+        except TypeError, ValueError:
+            parsed = {}
+        calls.append(
+            ToolCallPart(
+                id=str(entry.get("id") or f"{name}-{index}"),
+                name=name,
+                arguments=parsed if isinstance(parsed, dict) else {},
+            )
+        )
+    return tuple(calls)
+
+
 def openai_to_canonical(data: dict[str, Any], model: str) -> CanonicalResponse:
     choices = data.get("choices") or []
     first = choices[0] if choices else {}
@@ -254,6 +336,7 @@ def openai_to_canonical(data: dict[str, Any], model: str) -> CanonicalResponse:
         text=answer_of(message),
         finish_reason=finish_reason(first.get("finish_reason")),
         usage=_usage_of(data.get("usage")),
+        tool_calls=tool_calls_of(message.get("tool_calls")),
     )
 
 
@@ -281,6 +364,55 @@ def openai_chunk_to_canonical(data: dict[str, Any]) -> CanonicalChunk | None:
         finish_reason=finish_reason(reason) if reason else None,
         usage=usage,
     )
+
+
+class StreamedToolCalls:
+    """Reassembles tool calls that arrive **in pieces** (`FRD-131` FR-6).
+
+    This is the trap the FRD named before anything was built, and it is worth stating precisely.
+    In a streamed response a tool call does not arrive whole: the first delta carries an index, an
+    id and the function name, and the *arguments* then arrive as a series of string fragments
+    across the following deltas — `{"pa`, `th": "he`, `llo.py"}`. A mapper that forwarded each
+    delta would emit several half-formed calls, none of them parseable, and a client would either
+    error or, worse, act on the first fragment it could make sense of.
+
+    So fragments are accumulated by **index** — the only key present on every delta; `id` and
+    `name` appear once — and the finished calls are emitted on the chunk that ends the message.
+    Anything still incomplete when the stream ends is dropped rather than guessed at: half a
+    function call is not a smaller function call, it is a different one.
+    """
+
+    def __init__(self) -> None:
+        self._by_index: dict[int, dict[str, str]] = {}
+
+    def add(self, deltas: Any) -> None:
+        for delta in deltas or ():
+            index = int(delta.get("index", 0))
+            entry = self._by_index.setdefault(index, {"id": "", "name": "", "arguments": ""})
+            if delta.get("id"):
+                entry["id"] = str(delta["id"])
+            function = delta.get("function") or {}
+            if function.get("name"):
+                entry["name"] = str(function["name"])
+            if function.get("arguments"):
+                entry["arguments"] += str(function["arguments"])
+
+    @property
+    def pending(self) -> bool:
+        return bool(self._by_index)
+
+    def finish(self) -> tuple[ToolCallPart, ...]:
+        """The completed calls, in the order the provider indexed them."""
+        raw = [
+            {
+                "id": entry["id"],
+                "function": {"name": entry["name"], "arguments": entry["arguments"]},
+            }
+            for _, entry in sorted(self._by_index.items())
+            if entry["name"]
+        ]
+        self._by_index.clear()
+        return tool_calls_of(raw)
 
 
 def canonical_to_openai_embedding(request: CanonicalEmbeddingRequest) -> dict[str, Any]:

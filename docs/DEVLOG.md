@@ -3744,3 +3744,73 @@ The rule worth carrying: **a capability belongs to a model, not to a family, a v
 runtime.** A declaration measured against one model is not evidence about its siblings, and the
 seed that writes one declaration for "whatever model is configured" is the mechanism that turns a
 measurement into an assumption.
+
+## 2026-08-08 (later still) — `FRD-131` stages 1–4: a function call goes through the gateway
+
+Tool calling, built in four stages, each run against the whole existing suite before the next —
+the instruction was to add the capability without shooting anything down, and that is the part
+worth describing.
+
+**Stage 1, the canonical core.** `ToolCallPart` and `ToolResultPart` join `TextPart` and
+`DataPart` in the ordered-parts union `FRD-110` created; `CanonicalRequest.tools` carries the
+declarations; `CanonicalResponse.tool_calls` and `CanonicalChunk.tool_calls` carry the answer. The
+whole suite passed unmodified, which was the bar `FRD-110` set. One existing rule needed changing
+and it is the interesting one: `is_empty` refused a request with no text and no attachment, and
+**the second turn of every agent exchange is exactly that** — nothing but "here is what `read_file`
+returned". A tool result now counts as content, or the ordinary middle of an agent conversation
+would have been refused as a no-op.
+
+**Stage 2, the Gemini surface.** `functionCall` and `functionResponse` left the refused-parts list
+and `tools` left the refused-fields list. Five existing tests failed, all of them asserting the
+*old decision* rather than a property — they moved with it, and the docstrings say why. Google
+sends no call id and the other two dialects require one, so an id is generated where absent.
+
+**Stage 3, the OpenAI dialect** — the path to Ollama. Declarations become `tools`, a tool result
+becomes a message of its own with `role: "tool"`, arguments travel as a JSON *string*. The trap the
+FRD named before anything was built is real and is now handled: **a streamed tool call arrives in
+pieces**, name once and arguments as fragments across deltas, so `StreamedToolCalls` accumulates by
+index and emits whole calls on the chunk that ends the message. Unparseable arguments keep the name
+rather than failing the request — a model's mistake should not be hidden behind ours.
+
+**Stage 4, governance.** `tools_enabled` per use case, **default off** (migration `0020`,
+`server_default false`), read only when a request actually declares tools so an ordinary request
+pays nothing. A `tools` capability in the catalog, checked **per hop**, so a fallback skips an
+incapable candidate instead of answering in prose to a client that will parse it as a function
+call. The mock upstream answers a tool request with a call, because otherwise the feature would
+only ever be exercised against a model nobody has in CI — the state `FRD-110` refused to leave
+attachments in.
+
+**mypy caught what no test could.** Three adapters iterated `message.parts` and treated "not
+`TextPart`" as "an attachment". Widening the union made that untrue, and a tool part reaching those
+loops would have been an `AttributeError` at runtime, on the Gemini and Anthropic upstreams, in
+production. Now each checks `isinstance(part, DataPart)` explicitly and raises `DialectUnsupported`
+otherwise. That exception then had to **move out of the OpenAI dialect** into `upstreams/base.py`:
+two other adapters needed it, and importing it from a sibling dialect is precisely the import the
+architecture assertion caught once before with `to_json_schema`. A thing every dialect needs was
+never one dialect's to own.
+
+**And a measurement corrected a rule I had asserted.** `toolConfig` was refused outright, on the
+argument that its modes "hold on one vendor and silently do not on another". Then OpenCode was
+pointed at the gateway and sent `{"functionCallingConfig": {"mode": "AUTO"}}` on **every** request —
+and `AUTO` *is* the default: it asks for exactly what happens when nothing is sent. The blanket
+refusal blocked the whole use case in the name of a fidelity problem that mode does not have. Now
+`AUTO` is carried and `ANY`/`NONE` are refused **by name, because they are not built** — which is
+an honest reason, unlike a claim about vendors nobody had measured. Same shape as the `tools`
+refusal itself: a real capability question answered from the armchair.
+
+**Proven against the running stack.** A real request with a real model:
+
+```
+POST /v1beta/models/qwen3:4b:generateContent  {"tools": [{"functionDeclarations": [read_file]}]}
+→ {"functionCall": {"name": "read_file", "args": {"path": "hello.py"}}}, TOOL_USE, 487 tokens
+```
+
+and with OpenCode's own three-tool shape, `list{path: "."}`. Priced, budgeted and on the audit
+trail like everything else.
+
+**Not yet done, and stated rather than implied:** the full OpenCode loop still ends in a
+`ReadTimeout` — a 4B model on CPU takes **86 seconds** for a three-tool request and OpenCode sends
+ten plus a long system prompt. That is model speed, not a gateway defect: the same request answered
+correctly when given the time. Tool calls on the **Vertex** dialects (Gemini upstream, Anthropic)
+are not built either; both refuse a tool part by name, and the catalog capability keeps such a model
+out of a tool request in the first place.

@@ -49,16 +49,13 @@ class InlineData(BaseModel):
     data: str
 
 
-#: Part shapes Google defines that AIRA does not serve. `functionCall`/`functionResponse` are the
-#: same `ADR-0013` boundary as `tools`, arriving one level down — and a conversation replaying a
-#: function result would previously have had that turn silently deleted from the prompt, which is
-#: not a degraded answer but an answer to a different question.
+#: Part shapes Google defines that AIRA does not serve.
+#:
+#: `functionCall` and `functionResponse` **left this list on 2026-08-08** (`FRD-131`): they are
+#: carried now. The distinction `ADR-0013` always drew is between passing a declaration through
+#: and *executing* something, and only the second is out of scope. `executableCode` is the first —
+#: it asks a provider to run code on our behalf, which is the thing that stays refused.
 _PART_NOT_SERVED = {
-    "functionCall": "this gateway does not execute tools (ADR-0013)",
-    "functionResponse": (
-        "tool results are not carried; ignoring this part would drop a turn from the conversation "
-        "and answer a different question than the one asked (ADR-0013)"
-    ),
     "executableCode": "code execution is not offered (ADR-0013)",
     "codeExecutionResult": "code execution is not offered (ADR-0013)",
     "fileData": (
@@ -68,17 +65,43 @@ _PART_NOT_SERVED = {
 }
 
 
+class FunctionCall(BaseModel):
+    """The model asking for a function to be run — by the caller (`FRD-131`)."""
+
+    model_config = _STRICT
+    name: str
+    args: dict[str, Any] = {}
+    #: Google matches a result to a call by **name**; the other two dialects require an id. One is
+    #: accepted if a client sends it and generated otherwise, so a conversation that starts here
+    #: can be continued anywhere.
+    id: str | None = None
+
+
+class FunctionResponse(BaseModel):
+    """What running it produced, on its way back to the model."""
+
+    model_config = _STRICT
+    name: str
+    #: Google's shape is an object; a caller who has a plain string gets an error naming the field
+    #: rather than a silent stringification.
+    response: dict[str, Any] = {}
+    id: str | None = None
+
+
 class Part(BaseModel):
-    """One part of a prompt: text **or** inline data, never both and never neither.
+    """One part of a prompt: text, inline data, a function call or a function response — **exactly
+    one of them**.
 
     Modelled as optional fields with a validator rather than a union, because Google's wire format
     is a single object shape and a caller who sends `{}` deserves an error naming the problem, not
-    a union-discrimination message listing two schemas.
+    a union-discrimination message listing four schemas.
     """
 
     model_config = _STRICT
     text: str | None = None
     inlineData: InlineData | None = None
+    functionCall: FunctionCall | None = None
+    functionResponse: FunctionResponse | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -88,8 +111,21 @@ class Part(BaseModel):
 
     @model_validator(mode="after")
     def _exactly_one(self) -> Part:
-        if (self.text is None) == (self.inlineData is None):
-            raise ValueError("a part must carry either 'text' or 'inlineData', not both")
+        present = [
+            name
+            for name, value in (
+                ("text", self.text),
+                ("inlineData", self.inlineData),
+                ("functionCall", self.functionCall),
+                ("functionResponse", self.functionResponse),
+            )
+            if value is not None
+        ]
+        if len(present) != 1:
+            raise ValueError(
+                "a part must carry exactly one of 'text', 'inlineData', 'functionCall' or "
+                f"'functionResponse' (got {len(present)}: {present or 'none'})"
+            )
         return self
 
 
@@ -177,11 +213,6 @@ class GenerationConfig(BaseModel):
 #: `safetySettings` is refused for a different reason: it is a **governance** control, and one
 #: that holds on one vendor and silently does not on the other three is worse than none at all.
 _REQUEST_NOT_SERVED = {
-    "tools": (
-        "this gateway provides direct model access and does not execute tools (ADR-0013). "
-        "Silently ignoring the declaration would return prose where a function call was expected"
-    ),
-    "toolConfig": "tool execution is out of scope (ADR-0013)",
     "cachedContent": (
         "context caching is not offered (ADR-0013 — no conversation state). Ignoring it would "
         "also mean billing at uncached rates while the caller expected cached ones"
@@ -194,11 +225,74 @@ _REQUEST_NOT_SERVED = {
 }
 
 
+class FunctionDeclaration(BaseModel):
+    """A function the caller offers the model (`FRD-131`).
+
+    ``parameters`` is left as raw JSON here and parsed by `core.schema` in the mapper — the same
+    parser, bounds and error vocabulary a `responseSchema` gets, because it is the same kind of
+    thing arriving through a different field.
+    """
+
+    model_config = _STRICT
+    name: str
+    description: str = ""
+    parameters: dict[str, Any] | None = None
+
+
+class Tool(BaseModel):
+    """Google nests declarations one level down, in a list of tools."""
+
+    model_config = _STRICT
+    functionDeclarations: list[FunctionDeclaration] = []
+
+
+class FunctionCallingConfig(BaseModel):
+    """How the model is steered toward calling a function.
+
+    **`AUTO` only, and the reason is a measurement.** This whole object was refused outright at
+    first, on the argument that its modes hold on one vendor and silently do not on another. Then a
+    real client was pointed at the gateway and sent `AUTO` on **every** request — because `AUTO`
+    *is* the default: it asks for exactly what happens when nothing is sent at all. Refusing it
+    blocked the entire use case in the name of a fidelity problem it does not have.
+
+    `ANY` (the model must call something) and `NONE` (it must not) are different: they change the
+    answer, each dialect spells them differently, and the mapping is **not built**. They are
+    therefore refused **by name and with that reason** — not with a claim about vendors, which is
+    what the first version did without having measured one.
+    """
+
+    model_config = _STRICT
+    mode: str = "AUTO"
+
+    @model_validator(mode="after")
+    def _only_auto(self) -> FunctionCallingConfig:
+        if self.mode.strip().upper() != "AUTO":
+            raise ValueError(
+                f"'{self.mode}' is not served: this gateway carries tool declarations and lets the "
+                "model decide ('AUTO'). Forcing or forbidding a call is expressed differently by "
+                "each provider and is not implemented, so it is refused rather than accepted and "
+                "quietly downgraded to 'AUTO'."
+            )
+        return self
+
+
+class ToolConfig(BaseModel):
+    model_config = _STRICT
+    functionCallingConfig: FunctionCallingConfig | None = None
+
+
 class GenerateContentRequest(BaseModel):
     model_config = _STRICT
     contents: list[Content] = Field(min_length=1)
     systemInstruction: Content | None = None
     generationConfig: GenerationConfig | None = None
+    #: `FRD-131`. Carried to the model and back; never executed. A use case that has not enabled
+    #: tool calling is refused before dispatch, by the layer rather than by this schema — the
+    #: shape is valid, the *permission* is what is missing, and the two deserve different messages.
+    tools: list[Tool] = []
+    #: Accepted for `AUTO` — which is what the model does anyway — and refused by name for the
+    #: modes that would change the answer and are not implemented.
+    toolConfig: ToolConfig | None = None
 
     @model_validator(mode="before")
     @classmethod

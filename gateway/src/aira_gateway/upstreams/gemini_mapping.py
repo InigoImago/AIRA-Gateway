@@ -17,10 +17,12 @@ from aira_gateway.core.canonical import (
     CanonicalRequest,
     CanonicalResponse,
     CanonicalUsage,
+    DataPart,
     Role,
     TextPart,
     Thinking,
 )
+from aira_gateway.upstreams.base import DialectUnsupported
 
 
 def _wire_parts(message: CanonicalMessage) -> list[dict[str, Any]]:
@@ -34,15 +36,25 @@ def _wire_parts(message: CanonicalMessage) -> list[dict[str, Any]]:
     for part in message.parts:
         if isinstance(part, TextPart):
             wire.append({"text": part.text})
-        else:
-            wire.append(
-                {
-                    "inlineData": {
-                        "mimeType": part.media_type,
-                        "data": base64.b64encode(part.data).decode("ascii"),
-                    }
-                }
+            continue
+        if not isinstance(part, DataPart):
+            # `FRD-131` widened the part union, and "not text" stopped meaning "an attachment".
+            # This adapter does not carry tool parts yet, and the dispatch chain should have
+            # skipped a model that does not declare `tools` before we got here — so arriving is a
+            # catalog claiming a capability this dialect cannot deliver, which is the one case
+            # that must not fail quietly. Found by mypy, not by a test: no test could reach it.
+            raise DialectUnsupported(
+                "This adapter does not carry tool calls. A model declaring the capability cannot "
+                "serve the request through it."
             )
+        wire.append(
+            {
+                "inlineData": {
+                    "mimeType": part.media_type,
+                    "data": base64.b64encode(part.data).decode("ascii"),
+                }
+            }
+        )
     return wire
 
 

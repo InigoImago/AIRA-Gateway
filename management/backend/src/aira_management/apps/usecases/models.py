@@ -29,6 +29,14 @@ class UseCase(models.Model):
         default=True,
         help_text="Store prompts and responses at all. Off means nothing is written.",
     )
+    tools_enabled = models.BooleanField(
+        default=False,
+        help_text=(
+            "Let this use case declare functions for the model to call (FRD-131). Off by default: "
+            "a use case that summarises documents has no business declaring functions, and the "
+            "smallest set that needs tool calling is the right set to have it."
+        ),
+    )
     retention_days = models.PositiveSmallIntegerField(
         default=DEFAULT_RETENTION_DAYS,
         validators=[MinValueValidator(1), MaxValueValidator(3650)],
