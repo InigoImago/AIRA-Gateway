@@ -36,6 +36,12 @@ class GatewaySettings(BaseAiraSettings):
     # Persist request/response payloads (FRD-103). When False, only metadata is stored.
     store_payloads: bool = True
 
+    # Extra redaction patterns for stored payloads (`FRD-406`), ';'- or newline-separated regexes.
+    # **Additive**: the built-in credential shapes always apply, because a deployment naming its
+    # own token format must not thereby stop redacting Google keys. An invalid pattern, or one
+    # that backtracks exponentially, stops the gateway rather than silently matching nothing.
+    redact_patterns: str = ""
+
     # Retention for stored payloads of requests that carry no use case, in days (FRD-404).
     # Use-case traffic follows the period configured on its use case.
     default_retention_days: int = 7
@@ -65,6 +71,16 @@ class GatewaySettings(BaseAiraSettings):
     # Enforce per-use-case/per-member request rate limits pre-dispatch (FRD-405). A use case
     # without a configured limit stays unlimited regardless of this toggle.
     enforce_rate_limits: bool = True
+
+    # Failed authentications one source address may make per minute before it is asked to wait
+    # (2026-08-08). Every limit `FRD-405` built is keyed by use case or member, so it needs a
+    # verified identity and cannot bound the traffic of somebody who has none — an unauthenticated
+    # caller could probe credentials, and each attempt a database round trip, without ever meeting
+    # a bound.
+    #
+    # It counts **refusals only**: a caller with a working credential never touches this bucket, so
+    # no legitimate integration can be throttled by it however busy it is. 0 disables it.
+    max_auth_failures_per_minute: int = 60
 
     # Tokens assumed for a request whose output length the caller did not bound, used to reserve
     # budget before the real usage is known (FRD-405 §4.2). Reconciled to the actual figure the

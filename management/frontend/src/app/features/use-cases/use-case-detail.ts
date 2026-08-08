@@ -1,3 +1,4 @@
+import { DatePipe } from '@angular/common';
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
@@ -11,6 +12,7 @@ import {
   RateLimit,
   UseCase,
 } from '../../core/api/models';
+import { MeService } from '../../core/api/me.service';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { PageFeedback } from '../../core/ui/page-feedback';
 import { BudgetsTab } from './budgets-tab';
@@ -38,6 +40,7 @@ const TABS: readonly Tab[] = [
 @Component({
   selector: 'app-use-case-detail',
   imports: [
+    DatePipe,
     FormsModule,
     RouterLink,
     AccessPanel,
@@ -57,6 +60,7 @@ export class UseCaseDetail implements OnInit {
   private readonly router = inject(Router);
   private readonly service = inject(UseCaseService);
   private readonly confirmService = inject(ConfirmService);
+  private readonly meService = inject(MeService);
 
   protected readonly useCase = signal<UseCase | null>(null);
   protected readonly members = signal<Membership[]>([]);
@@ -104,6 +108,28 @@ export class UseCaseDetail implements OnInit {
   protected readonly memberUsername = signal('');
   protected readonly memberRole = signal('user');
   protected readonly keyLabel = signal('');
+  /**
+   * Days until the new key stops working. Empty means **never**, which is what every key issued
+   * before this existed carries — offering the choice rather than imposing a default, because a
+   * default lifetime would break existing integrations at whatever mark it picked.
+   */
+  protected readonly keyExpiresInDays = signal('');
+  /**
+   * The installation's key policy, shown rather than assumed.
+   *
+   * Read from `/api/v1/me` so the form states the same numbers the server enforces — a client-side
+   * constant would be a second definition, and the first time somebody changed the setting the
+   * form would be confidently wrong about a refusal the reader then cannot explain.
+   */
+  /**
+   * The installation's key policy, asked for rather than assumed (`ADR-0015`).
+   *
+   * The values below are only what the form shows until `/me` answers; the **server** decides and
+   * refuses an out-of-range lifetime by name. Stating a number the server does not enforce would
+   * leave the reader with a refusal they cannot explain, so these are a placeholder, not a rule.
+   */
+  protected readonly defaultKeyDays = signal(30);
+  protected readonly maxKeyDays = signal(180);
   /** Data-protection settings being edited on the overview tab (FRD-404). */
   protected readonly retentionDays = signal<number | null>(null);
   protected readonly storePayloads = signal(true);
@@ -115,6 +141,19 @@ export class UseCaseDetail implements OnInit {
       this.tab.set(requested);
     }
     this.load();
+    this.meService.get().subscribe({
+      next: (me) => {
+        if (me.api_key_default_days) {
+          this.defaultKeyDays.set(me.api_key_default_days);
+        }
+        if (me.api_key_max_days) {
+          this.maxKeyDays.set(me.api_key_max_days);
+        }
+      },
+      // Deliberately silent: the policy is a hint on one form, and a banner about it would sit
+      // above a page whose actual content loaded perfectly well.
+      error: () => undefined,
+    });
   }
 
   /** Keep the open tab in the URL so a reload — or a shared link — lands in the same place. */
@@ -203,17 +242,22 @@ export class UseCaseDetail implements OnInit {
     if (this.feedback.busy()) {
       return;
     }
-    this.feedback.run(this.service.issueApiKey(this.slug, this.keyLabel()), {
-      failure: 'Could not issue the key.',
-      success: (issued: IssuedApiKey) => {
-        this.keyLabel.set('');
-        this.copied.set(false);
-        this.copyFailed.set(false);
-        this.issued.set(issued);
-        this.showIssueKey.set(false);
-        this.loadKeys();
+    const days = Number(this.keyExpiresInDays());
+    this.feedback.run(
+      this.service.issueApiKey(this.slug, this.keyLabel(), days > 0 ? days : null),
+      {
+        failure: 'Could not issue the key.',
+        success: (issued: IssuedApiKey) => {
+          this.keyLabel.set('');
+          this.keyExpiresInDays.set('');
+          this.copied.set(false);
+          this.copyFailed.set(false);
+          this.issued.set(issued);
+          this.showIssueKey.set(false);
+          this.loadKeys();
+        },
       },
-    });
+    );
   }
 
   protected dismissIssued(): void {

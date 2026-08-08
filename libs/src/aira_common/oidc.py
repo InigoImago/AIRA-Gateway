@@ -1,8 +1,21 @@
 """Shared OIDC JWT verification (used by the gateway and the management backend).
 
-Verifies a Keycloak JWT against the issuer's JWKS (signature, issuer, expiry, optional
-audience) and returns the claims, or None if invalid. The JWKS client is injectable so
-callers can unit-test without a live Keycloak.
+Verifies a Keycloak JWT against the issuer's JWKS (signature, issuer, expiry, audience) and
+returns the claims, or None if invalid. The JWKS client is injectable so callers can unit-test
+without a live Keycloak.
+
+**A claim that is absent is not a claim that passed.** PyJWT verifies `exp` when it is present
+and accepts a token that carries none at all — so a token minted without one, or with the claim
+stripped by anything between the issuer and here, was a credential that never expired. `sub` is
+the subject every audit row, every membership decision and every budget booking is attributed to,
+and `iat` is what makes "this token is older than the incident" answerable. All three are now
+**required**, which is the same rule this project keeps arriving at from different directions:
+absence of information is not permission.
+
+The audience stays optional *here* and is required by deployment: `aira_gateway.security` refuses
+to start outside local development with OIDC on and no audience named. Putting it there rather
+than in the verifier keeps a laptop working against a realm that has no audience mapper, while
+making the production case impossible to reach by accident.
 """
 
 from __future__ import annotations
@@ -46,7 +59,11 @@ class JwtVerifier:
                 algorithms=self._algorithms,
                 issuer=self._issuer,
                 audience=self._audience,
-                options={"verify_aud": self._audience is not None},
+                options={
+                    "verify_aud": self._audience is not None,
+                    # Present *and* valid. Without this, a token with no `exp` verifies happily.
+                    "require": ["exp", "iat", "sub"],
+                },
             )
         except jwt.PyJWTError:
             return None

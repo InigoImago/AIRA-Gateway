@@ -117,6 +117,14 @@ CSV_EXPORT = "gateway/tests/test_csv_export.py"
 THINKING = "gateway/tests/test_thinking.py gateway/tests/test_serving_options.py"
 RESPONSE_SCHEMA = "gateway/tests/test_response_schema.py gateway/tests/test_serving_options.py"
 EMBEDDING = "gateway/tests/test_embedding_options.py gateway/tests/test_serving_options.py"
+SELECTOR = "gateway/tests/test_selector_never_grants.py"
+DEPLOYMENT_SAFETY = "gateway/tests/test_deployment_safety.py"
+ACCESS_LOGS = "libs/tests/test_access_log_redaction.py"
+AUTH_BOUND = "gateway/tests/test_auth_attempt_bound.py"
+SECURITY_HEADERS = "gateway/tests/test_security_headers.py"
+REDACTION = "gateway/tests/test_redaction.py gateway/tests/test_store_payloads.py"
+KEY_EXPIRY = "gateway/tests/test_auth_service.py management/backend/tests/test_apikeys.py"
+
 SERVING_OPTIONS = (
     "gateway/tests/test_serving_options.py gateway/tests/test_kira_surface.py "
     "gateway/tests/test_vertex.py gateway/tests/test_gemini_upstream.py"
@@ -152,8 +160,8 @@ MUTATIONS = [
         "A4",
         "a configured audience is enforced",
         "libs/src/aira_common/oidc.py",
-        '                options={"verify_aud": self._audience is not None},',
-        '                options={"verify_aud": False},',
+        '                    "verify_aud": self._audience is not None,',
+        '                    "verify_aud": False,',
         AUTH,
     ),
     Mutation(
@@ -1686,8 +1694,11 @@ MUTATIONS = [
         "D1a",
         "an unreachable upstream degrades readiness rather than failing it",
         "gateway/src/aira_gateway/routes/health.py",
-        '            "degraded": not counters_ok or bool(fallbacks) or bool(probe and probe.degraded),',  # noqa: E501
-        '            "degraded": not counters_ok or bool(fallbacks),',
+        # Re-anchored 2026-08-08: the expression moved out of the response literal when `/readyz`
+        # learned to answer probes with the verdict only (`ADR-0015`). A mutation whose anchor has
+        # moved protects nothing, which is why the harness reports STALE rather than "caught".
+        "    degraded = not counters_ok or bool(fallbacks) or bool(probe and probe.degraded)",
+        "    degraded = not counters_ok or bool(fallbacks)",
         DIAGNOSTICS,
     ),
     Mutation(
@@ -2428,6 +2439,170 @@ MUTATIONS = [
         "    stmt = stmt.order_by(RequestLog.created_at.desc(), RequestLog.id.desc()).limit(limit)",
         "gateway/tests/test_traces.py",
     ),
+    # ---- the security round (2026-08-08) --------------------------------------------------
+    #
+    # Every one of these defends a fix for a finding that a green suite, 271 mutation properties
+    # and four verification layers had all missed.
+    Mutation(
+        "H1",
+        "a selector never grants access — an empty membership list means nothing, not anything",
+        "gateway/src/aira_gateway/auth/dependencies.py",
+        '    if principal.method == "oidc" and use_case not in principal.use_cases:',
+        '    if principal.method == "oidc" and principal.use_cases and use_case not in principal.use_cases:',  # noqa: E501
+        SELECTOR,
+    ),
+    Mutation(
+        "H2",
+        "the KIRA surface asks the shared rule rather than keeping its own",
+        "gateway/src/aira_gateway/api/kira/attribution.py",
+        "        refusal = use_case_refusal(principal, header)",
+        "        refusal = None",
+        SELECTOR,
+    ),
+    Mutation(
+        "H3",
+        "open routes refuse to start outside local development",
+        "gateway/src/aira_gateway/security.py",
+        "    if not settings.auth_required:",
+        "    if False:",
+        DEPLOYMENT_SAFETY,
+    ),
+    Mutation(
+        "H4",
+        "the published development database password refuses to start",
+        "gateway/src/aira_gateway/security.py",
+        "    if settings.postgres_password == DEV_POSTGRES_PASSWORD:",
+        "    if False:",
+        DEPLOYMENT_SAFETY,
+    ),
+    Mutation(
+        "H5",
+        "OIDC without a named audience refuses to start",
+        "gateway/src/aira_gateway/security.py",
+        "    if settings.oidc_enabled and not settings.oidc_audience.strip():",
+        "    if False:",
+        DEPLOYMENT_SAFETY,
+    ),
+    Mutation(
+        "H6",
+        "a laptop, and a declared demo, still start with the convenience defaults",
+        "gateway/src/aira_gateway/security.py",
+        "    if is_local(settings):\n        return []",
+        "    if False:\n        return []",
+        DEPLOYMENT_SAFETY,
+    ),
+    Mutation(
+        "H7",
+        "a credential in the request line does not reach the access log",
+        "libs/src/aira_common/observability.py",
+        '    return f"{path}?{redact_query_string(query)}"',
+        "    return value",
+        ACCESS_LOGS,
+    ),
+    Mutation(
+        "H8",
+        "the redaction is attached to the loggers the web server actually writes through",
+        "libs/src/aira_common/logging.py",
+        "    install_access_log_redaction()",
+        "    pass",
+        ACCESS_LOGS,
+    ),
+    Mutation(
+        "H9",
+        "a token with no expiry, issued-at or subject is refused",
+        "libs/src/aira_common/oidc.py",
+        '                    "require": ["exp", "iat", "sub"],',
+        '                    "require": [],',
+        AUTH,
+    ),
+    Mutation(
+        "H10",
+        "a persistent authentication prober is asked to wait",
+        "gateway/src/aira_gateway/auth/dependencies.py",
+        "        await record_failed_authentication(request)",
+        "        pass",
+        AUTH_BOUND,
+    ),
+    Mutation(
+        "H11",
+        "the bound counts refusals, so success never fills the bucket",
+        "gateway/src/aira_gateway/auth/attempts.py",
+        "    if decision.allowed:\n        return",
+        "    if True:\n        return",
+        AUTH_BOUND,
+    ),
+    Mutation(
+        "H12",
+        "an expired API key stops working on its own",
+        "gateway/src/aira_gateway/auth/service.py",
+        "        if record.expires_at is not None and self._aware(record.expires_at) <= datetime.now(UTC):",  # noqa: E501
+        "        if False:",
+        KEY_EXPIRY,
+    ),
+    Mutation(
+        "H13",
+        "the expiry Management decided survives the wire to the gateway",
+        "management/backend/src/aira_management/apps/usecases/views.py",
+        '                    "expires_at": expires_at.isoformat(),',
+        '                    "expires_at": None,',
+        KEY_EXPIRY,
+    ),
+    Mutation(
+        "H14",
+        "every response carries the headers that stop a browser sniffing it",
+        "gateway/src/aira_gateway/app.py",
+        "    app.add_middleware(SecurityHeadersMiddleware)",
+        "    pass",
+        SECURITY_HEADERS,
+    ),
+    Mutation(
+        "H15",
+        "a credential pasted into a prompt does not reach the stored row",
+        "gateway/src/aira_gateway/persistence/writer.py",
+        "                return self._redactor.redact(stripped)",
+        "                return stripped",
+        REDACTION,
+    ),
+    Mutation(
+        "H16",
+        "an unusable redaction pattern stops the gateway rather than matching nothing",
+        "gateway/src/aira_gateway/persistence/redaction.py",
+        '                raise RedactionMisconfigured(\n                    f"Redaction pattern {pattern!r} is not a valid regular expression: {exc}"\n                ) from exc',  # noqa: E501
+        "                continue",
+        REDACTION,
+    ),
+    Mutation(
+        "H17",
+        "a deployment's own pattern is added to the built-ins, never substituted for them",
+        "gateway/src/aira_gateway/persistence/redaction.py",
+        "    return PatternRedactor(BUILTIN_PATTERNS + extra)",
+        "    return PatternRedactor(extra or BUILTIN_PATTERNS)",
+        REDACTION,
+    ),
+    Mutation(
+        "H18",
+        "a key issued without asking still gets the configured lifetime",
+        "management/backend/src/aira_management/apps/apikeys/serializers.py",
+        '            attrs["expires_in_days"] = settings.api_key_default_days',
+        '            attrs["expires_in_days"] = None',
+        KEY_EXPIRY,
+    ),
+    Mutation(
+        "H19",
+        "a lifetime past the configured maximum is refused rather than granted",
+        "management/backend/src/aira_management/apps/apikeys/serializers.py",
+        "        if days > settings.api_key_max_days:",
+        "        if False:",
+        KEY_EXPIRY,
+    ),
+    Mutation(
+        "H20",
+        "the break-glass key minted by hand is bounded too",
+        "gateway/src/aira_gateway/auth/service.py",
+        "        days = expires_in_days if expires_in_days is not None else _default_key_days()",
+        "        days = expires_in_days if expires_in_days is not None else 0",
+        KEY_EXPIRY,
+    ),
 ]
 
 
@@ -2465,6 +2640,7 @@ def main() -> int:
             return 2
 
     survivors: list[Mutation] = []
+
     for mutation in MUTATIONS:
         path = ROOT / mutation.path
         original = path.read_text()

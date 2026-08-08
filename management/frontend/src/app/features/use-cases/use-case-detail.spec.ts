@@ -60,6 +60,7 @@ interface Detail {
   memberUsername: { set: (v: string) => void; (): string };
   memberRole: { set: (v: string) => void; (): string };
   keyLabel: { set: (v: string) => void; (): string };
+  keyExpiresInDays: { set: (v: string) => void; (): string };
   budgetScope: { set: (v: 'use_case' | 'member') => void; (): string };
   budgetSubject: { set: (v: string) => void; (): string };
   budgetTokens: { set: (v: number | null) => void; (): number | null };
@@ -115,8 +116,8 @@ function setup(overrides: Overrides = {}, confirmAnswer = true, queryTab: string
       calls.push(`removeMember:${username}`);
       return overrides.removeMember ?? of(undefined as unknown as void);
     },
-    issueApiKey: (_s: string, label: string) => {
-      calls.push(`issueApiKey:${label}`);
+    issueApiKey: (_s: string, label: string, expiresInDays?: number | null) => {
+      calls.push(`issueApiKey:${label}:${expiresInDays ?? 'never'}`);
       return (
         overrides.issueApiKey ??
         of({ api_key: 'aira_ab_cd', prefix: 'ab', label, use_case: 'demo-uc' })
@@ -246,6 +247,36 @@ describe('UseCaseDetail', () => {
     });
     expect(component.showIssueKey()).toBe(false);
     expect(component.keyLabel()).toBe('');
+  });
+
+  // A key with no end date has to be inventoried; one with a date lapses on its own. Optional,
+  // because a default lifetime would break every existing integration at whatever mark it picked
+  // — and because the break-glass credential must not be able to expire.
+
+  // The console does not carry its own copy of the policy: omitting the field lets the **server**
+  // apply the configured default. A client-side default would be a second definition, wrong the
+  // first time an installation changed the setting — and the reader would then be shown a date
+  // that is not the one in the database.
+  it('sends no lifetime of its own, leaving the server to apply the default', () => {
+    const { component, calls } = setup();
+    component.keyLabel.set('laptop');
+    component.issueKey();
+    expect(calls).toContain('issueApiKey:laptop:never');
+  });
+
+  it('passes the lifetime the reader typed', () => {
+    const { component, calls } = setup();
+    component.keyLabel.set('laptop');
+    component.keyExpiresInDays.set('30');
+    component.issueKey();
+    expect(calls).toContain('issueApiKey:laptop:30');
+  });
+
+  it('clears the lifetime after issuing, so the next key is a fresh decision', () => {
+    const { component } = setup();
+    component.keyExpiresInDays.set('30');
+    component.issueKey();
+    expect(component.keyExpiresInDays()).toBe('');
   });
 
   it('surfaces the membership rule when issuing is refused', () => {

@@ -12,6 +12,7 @@ from fastapi import Depends, Request
 
 from aira_common.observability import set_span_attributes
 from aira_gateway.api.gemini.errors import GeminiHTTPError
+from aira_gateway.auth.attempts import record_failed_authentication
 from aira_gateway.auth.attribution import Attribution, is_valid_use_case, resolve_use_case
 from aira_gateway.auth.credentials import extract_token
 from aira_gateway.auth.keys import is_aira_key
@@ -70,25 +71,48 @@ async def require_principal(request: Request) -> Principal:
     """Dependency: attach the Principal to ``request.state`` or raise a 401."""
     principal = await resolve_principal(request)
     if principal is None:
+        # Before the 401, not after: an address that keeps failing is asked to wait. Every limit
+        # `FRD-405` built is keyed by a *verified* identity, so none of them could bound a caller
+        # who has none.
+        await record_failed_authentication(request)
         raise _unauthenticated("Missing or invalid credentials.")
     request.state.principal = principal
     return principal
 
 
-def authorize_use_case(principal: Principal, use_case: str) -> None:
-    """Raise 403 unless ``principal`` may act on ``use_case``.
+def use_case_refusal(principal: Principal, use_case: str) -> str | None:
+    """Why ``principal`` may not act on ``use_case``, or ``None`` if they may.
 
-    OIDC principals must be members (Keycloak group). An API key issued by Management is bound
-    to exactly one use case and may only touch that one; an unbound key (the CLI break-glass
-    key, minted by an operator with DB access) is not restricted. Demo principals exist only
-    when authentication is switched off entirely.
+    **A selector never grants access; it only chooses among what you already have.** That sentence
+    was written on the Gemini surface and implemented on one surface only — the KIRA surface asked
+    `if memberships and header not in memberships`, so an *empty* membership list meant "anything
+    goes" rather than "nothing". A caller who belonged to no use case at all could name somebody
+    else's, get a real answer, and have the tokens billed to that use case's budget and written
+    into its audit trail. Proven against the running stack before this was written.
+
+    So the rule lives here, once, and returns a *reason* rather than raising: the two surfaces owe
+    their callers different error envelopes, and that is the only thing that should differ.
+
+    Three cases, and the middle one is the deliberate exception:
+
+    - **OIDC** — must be a member. An empty membership list refuses everything, which is the whole
+      correction.
+    - **An unbound API key** — the CLI break-glass key, minted by an operator with database access.
+      Deliberately unrestricted: it exists for the moment when the control plane is unavailable.
+    - **A bound API key** — issued by Management for exactly one use case, and may touch only that.
     """
     if principal.method == "oidc" and use_case not in principal.use_cases:
-        raise GeminiHTTPError(403, f"Not a member of use case '{use_case}'.", "PERMISSION_DENIED")
+        return f"Not a member of use case '{use_case}'."
     if principal.method == "api_key" and principal.use_cases and use_case != principal.use_cases[0]:
-        raise GeminiHTTPError(
-            403, f"API key is bound to use case '{principal.use_cases[0]}'.", "PERMISSION_DENIED"
-        )
+        return f"API key is bound to use case '{principal.use_cases[0]}'."
+    return None
+
+
+def authorize_use_case(principal: Principal, use_case: str) -> None:
+    """Raise a Gemini-shaped 403 unless ``principal`` may act on ``use_case``."""
+    reason = use_case_refusal(principal, use_case)
+    if reason is not None:
+        raise GeminiHTTPError(403, reason, "PERMISSION_DENIED")
 
 
 def require_valid_use_case(use_case: str) -> str:

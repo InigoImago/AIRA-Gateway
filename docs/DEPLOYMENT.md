@@ -592,18 +592,42 @@ Operations:
       unpriced traffic is excluded from every spend figure (FRD-403)
 - [ ] `AIRA_STORE_PAYLOADS` reviewed against your data-protection rules — with it on, full prompts
       and responses are written to `request_logs`. They are deleted after each use case's
-      retention period (default **7 days**, FRD-404), but the *content* redaction hook is still a
-      no-op (`aira_gateway.persistence.redaction.NoOpRedactor`): nothing is masked before storage
+      retention period (default **7 days**, FRD-404), and **credential-shaped strings are masked
+      before storage** (`FRD-406`). That redaction is deliberately narrow: it removes API keys,
+      bearer tokens, JWTs and private keys, and leaves names, customer numbers and prose alone,
+      because those are what the payload is stored for. For data that must not be persisted at
+      all, the control is the per-use-case storage switch below, not redaction
+- [ ] `AIRA_REDACT_PATTERNS` set if your organisation has its own token or identifier format —
+      added to the built-ins, never replacing them
 - [ ] Retention periods reviewed with whoever is accountable for each use case, and payload
       storage switched **off** for any use case whose data must not be persisted at all
-- [ ] `/healthz` (liveness) and `/readyz` (readiness) wired into your orchestrator on both services
+- [ ] `/healthz` (liveness) and `/readyz` (readiness) wired into your orchestrator on both services.
+      `/readyz` is unauthenticated by design — a probe carries no credential — and outside `local`
+      it answers probes with the **verdict only**. The body naming your database host, Kafka host,
+      upstreams and current fallbacks needs an authenticated caller (`ADR-0015`)
+- [ ] `AIRA_ENVIRONMENT` set to something other than `local` on every real deployment. Both
+      services then **refuse to start** with a development default in place — an open gateway, the
+      published Postgres password, OIDC with no audience, a dev `SECRET_KEY`, `DEBUG`, or
+      `ALLOWED_HOSTS=*`. The message names every reason at once
+- [ ] `AIRA_API_KEY_DEFAULT_DAYS` (30) and `AIRA_API_KEY_MAX_DAYS` (180) reviewed against your
+      rotation policy. Every key issued from now on carries a date; neither plane can mint an
+      unbounded one
+- [ ] **Keys issued before 2026-08-08 carry no end date and still work.** Expiring them would have
+      been an outage chosen on your behalf, and a silent one — nothing tells an integration why it
+      stopped. The console marks them **"no end date"** in the API-keys table; re-issue them on a
+      schedule you pick
 
 ---
 
 ## 6a. Upgrading: deploy every component, or a migration can be undone
 
-The gateway and its consumer call `create_all` at startup — a development convenience that
-predates Alembic and is still there. It has one consequence that only shows up during an upgrade:
+> **Closed on 2026-08-08.** `create_all` no longer runs against Postgres: the gateway calls it only
+> for SQLite (tests and the hermetic suites), and the consumer — which is where this actually bit —
+> does not call it at all, since it already waits for `alembic upgrade head`. The history below is
+> kept because the failure mode is worth recognising, not because it is still present.
+
+The gateway and its consumer *used to* call `create_all` at startup — a development convenience
+that predates Alembic. It had one consequence that only showed up during an upgrade:
 
 > **A container running the previous image can recreate a table the new migration renamed or
 > dropped**, and will then fail every event against it.
@@ -621,9 +645,8 @@ So, when a release contains a migration that renames or drops:
    one whose feature changed.
 3. Check for a resurrected table (`\dt`) before assuming the migration held.
 
-The durable fix is to stop calling `create_all` outside tests. It is on the backlog rather than in
-this release, because doing it needs the demo and CI paths to build their schema from migrations
-instead — which is a change worth making deliberately.
+The durable fix — not calling `create_all` outside SQLite — is now in place. Step 2 remains good
+practice regardless: a component running the old image reads the new schema either way.
 
 ## 7. Known gaps
 
@@ -633,9 +656,9 @@ Stated plainly, because a deployment guide that hides them wastes your time:
 |---|---|---|
 | **No Kubernetes/Helm** | Compose only; no manifests or charts | Planned (see `docs/ROADMAP.md`) |
 | **Images are not published** | `make up-full` builds them locally; there is no registry push or tagging scheme beyond `AIRA_IMAGE_TAG` | — |
-| **Vault is not used by any code** | It runs in the reference stack but nothing reads from it; secrets come from environment variables | PRD §9 intends Vault; not implemented |
+| ~~**Vault is not used by any code**~~ | — | **Closed** by `FRD-116`: `aira_common.secrets` reads AppRole + KV-v2 and ranks Vault above the environment for both planes |
 | **Schema Registry is not used** | Events are plain JSON with an `event_type` header | Runs in the stack, unused |
-| **SPA configuration is build-time** | Changing issuer or client id requires editing `auth.config.ts` and rebuilding | No runtime config file yet |
+| ~~**SPA configuration is build-time**~~ | — | **Closed** on 2026-08-08: `public/runtime-config.js` ships with the bundle and sets the issuer and client id. Replace it per environment (volume mount, `ConfigMap`, or a `sed` in the entrypoint) — no rebuild |
 | **Kafka has no auth/TLS settings** | A broker requiring SASL/TLS needs a code change | `aira_common.kafka` takes bootstrap servers only |
 | **The relay is not a daemon** | Must be scheduled externally, or configuration never propagates | By design (transactional outbox), but unscheduled by default |
 | **Membership is split** between Management and Keycloak groups | Consumption views and data-plane access need the Keycloak group; the UI membership alone is not enough | ADR-0007 addendum, follow-up recorded |

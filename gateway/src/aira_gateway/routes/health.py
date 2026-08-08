@@ -3,6 +3,11 @@
 ``/healthz`` reports process liveness. ``/readyz`` probes the dependencies the gateway
 needs (Postgres, Kafka) and returns 503 until they are reachable.
 
+**The verdict is public, the diagnosis is not** (2026-08-08). The full body names the database
+host, the Kafka host, every configured upstream and which fallbacks are currently in force —
+a map of the deployment and its weak spot. A probe needs the status code; an operator presents
+the credential they already have. Locally the whole body is served to everyone.
+
 Redis is reported but does **not** fail readiness (ADR-0008): rate limiting and budget
 enforcement both degrade to a documented fallback without it, so taking the instance out of
 service would turn a cache outage into an outage. It is still surfaced, because degraded
@@ -21,7 +26,9 @@ from fastapi.responses import JSONResponse
 
 from aira_common.counters import CountersUnavailable
 from aira_common.health import check_tcp
+from aira_gateway.auth.dependencies import resolve_principal
 from aira_gateway.config import GatewaySettings
+from aira_gateway.security import is_local
 
 router = APIRouter(tags=["health"])
 
@@ -60,6 +67,30 @@ async def version_info(request: Request) -> dict[str, object]:
     }
 
 
+async def _may_see_detail(request: Request) -> bool:
+    """Whether this caller gets the diagnosis as well as the verdict.
+
+    `/readyz` must stay unauthenticated — a Kubernetes probe carries no credential, and a readiness
+    endpoint that answers 401 is an endpoint that reports every pod as unhealthy. But the full body
+    names the database host, the Kafka bootstrap host, every configured upstream and which
+    fallbacks are in force: a map of the deployment, its dependencies and their current weak spot,
+    served to anyone who can reach the port.
+
+    So the **verdict** is public and the **diagnosis** is not. A probe reads `status` and the status
+    code, which is all it has ever used; an operator debugging one presents the credential they
+    already have. Locally everything is shown, because a laptop has no topology to protect and an
+    endpoint that is less useful in development is one people stop looking at.
+    """
+    settings: GatewaySettings = request.app.state.settings
+    if is_local(settings):
+        return True
+    try:
+        principal = await resolve_principal(request)
+    except Exception:  # noqa: BLE001 - a broken credential must not break the readiness probe
+        return False
+    return principal is not None
+
+
 @router.get("/readyz")
 async def readyz(request: Request) -> JSONResponse:
     """Readiness probe: dependencies are reachable."""
@@ -88,6 +119,17 @@ async def readyz(request: Request) -> JSONResponse:
     probe = getattr(request.app.state, "upstream_probe", None)
     upstreams = probe.snapshot() if probe is not None else {}
 
+    degraded = not counters_ok or bool(fallbacks) or bool(probe and probe.degraded)
+    if not await _may_see_detail(request):
+        # The verdict, and nothing that describes the deployment. `degraded` stays because it is
+        # the answer, not a detail — a caller who cannot tell "up" from "up on its fallbacks" has
+        # to guess, and guessing here means either evacuating a healthy instance or ignoring a
+        # real one.
+        return JSONResponse(
+            status_code=200 if ready else 503,
+            content={"status": "ready" if ready else "not_ready", "degraded": degraded},
+        )
+
     return JSONResponse(
         status_code=200 if ready else 503,
         content={
@@ -96,7 +138,7 @@ async def readyz(request: Request) -> JSONResponse:
             # ADR-0008 in force. An unreachable *upstream* is the same shape of answer — a gateway
             # that still refuses over-budget requests and serves reporting is not down, and
             # evicting it helps nobody (FR-3). Anything watching this should alert, not evacuate.
-            "degraded": not counters_ok or bool(fallbacks) or bool(probe and probe.degraded),
+            "degraded": degraded,
             "fallbacks": fallbacks,
             "checks": checks,
             "upstreams": upstreams,

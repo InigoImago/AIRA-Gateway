@@ -33,13 +33,19 @@ def _token(
     iss: str = ISSUER,
     aud: str | None = None,
     sub: str | None = "user-123",
+    iat: bool = True,
+    exp: bool = True,
     groups: list[str] | None = None,
     roles: list[str] | None = None,
     expired: bool = False,
 ) -> str:
     now = dt.datetime.now(dt.UTC)
     delta = dt.timedelta(minutes=-5) if expired else dt.timedelta(minutes=5)
-    claims: dict[str, object] = {"iss": iss, "iat": now, "exp": now + delta}
+    claims: dict[str, object] = {"iss": iss}
+    if iat:
+        claims["iat"] = now
+    if exp:
+        claims["exp"] = now + delta
     if sub is not None:
         claims["sub"] = sub
     if aud is not None:
@@ -156,3 +162,42 @@ def test_a_token_without_roles_yields_a_principal_with_none() -> None:
     assert principal is not None
     assert principal.roles == ()
     assert principal.is_governance is False
+
+
+# ---- required claims (2026-08-08) -----------------------------------------------------------
+#
+# PyJWT verifies `exp` when it is *present* and accepts a token carrying none at all. A token
+# minted without one — or with the claim stripped anywhere between the issuer and here — was
+# therefore a credential that never expired, and nothing in the gateway would have noticed.
+# Absence of information is not permission; the same rule as "unpriced is not free".
+
+
+def test_a_token_with_no_expiry_is_refused() -> None:
+    private, public = _keypair()
+    validator = OidcValidator(ISSUER, None, _Resolver(public))
+
+    assert validator.validate(_token(private, exp=False)) is None
+
+
+def test_a_token_with_no_issued_at_is_refused() -> None:
+    """`iat` is what makes "this token predates the incident" an answerable question."""
+    private, public = _keypair()
+    validator = OidcValidator(ISSUER, None, _Resolver(public))
+
+    assert validator.validate(_token(private, iat=False)) is None
+
+
+def test_a_token_with_no_subject_is_refused() -> None:
+    """`sub` is what every audit row, membership decision and budget booking is attributed to."""
+    private, public = _keypair()
+    validator = OidcValidator(ISSUER, None, _Resolver(public))
+
+    assert validator.validate(_token(private, sub=None)) is None
+
+
+def test_an_ordinary_keycloak_token_is_unaffected() -> None:
+    """The other half of the change: a real realm sends all three, so nothing legitimate breaks."""
+    private, public = _keypair()
+    validator = OidcValidator(ISSUER, None, _Resolver(public))
+
+    assert validator.validate(_token(private)) is not None

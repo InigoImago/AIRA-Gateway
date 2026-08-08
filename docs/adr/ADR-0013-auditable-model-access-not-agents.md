@@ -66,10 +66,24 @@ is or is becoming:
 - **Conversation state.** Every request is complete in itself. History is the caller's, which is
   also what keeps retention (`FRD-404`) meaningful — we cannot promise to delete what we also keep
   as state.
+
+  **The same distinction applies to caching (2026-08-08, `FRD-133`).** A *cache handle* — Google's
+  `cachedContent` — is content the provider stores on our behalf and we later refer to: that is
+  server-side state, and it stays refused. A *cache marker* on content the caller sends in full
+  every time — Anthropic's `cache_control` — leaves the request complete in itself and is therefore
+  not conversation state at all. One is a boundary, the other is a price.
 - **Tool and function execution.** The gateway may pass a tool definition through (and uses one
   internally for structured output on Anthropic, `FRD-119` §5.5) but never *executes* anything.
   Executing a caller's tool would make the gateway a code-execution service inside the credential
   boundary.
+
+  **Clarified 2026-08-08.** The implementation refused `tools` outright and cited *this ADR* as the
+  reason, which reads — to a reader arriving at that error message — as "function calling is closed
+  by decision". It is not: **carrying a declaration is in scope, executing anything is not**, and
+  the paragraph above always said so. The real reason for the refusal was that `CanonicalRequest`
+  had nowhere to put one, which is a capability gap rather than a boundary. Refusing rather than
+  silently ignoring was still right (`FRD-124`). `FRD-131` builds the capability and corrects the
+  message. Keeping the two apart matters: a capability gap gets closed, a boundary does not.
 - **Prompt authoring, chaining, workflow orchestration.** The pipeline (`FRD-300`) is a
   *governance* pipeline — filter, allow-check, route — not a workflow engine. That distinction is
   the one most likely to erode, because each new step looks like the last one.

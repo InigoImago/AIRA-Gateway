@@ -7,6 +7,7 @@ from typing import Any
 from rest_framework import serializers
 
 from aira_management.apps.apikeys.models import ApiKey
+from aira_management.config.runtime import get_settings
 
 
 class ApiKeySerializer(serializers.ModelSerializer[ApiKey]):
@@ -16,7 +17,15 @@ class ApiKeySerializer(serializers.ModelSerializer[ApiKey]):
 
     class Meta:
         model = ApiKey
-        fields = ["prefix", "label", "owner", "is_active", "created_at", "revoked_at"]
+        fields = [
+            "prefix",
+            "label",
+            "owner",
+            "is_active",
+            "created_at",
+            "revoked_at",
+            "expires_at",
+        ]
 
 
 class IssueApiKeySerializer(serializers.Serializer[Any]):
@@ -24,3 +33,34 @@ class IssueApiKeySerializer(serializers.Serializer[Any]):
     label = serializers.CharField(  # type: ignore[assignment]
         required=False, allow_blank=True, default=""
     )
+    #: Lifetime in days. **Optional to state, never optional to have**: omitting it takes
+    #: `AIRA_API_KEY_DEFAULT_DAYS` (30 days), and anything past `AIRA_API_KEY_MAX_DAYS` (180) is
+    #: refused by name. There is no way to ask this API for a key that never expires — a credential
+    #: with no end date has to be inventoried by somebody who remembers to, and nobody does.
+    #:
+    #: The bounds are checked in `validate` rather than declared on the field, for two reasons: an
+    #: installation that changes the setting means it without a redeploy, and a per-field validator
+    #: does **not** run for a field the caller omitted — which is exactly the case that has to end
+    #: with a date.
+    expires_in_days = serializers.IntegerField(required=False, allow_null=True, default=None)
+
+    def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
+        settings = get_settings()
+        days = attrs.get("expires_in_days")
+        if days is None:
+            attrs["expires_in_days"] = settings.api_key_default_days
+            return attrs
+        if days < 1:
+            raise serializers.ValidationError(
+                {"expires_in_days": ["A lifetime is a number of days, at least 1."]}
+            )
+        if days > settings.api_key_max_days:
+            raise serializers.ValidationError(
+                {
+                    "expires_in_days": [
+                        "The longest lifetime this installation allows is "
+                        f"{settings.api_key_max_days} days."
+                    ]
+                }
+            )
+        return attrs

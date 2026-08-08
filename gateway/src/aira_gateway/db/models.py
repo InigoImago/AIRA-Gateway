@@ -41,6 +41,11 @@ class ApiKey(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: When the key stops working on its own (2026-08-08). **NULL means never**, which is what
+    #: every key issued before this existed carries and what the break-glass key needs — an expiry
+    #: that cannot be omitted is one an operator sets to the year 3000. A stated end date is what
+    #: turns "who still has a key" from an inventory exercise into a property of the system.
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class RequestLog(Base):

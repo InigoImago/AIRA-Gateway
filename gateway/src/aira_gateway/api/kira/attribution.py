@@ -9,7 +9,9 @@ The resolution, in order:
 1. **Exactly one use case in the caller's memberships** → that one. `FRD-102` already derives them
    from ``/use-cases/<slug>`` groups, so for the common case — an application belonging to one use
    case — attribution is automatic and the migrating client changes nothing.
-2. **An explicit ``X-AIRA-Use-Case`` header** → that one, if they are a member.
+2. **An explicit ``X-AIRA-Use-Case`` header** → that one, if they are a member. Authorised by
+   ``use_case_refusal``, which both surfaces share: a selector chooses among what a caller already
+   has and never adds to it.
 3. **Several memberships and no header** → **403 naming the candidates.**
 
 The third is the one worth defending. A guess would attribute somebody's traffic to the wrong
@@ -24,6 +26,7 @@ from fastapi import Request
 
 from aira_gateway.api.kira import errors
 from aira_gateway.auth.attribution import USE_CASE_HEADER, Attribution, is_valid_use_case
+from aira_gateway.auth.dependencies import use_case_refusal
 from aira_gateway.auth.principal import Principal
 
 
@@ -34,14 +37,13 @@ def resolve(request: Request, principal: Principal) -> Attribution:
     if header:
         if not is_valid_use_case(header):
             raise errors.KiraError(400, errors.VALIDATION_ERROR, "Invalid use case identifier.")
-        # An API key is already bound to one use case; an OIDC caller must be a member. Both are
-        # the same rule: a selector never *grants* access, it only chooses among what you have.
-        if memberships and header not in memberships:
-            raise errors.KiraError(
-                403,
-                errors.STANDARD_USER_PERMISSION_REQUIRED,
-                f"Not a member of use case '{header}'.",
-            )
+        # The same rule the Gemini surface applies, from the same function — because this used to
+        # be a second copy of it and the copy was wrong. `if memberships and …` made an *empty*
+        # membership list mean "anything goes": a caller belonging to no use case could name
+        # somebody else's and have the tokens billed to it. A selector never *grants* access.
+        refusal = use_case_refusal(principal, header)
+        if refusal is not None:
+            raise errors.KiraError(403, errors.STANDARD_USER_PERMISSION_REQUIRED, refusal)
         selected: str | None = header
     elif len(memberships) == 1:
         selected = memberships[0]

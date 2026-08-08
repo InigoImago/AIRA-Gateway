@@ -53,9 +53,13 @@ environment ([§7](#7-secrets-from-vault)).
 | `AIRA_AUTH_REQUIRED` | `true` | `false` opens every route — a demo switch, never production. With it off there is no identity, so role checks are skipped rather than guessed. |
 | `AIRA_OIDC_ENABLED` | `false` | Accept OIDC bearer tokens in addition to API keys. **Required** for the SPA's dry-run, consumption, reporting and incident views. |
 | `AIRA_OIDC_ISSUER` | — | e.g. `http://localhost:8080/realms/aira` |
-| `AIRA_OIDC_AUDIENCE` | — | Optional; when set it is enforced. |
+| `AIRA_OIDC_AUDIENCE` | — | The audience this service answers to. Enforced when set — and **required outside `AIRA_ENVIRONMENT=local`**: without it, any token the issuer minted is accepted, including one issued to a different client (`ADR-0015`). The gateway and Management both refuse to start. |
 | `AIRA_OIDC_JWKS_URI` | *(derived)* | Only when it is not `<issuer>/protocol/openid-connect/certs`. |
 | `AIRA_REQUIRE_USE_CASE` | `false` | Refuse an authenticated request that names no use case. Turn it **on** once every caller is migrated: without a use case there is nothing to budget, limit or attribute. |
+| `AIRA_API_KEY_DEFAULT_DAYS` | `30` | Lifetime of a newly issued API key. **A key is always bounded** — omitting the lifetime at issuance takes this value, and there is no way to ask either plane for one that never expires (`ADR-0015`). Read by both planes from one definition. |
+| `AIRA_API_KEY_MAX_DAYS` | `180` | The longest lifetime anybody may request. More is **refused by name**, with the maximum in the message — a silently shortened lifetime would leave the requester believing a date that is not in the database. |
+| `AIRA_MAX_AUTH_FAILURES_PER_MINUTE` | `60` | Failed authentications one source address may make before it is answered 429 with `Retry-After`. Counts **refusals only**, so a working credential never touches it however busy the caller is. `0` disables it (an installation whose WAF already does this). |
+| `AIRA_REDACT_PATTERNS` | — | Extra regexes (`;`- or newline-separated) redacted from stored payloads, **added to** the built-in credential shapes, never replacing them (`FRD-406`). An invalid or exponentially-backtracking pattern stops the gateway rather than silently matching nothing. |
 | `AIRA_TRUST_FORWARDED_FOR` | `false` | Read the client IP from `X-Forwarded-For`. Only enable behind a proxy you control — otherwise any caller can write any address into your audit trail. |
 | `AIRA_DIRECTORY_CLIENT_ID` | — | Management only. A **read-only** Keycloak service account (`view-users`, `query-groups`) so the console can search your groups and people when granting access (`FRD-209`). Without it the console offers what it already knows and says so. |
 | `AIRA_DIRECTORY_CLIENT_SECRET` | — | Its secret. From Vault in any real deployment. |

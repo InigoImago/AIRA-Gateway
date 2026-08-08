@@ -47,7 +47,7 @@ each does what it says for what it covers.
 | 19 | Extensibility as a measurable property | 🟡 architecture assertion passes; the claim "a new family is a catalog entry plus at most one dialect" has been tested twice, not three times |
 | 20 | Secrets from Vault | ✅ `FRD-116` — a settings source, fail-closed |
 | 21 | Operational diagnostics | 🟡 `FRD-117` — build identity, upstream health, trace header, CORS ✅; **FR-7 (a second OpenAPI 3.0 document) not built** |
-| 22 | Masking sensitive content in stored payloads | ❌ `FRD-406` — the `Redactor` is still a `NoOpRedactor` |
+| 22 | Masking sensitive content in stored payloads | 🟡 `FRD-406` (2026-08-08) — **credentials** are masked; PII deliberately is not |
 | 23 | Report export | ✅ `FRD-602` — CSV as a renderer on the existing endpoint |
 | 24 | Multiple Keycloak backends / groups from UserInfo | ❌ `FRD-118` — **need unclear**, not scheduled |
 
@@ -55,10 +55,25 @@ each does what it says for what it covers.
 
 ## 3. The gaps that matter, in order
 
-### 3.1 Content redaction is a promise the product does not keep — `FRD-406`
+### 3.1 Content redaction: the credential half is done, the PII half is a decision — `FRD-406`
 
-**What is missing.** Prompts and responses are stored (per use case, default 7 days) and **nothing
-masks anything inside them**. `Redactor` is a no-op hook that has been in place since Phase 1.
+**Closed on 2026-08-08 for credentials.** `PatternRedactor` masks API keys, bearer tokens, JWTs,
+`Authorization:` values and PEM private key blocks in every stored request and response, plus any
+pattern a deployment adds. An unusable pattern stops the gateway rather than silently matching
+nothing.
+
+**Still open, and deliberately so: personal data.** The redaction is narrow because names, customer
+numbers, addresses and prose are *what the payload is stored for*. A redactor that mangles them
+produces payloads nobody reads — after which the deployment switches storage off entirely, which is
+strictly worse than storing them. For data that must not be persisted at all the honest control is
+the per-use-case storage switch (`FRD-404`), which already exists.
+
+So the dependency below is **partly** relieved: a stored prompt no longer leaks a credential to
+anyone who can read the table. It still contains whatever business content the caller wrote, which
+is why per-request browsing by non-members remains a decision rather than a build.
+
+**What was missing.** Prompts and responses are stored (per use case, default 7 days) and **nothing
+masked anything inside them**. `Redactor` was a no-op hook in place since Phase 1.
 
 **Why it matters more than its ROADMAP position suggests.** Three things depend on it:
 
@@ -77,7 +92,7 @@ masks anything inside them**. `Redactor` is a no-op hook that has been in place 
 **Mitigations that exist**: a retention period, and switching payload storage off entirely. Neither
 masks anything in a payload that *is* kept.
 
-**Deferred by decision** (2026-08-05), and that decision is now load-bearing for two other features.
+**Was deferred by decision** (2026-08-05); the credential half landed 2026-08-08 with `ADR-0015`.
 
 ---
 

@@ -24,6 +24,11 @@ class ApiKey(models.Model):
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     revoked_at = models.DateTimeField(null=True, blank=True)
+    #: When the key stops working on its own (2026-08-08). **NULL means never** — every key issued
+    #: before this existed carries that, and an expiry that cannot be omitted is one somebody sets
+    #: to the year 3000. Expiry and revocation are different events and stay separate columns:
+    #: "it lapsed as planned" and "we took it away" are not the same answer to an audit.
+    expires_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ["-created_at"]

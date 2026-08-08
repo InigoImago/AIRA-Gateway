@@ -206,6 +206,7 @@ order below serves the priorities rather than restating them.
 | **7** ✅ | ~~`FRD-120` — Microsoft Foundry~~ **fertig 2026-08-06** | Priorität 2, zweite Hälfte. **Der Diff hat `upstreams/` nicht verlassen** — Feature 19 damit belegt, nicht behauptet. Hermetisch getestet; es gibt hier keine Azure-Subscription. |
 | **8** | `FRD-116`, `FRD-117`, `FRD-602`, `FRD-124`, `FRD-406` | Vault, Diagnostik, Export, Maskierung. |
 | **9** | `FRD-504`, `FRD-500`/`501`/`503` | IT-Security: Smoke-Tests, Anomalien, Incident Response. |
+| **9** | `FRD-131`, `FRD-132`, `FRD-133` | Agenten und Coding-Assistenten: Tool Calling (per Use Case, Default aus), Flächenentscheidung nach Messung, Prompt-Caching zuletzt. |
 
 Two deliberate deviations from a naive reading of the priority list, both stated so they can be
 overruled rather than discovered:
@@ -244,7 +245,44 @@ is unaffected. The two are different things and only one of them was ever deferr
 declined.
 
 **Out of scope for now:** the OpenAI-compatible surface (`FRD-106`) — deferred by decision on
-2026-08-06 so the parity programme is not competing with a second new contract.
+2026-08-06 so the parity programme is not competing with a second new contract. **Reopened as a
+question, not as a decision, on 2026-08-08**: `FRD-132` stage A measures whether a coding assistant
+can be served without it.
+
+---
+
+## Phase 9 — Agents and coding assistants (`FRD-131`–`FRD-133`)
+
+**Goal:** the third named use case — connecting coding assistants and agents such as **OpenCode** —
+alongside the two that already work (RAG chat, semantic search over embeddings).
+
+A review on 2026-08-08 established where the gap is, against the code rather than the docs:
+
+- **Semantic search** works today. `:embedContent` with batching and task types (`FRD-113`),
+  budgeted, priced, audited. Vector storage is the caller's, by `ADR-0013`.
+- **RAG chat** works today for the generation half: documents (`FRD-110`), structured output,
+  streaming, system instruction. Retrieval is the caller's.
+- **Coding assistants do not work at all**, and the blocker is one field: `tools` is refused with a
+  400. Every assistant's loop *is* tool calling.
+
+### Order, and why
+
+| Step | FRD | Why here |
+|---|---|---|
+| 1 | `FRD-132` **stage A** | Point OpenCode at the running gateway and record what breaks. Cheap, and it decides whether a new surface is needed at all — a question this project has repeatedly got wrong by reading instead of sending. Needs a host where Ollama and OpenCode can be exercised together. |
+| 2 | `FRD-131` | Tool calling in the canonical core, **per use case, default off**. Nothing works without it, whatever the surface. |
+| 3 | `FRD-132` **stage B** | Only if stage A says so: an OpenAI-compatible surface (this would revive `FRD-106`, withdrawn 2026-08-07 — a named client that cannot be served without it is exactly the evidence that was missing then). Much cheaper now: the OpenAI *dialect* already exists as an upstream (`FRD-123`). |
+| 4 | `FRD-133` | Prompt caching. **Written now, built last, by owner decision (2026-08-08):** the assistant work must stand at full price and be measured that way, so the saving is decided from `request_logs` rather than from an estimate. |
+
+**Least privilege is the design, not a setting bolted on.** `tools_enabled` is per use case and
+defaults to **off**: a use case that summarises documents has no business declaring functions, and
+the smallest set of use cases that need tool calling is the right set to have it.
+
+Two things this phase changes about the governance model, recorded in `FRD-132` §5 rather than
+discovered later: an assistant makes **many model calls per human instruction**, so rate limits and
+budgets calibrated for a chatbot trip immediately and "requests" means something different on the
+reporting screen; and a **tool result is content the model reads**, which the injection filter
+cannot see — the same blind spot `FRD-110` recorded for PDFs, one step sharper.
 
 ---
 
@@ -256,7 +294,7 @@ product owner; the reason for the order is recorded so it is not re-litigated la
 | Item | FRD | Why it waits |
 |---|---|---|
 | ~~Per-caller rate limiting + the budget guard/record race~~ | `FRD-405` | **Done (2026-08-05).** Token buckets and atomic budget reservations over Redis (ADR-0008); the audit write also moved off the request path. |
-| **Content redaction** — masking sensitive values *inside* a stored payload | `FRD-406` | **Deferred by decision (2026-08-05), to be done later.** The `Redactor` hook is still a `NoOpRedactor`. Two mitigations already exist: a per-use-case retention period (7 days, FRD-404) and switching payload storage off entirely. Neither masks anything in a payload that *is* kept — redaction remains genuinely open, it is only not urgent. |
+| **Content redaction** — masking sensitive values *inside* a stored payload | `FRD-406` | **Credentials: done (2026-08-08).** API keys, bearer tokens, JWTs, `Authorization:` values and PEM private key blocks are masked before storage, plus any pattern a deployment adds (`AIRA_REDACT_PATTERNS`, additive). **PII: deliberately not**, because names and customer numbers are what the payload is stored for and a redactor that mangles them ends with storage switched off entirely — for that, the control is `FRD-404`'s per-use-case switch. |
 | ~~Spend and usage reporting~~ | `FRD-601` | **Done (2026-08-06).** Gateway `GET /v1beta/reporting` + a **Reporting** screen: totals and breakdowns by use case, model and member over a chosen period, scoped by the caller's role (ADR-0009). Per-request *browsing* still waits for `FRD-406`. |
 | Budget threshold alerting | `FRD-402` follow-up | Today a breach is a 429 and nothing else — nobody is told before the wall is hit. |
 | Membership reconciliation (Keycloak groups ↔ Management) | — | The two sources can drift; nothing detects it. |

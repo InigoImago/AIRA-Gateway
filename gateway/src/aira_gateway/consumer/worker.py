@@ -23,7 +23,7 @@ from aira_common.kafka import (
 )
 from aira_gateway.config import GatewaySettings
 from aira_gateway.consumer.apply import apply_event
-from aira_gateway.db.base import build_engine, build_sessionmaker, create_all
+from aira_gateway.db.base import build_engine, build_sessionmaker
 
 
 def decode_event_type(headers: list[tuple[str, bytes]] | None) -> str | None:
@@ -38,7 +38,11 @@ async def run_consumer(settings: GatewaySettings) -> None:  # pragma: no cover
     from aiokafka import AIOKafkaConsumer
 
     engine = build_engine(settings.database_url(use_sqlite=False))
-    await create_all(engine)
+    # **No `create_all` here.** `gateway-migrate` runs `alembic upgrade head` and this worker waits
+    # for it, so the schema already exists — and `FRD-114` recorded what the belt-and-braces call
+    # actually did: an older container resurrected a table a migration had dropped and then failed
+    # every event against it. `create_all` beside Alembic lets a partially-deployed stack undo a
+    # migration, which is a worse failure than the missing table it was insuring against.
     sessionmaker = build_sessionmaker(engine)
 
     consumer = AIOKafkaConsumer(

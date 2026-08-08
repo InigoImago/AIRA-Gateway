@@ -9,6 +9,7 @@ change permission on the object (or global-admin); membership management require
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Any
 
 from django.contrib.auth import get_user_model
@@ -309,11 +310,20 @@ class UseCaseViewSet(viewsets.ModelViewSet[UseCase]):
         payload = IssueApiKeySerializer(data=request.data)
         payload.is_valid(raise_exception=True)
         label = payload.validated_data["label"]
+        # Always a date: the serializer fills in the configured default when none was asked for,
+        # and refuses anything past the configured maximum. There is no branch here for "never".
+        days = payload.validated_data["expires_in_days"]
+        expires_at = timezone.now() + timedelta(days=days)
         user: Any = request.user
         full, prefix, key_hash = generate_api_key()
         with transaction.atomic():
             ApiKey.objects.create(
-                use_case=usecase, owner=user, prefix=prefix, key_hash=key_hash, label=label
+                use_case=usecase,
+                owner=user,
+                prefix=prefix,
+                key_hash=key_hash,
+                label=label,
+                expires_at=expires_at,
             )
             emit(
                 "api_key.created",
@@ -324,11 +334,20 @@ class UseCaseViewSet(viewsets.ModelViewSet[UseCase]):
                     "use_case": usecase.slug,
                     "label": label,
                     "status": "active",
+                    # The gateway enforces it; Management only decides it. Absent stays absent
+                    # rather than becoming a far-future date, so "never" survives the wire.
+                    "expires_at": expires_at.isoformat(),
                 },
             )
         # The one and only time the plaintext leaves Management.
         return Response(
-            {"api_key": full, "prefix": prefix, "label": label, "use_case": usecase.slug},
+            {
+                "api_key": full,
+                "prefix": prefix,
+                "label": label,
+                "use_case": usecase.slug,
+                "expires_at": expires_at.isoformat(),
+            },
             status=status.HTTP_201_CREATED,
         )
 

@@ -112,6 +112,28 @@ class BaseAiraSettings(BaseSettings):
     demo_mode: bool = False
     """When True, enable the mock upstream and demo-safe defaults (see FRD-002)."""
 
+    api_key_default_days: int = 30
+    """How long a newly issued API key lives, in days (`ADR-0015`, 2026-08-08).
+
+    **A key is always bounded.** The first version of this made an expiry optional with "NULL means
+    never", on the argument that an expiry which cannot be omitted is one somebody sets to the year
+    3000. That argument is about the *maximum*, not about the default: the answer is a bound on
+    both ends, not an opt-in. A credential with no end date has to be inventoried by a person who
+    remembers to, and nobody does.
+
+    Shared by both planes on purpose — Management issues keys, the gateway's CLI mints the
+    break-glass one, and a policy with two definitions is a policy with two answers.
+    """
+
+    api_key_max_days: int = 180
+    """The longest lifetime anybody may ask for.
+
+    A ceiling rather than a fixed term, because integrations differ and a rotation everybody has to
+    do on the same day is a rotation that gets postponed. Asking for more is **refused by name**,
+    with the maximum in the message — a silently truncated lifetime would have the requester
+    believing a date that is not the one in the database.
+    """
+
     currency: str = "EUR"
     """Currency all prices and cost budgets are expressed in (FRD-403).
 

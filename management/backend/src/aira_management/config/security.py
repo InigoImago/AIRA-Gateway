@@ -39,6 +39,12 @@ def unsafe_settings(settings: ManagementSettings) -> list[str]:
         )
     if settings.debug:
         problems.append("AIRA_DEBUG must be off outside local development.")
+    if settings.oidc_issuer.strip() and not settings.oidc_audience.strip():
+        problems.append(
+            "AIRA_OIDC_AUDIENCE is unset — any token this issuer minted would be accepted, "
+            "including one issued to a different client. Name the audience this service "
+            "answers to."
+        )
     return problems
 
 

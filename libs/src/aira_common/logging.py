@@ -13,6 +13,8 @@ from typing import Any
 import structlog
 from opentelemetry import trace
 
+from aira_common.observability import install_access_log_redaction
+
 _LEVELS: dict[str, int] = logging.getLevelNamesMapping()
 
 
@@ -35,6 +37,9 @@ def configure_logging(level: str = "INFO", *, json_output: bool = True) -> None:
         json_output: Render JSON lines when True, else a colorized console format.
     """
     log_level = _LEVELS.get(level.upper(), logging.INFO)
+    # Every service that configures logging gets it: the access log is written by the web server,
+    # not by us, so there is no code path of ours to put this on instead.
+    install_access_log_redaction()
 
     processors: list[structlog.typing.Processor] = [
         structlog.contextvars.merge_contextvars,

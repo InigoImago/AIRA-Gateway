@@ -18,6 +18,9 @@ export interface Me {
   email: string;
   roles: string[];
   use_cases: string[];
+  /** The installation's key policy, so a form states what the server enforces (`ADR-0015`). */
+  api_key_default_days?: number;
+  api_key_max_days?: number;
 }
 
 /**
@@ -97,6 +100,10 @@ export interface ApiKey {
   is_active: boolean;
   created_at?: string;
   revoked_at?: string | null;
+  /** When it stops working on its own. `null` means never — the default, and what the
+   *  break-glass credential needs. Expiry and revocation are separate facts on purpose: "it
+   *  lapsed as planned" and "we took it away" are not the same answer to an audit. */
+  expires_at?: string | null;
 }
 
 /** Issue response — the only time the plaintext key is ever returned. */
@@ -105,6 +112,7 @@ export interface IssuedApiKey {
   prefix: string;
   label: string;
   use_case: string;
+  expires_at?: string | null;
 }
 
 export type StepType = 'injection_filter' | 'allow_check' | 'model_route';

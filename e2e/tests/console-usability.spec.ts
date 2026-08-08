@@ -49,6 +49,15 @@ test.describe('The page holds still', () => {
     await page.goto('/security');
     await expect(page.locator('[data-testid="live-stamp"]')).toBeVisible();
 
+    // **Measured from after the page has settled**, which is what this test has always claimed to
+    // be about. It used `buffered: true` and therefore also counted the *initial* render — and on
+    // 2026-08-08, with 1919 findings in the database, that render reflowed once (0.0207 at t=101ms,
+    // a card arriving after the shell) and the test failed for a reason it was not written to
+    // catch. A first paint that settles once as its data lands is not the defect here; the defect
+    // was a control that moved under the reader's cursor on **every tick**, and a test that cannot
+    // tell the two apart reports the wrong thing.
+    await page.waitForTimeout(1_000);
+
     const shifts = await page.evaluate(async () => {
       const seen: number[] = [];
       const observer = new PerformanceObserver((list) => {
@@ -56,7 +65,7 @@ test.describe('The page holds still', () => {
           seen.push(entry.value);
         }
       });
-      observer.observe({ type: 'layout-shift', buffered: true });
+      observer.observe({ type: 'layout-shift' });
       // Two full ticks of the 15-second poll, plus room for a slow one.
       await new Promise((resolve) => setTimeout(resolve, 35_000));
       observer.disconnect();

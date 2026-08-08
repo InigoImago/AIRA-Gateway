@@ -43,7 +43,7 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
   inevitably do when both were written from the same mental model — and line coverage cannot see
   a *missing requirement*: on 2026-08-05 a review found seven real defects behind a green suite at
   99% coverage. So: **prove a test can fail.** Break the property, watch it go red, restore.
-  `make mutants` (`tools/mutation_check.py`) does this for **271 properties** across auth, budgets,
+  `make mutants` (`tools/mutation_check.py`) does this for **291 properties** across auth, budgets,
   pipeline, retention, the management control plane and the gateway's counters; when
   you fix a bug, add the mutation that reintroduces it. Two traps that cost real defects here:
   a stand-in that is more permissive than the thing it replaces (reuse the real method where you
@@ -802,6 +802,66 @@ after destroy because the harness provided the service in the *testing module* w
 provides it on the *component* — `DestroyRef` resolves to whichever injector created it, and an
 environment one outlives every component. **A harness that configures a service differently from
 production tests a different service.** `N24`–`N27`.
+**The security round (`ADR-0015`, `FRD-406`, 2026-08-08) — every finding fixed, nothing taken
+away.** The instruction was to keep the framework's functionality, and that was the harder half:
+the demo, the published demo key, `?key=`, the CLI break-glass key, a laptop's zero-configuration
+start and a useful `/readyz` all had to survive their own fixes. **The one that mattered was found
+by sending a request, not by reading**: the KIRA surface asked `if memberships and header not in
+memberships`, so an **empty** membership list meant "anything goes" rather than "nothing" — a
+caller belonging to no use case could name somebody else's, get a real answer, and have the tokens
+billed to that budget and written into that audit trail. The Gemini surface refused the identical
+request. Cause: **a rule restated by hand on a second surface**, the same shape as `FRD-126`,
+`FRD-206` and `FRD-602`. It is now `use_case_refusal`, returning a *reason* rather than raising, so
+the surfaces differ only in their envelope — and the deliberate exception survives inside it (an
+**unbound** API key is break-glass and stays unrestricted).
+**A convenience default is a production default, one variable away.** `ADR-0007` made Management
+refuse to boot outside `local`; the gateway read `environment` for telemetry and acted on it
+nowhere. Now: open routes, the published Postgres password and OIDC-with-no-audience each stop the
+process, all reasons at once — **environment-shaped rather than stricter defaults**, with
+`AIRA_DEMO_MODE` exempting outright, because a hardening pass that breaks the demo gets reverted.
+Six more of the same character: a credential was kept out of exported spans and written **verbatim
+to the access log** (the more widely readable of the two); **an absent claim is not a claim that
+passed** (PyJWT accepts a token with no `exp` — `exp`/`iat`/`sub` now required, audience required
+by *deployment* so a laptop still works); **the verdict is public, the diagnosis is not** (`/readyz`
+stays unauthenticated for probes, but the body naming hosts, upstreams and fallbacks needs a
+credential); **a control keyed by identity cannot bound a caller who has none** (authentication
+*failures* bounded per address, **counting refusals only**, so a working credential never touches
+the bucket); API keys may state an end date (**NULL means never** — an expiry that cannot be
+omitted is one set to the year 3000); and `create_all` no longer runs beside Alembic, closing the
+hazard `FRD-114` recorded. **`FRD-406` finally does something**: stored payloads are scrubbed of
+credential shapes only — names, customer numbers and prose are *the work*, and a redactor that
+mangles them produces payloads nobody uses and a deployment that turns storage off, which is worse.
+An unusable pattern **stops the gateway** rather than matching nothing (`FRD-125`'s badge-wearing
+absent control), and deployment patterns are **additive**, or the first organisation to name its own
+token format stops redacting Google keys. Two test notes: the redaction requirement is proved twice
+on purpose (class *and* route, the `FRD-124` lesson), and the bound's tests run with `redis_url=""`
+because a Redis left running on the machine still held the bucket from a previous run — a property
+of the process has to be tested as one. `H1`–`H17`; `A4` **re-anchored**.
+**Agents and coding assistants (`FRD-131`–`FRD-133`, 2026-08-08)** — the third named use case, and
+a check against the code rather than the docs: **semantic search and RAG chat already work**
+(embeddings with batching and task types; documents, structured output, streaming — retrieval and
+vector storage are the caller's by `ADR-0013`), and **coding assistants do not work at all**,
+blocked on one field. `tools` is refused with a 400, and an assistant's whole loop *is* tool calling.
+**The refusal is right and its stated reason is wrong**: the code cites `ADR-0013`, which says in
+the same words it has always had that the gateway *may pass a tool definition through* and never
+executes. The real reason was written nowhere — `CanonicalRequest` has no field one could travel in,
+which is a **capability gap, not a boundary**, and the two get different treatment. `ADR-0013` now
+says so, and needed the same clarification for caching: a cache *handle* (`cachedContent`) is
+provider-side state and stays refused; a cache *marker* on content sent in full every time is a
+price, not state. `FRD-131` carries tool calls **per use case, default off** (least privilege: a use
+case that summarises documents has no business declaring functions), with the capability checked
+**per hop** so a fallback skips an incapable candidate rather than returning a 200 the client parses
+as a function call. Two traps recorded before they are hit: Anthropic already implements structured
+output *as* a forced tool call (`FRD-119` §5.5), so tools + schema is refused by name; and OpenAI
+streams a tool call's arguments **fragmented across chunks**. `FRD-132` **measures before choosing a
+surface** — OpenCode against the running gateway, because a contract chosen by reading is one
+maintained forever, and reviving `FRD-106` is now cheap since `FRD-123` built the OpenAI dialect as
+an upstream. `FRD-133` (caching) is **written now and built last by owner decision**, so the
+assistant work stands at full price and the saving comes out of `request_logs`. Two governance
+consequences: an assistant makes **many model calls per human instruction** (the `FRD-125b` shape at
+scale, except the calls are genuinely the caller's), so limits calibrated for a chatbot trip at once;
+and **a tool result is content the model reads** and the injection filter cannot see — `FRD-110`'s
+blind spot one step sharper.
 Next candidates: **`FRD-114`** (model metadata — now also carries publisher + default output cap,
 prerequisite for 110–113 and 119), **`FRD-110`** (documents/images — the widest gap),
 **`FRD-115`/`FRD-119`** (Vertex EU + the Anthropic dialect — required), **`FRD-116`** (Vault),

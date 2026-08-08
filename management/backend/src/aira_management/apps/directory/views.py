@@ -34,8 +34,11 @@ from aira_common.directory import (
     DirectoryUnavailable,
     KeycloakDirectory,
 )
+from aira_common.logging import get_logger
 from aira_management.apps.usecases.models import UseCaseGroupGrant
 from aira_management.rbac import IsUseCaseAdmin
+
+_log = get_logger("aira_management.directory")
 
 
 def _build_directory() -> KeycloakDirectory | None:
@@ -105,6 +108,17 @@ class DirectorySearchView(APIView):
         # real realm it is thousands of rows.
         if len(query) < 2:
             return Response({"results": [], "source": "none", "hint": "Type at least two letters."})
+
+        # A directory search reads other people's names and email addresses. Narrowing *who* may
+        # do it is not available — granting access is a use-case admin's job and they have to be
+        # able to find the person — so the answer is the one this project keeps arriving at: an
+        # action nobody can see is not governed. Walking the alphabet is still possible and is now
+        # a hundred log lines with one username on them.
+        _log.info(
+            "directory.search",
+            actor=request.user.get_username(),
+            query=query,
+        )
 
         directory = _build_directory()
         if directory is not None:

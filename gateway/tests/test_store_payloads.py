@@ -156,3 +156,39 @@ async def test_switching_storage_off_removes_what_was_already_stored(sessionmake
         row = (await session.execute(select(RequestLog))).scalars().one()
     assert row.request_payload is None
     assert row.status == 200  # the record itself survives
+
+
+# ---- redaction, at the route rather than in the class (`FRD-406`, 2026-08-08) ----------------
+#
+# `test_redaction.py` proves the redactor. This proves the *wiring* — the lesson `FRD-124` and the
+# CSV export both recorded on the same day: a requirement exercised only against the class leaves
+# the route undefended, and coverage cannot see the difference.
+
+
+async def test_a_credential_in_a_prompt_does_not_reach_the_stored_row() -> None:
+    key = "AIzaSyD-1234567890abcdefghijklmnopqrstu"
+    app = _app()
+    with TestClient(app) as client:
+        assert (
+            client.post(
+                URL,
+                json={"contents": [{"parts": [{"text": f"curl with {key} please"}]}]},
+            ).status_code
+            == 200
+        )
+        rows = await _logs(app)
+
+    assert len(rows) == 1
+    assert key not in str(rows[0].request_payload)
+    assert "[REDACTED]" in str(rows[0].request_payload)
+
+
+async def test_the_rest_of_the_prompt_is_still_stored() -> None:
+    """A stored payload that has been scrubbed of its content is one nobody reads — which ends
+    with the deployment turning storage off, strictly worse than storing it."""
+    app = _app()
+    with TestClient(app) as client:
+        assert client.post(URL, json=BODY).status_code == 200
+        rows = await _logs(app)
+
+    assert "Personalnummer ist 4711" in str(rows[0].request_payload)

@@ -125,6 +125,51 @@ def redact_query_string(query: str) -> str:
     return "&".join(parts)
 
 
+class AccessLogRedaction(logging.Filter):
+    """Keep credentials out of the *access* log, not only out of exported spans.
+
+    `redact_span_query` has kept `?key=<api key>` out of OpenTelemetry since `ADR-0007`, and the
+    web server's own access log — the one that goes to stdout, is collected by whatever ships
+    container logs, and is readable by everyone who can read logs — recorded the request line
+    verbatim. A Gemini client authenticating the documented way therefore wrote its API key into
+    the log of every request it made. A trace backend is usually the *better*-guarded of the two.
+
+    The filter rewrites the record's arguments rather than the formatted message, because uvicorn
+    formats the line itself and the message does not exist yet when a filter runs. It redacts any
+    string argument that carries a query string, rather than the one positional index uvicorn
+    happens to use today — a filter pinned to `args[2]` is one silently disabled by an upgrade.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if isinstance(args, tuple):
+            record.args = tuple(_redact_arg(arg) for arg in args)
+        elif isinstance(args, dict):
+            record.args = {key: _redact_arg(value) for key, value in args.items()}
+        return True
+
+
+def _redact_arg(value: object) -> object:
+    if not isinstance(value, str) or "?" not in value:
+        return value
+    path, _, query = value.partition("?")
+    return f"{path}?{redact_query_string(query)}"
+
+
+#: The loggers that emit a request line. Named rather than filtered at the root, because a filter
+#: on the root logger does not run for records emitted through a child logger with its own handler
+#: — which is exactly how uvicorn is configured.
+ACCESS_LOGGERS = ("uvicorn.access", "gunicorn.access", "django.server")
+
+
+def install_access_log_redaction() -> None:
+    """Attach :class:`AccessLogRedaction` to the access loggers, once."""
+    for name in ACCESS_LOGGERS:
+        logger = logging.getLogger(name)
+        if not any(isinstance(existing, AccessLogRedaction) for existing in logger.filters):
+            logger.addFilter(AccessLogRedaction())
+
+
 def trace_context_fields() -> dict[str, str]:
     """Return ``trace_id``/``span_id`` (hex) for the current span, if one is active."""
     ctx = trace.get_current_span().get_span_context()

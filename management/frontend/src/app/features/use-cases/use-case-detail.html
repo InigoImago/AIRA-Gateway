@@ -291,6 +291,24 @@
             />
             <span class="field__hint">Helps you tell keys apart later — it is not a secret.</span>
           </div>
+          <div class="field">
+            <label for="key-expiry">Expires after (days)</label>
+            <input
+              id="key-expiry"
+              name="expires_in_days"
+              type="number"
+              min="1"
+              [attr.max]="maxKeyDays()"
+              [ngModel]="keyExpiresInDays()"
+              (ngModelChange)="keyExpiresInDays.set($event)"
+              [placeholder]="defaultKeyDays()"
+              autocomplete="off"
+            />
+            <span class="field__hint">
+              Leave empty for the standard {{ defaultKeyDays() }} days. Keys always expire; the
+              longest this installation allows is {{ maxKeyDays() }} days.
+            </span>
+          </div>
           <button type="submit" class="btn btn--primary" [disabled]="feedback.busy()">
             {{ feedback.busy() ? 'Issuing…' : 'Issue' }}
           </button>
@@ -326,6 +344,7 @@
               <th scope="col">Label</th>
               <th scope="col">Owner</th>
               <th scope="col">Status</th>
+              <th scope="col">Expires</th>
               <th scope="col"><span class="sr-only">Actions</span></th>
             </tr>
           </thead>
@@ -342,6 +361,15 @@
                     <span class="badge badge--success">active</span>
                   } @else {
                     <span class="badge badge--danger">revoked</span>
+                  }
+                </td>
+                <td>
+                  @if (key.expires_at) {
+                    {{ key.expires_at | date: 'yyyy-MM-dd' }}
+                  } @else {
+                    <!-- Issued before keys were bounded. It still works, and saying so plainly is
+                         the point: an unbounded credential nobody can see is one nobody replaces. -->
+                    <span class="badge badge--warning">no end date</span>
                   }
                 </td>
                 <td class="table__actions">
@@ -362,7 +390,7 @@
               </tr>
             } @empty {
               <tr>
-                <td class="table__empty" colspan="5">No keys issued yet.</td>
+                <td class="table__empty" colspan="6">No keys issued yet.</td>
               </tr>
             }
           </tbody>

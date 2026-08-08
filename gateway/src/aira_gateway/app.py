@@ -49,10 +49,11 @@ from aira_gateway.diagnostics import UpstreamProbe
 from aira_gateway.middleware import (
     BodySizeLimitMiddleware,
     RequestTooLarge,
+    SecurityHeadersMiddleware,
     TraceIdMiddleware,
     UseCasePathMiddleware,
 )
-from aira_gateway.persistence.redaction import NoOpRedactor
+from aira_gateway.persistence.redaction import build_redactor
 from aira_gateway.persistence.writer import RequestLogWriter
 from aira_gateway.pipeline.engine import PipelineEngine
 from aira_gateway.pipeline.store import PipelineStore
@@ -65,6 +66,7 @@ from aira_gateway.ratelimit.buckets import (
 from aira_gateway.ratelimit.service import RateLimitService
 from aira_gateway.reporting.service import ReportingService
 from aira_gateway.routes.health import router as health_router
+from aira_gateway.security import enforce_safe_settings
 from aira_gateway.upstreams.base import ProviderRegistry, Upstream
 from aira_gateway.upstreams.foundry import build_foundry_upstreams
 from aira_gateway.upstreams.gemini import build_gemini_upstream
@@ -76,6 +78,9 @@ from aira_gateway.upstreams.vertex import build_vertex_upstreams
 def create_app(settings: GatewaySettings | None = None) -> FastAPI:
     """Create and configure a Gateway FastAPI application."""
     settings = settings or GatewaySettings()
+    # Before anything is built, and before a port is opened: the convenience defaults are safe
+    # locally and are the whole attack surface anywhere else (`gateway/security.py`).
+    enforce_safe_settings(settings)
     configure_logging(settings.log_level, json_output=settings.log_json)
     otel_enabled = configure_observability(
         service_name=settings.app_name,
@@ -100,7 +105,12 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app_: FastAPI) -> AsyncIterator[None]:
-        await create_all(engine)
+        # Only where there are no migrations to contradict. `FRD-114` recorded the hazard from the
+        # other end: an old container's `create_all` **resurrected a table a migration had
+        # dropped**, and then failed every event against it. Alembic owns the schema of any real
+        # database; `create_all` exists for SQLite, which has no migration history to disagree with.
+        if use_sqlite:
+            await create_all(engine)
         if settings.demo_mode:
             async with sessionmaker() as session:
                 await ApiKeyService(session).ensure_demo_key()
@@ -165,7 +175,10 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
     app.state.db_engine = engine
     app.state.db_sessionmaker = sessionmaker
     app.state.oidc_validator = build_oidc_validator(settings)
-    app.state.redactor = NoOpRedactor()
+    # `FRD-406`. Narrow on purpose: credential shapes only, because a redactor that mangles the
+    # business content of a prompt produces a stored payload nobody can use — and the deployment
+    # then switches storage off, which is worse than storing it.
+    app.state.redactor = build_redactor(settings.redact_patterns)
     # The audit write happens after the response goes out (FRD-405 §4.4); CLAUDE.md requires
     # persistence to stay off the request path and this is what makes that true.
     # Detection reads the rows the writer produces (`ADR-0014`): the writer tells it which scopes
@@ -205,6 +218,7 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
     # Outermost, so a response produced by an exception handler still carries it (`FRD-117` FR-4).
     # The requests that most need correlating are the ones that went wrong.
     app.add_middleware(TraceIdMiddleware)
+    app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(UseCasePathMiddleware)
     app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.max_request_bytes)
 

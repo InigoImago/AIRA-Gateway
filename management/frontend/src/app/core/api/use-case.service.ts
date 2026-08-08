@@ -115,8 +115,21 @@ export class UseCaseService {
     return this.http.get<ApiKey[]>(`${this.base}${seg(slug)}/api-keys/`);
   }
 
-  issueApiKey(slug: string, label: string): Observable<IssuedApiKey> {
-    return this.http.post<IssuedApiKey>(`${this.base}${seg(slug)}/api-keys/`, { label });
+  /**
+   * Issue a key. `expiresInDays` is optional and **omitted when absent** rather than sent as null:
+   * a key with no end date is what every key issued before expiry existed carries, and what the
+   * break-glass credential needs.
+   */
+  issueApiKey(
+    slug: string,
+    label: string,
+    expiresInDays?: number | null,
+  ): Observable<IssuedApiKey> {
+    const body: { label: string; expires_in_days?: number } = { label };
+    if (expiresInDays) {
+      body.expires_in_days = expiresInDays;
+    }
+    return this.http.post<IssuedApiKey>(`${this.base}${seg(slug)}/api-keys/`, body);
   }
 
   revokeApiKey(slug: string, prefix: string): Observable<void> {

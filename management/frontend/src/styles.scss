@@ -111,9 +111,24 @@ code,
   color: var(--aira-text-muted);
 }
 /* Visible to screen readers only — used for column headers that are visually empty (an
- * actions column) and for labels a sighted user infers from context. */
+ * actions column) and for labels a sighted user infers from context.
+ *
+ * `left: 0` is load-bearing and was added on 2026-08-08 after a measurement. Without it the
+ * element keeps its **static** position — where it would have sat in normal flow — and since it
+ * is `position: absolute` with no positioned ancestor, that position is relative to the document
+ * rather than to the scrolling container it appears to live in. An "Actions" header in the sixth
+ * column of a table that scrolls inside its card therefore sat at x≈427 *on the document*, and
+ * the whole page gained a horizontal scrollbar: 428px of document in a 360px phone viewport.
+ *
+ * Anchoring it to the left removes the static position from the equation entirely, for every
+ * present and future use. It cannot be fixed by making `.table-wrap` a containing block instead:
+ * that would also clip the info-hint popups, which are absolutely positioned inside table headers
+ * on purpose and are *meant* to escape.
+ *
+ * Nothing moves visually — `clip-path: inset(50%)` hides it wherever it is. */
 .sr-only {
   position: absolute;
+  left: 0;
   width: 1px;
   height: 1px;
   padding: 0;

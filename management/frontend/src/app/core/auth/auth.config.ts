@@ -1,6 +1,24 @@
 import { AuthConfig } from 'angular-oauth2-oidc';
 
 /**
+ * What a deployment may set without rebuilding the bundle (`public/runtime-config.js`).
+ *
+ * The issuer used to be a compiled-in constant, which meant one build per environment and, in
+ * practice, one published build pointing at whichever Keycloak the person who ran the build had
+ * in mind. A misdirected console does not fail — it sends people to a real login page at the
+ * wrong realm.
+ *
+ * The fallbacks are the local Compose stack, so a laptop and the unit tests need no file at all.
+ */
+interface RuntimeConfig {
+  issuer?: string;
+  clientId?: string;
+}
+
+const runtime: RuntimeConfig =
+  (window as unknown as { __AIRA_CONFIG__?: RuntimeConfig }).__AIRA_CONFIG__ ?? {};
+
+/**
  * OIDC client configuration (ADR-0007).
  *
  * `requireHttps: 'remoteOnly'` keeps localhost development on plain HTTP while refusing to run
@@ -9,10 +27,10 @@ import { AuthConfig } from 'angular-oauth2-oidc';
  * 'code'`) and the discovery document is validated strictly against the issuer.
  */
 export const authConfig: AuthConfig = {
-  issuer: 'http://localhost:8080/realms/aira',
+  issuer: runtime.issuer ?? 'http://localhost:8080/realms/aira',
   redirectUri: window.location.origin + '/',
   postLogoutRedirectUri: window.location.origin + '/',
-  clientId: 'aira-gateway',
+  clientId: runtime.clientId ?? 'aira-gateway',
   responseType: 'code',
   // Deliberately **not** `offline_access`.
   //

@@ -25,11 +25,17 @@ def gemini_error_response(
 class GeminiHTTPError(Exception):
     """Raised to return a Gemini-shaped error (e.g. from an auth dependency)."""
 
-    def __init__(self, code: int, message: str, status: str) -> None:
+    def __init__(
+        self, code: int, message: str, status: str, headers: dict[str, str] | None = None
+    ) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
         self.status = status
+        #: Response metadata the caller needs to act on the refusal. A 429 raised from an auth
+        #: dependency has to be able to carry `Retry-After`, or the client's only option is the
+        #: immediate retry the bound exists to stop.
+        self.headers = headers
 
     def to_response(self) -> JSONResponse:
-        return gemini_error_response(self.code, self.message, self.status)
+        return gemini_error_response(self.code, self.message, self.status, self.headers)

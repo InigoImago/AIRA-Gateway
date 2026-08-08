@@ -196,6 +196,61 @@ class BodySizeLimitMiddleware:
         await send({"type": "http.response.body", "body": body})
 
 
+class SecurityHeadersMiddleware:
+    """The response headers a JSON API owes a browser (2026-08-08).
+
+    Management has had these since `ADR-0007` (Django's `SECURE_*` settings); the gateway had
+    none. It is not a browser-facing service, which is the argument for skipping them and is not
+    good enough: the console's dry-run, consumption and reporting views call it **from a browser**
+    through the `/gw` proxy, and a JSON body that a browser is willing to sniff as HTML is the
+    ingredient every reflected-content trick needs.
+
+    Four headers, and deliberately not more:
+
+    - `X-Content-Type-Options: nosniff` — the one that matters here. It stops a browser second-
+      guessing `application/json`, which is what turns a reflected error message into markup.
+    - `Referrer-Policy: no-referrer` — this API is addressed with `?key=<api key>` by every Gemini
+      client. Without it, following any link from a response leaks the credential in `Referer`.
+    - `Cache-Control: no-store` on anything that is not a health probe — responses here contain
+      other people's prompts and other people's spend.
+    - `X-Frame-Options: DENY` — nothing served here is meant to be embedded.
+
+    **No HSTS and no CSP**: TLS is terminated in front of this service (so the header would be
+    ours to guess at rather than to state), and a content policy on a JSON API constrains nothing
+    while reading as a protection that is present.
+
+    Pure ASGI, like `TraceIdMiddleware` above and for the same reason — an error response is still
+    a response.
+    """
+
+    HEADERS: tuple[tuple[bytes, bytes], ...] = (
+        (b"x-content-type-options", b"nosniff"),
+        (b"referrer-policy", b"no-referrer"),
+        (b"x-frame-options", b"DENY"),
+        (b"cache-control", b"no-store"),
+    )
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_headers(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers") or [])
+                present = {name.lower() for name, _ in headers}
+                # A route that has already said something about caching keeps its answer; these
+                # are defaults, not overrides.
+                headers.extend((name, value) for name, value in self.HEADERS if name not in present)
+                message = {**message, "headers": headers}
+            await send(message)
+
+        await self.app(scope, receive, send_with_headers)
+
+
 class TraceIdMiddleware:
     """Put the active trace id on **every** response, including the failures (`FRD-117` FR-4).
 

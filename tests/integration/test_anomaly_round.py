@@ -125,6 +125,24 @@ async def _tick_enforcing(engine: AsyncEngine, slug: str) -> list:
     return await service.tick()
 
 
+def _by_rule(events: list, rule_id: int):
+    """The event **this test's** rule produced.
+
+    Not `events[0]`. A tick evaluates every rule that applies to the scope, and a **global** rule
+    (`use_case IS NULL`) applies to every scope there is — so a shared database accumulates other
+    runs' global rules and one of them answers first. Found on 2026-08-08 with sixteen `alert`
+    rules left behind by earlier e2e runs: three assertions read `alert` where they expected
+    `blocked`, `throttled` and `detected_not_enforced`, and the product was doing exactly the right
+    thing. Latent until there was enough junk, which is the worst kind of test to leave standing.
+    """
+    mine = [event for event in events if getattr(event, "rule_id", None) == rule_id]
+    assert mine, (
+        f"rule {rule_id} produced no finding; the tick returned "
+        f"{[getattr(e, 'rule_name', '?') for e in events]}"
+    )
+    return mine[0]
+
+
 async def _rule_row(engine: AsyncEngine, rule_id: int) -> AnomalyRuleRead:
     async with build_sessionmaker(engine)() as session:
         row = await session.get(AnomalyRuleRead, rule_id)
@@ -1230,7 +1248,7 @@ async def test_g4_a_rule_that_blocks_writes_a_decision_that_the_gateway_then_hon
     fixture,
 ) -> None:
     """The whole chain in one test: traffic, a finding, a written decision, a refused request."""
-    await fixture.rule(
+    rule_id = await fixture.rule(
         kind="refusal_rate",
         threshold=50,
         min_sample=4,
@@ -1243,7 +1261,7 @@ async def test_g4_a_rule_that_blocks_writes_a_decision_that_the_gateway_then_hon
 
     events = await _tick_enforcing(fixture.engine, fixture.slug)
     assert events, "the rule found nothing"
-    assert events[0].action_taken == "blocked"
+    assert _by_rule(events, rule_id).action_taken == "blocked"
 
     written = await fixture.suspensions()
     assert len(written) == 1
@@ -1256,13 +1274,13 @@ async def test_g4_a_rule_that_blocks_writes_a_decision_that_the_gateway_then_hon
 
 
 async def test_g5_a_rule_that_only_alerts_leaves_the_traffic_alone(fixture) -> None:
-    await fixture.rule(kind="refusal_rate", threshold=50, min_sample=4, target="use_case")
+    rule_id = await fixture.rule(kind="refusal_rate", threshold=50, min_sample=4, target="use_case")
     await _seed_rows(fixture.engine, fixture.slug, 9, outcome="rate_limited", status=429)
     await _seed_rows(fixture.engine, fixture.slug, 1)
 
     events = await _tick_enforcing(fixture.engine, fixture.slug)
 
-    assert events[0].action_taken == "alert"
+    assert _by_rule(events, rule_id).action_taken == "alert"
     assert await fixture.suspensions() == []
     async with httpx.AsyncClient(timeout=180.0) as client:
         response = await _generate(client, fixture)
@@ -1270,7 +1288,7 @@ async def test_g5_a_rule_that_only_alerts_leaves_the_traffic_alone(fixture) -> N
 
 
 async def test_g6_a_throttling_rule_writes_its_rate(fixture) -> None:
-    await fixture.rule(
+    rule_id = await fixture.rule(
         kind="refusal_rate",
         threshold=50,
         min_sample=4,
@@ -1284,7 +1302,7 @@ async def test_g6_a_throttling_rule_writes_its_rate(fixture) -> None:
 
     events = await _tick_enforcing(fixture.engine, fixture.slug)
 
-    assert events[0].action_taken == "throttled"
+    assert _by_rule(events, rule_id).action_taken == "throttled"
     assert (await fixture.suspensions())[0]["throttle_rpm"] == 2
 
 
@@ -1302,7 +1320,7 @@ async def test_g7_a_rule_that_cannot_be_carried_out_says_so_on_the_row(fixture, 
 
     events = await _tick_enforcing(fixture.engine, fixture.slug)
 
-    assert events[0].action_taken == "detected_not_enforced"
+    assert _by_rule(events, rule_id).action_taken == "detected_not_enforced"
     assert await fixture.suspensions() == []
 
 

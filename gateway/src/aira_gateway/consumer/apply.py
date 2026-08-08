@@ -6,6 +6,7 @@ replaying a compacted topic) converges to the same state.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import delete, select, update
@@ -191,6 +192,21 @@ async def _remove_member(session: AsyncSession, slug: str, subject: str) -> None
     )
 
 
+def _moment(value: Any) -> datetime | None:
+    """Parse an ISO-8601 instant from an event, or ``None``.
+
+    An unparsable value yields ``None`` rather than raising: the event stream must not stall on one
+    malformed field, and for an *expiry* the failure direction is the safe one only because the
+    key is still revocable by hand. Nothing else in the payload is optional in this way.
+    """
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
 async def _upsert_api_key(session: AsyncSession, payload: dict[str, Any]) -> None:
     """Upsert a Management-issued API key into the read-model, keyed by prefix (FRD-205).
 
@@ -209,6 +225,7 @@ async def _upsert_api_key(session: AsyncSession, payload: dict[str, Any]) -> Non
                 use_case=payload.get("use_case"),
                 label=payload.get("label"),
                 is_active=True,
+                expires_at=_moment(payload.get("expires_at")),
             )
         )
     else:
@@ -216,6 +233,7 @@ async def _upsert_api_key(session: AsyncSession, payload: dict[str, Any]) -> Non
         record.subject = payload.get("subject", "")
         record.use_case = payload.get("use_case")
         record.label = payload.get("label")
+        record.expires_at = _moment(payload.get("expires_at"))
 
 
 async def _set_api_key_active(session: AsyncSession, prefix: str, *, active: bool) -> None:

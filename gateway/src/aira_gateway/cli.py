@@ -20,13 +20,13 @@ def _use_sqlite(settings: GatewaySettings) -> bool:
     return settings.test_database or ("pytest" in sys.modules)
 
 
-async def _create(subject: str, label: str | None) -> tuple[str, str]:
+async def _create(subject: str, label: str | None, days: int | None) -> tuple[str, str]:
     settings = GatewaySettings()
     engine = build_engine(settings.database_url(use_sqlite=_use_sqlite(settings)))
     await create_all(engine)
     try:
         async with build_sessionmaker(engine)() as session:
-            full, record = await ApiKeyService(session).create(subject, label)
+            full, record = await ApiKeyService(session).create(subject, label, expires_in_days=days)
             return full, record.prefix
     finally:
         await engine.dispose()
@@ -51,6 +51,14 @@ def main(argv: list[str] | None = None) -> int:
     create = api_key.add_parser("create")
     create.add_argument("--subject", required=True)
     create.add_argument("--label", default=None)
+    # Bounded like every key Management issues. There is deliberately no `--never-expires`: a
+    # credential minted by hand during an incident is the one nobody remembers to take away.
+    create.add_argument(
+        "--days",
+        type=int,
+        default=None,
+        help="Lifetime in days (default: AIRA_API_KEY_DEFAULT_DAYS).",
+    )
 
     revoke = api_key.add_parser("revoke")
     revoke.add_argument("--prefix", required=True)
@@ -58,8 +66,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.action == "create":
-        full, prefix = asyncio.run(_create(args.subject, args.label))
-        print(f"API key created (prefix={prefix}). Shown once — store it now:\n{full}")
+        full, prefix = asyncio.run(_create(args.subject, args.label, args.days))
+        days = args.days if args.days is not None else GatewaySettings().api_key_default_days
+        print(f"API key created (prefix={prefix}), valid for {days} days.")
+        print(f"Shown once — store it now:\n{full}")
         return 0
 
     revoked = asyncio.run(_revoke(args.prefix))

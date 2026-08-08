@@ -3502,3 +3502,196 @@ options weighed, and the trade-offs.
 - Created **`CLAUDE.md`** (project guidance) and set up **`docs/adr/`** (ADR process + first two ADRs).
 - **Next:** write Phase 0 FRDs (`FRD-000` foundation, `FRD-001` observability, `FRD-002` seed/demo),
   then begin implementation of Phase 0 (Foundation & Infra).
+
+## 2026-08-08 — The security round: every finding fixed, nothing taken away
+
+A full read of the code after four weeks on authentication, roles and group grants
+(`ADR-0015`, `FRD-406`). The instruction was to fix every finding **and keep the framework's
+functionality**, which turned out to be the harder half and the more interesting one: the demo,
+the published demo key, `?key=` authentication, the CLI break-glass key, a laptop's
+zero-configuration start and a useful `/readyz` all had to survive their own fixes.
+
+**The one that mattered was found by sending a request, not by reading.** The KIRA surface asked
+`if memberships and header not in memberships` — so an **empty** membership list meant "anything
+goes" rather than "nothing". A caller belonging to no use case at all could send
+`X-AIRA-Use-Case: somebody-elses`, get a real answer, and have the tokens billed to that use
+case's budget and written into its audit trail. The Gemini surface refused the identical request
+in both of its selector forms. Proven live; `request_logs` showed the row, attributed to the
+victim. Cause: the rule existed correctly in one place and was **restated by hand** on the second
+surface — the same shape as `FRD-126`'s pre-dispatch order, `FRD-206`'s permission predicates and
+`FRD-602`'s export scope. It now lives in `use_case_refusal`, returns a *reason* rather than
+raising, and each surface wraps it in its own envelope, which is the only thing that should
+differ. The deliberate exception survives inside it: an **unbound** API key stays unrestricted,
+because break-glass exists for the moment the control plane is gone.
+
+**A convenience default is a production default, one variable away.** `ADR-0007` made Management
+refuse to boot outside `local` with development defaults; the gateway — which serves the traffic,
+holds the upstream credentials and writes the audit trail — read `environment` for telemetry and
+acted on it nowhere. `aira_gateway.security` now mirrors it: open routes, the published Postgres
+password, and OIDC with no audience each stop the process, all reasons named at once. The check is
+**environment-shaped rather than stricter defaults**, and `AIRA_DEMO_MODE` exempts outright — a
+hardening pass that breaks the demo is a hardening pass that gets reverted.
+
+Six more, each with the same character — a rule that was right in one place and absent in another:
+
+- **A credential was redacted in the trace backend and written verbatim to the access log.**
+  `?key=` has been kept out of exported spans since `ADR-0007`; the web server's own request line
+  went to stdout intact, which is the *more* widely readable of the two. A logging filter now
+  rewrites the arguments (not the formatted message — uvicorn formats after filters run), and
+  deliberately redacts any string argument carrying a query rather than the one positional index
+  uvicorn happens to use today.
+- **A claim that is absent is not a claim that passed.** PyJWT verifies `exp` when present and
+  accepts a token carrying none — a credential that never expired. `exp`, `iat` and `sub` are now
+  required. The audience stays optional in the verifier and **required by deployment**, so a
+  laptop keeps working against a realm with no audience mapper.
+- **The verdict is public; the diagnosis is not.** `/readyz` stays unauthenticated (a probe
+  carries no credential, and one answering 401 reports every pod unhealthy), but the body naming
+  the database host, Kafka host, every upstream and the current fallbacks now needs an
+  authenticated caller. Locally, everything is shown.
+- **A control that needs a verified identity cannot bound a caller who has none.** Every limit
+  `FRD-405` built is keyed by use case or member. Authentication *failures* are now bounded per
+  source address — **counting refusals only**, so a working credential never touches the bucket
+  and the bound can be low enough to be worth having. Behind an untrusted proxy the whole
+  deployment shares one bucket, and that is tolerable *because* of the refusals-only rule: the
+  worst case is somebody else's typo answered 429 instead of 401.
+- **A key with no end date has to be inventoried.** First shipped as an *optional* expiry, on the
+  argument that "an expiry which cannot be omitted is one somebody sets to the year 3000" — and
+  that argument is about the **maximum**, not the default. Corrected the same day: every key is
+  bounded, `AIRA_API_KEY_DEFAULT_DAYS` (30) applies when nobody names one and
+  `AIRA_API_KEY_MAX_DAYS` (180) is refused past rather than truncated. Neither plane can mint an
+  unbounded key, the break-glass CLI included — a credential minted by hand during an incident is
+  precisely the one that outlives its reason. Keys issued before the change keep working and are
+  marked "no end date" in the console: expiring them would be an outage chosen on the operator's
+  behalf, and a silent one.
+- **`create_all` beside Alembic** let a partially-deployed stack undo a migration (`FRD-114`
+  recorded it happening). It now runs for SQLite only, and the consumer — which is where it bit —
+  does not call it at all, since it already waits for `alembic upgrade head`.
+
+**`FRD-406` finally does something.** The `Redactor` hook has existed since Phase 1 and was a
+no-op, so a stored prompt was a verbatim copy of whatever a caller sent. The redaction is
+deliberately **narrow**: credential shapes only (AIRA keys, `AIza…`, `sk-…`, `Authorization:`,
+JWTs, PEM private key blocks), because names, customer numbers and prose are *the work* — a
+redactor that mangles them produces payloads nobody uses, and the deployment then switches storage
+off entirely, which is strictly worse than storing them. An unusable pattern **stops the gateway**
+rather than silently matching nothing, which is the `FRD-125` failure exactly: an absent control
+wearing a present one's badge. Deployment patterns are **additive**, never replacing, or the first
+organisation to name its own token format stops redacting Google keys.
+
+Two test notes. The redaction requirement is proved twice on purpose — once against the class and
+once by posting a prompt at the route and reading the stored row back, because `FRD-124` and the
+CSV export both recorded on one day that a requirement exercised only against the class leaves the
+wiring undefended and coverage cannot see the difference. And the authentication-bound tests run
+with `redis_url=""`: the first version failed at the *first* request because a Redis left running
+on the machine still held the bucket from a previous run — a bound that is a property of the
+process must be tested as one.
+
+Mutations `H1`–`H20` (the `S` prefix was taken; the harness refuses a duplicate id, which is how
+that was caught). Two self-inflicted findings worth recording, both about *where* a thing was
+written: the new mutation block was inserted into `survivors = [...]` in `main()` instead of into
+`MUTATIONS`, so all seventeen were reported "undefended" **by construction** and none had ever
+run; and a `validate_<field>` method does not execute for a field the caller **omitted**, which is
+exactly the case that had to end with a date — every existing test issued an unbounded key straight
+past it. Both were caught by a suite that disagreed with the code, which is the point of having
+one. `A4` was **re-anchored**: adding the required-claims list turned the JWT
+options into a multi-line dict, and a mutation whose anchor has moved protects nothing.
+
+## 2026-08-08 — Agents and coding assistants: the gap, measured against the code
+
+The named use cases are a RAG chatbot, semantic search over embeddings, and **connecting coding
+assistants such as OpenCode**. Checked against the code rather than the documentation, two of the
+three already work and the third does not work at all.
+
+- **Semantic search**: covered. `:embedContent` with batching and task types (`FRD-113`), budgeted,
+  priced, audited. Vector storage is the caller's by `ADR-0013`.
+- **RAG chat**: covered for the generation half — documents (`FRD-110`), structured output,
+  streaming, `systemInstruction`. Retrieval is the caller's.
+- **Coding assistants**: blocked on one field. `tools` and `toolConfig` are refused with a **400**,
+  and an assistant's entire loop *is* tool calling — it asks which file to read, gets a function
+  call rather than prose, executes it itself, and sends the result back as the next turn.
+
+**The refusal is right and its stated reason is wrong**, which is the finding worth keeping.
+`api/gemini/schemas.py` cites `ADR-0013` — but that ADR says, in the same words it has always had:
+*"The gateway may pass a tool definition through … but never executes anything."* Passthrough is
+explicitly in scope; execution is not. The message conflates them, so a reader arriving at that
+error concludes the whole area is closed by decision. The real reason is different and was written
+down nowhere: **`CanonicalRequest` has no field a tool declaration could travel in.** That is a
+capability gap, and a capability gap gets built; a boundary does not. `ADR-0013` now says so
+explicitly, and the same clarification was needed for caching: a cache *handle* (Google's
+`cachedContent`) is provider-side state and stays refused, while a cache *marker* on content the
+caller sends in full every time leaves the request self-contained and is a price, not a boundary.
+
+Three FRDs, in an order the owner set:
+
+- **`FRD-131`** — tool calling carried through the canonical core, never executed. **Per use case,
+  default off**: a use case that summarises documents has no business declaring functions, and the
+  smallest set that needs it is the right set to have it. Catalog capability, checked **per hop** so
+  a fallback skips an incapable candidate rather than answering without tools — a 200 that a client
+  will then parse as a function call. Two traps written down before they are hit: on Anthropic,
+  structured output is *already implemented as a forced tool call* (`FRD-119` §5.5), so tools plus a
+  response schema is refused by name rather than silently losing one; and in the OpenAI dialect a
+  tool call's arguments arrive **fragmented across chunks**, so a naive mapper emits several half
+  calls.
+- **`FRD-132`** — which surface an assistant needs, **measured before it is chosen**. Stage A points
+  OpenCode at the running gateway and records what actually breaks; stage B builds a surface only if
+  stage A says so. Reviving `FRD-106` is much cheaper than when it was withdrawn, because
+  `FRD-123` built the OpenAI dialect as an upstream and a surface is largely its inverse. This
+  project has repeatedly learned that a contract chosen by reading is a contract maintained forever.
+- **`FRD-133`** — prompt caching, written now and **built last, by owner decision**: the assistant
+  work must stand at full price so the saving is decided from `request_logs` rather than from an
+  estimate. The FRD keeps open the possibility that the measurement says don't build it.
+
+Two governance consequences recorded before they surprise anybody: an assistant makes **many model
+calls per human instruction** — the `FRD-125b` shape at scale, except the calls are genuinely the
+caller's — so limits and budgets calibrated for a chatbot trip immediately and "requests" means
+something different on the reporting screen; and **a tool result is content the model reads**, which
+the injection filter cannot see. Same blind spot `FRD-110` recorded for PDFs, one step sharper,
+because the content comes from the caller's own machine and the model is about to propose the next
+command.
+
+**Five stale tests, each stale for a different reason, and each found by a layer above the one
+that could have prevented it.**
+
+*A shared database accumulates other people's global rules.* Three anomaly tests asserted on
+`events[0]` after a tick. A tick evaluates every rule that applies to the scope — and a **global**
+rule (`use_case IS NULL`) applies to every scope there is. Sixteen `alert` rules left behind by
+earlier e2e runs meant `events[0]` was somebody else's finding, so the assertions read `alert`
+where they expected `blocked`, `throttled` and `detected_not_enforced` while the product was doing
+exactly the right thing. They now select **their own** `rule_id`. Latent since the rules were
+written, visible only once enough junk had piled up — the worst kind of test to leave standing,
+because it fails long after the change that exposed it.
+
+*A test I wrote hours earlier and never ran.* The e2e case for key expiry asserted that leaving the
+lifetime empty produces a key showing "never" — true when I wrote it, false the moment the bound
+landed, and I updated the unit and API tests without touching it. It now asserts the opposite,
+plus that the form states the policy the server enforces. **A test that has never been executed is
+not a test**, and this one was written, committed to a file, and left unrun until the suite was
+finally invoked.
+
+*A one-line CSS rule whose effect nobody had measured.* The e2e layout suite failed on the
+API-keys tab at phone width: **428px of document in a 360px viewport**. The offender turned out to
+be `.sr-only` — the visually-hidden "Actions" column header. It is `position: absolute` with **no
+positioned ancestor**, so it keeps its *static* position relative to the **document** rather than
+to the card that scrolls it. In a six-column table that sat at x≈427, and the whole page grew a
+horizontal scrollbar. My new "Expires" column is what pushed it over the edge; the rule had been
+wrong since it was written, and the rate-limits tab was quietly 8px over as well — never seen,
+because the loop failed on the keys tab first and stopped.
+
+Fixed with `left: 0` on `.sr-only`, which removes the static position from the equation for every
+present and future use. **Not** by making `.table-wrap` a containing block: that would also clip
+the info-hint popups, which are absolutely positioned inside table headers on purpose and are
+*meant* to escape. Nothing moves visually — `clip-path: inset(50%)` hides the element wherever it
+sits. Every detail tab now measures exactly 360.
+
+*And a test that was measuring more than it claimed.* `a live view refreshes without moving
+anything` observed layout shifts with `buffered: true`, so it counted the **initial render** as
+well as the refresh ticks it was written for. With 1919 findings in the database that render
+reflows once — 0.0207 at t=101ms, a card arriving after the shell, which is ordinary for a
+data-driven page and is not a control moving under the reader's cursor. Measured, then narrowed to
+what the name promises: shifts *after* the page has settled, still required to be exactly zero.
+
+**Also fixed:** `test_management_api.py` scanned the use-case list as a plain array and failed after
+the rebuild — server paging (`FRD-208`) had changed the body to `{count, …, results}` the same week,
+and the integration layer is not part of `make ci`'s hermetic half, so nothing had told it. It now
+**searches** rather than scanning, which it needed anyway: with hundreds of use cases in that
+database, page one would not have contained a slug created a second earlier however the body were
+shaped. The e2e round hit the identical trap with `ensureUseCase` on the same day.

@@ -121,10 +121,11 @@ graph LR
 ```
 
 A green test proves the code and the test agree — which they inevitably do when both came from the
-same idea. So each property is broken on purpose and the tests are required to notice: **271
+same idea. So each property is broken on purpose and the tests are required to notice: **291
 properties** are guarded that way. The layers above unit exist because each has caught defects the
-one below structurally could not — most recently, five defects that 251 mutation properties and a
-green gate all missed. → [`docs/TESTING.md`](docs/TESTING.md)
+one below structurally could not — most recently a use-case bypass on one of the two API surfaces
+that 271 mutation properties, a green gate and three other layers all missed, and that a single
+request against the running stack made obvious. → [`docs/TESTING.md`](docs/TESTING.md)
 
 Conventions and current status: [`CLAUDE.md`](CLAUDE.md).
 
@@ -142,7 +143,8 @@ response with a kill switch, its console, and a per-use-case request view.
 Phase 5 is **not finished**: alert *delivery* (mail, webhook) is not built — the console is where a
 finding is seen, not where it is sent — and model smoke tests (`FRD-504`) are not built.
 
-**Known gaps, stated rather than implied** — content redaction (`FRD-406`), alert delivery,
+**Known gaps, stated rather than implied** — redaction of *personal data* in stored payloads
+(`FRD-406` masks credentials; PII is a deliberate non-goal), alert delivery,
 model smoke tests (`FRD-504`), Foundry against a real Azure subscription, and
 pagination. Each with its consequences: [`docs/GAP-ANALYSIS.md`](docs/GAP-ANALYSIS.md).
 

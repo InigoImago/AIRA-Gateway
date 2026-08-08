@@ -27,6 +27,11 @@
                form-action 'self'"
     />
     <link rel="icon" type="image/x-icon" href="favicon.ico" />
+    <!--
+      Deployment-time configuration, loaded before the bundle. Replaced per environment without a
+      rebuild; see public/runtime-config.js. Same-origin, so the CSP above already allows it.
+    -->
+    <script src="runtime-config.js"></script>
   </head>
   <body>
     <app-root></app-root>

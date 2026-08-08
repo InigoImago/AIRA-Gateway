@@ -79,10 +79,17 @@ async def test_oversight_sees_a_use_case_it_did_not_create(
         seen_by_governance = await client.get(
             f"/api/v1/use-cases/{slug}/", headers=_auth(governance_token)
         )
-        listed = await client.get("/api/v1/use-cases/", headers=_auth(governance_token))
+        # **Searched, not scanned.** Two reasons, and the second is the one that bites: the list
+        # has been server-paged since `FRD-208`, so the body is `{count, page, …, results}` and
+        # not a list — and this database holds hundreds of use cases, so page one would not
+        # contain a slug created a second ago however the body were shaped. The e2e round hit the
+        # identical trap with `ensureUseCase` on the same day.
+        listed = await client.get(
+            "/api/v1/use-cases/", params={"q": slug}, headers=_auth(governance_token)
+        )
 
     assert seen_by_governance.status_code == 200
-    slugs = [item["slug"] for item in listed.json()]
+    slugs = [item["slug"] for item in listed.json()["results"]]
     assert slug in slugs
 
 

@@ -44,6 +44,10 @@ class RateLimitService:
     ) -> None:
         self._sessionmaker = sessionmaker
         self._bucket = bucket
+        #: Read by the pre-authentication bound (`auth/attempts.py`), which needs the same bucket
+        #: implementation — and therefore the same Redis-or-per-instance degradation — without
+        #: needing a configured limit record to look up.
+        self.bucket = bucket
         self._enforce = enforce
         # Injectable so the cache's *expiry* can be tested rather than only its manual
         # invalidation — a TTL nothing ever crosses is a TTL nothing tests.
