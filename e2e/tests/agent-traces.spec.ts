@@ -18,7 +18,10 @@ test.describe('Traces — the controls an investigation reaches for', () => {
      * installation with whatever happened to arrive. The `FRD-208` lesson, applied to the filter
      * this one added.
      */
-    await login(page, USERS.itSecurity);
+    // A use-case administrator, because these two filters are everybody's. IT Security cannot
+    // *create* a use case — an authority it does not have, and the console correctly does not
+    // offer it — so the incident case below borrows one instead.
+    await login(page, USERS.useCaseAdmin);
     const slug = await createUseCase(page, uniqueSlug('traces'), 'Trace filters');
 
     await page.goto(`/use-cases/${slug}?tab=traces`);
@@ -45,20 +48,37 @@ test.describe('Traces — the controls an investigation reaches for', () => {
      * case's own members need. The server decides — the console only has to stop promising it, or
      * it is `FRD-206`'s defect again: a control that 403s the moment it is used.
      */
-    await login(page, USERS.itSecurity);
-    await page.goto('/security');
-    await expect(page.getByRole('heading', { name: /security/i })).toBeVisible();
-
-    const slug = await createUseCase(page, uniqueSlug('addr'), 'Address column');
-    await page.goto(`/use-cases/${slug}?tab=traces`);
-    await expect(page.getByTestId('trace-source-ip')).toBeVisible();
-
-    // The same screen, as somebody whose role is running the use case rather than policing it.
-    await page.context().clearCookies();
+    // Created by the role that may create one, and read by the role that may investigate. IT
+    // Security sees every use case without being a member of any — that is what oversight is.
     await login(page, USERS.useCaseAdmin);
+    const slug = await createUseCase(page, uniqueSlug('addr'), 'Address column');
+
     await page.goto(`/use-cases/${slug}?tab=traces`);
     await expect(page.getByTestId('tools-only')).toBeVisible();
     await expect(page.getByTestId('trace-source-ip')).toHaveCount(0);
+
+    // The same screen, as IT Security. A **fresh context**, not `clearCookies()`: Keycloak's SSO
+    // session lives in its own cookie jar, so a second login in this one would silently continue
+    // as the first user — and the assertion would then be about the wrong person entirely.
+    const investigator = await page.context().browser()!.newContext();
+    const investigatorPage = await investigator.newPage();
+    await login(investigatorPage, USERS.security);
+    await investigatorPage.goto(`/use-cases/${slug}?tab=traces`);
+    await expect(investigatorPage.getByTestId('trace-source-ip')).toBeVisible();
+
+    // …and the row that gained a field still reads as one row. `console-usability` measures this
+    // as `it-steuerung`, who is shown five controls; IT Security is shown six, so the widest case
+    // is the one no other test covers. Adding two fields to that row is exactly how `FRD-207`'s
+    // finding came back the first time.
+    const offset = await investigatorPage.evaluate(() => {
+      const box = (selector: string) => document.querySelector(selector)!.getBoundingClientRect();
+      const check = box('[data-testid="refusals-only"]');
+      const select = box('#trace-outcome');
+      return Math.abs(check.top + check.height / 2 - (select.top + select.height / 2));
+    });
+    expect(offset).toBeLessThan(4);
+
+    await investigator.close();
   });
 });
 

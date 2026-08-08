@@ -838,6 +838,13 @@ fieldset.bare {
 .filter-row .checkline {
   padding-bottom: 0.55rem;
 }
+/* A filter field is as wide as what it holds — a key prefix and an address are short. Sized so
+   the row still fits on one line: an input at its default width pushed the outcome selector onto
+   a second line, which puts a control and the checkbox it is read beside 80px apart vertically.
+   That is the `FRD-207` finding, reintroduced by adding two fields to a row that had two. */
+.filter-row .field--narrow input {
+  width: 9.5rem;
+}
 
 /* ---- the "i" that carries the rest of a sentence ---------------------------------- */
 

@@ -37,6 +37,13 @@
     is read as a pair with. This aligns on the bottom, where the controls are, and both items
     carry a heading so the top line matches too.
   -->
+  <!--
+    Order matters here, not only content. Six controls do not fit on one line, so the row wraps —
+    and where it wraps is the whole question: a checkbox and the selector it is read beside must
+    not end up 80px apart on different lines (`FRD-207`). The three checkboxes and the outcome
+    selector are one group and stay together; the two lookup fields are the second and wrap as a
+    pair. A seventh control goes in the second group, never between the first one's members.
+  -->
   <div class="filter-row" style="margin-top: 0.75rem">
     <label class="checkline">
       <input
@@ -66,6 +73,20 @@
       Only my requests
     </label>
     <div class="field">
+      <label for="trace-outcome">Outcome</label>
+      <select
+        id="trace-outcome"
+        name="outcome"
+        [ngModel]="outcome()"
+        (ngModelChange)="setOutcome($event)"
+      >
+        <option value="">any</option>
+        @for (value of outcomes; track value) {
+          <option [value]="value">{{ value }}</option>
+        }
+      </select>
+    </div>
+    <div class="field field--narrow">
       <label for="trace-credential">API key</label>
       <input
         id="trace-credential"
@@ -82,7 +103,7 @@
         members need — the server answers `403` for anyone else, so offering the field to them
         would be `FRD-206`'s defect: a control that refuses the moment it is used.
       -->
-      <div class="field">
+      <div class="field field--narrow">
         <label for="trace-source-ip">
           Source address
           <app-info-hint
@@ -102,20 +123,6 @@
         />
       </div>
     }
-    <div class="field">
-      <label for="trace-outcome">Outcome</label>
-      <select
-        id="trace-outcome"
-        name="outcome"
-        [ngModel]="outcome()"
-        (ngModelChange)="setOutcome($event)"
-      >
-        <option value="">any</option>
-        @for (value of outcomes; track value) {
-          <option [value]="value">{{ value }}</option>
-        }
-      </select>
-    </div>
   </div>
 
   @if (loading()) {
