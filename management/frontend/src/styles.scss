@@ -342,6 +342,10 @@ $field-label-gap: 0.3rem;
   justify-content: flex-end;
   align-items: center;
   gap: 0.4rem;
+  /* `.actions` wraps by default, which is right in a form row and wrong in a table cell: the
+   * column is only as wide as its content, so "Edit" and "Remove" wrap onto two lines and the row
+   * grows to hold them. The cell already refuses to wrap its text; this makes its buttons agree. */
+  flex-wrap: nowrap;
 }
 .table th {
   font-size: 0.75rem;

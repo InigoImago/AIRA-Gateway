@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from django.db import transaction
+from django.db.models import QuerySet
 from rest_framework import status, viewsets
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
@@ -61,6 +62,19 @@ class ModelViewSet(viewsets.ModelViewSet[Model]):
     queryset = Model.objects.all()
     lookup_field = "name"
     lookup_value_regex = "[^/]+"
+
+    # Deliberately **not** paged, and this is the decision rather than an omission.
+    #
+    # The catalog is bounded by how many models an organisation has contracted — tens, not
+    # thousands — and two of the console's warnings ("N models have no price on file", "N have no
+    # capability declaration") are counts over the *whole* catalog. Paging it would turn those into
+    # "N on this page", which is a figure that means nothing. The console searches and pages it in
+    # the browser instead, which it can honestly do because it has the whole thing.
+    #
+    # `/api/v1/use-cases/` is the opposite case and is paged at the server: unbounded, and its
+    # serializer computes object-level permissions per row.
+    def get_queryset(self) -> QuerySet[Model]:
+        return Model.objects.all().order_by("name")
 
     def get_permissions(self) -> list[Any]:
         if self.action in ("list", "retrieve"):

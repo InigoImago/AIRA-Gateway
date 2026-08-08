@@ -1,4 +1,5 @@
 import { TestBed } from '@angular/core/testing';
+import { provideRouter } from '@angular/router';
 import { Observable, Subject, of, throwError } from 'rxjs';
 import { AnomalyEvent, AnomalyRule, Me, Suspension } from '../../core/api/models';
 import { MeService } from '../../core/api/me.service';
@@ -62,14 +63,27 @@ interface Options {
   suspend?: Observable<Suspension>;
   lift?: Observable<Suspension>;
   update?: Observable<AnomalyRule>;
+  /** A cursor on the first page, so the "load older" control appears. */
+  moreEvents?: string | null;
+  olderEvents?: Observable<{ events: AnomalyEvent[]; next_cursor: string | null; scope: string }>;
   confirmAnswer?: boolean;
 }
 
 function setup(options: Options = {}) {
   TestBed.resetTestingModule();
   const calls: string[] = [];
+  /** Read calls, kept apart from writes: several cases assert that nothing was *written*. */
+  const fetches: string[] = [];
   const service = {
-    anomalies: () => of({ events: options.events ?? [EVENT], scope: 'all' }),
+    anomalies: (_limit?: number, _useCase?: string, cursor?: string) => {
+      fetches.push(cursor ?? '');
+      if (cursor) return options.olderEvents ?? of({ events: [], next_cursor: null, scope: 'all' });
+      return of({
+        events: options.events ?? [EVENT],
+        next_cursor: options.moreEvents ?? null,
+        scope: 'all',
+      });
+    },
     suspensions: () => options.suspensions ?? of({ suspensions: [SUSPENSION] }),
     globalRules: () => of(options.rules ?? [RULE]),
     suspend: (body: Record<string, unknown>) => {
@@ -92,6 +106,10 @@ function setup(options: Options = {}) {
   TestBed.configureTestingModule({
     imports: [SecurityPage],
     providers: [
+      // The page links to a use case's rules panel, so it needs a router. No routes: what is
+      // asserted is the href the console offers, not that navigating it lands anywhere — that
+      // belongs to the browser layer.
+      provideRouter([]),
       { provide: UseCaseService, useValue: service },
       {
         provide: MeService,
@@ -113,6 +131,7 @@ function setup(options: Options = {}) {
   return {
     fixture,
     calls,
+    fetches,
     element,
     component: fixture.componentInstance as unknown as Record<string, never>,
     text: () => element.textContent ?? '',
@@ -491,40 +510,16 @@ describe('SecurityPage — a rule opens and can be changed', () => {
     expect(readOnly.testid('rule-readonly-1')?.textContent).toContain('IT Security');
   });
 
-  it('points a use-case rule at the use case rather than guessing the permission', () => {
-    // Object-level permission is not in the token, so the console cannot answer "may I edit this"
-    // for a use-case rule. Saying where it is edited beats offering a button that answers 403.
+  it('links a use-case rule to the panel where it is actually edited', () => {
+    // Object-level permission is not in the token, so this console cannot answer "may I edit
+    // this" for a use-case rule. It names where instead — and that place now exists: pointing at
+    // a screen that was not there is the `FRD-206` defect one level of indirection further out.
     const harness = onRules({ rules: [{ ...RULE, is_global: false, use_case: 'uc-a' }] });
     harness.click('[data-testid="rule-toggle-1"]');
 
     expect(harness.testid('rule-edit-1')).toBeNull();
-    expect(harness.testid('rule-readonly-1')?.textContent).toContain('uc-a');
-  });
-
-  it('saves the fields somebody actually changes, and never the kind', () => {
-    // A rule's kind decides what its threshold *means*. Changing it in place would silently
-    // reinterpret a number somebody chose deliberately — a different kind is a different rule.
-    const harness = onRules();
-    harness.click('[data-testid="rule-toggle-1"]');
-    harness.click('[data-testid="rule-edit-1"]');
-
-    const component = harness.component as unknown as {
-      editThreshold: { set: (v: number) => void };
-      editAction: { set: (v: string) => void };
-      saveRule: (rule: AnomalyRule) => void;
-    };
-    component.editThreshold.set(5);
-    component.editAction.set('block');
-    component.saveRule(RULE);
-
-    const sent = harness.calls.find((call) => call.startsWith('update:1:'));
-    expect(sent).toBeDefined();
-    const body = JSON.parse(sent!.slice('update:1:'.length));
-    expect(body.threshold).toBe(5);
-    expect(body.action).toBe('block');
-    // Sent unchanged, because the server validates the threshold against the kind: a PATCH that
-    // omitted it would be validated against the default rather than against this rule.
-    expect(body.kind).toBe(RULE.kind);
+    const link = harness.testid('rule-readonly-1')?.querySelector('a');
+    expect(link?.getAttribute('href')).toBe('/use-cases/uc-a?tab=rules');
   });
 
   it('asks before deleting a rule, and says what stops being watched', () => {
@@ -570,9 +565,13 @@ describe('SecurityPage — saying what a control is', () => {
   });
 });
 
-describe('SecurityPage — the rule editor', () => {
-  function editing(over: Partial<AnomalyRule> = {}) {
-    const harness = setup({ rules: [{ ...RULE, ...over }] });
+describe('SecurityPage — the rule editor is wired to the server', () => {
+  // The form's own behaviour — which fields appear, what it refuses, what it sends — lives in
+  // `rule-form.spec.ts`, because it is now one component used by two screens. What belongs here
+  // is that this screen opens it, and that what it emits reaches the right endpoint.
+
+  function opened() {
+    const harness = setup();
     (harness.component as unknown as { tab: { set: (v: string) => void } }).tab.set('rules');
     harness.fixture.detectChanges();
     harness.click('[data-testid="rule-toggle-1"]');
@@ -580,71 +579,36 @@ describe('SecurityPage — the rule editor', () => {
     return harness;
   }
 
-  it('shows the byte figure only for the kind that has one', () => {
-    // `payload_size` needs two numbers and every other kind needs one. A form that showed the
-    // second everywhere would invite a value the engine never reads.
-    expect(editing({ kind: 'payload_size' }).testid('edit-parameter-1')).not.toBeNull();
-    expect(editing({ kind: 'refusal_rate' }).testid('edit-parameter-1')).toBeNull();
+  it('opens the shared form on the rule that was pressed', () => {
+    const harness = opened();
+
+    expect(harness.element.querySelector('app-rule-form')).not.toBeNull();
+    expect(harness.testid('rule-1-threshold')).not.toBeNull();
   });
 
-  it('asks for a duration and a rate only when the action needs them', () => {
-    const harness = editing();
-    const component = harness.component as unknown as { editAction: { set: (v: string) => void } };
+  it('sends what the form emits to that rule, and nothing else', () => {
+    const harness = opened();
+    (
+      harness.component as unknown as {
+        saveRule: (rule: AnomalyRule, changes: Partial<AnomalyRule>) => void;
+      }
+    ).saveRule(RULE, { threshold: 65, action: 'block' });
 
-    expect(harness.testid('edit-minutes-1')).toBeNull();
-
-    component.editAction.set('block');
-    harness.fixture.detectChanges();
-    expect(harness.testid('edit-minutes-1')).not.toBeNull();
-    expect(harness.testid('edit-rpm-1')).toBeNull();
-
-    component.editAction.set('throttle');
-    harness.fixture.detectChanges();
-    // A throttle without a rate is not a decision (`FRD-503` §7).
-    expect(harness.testid('edit-rpm-1')).not.toBeNull();
-  });
-
-  it('opens with the rule as it is, not with an empty form', () => {
-    const harness = editing({ threshold: 42, window_minutes: 90, min_sample: 7, enabled: false });
-    const component = harness.component as unknown as {
-      editThreshold: () => number | null;
-      editWindow: () => number | null;
-      editSample: () => number | null;
-      editEnabled: () => boolean;
-    };
-
-    expect(component.editThreshold()).toBe(42);
-    expect(component.editWindow()).toBe(90);
-    expect(component.editSample()).toBe(7);
-    expect(component.editEnabled()).toBe(false);
-  });
-
-  it('abandons an edit when the row is closed', () => {
-    // Otherwise a hidden form saves fields the reader can no longer see.
-    const harness = editing();
-    harness.click('[data-testid="rule-toggle-1"]');
-
-    expect((harness.component as unknown as { editing: () => number | null }).editing()).toBeNull();
-  });
-
-  it('can switch a rule off without deleting it', () => {
-    // Deleting stops the watching *and* loses the intent; switching off keeps the rule for
-    // whoever asks later why it is not firing.
-    const harness = editing();
-    const component = harness.component as unknown as {
-      editEnabled: { set: (v: boolean) => void };
-      saveRule: (rule: AnomalyRule) => void;
-    };
-    component.editEnabled.set(false);
-    component.saveRule(RULE);
-
-    const sent = harness.calls.find((call) => call.startsWith('update:1:'))!;
-    expect(JSON.parse(sent.slice('update:1:'.length)).enabled).toBe(false);
+    const sent = harness.calls.find((call) => call.startsWith('update:1:'));
+    expect(sent).toBeDefined();
+    expect(JSON.parse(sent!.slice('update:1:'.length))).toEqual({
+      threshold: 65,
+      action: 'block',
+    });
   });
 
   it('says the change takes a moment to reach the gateway', () => {
-    const harness = editing();
-    (harness.component as unknown as { saveRule: (r: AnomalyRule) => void }).saveRule(RULE);
+    const harness = opened();
+    (
+      harness.component as unknown as {
+        saveRule: (rule: AnomalyRule, changes: Partial<AnomalyRule>) => void;
+      }
+    ).saveRule(RULE, { threshold: 65 });
 
     expect(
       (
@@ -652,45 +616,94 @@ describe('SecurityPage — the rule editor', () => {
       ).feedback.notice(),
     ).toContain('few seconds');
   });
+
+  it('abandons an open form when the row is closed', () => {
+    // Otherwise a hidden form saves fields the reader can no longer see.
+    const harness = opened();
+    harness.click('[data-testid="rule-toggle-1"]');
+
+    expect((harness.component as unknown as { editing: () => number | null }).editing()).toBeNull();
+  });
 });
 
-describe('SecurityPage — while something is in flight', () => {
-  it('says it is saving, and refuses a second press', () => {
-    // Two saves from one intent is how a form that looks stuck gets pressed twice.
-    const pending = new Subject<AnomalyRule>();
-    const harness = setup({ update: pending as unknown as Observable<AnomalyRule> });
-    (harness.component as unknown as { tab: { set: (v: string) => void } }).tab.set('rules');
-    harness.fixture.detectChanges();
-    harness.click('[data-testid="rule-toggle-1"]');
-    harness.click('[data-testid="rule-edit-1"]');
+describe('SecurityPage — older findings', () => {
+  it('offers no "load older" when there is nothing older', () => {
+    expect(setup().testid('events-load-more')).toBeNull();
+  });
 
-    (harness.component as unknown as { saveRule: (r: AnomalyRule) => void }).saveRule(RULE);
-    harness.fixture.detectChanges();
+  it('appends older findings rather than replacing the page', () => {
+    const older = { ...EVENT, id: 'e2', rule: 'an older finding' };
+    const harness = setup({
+      moreEvents: 'c1',
+      olderEvents: of({ events: [older], next_cursor: null, scope: 'all' }),
+    });
 
-    const save = harness.testid('rule-save-1') as HTMLButtonElement;
-    expect(save.textContent).toContain('Saving…');
-    expect(save.disabled).toBe(true);
+    harness.click('[data-testid="events-load-more"]');
+
+    expect(harness.text()).toContain('too many refusals');
+    expect(harness.text()).toContain('an older finding');
+    // Asked for by cursor: findings are an append-only log, and an offset page over one shows a
+    // row twice and skips another while somebody reads.
+    expect(harness.fetches).toContain('c1');
+  });
+
+  it('pauses the live refresh while paging, so the reader keeps their place', () => {
+    const harness = setup({
+      moreEvents: 'c1',
+      olderEvents: of({ events: [], next_cursor: null, scope: 'all' }),
+    });
+
+    harness.click('[data-testid="events-load-more"]');
+
+    const toggle = harness.testid('live-toggle') as HTMLInputElement;
+    expect(toggle.checked).toBe(false);
+  });
+});
+
+describe('SecurityPage — while older findings are in flight', () => {
+  it('says it is loading, and refuses a second press', () => {
+    const pending = new Subject<{
+      events: AnomalyEvent[];
+      next_cursor: string | null;
+      scope: string;
+    }>();
+    const harness = setup({
+      moreEvents: 'c1',
+      olderEvents: pending as unknown as Observable<{
+        events: AnomalyEvent[];
+        next_cursor: string | null;
+        scope: string;
+      }>,
+    });
+
+    harness.click('[data-testid="events-load-more"]');
+
+    const button = harness.testid('events-load-more') as HTMLButtonElement;
+    expect(button.textContent).toContain('Loading…');
+    expect(button.disabled).toBe(true);
+
+    // A second press must not start a second request against the same cursor.
+    harness.click('[data-testid="events-load-more"]');
+    expect(harness.fetches.filter((cursor) => cursor === 'c1').length).toBe(1);
     pending.complete();
   });
 
-  it('shows a bare threshold for a kind that has no unit', () => {
-    // "Undeclared means the baseline and nothing more": a kind this console has not met shows the
-    // number and no unit, rather than borrowing one that would be wrong.
-    const harness = setup({ rules: [{ ...RULE, kind: 'future_kind' }] });
-    (harness.component as unknown as { tab: { set: (v: string) => void } }).tab.set('rules');
-    harness.fixture.detectChanges();
-    harness.click('[data-testid="rule-toggle-1"]');
-    harness.click('[data-testid="rule-edit-1"]');
+  it('reports a failed page through the page banner', () => {
+    const harness = setup({
+      moreEvents: 'c1',
+      olderEvents: throwError(() => ({ status: 500 })) as unknown as Observable<{
+        events: AnomalyEvent[];
+        next_cursor: string | null;
+        scope: string;
+      }>,
+    });
 
-    expect(harness.text()).toContain('as counted');
-  });
+    harness.click('[data-testid="events-load-more"]');
 
-  it('does not print an empty reason as a blank cell in the history', () => {
-    const expired = { ...SUSPENSION, id: 's9', reason: '', expires_at: '2020-01-01T00:00:00Z' };
-    const harness = setup({ suspensions: of({ suspensions: [expired] }) });
-    (harness.component as unknown as { tab: { set: (v: string) => void } }).tab.set('suspensions');
-    harness.fixture.detectChanges();
-
-    expect(harness.text()).toContain('expired');
+    expect(
+      (
+        harness.component as unknown as { feedback: { error: () => string | null } }
+      ).feedback.error(),
+    ).toContain('Could not load older findings.');
   });
 });

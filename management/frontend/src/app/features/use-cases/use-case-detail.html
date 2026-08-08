@@ -87,6 +87,17 @@
       type="button"
       class="tab"
       role="tab"
+      id="tab-rules"
+      [attr.aria-selected]="tab() === 'rules'"
+      [class.is-active]="tab() === 'rules'"
+      (click)="selectTab('rules')"
+    >
+      Rules <span class="tab__count">{{ ruleCount() }}</span>
+    </button>
+    <button
+      type="button"
+      class="tab"
+      role="tab"
       id="tab-warnings"
       [attr.aria-selected]="tab() === 'warnings'"
       [class.is-active]="tab() === 'warnings'"
@@ -457,6 +468,10 @@
   }
 
   <!-- Warnings about this use case (FRD-502) -->
+  @if (tab() === 'rules') {
+    <app-rules-tab [slug]="slug" [canManage]="canManage()" (countChanged)="ruleCount.set($event)" />
+  }
+
   @if (tab() === 'warnings') {
     <app-warnings-tab [slug]="slug" (countChanged)="warningCount.set($event)" />
   }

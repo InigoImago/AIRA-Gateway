@@ -652,6 +652,24 @@ and both changes live only in the fourth. No unit test performs an OIDC redirect
 whether a control does something when used, **is an e2e change**. That run also updated 16 e2e
 tests whose screens this pass deliberately moved — five rewritten rather than repaired, because
 their *meaning* changed.
+**Paging that is real, and a rule somebody can change (`FRD-208`, 2026-08-08)** — `FRD-207`'s
+search and paging were **client-side**, and the useful question is where that matters: one list of
+three. The **use-case list** is unbounded (801 seen) *and* its serializer answers three permissions
+**per row**, so slicing in the browser left every computation happening — the reader waited just as
+long for 25 rows. Server-paged now, explicitly ordered (an unordered queryset repeats and skips
+rows); **1.6 s for 211 use cases across 9 pages**, measured. **Findings** page by **cursor** (an
+append-only log — an offset page shows one row twice and misses another while somebody reads); the
+**catalog stays client-side on purpose**, written into the viewset, because two console warnings
+count over the *whole* catalog and paging would turn them into "N on this page". Three properties a
+server-paged list needs: a debounce (nine letters ≠ nine round trips), a reset to page one on a new
+search, and a switch rather than a queue so a slow answer cannot overwrite a newer one. **The bigger
+finding: the console pointed at a screen that did not exist** — it said a use-case rule "is changed
+on that use case" and there was no such panel. `FRD-206`'s defect one indirection out: not a button
+that 403s, an instruction with no destination. There is a **Rules tab** on the use-case detail now
+(the server always allowed it), and one shared `rule-form.ts` for both screens — refusing to edit a
+rule's **kind** (it decides what the threshold *means*) or **name** (the server upserts by name, so
+a rename creates a second rule). Test note: the search is asserted by **watching for the request
+carrying `q=`**, because checking which rows are on screen passes for a client-side filter too.
 **The console holds still and says what its controls do (`FRD-207`, 2026-08-08)** — `FRD-206`
 stopped the console promising what the server refuses; a walkthrough asked the next question, *can
 I read this?*, and produced twelve findings. Two were defects of the same shape — **a declaration

@@ -164,8 +164,14 @@ it is unbounded *in time* (`FRD-502` §4.2).
 
 ## 6. Open
 
-- The use-case list endpoint computes object-level permissions per row, so an installation with
+Both of these were closed the same day, by [`FRD-208`](FRD-208-paging-and-use-case-rules.md):
+
+- ~~The use-case list endpoint computes object-level permissions per row, so an installation with
   hundreds of use cases takes many seconds to answer. The search box and the pager make that
-  survivable; they do not make it fast. Server-side filtering is the fix, and is not built.
-- The findings list is not searchable or paged — it is bounded by the endpoint's `limit`, not by
-  the installation's size. It will need the same treatment once it is used in anger.
+  survivable; they do not make it fast.~~ Server-paged and server-searched; 1.6 s for 211 rows.
+- ~~The findings list is not searchable or paged.~~ Cursor-paged.
+
+That pass also corrected two things this one got wrong: the search and paging added here were
+**client-side**, which fixed the cheaper half of the problem in the one list where it mattered; and
+the security console's "a use-case rule is changed on that use case" pointed at a screen that did
+not exist.

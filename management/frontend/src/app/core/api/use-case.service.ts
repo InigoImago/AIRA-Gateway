@@ -3,6 +3,7 @@ import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import {
   AnomalyEvent,
+  AnomalyPage,
   AnomalyRule,
   ApiKey,
   Budget,
@@ -12,6 +13,7 @@ import {
   DryRunResult,
   IssuedApiKey,
   Membership,
+  Page,
   PipelineConfig,
   Report,
   UseCase,
@@ -31,6 +33,19 @@ const seg = (value: string): string => encodeURIComponent(value);
 export class UseCaseService {
   private readonly http = inject(HttpClient);
   private readonly base = '/api/v1/use-cases/';
+
+  /**
+   * One page of use cases, searched at the server (`FRD-208`).
+   *
+   * Paged there rather than in the browser because this endpoint computes object-level permissions
+   * per row: fetching all of them and slicing locally leaves every one of those computations
+   * happening on every load, which is the part that actually takes seconds.
+   */
+  listPage(query: string, page: number): Observable<Page<UseCase>> {
+    const params: Record<string, string | number> = { page };
+    if (query) params['q'] = query;
+    return this.http.get<Page<UseCase>>('/api/v1/use-cases/', { params });
+  }
 
   list(): Observable<UseCase[]> {
     return this.http.get<UseCase[]>(this.base);
@@ -118,7 +133,14 @@ export class UseCaseService {
     return this.http.delete<void>(`${this.base}${seg(slug)}/rate-limits/${id}/`);
   }
 
-  /** The model catalog with its prices; everyone reads it, only a global admin writes. */
+  /**
+   * The **whole** catalog, deliberately unpaged (`FRD-208`).
+   *
+   * Bounded by how many models an organisation has contracted — tens, not thousands — and the
+   * screen's two warnings count over all of it ("N have no price on file"). Paging it at the
+   * server would turn those into "N on this page", a figure that means nothing. The console
+   * searches and pages this one in the browser, which it can honestly do because it has it all.
+   */
   models(): Observable<CatalogModel[]> {
     return this.http.get<CatalogModel[]>('/api/v1/models/');
   }
@@ -162,19 +184,16 @@ export class UseCaseService {
    * Scoped by the caller's token: an oversight role sees every use case, a member sees the ones
    * they belong to, and somebody with neither gets an empty list rather than a refusal.
    */
-  anomalies(
-    limit = 100,
-    useCase?: string,
-  ): Observable<{ events: AnomalyEvent[]; scope: string; in_scope?: boolean }> {
+  anomalies(limit = 50, useCase?: string, cursor?: string): Observable<AnomalyPage> {
     const params: Record<string, string | number> = { limit };
+    // Cursor, not offset — findings are an append-only log, so a detector firing while somebody
+    // reads page two pushes rows across the boundary and they see one twice and miss another.
+    if (cursor) params['cursor'] = cursor;
     // Asked for by name rather than filtered in the browser: a console that fetched the newest
     // hundred findings and kept the matching ones would show a quiet use case nothing on a busy
     // installation, because somebody else's findings pushed its own off the end.
     if (useCase) params['use_case'] = useCase;
-    return this.http.get<{ events: AnomalyEvent[]; scope: string; in_scope?: boolean }>(
-      '/gw/v1beta/anomalies',
-      { params },
-    );
+    return this.http.get<AnomalyPage>('/gw/v1beta/anomalies', { params });
   }
 
   /** Traffic that is currently stopped, and what was stopped before (`FRD-503`). */
@@ -219,6 +238,26 @@ export class UseCaseService {
     if (options.refusalsOnly) params['refusals_only'] = true;
     if (options.cursor) params['cursor'] = options.cursor;
     return this.http.get<TracePage>('/gw/v1beta/traces', { params });
+  }
+
+  /** The anomaly rules of one use case. Members read; whoever manages it writes. */
+  useCaseRules(slug: string): Observable<AnomalyRule[]> {
+    return this.http.get<AnomalyRule[]>(`${this.base}${seg(slug)}/anomaly-rules/`);
+  }
+
+  /**
+   * Create or replace a rule on one use case.
+   *
+   * The server upserts **by name** (`upsert_use_case_rule`), which is why the form keeps a rule's
+   * name fixed once it exists: renaming one would silently create a second and leave the first
+   * watching.
+   */
+  saveUseCaseRule(slug: string, rule: Partial<AnomalyRule>): Observable<AnomalyRule> {
+    return this.http.post<AnomalyRule>(`${this.base}${seg(slug)}/anomaly-rules/`, rule);
+  }
+
+  deleteUseCaseRule(slug: string, id: number): Observable<void> {
+    return this.http.delete<void>(`${this.base}${seg(slug)}/anomaly-rules/${id}`);
   }
 
   /** Anomaly rules that apply everywhere, plus the ones on use cases the caller may see. */

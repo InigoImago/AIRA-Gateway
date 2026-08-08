@@ -5,6 +5,59 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-08 — paging that is real, and a rule somebody can change (`FRD-208`)
+
+Asked directly whether the search and paging `FRD-207` added were real or client-side, the honest
+answer was **client-side**. The useful follow-up is where that matters, and it is one of the three
+lists.
+
+**The use-case list.** Unbounded — a live round found 801 — and its serializer answers
+`can_admin`/`can_manage`/`is_member` **per row** (`access.py`). Slicing that in the browser leaves
+every one of those computations happening on every load: the reader waits exactly as long and then
+sees twenty-five rows. Now `?page=`/`?q=` at the server, ordered explicitly (an unordered queryset
+may hand the same row back twice and never show a third). Measured after: **1.6 s, 211 use cases
+across 9 pages**.
+
+**Findings** are paged too, by **cursor** rather than page number — the same choice the trace view
+made and for the same reason: an append-only log, so a detector firing while somebody reads page two
+pushes rows across the boundary and they see one twice and miss another, invisibly.
+
+**The catalog stays client-side, and that is now written into the viewset.** It is bounded by how
+many models an organisation contracts, and two of the console's warnings count over the *whole*
+catalog — paging would turn "N models have no price" into "N on this page", a figure that means
+nothing. Report breakdowns likewise: one aggregate response, already computed.
+
+Three behaviours a server-paged list has to have, each a way it goes wrong: typing does not fire a
+request per keystroke (250 ms, and identical queries are not re-sent — nine letters would otherwise
+be nine round trips against the slowest endpoint here); a new search starts at page one (otherwise
+it asks for page 4 of a two-page result and gets nothing, which reads as "no matches"); and a late
+answer never overwrites a newer one (a slow "a" must not land after a fast "abc").
+
+**The bigger finding: the console pointed at a screen that did not exist.** `FRD-207` had the
+security console say a use-case rule *"is changed on that use case"* — and there was no such
+screen. That is the `FRD-206` defect one level of indirection further out: not a button that
+answers 403, but an instruction with no destination. The server had allowed it all along
+(`AnomalyRuleViewSet._guard`, `upsert_use_case_rule`); only the screen was missing. There is now a
+**Rules** tab on the use-case detail — list, create, edit, delete, each rule described in a
+sentence — and the console's sentence became a link to it. Global rules are deliberately absent
+from it: they are not that use case's to change.
+
+**One form, two screens.** `rule-form.ts` is thirteen fields with a per-kind validation contract; a
+second copy is how one screen quietly loses the field the other gained. It refuses to edit a rule's
+**kind** (the kind decides what the threshold *means* — 50 is half the requests under one and half a
+multiple under another) and its **name** (the server upserts by name, so a rename would create a
+second rule and leave the first watching).
+
+And the layout defect reported alongside: `.actions` carries `flex-wrap: wrap`, right in a form row
+and wrong in a table cell, so Edit and Remove wrapped onto two lines. Same cell as `FRD-207` §2.3,
+a second way of leaving the row.
+
+Test note: the search is asserted by **watching for the request carrying `q=`**, not by checking
+which rows are on screen — the second passes for a client-side filter too, which is how this pass
+would have "proved" the thing it was correcting.
+
+---
+
 ## 2026-08-08 — the console holds still, and says what its controls do (`FRD-207`)
 
 `FRD-206` made the console stop promising what the server refuses. A walkthrough of the running

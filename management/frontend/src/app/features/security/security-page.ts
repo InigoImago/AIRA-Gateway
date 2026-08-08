@@ -1,6 +1,7 @@
 import { DatePipe } from '@angular/common';
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { RouterLink } from '@angular/router';
 import { AnomalyEvent, AnomalyRule, Me, Suspension } from '../../core/api/models';
 import { MeService } from '../../core/api/me.service';
 import { UseCaseService } from '../../core/api/use-case.service';
@@ -8,6 +9,7 @@ import { ConfirmService } from '../../core/ui/confirm.service';
 import { InfoHint } from '../../core/ui/info-hint';
 import { Live, agoLabel } from '../../core/ui/live';
 import { PageFeedback } from '../../core/ui/page-feedback';
+import { RuleForm } from './rule-form';
 import { describeAction, describeEvent, describeRule, unitOf } from './rule-language';
 
 /** How often the console refreshes itself. Findings change at human speed. */
@@ -27,7 +29,7 @@ const REFRESH_SECONDS = 15;
  */
 @Component({
   selector: 'app-security-page',
-  imports: [DatePipe, FormsModule, InfoHint],
+  imports: [DatePipe, FormsModule, InfoHint, RouterLink, RuleForm],
   templateUrl: './security-page.html',
   providers: [PageFeedback, Live],
 })
@@ -40,6 +42,9 @@ export class SecurityPage implements OnInit {
 
   protected readonly me = signal<Me | null>(null);
   protected readonly events = signal<AnomalyEvent[]>([]);
+  /** Set when there are older findings than the ones on screen — cursor, not offset. */
+  protected readonly moreEvents = signal<string | null>(null);
+  protected readonly loadingMore = signal(false);
   protected readonly suspensions = signal<Suspension[]>([]);
   protected readonly rules = signal<AnomalyRule[]>([]);
   protected readonly loading = signal(true);
@@ -52,19 +57,11 @@ export class SecurityPage implements OnInit {
   protected readonly openEvent = signal<string | null>(null);
   protected readonly openRule = signal<number | null>(null);
 
-  // The rule editor. One rule at a time, and the fields a person actually changes: what counts as
-  // too much, over how long, how many requests it takes to be worth judging, and what to do.
+  /** Which rule's form is open. The form itself owns the field values (`rule-form.ts`). */
   protected readonly editing = signal<number | null>(null);
-  protected readonly editThreshold = signal<number | null>(null);
-  protected readonly editWindow = signal<number | null>(null);
-  protected readonly editSample = signal<number | null>(null);
-  protected readonly editParameter = signal<number | null>(null);
-  protected readonly editAction = signal<string>('alert');
-  protected readonly editMinutes = signal<number | null>(null);
-  protected readonly editRpm = signal<number | null>(null);
-  protected readonly editEnabled = signal(true);
 
-  // The kill-switch form. Signals, because the app is zoneless.
+  // The kill-switch form. Signals, because the app is zoneless: a plain property changed from a
+  // callback schedules no re-render, and the inputs would keep the submitted text.
   protected readonly showStop = signal(false);
   protected readonly target = signal<'subject' | 'credential' | 'use_case'>('subject');
   protected readonly targetValue = signal('');
@@ -98,9 +95,10 @@ export class SecurityPage implements OnInit {
     this.meService.get().subscribe({ next: (me) => this.me.set(me), error: () => undefined });
     this.live.start(
       REFRESH_SECONDS,
-      () => this.service.anomalies(200),
+      () => this.service.anomalies(),
       (page) => {
         this.events.set(page.events);
+        this.moreEvents.set(page.next_cursor);
         this.loading.set(false);
       },
     );
@@ -158,48 +156,21 @@ export class SecurityPage implements OnInit {
 
   protected startEdit(rule: AnomalyRule): void {
     this.editing.set(rule.id);
-    this.editThreshold.set(rule.threshold);
-    this.editWindow.set(rule.window_minutes);
-    this.editSample.set(rule.min_sample);
-    this.editParameter.set(rule.parameter);
-    this.editAction.set(rule.action);
-    this.editMinutes.set(rule.action_minutes);
-    this.editRpm.set(rule.throttle_rpm);
-    this.editEnabled.set(rule.enabled);
   }
 
   protected cancelEdit(): void {
     this.editing.set(null);
   }
 
-  protected saveRule(rule: AnomalyRule): void {
-    this.feedback.run(
-      this.service.updateRule(rule.id, {
-        threshold: this.editThreshold() ?? rule.threshold,
-        window_minutes: this.editWindow() ?? rule.window_minutes,
-        min_sample: this.editSample() ?? 0,
-        parameter: this.editParameter(),
-        action: this.editAction(),
-        action_minutes: this.editMinutes(),
-        throttle_rpm: this.editRpm(),
-        enabled: this.editEnabled(),
-        // Sent unchanged because the server validates the pair — a threshold is only meaningful
-        // against its kind, and a PATCH that omitted the kind would be validated against the
-        // default rather than against this rule.
-        kind: rule.kind,
-        name: rule.name,
-      }),
-      {
-        failure: 'Could not save this rule.',
-        success: () => {
-          this.feedback.succeed(
-            `"${rule.name}" saved. It reaches the gateway within a few seconds.`,
-          );
-          this.editing.set(null);
-          this.loadRules();
-        },
+  protected saveRule(rule: AnomalyRule, changes: Partial<AnomalyRule>): void {
+    this.feedback.run(this.service.updateRule(rule.id, changes), {
+      failure: 'Could not save this rule.',
+      success: () => {
+        this.feedback.succeed(`"${rule.name}" saved. It reaches the gateway within a few seconds.`);
+        this.editing.set(null);
+        this.loadRules();
       },
-    );
+    });
   }
 
   protected removeRule(rule: AnomalyRule): void {
@@ -236,10 +207,37 @@ export class SecurityPage implements OnInit {
 
   protected refreshNow(): void {
     this.live.refresh(
-      () => this.service.anomalies(200),
-      (page) => this.events.set(page.events),
+      () => this.service.anomalies(),
+      (page) => {
+        this.events.set(page.events);
+        this.moreEvents.set(page.next_cursor);
+      },
     );
     this.loadSuspensions();
+  }
+
+  /**
+   * Fetch the next page of findings and append it.
+   *
+   * Live is switched **off** while paging, exactly as the trace view does it: a refresh would
+   * replace the first page and throw away everything the reader had scrolled to.
+   */
+  protected loadOlderEvents(): void {
+    const cursor = this.moreEvents();
+    if (!cursor || this.loadingMore()) return;
+    this.live.enabled.set(false);
+    this.loadingMore.set(true);
+    this.service.anomalies(50, undefined, cursor).subscribe({
+      next: (page) => {
+        this.events.update((rows) => [...rows, ...page.events]);
+        this.moreEvents.set(page.next_cursor);
+        this.loadingMore.set(false);
+      },
+      error: (response: unknown) => {
+        this.loadingMore.set(false);
+        this.feedback.fail(response, 'Could not load older findings.');
+      },
+    });
   }
 
   protected loadSuspensions(): void {

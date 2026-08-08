@@ -1,3 +1,17 @@
+/**
+ * One page of a list the server paged (`FRD-208`).
+ *
+ * `count` is the total across every page, not the length of `results` — a list that does not say
+ * how much it is not showing reads as complete.
+ */
+export interface Page<T> {
+  count: number;
+  page: number;
+  page_size: number;
+  pages: number;
+  results: T[];
+}
+
 export interface Me {
   subject: string;
   username: string;
@@ -224,6 +238,14 @@ export interface Report {
   by_member: ReportRow[];
   /** Why requests ended the way they did — `served`, `rate_limited`, … (FRD-122). */
   by_outcome: ReportRow[];
+}
+
+/** One page of findings — cursor-paged, because findings are an append-only log. */
+export interface AnomalyPage {
+  events: AnomalyEvent[];
+  next_cursor: string | null;
+  scope: string;
+  in_scope?: boolean;
 }
 
 /** One finding: a rule crossed its threshold for one target (`FRD-501`). */

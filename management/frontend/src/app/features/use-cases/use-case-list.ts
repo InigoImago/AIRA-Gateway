@@ -14,8 +14,8 @@ import { errorMessage } from '../../core/api/error-message';
 import { Me, UseCase } from '../../core/api/models';
 import { MeService } from '../../core/api/me.service';
 import { UseCaseService } from '../../core/api/use-case.service';
+import { ServerTableView } from '../../core/ui/server-table-view';
 import { TablePager } from '../../core/ui/table-pager';
-import { TableView } from '../../core/ui/table-view';
 
 /** Mirrors the server-side slug validator, so the rule is stated before the request fails. */
 const SLUG_PATTERN = /^[a-z0-9-]+$/;
@@ -53,21 +53,25 @@ export class UseCaseList implements OnInit {
   private readonly meService = inject(MeService);
   private readonly router = inject(Router);
 
-  protected readonly useCases = signal<UseCase[]>([]);
-
   /**
-   * The list, searched and paged.
+   * The list, searched and paged **at the server** (`FRD-208`).
    *
    * Not a nicety: a live round found **801** use cases in one installation, which made this
-   * overview unusable without a single line of it being wrong. A list that only grows needs a way
-   * to ask for the row you want — the name *or* the technical id, since one is what a person
-   * calls it and the other is what their systems quote.
+   * overview unusable without a single line of it being wrong. And not client-side either — this
+   * endpoint computes object-level permissions per row, so fetching everything and slicing it in
+   * the browser leaves every one of those computations happening on every load. The reader waits
+   * exactly as long and then sees twenty-five rows.
+   *
+   * Searchable by name *or* technical id: one is what a person calls it, the other is what their
+   * systems quote, and somebody arriving from a log line has only the second.
    */
-  protected readonly view = new TableView<UseCase>(
-    this.useCases,
-    (useCase) => `${useCase.name} ${useCase.slug}`,
+  protected readonly view = new ServerTableView<UseCase>(
+    (query, page) => this.service.listPage(query, page),
+    (response) => this.error.set(errorMessage(response, 'Failed to load use cases.')),
   );
-  protected readonly loading = signal(true);
+  protected readonly useCases = this.view.rows;
+  /** Whether a page is in flight. Owned by the view, since it is the thing doing the fetching. */
+  protected readonly loading = this.view.loading;
   protected readonly creating = signal(false);
   protected readonly error = signal<string | null>(null);
   protected readonly me = signal<Me | null>(null);
@@ -117,11 +121,14 @@ export class UseCaseList implements OnInit {
     this.slugEdited.set(true);
   }
 
-  protected readonly isEmpty = computed(() => !this.loading() && this.useCases().length === 0);
+  /** Nothing at all — as opposed to nothing *matching*, which the search says in its own words. */
+  protected readonly isEmpty = computed(
+    () => !this.loading() && this.view.total() === 0 && !this.view.filtered(),
+  );
 
   ngOnInit(): void {
     this.meService.get().subscribe({ next: (me) => this.me.set(me), error: () => undefined });
-    this.reload();
+    this.view.start();
   }
 
   protected openCreate(): void {
@@ -140,18 +147,8 @@ export class UseCaseList implements OnInit {
   }
 
   protected reload(): void {
-    this.loading.set(true);
-    this.service.list().subscribe({
-      next: (list) => {
-        this.useCases.set(list);
-        this.error.set(null);
-        this.loading.set(false);
-      },
-      error: (response: unknown) => {
-        this.error.set(errorMessage(response, 'Failed to load use cases.'));
-        this.loading.set(false);
-      },
-    });
+    this.error.set(null);
+    this.view.reload();
   }
 
   protected create(): void {

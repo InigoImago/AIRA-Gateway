@@ -226,6 +226,23 @@
             </tbody>
           </table>
         </div>
+
+        @if (moreEvents()) {
+          <div class="row" style="padding: 0.75rem 1rem">
+            <button
+              type="button"
+              class="btn btn--sm"
+              [disabled]="loadingMore()"
+              (click)="loadOlderEvents()"
+              data-testid="events-load-more"
+            >
+              {{ loadingMore() ? 'Loading…' : 'Load older findings' }}
+            </button>
+            <span class="muted" style="font-size: 0.78rem">
+              Loading older findings pauses the live refresh, so what you are reading stays put.
+            </span>
+          </div>
+        }
       }
     </div>
   }
@@ -576,140 +593,33 @@
                               Administrator.
                             </span>
                           } @else {
+                            <!-- A link, not an instruction. The panel it names exists now
+                                 (`FRD-208`); before it did, this sentence sent the reader looking
+                                 for a screen that was not there. -->
                             <span class="muted" [attr.data-testid]="'rule-readonly-' + rule.id">
-                              This rule belongs to <code>{{ rule.use_case }}</code> and is changed
-                              on that use case, by somebody who administers it.
+                              This rule belongs to
+                              <a
+                                [routerLink]="['/use-cases', rule.use_case]"
+                                [queryParams]="{ tab: 'rules' }"
+                                >{{ rule.use_case }}</a
+                              >
+                              and is changed there, by somebody who administers it.
                             </span>
                           }
                         </div>
                       } @else {
                         <!--
-                          The fields somebody actually changes. Not the kind and not the name: a
-                          rule's kind decides what its threshold *means*, so changing it in place
-                          would silently reinterpret a number somebody chose deliberately. A
-                          different kind is a different rule.
+                          The same form the use-case rules panel uses. One component rather than
+                          two: this is thirteen fields with a per-kind validation contract, and a
+                          second copy is how one screen quietly loses the field the other gained.
                         -->
-                        <form class="form-inline" (ngSubmit)="saveRule(rule)">
-                          <div class="field">
-                            <label [attr.for]="'edit-threshold-' + rule.id">Threshold</label>
-                            <input
-                              [attr.id]="'edit-threshold-' + rule.id"
-                              type="number"
-                              name="threshold"
-                              min="1"
-                              [ngModel]="editThreshold()"
-                              (ngModelChange)="editThreshold.set($event)"
-                              [attr.data-testid]="'edit-threshold-' + rule.id"
-                            />
-                            <span class="field__hint">{{ unit(rule) || 'as counted' }}</span>
-                          </div>
-                          <div class="field">
-                            <label [attr.for]="'edit-window-' + rule.id">Window (minutes)</label>
-                            <input
-                              [attr.id]="'edit-window-' + rule.id"
-                              [attr.data-testid]="'edit-window-' + rule.id"
-                              type="number"
-                              name="window"
-                              min="1"
-                              [ngModel]="editWindow()"
-                              (ngModelChange)="editWindow.set($event)"
-                            />
-                          </div>
-                          <div class="field">
-                            <label [attr.for]="'edit-sample-' + rule.id">Smallest sample</label>
-                            <input
-                              [attr.id]="'edit-sample-' + rule.id"
-                              [attr.data-testid]="'edit-sample-' + rule.id"
-                              type="number"
-                              name="sample"
-                              min="0"
-                              [ngModel]="editSample()"
-                              (ngModelChange)="editSample.set($event)"
-                            />
-                            <span class="field__hint">
-                              Below this many requests the rule is not judged at all.
-                            </span>
-                          </div>
-                          @if (rule.kind === 'payload_size') {
-                            <div class="field">
-                              <label [attr.for]="'edit-parameter-' + rule.id">Larger than</label>
-                              <input
-                                [attr.id]="'edit-parameter-' + rule.id"
-                                [attr.data-testid]="'edit-parameter-' + rule.id"
-                                type="number"
-                                name="parameter"
-                                min="1"
-                                [ngModel]="editParameter()"
-                                (ngModelChange)="editParameter.set($event)"
-                              />
-                              <span class="field__hint">bytes</span>
-                            </div>
-                          }
-                          <div class="field">
-                            <label [attr.for]="'edit-action-' + rule.id">Then</label>
-                            <select
-                              [attr.id]="'edit-action-' + rule.id"
-                              name="action"
-                              [ngModel]="editAction()"
-                              (ngModelChange)="editAction.set($event)"
-                              [attr.data-testid]="'edit-action-' + rule.id"
-                            >
-                              <option value="alert">record it (take nothing away)</option>
-                              <option value="throttle">slow the traffic down</option>
-                              <option value="block">stop the traffic</option>
-                            </select>
-                          </div>
-                          @if (editAction() !== 'alert') {
-                            <div class="field">
-                              <label [attr.for]="'edit-minutes-' + rule.id">For (minutes)</label>
-                              <input
-                                [attr.id]="'edit-minutes-' + rule.id"
-                                [attr.data-testid]="'edit-minutes-' + rule.id"
-                                type="number"
-                                name="minutes"
-                                min="1"
-                                [ngModel]="editMinutes()"
-                                (ngModelChange)="editMinutes.set($event)"
-                              />
-                              <span class="field__hint">Empty means until somebody lifts it.</span>
-                            </div>
-                          }
-                          @if (editAction() === 'throttle') {
-                            <div class="field">
-                              <label [attr.for]="'edit-rpm-' + rule.id">Slowed to</label>
-                              <input
-                                [attr.id]="'edit-rpm-' + rule.id"
-                                [attr.data-testid]="'edit-rpm-' + rule.id"
-                                type="number"
-                                name="rpm"
-                                min="1"
-                                [ngModel]="editRpm()"
-                                (ngModelChange)="editRpm.set($event)"
-                              />
-                              <span class="field__hint">
-                                requests a minute — a throttle without a rate is not a decision.
-                              </span>
-                            </div>
-                          }
-                          <label class="checkline" style="padding-bottom: 0.55rem">
-                            <input
-                              type="checkbox"
-                              [checked]="editEnabled()"
-                              (change)="editEnabled.set($any($event.target).checked)"
-                              [attr.data-testid]="'edit-enabled-' + rule.id"
-                            />
-                            Watching
-                          </label>
-                          <button
-                            type="submit"
-                            class="btn btn--primary"
-                            [disabled]="feedback.busy()"
-                            [attr.data-testid]="'rule-save-' + rule.id"
-                          >
-                            {{ feedback.busy() ? 'Saving…' : 'Save' }}
-                          </button>
-                          <button type="button" class="btn" (click)="cancelEdit()">Cancel</button>
-                        </form>
+                        <app-rule-form
+                          [rule]="rule"
+                          [busy]="feedback.busy()"
+                          [formId]="'rule-' + rule.id"
+                          (saved)="saveRule(rule, $event)"
+                          (cancelled)="cancelEdit()"
+                        />
                       }
                     </td>
                   </tr>

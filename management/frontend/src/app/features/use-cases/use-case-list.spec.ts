@@ -1,6 +1,7 @@
 import { TestBed } from '@angular/core/testing';
 import { Router, provideRouter } from '@angular/router';
 import { Observable, of, throwError } from 'rxjs';
+import { map } from 'rxjs/operators';
 import { Me, UseCase } from '../../core/api/models';
 import { MeService } from '../../core/api/me.service';
 import { UseCaseService } from '../../core/api/use-case.service';
@@ -38,6 +39,7 @@ function setup(
   TestBed.resetTestingModule();
   const created: Partial<UseCase>[] = [];
   const navigated: unknown[][] = [];
+  const queries: { query: string; page: number }[] = [];
   TestBed.configureTestingModule({
     imports: [UseCaseList],
     providers: [
@@ -56,7 +58,33 @@ function setup(
       {
         provide: UseCaseService,
         useValue: {
-          list: () => options.list ?? of([DEMO]),
+          /**
+           * The list is paged **at the server** now (`FRD-208`), so the double answers with a
+           * page rather than an array — and it records what was asked for, because "did the search
+           * reach the server" is the property that matters once the filtering is not local.
+           */
+          listPage: (query: string, page: number) => {
+            queries.push({ query, page });
+            const source = options.list ?? of([DEMO]);
+            return source.pipe(
+              map((rows: UseCase[]) => {
+                const matching = query
+                  ? rows.filter((row) =>
+                      `${row.name} ${row.slug}`.toLowerCase().includes(query.toLowerCase()),
+                    )
+                  : rows;
+                const size = 25;
+                const start = (page - 1) * size;
+                return {
+                  count: matching.length,
+                  page,
+                  page_size: size,
+                  pages: Math.max(1, Math.ceil(matching.length / size)),
+                  results: matching.slice(start, start + size),
+                };
+              }),
+            );
+          },
           create: (useCase: Partial<UseCase>) => {
             created.push(useCase);
             return options.create ?? of(DEMO);
@@ -86,6 +114,7 @@ function setup(
     fixture,
     created,
     navigated,
+    queries,
     component,
     element,
     text: () => element.textContent ?? '',
@@ -262,7 +291,12 @@ describe('UseCaseList form', () => {
 });
 
 describe('UseCaseList — finding one among many', () => {
-  it('searches by name and by technical id', () => {
+  // The search is debounced and goes to the server, so these drive the clock. Without the pause a
+  // nine-letter query would be nine round trips against the slowest endpoint in the console.
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it('searches by name and by technical id, at the server', () => {
     // One is what a person calls it, the other is what their systems quote — somebody arriving
     // from a log line has the second and not the first.
     const harness = setup({
@@ -274,12 +308,53 @@ describe('UseCaseList — finding one among many', () => {
     });
 
     harness.type('use-case-search', 'Customer');
+    vi.advanceTimersByTime(300);
+    harness.fixture.detectChanges();
+    // The needle reached the server rather than being applied to rows already in hand.
+    expect(harness.queries.at(-1)).toEqual({ query: 'Customer', page: 1 });
     expect(harness.text()).toContain('Customer service');
     expect(harness.text()).not.toContain('Engineering');
 
     harness.type('use-case-search', 'entwick');
+    vi.advanceTimersByTime(300);
+    harness.fixture.detectChanges();
     expect(harness.text()).toContain('Engineering');
     expect(harness.text()).not.toContain('Customer service');
+  });
+
+  it('does not send a request per keystroke', () => {
+    const harness = setup({
+      open: false,
+      list: of([{ slug: 'a', name: 'A' }] as unknown as UseCase[]),
+    });
+    const before = harness.queries.length;
+
+    for (const value of ['k', 'ku', 'kun', 'kund', 'kunde']) {
+      harness.type('use-case-search', value);
+      vi.advanceTimersByTime(50);
+    }
+    vi.advanceTimersByTime(300);
+    harness.fixture.detectChanges();
+
+    expect(harness.queries.length - before).toBe(1);
+    expect(harness.queries.at(-1)?.query).toBe('kunde');
+  });
+
+  it('goes back to page one when the search changes', () => {
+    // Otherwise a filter applied on page 4 asks the server for page 4 of a two-page result and
+    // gets nothing, which reads as "no matches".
+    const many = Array.from({ length: 60 }, (_, index) => ({
+      slug: `uc-${index}`,
+      name: `Use case ${index}`,
+    })) as unknown as UseCase[];
+    const harness = setup({ open: false, list: of(many) });
+    harness.click('[data-testid="pager-next"]');
+    expect(harness.queries.at(-1)?.page).toBe(2);
+
+    harness.type('use-case-search', 'uc-1');
+    vi.advanceTimersByTime(300);
+
+    expect(harness.queries.at(-1)?.page).toBe(1);
   });
 
   it('says a search found nothing, and how much there was to search', () => {
@@ -289,7 +364,10 @@ describe('UseCaseList — finding one among many', () => {
     });
 
     harness.type('use-case-search', 'zzz');
-    expect(harness.testid('use-case-no-match')?.textContent).toContain('1 in total');
+    vi.advanceTimersByTime(300);
+    harness.fixture.detectChanges();
+
+    expect(harness.testid('use-case-no-match')?.textContent).toContain('No use case matches');
   });
 
   it('pages a long list rather than printing all of it', () => {

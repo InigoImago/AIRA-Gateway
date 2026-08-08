@@ -89,6 +89,12 @@ function setup(overrides: Overrides = {}, confirmAnswer = true, queryTab: string
   TestBed.resetTestingModule();
   const calls: string[] = [];
   const service = {
+    // Each panel loads its own; the parent only opens it. Stubbed here so the walkthrough below
+    // can visit all eight — which is the point of it.
+    useCaseRules: () => of([]),
+    anomalies: () => of({ events: [], next_cursor: null, scope: 'use_cases' }),
+    suspensions: () => of({ suspensions: [] }),
+    traces: () => of({ traces: [], next_cursor: null, scope: 'use_cases' }),
     get: () => overrides.get ?? of(USE_CASE),
     update: (_s: string, changes: Partial<UseCase>) => {
       calls.push(`update:${JSON.stringify(changes)}`);
@@ -758,5 +764,59 @@ describe('UseCaseDetail — an oversight role', () => {
 
     expect(readonly?.textContent).toContain('not stored');
     expect(readonly?.textContent).not.toContain('day(s)');
+  });
+});
+
+describe('UseCaseDetail — the rules tab', () => {
+  it('is deep-linkable, like every other tab', async () => {
+    // A tab that cannot be linked to is a tab nobody sends a colleague to — and the security
+    // console now links straight at this one.
+    const harness = setup({}, true, 'rules');
+    await harness.fixture.whenStable();
+    harness.fixture.detectChanges();
+
+    expect(harness.component.tab()).toBe('rules');
+    expect(harness.html().querySelector('#tab-rules')?.getAttribute('aria-selected')).toBe('true');
+    expect(harness.html().querySelector('app-rules-tab')).not.toBeNull();
+  });
+});
+
+describe('UseCaseDetail — every tab has a panel behind it', () => {
+  // A tab that responds with nothing is the `FRD-206` defect in its plainest form, and it is
+  // exactly what `FRD-502` shipped: two tabs whose panels failed to construct and rendered
+  // nothing, while every unit test passed. This walks all eight.
+  const PANELS: [string, string][] = [
+    ['overview', '[aria-labelledby="tab-overview"]'],
+    ['members', 'table'],
+    ['keys', 'table'],
+    ['budgets', 'app-budgets-tab'],
+    ['rate-limits', 'app-rate-limits-tab'],
+    ['rules', 'app-rules-tab'],
+    ['warnings', 'app-warnings-tab'],
+    ['traces', 'app-traces-tab'],
+  ];
+
+  for (const [tab, selector] of PANELS) {
+    it(`renders something under "${tab}"`, async () => {
+      const harness = setup({}, true, tab);
+      await harness.fixture.whenStable();
+      harness.fixture.detectChanges();
+
+      expect(harness.component.tab()).toBe(tab);
+      expect(harness.html().querySelector(selector), `${tab} has no panel`).not.toBeNull();
+    });
+  }
+
+  it('counts warnings only when there are some', () => {
+    // A zero beside a tab reads as a figure worth looking at. An absent badge reads as nothing to
+    // see, which is the truth.
+    const harness = setup();
+    expect(harness.html().querySelector('#tab-warnings .tab__count')).toBeNull();
+
+    (
+      harness.component as unknown as { warningCount: { set: (v: number) => void } }
+    ).warningCount.set(3);
+    harness.fixture.detectChanges();
+    expect(harness.html().querySelector('#tab-warnings .tab__count')?.textContent).toContain('3');
   });
 });

@@ -78,11 +78,54 @@ def test_list_is_scoped_and_governance_sees_all() -> None:
     _create(_client(admin_a), "uc-a")
     _create(_client(admin_b), "uc-b")
 
-    a_slugs = {x["slug"] for x in _client(admin_a).get(BASE).json()}
-    assert a_slugs == {"uc-a"}
+    # The list is a **page** now (`FRD-208`): `results` plus a total. The total is part of the
+    # answer, not decoration — a list that does not say how much it is not showing reads as
+    # complete, which is how an installation with 801 use cases came to look like one with 25.
+    a_page = _client(admin_a).get(BASE).json()
+    assert {x["slug"] for x in a_page["results"]} == {"uc-a"}
+    assert a_page["count"] == 1
 
-    gov_slugs = {x["slug"] for x in _client(gov).get(BASE).json()}
-    assert {"uc-a", "uc-b"} <= gov_slugs
+    gov_page = _client(gov).get(BASE).json()
+    assert {"uc-a", "uc-b"} <= {x["slug"] for x in gov_page["results"]}
+
+
+def test_the_list_is_searched_at_the_server() -> None:
+    """Filtered by the database, not by the browser.
+
+    The point of moving this off the client is that the rows a reader is not looking at are never
+    built — and this serializer computes object-level permissions per row, which is the part that
+    actually costs seconds.
+    """
+    admin = _user("a", "use-case-admin")
+    client = _client(admin)
+    _create(client, "kundenservice")
+    _create(client, "entwicklung")
+
+    found = client.get(f"{BASE}?q=KUNDEN").json()
+    assert {x["slug"] for x in found["results"]} == {"kundenservice"}
+    assert found["count"] == 1
+
+    # An empty needle is not a filter. Treating it as one would answer "nothing matches the empty
+    # string", which is both wrong and the sort of emptiness a reader reads as a broken screen.
+    assert client.get(f"{BASE}?q=%20%20").json()["count"] == 2
+
+
+def test_a_page_is_a_page() -> None:
+    """Bounded, ordered, and honest about the whole."""
+    admin = _user("a", "use-case-admin")
+    client = _client(admin)
+    for index in range(7):
+        _create(client, f"uc-{index}")
+
+    first = client.get(f"{BASE}?page_size=3").json()
+    assert len(first["results"]) == 3
+    assert first["count"] == 7
+    assert first["pages"] == 3
+
+    second = client.get(f"{BASE}?page_size=3&page=2").json()
+    # No row on both pages: an unordered queryset may hand the same row back twice and never show
+    # a third, so the ordering is explicit rather than incidental.
+    assert not {x["slug"] for x in first["results"]} & {x["slug"] for x in second["results"]}
 
 
 def test_non_member_gets_404() -> None:

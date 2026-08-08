@@ -70,6 +70,7 @@ function setup(options: Options = {}) {
           anomalies: (limit: number, useCase?: string) => {
             asked.push(useCase);
             return of({
+              next_cursor: null,
               events: options.events ?? [EVENT],
               scope: 'use_cases',
               ...(options.inScope === undefined ? {} : { in_scope: options.inScope }),

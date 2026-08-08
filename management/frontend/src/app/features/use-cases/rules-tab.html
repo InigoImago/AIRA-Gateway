@@ -1,0 +1,140 @@
+<div class="card" role="tabpanel">
+  <div class="spread">
+    <h3 class="section-title" style="margin: 0">
+      Anomaly rules
+      <app-info-hint label="anomaly rules" testid="rules-scope" [wide]="true">
+        What this use case considers abnormal. Each rule watches one measurement over a window and
+        either <strong>records</strong> a finding, <strong>slows</strong> the traffic down, or
+        <strong>stops</strong> it. Findings appear under <strong>Warnings</strong>, and anything
+        stopped is listed there too. Rules that apply to <em>every</em> use case are written by IT
+        Security and are not shown here — they are not this use case's to change.
+      </app-info-hint>
+    </h3>
+    @if (canManage() && editing() === null) {
+      <button type="button" class="btn btn--sm btn--primary" (click)="add()" data-testid="rule-add">
+        + New rule
+      </button>
+    }
+  </div>
+
+  @if (!canManage()) {
+    <p class="muted" style="margin: 0.25rem 0 0" data-testid="rules-readonly">
+      You can see what is being watched here. Changing it is done by somebody who administers this
+      use case.
+    </p>
+  }
+
+  @if (editing() === 0) {
+    <div class="disclosure" style="margin-top: 0.75rem">
+      <app-rule-form
+        [rule]="draft()"
+        [busy]="feedback.busy()"
+        formId="new-rule"
+        (saved)="save($event)"
+        (cancelled)="cancel()"
+      />
+    </div>
+  }
+
+  @if (loading()) {
+    <p class="loading" style="margin-top: 1rem">
+      <span class="spinner" aria-hidden="true"></span>
+      Loading rules…
+    </p>
+  } @else if (!rules().length) {
+    <!-- The distinction `FRD-502` insists on: a quiet detector and an absent one look identical
+         from a findings list, so the place that knows must say which. -->
+    <p class="empty" data-testid="no-rules">
+      Nothing is being watched for this use case specifically. That is why its
+      <strong>Warnings</strong> tab can be empty and mean nothing on its own — global rules written
+      by IT Security may still apply.
+    </p>
+  } @else {
+    <div class="table-wrap" style="margin-top: 1rem">
+      <table class="table">
+        <thead>
+          <tr>
+            <th scope="col">Rule</th>
+            <th scope="col">Watches</th>
+            <th scope="col">Threshold</th>
+            <th scope="col">Then</th>
+            <th scope="col"><span class="sr-only">Actions</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (rule of rules(); track rule.id) {
+            <tr [class.is-open]="editing() === rule.id">
+              <td>
+                {{ rule.name }}
+                <div class="muted" style="font-size: 0.78rem">per {{ rule.target }}</div>
+              </td>
+              <td>
+                {{ rule.kind }}
+                <div class="muted" style="font-size: 0.78rem">
+                  {{ rule.window_minutes }} min window
+                </div>
+              </td>
+              <td class="nowrap">
+                {{ rule.threshold }}
+                <span class="muted" style="font-size: 0.78rem">{{ unit(rule) }}</span>
+              </td>
+              <td>
+                <span
+                  class="badge"
+                  [class.badge--muted]="rule.action === 'alert'"
+                  [class.badge--danger]="rule.action === 'block'"
+                  [class.badge--warning]="rule.action === 'throttle'"
+                >
+                  {{ rule.action }}
+                </span>
+                @if (!rule.enabled) {
+                  <span class="badge badge--muted">off</span>
+                }
+              </td>
+              <td class="table__actions">
+                <div class="actions">
+                  @if (canManage()) {
+                    <button
+                      type="button"
+                      class="btn btn--sm"
+                      [attr.aria-label]="'Edit ' + rule.name"
+                      [attr.data-testid]="'uc-rule-edit-' + rule.id"
+                      (click)="edit(rule)"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      class="btn btn--sm btn--danger"
+                      [disabled]="feedback.busy()"
+                      [attr.aria-label]="'Delete ' + rule.name"
+                      [attr.data-testid]="'uc-rule-delete-' + rule.id"
+                      (click)="remove(rule)"
+                    >
+                      Delete
+                    </button>
+                  }
+                </div>
+              </td>
+            </tr>
+
+            <tr class="row-detail">
+              <td colspan="5">
+                <p class="detail-sentence" style="margin-top: 0">{{ explain(rule) }}</p>
+                @if (editing() === rule.id) {
+                  <app-rule-form
+                    [rule]="rule"
+                    [busy]="feedback.busy()"
+                    [formId]="'rule-' + rule.id"
+                    (saved)="save($event)"
+                    (cancelled)="cancel()"
+                  />
+                }
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  }
+</div>

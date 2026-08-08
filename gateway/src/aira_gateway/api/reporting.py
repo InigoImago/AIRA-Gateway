@@ -151,7 +151,8 @@ async def reporting(
 async def anomalies(
     request: Request,
     principal: Principal = Depends(require_principal),
-    limit: int = Query(100, ge=1, le=500),
+    limit: int = Query(50, ge=1, le=200),
+    cursor: str = Query("", max_length=128),
     use_case: str = Query("", max_length=64),
 ) -> JSONResponse:
     """What the detector has found (`FRD-501` FR-8).
@@ -167,9 +168,11 @@ async def anomalies(
     if use_case and scope is not None and use_case not in scope:
         # Same answer, and the same reason, as the trace view: emptiness rather than a refusal,
         # with `in_scope` saying which of the two empties this is (see `_out_of_scope`).
-        return JSONResponse({"events": [], "scope": "use_cases", "in_scope": False})
+        return JSONResponse(
+            {"events": [], "next_cursor": None, "scope": "use_cases", "in_scope": False}
+        )
 
-    stmt = select(AnomalyEvent).order_by(AnomalyEvent.created_at.desc()).limit(limit)
+    stmt = select(AnomalyEvent)
     if scope is not None:
         stmt = stmt.where(AnomalyEvent.use_case.in_(list(scope)))
     # Filtered here rather than in the browser: a console that fetched the newest hundred findings
@@ -178,9 +181,28 @@ async def anomalies(
     if use_case:
         stmt = stmt.where(AnomalyEvent.use_case == use_case)
 
+    # Paged by cursor, for the same reason the trace view is (`FRD-502` §4.2) and not the one the
+    # use-case list is: findings are an **append-only log**. A detector firing while somebody reads
+    # page two of an offset-paged list pushes rows across the boundary, so they see one row twice
+    # and never see another — invisibly. The cursor is `(created_at, id)` because two findings can
+    # share a millisecond, written out because SQLite has no tuple comparison.
+    if cursor:
+        at, row_id = _parse_cursor(cursor)
+        stmt = stmt.where(
+            or_(
+                AnomalyEvent.created_at < at,
+                and_(AnomalyEvent.created_at == at, AnomalyEvent.id < row_id),
+            )
+        )
+    stmt = stmt.order_by(AnomalyEvent.created_at.desc(), AnomalyEvent.id.desc()).limit(limit + 1)
+
     sessionmaker = request.app.state.db_sessionmaker
     async with sessionmaker() as session:
         rows = list((await session.execute(stmt)).scalars().all())
+
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    next_cursor = f"{rows[-1].created_at.isoformat()}|{rows[-1].id}" if has_more and rows else None
 
     return JSONResponse(
         {
@@ -203,6 +225,7 @@ async def anomalies(
                 }
                 for row in rows
             ],
+            "next_cursor": next_cursor,
             "scope": "all" if scope is None else "use_cases",
             "in_scope": True,
         }

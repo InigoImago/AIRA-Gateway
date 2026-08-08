@@ -159,15 +159,16 @@ test.describe('The console explains itself', () => {
     await row.locator('[data-testid^="rule-toggle-"]').click();
     await page.locator('[data-testid^="rule-edit-"]').first().click();
 
-    // The form opens with the rule as it is, not empty.
-    const threshold = page.locator('[data-testid^="edit-threshold-"]').first();
+    // The form opens with the rule as it is, not empty. Its fields are the shared `RuleForm`'s
+    // now, so they are named after the form rather than after the screen.
+    const threshold = page.locator('[data-testid^="rule-"][data-testid$="-threshold"]').first();
     await expect(threshold).toBeVisible();
     expect(await threshold.inputValue()).toBe('50');
 
     // And a change actually reaches the server: the reason this screen exists is that rules were
     // authorable only over the API.
     await threshold.fill('65');
-    await page.locator('[data-testid^="rule-save-"]').first().click();
+    await page.locator('[data-testid^="rule-"][data-testid$="-save"]').first().click();
     await expect(page.locator('[role="status"]')).toContainText('saved', { timeout: 15_000 });
 
     await page.reload();
@@ -287,5 +288,89 @@ test.describe('Navigation says where you are', () => {
     expect(Number(marker!.weight)).toBeGreaterThanOrEqual(700);
     // A tint the unselected items do not have — the underline alone read as decoration.
     expect(marker!.background).not.toBe(marker!.otherBackground);
+  });
+});
+
+test.describe("Paging is the server's, where the list is unbounded", () => {
+  test('the use-case list arrives one page at a time, and says how many there are', async ({
+    page,
+  }) => {
+    // Client-side paging fixed the half that was never the expensive one: this endpoint computes
+    // object-level permissions per row, so fetching everything and slicing it in the browser left
+    // every one of those computations happening. The reader waited exactly as long for 25 rows.
+    await login(page, USERS.useCaseAdmin);
+    const started = Date.now();
+    await page.goto('/use-cases');
+    await expect(page.locator('[data-testid="use-case-pager"]')).toBeVisible({ timeout: 30_000 });
+
+    // Not a benchmark — an upper bound that the old shape could not have met on this database.
+    expect(Date.now() - started).toBeLessThan(15_000);
+    expect(await page.locator('tbody tr').count()).toBeLessThanOrEqual(25);
+
+    const pager = page.locator('[data-testid="use-case-pager"]');
+    // The total is the server's count, not the length of what arrived.
+    await expect(pager).toContainText(/of \d+ use cases/);
+  });
+
+  test('the search is answered by the database, not by the page', async ({ page }) => {
+    await login(page, USERS.useCaseAdmin);
+    const slug = uniqueSlug('needle');
+    await createUseCase(page, slug, 'Needle probe');
+
+    await page.goto('/use-cases');
+    await expect(page.locator('[data-testid="use-case-search"]')).toBeVisible({ timeout: 30_000 });
+
+    const request = page.waitForRequest(
+      (r) => r.url().includes('/api/v1/use-cases/') && r.url().includes(`q=${slug}`),
+    );
+    await page.fill('[data-testid="use-case-search"]', slug);
+    await request;
+
+    await expect(page.locator(`code:text-is("${slug}")`)).toBeVisible();
+    await expect(page.locator('[data-testid="use-case-pager"]')).toContainText('filtered');
+  });
+});
+
+test.describe("A use case's own anomaly rules", () => {
+  test('can be created and changed by whoever administers the use case', async ({ page }) => {
+    // The security console said a use-case rule "is changed on that use case" and there was no
+    // such screen — an instruction with no destination. This is the destination.
+    await login(page, USERS.useCaseAdmin);
+    const slug = uniqueSlug('rules');
+    await createUseCase(page, slug, 'Rules probe');
+
+    await page.goto(`/use-cases/${slug}?tab=rules`);
+    await expect(page.locator('[data-testid="no-rules"]')).toBeVisible({ timeout: 20_000 });
+    // An empty list here does not mean nothing is watching — global rules may still apply, and
+    // the place that knows the difference says so.
+    await expect(page.locator('[data-testid="no-rules"]')).toContainText('global rules');
+
+    await page.click('[data-testid="rule-add"]');
+    await page.fill('[data-testid="new-rule-name"]', 'refusals are climbing');
+    await page.selectOption('[data-testid="new-rule-kind"]', 'refusal_rate');
+    await page.fill('[data-testid="new-rule-threshold"]', '40');
+    await page.click('[data-testid="new-rule-save"]');
+
+    await expect(page.locator('[role="status"]')).toContainText('created', { timeout: 20_000 });
+    const row = page.locator('tr:has-text("refusals are climbing")').first();
+    await expect(row).toBeVisible();
+    // Said in words, not as a kind and two numbers.
+    await expect(page.locator('.detail-sentence').first()).toContainText('Watches');
+
+    // And changed.
+    await page.locator('[data-testid^="uc-rule-edit-"]').first().click();
+    const threshold = page.locator('[data-testid^="rule-"][data-testid$="-threshold"]').first();
+    await threshold.fill('55');
+    await page.locator('[data-testid^="rule-"][data-testid$="-save"]').first().click();
+    await expect(page.locator('[role="status"]')).toContainText('saved', { timeout: 20_000 });
+  });
+
+  test('is read-only for somebody who does not administer it', async ({ page }) => {
+    // `ucuser` is a member of `demo-uc` and administers nothing.
+    await login(page, USERS.useCaseUser);
+    await page.goto('/use-cases/demo-uc?tab=rules');
+
+    await expect(page.locator('[data-testid="rules-readonly"]')).toBeVisible({ timeout: 20_000 });
+    await expect(page.locator('[data-testid="rule-add"]')).toHaveCount(0);
   });
 });

@@ -56,6 +56,7 @@ from aira_management.apps.usecases.serializers import (
     MembershipSerializer,
     UseCaseSerializer,
 )
+from aira_management.pagination import ConsolePagination, apply_search
 from aira_management.rbac import IsUseCaseAdmin, scope_queryset
 
 # One definition, in `access.py`, because the console asks the same questions to decide what to
@@ -125,9 +126,20 @@ def _rate_limit_payload(limit: RateLimit, slug: str) -> dict[str, Any]:
 class UseCaseViewSet(viewsets.ModelViewSet[UseCase]):
     serializer_class = UseCaseSerializer
     lookup_field = "slug"
+    #: Only the list is paged. Every other action here addresses one use case by slug, and a
+    #: paginated single object is not a thing.
+    pagination_class = ConsolePagination
 
     def get_queryset(self) -> QuerySet[UseCase]:
-        return scope_queryset(self.request.user, _VIEW, UseCase.objects.all())
+        scoped = scope_queryset(self.request.user, _VIEW, UseCase.objects.all())
+        # Ordered explicitly: paging an unordered queryset is undefined, and Postgres is entitled
+        # to hand back the same row on two pages and no row for a third. By name, because that is
+        # what the list is read by.
+        scoped = scoped.order_by("name", "slug")
+        # The search runs here, so the rows a reader is not looking at are never built. That is the
+        # whole reason this moved off the browser: the serializer computes object-level permissions
+        # per row (`access.py`), and client-side paging left every one of them happening.
+        return apply_search(scoped, self.request, "name", "slug")
 
     def get_permissions(self) -> list[Any]:
         if self.action == "create":

@@ -38,9 +38,9 @@
         </label>
       </div>
 
-      @if (!view.matches().length) {
+      @if (!view.total()) {
         <p class="empty" data-testid="use-case-no-match">
-          No use case matches “{{ view.query() }}”. There are {{ useCases().length }} in total.
+          No use case matches “{{ view.query() }}”.
         </p>
       } @else {
         <div class="table-wrap">
