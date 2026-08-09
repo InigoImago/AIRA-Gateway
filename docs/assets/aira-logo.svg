@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 132" width="560" height="132"
+     role="img" aria-label="AIRA Gateway">
+  <title>AIRA Gateway</title>
+  <desc>A gate: two posts and a lintel, with three request paths passing through one opening.</desc>
+
+  <defs>
+    <linearGradient id="edge" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2563eb"/>
+      <stop offset="1" stop-color="#0ea5e9"/>
+    </linearGradient>
+  </defs>
+
+  <!-- The mark is a gate, because that is what the product is: everything passes, one way, and
+       what passes is recorded. Three lines go in on the left; the same three come out on the
+       right, one of them stopped at the threshold. -->
+  <g transform="translate(14 14)">
+    <!-- lintel and posts -->
+    <rect x="14" y="0" width="76" height="13" rx="4" fill="url(#edge)"/>
+    <rect x="14" y="13" width="13" height="91" rx="4" fill="url(#edge)"/>
+    <rect x="77" y="13" width="13" height="91" rx="4" fill="url(#edge)"/>
+
+    <!-- three requests arriving -->
+    <g stroke="#64748b" stroke-width="6" stroke-linecap="round">
+      <line x1="-14" y1="38" x2="10" y2="38"/>
+      <line x1="-14" y1="58" x2="10" y2="58"/>
+      <line x1="-14" y1="78" x2="10" y2="78"/>
+    </g>
+
+    <!-- two continue, one is stopped at the threshold -->
+    <g stroke="#2563eb" stroke-width="6" stroke-linecap="round">
+      <line x1="94" y1="38" x2="118" y2="38"/>
+      <line x1="94" y1="78" x2="118" y2="78"/>
+    </g>
+    <circle cx="52" cy="58" r="7" fill="#ef4444"/>
+  </g>
+
+  <g fill="#0f172a" font-family="Inter, Segoe UI, Helvetica, Arial, sans-serif">
+    <text x="176" y="72" font-size="54" font-weight="700" letter-spacing="1">AIRA</text>
+    <text x="176" y="102" font-size="19" font-weight="500" fill="#475569" letter-spacing="3.5">
+      GOVERNED MODEL ACCESS
+    </text>
+  </g>
+</svg>

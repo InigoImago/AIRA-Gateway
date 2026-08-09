@@ -1,7 +1,7 @@
 # ADR-0016 — Stored prompts are readable, and every read is recorded
 
 > Status: **Accepted** · Date: 2026-08-09 · Owner: Vadim Scheibe
-> Amends [`ADR-0009`](ADR-0009-reporting-reads-the-gateway-store.md) · Related: `FRD-406`
+> Amends [`ADR-0009`](ADR-0009-gateway-knows-roles.md) · Related: `FRD-406`
 > (redaction), `FRD-404` (retention), `FRD-502` (traces), `FRD-505` (this view), `ADR-0013`
 > (auditable model access)
 

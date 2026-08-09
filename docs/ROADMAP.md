@@ -96,7 +96,7 @@ FRDs: `FRD-400-budget-model`, `FRD-401-budget-enforcement`, `FRD-402-budget-ui`.
 Deliverables:
 - **Anomaly rules** self-service: rate-based, size-based, data-leak detection.
 - Detection pipeline (gateway signals → Kafka → evaluation) and **AnomalyEvent** store.
-- **IT Security console** ✅ (`FRD-502`, 2026-08-08): cross-use-case findings, suspensions and the
+- **IT Security console** done (`FRD-502`, 2026-08-08): cross-use-case findings, suspensions and the
   kill switch, the rules behind them, warnings per use case for the members who could fix the cause,
   and a per-use-case request view — all refreshing live. Scoped visibility is **metadata only**;
   showing a payload still waits on `FRD-406`.
@@ -196,14 +196,14 @@ order below serves the priorities rather than restating them.
 
 | Stufe | Was | Warum hier |
 |---|---|---|
-| **0** ✅ | ~~`FRD-122` — vollständiger Audit-Trail~~ **fertig 2026-08-06** | Klein, additiv, kein Eingriff in den Request-Pfad — und **jede spätere Stufe wird dagegen getestet**. Ablehnungen, das aufrufende System und `requested_model` vs. `model` sind genau das, was man bei Fallback über zwei Anbieter und einer zweiten API-Fläche braucht. Zuerst, weil es danach mühsamer nachzurüsten ist als jetzt. |
-| **1** ✅ | ~~`FRD-114` — Modell-Metadaten~~ **fertig 2026-08-06** | Voraussetzung für alles: Publisher, Capabilities, Default-Cap, Adressierung, Hosting. |
-| **2** ✅ | ~~`FRD-115` + `FRD-119` — Vertex EU, Gemini + Anthropic~~ **fertig 2026-08-06** | Priorität 2, erste Hälfte. Erst danach ist überhaupt ein produktionsfähiges (EU-)Modell erreichbar. |
-| **3** ✅ | ~~`FRD-110` — Dokumente~~ **fertig 2026-08-06** | Priorität 3. Bewusst **nach** Stufe 2: ohne dokumentenfähiges Modell in der EU wären Dokumente nur gegen den Mock nutzbar. |
-| **4** ✅ | ~~`FRD-107` Stage A — KIRA-Fläche~~ **fertig 2026-08-06**, inkl. Dokumenten | Priorität 1, so früh wie ehrlich möglich. Nicht unterstützte Felder werden **abgewiesen**, nie ignoriert (`FRD-107` §5.2). Einfache Clients migrieren hier. |
-| **5** ✅ | ~~`FRD-111`, `FRD-112`, `FRD-113`~~ **fertig 2026-08-06** | Thinking, strukturierte Ausgabe, Embedding-Optionen. |
-| **6** ✅ | ~~`FRD-107` Stage B~~ **fertig 2026-08-06** | Dieselben Felder wurden von abgewiesen zu bedient — **Vertrag unverändert**, direkt mit Stufe 5 ausgeliefert, weil eine Fähigkeit zu bauen und sie an der Kompatibilitätsfläche weiter abzuweisen niemandem nützt. |
-| **7** ✅ | ~~`FRD-120` — Microsoft Foundry~~ **fertig 2026-08-06** | Priorität 2, zweite Hälfte. **Der Diff hat `upstreams/` nicht verlassen** — Feature 19 damit belegt, nicht behauptet. Hermetisch getestet; es gibt hier keine Azure-Subscription. |
+| **0** done | ~~`FRD-122` — vollständiger Audit-Trail~~ **fertig 2026-08-06** | Klein, additiv, kein Eingriff in den Request-Pfad — und **jede spätere Stufe wird dagegen getestet**. Ablehnungen, das aufrufende System und `requested_model` vs. `model` sind genau das, was man bei Fallback über zwei Anbieter und einer zweiten API-Fläche braucht. Zuerst, weil es danach mühsamer nachzurüsten ist als jetzt. |
+| **1** done | ~~`FRD-114` — Modell-Metadaten~~ **fertig 2026-08-06** | Voraussetzung für alles: Publisher, Capabilities, Default-Cap, Adressierung, Hosting. |
+| **2** done | ~~`FRD-115` + `FRD-119` — Vertex EU, Gemini + Anthropic~~ **fertig 2026-08-06** | Priorität 2, erste Hälfte. Erst danach ist überhaupt ein produktionsfähiges (EU-)Modell erreichbar. |
+| **3** done | ~~`FRD-110` — Dokumente~~ **fertig 2026-08-06** | Priorität 3. Bewusst **nach** Stufe 2: ohne dokumentenfähiges Modell in der EU wären Dokumente nur gegen den Mock nutzbar. |
+| **4** done | ~~`FRD-107` Stage A — KIRA-Fläche~~ **fertig 2026-08-06**, inkl. Dokumenten | Priorität 1, so früh wie ehrlich möglich. Nicht unterstützte Felder werden **abgewiesen**, nie ignoriert (`FRD-107` §5.2). Einfache Clients migrieren hier. |
+| **5** done | ~~`FRD-111`, `FRD-112`, `FRD-113`~~ **fertig 2026-08-06** | Thinking, strukturierte Ausgabe, Embedding-Optionen. |
+| **6** done | ~~`FRD-107` Stage B~~ **fertig 2026-08-06** | Dieselben Felder wurden von abgewiesen zu bedient — **Vertrag unverändert**, direkt mit Stufe 5 ausgeliefert, weil eine Fähigkeit zu bauen und sie an der Kompatibilitätsfläche weiter abzuweisen niemandem nützt. |
+| **7** done | ~~`FRD-120` — Microsoft Foundry~~ **fertig 2026-08-06** | Priorität 2, zweite Hälfte. **Der Diff hat `upstreams/` nicht verlassen** — Feature 19 damit belegt, nicht behauptet. Hermetisch getestet; es gibt hier keine Azure-Subscription. |
 | **8** | `FRD-116`, `FRD-117`, `FRD-602`, `FRD-124`, `FRD-406` | Vault, Diagnostik, Export, Maskierung. |
 | **9** | `FRD-504`, `FRD-500`/`501`/`503` | IT-Security: Smoke-Tests, Anomalien, Incident Response. |
 | **9** | `FRD-131`, `FRD-132`, `FRD-133` | Agenten und Coding-Assistenten: Tool Calling (per Use Case, Default aus), Flächenentscheidung nach Messung, Prompt-Caching zuletzt. |
@@ -234,7 +234,7 @@ overruled rather than discovered:
 | `FRD-116` | Secrets actually read from Vault | policy and implementation have been apart since Phase 0 |
 | `FRD-117` | Version info, upstream health, CORS, OpenAPI 3.0, trace header | independent; makes the rest operable |
 | `FRD-118` | Several Keycloak backends, groups from UserInfo | **requirement unconfirmed — see its §11** |
-| `FRD-602` | CSV export of the usage report | follows `FRD-601` ✓ |
+| `FRD-602` | CSV export of the usage report | follows `FRD-601` done |
 | `FRD-107` | The KIRA wire format itself | **Stage A done (2026-08-06)**, and it carries documents because `FRD-110` landed first. Stage B (thinking, structured output, embedding options) follows those FRDs. |
 
 **Withdrawn (2026-08-07):** the OpenAI-compatible **surface** (`FRD-106`) is not wanted. It was

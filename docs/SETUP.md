@@ -1,5 +1,20 @@
 # Setup
 
+> **This page has been split into four**, one per way of running AIRA, each written step by step for
+> somebody doing it for the first time. It is kept as a redirect because links to it exist.
+>
+> | | For |
+> |---|---|
+> | [**Showcase**](deployment/showcase.md) | seeing the whole product work, with real traffic |
+> | [**Standalone**](deployment/standalone.md) | running it on one machine, everything in containers |
+> | [**Development**](deployment/dev.md) | changing the code, with reload on save |
+> | [**Integrated**](deployment/integrated.md) | your infrastructure, your Keycloak, your models |
+>
+> Reference that applies to all four: [configuration](CONFIGURATION.md),
+> [integrations](INTEGRATIONS.md), [operations](DEPLOYMENT.md), [roles](ROLES.md).
+
+---
+
 Four ways to run AIRA Gateway, from "I want to look at it" to "I want it on our infrastructure".
 Pick the row that matches your intent.
 
@@ -19,9 +34,9 @@ why is in [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 | Setup | Docker | Python 3.14 + [uv](https://docs.astral.sh/uv/) | Node 26 | Disk |
 |---|:--:|:--:|:--:|---|
-| Demo | ✅ | — | — | ~4 GB (model weights) |
-| Standalone | ✅ | — | — | ~2 GB |
-| Development | ✅ (infrastructure) | ✅ | ✅ | ~2 GB |
+| Demo | yes | — | — | ~4 GB (model weights) |
+| Standalone | yes | — | — | ~2 GB |
+| Development | yes (infrastructure) | yes | yes | ~2 GB |
 | Integrated | for images | — | — | — |
 
 Versions are pinned ([`ADR-0003`](adr/ADR-0003-toolchain-versions.md)): `.python-version` and

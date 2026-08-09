@@ -8,7 +8,7 @@ and the [ROADMAP](ROADMAP.md).
 close a gap is a decision somebody makes rather than a surprise somebody has. Items are grouped by
 how much they matter, not by how hard they are.
 
-Legend: ✅ built and verified · 🟡 partial, with the missing half named · ❌ not built
+Legend: done built and verified · partly partial, with the missing half named · missing not built
 
 ---
 
@@ -16,23 +16,23 @@ Legend: ✅ built and verified · 🟡 partial, with the missing half named · �
 
 | # | Feature | Stand | Where |
 |--:|---|---|---|
-| 1 | Unified provision of models | 🟡 | Vertex (Gemini + Anthropic) ✅, OpenAI-compatible/self-hosted ✅, Foundry **hermetic only** — no Azure subscription has ever run it |
-| 2 | Role assignment | ✅ | `FRD-201`, `ADR-0009` |
-| 3 | KIRA API compatibility | ✅ | `FRD-107` Stage A+B — text, documents, thinking, structured output, batch embedding |
-| 4 | Auditability | ✅ | `FRD-122` — refusals recorded at the exception boundary, requested vs. served model, degradation per row |
-| 5 | Storage of requests/responses: which system, when, what, with what | ✅ | `FRD-103` + `FRD-122` — the API-key prefix distinguishes the calling system |
-| 6 | Incident response | ✅ | `FRD-503` — suspensions with author, expiry, reason; kill switch |
-| 7 | Blocking dangerous requests | 🟡 | injection filter ✅, operator kill switch ✅ — **no further categories** (jailbreak, data exfiltration, PII in the prompt) |
-| 8 | Model routing from the definition | ✅ | `FRD-300`, `FRD-306` |
-| 9 | Model fallback | ✅ | capability-homogeneous: a chain skips an incapable candidate rather than degrading silently |
-| 10 | Independence from Google / Microsoft | 🟡 | proven for **two** providers by an architecture assertion; Foundry unproven against a real subscription |
-| 11 | Overview of all use cases | 🟡 | list and detail ✅ — **no governance view of the processing logic** across use cases (`FRD-600`) |
-| 12 | Self-service filter and routing pipeline | ✅ | `FRD-303`, `FRD-306` |
-| 13 | Permitted models per use case | 🟡 | allow-list ✅, capabilities enforced ✅ — **no approved catalog with pickers** (`FRD-307`) |
-| 14 | Model smoke tests and jailbreak batteries | ❌ | `FRD-504` written, **not built** |
-| 15 | Budget overview and limits | ✅ | `FRD-400`–`403`, `FRD-601` |
-| 16 | Anomaly detection | ✅ | `FRD-500`/`501` — seven kinds, evaluated against the audit trail |
-| 17 | Central overview of all use cases | 🟡 | see 11 |
+| 1 | Unified provision of models | partly | Vertex (Gemini + Anthropic) done, OpenAI-compatible/self-hosted done, Foundry **hermetic only** — no Azure subscription has ever run it |
+| 2 | Role assignment | done | `FRD-201`, `ADR-0009` |
+| 3 | KIRA API compatibility | done | `FRD-107` Stage A+B — text, documents, thinking, structured output, batch embedding |
+| 4 | Auditability | done | `FRD-122` — refusals recorded at the exception boundary, requested vs. served model, degradation per row |
+| 5 | Storage of requests/responses: which system, when, what, with what | done | `FRD-103` + `FRD-122` — the API-key prefix distinguishes the calling system |
+| 6 | Incident response | done | `FRD-503` — suspensions with author, expiry, reason; kill switch |
+| 7 | Blocking dangerous requests | partly | injection filter done, operator kill switch done — **no further categories** (jailbreak, data exfiltration, PII in the prompt) |
+| 8 | Model routing from the definition | done | `FRD-300`, `FRD-306` |
+| 9 | Model fallback | done | capability-homogeneous: a chain skips an incapable candidate rather than degrading silently |
+| 10 | Independence from Google / Microsoft | partly | proven for **two** providers by an architecture assertion; Foundry unproven against a real subscription |
+| 11 | Overview of all use cases | partly | list and detail done — **no governance view of the processing logic** across use cases (`FRD-600`) |
+| 12 | Self-service filter and routing pipeline | done | `FRD-303`, `FRD-306` |
+| 13 | Permitted models per use case | partly | allow-list done, capabilities enforced done — **no approved catalog with pickers** (`FRD-307`) |
+| 14 | Model smoke tests and jailbreak batteries | missing | `FRD-504` written, **not built** |
+| 15 | Budget overview and limits | done | `FRD-400`–`403`, `FRD-601` |
+| 16 | Anomaly detection | done | `FRD-500`/`501` — seven kinds, evaluated against the audit trail |
+| 17 | Central overview of all use cases | partly | see 11 |
 
 **Score:** 9 built, 6 partial, 2 missing. The partials are all *breadth* rather than correctness —
 each does what it says for what it covers.
@@ -43,13 +43,13 @@ each does what it says for what it covers.
 
 | # | Feature | Stand |
 |--:|---|---|
-| 18 | Document processing (PDF, images) | ✅ `FRD-110` — 15 media types, signature checks, a model that cannot read it is **refused by name** |
-| 19 | Extensibility as a measurable property | 🟡 architecture assertion passes; the claim "a new family is a catalog entry plus at most one dialect" has been tested twice, not three times |
-| 20 | Secrets from Vault | ✅ `FRD-116` — a settings source, fail-closed |
-| 21 | Operational diagnostics | 🟡 `FRD-117` — build identity, upstream health, trace header, CORS ✅; **FR-7 (a second OpenAPI 3.0 document) not built** |
-| 22 | Masking sensitive content in stored payloads | 🟡 `FRD-406` (2026-08-08) — **credentials** are masked; PII deliberately is not |
-| 23 | Report export | ✅ `FRD-602` — CSV as a renderer on the existing endpoint |
-| 24 | Multiple Keycloak backends / groups from UserInfo | ❌ `FRD-118` — **need unclear**, not scheduled |
+| 18 | Document processing (PDF, images) | done `FRD-110` — 15 media types, signature checks, a model that cannot read it is **refused by name** |
+| 19 | Extensibility as a measurable property | partly architecture assertion passes; the claim "a new family is a catalog entry plus at most one dialect" has been tested twice, not three times |
+| 20 | Secrets from Vault | done `FRD-116` — a settings source, fail-closed |
+| 21 | Operational diagnostics | partly `FRD-117` — build identity, upstream health, trace header, CORS done; **FR-7 (a second OpenAPI 3.0 document) not built** |
+| 22 | Masking sensitive content in stored payloads | partly `FRD-406` (2026-08-08) — **credentials** are masked; PII deliberately is not |
+| 23 | Report export | done `FRD-602` — CSV as a renderer on the existing endpoint |
+| 24 | Multiple Keycloak backends / groups from UserInfo | missing `FRD-118` — **need unclear**, not scheduled |
 
 ---
 

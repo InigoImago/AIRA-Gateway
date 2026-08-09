@@ -1,86 +1,158 @@
-# AIRA Gateway — AI REST API
+<p align="center">
+  <img src="docs/assets/aira-logo.svg" alt="AIRA — governed model access" width="420">
+</p>
 
-**One governed API in front of every LLM your organisation uses.**
-
-A use case calls AIRA instead of calling Google, Microsoft or a self-hosted model directly. In
-exchange the organisation gets attribution, budgets, rate limits, a configurable pre-dispatch
-pipeline, a complete audit trail, spend reporting, anomaly detection and an incident kill switch —
-without every team building any of it.
-
-The scope is deliberately narrow: **auditable model access, not agents**. No retrieval, no
-conversation state, no tool execution, no workflow orchestration
-([`ADR-0013`](docs/adr/ADR-0013-auditable-model-access-not-agents.md)).
-
-```mermaid
-graph LR
-    app["Your application"] -->|"one API<br/>Gemini or KIRA dialect"| aira["<b>AIRA Gateway</b>"]
-    aira --> v["Google Vertex AI<br/><i>Gemini · Claude · EU</i>"]
-    aira --> f["Microsoft Foundry<br/><i>Azure OpenAI</i>"]
-    aira --> s["Self-hosted<br/><i>OpenAI-compatible</i>"]
-    aira -.->|"attribution · budgets · limits<br/>pipeline · audit · detection"| gov["Governance"]
-    style aira fill:#4f46e5,color:#fff
-```
+<p align="center">
+  <strong>An enterprise gateway for AI models.</strong><br>
+  One API in front of several platforms, and a record of everything that passed through it.
+</p>
 
 ---
 
-## Try it
+AIRA sits between the people who want to call a model and the platforms that serve one. Every
+request goes through the same controls in the same order — who is asking, on whose behalf, may they
+afford it, may this model serve it — and every request leaves a row saying what happened, including
+the ones that were refused.
+
+It is deliberately **not** an agent platform. It provides auditable model access: no conversation
+state, no retrieval, no tool execution, no workflow orchestration. The test for anything proposed
+is whether it makes model access better governed and better evidenced, or whether it makes the
+gateway think for the use case.
+
+---
+
+## See it working
 
 ```bash
 make showcase
 ```
 
 Starts everything in containers, pulls a small local model, seeds three use cases with budgets,
-limits, pipelines and keys, and drives **real traffic** through the gateway — including a prompt
-injection the filter refuses. Then open <http://localhost:4200>.
+limits, pipelines, rules and keys, and drives **real traffic** through the gateway — including a
+prompt injection the filter refuses. Then open <http://localhost:4200>.
 
 | Sign in as | Password | To see |
 |---|---|---|
+| `admin` | `demo-password` | everything, including model prices and approval |
+| `itsec` | `demo-password` | security oversight, and the content of requests |
+| `itgov` | `demo-password` | every figure, no write anywhere, no content |
 | `ucadmin` | `demo-password` | administering two of three use cases |
-| `ucuser` | `demo-password` | a member's read-only view |
-| `itsec` | `demo-password` | security oversight across every use case |
-| `itgov` | `demo-password` | every figure, no write anywhere |
-| `admin` | `demo-password` | everything, including model prices |
+| `ucuser` | `demo-password` | a member's view |
 
-Only Docker is needed. `make showcase-traffic` drives more traffic; `make down-full` stops it. → [`docs/SETUP.md`](docs/SETUP.md)
+Only Docker is needed. Step by step: [**Showcase**](docs/deployment/showcase.md).
 
 ---
 
-## What it does
+## Deployment
 
-### For the people calling models
+Four ways to run it, one page each. Written for somebody doing it for the first time.
 
-- **One API, several platforms.** Gemini-dialect REST (`/v1beta`) and the predecessor's KIRA
-  contract (`/kira/api/external`), both over one provider-agnostic core.
-- **Text, documents and images.** 15 media types with signature checks. A model that cannot read
-  the attachment is **refused by name** — never sent the prompt without it, because a dropped
-  attachment produces a confident wrong answer with a 200.
-- **Thinking, structured output, batch embedding.** Declared per model; one flag says *whether*, and
-  three vendors do it three unrelated ways the caller never sees.
+| | For | Needs |
+|---|---|---|
+| [**Showcase**](docs/deployment/showcase.md) | seeing the whole product work, with real traffic | Docker |
+| [**Standalone**](docs/deployment/standalone.md) | running it on one machine, everything in containers | Docker |
+| [**Development**](docs/deployment/dev.md) | changing the code, reload on save | Docker, Python 3.14 + uv, Node 26 |
+| [**Integrated**](docs/deployment/integrated.md) | your infrastructure, your Keycloak, your models | see its access checklist |
+
+---
+
+## Features
+
+Complete, and honest about what is not there. Anything unbuilt is in
+[Gaps](#gaps-stated-rather-than-implied).
+
+### Calling a model
+
+- **Two API surfaces on one core.** The Gemini dialect (`/v1beta/models/…:generateContent`,
+  `:streamGenerateContent`, `:embedContent`) and the predecessor KIRA contract
+  (`/kira/api/external`), both served by the same provider-agnostic pipeline. Neither is a copy of
+  the other: a test compares the audit rows the two produce.
+- **Four model families, one namespace.** Gemini and Claude on Google Vertex (EU-regional), GPT and
+  others on Microsoft Foundry, and any OpenAI-compatible server you run yourself.
+- **Streaming**, as SSE for the Google SDK and as a JSON array by default.
+- **Documents and images.** 15 media types with signature checks. A model that cannot read the
+  attachment is **refused by name** — never sent the prompt without it, because a dropped attachment
+  produces a confident wrong answer with a 200 and the caller blames the model.
+- **Thinking budgets, structured output, batch embedding with task types.** Declared per model. One
+  flag says *whether*; three vendors do each of these three unrelated ways the caller never sees.
+- **Tool calling**, carried and never executed, off by default per use case.
+- **Fallback chains** that skip a candidate that cannot serve the request and say which and why —
+  rather than quietly answering with less than was asked for.
 - **Nothing is silently dropped.** A field this gateway cannot honour is refused *by name* with the
-  reason, or the candidate is skipped — never accepted and ignored.
+  reason. Strictness is one-directional: responses still ignore fields they do not know, or every
+  upstream release becomes an outage.
 
-### For the people accountable for it
+### Governing it
 
-- **Attribution** per request: who, which system, which use case, which model, which region.
-- **Budgets** in money, tokens or requests — per use case or per member, per day or month, reserved
-  before dispatch so concurrent requests cannot all pass the same stale figure.
-- **Rate limits** as token buckets over a shared store, so N replicas do not allow N × the limit.
-- **A pipeline** per use case: prompt-injection filter, model allow-list, LLM-based routing, and a
-  fallback chain that skips candidates it cannot honour.
-- **A complete audit trail** — including refusals, because "the log records what was served, not
-  what was asked" is how a leaked credential's blast radius becomes unknowable.
-- **Spend and usage reporting**, on screen and as CSV.
-- **Anomaly detection and incident response**: seven rule kinds evaluated against the audit trail,
-  and suspensions with an author, a reason and an expiry.
+- **Use cases** as the unit of everything: access, budget, limits, pipeline, retention, reporting.
+- **Two ways in.** API keys bound to a use case (hashed at rest, always with an end date), and
+  Keycloak OIDC bearer tokens.
+- **Access follows the group.** A grant binds a person *or* a Keycloak group to a use case. AIRA
+  never writes to your directory.
+- **Five roles**, and the differences between them are load-bearing:
+  [**who may do what**](docs/ROLES.md).
+- **Budgets** on spend, tokens or requests, per use case or per member, per day or per month.
+  Reserved before dispatch and settled after, so concurrent requests cannot all pass a limit with
+  room for one.
+- **Rate limits** as token buckets over Redis, holding across replicas.
+- **A pre-dispatch pipeline** per use case: prompt-injection filtering (heuristic or LLM-backed),
+  model allow-lists, and LLM-classifier routing — built in the console as a graph, with inline help
+  and a dry run.
+- **An approved-model catalog.** Only models a Global Administrator has catalogued **and approved**
+  may be used. Prices, capabilities, output caps and regions live there, and the gateway enforces
+  them from its own read-model rather than asking the control plane on the request path.
+- **Residency enforced, not intended.** A model outside the permitted regions stops the process at
+  startup, and provider, publisher and region are on every audit row.
+- **Secrets from Vault.** AppRole and KV-v2, ranked above the environment, failing closed: a
+  configured Vault that cannot be reached stops the process rather than running on a stale value.
 
-### For the people running it
+### Evidencing it
 
-- Two stateless services, six processes, Postgres + Kafka + Keycloak, optional Redis, Vault and
-  OTLP. Everything else is a container.
-- **Degradation is decided**: without Redis, limits become per-instance rather than absent, and
-  `/readyz` says so — and the audit row records which controls were degraded when it was written.
-- **Safe defaults are enforced**: a dev secret, `DEBUG`, `ALLOWED_HOSTS=*`, a model outside the
-  residency policy or an unreachable Vault all **refuse to boot**.
+- **Every request is recorded** — served or refused. Rate-limited, over budget, unknown model,
+  malformed, too large, client hung up: the log records what was *asked*, not only what was served.
+- **What it cost.** Priced from the prompt/completion split in integer nano-units. Unpriced traffic
+  is counted apart, never as zero.
+- **What the model was asked to run.** Tool names and counts on the audit row — never the arguments,
+  which are the caller's content.
+- **Spend and usage reporting** with breakdowns by use case, model and member, and a CSV export that
+  is a renderer of the same endpoint rather than a second one.
+- **A request browser**, across use cases for the roles that investigate and inside one for the
+  people who run it: which system, whose identity, which machine, what the pipeline objected to.
+- **The prompts and answers themselves**, for the roles entitled to them — and **every read writes a
+  record** of who read what, when, and on what authority.
+- **Anomaly detection.** Seven rule kinds in a closed vocabulary, evaluated against the request log,
+  including refusals. `alert` is the default because a system whose first setting is `block` blocks
+  wrongly once and is switched off forever.
+- **Incident response.** A suspension is a written decision with a target, an expiry, an author and
+  a reason; it is read at the one pre-dispatch gate and kept after being lifted.
+- **Per-use-case retention** for stored prompts, seven days by default, with payload storage
+  switchable per use case and a kill switch above it.
+- **Tracing** with `aira.*` span attributes, and a trace id on every response.
+
+---
+
+## How it is built
+
+```mermaid
+graph LR
+  caller["caller"] --> gw["Gateway<br/><i>FastAPI</i>"]
+  gw --> up["model platforms"]
+  gw --> pg[("Postgres")]
+  gw --> redis[("Redis")]
+  mg["Control plane<br/><i>Django + DRF</i>"] -- config over Kafka --> gw
+  ui["Console<br/><i>Angular</i>"] --> mg
+  ui --> gw
+  kc["Keycloak"] -.-> gw
+  kc -.-> mg
+  vault["Vault"] -.-> gw
+  vault -.-> mg
+```
+
+The two planes share nothing but events. The gateway never calls the control plane on the request
+path, so a control-plane outage costs configuration changes, not traffic.
+
+Full picture: [**Architecture**](docs/ARCHITECTURE.md) ·
+[**One request end to end**](docs/REQUEST-LIFECYCLE.md).
 
 ---
 
@@ -88,70 +160,58 @@ Only Docker is needed. `make showcase-traffic` drives more traffic; `make down-f
 
 | | |
 |---|---|
-| 🏛 [**Architecture**](docs/ARCHITECTURE.md) | C4 context, containers and components, with diagrams |
-| 🔄 [**Request lifecycle**](docs/REQUEST-LIFECYCLE.md) | One request end to end: every control, in order, and what it costs to skip |
-| 🚀 [**Setup**](docs/SETUP.md) | Demo · standalone · development · integrated |
-| ⚙️ [**Configuration**](docs/CONFIGURATION.md) | Every variable, what it does, what breaks without it |
-| 🔌 [**Integrations**](docs/INTEGRATIONS.md) | What each connected system must provide: tokens, settings, checklists |
-| 📋 [**Gap analysis**](docs/GAP-ANALYSIS.md) | Requirements against what is built — honestly |
-| 🧪 [**Testing**](docs/TESTING.md) | The four layers and why each exists |
-| 📦 [**Deployment**](docs/DEPLOYMENT.md) | Operational reference |
-| 📐 [**ADRs**](docs/adr/) | Why each significant decision was made |
-| 📄 [**FRDs**](docs/features/) | What each feature must do |
-| 📓 [**Devlog**](docs/DEVLOG.md) · [**PRD**](docs/PRD.md) · [**Roadmap**](docs/ROADMAP.md) | History, requirements, plan |
+| [**Roles**](docs/ROLES.md) | Who may do what, completely |
+| [**Deployment**](docs/deployment/) | Showcase · standalone · development · integrated |
+| [**Architecture**](docs/ARCHITECTURE.md) | Context, containers and components |
+| [**Request lifecycle**](docs/REQUEST-LIFECYCLE.md) | Every control, in order, and what skipping one costs |
+| [**Configuration**](docs/CONFIGURATION.md) | Every variable, what it does, what breaks without it |
+| [**Integrations**](docs/INTEGRATIONS.md) | What each connected system must provide |
+| [**Operations**](docs/DEPLOYMENT.md) | Running it: topics, jobs, degradation, backups |
+| [**Testing**](docs/TESTING.md) | The four layers and why each exists |
+| [**Gap analysis**](docs/GAP-ANALYSIS.md) | Requirements against what is built |
+| [**Contributing**](CONTRIBUTING.md) | Conventions, and where the decision records live |
 
 ---
 
-## Development
+## Building it
 
 ```bash
-make sync              # dependencies (Python 3.14 + uv, Node 26)
-make ci                # everything CI checks: lint, types, unit tests with coverage gates
-make test-integration  # against the live stack
-make test-e2e          # real browser (Playwright)
-make mutants           # break each guarded property and check the tests notice
-make help              # every target
+make sync   # dependencies
+make ci     # exactly what CI checks
+make help   # every target
 ```
 
-**Four test layers**, each for what the one below cannot see:
+Four test layers, each for what the one below cannot see:
 
 ```mermaid
 graph LR
     u["unit<br/><i>hermetic</i>"] --> m["mutation<br/><i>can a test fail?</i>"] --> i["integration<br/><i>live stack</i>"] --> e["e2e<br/><i>real browser</i>"]
 ```
 
-A green test proves the code and the test agree — which they inevitably do when both came from the
-same idea. So each property is broken on purpose and the tests are required to notice: **301
-properties** are guarded that way. The layers above unit exist because each has caught defects the
-one below structurally could not — most recently a use-case bypass on one of the two API surfaces
-that 271 mutation properties, a green gate and three other layers all missed, and that a single
-request against the running stack made obvious. → [`docs/TESTING.md`](docs/TESTING.md)
+A green test proves that the code and the test agree — which they inevitably do when both came from
+the same idea. So each guarded property is broken on purpose and the tests are required to notice.
+The layers above unit exist because each has caught defects the one below structurally could not.
 
-Conventions and current status: [`CLAUDE.md`](CLAUDE.md).
+Details: [**Testing**](docs/TESTING.md).
 
 ---
 
-## Status
+## Gaps, stated rather than implied
 
-**Phases 0–4 delivered, Phase 5 substantially.** Infrastructure and observability; the gateway with
-auth, attribution, persistence, streaming and tracing; the control plane with RBAC and Kafka config
-distribution; the Angular console; the pre-dispatch pipeline; budgets and cost control; rate
-limiting; Vault; the KIRA compatibility surface; documents; Vertex EU with Gemini and Anthropic;
-reporting and CSV export; and — from Phase 5 — anomaly rules, the detection engine and incident
-response with a kill switch, its console, and a per-use-case request view.
+- **Personal data in stored payloads is not redacted.** Credentials are; names and customer numbers
+  deliberately are not, because they are what the payload is stored *for*. The control is the
+  per-use-case storage switch.
+- **No alert delivery.** Findings appear in the console; nothing sends mail or calls a webhook.
+- **No model smoke tests.** How *models* behave — jailbreak resistance, refusal rates — is not
+  measured.
+- **No Kubernetes or Helm charts**, and no load or performance testing.
+- **Microsoft Foundry is untested against a real Azure subscription.**
 
-Phase 5 is **not finished**: alert *delivery* (mail, webhook) is not built — the console is where a
-finding is seen, not where it is sent — and model smoke tests (`FRD-504`) are not built.
-
-**Known gaps, stated rather than implied** — redaction of *personal data* in stored payloads
-(`FRD-406` masks credentials; PII is a deliberate non-goal), alert delivery,
-model smoke tests (`FRD-504`), Foundry against a real Azure subscription, and
-pagination. Each with its consequences: [`docs/GAP-ANALYSIS.md`](docs/GAP-ANALYSIS.md).
+The full list with consequences: [**Gap analysis**](docs/GAP-ANALYSIS.md).
 
 ---
 
 ## Licence
 
 Apache License 2.0 — see [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).
-
 Documentation and code are written in English.

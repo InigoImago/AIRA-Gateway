@@ -53,7 +53,7 @@ default of `0` (never) is deliberate.
 new code starts. Nothing else may create tables: an old container's `create_all` once resurrected a
 dropped table and then failed every event against it.
 
-> ✅ two databases · a role that may migrate · migrations as a pre-deploy job · a plan for
+> done two databases · a role that may migrate · migrations as a pre-deploy job · a plan for
 > `request_logs` growth
 
 ---
@@ -146,7 +146,7 @@ used, so on a fresh installation the first grant of a new group has to be typed.
 - **Client description length**: Keycloak stores it in `varchar(255)`. A longer one breaks the
   realm import, and the failure looks like Keycloak not starting.
 
-> ✅ five realm roles · a **`groups` claim with full paths on every client** · a public PKCE client
+> done five realm roles · a **`groups` claim with full paths on every client** · a public PKCE client
 > with pinned URIs · password grant off · issuer reachable from both services · *(optional)* a
 > read-only service account for directory search
 
@@ -182,7 +182,7 @@ Configuration flows Management → Kafka → gateway. **Eight compacted topics**
 **Single-writer processes.** Run exactly **one** relay and **one** consumer. They are not
 horizontally scalable and do not need to be.
 
-> ✅ eight compacted topics, created explicitly · one relay · one consumer · bootstrap servers
+> done eight compacted topics, created explicitly · one relay · one consumer · bootstrap servers
 > reachable from both planes
 
 ---
@@ -199,7 +199,7 @@ limit. Budgets fall back to the Postgres path, which enforces but is racy.
 **What you provide**: any Redis 6+ reachable at `AIRA_REDIS_URL`. No persistence is required —
 counters seed from Postgres on a miss and expire in five minutes so drift cannot outlive a period.
 
-> ✅ one Redis, or accept per-instance limits and one gateway replica
+> done one Redis, or accept per-instance limits and one gateway replica
 
 ---
 
@@ -251,7 +251,7 @@ silently free.
 An API key (`AIRA_GOOGLE_API_KEY`). Simplest to start with, and the one to avoid where residency
 matters.
 
-> ✅ credentials in Vault or a mounted secret · regions on the allow-list · every model that will be
+> done credentials in Vault or a mounted secret · regions on the allow-list · every model that will be
 > served declared in the catalog with a **price** and its **capabilities**
 
 ---
@@ -264,7 +264,7 @@ outcome, tokens, cost, provider/publisher/region — so a trace can be filtered 
 `?key=` is redacted from spans; credentials never appear in a log line. `x-trace-id` is on **every**
 response including failures, which are the ones most worth correlating.
 
-> ✅ an OTLP endpoint · `AIRA_OTEL_ENABLED=true` · a sample ratio you can afford
+> done an OTLP endpoint · `AIRA_OTEL_ENABLED=true` · a sample ratio you can afford
 
 ---
 
@@ -292,7 +292,7 @@ container restarting behind a new IP produces a 502 that outlives the restart.
 The bundle sets a CSP and uses `requireHttps: 'remoteOnly'`, so it works on `localhost` over HTTP
 and demands HTTPS everywhere else.
 
-> ✅ build per environment · both proxies · a resolver that re-resolves · TLS in front
+> done build per environment · both proxies · a resolver that re-resolves · TLS in front
 
 ---
 
@@ -309,7 +309,7 @@ Terminate TLS in front of both APIs. Two things AIRA needs from the proxy:
 Timeouts should exceed your slowest model. A self-deployed model cold-starting can take minutes,
 which is why its own timeout defaults to 300 seconds.
 
-> ✅ TLS · `X-Forwarded-For` matched by the setting · SSE unbuffered · generous timeouts
+> done TLS · `X-Forwarded-For` matched by the setting · SSE unbuffered · generous timeouts
 
 ---
 

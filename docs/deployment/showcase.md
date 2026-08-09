@@ -1,0 +1,156 @@
+# Deployment 1 of 4: Showcase
+
+**For:** seeing the whole product work, with real traffic, in about fifteen minutes.
+**You need:** Docker, roughly 8 GB of free disk, and no accounts anywhere.
+**You do not need:** a cloud provider, an API key, Python, Node, or a Keycloak of your own.
+
+This is the only setup that pulls a real model and sends real requests through it. Everything else
+on this page is a consequence of that: the figures you see afterwards are measurements, not
+fixtures.
+
+---
+
+## What you will have when this finishes
+
+- The whole stack in containers: gateway, control plane, console, Postgres, Keycloak, Kafka, Redis,
+  Vault, an OpenTelemetry collector and Grafana.
+- A small language model (`qwen2.5:3b`, about 2 GB) running locally in Ollama.
+- Three use cases with budgets, rate limits, pipelines, anomaly rules and one API key each.
+- Five users, one per role.
+- Real traffic already through the gateway, **including a prompt injection the filter refused** —
+  so the security console has something true in it rather than rows somebody inserted.
+
+---
+
+## Step 1: check Docker
+
+```bash
+docker version
+docker compose version
+```
+
+Both must print a version. If `docker version` says it cannot connect to the daemon, start Docker
+Desktop (macOS, Windows) or `sudo systemctl start docker` (Linux) and try again.
+
+Check the disk, because a failed model pull halfway through is the most common way this goes wrong:
+
+```bash
+df -h .
+```
+
+You want at least 8 GB free.
+
+---
+
+## Step 2: start it
+
+```bash
+make showcase
+```
+
+This runs for a while and prints what it is doing. In order:
+
+1. **Creates `deploy/compose/.env`** from the example, if it does not exist.
+2. **Starts the infrastructure** and waits for each container to report healthy.
+3. **Pulls the model.** This is the slow part — a few minutes on a normal connection. It is a
+   separate step on purpose, so that the container's health check does not report "ready" while a
+   2 GB download is still running.
+4. **Applies database migrations** for both planes.
+5. **Seeds** the roles, users, use cases, budgets, limits, pipelines, rules and keys.
+6. **Drives traffic** through the gateway with those keys.
+
+If it stops with an error, read the last twenty lines: every step names what it was doing.
+
+---
+
+## Step 3: sign in
+
+Open <http://localhost:4200>.
+
+| Sign in as | Password | Shows you |
+|---|---|---|
+| `admin` | `demo-password` | everything, including model prices and approval |
+| `itsec` | `demo-password` | security oversight across every use case, and the content of requests |
+| `itgov` | `demo-password` | every figure, no write anywhere, no content |
+| `ucadmin` | `demo-password` | administering two of the three use cases — the third is deliberately not theirs |
+| `ucuser` | `demo-password` | a member's view |
+
+The roles differ on purpose, and the differences are the point. See [`../ROLES.md`](../ROLES.md) for
+what each may do and why.
+
+---
+
+## Step 4: what to look at, in order
+
+**Requests** (as `itsec`) — every request across every use case. Open a row: the metadata is on the
+left, and the prompt and the answer are one click away. The panel tells you the read was recorded,
+because it was.
+
+**Reporting** (as `itgov`) — spend and usage. The figures come from the traffic step 2 sent; nothing
+here is seeded.
+
+**Security** (as `itsec`) — findings, what is stopped, and the rules behind them. One rule throttles
+rather than alerts, so you can see the difference.
+
+**Use cases → Pipeline** (as `ucadmin`) — the filter that refused the injection. Use the test panel
+to send the same prompt again and watch it be refused.
+
+**Models & prices** (as `admin`) — the catalog. Open a row for everything on file about a model, and
+press **Check reachability**: the local model answers, and a model this installation has no
+credential for reports that it is declared and nothing serves it.
+
+---
+
+## Step 5: more traffic, and stopping
+
+```bash
+make showcase-traffic   # send another round through the gateway
+make down-full          # stop everything, keep the data
+make down-full-volumes  # stop everything and delete the data
+```
+
+---
+
+## When something goes wrong
+
+**The model pull fails or hangs.** The registry may be unreachable from your network. Everything
+except the real-model parts still works — the mock upstream serves `mock-1`.
+
+```bash
+docker compose -f deploy/compose/docker-compose.yml --profile demo logs ollama-pull
+```
+
+**A container never becomes healthy.** Ask it why:
+
+```bash
+docker compose -f deploy/compose/docker-compose.yml ps
+docker logs aira-gateway --tail 50
+```
+
+**Port already in use.** The stack uses 4200 (console), 8001 (gateway), 8002 (control plane), 8080
+(Keycloak), 5432 (Postgres), 6379 (Redis), 8200 (Vault), 3000 (Grafana). Stop whatever holds the
+port, or change the mapping in `deploy/compose/docker-compose.yml`.
+
+**Signing in fails with a CORS error naming no setting.** Keycloak imports a realm only if it does
+not already exist. If you edited the realm file after first start, recreate it:
+
+```bash
+docker compose -f deploy/compose/docker-compose.yml rm -sf keycloak
+docker volume rm compose_keycloak-data
+make up
+```
+
+---
+
+## What this setup is not
+
+It is **not** a deployment. It uses a development Keycloak realm with fixed passwords, a published
+Postgres password, and Vault's dev-mode root token. The gateway refuses to start with any of those
+outside a `local` environment, on purpose (`ADR-0015`).
+
+For something you can actually put in front of people, read
+[`integrated.md`](integrated.md).
+
+---
+
+Next: [Development](dev.md) · [Standalone](standalone.md) · [Integrated](integrated.md)

@@ -46,23 +46,23 @@ gap, not an aspiration.
 
 | # | Feature | Stand | Where |
 |--:|---|---|---|
-| 1 | Einheitliche Bereitstellung von Modellen | **weitgehend** — Gemini **und** Anthropic über Vertex in der EU (`FRD-115`/`119` ✅); Microsoft Foundry offen | `FRD-100` ✓, `FRD-120` offen |
+| 1 | Einheitliche Bereitstellung von Modellen | **weitgehend** — Gemini **und** Anthropic über Vertex in der EU (`FRD-115`/`119` done); Microsoft Foundry offen | `FRD-100` done, `FRD-120` offen |
 | 2 | Rollenzuweisung | **fertig** | `FRD-201`, `ADR-0009` |
-| 3 | Kompatibilität mit der KIRA-API | **fertig (2026-08-06)** — vollständiger Vertrag: Text, Dokumente, Thinking, strukturierte Ausgabe, Batch-Embedding. Was ein *Modell* nicht kann, wird weiterhin abgewiesen, nie ignoriert | `FRD-107` ✅ `FRD-111`–`113` ✅ |
-| 4 | Auditierbarkeit | **fertig (2026-08-06)** — alle fünf Lücken geschlossen | `FRD-122` ✅ |
-| 5 | Speicherung von Requests/Responses: *welches System wann was womit* | **fertig (2026-08-06)** — das aufrufende System ist über den Key-Prefix unterscheidbar, Ablehnungen erzeugen eine Zeile | `FRD-103` ✓, `FRD-122` ✅ |
-| 6 | Incident Response | **fertig (2026-08-07)** — eine Sperre ist eine *geschriebene Entscheidung*: Ziel, Aktion, Ablauf, **Autor**, **Grund**; am einen Pre-Dispatch-Gate gelesen, nach dem Aufheben aufbewahrt (429, eigener Audit-Ausgang `suspended`, **nicht über Kafka**) | `FRD-503` ✅ |
-| 7 | Blockierung gefährlicher Anfragen | **teilweise** — Prompt-Injection-Filter ✓, Betriebs-Kill-Switch ✓ (`FRD-503`); weitere Kategorien (Jailbreak, Exfiltration, PII im Prompt, Ausgabefilter) fehlen weiterhin | `FRD-300` ✓, `FRD-503` ✅, `FRD-504` |
+| 3 | Kompatibilität mit der KIRA-API | **fertig (2026-08-06)** — vollständiger Vertrag: Text, Dokumente, Thinking, strukturierte Ausgabe, Batch-Embedding. Was ein *Modell* nicht kann, wird weiterhin abgewiesen, nie ignoriert | `FRD-107` done `FRD-111`–`113` done |
+| 4 | Auditierbarkeit | **fertig (2026-08-06)** — alle fünf Lücken geschlossen | `FRD-122` done |
+| 5 | Speicherung von Requests/Responses: *welches System wann was womit* | **fertig (2026-08-06)** — das aufrufende System ist über den Key-Prefix unterscheidbar, Ablehnungen erzeugen eine Zeile | `FRD-103` done, `FRD-122` done |
+| 6 | Incident Response | **fertig (2026-08-07)** — eine Sperre ist eine *geschriebene Entscheidung*: Ziel, Aktion, Ablauf, **Autor**, **Grund**; am einen Pre-Dispatch-Gate gelesen, nach dem Aufheben aufbewahrt (429, eigener Audit-Ausgang `suspended`, **nicht über Kafka**) | `FRD-503` done |
+| 7 | Blockierung gefährlicher Anfragen | **teilweise** — Prompt-Injection-Filter done, Betriebs-Kill-Switch done (`FRD-503`); weitere Kategorien (Jailbreak, Exfiltration, PII im Prompt, Ausgabefilter) fehlen weiterhin | `FRD-300` done, `FRD-503` done, `FRD-504` |
 | 8 | Model Routing anhand der Definition | **fertig** | `FRD-300`, `FRD-306` |
-| 9 | Modell-Fallback | **fertig** — muss noch capability-homogen werden | `FRD-302` ✓, `ADR-0012` §3 |
-| 10 | Unabhängigkeit von Google / Microsoft | **belegt für zwei Anbieter** — die Architektur-Assertion ist ein Test: kein Code oberhalb der Adapter kennt den Vendor. Foundry offen | `ADR-0011` ✅, `FRD-115`/`119` ✅, `FRD-120` |
-| 11 | Übersicht über alle Use Cases | **teilweise** — Liste ✓, Governance-Sicht auf die Verarbeitungslogik fehlt | `FRD-202` ✓, `FRD-600` |
+| 9 | Modell-Fallback | **fertig** — muss noch capability-homogen werden | `FRD-302` done, `ADR-0012` §3 |
+| 10 | Unabhängigkeit von Google / Microsoft | **belegt für zwei Anbieter** — die Architektur-Assertion ist ein Test: kein Code oberhalb der Adapter kennt den Vendor. Foundry offen | `ADR-0011` done, `FRD-115`/`119` done, `FRD-120` |
+| 11 | Übersicht über alle Use Cases | **teilweise** — Liste done, Governance-Sicht auf die Verarbeitungslogik fehlt | `FRD-202` done, `FRD-600` |
 | 12 | Self-Service: Filter- und Routing-Pipeline | **fertig** | `FRD-303`, `FRD-306` |
-| 13 | Zugelassene Modelle je Use Case | **teilweise** — `allow_check` ✓, Fähigkeiten deklariert und durchgesetzt (`FRD-114` ✅), genehmigter Katalog fehlt noch | `FRD-300` ✓, `FRD-114` ✅, `FRD-307` |
+| 13 | Zugelassene Modelle je Use Case | **teilweise** — `allow_check` done, Fähigkeiten deklariert und durchgesetzt (`FRD-114` done), genehmigter Katalog fehlt noch | `FRD-300` done, `FRD-114` done, `FRD-307` |
 | 14 | IT-Security-Unterstützung: Modell-Smoke-Tests und Jailbreak-Versuche | **fehlt** — als einziges der siebzehn Merkmale ohne jede Umsetzung; braucht **keine Cloud**, das lokale Modell genügt | `FRD-504` |
 | 15 | Budgetübersicht und Budgetgrenze | **fertig** | `FRD-400`–`403`, `FRD-601` |
-| 16 | Anomalieerkennung | **fertig (2026-08-07/08)** — sieben Regelarten in geschlossenem Vokabular, ausgewertet gegen das Request-Log (auch Ablehnungen), `alert` als Standard, IT-Security-Konsole + Warnungen je Use Case | `FRD-500`/`501`/`502` ✅ |
-| 17 | Zentrale Übersicht über alle Use Cases | siehe 11 | `FRD-600`, `FRD-601` ✓ |
+| 16 | Anomalieerkennung | **fertig (2026-08-07/08)** — sieben Regelarten in geschlossenem Vokabular, ausgewertet gegen das Request-Log (auch Ablehnungen), `alert` als Standard, IT-Security-Konsole + Warnungen je Use Case | `FRD-500`/`501`/`502` done |
+| 17 | Zentrale Übersicht über alle Use Cases | siehe 11 | `FRD-600`, `FRD-601` done |
 
 ### 1.2 Additional features from the code review (2026-08-06)
 
@@ -72,12 +72,12 @@ product's central claim being true and being asserted.
 
 | # | Feature | Stand | Where |
 |--:|---|---|---|
-| 18 | **Verarbeitung von Dokumenten** (PDF, Bilder u. a. im Request) — KIRAs Kernfall | **fertig (2026-08-06)** — geordnete Teile, 15 Medientypen, Signaturprüfung, Grenzen; ein Modell, das den Typ nicht lesen kann, **lehnt ab** statt zu halluzinieren | `FRD-110` ✅ |
+| 18 | **Verarbeitung von Dokumenten** (PDF, Bilder u. a. im Request) — KIRAs Kernfall | **fertig (2026-08-06)** — geordnete Teile, 15 Medientypen, Signaturprüfung, Grenzen; ein Modell, das den Typ nicht lesen kann, **lehnt ab** statt zu halluzinieren | `FRD-110` done |
 | 19 | **Erweiterbarkeit als messbare Eigenschaft** — eine neue Modellfamilie ist ein Katalogeintrag plus höchstens ein Dialekt | **Architektur steht, ungeprüft** | `ADR-0011`, `FRD-115` §10 |
-| 20 | **Secrets aus Vault** — Richtlinie und Implementierung stehen seit Phase 0 auseinander | **fertig (2026-08-06)** — AppRole + KV-v2 als pydantic-Settings-Quelle über der Umgebung, **fail closed**; gegen eine echte AppRole im Stack verifiziert | `FRD-116` ✅ |
-| 21 | **Betriebsdiagnostik** — Build-Identität, Upstream-Health, Trace-Header, CORS, OpenAPI 3.0 | **fertig bis auf FR-7 (2026-08-06)** — Erreichbarkeit wird im Hintergrund geprüft und von `/readyz` *gelesen*, veraltet zählt als degradiert, `x-trace-id` als reines ASGI ganz außen; **das zweite OpenAPI-3.0-Dokument ist bewusst nicht gebaut** | `FRD-117` ✅ (FR-7 offen) |
-| 22 | **Maskierung sensibler Inhalte** in gespeicherten Payloads | **Credentials fertig (2026-08-08)** — API-Keys, Bearer-Token, JWTs, `Authorization:`, PEM-Blöcke, plus Deployment-Muster (additiv). **PII bewusst nicht**: Namen und Kundennummern sind der Grund, *warum* gespeichert wird — dafür ist der Schalter je Use Case (`FRD-404`) die Kontrolle | `FRD-406` ✅ (PII bewusst offen) |
-| 23 | **Export der Auswertung** (CSV mit Content Negotiation) | **fertig (2026-08-06)** — CSV als *Renderer* desselben Endpunkts, per `Accept` gewählt; BOM, CRLF, RFC 4180, unpreisliche Zeile als Nachsatz | `FRD-602` ✅ |
+| 20 | **Secrets aus Vault** — Richtlinie und Implementierung stehen seit Phase 0 auseinander | **fertig (2026-08-06)** — AppRole + KV-v2 als pydantic-Settings-Quelle über der Umgebung, **fail closed**; gegen eine echte AppRole im Stack verifiziert | `FRD-116` done |
+| 21 | **Betriebsdiagnostik** — Build-Identität, Upstream-Health, Trace-Header, CORS, OpenAPI 3.0 | **fertig bis auf FR-7 (2026-08-06)** — Erreichbarkeit wird im Hintergrund geprüft und von `/readyz` *gelesen*, veraltet zählt als degradiert, `x-trace-id` als reines ASGI ganz außen; **das zweite OpenAPI-3.0-Dokument ist bewusst nicht gebaut** | `FRD-117` done (FR-7 offen) |
+| 22 | **Maskierung sensibler Inhalte** in gespeicherten Payloads | **Credentials fertig (2026-08-08)** — API-Keys, Bearer-Token, JWTs, `Authorization:`, PEM-Blöcke, plus Deployment-Muster (additiv). **PII bewusst nicht**: Namen und Kundennummern sind der Grund, *warum* gespeichert wird — dafür ist der Schalter je Use Case (`FRD-404`) die Kontrolle | `FRD-406` done (PII bewusst offen) |
+| 23 | **Export der Auswertung** (CSV mit Content Negotiation) | **fertig (2026-08-06)** — CSV als *Renderer* desselben Endpunkts, per `Accept` gewählt; BOM, CRLF, RFC 4180, unpreisliche Zeile als Nachsatz | `FRD-602` done |
 | 24 | Mehrere Keycloak-Backends / Gruppen aus UserInfo | **fehlt — Bedarf ungeklärt** | `FRD-118` §11 |
 
 Feature 19 deserves the emphasis the owner put on it (*"so dass es einfach erweiterbar wäre"*).
