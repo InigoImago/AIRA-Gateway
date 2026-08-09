@@ -987,6 +987,26 @@ inherit the `@if` it belongs to immediately found a second instance. **Second ti
 a new guard had to be broken before it could be believed, and both times it was silently wrong in
 the same direction: passing.**
 
+**The catalog, and the question nothing could answer (`FRD-506`, 2026-08-09)** — *"wie kann ich
+neue Modelle definieren, wenn ich keinen Key habe, oder testen ob es überhaupt ansprechbar wäre?"*
+A catalog entry is a **declaration**: it needs no credential and proves nothing. Without a key no
+adapter is registered, so a model sits in the catalog looking healthy while every request for it
+returns `model_not_found` — which a caller reads as a typo. `GET /v1beta/models/{model}:check` now
+answers **three separate facts** — declared · served · reachable — and `reachable: null` ("not
+contacted") is never reported as healthy (`FRD-117`'s rule). **Never a generation**: a self-deployed
+model can be scaled to zero, and a "does this work" button must not be what wakes it. The upstream's
+error *text* is not repeated back — a provider's message can carry the URL, and the URL the key.
+Also: **model declarations moved to the top** (adding one required scrolling past the whole
+catalog), a row **opens to every field on file** (built as a list so it is exhaustive by
+construction, with a test that populates all of them), and the rule editor's actions left the
+wrapping field row where "Create rule" had been reading as one more setting.
+**An audit of the test matrix, measured rather than asserted**: each branch of `payloads.py` broken
+in turn, recording which parametrised rows noticed. **`is_oversight` was undefended** — removing it
+drops an oversight role through to `OUT_OF_SCOPE`, also a 403, so a matrix checking only the status
+passed with the role boundary gone; it asserts the *sentence* now. And **half an audit reports half
+a matrix as pointless**: deleting a branch can only make code more permissive, so the four rows
+guarding against *over*-restriction needed the inverse mutations to show their worth. `N46`–`N54`.
+
 Next candidates: **`FRD-114`** (model metadata — now also carries publisher + default output cap,
 prerequisite for 110–113 and 119), **`FRD-110`** (documents/images — the widest gap),
 **`FRD-115`/`FRD-119`** (Vertex EU + the Anthropic dialect — required), **`FRD-116`** (Vault),

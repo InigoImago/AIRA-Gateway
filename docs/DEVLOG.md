@@ -4171,3 +4171,61 @@ rather than with a badge in a column nobody scans for.
 Sixteen unit tests moved from asserting the list to asserting the opened row — the same statements,
 one indirection further in. The harness gained a router, because the detail links to its use case
 and a harness without one tests a different component.
+
+## 2026-08-09 (evening) — The catalog, the rule editor, and an audit of the audit
+
+### "How do I know a model is reachable if I have no key?"
+
+The sharpest question of the round, and the honest answer was that nothing could tell you. A
+catalog entry is a **declaration**: it needs no credential and proves nothing. Without a key no
+adapter is registered, so the model sits in the catalog looking perfectly healthy while every
+request for it comes back `model_not_found` — which a caller reads as a typo, not as a missing
+credential.
+
+`GET /v1beta/models/{model}:check` now answers **three separate facts**: declared, served,
+reachable. `reachable: null` means nothing was contacted, which `FRD-117` already established is not
+the same as failing. Never a generation — a self-deployed model can be scaled to zero, and a
+"does this work" button must not be the thing that wakes it, bills for it and takes minutes to say
+so. The upstream's error *text* is never repeated back: a provider's message can carry the URL it
+was called with, and that URL can carry the key.
+
+Verified against the live registry, which is the only place it means anything: the local model
+answers, and a Vertex model this stack has no credential for reports **"declared, but nothing
+serves it"** instead of looking fine.
+
+### Declaring a model was at the bottom of the page
+
+Somebody who came to add a model had to scroll past the entire catalog to find out how. The thing a
+screen is *for* goes where a reader starts. A row now opens to **everything on file** — built as a
+list in the component so it is exhaustive by construction, with a test that populates every field
+and requires each on screen. A catalog entry is what the gateway *enforces*; a partial answer to
+"what does this row actually say" is worse than none.
+
+### An audit of the audit
+
+Asked whether all the test combinations actually occur, so it was measured rather than asserted:
+each branch of `payloads.py` was broken in turn and the parametrised rows that noticed were
+recorded. Three findings.
+
+**`is_oversight` was undefended.** Removing it makes an oversight role fall through to
+`OUT_OF_SCOPE`, which is *also* a 403 — so a matrix checking only the status passed with the role
+boundary gone. The distinction is the entire point of the message: "you see figures, not content"
+and "that use case is not yours" send the reader to two different people. The matrix asserts the
+sentence now.
+
+**Half an audit reports half a matrix as pointless.** Deleting a branch can only make code *more*
+permissive, so a case guarding against over-restriction can never go red for a deletion. Running the
+inverse mutations — refuse too much — showed that four rows exist precisely to defend against that,
+and one of them is the only thing standing between a colleague's request being readable and not.
+
+**One row was defended a layer up**: `outsider` is caught by the route's own scope guard, which no
+module-level break could reach. A mutation for it now exists.
+
+Nine of these became permanent (`N46`–`N54`); the harness stands at 316 properties.
+
+### And the rule editor
+
+Its buttons sat in the same wrapping `form-inline` as its fields, so "Create rule" flowed in beside
+"smallest sample" and read as one more setting. Fields and actions are two things now, separated by
+a rule, with room to aim — a dozen controls at 0.6rem is a wall, and clicking the wrong one of two
+adjacent checkboxes is a governance mistake rather than a typo.
