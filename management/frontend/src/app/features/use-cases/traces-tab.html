@@ -1,6 +1,10 @@
 <div class="card" role="tabpanel">
   <div class="spread">
-    <h3 class="section-title" style="margin: 0">Requests</h3>
+    <!-- Says which requests, not merely "requests": on the standalone screen the page is
+         already called that, and two identical headings tell a reader nothing twice. -->
+    <h3 class="section-title" style="margin: 0">
+      {{ slug() ? 'Requests' : 'Across all use cases' }}
+    </h3>
     <div class="row live">
       <label class="checkline" title="Refresh automatically">
         <input
@@ -21,7 +25,11 @@
   </div>
 
   <p class="muted" style="margin: 0.25rem 0 0">
-    Every request this use case made, newest first — who, which model, how it ended, what it cost.
+    @if (slug()) {
+      Every request this use case made, newest first — who, which model, how it ended, what it cost.
+    } @else {
+      Newest first — which use case, who, which model, how it ended, what it cost.
+    }
     <strong>Prompts and responses are not shown here</strong>, whatever the retention settings say.
   </p>
 

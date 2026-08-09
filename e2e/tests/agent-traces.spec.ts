@@ -132,3 +132,100 @@ test.describe('The OpenCode configuration', () => {
     await expect(page.getByTestId('copy-opencode')).toHaveCount(0);
   });
 });
+
+test.describe('Reading what was actually sent', () => {
+  test('an incident role opens a request and is told the read was recorded', async ({ page }) => {
+    /**
+     * The layer that can tell "renders a panel" from "shows the reader the prompt". Three defects
+     * in this area were invisible to every other layer: a button behind a horizontal scroll, an
+     * info panel that opened empty, and a 200 rendered in red.
+     */
+    // Its own traffic, with its own key. A first version opened whichever row happened to be at
+    // the top and failed against rows another suite had left there — no payload, dated 2031. A
+    // test that depends on ambient data is flaky by construction, and worse, it is flaky in a way
+    // that looks like a product defect.
+    await login(page, USERS.useCaseAdmin);
+    const slug = await createUseCase(page, uniqueSlug('payload'), 'Reading a prompt');
+    await page.goto(`/use-cases/${slug}?tab=keys`);
+    await page.click('button:has-text("+ Issue key")');
+    await page.fill('#key-label', 'e2e-payload');
+    await page.click('button[type="submit"]:has-text("Issue")');
+    const key = await page.locator('code.secret').innerText();
+    await page.click('button:has-text("Done")');
+
+    // A key reaches the gateway over Kafka (`FRD-205`), so it is valid within a moment rather than
+    // immediately. Polled rather than slept: a fixed wait is either too short on a loaded machine
+    // or wasted on an idle one, and both read as flakiness.
+    const send = () =>
+      page.request.post('http://localhost:8001/v1beta/models/qwen3:0.6b:generateContent', {
+        headers: { 'x-goog-api-key': key.trim(), 'content-type': 'application/json' },
+        data: {
+          contents: [{ parts: [{ text: 'A sentence this test can look for.' }] }],
+          generationConfig: { maxOutputTokens: 8 },
+        },
+        timeout: 180_000,
+      });
+    await expect
+      .poll(async () => (await send()).status(), { timeout: 60_000, intervals: [1000] })
+      .toBe(200);
+
+    // A **fresh context**, not `clearCookies()`. Keycloak's SSO session lives in its own cookie
+    // jar, so the second login silently continues as the first user — this test asserted a
+    // permission about IT Security while signed in as the use-case administrator, which is the
+    // second time this trap has been walked into today. Written down here rather than remembered.
+    const investigator = await page.context().browser()!.newContext();
+    const investigatorPage = await investigator.newPage();
+    await login(investigatorPage, USERS.security);
+    await investigatorPage.goto(`/use-cases/${slug}?tab=traces`);
+
+    const opener = investigatorPage.locator('[data-testid^="open-payload-"]').first();
+    await expect(opener).toBeVisible({ timeout: 60_000 });
+
+    // Visible **without scrolling the table sideways** — the complaint that moved it to the first
+    // column. `isVisible` is not enough for that; the check is that it sits inside the viewport.
+    const box = await opener.boundingBox();
+    const width = investigatorPage.viewportSize()?.width ?? 1280;
+    expect(box, 'the control that opens a request has no box').not.toBeNull();
+    expect(box!.x + box!.width).toBeLessThanOrEqual(width);
+
+    await opener.click();
+    await expect(investigatorPage.getByTestId('payload-recorded')).toBeVisible();
+    // The prompt itself, not merely a panel: the distinction three defects this week lived in.
+    await expect(investigatorPage.getByTestId('payload-request')).toContainText(
+      'A sentence this test can',
+    );
+    await investigator.close();
+  });
+
+  test('a served request is not shown as a failure', async ({ page }) => {
+    /** Reported from the running console: a **200 in red**. A status column that calls a success
+     *  a problem is the one thing it must never do. */
+    await login(page, USERS.security);
+    await page.goto('/requests');
+    await expect(page.locator('tbody tr').first()).toBeVisible({ timeout: 30_000 });
+
+    const served = page.locator('.badge--success', { hasText: 'served' });
+    await expect(served.first()).toBeVisible();
+  });
+
+  test('an info hint shows something when you point at it', async ({ page }) => {
+    /** The defect: `text="…"` is not an input on `InfoHint`, so three panels opened blank. No unit
+     *  test could see it — the component renders whatever the test projects into it. */
+    await login(page, USERS.security);
+    await page.goto('/requests');
+
+    const hint = page.locator('.info-hint__button').first();
+    await expect(hint).toBeVisible({ timeout: 30_000 });
+    await hint.hover();
+
+    const panel = page.locator('.info-hint__panel').first();
+    await expect(panel).toBeVisible();
+    await expect(panel).not.toBeEmpty();
+  });
+
+  test('a use-case member is never offered the cross-use-case screen', async ({ page }) => {
+    await login(page, USERS.useCaseAdmin);
+
+    await expect(page.getByTestId('nav-requests')).toHaveCount(0);
+  });
+});

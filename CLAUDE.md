@@ -950,6 +950,33 @@ shape, which a Google client reads as "unknown error": now **400 `INVALID_ARGUME
 parameter**, each surface in its own envelope — the routing-handler finding of 2026-08-06, one layer
 in.
 
+**The requests view, read by somebody who did not build it (`FRD-505`, `ADR-0016`, 2026-08-09)** —
+a walkthrough produced eight findings that were one complaint: **the view assumed the reader already
+knew the answer.** The sharpest: `source_ip` was added as a **filter** and not as a **column**, so an
+investigator could search for an address the screen never showed them. Now: a cross-use-case
+**Requests** screen for the incident roles (the tab stays for the people who work inside a use case —
+**one component, two homes**), the use case and the machine as columns, and *"show me the prompts
+that threw a warning"* as a filter backed by a `flagged` column derived in `record_request` rather
+than queried out of the JSON decisions (containment is written differently on SQLite and Postgres).
+**`ADR-0016` reopens `ADR-0009`'s deferral, and not the way that paragraph expected**: `FRD-406`
+shipped its credential half and declined its PII half on purpose, so the redactor could never make
+this safe — the sensitive content and the useful content are the same content. Stored prompts are
+readable by **Global Admin and IT Security** (and inside a use case by its own people, with a
+`restrict_members_to_own_requests` switch its administrator owns), and **every read writes a record**
+naming who, what, when and on what authority, written *before* the content is returned. **IT
+Steuerung reads none of it** — every figure, no content. Three defects invisible to every hermetic
+test: a **200 rendered in red** (`outcome` is NULL on pre-`FRD-122` rows and the badge fell through
+to its danger branch), the control that opens a request **off screen** behind the table's horizontal
+scroll ("I did not even know it was there" is the accurate description of an action that does not
+exist), and three info hints that **said nothing** — `InfoHint` takes projected content and `text=`
+is not an input, which Angular ignores silently. **The guard against that was itself inert**: written
+first as an Angular spec using `import.meta.glob`, it failed to *load* and Vitest reported "0 tests"
+while the total stayed green. Found by breaking a template on purpose; it lives in the Python suite
+now and was shown to fire. **A guard that cannot fail is the thing it guards against, one level up.**
+Also: a 42-character migration id applied its DDL and then failed writing `alembic_version`
+(`varchar(32)`), and the phone-layout test caught a ten-pixel overflow the day a checkbox gained a
+sentence-length label.
+
 Next candidates: **`FRD-114`** (model metadata — now also carries publisher + default output cap,
 prerequisite for 110–113 and 119), **`FRD-110`** (documents/images — the widest gap),
 **`FRD-115`/`FRD-119`** (Vertex EU + the Anthropic dialect — required), **`FRD-116`** (Vault),

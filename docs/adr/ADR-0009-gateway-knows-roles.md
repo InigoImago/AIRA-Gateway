@@ -79,3 +79,10 @@ they read the same claim from the same token.
   stored prompts to people who are deliberately not members of the use case that produced them,
   which is exactly what content redaction (`FRD-406`, deferred) exists to make safe. That view
   waits for it, and this ADR is the reason the wait is not merely a backlog ordering.
+
+  **Resolved 2026-08-09 — and not the way this paragraph expected** (`ADR-0016`). `FRD-406`
+  shipped its credential half and declined its PII half on purpose, because names and customer
+  numbers are what a payload is stored *for*. So the redactor could never discharge this deferral:
+  the sensitive content and the useful content are the same content. The view was granted instead
+  on a different condition — a named set of roles, and **every read writes a record** naming who
+  read what, when and on what authority. The boundary is still crossed; it is now crossed visibly.

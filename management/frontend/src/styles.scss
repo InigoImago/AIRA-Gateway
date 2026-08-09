@@ -645,13 +645,16 @@ $field-label-gap: 0.3rem;
  * and a column of them reads as a staircase. */
 .checkline {
   display: flex;
-  align-items: center;
   gap: 0.4rem;
   font-size: 0.9rem;
-  white-space: nowrap;
+  /* `nowrap` keeps a box beside its two-word label — "Refusals only" must not break in half. A
+     sentence-length label is a different thing, and on a 360px phone an unbreakable one pushes
+     the whole document sideways: the layout test caught exactly that, ten pixels, the day a
+     checkbox gained a real sentence. So the box stays put and the words may wrap around it. */
+  align-items: flex-start;
 }
 .checkline input {
-  margin: 0;
+  margin-top: 0.15rem;
 }
 
 .field__legend {

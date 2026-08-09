@@ -4045,3 +4045,80 @@ Two integration rows were **retired rather than deleted**: `tools` sat on the "f
 does not serve" lists until `FRD-131` served it this morning. The requirement did not go away, it
 moved — a use case without the toggle refuses a declaration by name — and a row deleted without a
 comment reads as a requirement somebody dropped.
+
+## 2026-08-09 — The requests view, read by somebody who did not build it
+
+A walkthrough of yesterday's screen produced eight findings across two rounds. They were one
+complaint in different shapes: **the view assumed the reader already knew the answer.**
+
+The sharpest one was also the most embarrassing. The source address was added as a **filter** and
+not as a **column** — so an investigator could search for an address the screen never showed them.
+A filter narrows a lead; it cannot produce one, and I had built only the narrowing half.
+
+### Three defects, none visible to a hermetic test
+
+**A 200 rendered in red.** `outcome` arrived with `FRD-122`, so every row written before it is
+NULL, and the badge fell through to its danger branch printing the status. A status column that
+calls a success a problem is the one thing it must never do.
+
+**The control that opens a request was off screen.** It was the last column, and the table scrolls
+sideways now that it carries a use case and an address. Reported as *"the button was hidden behind
+the scroll, I did not even know it was there"* — which is the accurate description of an action
+that does not exist. First column now, and the whole row opens.
+
+**Three info hints that said nothing.** `InfoHint` takes its explanation as projected content; I
+wrote `text="…"`, which is not an input, and Angular ignores an unknown attribute on a component
+silently. The panels opened empty — *precisely* the defect the component was built to prevent,
+since `FRD-206` shipped info buttons as `title` attributes that displayed nothing and this
+component was the fix.
+
+### The guard against it was itself inert
+
+Worth more than the fix. The first version was an Angular spec using `import.meta.glob` to read
+every template, and it **did not work**: those specs run in a browser, the glob is unavailable at
+runtime, and the file failed to *load* — Vitest reported "0 tests" for it while the run's total
+stayed green, and my grep for the pass count showed 535 and told me nothing.
+
+Found by breaking a template on purpose and watching nothing happen. It lives in the Python suite
+now, which has a filesystem, and it was shown to fire.
+
+**A guard that cannot fail is the thing it guards against, one level up.** Third time in this
+repository that a new test had to be broken before it could be believed — and the first time the
+test in question *was* the safety net.
+
+### And the deferral that could never be discharged as written
+
+`ADR-0009` deferred per-request browsing until `FRD-406` made it safe. `FRD-406` then shipped its
+credential half and **declined its PII half on purpose**, because names and customer numbers are
+what a payload is stored *for* and a redactor that mangles them ends with storage switched off.
+
+So the redactor was never going to discharge that deferral: the sensitive content and the useful
+content are the same content. `ADR-0016` grants the view on a different condition — a named set of
+roles, and **every read writes a record** naming who read what, when and on what authority, written
+*before* the content is returned. The boundary is still crossed. It is now crossed visibly.
+
+IT Steuerung reads none of it: every figure about every use case, no content. Visibility and
+content are different answers, which is the same split `FRD-206` had to make between seeing a use
+case and administering one.
+
+### Smaller, and still real
+
+- The **summary panel** built for "I have to know the key first" was **removed the same day**: it
+  answered the question and pushed the requests below the fold, and the first reader asked where
+  their traces had gone. A discovery aid that hides the thing being discovered is a net loss.
+- **"Show me the prompts that threw a warning"** is a filter now, backed by a `flagged` column
+  derived in `record_request` from the argument all three call sites already pass. Not a query over
+  the JSON decisions: containment is written differently on SQLite and Postgres, and the hermetic
+  suite runs on one while production runs on the other.
+- A migration id of 42 characters **applied its DDL and then failed writing its own version row**,
+  because `alembic_version.version_num` is a `varchar(32)`. The same shape as the Keycloak client
+  description that broke a realm import at `varchar(255)`: a length only a real database enforces.
+- The **phone layout test** caught a ten-pixel overflow the day a checkbox gained a sentence-length
+  label — `.checkline` was `white-space: nowrap`, which is right for "Refusals only" and wrong for a
+  sentence.
+- The e2e test for reading a prompt **issues its own key and sends its own request**, because the
+  first version opened whichever row was on top and failed against rows another suite had left
+  there, dated 2031 with no payload. A test that depends on ambient data is flaky by construction —
+  and flaky in a way that looks like a product defect.
+- `clearCookies()` does not end a Keycloak SSO session. Walked into twice in one day; written into
+  the test rather than remembered.

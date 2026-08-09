@@ -26,3 +26,4 @@ Each ADR is immutable once **Accepted** — to change a decision, add a new ADR 
 | 0013 | [The gateway provides auditable model access, not agents](ADR-0013-auditable-model-access-not-agents.md) | Accepted | 2026-08-06 |
 | 0014 | [Detection is asynchronous; enforcement is not](ADR-0014-detection-is-asynchronous-enforcement-is-not.md) | Accepted | 2026-08-07 |
 | 0015 | [A convenience default is a production default](ADR-0015-a-convenience-default-is-a-production-default.md) | Accepted | 2026-08-08 |
+| 0016 | [Stored prompts are readable, and every read is recorded](ADR-0016-content-is-readable-and-every-read-is-recorded.md) | Accepted | 2026-08-09 |

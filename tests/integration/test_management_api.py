@@ -114,11 +114,17 @@ async def test_a_caller_does_not_see_a_use_case_it_has_nothing_to_do_with(
     try:
         async with management.begin() as connection:
             await connection.execute(
+                # Every NOT NULL column named explicitly. Django adds a column with a *one-time*
+                # default and does not leave a database-level one, so a raw INSERT into an
+                # ORM-managed table breaks the moment a field is added — and it broke here on a
+                # migration that only changed a `help_text`, because `AlterField` re-creates the
+                # column and drops the default the original `AddField` had left behind.
                 text(
                     "INSERT INTO usecases_usecase"
                     " (slug, name, description, processing_notes, store_payloads,"
+                    "  tools_enabled, restrict_members_to_own_requests,"
                     "  retention_days, created_at, updated_at)"
-                    " VALUES (:slug, :slug, '', '', true, 7, now(), now())"
+                    " VALUES (:slug, :slug, '', '', true, false, false, 7, now(), now())"
                 ),
                 {"slug": slug},
             )
