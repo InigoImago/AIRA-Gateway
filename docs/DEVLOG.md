@@ -4122,3 +4122,52 @@ case and administering one.
   and flaky in a way that looks like a product defect.
 - `clearCookies()` does not end a Keycloak SSO session. Walked into twice in one day; written into
   the test rather than remembered.
+
+## 2026-08-09 (later) — Four columns, and a search box that survives its own query
+
+A second walkthrough of the same screen, and the more interesting of the two findings is the one
+about a text field.
+
+### Typing two characters threw the reader out of the field
+
+> *"in Suchfeldern wenn ich 2 character reinschreibe, dann fängt er an zu suchen und ich fliege aus
+> dem Feld raus und muss es nochmal anclicken"*
+
+The use-case list had its search input inside the `@else` of `@if (loading())`. So the first
+keystroke that reached the debounce started a query, the query set `loading`, Angular tore down the
+`@else` — taking the input with it — and built a fresh one when the answer arrived. Focus gone,
+mid-word.
+
+**A control that starts a request must survive that request.** The box now sits outside the branch,
+and "busy" is a word beside it rather than a screen that replaces it.
+
+### The guard missed the case it was written for
+
+The shape is the defect, not the occurrence, so the guard scans every template for a search input
+inside a block its own query toggles. Its first version found nothing — because `@else` carries no
+condition, so `} @else {` reads as innocent no matter what it is the alternative *to*. Teaching it
+to inherit the `@if` it belongs to immediately turned up a second instance in the model catalog,
+which does not misbehave today only because that search is client-side.
+
+Second time in two days that a new guard had to be broken before it could be believed, and both
+times it was silently wrong in the same direction: **passing**.
+
+The e2e test was then shown to fail against the restored bug. Only a browser can see it — a
+component test types into a field and asserts a request went out, with no notion of where the caret
+is.
+
+### Eleven columns down to four
+
+When, from where, what, how it ended. That is what somebody scans a list *by*; model, tokens, cost,
+latency, trace id, tools, credential and use case are details *about* a request, and they now belong
+to the request that was opened. The table had grown to eleven columns and scrolled sideways, which
+is precisely how the control that opens a row ended up off screen yesterday — so the fix for that
+and the fix for this are the same fix, and an assertion on the scroller's own width keeps it.
+
+Dates are `dd.MM.yyyy`: this console is read in Europe, and `9/8/26` means two different days
+depending on who is reading it. A request a pipeline step objected to is marked **red on the row**
+rather than with a badge in a column nobody scans for.
+
+Sixteen unit tests moved from asserting the list to asserting the opened row — the same statements,
+one indirection further in. The harness gained a router, because the detail links to its use case
+and a harness without one tests a different component.

@@ -108,6 +108,31 @@ template on purpose and watching nothing happen, and it now lives in the Python 
 The general rule, third time in this repository: **prove the new test can go red, including when
 the new test is itself the safety net.**
 
+## 4.2 The second round: what a list is scanned by
+
+The first version answered every finding and still had eleven columns, so it scrolled sideways —
+which is *how* the control that opens a request came to be off screen. Both are one mistake: a list
+was being asked to carry everything a request is.
+
+**FR-8** — the table carries **when, from where, what, and how it ended**. Everything else — model,
+tokens, cost, latency, trace id, tools, credential, use case — is a detail *about* a request and
+belongs to the request somebody opened. Asserted on the scroller's own width, because a page that
+does not scroll is a weaker property: `.table-wrap` scrolls inside itself by design and hides the
+overflow from the document.
+
+**FR-9** — dates are `dd.MM.yyyy`. `9/8/26` means two different days depending on who is reading it.
+
+**FR-10** — a request a pipeline step objected to is marked **on the row**, in red. A badge in the
+last column is a badge nobody scans for, and this is the row an oversight role opened the screen to
+find.
+
+**FR-11** — **a control that starts a request must survive that request.** The use-case search box
+sat inside the `@else` of `@if (loading())`, so the first keystroke past the debounce tore down the
+block that contained it and the reader lost focus mid-word. Guarded for the *shape* rather than the
+occurrence — and that guard missed its own case at first, because `@else` carries no condition and
+reads as innocent; teaching it to inherit its `@if` immediately found a second instance in the model
+catalog, which does not misbehave today only because that search is client-side.
+
 ## 5. Testing
 
 - **Hermetic**: a role matrix (`gateway/tests/test_payload_access.py`) — four roles × the
@@ -123,6 +148,9 @@ the new test is itself the safety net.**
   construction, and flaky in a way that looks like a product defect.
 - **Layout**: the phone-width check caught a ten-pixel overflow the day a checkbox gained a
   sentence-length label — `.checkline` was `white-space: nowrap`.
+- **Focus**: only a browser can see it. A component test types into a field and asserts a request
+  went out, with no notion of where the caret is. The e2e test was shown to fail against the
+  restored bug before it was trusted.
 
 ## 6. Open
 

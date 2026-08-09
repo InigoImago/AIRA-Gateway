@@ -976,6 +976,16 @@ now and was shown to fire. **A guard that cannot fail is the thing it guards aga
 Also: a 42-character migration id applied its DDL and then failed writing `alembic_version`
 (`varchar(32)`), and the phone-layout test caught a ten-pixel overflow the day a checkbox gained a
 sentence-length label.
+**A second round the same day** cut the table from **eleven columns to four** (when · from · what ·
+how it ended; everything else is a detail *about* a request and moved into the opened row), put
+dates in `dd.MM.yyyy` and marked a pipeline objection **red on the row**. And it found the one that
+generalises: **typing two characters threw the reader out of the search field** — the input sat
+inside the `@else` of `@if (loading())`, so the query it started tore down the block containing it.
+**A control that starts a request must survive that request.** The guard for the *shape* missed its
+own case at first, because `@else` carries no condition and reads as innocent; teaching it to
+inherit the `@if` it belongs to immediately found a second instance. **Second time in two days that
+a new guard had to be broken before it could be believed, and both times it was silently wrong in
+the same direction: passing.**
 
 Next candidates: **`FRD-114`** (model metadata — now also carries publisher + default output cap,
 prerequisite for 110–113 and 119), **`FRD-110`** (documents/images — the widest gap),
