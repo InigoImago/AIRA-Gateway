@@ -26,14 +26,49 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 
+from aira_management.apps.usecases.access import may_call_queryset
+from aira_management.apps.usecases.models import UseCase
 from aira_management.rbac import IsITSecurity, MayTestModels
 
-from .models import TestCase, TestResult, TestRun, Verdict
+from .models import SMOKE_TEST_USE_CASE, TestCase, TestResult, TestRun, Verdict
 from .serializers import (
     TestCaseSerializer,
     TestResultSerializer,
     TestRunSerializer,
 )
+
+
+class TestAttributionViewSet(viewsets.ViewSet):
+    """Where a run is booked, and whether this caller may book one.
+
+    **One server answer, so the slug is written once.** The console needs three facts before it can
+    offer a Run button — which use case, whether it exists, and whether the gateway will accept this
+    caller for it — and all three are the server's to know. A console that held the slug itself
+    would go silently wrong the day the seed renamed it, and a console that decided the third fact
+    from a membership list would repeat the defect this endpoint exists because of: on 2026-08-09 it
+    asked Management's `is_member`, which grants a global admin everything, and every question of a
+    run came back `Not a member of use case 'addr-1nn4ss'`.
+
+    `may_call` is the **gateway's** rule (`may_call_queryset` → `aira_common.access.resolve`), not
+    visibility and not administration.
+    """
+
+    permission_classes = [IsAuthenticated, MayTestModels]
+
+    def list(self, request: Request) -> Response:
+        use_case = UseCase.objects.filter(slug=SMOKE_TEST_USE_CASE).first()
+        may_call = (
+            use_case is not None
+            and may_call_queryset(request.user, UseCase.objects.filter(pk=use_case.pk)).exists()
+        )
+        return Response(
+            {
+                "use_case": SMOKE_TEST_USE_CASE,
+                "name": use_case.name if use_case else "",
+                "exists": use_case is not None,
+                "may_call": may_call,
+            }
+        )
 
 
 class TestCaseViewSet(viewsets.ModelViewSet[TestCase]):

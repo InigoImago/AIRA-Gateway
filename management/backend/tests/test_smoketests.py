@@ -12,6 +12,7 @@ import pytest
 # Imported under aliases: pytest collects any class whose name starts with `Test`, so importing
 # the Django models by their own names makes it try to instantiate them as test classes and warn
 # about it on every run. Warnings that are always there are warnings nobody reads.
+from aira_management.apps.smoketests.models import SMOKE_TEST_USE_CASE
 from aira_management.apps.smoketests.models import TestCase as Case
 from aira_management.apps.smoketests.models import TestResult as Result
 from aira_management.apps.smoketests.models import TestRun as Run
@@ -303,3 +304,99 @@ def test_a_retired_question_is_neither_listed_nor_asked(catalogue) -> None:
     assert "Withdrawn" not in [c["topic"] for c in listed]
     assert len(listed) == 2, "the count the screen states is what somebody plans their time by"
     assert Result.objects.filter(run_id=run_id).count() == 2
+
+
+# ---- where a run is booked ---------------------------------------------------------------------
+
+
+ATTRIBUTION = "/api/v1/test-attribution/"
+
+
+def test_a_run_is_booked_to_one_dedicated_use_case() -> None:
+    """**All model testing lands on one use case**, seeded, never on whichever one the tester
+    happens to belong to.
+
+    A run is ordinary traffic and has to be priced somewhere. Charging it to a member's own use case
+    spends somebody else's budget on work that is not theirs and mixes evaluation cost into their
+    production figures — reporting then cannot separate the two, because nothing distinguishes them.
+    """
+    from aira_management.apps.seed.contributions.test_catalogue import seed_test_catalogue
+
+    seed_test_catalogue(fresh=False)
+    body = _client(_user("sec", "it-security")).get(ATTRIBUTION).json()
+
+    assert body["use_case"] == SMOKE_TEST_USE_CASE
+    assert body["exists"] is True
+
+
+def test_may_call_is_the_gateways_answer_and_not_managements() -> None:
+    """The defect this endpoint exists because of.
+
+    The console used to resolve attribution with Management's `is_member`, which grants a **global
+    administrator every use case**. The gateway grants nobody a blanket — it reads a token's groups
+    — so the console offered a use case the token had never reached and every question of a run came
+    back `Not a member of use case 'addr-1nn4ss'`.
+
+    A global admin with no use-case group may therefore not run one, and the screen says so. That is
+    `ADR-0007` working: seeing every use case is not being able to call one.
+    """
+    from aira_management.apps.seed.contributions.test_catalogue import seed_test_catalogue
+
+    seed_test_catalogue(fresh=False)
+    body = _client(_user("boss", "global-admin")).get(ATTRIBUTION).json()
+
+    assert body["exists"] is True
+    assert body["may_call"] is False, "a blanket in Management is not a blanket at the gateway"
+
+
+def test_a_caller_whose_group_reaches_it_may_run_one() -> None:
+    from aira_management.apps.seed.contributions.test_catalogue import seed_test_catalogue
+    from aira_management.rbac import KEYCLOAK_GROUP_PREFIX
+    from django.contrib.auth.models import Group
+
+    seed_test_catalogue(fresh=False)
+    caller = _user("uca", "use-case-admin")
+    group, _ = Group.objects.get_or_create(
+        name=f"{KEYCLOAK_GROUP_PREFIX}/use-cases/{SMOKE_TEST_USE_CASE}"
+    )
+    caller.groups.add(group)
+
+    body = _client(caller).get(ATTRIBUTION).json()
+
+    assert body["may_call"] is True
+
+
+def test_a_missing_use_case_is_a_different_answer_from_a_refused_one() -> None:
+    """Two reasons, two people to ask: an unseeded use case is an operator's job, a caller the
+    gateway will not accept is a directory question. One message covering both sends half the
+    readers to the wrong person."""
+    body = _client(_user("sec2", "it-security")).get(ATTRIBUTION).json()
+
+    assert body["exists"] is False
+    assert body["may_call"] is False
+
+
+def test_seeding_the_use_case_announces_it_to_the_gateway() -> None:
+    """**The event, not just the row.**
+
+    The gateway learns configuration over Kafka (`FRD-204`), so a seed that writes the table and
+    emits nothing leaves the use case existing in Management and unknown downstream — and the
+    gateway then refuses every request for it. Found on a live stack: the relay reported "no pending
+    events" while the console offered a use case that did not exist there. Fourth instance of two
+    correct halves and no wire.
+    """
+    from aira_management.apps.seed.contributions.test_catalogue import seed_test_catalogue
+    from aira_management.apps.usecases import events
+
+    seen: list[tuple[str, dict]] = []
+    events.subscribe(lambda kind, payload: seen.append((kind, payload)))
+    try:
+        seed_test_catalogue(fresh=False)
+    finally:
+        events._subscribers.clear()
+
+    upserts = [payload for kind, payload in seen if kind == "usecase.upserted"]
+
+    assert any(p.get("slug") == SMOKE_TEST_USE_CASE for p in upserts), (
+        "a use case the gateway never hears about is one it refuses every request for"
+    )

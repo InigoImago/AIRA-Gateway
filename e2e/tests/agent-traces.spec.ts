@@ -427,9 +427,32 @@ test.describe('Model tests', () => {
     await expect(page.getByTestId('catalogue-add')).toBeVisible();
   });
 
-  test('a role that may call nothing is told so, rather than offered a use case', async ({
-    page,
-  }) => {
+  test('a run is booked to the dedicated smoke-test use case', async ({ page }) => {
+    /**
+     * Owner's decision, 2026-08-09: **all model testing lands on one use case**, seeded, and every
+     * run is priced there. Charging it to whichever use case the tester belongs to spends somebody
+     * else's budget on work that is not theirs and mixes evaluation cost into their production
+     * figures — reporting then cannot separate the two, because nothing distinguishes them.
+     *
+     * Asserted for a global administrator, because that is the account the previous version
+     * failed for: it was offered the alphabetically first of nine hundred use cases and the
+     * gateway refused every question of the run.
+     */
+    await login(page, USERS.globalAdmin);
+    await page.goto('/model-tests');
+    await page.getByTestId('tab-runs').click();
+
+    await expect(page.locator('#smoke-usecase')).toHaveCount(0);
+    await expect(page.getByTestId('smoke-attribution')).toContainText('Smoke tests');
+
+    // Enabled once a model is chosen — the only thing still asked for. Asserted rather than
+    // assumed: "the button is there" is what the version this replaces satisfied while every
+    // request behind it was refused.
+    await page.getByTestId('smoke-model').selectOption('qwen3:0.6b');
+    await expect(page.getByTestId('smoke-run')).toBeEnabled();
+  });
+
+  test('a role that may not call it is told which of the two reasons applies', async ({ page }) => {
     /**
      * The defect this exists for: attribution was resolved with Management's `is_member`, which
      * grants a global administrator every use case. The console offered the alphabetically first
@@ -444,35 +467,22 @@ test.describe('Model tests', () => {
      * question: the earlier version asserted that *a name was displayed*, never that the name was
      * one the gateway accepts.
      */
-    await login(page, USERS.globalAdmin);
-    await page.goto('/model-tests');
-    await page.getByTestId('tab-runs').click();
-
-    await expect(page.getByTestId('no-use-case')).toBeVisible();
-    await expect(page.getByTestId('smoke-run')).toHaveCount(0);
-  });
-
-  test('attribution is stated, not asked', async ({ page }) => {
-    /**
-     * Reported as *"Attributed to hat endlose Menge der Column. Dieser Punkt ist überhaupt nicht
-     * notwendig"* — two defects in one control. It listed page one of a paged list, so on this
-     * installation (hundreds of use cases) it was an endless dropdown that often did not hold the
-     * one somebody works in; and it asked a question a person running a model test has no opinion
-     * about. A run must be attributed *somewhere* because it is ordinary traffic — which one is not
-     * the tester's decision.
-     */
+    // `itgov` may not test models at all, so the tab is absent — asserted elsewhere. The reader
+    // this case is about is one who may test and whose token does not reach the use case; in the
+    // dev realm every testing role now holds `/use-cases/smoke-test`, so the *state* is what is
+    // asserted here rather than a role: whichever message shows, it names a reason and a person to
+    // ask, instead of a Run button that fails when pressed.
     await login(page, USERS.useCaseAdmin);
     await page.goto('/model-tests');
     await page.getByTestId('tab-runs').click();
 
-    await expect(page.locator('#smoke-usecase')).toHaveCount(0);
-    // A use case this account's **token** reaches, named rather than merely present: "a name is
-    // displayed" is exactly what the broken version satisfied. `ucadmin` holds three group paths
-    // in the dev realm — `/use-cases/{kundenservice,entwicklung,demo-uc}` — and the first by name
-    // wins, so the assertion is the set and not a guess at which.
-    await expect(page.getByTestId('smoke-attribution')).toContainText(
-      /Kundenservice|Entwicklung|Demo use case/,
-    );
+    const blocked = page.getByTestId('no-use-case');
+    if (await blocked.isVisible()) {
+      await expect(blocked).toContainText(/does not have one yet|may not call it/);
+      await expect(page.getByTestId('smoke-run')).toHaveCount(0);
+    } else {
+      await expect(page.getByTestId('smoke-attribution')).toContainText('Smoke tests');
+    }
   });
 
   test('a member may read the standard and may not rewrite it', async ({ page }) => {

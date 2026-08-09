@@ -57,7 +57,8 @@ const RUN: TestRun = {
 
 interface Options {
   roles?: string[];
-  useCases?: { slug: string; name: string }[];
+  /** What the server says about where a run is booked. */
+  attribution?: { use_case: string; name: string; exists: boolean; may_call: boolean };
   results?: TestResult[];
   stats?: TestModelStats[];
   askFails?: boolean;
@@ -93,17 +94,19 @@ function setup(options: Options = {}) {
         provide: UseCaseService,
         useValue: {
           testCases: () => of(options.emptyCatalogue ? [] : CATALOGUE),
-          // `?may_call=true`: the server answers with the ones the **gateway** will accept. The
-          // screen never filters a visible list — visibility, administration and the right to call
-          // are three different answers, and asking the wrong one is what shipped a broken run.
-          callableUseCases: () =>
-            of({
-              count: 1,
-              page: 1,
-              page_size: 100,
-              pages: 1,
-              results: options.useCases ?? [{ slug: 'uc-a', name: 'Kundenservice' }],
-            }),
+          // One server answer: which use case, whether it exists, and whether the **gateway** will
+          // accept this caller for it. The screen never decides the third from a membership list —
+          // visibility, administration and the right to call are three different answers, and
+          // asking the wrong one is what shipped a broken run.
+          testAttribution: () =>
+            of(
+              options.attribution ?? {
+                use_case: 'smoke-test',
+                name: 'Smoke tests',
+                exists: true,
+                may_call: true,
+              },
+            ),
           models: () =>
             of([
               { name: 'qwen2.5:3b', approved: true },
@@ -186,7 +189,7 @@ describe('SmokeTests', () => {
     expect(options).not.toContain('not-approved-1');
   });
 
-  it('says which use case a run will be attributed to, rather than asking', () => {
+  it('says where a run is booked, rather than asking', () => {
     /** Reported as *"Attributed to hat endlose Menge der Column. Dieser Punkt ist überhaupt nicht
      *  notwendig"* — and it was two defects in one control. It listed page one of a paged list, so
      *  on an installation with hundreds of use cases it was an endless dropdown that frequently did
@@ -196,14 +199,16 @@ describe('SmokeTests', () => {
     const harness = setup({ tab: 'runs' });
 
     expect(harness.element.querySelector('#smoke-usecase')).toBeNull();
-    expect(harness.testid('smoke-attribution')?.textContent).toContain('Kundenservice');
+    expect(harness.testid('smoke-attribution')?.textContent).toContain('Smoke tests');
   });
 
-  it('withholds running from somebody who is a member of nothing', () => {
+  it('withholds running from somebody the gateway would refuse', () => {
     /** Running is **making requests**, so what gates it is membership rather than a role. The
      *  first version asked for an incident role and the feature was unusable: IT Security is
      *  deliberately a member of nothing, so nobody could satisfy both requirements at once. */
-    const { testid } = setup({ useCases: [] });
+    const { testid } = setup({
+      attribution: { use_case: 'smoke-test', name: 'Smoke tests', exists: true, may_call: false },
+    });
 
     expect(testid('smoke-run')).toBeNull();
   });
@@ -380,8 +385,8 @@ describe('SmokeTests', () => {
           useValue: {
             testCases: () => throwError(() => ({ status: 500 })),
             models: () => of([]),
-            callableUseCases: () =>
-              of({ count: 0, page: 1, page_size: 100, pages: 1, results: [] }),
+            testAttribution: () =>
+              of({ use_case: 'smoke-test', name: 'Smoke tests', exists: true, may_call: true }),
             testRuns: () => of([]),
             testStats: () => of([]),
           },
@@ -580,14 +585,8 @@ describe('SmokeTests', () => {
           useValue: {
             testCases: () => of(CATALOGUE),
             models: () => of([{ name: 'm', approved: true }]),
-            callableUseCases: () =>
-              of({
-                count: 1,
-                page: 1,
-                page_size: 100,
-                pages: 1,
-                results: [{ slug: 'uc-a', name: 'A' }],
-              }),
+            testAttribution: () =>
+              of({ use_case: 'smoke-test', name: 'Smoke tests', exists: true, may_call: true }),
             testRuns: () => of([]),
             testStats: () => of([]),
             runResults: () => of([result()]),
@@ -615,14 +614,14 @@ describe('SmokeTests', () => {
     expect(String(patched[0]['error'])).toContain('request failed');
   });
 
-  it('attributes a run to a use case this caller may actually call', () => {
+  it('books a run where the server says, and only if the gateway would accept it', () => {
     /** The defect behind all of this: a free-text box let an incident role type any slug, and IT
      *  Security is deliberately a member of nothing (`ADR-0007`). The run went through, the gateway
      *  refused every request with "not a member", and three failures looked like the model's fault.
      *
-     *  The question is the server's now — `?may_call=true`, resolved with the same
-     *  `aira_common.access.resolve` the gateway's own grant resolver calls. What is asserted here
-     *  is that the screen uses that answer and sends it. */
+     *  All of it is the server's answer now — which use case, whether it exists, and whether the
+     *  gateway will accept this caller — resolved with the same `aira_common.access.resolve` the
+     *  gateway's own grant resolver calls. What is asserted here is that the screen uses it. */
     const harness = setup();
     const component = harness.component as unknown as {
       model: { set: (v: string) => void };
@@ -630,22 +629,33 @@ describe('SmokeTests', () => {
     };
     component.model.set('qwen2.5:3b');
 
-    expect(component.useCase()).toBe('uc-a');
+    expect(component.useCase()).toBe('smoke-test');
   });
 
-  it('says so when there is nothing to attribute a test to', () => {
-    const harness = setup({
-      useCases: [],
+  it('tells a missing use case apart from a refused one', () => {
+    /** Two different reasons and two different people to ask: a use case that has not been seeded
+     *  is an operator's job; a caller the gateway will not accept is a directory question. One
+     *  message covering both sends half the readers to the wrong person. */
+    const missing = setup({
+      attribution: { use_case: 'smoke-test', name: '', exists: false, may_call: false },
+    });
+    const refused = setup({
+      attribution: { use_case: 'smoke-test', name: 'Smoke tests', exists: true, may_call: false },
     });
 
-    expect(harness.testid('no-use-case')).not.toBeNull();
+    expect(missing.testid('no-use-case')?.textContent).toContain('does not have one yet');
+    expect(refused.testid('no-use-case')?.textContent).toContain('may not call it');
+
+    const harness = missing;
     // And no button to press: the section explains rather than offering something that refuses.
     expect(harness.testid('smoke-run')).toBeNull();
   });
 
   it('refuses to run without one, not only in the template', () => {
     /** A guard that exists only as a `disabled` attribute is a guard a keyboard walks past. */
-    const harness = setup({ useCases: [] });
+    const harness = setup({
+      attribution: { use_case: 'smoke-test', name: 'Smoke tests', exists: true, may_call: false },
+    });
     const component = harness.component as unknown as {
       model: { set: (v: string) => void };
       run: () => Promise<void>;
@@ -739,7 +749,8 @@ describe('SmokeTests', () => {
             models: () => of([]),
             testRuns: () => of([]),
             testStats: () => of([]),
-            callableUseCases: () => of({ count: 0, page: 1, page_size: 100, pages: 1 }),
+            testAttribution: () =>
+              of({ use_case: 'smoke-test', name: '', exists: false, may_call: false }),
           },
         },
       ],

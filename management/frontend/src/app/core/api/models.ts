@@ -283,6 +283,20 @@ export interface ModelCheck {
  * `topic` is the keyword saying what it tests — a label on a row, not a categorisation. Nothing
  * branches on it and nothing is grouped by it.
  */
+/**
+ * Where a smoke-test run is booked, and whether this caller may book one.
+ *
+ * All three facts come from the server. The console holding the slug would go silently wrong the
+ * day the seed renamed it, and the console deciding `may_call` from a membership list is the defect
+ * this endpoint exists because of.
+ */
+export interface TestAttribution {
+  use_case: string;
+  name: string;
+  exists: boolean;
+  may_call: boolean;
+}
+
 export interface TestCase {
   id: number;
   topic: string;

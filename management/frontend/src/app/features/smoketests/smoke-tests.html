@@ -143,11 +143,28 @@
           that says nothing about the model.
         </app-info-hint>
       </h3>
-      @if (!mine().length) {
+      @if (!mayRun()) {
+        <!--
+          Two different reasons, said apart. "The use case is missing" is somebody's job to fix with
+          a seed run; "you may not call it" is a directory question. One message covering both would
+          send half the readers to the wrong person.
+        -->
         <p class="empty" data-testid="no-use-case">
-          You are not a member of any use case, so there is nothing to attribute a test to. A run is
-          ordinary traffic: it is priced, budgeted and audited under a use case. Ask to be granted
-          access to one — oversight lets you see every use case and deliberately not call one.
+          @if (attribution() && !attribution()!.exists) {
+            Model tests are booked to a dedicated use case,
+            <code>{{ attribution()!.use_case }}</code
+            >, and this installation does not have one yet. It is created by the seed (<code
+              >manage.py seed_demo</code
+            >); until it exists there is nowhere to price a run.
+          } @else {
+            Model tests are booked to a dedicated use case,
+            <code>{{ attribution()?.use_case }}</code
+            >, and your account may not call it. A run is ordinary traffic — priced, budgeted,
+            rate-limited and audited like any other request — so the gateway decides this from the
+            groups your token carries, and seeing every use case is deliberately not the same as
+            being able to call one. Ask to be added to that use case's group in your identity
+            provider.
+          }
         </p>
       } @else {
         <div class="form-stack">
@@ -176,13 +193,17 @@
           </div>
 
           <p class="muted" style="margin: 0.6rem 0 0" data-testid="smoke-attribution">
-            Attributed to <strong>{{ attribution() }}</strong
-            >.
-            <app-info-hint label="Why a run is attributed to a use case">
+            Booked to <strong>{{ attribution()?.name }}</strong> (<code>{{
+              attribution()?.use_case
+            }}</code
+            >).
+            <app-info-hint label="Why model tests have their own use case">
               A test travels the ordinary request path, so it is priced, budgeted, rate-limited and
-              audited like any other traffic — which means it belongs to a use case. It is not a
-              choice worth making here: it is whichever one you are a member of, named so the spend
-              stays traceable. Oversight lets you see every use case and deliberately not call one.
+              audited like any other traffic — which means it belongs to a use case. All model
+              testing is booked to one, deliberately: charging it to whichever use case the tester
+              happens to belong to would spend somebody else's budget on work that is not theirs,
+              and mix evaluation cost into their production figures. Reporting separates the two by
+              construction.
             </app-info-hint>
           </p>
 

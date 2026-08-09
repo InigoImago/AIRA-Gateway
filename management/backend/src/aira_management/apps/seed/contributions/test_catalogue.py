@@ -28,7 +28,10 @@ from __future__ import annotations
 from django.db import transaction
 
 from aira_management.apps.seed.registry import SeedResult, register
-from aira_management.apps.smoketests.models import TestCase
+from aira_management.apps.smoketests.models import SMOKE_TEST_USE_CASE, TestCase
+from aira_management.apps.usecases import events
+from aira_management.apps.usecases.models import UseCase
+from aira_management.apps.usecases.views import _snapshot
 
 #: (topic, prompt, what to look at). Order is the order they are asked in.
 QUESTIONS: list[tuple[str, str, str]] = [
@@ -566,6 +569,37 @@ def seed_test_catalogue(fresh: bool) -> SeedResult:
     """
     added = 0
     with transaction.atomic():
+        # **One use case for all model testing**, always present. Owner's decision on 2026-08-09:
+        # test traffic is real traffic and has to be attributed and priced somewhere, and putting it
+        # on whichever use case the tester happens to belong to charges somebody else's budget for
+        # work that is not theirs and quietly pollutes their spend figures. One place, and reporting
+        # separates testing from production by construction.
+        use_case, _created = UseCase.objects.update_or_create(
+            slug=SMOKE_TEST_USE_CASE,
+            defaults={
+                "name": "Smoke tests",
+                "description": (
+                    "Model testing. Every smoke-test run is attributed here, so the cost of "
+                    "evaluating a model never lands on a use case that did not ask for it."
+                ),
+                "processing_notes": (
+                    "No personal data: the catalogue is a fixed list of questions. Gateway payload "
+                    "storage is off, because Management already keeps every prompt and answer with "
+                    "its verdict — storing them twice would put the same content under two "
+                    "different retention clocks."
+                ),
+                "store_payloads": False,
+                "retention_days": 1,
+            },
+        )
+        # **The event, not just the row.** The gateway learns configuration over Kafka
+        # (`FRD-204`); a seed that writes the table and emits nothing leaves the use case existing
+        # in Management and unknown to the gateway, which then refuses every request for it. The
+        # showcase seed says this in its own docstring — "everything goes through the same events
+        # the API emits" — and this one skipped it, so the relay reported "no pending events" while
+        # the console cheerfully offered a use case that did not exist downstream. Fourth instance
+        # of two correct halves and no wire, and the second one found by looking at a live stack.
+        events.emit("usecase.upserted", _snapshot(use_case))
         for position, (topic, prompt, expectation) in enumerate(QUESTIONS, start=1):
             _, created = TestCase.objects.update_or_create(
                 position=position,
@@ -576,4 +610,4 @@ def seed_test_catalogue(fresh: bool) -> SeedResult:
         retired = TestCase.objects.filter(retired=False, position__gt=len(QUESTIONS)).update(
             retired=True
         )
-    return {"questions": added, "retired": retired}
+    return {"use_case": SMOKE_TEST_USE_CASE, "questions": added, "retired": retired}

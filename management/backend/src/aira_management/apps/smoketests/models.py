@@ -17,6 +17,15 @@ from __future__ import annotations
 from django.conf import settings
 from django.db import models
 
+#: The use case every smoke-test run is attributed to.
+#:
+#: A run is ordinary traffic — priced, budgeted, rate-limited and audited like any other request —
+#: so it has to belong to a use case. Attributing it to whichever one the tester happens to be a
+#: member of charges somebody else's budget for work that is not theirs, and quietly mixes
+#: evaluation spend into a use case's production figures. One place, seeded, and reporting separates
+#: testing from production by construction.
+SMOKE_TEST_USE_CASE = "smoke-test"
+
 
 class TestCase(models.Model):
     """One question in the catalogue.

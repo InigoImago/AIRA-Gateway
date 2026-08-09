@@ -21,6 +21,10 @@
         },
         {
           "name": "other-uc"
+        },
+        {
+          "name": "smoke-test",
+          "path": "/use-cases/smoke-test"
         }
       ]
     },
@@ -40,7 +44,7 @@
     {
       "clientId": "aira-gateway",
       "name": "AIRA Gateway (dev)",
-      "description": "Public SPA client (dev). Redirect URIs and web origins are pinned on purpose \u2014 a wildcard on a public client lets an attacker capture the authorization code. See ADR-0007.",
+      "description": "Public SPA client (dev). Redirect URIs and web origins are pinned on purpose — a wildcard on a public client lets an attacker capture the authorization code. See ADR-0007.",
       "enabled": true,
       "publicClient": true,
       "directAccessGrantsEnabled": false,
@@ -201,7 +205,9 @@
       "realmRoles": [
         "global-admin"
       ],
-      "groups": []
+      "groups": [
+        "/use-cases/smoke-test"
+      ]
     },
     {
       "username": "itsec",
@@ -220,7 +226,9 @@
       "realmRoles": [
         "it-security"
       ],
-      "groups": []
+      "groups": [
+        "/use-cases/smoke-test"
+      ]
     },
     {
       "username": "itgov",
@@ -261,7 +269,8 @@
       "groups": [
         "/use-cases/kundenservice",
         "/use-cases/entwicklung",
-        "/use-cases/demo-uc"
+        "/use-cases/demo-uc",
+        "/use-cases/smoke-test"
       ]
     },
     {
@@ -348,23 +357,23 @@
     "realm": [
       {
         "name": "global-admin",
-        "description": "Global Administrator \u2014 full administration"
+        "description": "Global Administrator — full administration"
       },
       {
         "name": "it-security",
-        "description": "IT Security \u2014 anomaly/incident oversight"
+        "description": "IT Security — anomaly/incident oversight"
       },
       {
         "name": "it-steuerung",
-        "description": "Governance \u2014 organisation-wide read visibility"
+        "description": "Governance — organisation-wide read visibility"
       },
       {
         "name": "use-case-admin",
-        "description": "Use Case Administrator \u2014 may create use cases"
+        "description": "Use Case Administrator — may create use cases"
       },
       {
         "name": "use-case-user",
-        "description": "Use Case User \u2014 may consume a use case"
+        "description": "Use Case User — may consume a use case"
       }
     ]
   }

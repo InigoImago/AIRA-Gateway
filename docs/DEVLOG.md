@@ -5,6 +5,43 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-09 — One use case for all model testing (`FRD-504`)
+
+Owner's decision, after the attribution defect: *"es soll dann einfach als Standard ein Use Case
+immer angelegt werden, wer smoke test heißt und auf dem wird dann alles abgerechnet."*
+
+It settles the question rather than fixing it again. A run is ordinary traffic and has to be priced
+somewhere; booking it against whichever use case the tester happens to belong to spends **somebody
+else's budget on work that is not theirs** and mixes evaluation cost into their production figures —
+after which reporting cannot separate the two, because nothing distinguishes them. `smoke-test` is
+seeded on every installation and every run is booked there. Payload storage is off on it: Management
+already keeps each prompt, answer and verdict, and storing them twice would put the same content
+under two retention clocks.
+
+The console asks **one** server question — `GET /api/v1/test-attribution/` → which use case, does it
+exist, will the gateway accept you — instead of holding the slug and deciding the third part from a
+membership list. That is the shape of the defect it replaces: the slug written in the console goes
+silently wrong the day the seed renames it, and the membership question was the one asked wrongly
+yesterday. `may_call` is the gateway's rule (`aira_common.access.resolve`), and the two refusals are
+**said apart** — a use case nobody has seeded is an operator's job, a caller the gateway will not
+accept is a directory question, and one message covering both sends half the readers to the wrong
+person.
+
+The dev realm gains `/use-cases/smoke-test`, held by every role that may test a model. AIRA never
+writes to a directory (`FRD-209`), so on a real installation that group is the one thing an operator
+must create — now in `INTEGRATIONS.md` rather than discovered.
+
+**And the seed reproduced the bug it exists to prevent.** It wrote the use case with
+`UseCase.objects.update_or_create` and emitted nothing, so the row existed in Management, the relay
+reported *"no pending events"*, and the gateway had never heard of it. The showcase seed states the
+rule in its own docstring — *"everything goes through the same events the API emits"* — and this one
+walked straight past it. Fourth recorded instance of **two correct halves and no wire**, and the
+second found by looking at a live stack rather than at code. `Q6`.
+
+Verified where it failed before: a **global administrator** — the account that could not run
+anything yesterday — starts a run and the gateway records `served`, 575 tokens, use case
+`smoke-test`.
+
 ## 2026-08-09 — Three questions that look like one, and the tests that agreed with me
 
 Reported from the running console: every question of a smoke-test run came back

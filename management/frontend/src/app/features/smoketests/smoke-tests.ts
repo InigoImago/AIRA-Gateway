@@ -6,6 +6,7 @@ import { MeService } from '../../core/api/me.service';
 import { maySetStandards } from '../../core/auth/roles';
 import {
   CatalogModel,
+  TestAttribution,
   TestCase,
   TestModelStats,
   TestResult,
@@ -71,8 +72,11 @@ export class SmokeTests implements OnInit {
    * use case to attribute the traffic to, and IT Security is deliberately a member of nothing
    * (`ADR-0007`). No user could satisfy both. Running the catalogue is making requests; whoever
    * may call a model may test one. Writing the catalogue stays with IT Security.
+   *
+   * What decides it is whether the **gateway** will accept this caller for the smoke-test use
+   * case, which is the server's answer and not a list this screen filters.
    */
-  protected readonly mayRun = computed(() => this.mine().length > 0);
+  protected readonly mayRun = computed(() => this.attribution()?.may_call === true);
 
   /** Which of the three activities the reader is on. */
   protected readonly tab = signal<'results' | 'runs' | 'catalogue'>('results');
@@ -86,31 +90,24 @@ export class SmokeTests implements OnInit {
 
   // What a new run will be.
   protected readonly model = signal('');
-  protected readonly useCase = signal('');
-  /** The name of the use case a run will be attributed to, for saying so on screen. */
-  protected readonly attribution = computed(
-    () => this.mine().find((uc) => uc.slug === this.useCase())?.name ?? '',
-  );
+  protected readonly useCase = computed(() => this.attribution()?.use_case ?? '');
   /**
-   * The use cases this caller may attribute traffic to.
+   * Where a run is booked, answered by the server.
    *
-   * **Not a control.** It was a picker, and the picker was wrong twice: it listed whatever page
-   * one of a paged list happened to hold — on an installation with hundreds of use cases, an
-   * endless dropdown that frequently did not contain the one somebody works in — and it asked a
-   * question the person running a model test does not have an opinion about. A run has to be
-   * attributed *somewhere*, because it is ordinary traffic and is priced, budgeted, rate-limited
-   * and audited like any other request; which one it lands on is not the tester's decision to
-   * make.
+   * **Not a control, and no longer a choice.** It was a picker, and the picker was wrong three
+   * times over: it listed page one of a paged list (an endless dropdown that frequently did not
+   * hold the use case somebody works in); it asked a question the person running a model test has
+   * no opinion about; and it resolved membership with Management's rule rather than the gateway's,
+   * so a global admin was offered a use case their token has never reached and every question of a
+   * run came back `Not a member of use case 'addr-1nn4ss'`.
    *
-   * So the screen resolves it and **states** it. Asked of the server (`?may_call=true`), which is
-   * the *gateway's* question and not Management's: `is_member` grants a global administrator every
-   * use case, the gateway grants nobody a blanket, and the first version of this asked the wrong
-   * one — the console offered a global admin the alphabetically first of nine hundred use cases
-   * and every question of the run came back `Not a member of use case 'addr-1nn4ss'`. `FRD-206`'s
-   * defect for the third time on this screen, and the first two were the same mistake in smaller
-   * print.
+   * There is **one use case for all model testing** (owner's decision, 2026-08-09). Test traffic is
+   * real traffic and has to be priced somewhere; booking it against whichever use case the tester
+   * belongs to charges somebody else's budget for work that is not theirs and mixes evaluation
+   * spend into their production figures. Reporting now separates the two by construction.
    */
-  protected readonly mine = signal<{ slug: string; name: string }[]>([]);
+  protected readonly attribution = signal<TestAttribution | null>(null);
+
   protected readonly running = signal(false);
   /** How far a run has got, so a hundred questions do not look frozen. */
   protected readonly progress = signal('');
@@ -189,17 +186,10 @@ export class SmokeTests implements OnInit {
       next: (rows) => this.models.set(rows),
       error: () => undefined,
     });
-    this.service.callableUseCases().subscribe({
-      next: (page) => {
-        const usable = (page.results ?? []).map((r) => ({ slug: r.slug, name: r.name }));
-        this.mine.set(usable);
-        // Whichever comes first, by name — the list is ordered by the server, and every entry in
-        // it is one the gateway will accept. A tester has no opinion about this; the screen says
-        // which one it landed on so the spend stays traceable to a budget.
-        if (usable.length && !this.useCase()) this.useCase.set(usable[0].slug);
-      },
+    this.service.testAttribution().subscribe({
+      next: (where) => this.attribution.set(where),
       error: (response: unknown) =>
-        this.feedback.fail(response, 'Could not work out which use case to attribute a run to.'),
+        this.feedback.fail(response, 'Could not work out where a run would be booked.'),
     });
     this.refreshRuns();
   }
@@ -223,7 +213,7 @@ export class SmokeTests implements OnInit {
    * nothing about the model.
    */
   protected async run(): Promise<void> {
-    if (!this.model() || !this.useCase() || this.running()) return;
+    if (!this.model() || !this.mayRun() || this.running()) return;
 
     this.running.set(true);
     this.feedback.clear();

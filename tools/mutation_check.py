@@ -2851,6 +2851,14 @@ MUTATIONS = [
         "management/backend/tests/test_usecases.py",
     ),
     Mutation(
+        "Q6",
+        "the seeded smoke-test use case is announced to the gateway, not only written locally",
+        "management/backend/src/aira_management/apps/seed/contributions/test_catalogue.py",
+        '        events.emit("usecase.upserted", _snapshot(use_case))',
+        "        pass",
+        "management/backend/tests/test_smoketests.py",
+    ),
+    Mutation(
         "Q3",
         "the seed corrects a renamed question in place instead of adding a second one",
         "management/backend/src/aira_management/apps/seed/contributions/test_catalogue.py",

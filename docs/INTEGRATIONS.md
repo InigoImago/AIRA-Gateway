@@ -345,3 +345,18 @@ unenforceable, and unpriced traffic is counted apart rather than as zero. **Aler
 a rule is a hypothesis until somebody has watched it be right, and a detection system that blocks
 wrongly once is switched off forever. **`REQUIRE_USE_CASE` last** — turning it on before every
 caller is migrated refuses traffic that used to work.
+
+### A group for model testing
+
+Model tests (`FRD-504`) are booked to a dedicated use case, `smoke-test`, which the seed creates.
+Because AIRA never writes to your directory, whoever may test a model must be able to *call* that
+use case, and the gateway decides that from the groups their token carries:
+
+- Create a group whose path is **`/use-cases/smoke-test`** (or grant an existing group to that use
+  case in the console, which works the same way).
+- Put the people who may test models in it — by default Global Administrators, IT Security and
+  use-case administrators.
+
+Without it the console does not offer a Run button and says why. Seeing every use case is
+deliberately not the same as being able to call one (`ADR-0007`), so an oversight role does **not**
+get this by virtue of its role.
