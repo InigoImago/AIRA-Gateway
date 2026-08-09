@@ -1,5 +1,6 @@
 import { Component, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
+import { provideRouter } from '@angular/router';
 import { Subject, of, throwError } from 'rxjs';
 import { Trace, TracePage } from '../../core/api/models';
 import { MeService } from '../../core/api/me.service';
@@ -65,6 +66,9 @@ function setup(options: Options = {}) {
   TestBed.configureTestingModule({
     imports: [Host],
     providers: [
+      // The detail links to the use case, so the component genuinely uses `RouterLink`. A
+      // harness without a router is testing a different component.
+      provideRouter([]),
       {
         provide: MeService,
         useValue: { get: () => of({ roles: options.roles ?? ['use-case-admin'] }) },
@@ -111,6 +115,13 @@ function setup(options: Options = {}) {
     text: () => element.textContent ?? '',
     testid: (id: string) => element.querySelector(`[data-testid="${id}"]`),
     rows: () => element.querySelectorAll('tbody tr'),
+    /** Open the first row. Most of what a trace records now lives in the detail rather than in a
+     *  column — the table was eleven columns wide and scrolled sideways, so it carries what a
+     *  reader *scans* by and the rest belongs to the one request they chose to look at. */
+    openFirst: () => {
+      element.querySelector<HTMLElement>('[data-testid^="open-payload-"]')?.click();
+      fixture.detectChanges();
+    },
     click: (id: string) => {
       element.querySelector<HTMLElement>(`[data-testid="${id}"]`)?.click();
       fixture.detectChanges();
@@ -120,7 +131,8 @@ function setup(options: Options = {}) {
 
 describe('TracesTab', () => {
   it('shows what happened, and asks only about this use case', () => {
-    const { text, queries } = setup();
+    const { text, queries, openFirst } = setup();
+    openFirst();
 
     expect(queries[0]['useCase']).toBe('uc-a');
     expect(text()).toContain('generateContent');
@@ -137,9 +149,10 @@ describe('TracesTab', () => {
   });
 
   it('renders money as money, keeping the exact integer in the API', () => {
-    const { text } = setup({
+    const { text, openFirst } = setup({
       pages: [{ traces: [trace({ cost_nanos: 2_500_000 })], next_cursor: null, scope: 'all' }],
     });
+    openFirst();
 
     expect(text()).toContain('0.0025');
   });
@@ -265,7 +278,9 @@ describe('TracesTab', () => {
 
 describe('TracesTab — reading one row', () => {
   function one(over: Partial<Trace>) {
-    return setup({ pages: [{ traces: [trace(over)], next_cursor: null, scope: 'all' }] });
+    const harness = setup({ pages: [{ traces: [trace(over)], next_cursor: null, scope: 'all' }] });
+    harness.openFirst();
+    return harness;
   }
 
   it('names both the model asked for and the one that answered, when they differ', () => {
@@ -303,12 +318,12 @@ describe('TracesTab — reading one row', () => {
     // read as "it answered with nothing".
     const { text } = one({ prompt_tokens: null, completion_tokens: null, latency_ms: null });
 
-    expect(text()).not.toContain('0 / 0');
+    expect(text()).not.toContain('0 in / 0 out');
     expect(text()).toContain('—');
   });
 
   it('shows a half-known token count rather than dropping it', () => {
-    expect(one({ prompt_tokens: 12, completion_tokens: null }).text()).toContain('12 / 0');
+    expect(one({ prompt_tokens: 12, completion_tokens: null }).text()).toContain('12 in / 0 out');
   });
 
   it('shows the trace id, which is what correlates this row with the logs', () => {
@@ -378,6 +393,7 @@ describe('TracesTab — while a page is in flight', () => {
         },
       ],
     });
+    harness.openFirst();
 
     expect(harness.text()).toContain('asked for b');
     expect(harness.text()).not.toContain('·');
@@ -385,7 +401,7 @@ describe('TracesTab — while a page is in flight', () => {
   // ---- what an incident needs to see (`FRD-131` FR-7, `FRD-502`) ---------------------------
 
   it('shows the functions the model asked for', () => {
-    const { text } = setup({
+    const { text, openFirst } = setup({
       pages: [
         {
           traces: [trace({ tool_calls: { declared: 3, called: ['read_file', 'bash'] } })],
@@ -394,6 +410,7 @@ describe('TracesTab — while a page is in flight', () => {
         },
       ],
     });
+    openFirst();
 
     expect(text()).toContain('read_file');
   });
@@ -401,7 +418,7 @@ describe('TracesTab — while a page is in flight', () => {
   it('distinguishes "offered and not used" from "never offered"', () => {
     /** Two different events, and only one of them is a model behaving oddly. A row showing a dash
      *  for both would hide the interesting one. */
-    const { text } = setup({
+    const { text, openFirst } = setup({
       pages: [
         {
           traces: [trace({ tool_calls: { declared: 4, called: [] } })],
@@ -410,6 +427,7 @@ describe('TracesTab — while a page is in flight', () => {
         },
       ],
     });
+    openFirst();
 
     expect(text()).toContain('4 offered, none called');
   });

@@ -171,39 +171,19 @@
         <thead>
           <tr>
             <!--
-              First column, and deliberately. It was last, and the table scrolls horizontally now
-              that it carries a use case and an address — so the control that opens a request was
-              **off screen**, and a reader had no way to learn it existed. An action behind a
-              scrollbar is an action that is not there.
+              Four columns, and that is the whole design. The table carried eleven and scrolled
+              sideways; a reader cannot scan eleven, and the control that opened a row was off the
+              right-hand edge. What stays is what somebody scans a list *for* — when, from where,
+              what, and how it ended. Everything else is a detail *about* a request, and details
+              belong to the request you opened, not to the list you are still reading.
             -->
             <th scope="col"><span class="sr-only">Open</span></th>
             <th scope="col">When</th>
-            <!-- Only when the table spans use cases. Inside one, the column would repeat the page
-                 heading on every row. -->
-            @if (!slug()) {
-              <th scope="col">Use case</th>
-            }
-            <th scope="col">Operation</th>
-            <th scope="col">Model</th>
-            <th scope="col">Outcome</th>
-            <th scope="col">Tokens</th>
-            <th scope="col">Cost</th>
-            <th scope="col">Latency</th>
             @if (mayInvestigate()) {
-              <!-- The address was a filter and not a column, which meant it could be searched for
-                   and never seen. A filter you cannot populate from the screen is one you cannot
-                   use. -->
               <th scope="col">From</th>
             }
-            <th scope="col">
-              Tools
-              <app-info-hint label="What tool calls are">
-                What the model asked the caller to run, and how many functions it was offered. Names
-                only — never the arguments, which are the caller's content and live under the use
-                case's payload storage and retention.
-              </app-info-hint>
-            </th>
-            <th scope="col">Trace</th>
+            <th scope="col">Operation</th>
+            <th scope="col">Outcome</th>
           </tr>
         </thead>
         <tbody>
@@ -211,6 +191,7 @@
             <tr
               class="row-openable"
               [class.is-open]="openPayload() === row.id"
+              [class.is-flagged]="row.flagged"
               (click)="togglePayload(row)"
             >
               <td class="table__open">
@@ -226,34 +207,31 @@
                   {{ openPayload() === row.id ? '▾' : '▸' }}
                 </button>
               </td>
-              <td class="nowrap">{{ row.created_at | date: 'short' }}</td>
-              @if (!slug()) {
-                <td>
-                  <a [routerLink]="['/use-cases', row.use_case]">{{ row.use_case }}</a>
+              <!-- Day first. This console is read in Europe, and `9/8/26` means two different days
+                   depending on who is looking at it. -->
+              <td class="nowrap">{{ row.created_at | date: 'dd.MM.yyyy HH:mm:ss' }}</td>
+              @if (mayInvestigate()) {
+                <td class="nowrap">
+                  <code>{{ row.source_ip || '—' }}</code>
                 </td>
               }
               <td>
                 {{ row.operation }}
-                <div class="muted" style="font-size: 0.78rem">{{ row.subject }}</div>
-              </td>
-              <td>
-                <code>{{ row.model }}</code>
-                <!-- Requested and served both, when they differ: with a fallback chain they do,
-                     and "why did that model answer" has no answer without the pair. -->
-                @if (row.requested_model && row.requested_model !== row.model) {
-                  <div class="muted" style="font-size: 0.78rem">
-                    asked for {{ row.requested_model }}
-                    @if (row.model_selection) {
-                      · {{ row.model_selection }}
-                    }
-                  </div>
-                }
+                <!-- The caller under the operation, and — when the table spans use cases — which
+                     use case. A sub-line rather than two more columns: it is context for the row
+                     you are reading, not something you scan a list by. -->
+                <div class="muted" style="font-size: 0.78rem">
+                  {{ row.subject }}
+                  @if (!slug() && row.use_case) {
+                    · {{ row.use_case }}
+                  }
+                </div>
               </td>
               <td>
                 @if (row.flagged) {
-                  <!-- The interesting case is a *served* flagged request: it looks like every
-                       other 200 until something says otherwise. -->
-                  <span class="badge badge--warning" data-testid="flagged">flagged</span>
+                  <!-- Red, because it is the one an oversight role came to find: a pipeline step
+                       objected. A *served* flagged request looks like every other 200 otherwise. -->
+                  <span class="badge badge--danger" data-testid="flagged">flagged</span>
                 }
                 @if (served(row)) {
                   <span class="badge badge--success">served</span>
@@ -265,40 +243,94 @@
                   <span class="badge badge--warning">{{ row.status }}</span>
                 }
               </td>
-              <td class="nowrap">
-                @if (row.prompt_tokens === null && row.completion_tokens === null) {
-                  —
-                } @else {
-                  {{ row.prompt_tokens ?? 0 }} / {{ row.completion_tokens ?? 0 }}
-                }
-              </td>
-              <td class="nowrap">{{ cost(row) }}</td>
-              <td class="nowrap">{{ row.latency_ms === null ? '—' : row.latency_ms + ' ms' }}</td>
-              @if (mayInvestigate()) {
-                <td class="nowrap">
-                  <code>{{ row.source_ip || '—' }}</code>
-                </td>
-              }
-              <td>
-                @if (row.tool_calls; as tools) {
-                  @if (tools.called.length) {
-                    <span class="badge badge--warning">{{ tools.called.join(', ') }}</span>
-                  } @else {
-                    <!-- "offered ten and asked for none" and "offered none" are different events,
-                         and only one of them is a model behaving oddly. -->
-                    <span class="muted">{{ tools.declared }} offered, none called</span>
-                  }
-                } @else {
-                  <span class="muted">—</span>
-                }
-              </td>
-              <td>
-                <span class="trace-id">{{ row.trace_id ?? '—' }}</span>
-              </td>
             </tr>
             @if (openPayload() === row.id) {
               <tr class="row-detail">
                 <td [attr.colspan]="20">
+                  <!--
+                    Everything the columns no longer carry. It is not less information — it is the
+                    same information, attached to the one request somebody chose to look at.
+                  -->
+                  <dl class="detail-grid">
+                    <div>
+                      <dt>Model</dt>
+                      <dd>
+                        <code>{{ row.model }}</code>
+                        @if (row.requested_model && row.requested_model !== row.model) {
+                          <div class="muted" style="font-size: 0.78rem">
+                            asked for {{ row.requested_model }}
+                            @if (row.model_selection) {
+                              · {{ row.model_selection }}
+                            }
+                          </div>
+                        }
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Tokens</dt>
+                      <dd>
+                        @if (row.prompt_tokens === null && row.completion_tokens === null) {
+                          —
+                        } @else {
+                          {{ row.prompt_tokens ?? 0 }} in / {{ row.completion_tokens ?? 0 }} out
+                        }
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Cost</dt>
+                      <dd>{{ cost(row) }}</dd>
+                    </div>
+                    <div>
+                      <dt>Latency</dt>
+                      <dd>{{ row.latency_ms === null ? '—' : row.latency_ms + ' ms' }}</dd>
+                    </div>
+                    <div>
+                      <dt>Use case</dt>
+                      <dd>
+                        @if (row.use_case) {
+                          <a [routerLink]="['/use-cases', row.use_case]">{{ row.use_case }}</a>
+                        } @else {
+                          —
+                        }
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>API key</dt>
+                      <dd>
+                        <code>{{ row.credential || '—' }}</code>
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>
+                        Tools
+                        <app-info-hint label="What tool calls are">
+                          What the model asked the caller to run, and how many functions it was
+                          offered. Names only — never the arguments, which are the caller's content
+                          and live under the use case's payload storage and retention.
+                        </app-info-hint>
+                      </dt>
+                      <dd>
+                        @if (row.tool_calls; as tools) {
+                          @if (tools.called.length) {
+                            {{ tools.called.join(', ') }}
+                          } @else {
+                            <!-- "offered ten and asked for none" and "offered none" are different
+                                 events, and only one of them is a model behaving oddly. -->
+                            {{ tools.declared }} offered, none called
+                          }
+                        } @else {
+                          —
+                        }
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Trace</dt>
+                      <dd>
+                        <span class="trace-id">{{ row.trace_id ?? '—' }}</span>
+                      </dd>
+                    </div>
+                  </dl>
+
                   @if (payloadLoading()) {
                     <p class="loading">
                       <span class="spinner" aria-hidden="true"></span>

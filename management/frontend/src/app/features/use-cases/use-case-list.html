@@ -11,19 +11,13 @@
   }
 
   <div class="card" style="padding: 0">
-    @if (loading()) {
-      <p class="loading" style="padding: 1rem">
-        <span class="spinner" aria-hidden="true"></span>
-        Loading use cases…
-      </p>
-    } @else if (isEmpty()) {
-      <p class="empty">
-        No use cases yet.
-        @if (canCreate()) {
-          Use <strong>New use case</strong> above to create the first one.
-        }
-      </p>
-    } @else {
+    <!--
+      The search box lives **outside** the loading branch, and that is the whole of a bug report:
+      it used to be inside the `@else`, so the first keystroke that fired a query destroyed the
+      block, took the input with it, and rebuilt a new one — the reader lost focus mid-word and had
+      to click back in. A control that starts a request must survive that request.
+    -->
+    @if (!isEmpty() || view.query()) {
       <div class="table-tools" style="padding: 0.9rem 1rem 0">
         <label class="search">
           <span>Find a use case</span>
@@ -36,8 +30,27 @@
             autocomplete="off"
           />
         </label>
+        <!-- Busy is a word beside the box, not a screen that replaces it. `FRD-207`: the page
+             holds still while it works. -->
+        @if (loading()) {
+          <span class="muted" data-testid="use-case-searching">searching…</span>
+        }
       </div>
+    }
 
+    @if (loading() && !view.total()) {
+      <p class="loading" style="padding: 1rem">
+        <span class="spinner" aria-hidden="true"></span>
+        Loading use cases…
+      </p>
+    } @else if (isEmpty()) {
+      <p class="empty">
+        No use cases yet.
+        @if (canCreate()) {
+          Use <strong>New use case</strong> above to create the first one.
+        }
+      </p>
+    } @else {
       @if (!view.total()) {
         <p class="empty" data-testid="use-case-no-match">
           No use case matches “{{ view.query() }}”.

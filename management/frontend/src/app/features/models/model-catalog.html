@@ -27,14 +27,12 @@
   }
 
   <div class="card" style="padding: 0">
-    @if (loading()) {
-      <p class="loading" style="padding: 1rem">
-        <span class="spinner" aria-hidden="true"></span>
-        Loading catalog…
-      </p>
-    } @else if (!models().length) {
-      <p class="empty">No models in the catalog yet.</p>
-    } @else {
+    <!--
+      Outside the loading branch. This search is client-side today, so it does not lose focus the
+      way the use-case list did — but it is the same structure one change away from the same bug,
+      and the guard in `tools/tests/test_console_info_hints.py` treats the shape as the defect.
+    -->
+    @if (models().length) {
       <div class="table-tools" style="padding: 0.9rem 1rem 0">
         <label class="search">
           <span>Find a model</span>
@@ -48,7 +46,16 @@
           />
         </label>
       </div>
+    }
 
+    @if (loading()) {
+      <p class="loading" style="padding: 1rem">
+        <span class="spinner" aria-hidden="true"></span>
+        Loading catalog…
+      </p>
+    } @else if (!models().length) {
+      <p class="empty">No models in the catalog yet.</p>
+    } @else {
       @if (!view.matches().length) {
         <p class="empty" data-testid="model-no-match">
           No model matches “{{ view.query() }}”. The catalog holds {{ models().length }}.

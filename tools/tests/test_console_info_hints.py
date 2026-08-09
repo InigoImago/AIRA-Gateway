@@ -78,3 +78,75 @@ def test_every_hint_carries_an_accessible_label() -> None:
     ]
 
     assert offenders == [], offenders
+
+
+# ---- a control that starts a request must survive it -----------------------------------------
+
+
+def _enclosing_blocks(source: str, position: int) -> list[str]:
+    """The Angular control-flow blocks open at ``position``, outermost first.
+
+    Brace counting rather than a template parser: what is being checked is a *structural* mistake
+    in the source, and every parser here would have to be taught Angular's `@if`/`@else` syntax to
+    find it.
+    """
+    open_blocks: list[str] = []
+    depth_of: list[int] = []
+    depth = 0
+    index = 0
+    #: The header of the block that most recently closed at each depth. An `@else` says nothing
+    #: about *what* it is the alternative to, so it inherits the `@if` it belongs to — without
+    #: that, this scanner misses the exact shape it exists to find, which is how its first version
+    #: passed while the bug was still in the tree.
+    last_closed: dict[int, str] = {}
+    block = re.compile(r"@(?:else if|else|if|for|switch)\b[^\n{]*\{")
+    while index < position:
+        match = block.match(source, index)
+        if match:
+            header = match.group(0).strip()
+            if header.startswith("@else"):
+                inherited = last_closed.get(depth, "")
+                header = f"{header} /* of {inherited} */"
+            open_blocks.append(header)
+            depth_of.append(depth)
+            depth += 1
+            index = match.end()
+            continue
+        char = source[index]
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            while depth_of and depth_of[-1] >= depth:
+                depth_of.pop()
+                last_closed[depth] = open_blocks.pop()
+        index += 1
+    return open_blocks
+
+
+def test_no_search_box_lives_inside_a_block_a_load_toggles() -> None:
+    """A search field that a query destroys is a search field nobody can type into.
+
+    Reported from the running console: *"wenn ich 2 character reinschreibe, dann fängt er an zu
+    suchen und ich fliege aus dem Feld raus"*. The use-case list had its input inside the `@else`
+    of `@if (loading())`, so the first keystroke that reached the debounce tore the block down,
+    took the input with it, and built a new one — focus gone, mid-word.
+
+    The shape is the defect, not the one occurrence: any control that *starts* a request and sits
+    inside a branch that request flips will do the same thing.
+    """
+    offenders: list[str] = []
+    for path in TEMPLATES:
+        source = path.read_text()
+        for match in re.finditer(r'type="search"', source):
+            guilty = [
+                block
+                for block in _enclosing_blocks(source, match.start())
+                if "loading()" in block or "busy()" in block or "refreshing()" in block
+            ]
+            if guilty:
+                offenders.append(f"{path.relative_to(ROOT)}: inside {guilty[-1]}")
+
+    assert offenders == [], (
+        f"a search box inside a block its own query toggles is destroyed mid-typing: {offenders}"
+    )

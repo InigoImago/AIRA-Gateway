@@ -229,3 +229,53 @@ test.describe('Reading what was actually sent', () => {
     await expect(page.getByTestId('nav-requests')).toHaveCount(0);
   });
 });
+
+test.describe('The list holds still and fits', () => {
+  test('the request table does not scroll sideways', async ({ page }) => {
+    /**
+     * Eleven columns scrolled horizontally, which is how the control that opens a request ended up
+     * off screen. Four columns is the design; this is the assertion that keeps it one. Measured on
+     * the scroller itself — the page not scrolling is a weaker property, because `.table-wrap`
+     * scrolls inside itself by design and hides the overflow from the document.
+     */
+    await login(page, USERS.security);
+    await page.goto('/requests');
+    await expect(page.locator('tbody tr').first()).toBeVisible({ timeout: 30_000 });
+
+    const overflow = await page.locator('.table-wrap').first().evaluate((el) => ({
+      scroll: el.scrollWidth,
+      client: el.clientWidth,
+    }));
+
+    expect(
+      overflow.scroll,
+      `the request table needs ${overflow.scroll}px in ${overflow.client}px`,
+    ).toBeLessThanOrEqual(overflow.client + 1);
+  });
+
+  test('a search field keeps focus while it is being typed into', async ({ page }) => {
+    /**
+     * Reported from the running console: *"wenn ich 2 character reinschreibe, dann fängt er an zu
+     * suchen und ich fliege aus dem Feld raus"*. The input sat inside the `@else` of
+     * `@if (loading())`, so the query it started tore down the block that contained it.
+     *
+     * Only a browser can see this. The component test types into a field and asserts a request was
+     * made; it has no notion of which element the caret is in.
+     */
+    await login(page, USERS.globalAdmin);
+    await page.goto('/use-cases');
+
+    const search = page.getByTestId('use-case-search');
+    await search.click();
+    await search.type('de', { delay: 120 });
+    // Past the debounce, so the query has fired and the answer has come back.
+    await page.waitForTimeout(1500);
+
+    await expect(search).toBeFocused();
+    await expect(search).toHaveValue('de');
+
+    // And typing can simply continue, which is the thing that was actually broken.
+    await page.keyboard.type('mo');
+    await expect(search).toHaveValue('demo');
+  });
+});
