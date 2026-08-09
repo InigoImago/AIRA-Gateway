@@ -146,6 +146,11 @@ test.describe('The console explains itself', () => {
     await page.reload();
     await page.click('[role="tab"]:has-text("Rules")');
 
+    // Searched for, not scrolled to. The list is paged now, and an installation with a few
+    // hundred rules puts a freshly created one well off the first page — which is exactly what a
+    // person would hit, and what this test hit the moment paging landed.
+    await page.getByTestId('rule-search').fill(name);
+
     const row = page.locator(`tr:has-text("${name}")`);
     await expect(row).toBeVisible({ timeout: 20_000 });
     await row.locator('[data-testid^="rule-toggle-"]').click();
@@ -162,6 +167,7 @@ test.describe('The console explains itself', () => {
     await createRule(page, name);
     await page.reload();
     await page.click('[role="tab"]:has-text("Rules")');
+    await page.getByTestId('rule-search').fill(name);
 
     const row = page.locator(`tr:has-text("${name}")`);
     await expect(row).toBeVisible({ timeout: 20_000 });
@@ -182,6 +188,7 @@ test.describe('The console explains itself', () => {
 
     await page.reload();
     await page.click('[role="tab"]:has-text("Rules")');
+    await page.getByTestId('rule-search').fill(name);
     await expect(page.locator(`tr:has-text("${name}")`)).toContainText('65');
   });
 

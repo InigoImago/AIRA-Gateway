@@ -1007,6 +1007,22 @@ passed with the role boundary gone; it asserts the *sentence* now. And **half an
 a matrix as pointless**: deleting a branch can only make code more permissive, so the four rows
 guarding against *over*-restriction needed the inverse mutations to show their worth. `N46`–`N54`.
 
+**The button nobody could reach (2026-08-09)** — `FRD-500` says a global anomaly rule is IT
+Security's to author and the server has accepted one since it was written; the **console never
+offered it**, so every global rule anywhere had been seeded straight into the database. `FRD-206`'s
+defect **inverted**: not a control that refuses when used, but a capability with no way in — and only
+the first kind announces itself. Also: rules, live suspensions and earlier decisions are **paged and
+searchable** (one box covers both suspension lists, because "has this caller ever been stopped?" is
+answered by the live list *together with* the record); the rule editor is a **grid** rather than a
+wrapping row that packed five controls onto a line; reachability moved **into the editor window** and
+deliberately **does not block saving** (declaring a model before its credential exists is the
+ordinary order of work — `FRD-114`'s rule: deprecation warns, revocation blocks); and the showcase
+seeds four rules across the vocabulary, never `block`, because a demo that stopped somebody's traffic
+on a first run teaches `FRD-500`'s lesson backwards. **The seed lied by one**: a rule named a use
+case it does not create and the loop's `continue` dropped it silently — three of four appeared, the
+count looked plausible, and the missing one was the only rule that *acts*. Third instance of
+"returns silently for something unknown", after `record_to_outbox` and the missing Kafka topics.
+
 Next candidates: **`FRD-114`** (model metadata — now also carries publisher + default output cap,
 prerequisite for 110–113 and 119), **`FRD-110`** (documents/images — the widest gap),
 **`FRD-115`/`FRD-119`** (Vertex EU + the Anthropic dialect — required), **`FRD-116`** (Vault),

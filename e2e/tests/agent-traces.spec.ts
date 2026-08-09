@@ -279,3 +279,40 @@ test.describe('The list holds still and fits', () => {
     await expect(search).toHaveValue('demo');
   });
 });
+
+test.describe('Authoring a rule that applies everywhere', () => {
+  test('IT Security can create a global rule from the console', async ({ page }) => {
+    /**
+     * The capability the server has had since `FRD-500` and the console never offered — so the
+     * only global rules that existed anywhere were the ones a seed had written into the database.
+     * Asserted end to end because that is where the gap was: the API worked all along.
+     */
+    await login(page, USERS.security);
+    await page.goto('/security');
+    await page.click('[role="tab"]:has-text("Rules")');
+
+    await page.getByTestId('new-global-rule').click();
+
+    const name = `e2e global ${Date.now()}`;
+    await page.locator('[data-testid="new-global-rule-name"]').fill(name);
+    await page.locator('[data-testid="new-global-rule-threshold"]').fill('55');
+    await page.locator('[data-testid="new-global-rule-save"]').click();
+
+    await expect(page.locator('[role="status"]')).toContainText('every use case', {
+      timeout: 15_000,
+    });
+
+    await page.getByTestId('rule-search').fill(name);
+    const row = page.locator(`tr:has-text("${name}")`);
+    await expect(row).toBeVisible({ timeout: 20_000 });
+    await expect(row).toContainText('everywhere');
+  });
+
+  test('a role that may stop nothing is not offered the button', async ({ page }) => {
+    await login(page, USERS.governance);
+    await page.goto('/security');
+    await page.click('[role="tab"]:has-text("Rules")');
+
+    await expect(page.getByTestId('new-global-rule')).toHaveCount(0);
+  });
+});

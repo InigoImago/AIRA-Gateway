@@ -4229,3 +4229,50 @@ Its buttons sat in the same wrapping `form-inline` as its fields, so "Create rul
 "smallest sample" and read as one more setting. Fields and actions are two things now, separated by
 a rule, with room to aim — a dozen controls at 0.6rem is a wall, and clicking the wrong one of two
 adjacent checkboxes is a governance mistake rather than a typo.
+
+## 2026-08-09 (night) — The button nobody could reach, and a seed that lied by one
+
+### A capability with no way in
+
+`FRD-500` says a global rule is IT Security's to author, and the server has accepted one since the
+day it was written. The console never offered the button — so every global rule that existed
+anywhere had been written into the database by a seed, and the question came back exactly as one
+would expect: *"wie mache ich es über die Oberfläche?"*
+
+This is `FRD-206`'s defect **inverted**. That one was a control that refuses when used; this is a
+capability nobody could reach. Both are a console disagreeing with its server, and only the first
+one announces itself.
+
+### Three lists that only grow
+
+Rules, what is stopped now, and what was stopped before — the last of which is *kept* on purpose,
+because "blocked for two hours last Tuesday" is what a review asks. All three are paged and
+searchable now, and one box covers both suspension lists: "has this caller ever been stopped?" is
+answered by the live list *together with* the record, and a search over only the first would answer
+it wrongly while looking like it had answered it.
+
+Paging then broke two e2e tests, and correctly: they created a rule and looked for it on screen,
+and with a few hundred rules from earlier runs a fresh one is well off the first page. They search
+for it now — which is what a person would do, and what the tests should have been doing all along.
+
+### The seed lied by one
+
+Four rules were seeded and three appeared. The fourth named a use case this seed does not create,
+and the loop's `continue` dropped it silently: the count looked plausible and the one that went
+missing was the only rule that *acts* rather than alerts.
+
+Found by running the seed rather than reading it. It raises now — the **third** instance in this
+repository of "returns silently for something unknown", after `record_to_outbox` and the missing
+Kafka topics.
+
+### And the design question that was asked directly
+
+> *"Warum machen wir check reachability nicht im Window, und wenn reachability false ist, dann kein
+> Anlegen?"*
+
+In the window: yes, done. Blocking: **no**, and it is worth writing down why. Declaring a model
+before its credential exists is the ordinary order of work — you write the catalog, then configure
+the platform — and an adapter is registered only once the credential is there. A hard gate would
+make a fresh installation undeclarable, and would make it impossible to prepare a catalog for a
+platform whose key arrives next week. `FRD-114` already settled the shape of this: deprecation
+warns, revocation blocks. A reachability verdict is information, and it is shown as such.
