@@ -108,9 +108,9 @@ SECURITY_CLIENT_SECRET = "integration-tests-security-secret"  # noqa: S105
 
 # A fourth account, carrying `global-admin`. Added by `FRD-209`: proving that a **group** grant
 # reaches somebody needs two identities — one that may create a use case and grant access, and one
-# with *no oversight* that reaches it only through the group. `it-steuerung` cannot create;
-# `use-case-admin` creating its own use case becomes its member directly, which is the thing not
-# being tested.
+# with *no oversight* that reaches it only through the group. Since `ADR-0017` this account is
+# also the only one that may create a use case at all; the creator becomes its administrator
+# directly, which is why the *reached-through-a-group* half needs the second account.
 ADMIN_CLIENT_ID = "aira-integration-tests-admin"
 ADMIN_CLIENT_SECRET = "integration-tests-admin-secret"  # noqa: S105
 
@@ -123,7 +123,9 @@ async def governance_token() -> str:
 
 @pytest.fixture
 async def member_token() -> str:
-    """A real token for a use-case admin — authenticated, but with no oversight."""
+    """A real token for an ordinary caller — authenticated, and holding **no organisation-wide
+    role** (`ADR-0017`). It carried `use-case-admin` until that stopped being a role; what it has
+    now is group membership, which is where its access to a use case comes from."""
     return await _token(MEMBER_CLIENT_ID, MEMBER_CLIENT_SECRET)
 
 

@@ -156,15 +156,16 @@ async def _rule_row(engine: AsyncEngine, rule_id: int) -> AnomalyRuleRead:
 
 
 @pytest.fixture
-async def authored(member_token: str):
+async def authored(admin_token: str):
     """A use case made through Management, so rules are authored the way people author them.
 
-    Created by the **use-case admin** service account: `it-steuerung` sees everything and writes
-    nothing (PRD §154), so it cannot create a use case — which is the same distinction that turned
-    out to be missing in the gateway's kill switch.
+    Created by the **global-admin** service account (`ADR-0017`): creating a use case is that
+    role's act, and the creator is granted administration of it, which is what authoring its rules
+    needs. `it-steuerung` cannot create — it sees everything and writes nothing (PRD §154) — and
+    the account that used to do this held `use-case-admin`, which is no longer a role at all.
     """
     slug = f"anom-{uuid.uuid4().hex[:8]}"
-    headers = {"Authorization": f"Bearer {member_token}"}
+    headers = {"Authorization": f"Bearer {admin_token}"}
     async with httpx.AsyncClient(timeout=30.0) as client:
         created = await client.post(
             f"{MANAGEMENT_URL}/api/v1/use-cases/",
@@ -324,9 +325,11 @@ async def test_a5_a_throttling_rule_carries_its_rate(authored, engine) -> None:
 
 
 async def test_a6_deleting_a_use_case_takes_its_rules_and_leaves_the_global_ones(
-    member_token: str, security_token: str, engine
+    admin_token: str, security_token: str, engine
 ) -> None:
-    headers = {"Authorization": f"Bearer {member_token}"}
+    # Created and deleted by the role that may (`ADR-0017`); what is under test is the cascade,
+    # not who performs it.
+    headers = {"Authorization": f"Bearer {admin_token}"}
     security = {"Authorization": f"Bearer {security_token}"}
     slug = f"anom-{uuid.uuid4().hex[:8]}"
     global_name = f"survivor-{uuid.uuid4().hex[:6]}"

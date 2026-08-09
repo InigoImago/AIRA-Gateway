@@ -23,9 +23,9 @@ pytestmark = pytest.mark.integration
 #: A department group in the dev realm that is deliberately **not** named after a use case — the
 #: point of the feature is that a grant names whatever the realm actually uses.
 DEPARTMENT = "/abteilungen/kundendienst"
-#: The suite's *member* service account is in it (see the realm file), and carries
-#: `use-case-admin` — a role with **no oversight**, so anything it can see it can see because of
-#: a grant. That is what makes "they can see it now" mean something.
+#: The suite's *member* service account is in it (see the realm file) and holds **no
+#: organisation-wide role** (`ADR-0017`) — so anything it can see, it can see because of a grant.
+#: That is what makes "they can see it now" mean something.
 MODEL = "qwen3:0.6b"
 
 

@@ -32,12 +32,18 @@ def _claims(token: str) -> dict:
 async def test_the_realm_issues_a_token_carrying_the_governance_role(
     governance_token: str,
 ) -> None:
-    """The realm has to *have* the role and map it into the token. A realm that defines a role
-    nobody is granted looks identical, from the gateway, to one that grants it correctly — until
-    somebody is refused a report they should see."""
+    """The realm has to put this account in the group and map the claim into the token. A realm
+    whose group nobody is in looks identical, from the gateway, to one that grants it correctly —
+    until somebody is refused a report they should see.
+
+    **Rewritten for `ADR-0017`.** It asserted `realm_access.roles`; a role is held through a group
+    now and a realm role confers nothing, so the claim to check is `groups`. The mapping from path
+    to role lives in `AIRA_ROLE_GROUPS` and is the gateway's to apply — what this test owns is that
+    the *realm* puts the account where the mapping can find it.
+    """
     claims = _claims(governance_token)
 
-    assert "it-steuerung" in claims["realm_access"]["roles"]
+    assert "/aira/it-steuerung" in claims.get("groups", [])
     assert claims["iss"].endswith("/realms/aira")
 
 
@@ -79,6 +85,10 @@ async def test_an_unsigned_token_is_refused() -> None:
                 {
                     "sub": "attacker",
                     "iss": "http://localhost:8080/realms/aira",
+                    # Both, because a forged token should not be believed whichever mechanism it
+                    # claims through — and `realm_access` is now the one that confers nothing even
+                    # when the signature *is* valid.
+                    "groups": ["/aira/global-admins", "/aira/it-steuerung"],
                     "realm_access": {"roles": ["it-steuerung", "global-admin"]},
                 }
             ).encode()

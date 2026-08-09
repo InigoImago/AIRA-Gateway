@@ -43,8 +43,9 @@ async def test_a_caller_in_no_use_case_cannot_name_one_on_the_kira_surface(
     `if memberships and header not in memberships` refused a caller who had *some* memberships and
     waved through one who had **none** — so the reproduction needs an identity in no use case at
     all. `it-steuerung` is exactly that: it sees every use case (oversight) and is a member of
-    none, which is the whole point of an oversight role. A `use-case-admin` account does **not**
-    reproduce it, and the first draft of this test used one and passed against the broken code.
+    none, which is the whole point of an oversight role. An account that merely administers a use
+    case does **not** reproduce it, and the first draft of this test used one and passed against
+    the broken code.
     """
     marker = f"selector-{uuid.uuid4().hex[:8]}"
     async with httpx.AsyncClient(timeout=120.0) as client:

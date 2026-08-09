@@ -58,12 +58,16 @@ async def test_the_roles_in_the_token_are_the_roles_that_apply(
 
     assert "it-steuerung" in governance["roles"]
     assert "it-steuerung" not in member["roles"]
-    assert "use-case-admin" in member["roles"]
+    # **The member holds no organisation-wide role at all** (`ADR-0017`). It carried
+    # `use-case-admin` until that stopped being a role; access to a use case is a grant on that
+    # use case now, so an empty list here is the correct answer rather than a missing one — and
+    # asserting it is what stops a future realm quietly handing this account oversight.
+    assert member["roles"] == []
     assert governance["subject"] != member["subject"]
 
 
 async def test_oversight_sees_a_use_case_it_did_not_create(
-    governance_token: str, member_token: str
+    governance_token: str, admin_token: str
 ) -> None:
     """The whole point of the governance role, over the real API: the use case is created by
     somebody else, and the overseer — who is deliberately not a member — still sees it."""
@@ -71,8 +75,8 @@ async def test_oversight_sees_a_use_case_it_did_not_create(
     async with httpx.AsyncClient(base_url=MANAGEMENT_URL, timeout=15.0) as client:
         created = await client.post(
             "/api/v1/use-cases/",
-            json={"slug": slug, "name": "Owned by the member"},
-            headers=_auth(member_token),
+            json={"slug": slug, "name": "Owned by somebody else"},
+            headers=_auth(admin_token),
         )
         assert created.status_code == 201, created.text
 
@@ -138,7 +142,7 @@ async def test_a_caller_does_not_see_a_use_case_it_has_nothing_to_do_with(
 
 
 async def test_oversight_may_look_but_not_administer(
-    governance_token: str, member_token: str
+    governance_token: str, admin_token: str
 ) -> None:
     """ADR-0007's boundary over the real API, and it cuts harder than expected: an oversight role
     cannot even create a use case.
@@ -151,8 +155,8 @@ async def test_oversight_may_look_but_not_administer(
     async with httpx.AsyncClient(base_url=MANAGEMENT_URL, timeout=15.0) as client:
         owned_by_member = await client.post(
             "/api/v1/use-cases/",
-            json={"slug": slug, "name": "Owned by the member"},
-            headers=_auth(member_token),
+            json={"slug": slug, "name": "Owned by somebody else"},
+            headers=_auth(admin_token),
         )
         assert owned_by_member.status_code == 201, owned_by_member.text
 
@@ -173,13 +177,16 @@ async def test_oversight_may_look_but_not_administer(
     assert may_mint.status_code == 403, "oversight must not mint a data-plane key"
 
 
-async def test_a_refusal_carries_the_error_envelope(member_token: str) -> None:
+async def test_a_refusal_carries_the_error_envelope(admin_token: str) -> None:
     """FRD-200: one error shape, so the SPA can say what went wrong instead of "something did"."""
     async with httpx.AsyncClient(base_url=MANAGEMENT_URL, timeout=15.0) as client:
         response = await client.post(
             "/api/v1/use-cases/",
             json={"slug": "Not A Slug", "name": "x"},
-            headers=_auth(member_token),
+            # A caller who may create, so the refusal under test is the **validation** one. As the
+            # member this now returns 403 before the slug is ever looked at, and the test would
+            # assert the envelope of a different refusal.
+            headers=_auth(admin_token),
         )
 
     assert response.status_code == 400
@@ -188,7 +195,7 @@ async def test_a_refusal_carries_the_error_envelope(member_token: str) -> None:
     assert body["error"].get("message")
 
 
-async def test_a_use_case_created_here_reaches_the_gateway(member_token: str, engine) -> None:
+async def test_a_use_case_created_here_reaches_the_gateway(admin_token: str, engine) -> None:
     """The API is one end of the distribution path; this is the other. Creating over HTTP has to
     produce the same outbox row the hermetic tests assert on, and the relay has to carry it."""
     import asyncio
@@ -201,7 +208,7 @@ async def test_a_use_case_created_here_reaches_the_gateway(member_token: str, en
             await client.post(
                 "/api/v1/use-cases/",
                 json={"slug": slug, "name": "Distributed"},
-                headers=_auth(member_token),
+                headers=_auth(admin_token),
             )
         ).status_code == 201
 

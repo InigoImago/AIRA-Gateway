@@ -27,8 +27,8 @@ from .conftest import GATEWAY_URL, MANAGEMENT_URL
 pytestmark = pytest.mark.integration
 
 #: A department group in the dev realm, deliberately not named after a use case. The suite's
-#: *member* account is in it and carries `use-case-admin` — a role with **no oversight**, so
-#: anything it can see, it can see because of a grant.
+#: *member* account is in it and holds **no organisation-wide role** (`ADR-0017`), so anything it
+#: can see, it can see because of a grant.
 DEPARTMENT = "/abteilungen/kundendienst"
 UNUSED_GROUP = "/abteilungen/nobody-is-in-this"
 MODEL = "qwen3:0.6b"

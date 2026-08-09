@@ -124,8 +124,9 @@ async def test_the_window_excludes_what_falls_outside_it(
 async def test_a_caller_without_oversight_does_not_see_another_use_case(
     engine: AsyncEngine, member_token: str, governance_token: str
 ) -> None:
-    """The security-relevant one, over the real token. The member client holds `use-case-admin`
-    and is a member of nothing, so it must see an empty report while oversight sees the traffic.
+    """The security-relevant one, over the real token. The member client holds no
+    organisation-wide role (`ADR-0017`) and is a member of nothing, so it must see an empty report
+    while oversight sees the traffic.
 
     Both halves in one test on purpose: separately, the first would pass against an endpoint that
     is simply broken and returns nothing to anyone.
