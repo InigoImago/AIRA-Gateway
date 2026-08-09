@@ -45,6 +45,11 @@ test.describe('Cost budgets', () => {
     await page.fill('#model-name', model);
     await page.fill('#model-input', '0.075');
     await page.fill('#model-output', '0.30');
+    // Adding a model requires having *looked* first (`FRD-506`): the catalog is what the gateway
+    // enforces, and "I did not know it was unreachable" is the one outcome a single button can
+    // rule out. What the answer *is* does not block — declaring a model before its credential
+    // arrives is the ordinary order of work.
+    await page.click('[data-testid="editor-check"]');
     await page.click('button[type="submit"][form="model-editor-form"]');
 
     await expect(page.locator(`code:has-text("${model}")`)).toBeVisible();
@@ -54,6 +59,11 @@ test.describe('Cost budgets', () => {
     await page.click('button:has-text("Add model")');
     const unpriced = uniqueSlug('unpriced');
     await page.fill('#model-name', unpriced);
+    // Adding a model requires having *looked* first (`FRD-506`): the catalog is what the gateway
+    // enforces, and "I did not know it was unreachable" is the one outcome a single button can
+    // rule out. What the answer *is* does not block — declaring a model before its credential
+    // arrives is the ordinary order of work.
+    await page.click('[data-testid="editor-check"]');
     await page.click('button[type="submit"][form="model-editor-form"]');
     // Targeted by text rather than by position: the catalog now also flags models nobody has
     // *declared* (FRD-114), so `.first()` would assert about whichever badge happens to render

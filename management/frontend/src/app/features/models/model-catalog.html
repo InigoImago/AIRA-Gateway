@@ -430,17 +430,21 @@
         impossible to declare anything on a fresh installation. The project's own rule, from
         `FRD-114`: deprecation warns, revocation blocks. A reachability verdict is information.
       -->
-      @if (name()) {
-        <button
-          type="button"
-          class="btn"
-          [disabled]="checking()"
-          (click)="runCheck({ name: name() })"
-          data-testid="editor-check"
-        >
-          {{ checking() ? 'Checking…' : 'Check reachability' }}
-        </button>
-      }
+      <!--
+        Always here, disabled until there is a name to check. It used to be inside `@if (name())`,
+        so opening "Add model" showed **no button at all** and the check looked absent — which is
+        how it was reported. A control that appears only once you have done something else is a
+        control nobody finds.
+      -->
+      <button
+        type="button"
+        class="btn"
+        [disabled]="checking() || !name().trim()"
+        (click)="runCheck({ name: name().trim() })"
+        data-testid="editor-check"
+      >
+        {{ checking() ? 'Checking…' : 'Check reachability' }}
+      </button>
       @if (check(); as verdict) {
         <span
           class="badge"
@@ -454,6 +458,12 @@
       }
       @if (formError(); as message) {
         <span class="field__hint field__hint--error grow">{{ message }}</span>
+      } @else if (mustCheck()) {
+        <!-- Not a refusal of the *verdict* — of the *ignorance*. You have to look; what you do
+             with what you see is still yours to decide. -->
+        <span class="field__hint grow" data-testid="check-required">
+          Check reachability before adding a model. You may add it whatever the answer is.
+        </span>
       }
       <button type="button" class="btn" (click)="close()">Cancel</button>
       <button

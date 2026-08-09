@@ -141,8 +141,29 @@ export class ModelCatalog implements OnInit {
     return null;
   }
 
+  /**
+   * Whether a reachability check has been **answered** for the name currently in the form.
+   *
+   * Answered, not *passed*. An error counts: if the gateway cannot be asked, a reader must not be
+   * locked out of their own catalog by a diagnostic.
+   */
+  protected readonly checkedName = signal<string | null>(null);
+
+  /** True while a **new** model has not been checked yet. */
+  protected mustCheck(): boolean {
+    return !this.editing() && this.checkedName() !== this.name().trim();
+  }
+
   protected canSave(): boolean {
-    return !this.formError() && !this.busy();
+    // Creating a model requires having *looked*. Not having succeeded — `FRD-114`'s rule stands,
+    // deprecation warns and revocation blocks, and a declaration made before its credential
+    // arrives is the ordinary order of work. What is refused here is doing it **blind**: the
+    // catalog is what the gateway enforces, and "I did not know it was unreachable" is the one
+    // outcome a single button can rule out.
+    //
+    // Editing is exempt: correcting a price on a model that already exists is not the moment to
+    // demand a network round trip.
+    return !this.formError() && !this.busy() && !this.mustCheck();
   }
 
   protected save(): void {
@@ -203,6 +224,7 @@ export class ModelCatalog implements OnInit {
   /** Open the window empty, for a model the catalog does not have yet. */
   protected add(): void {
     this.reset();
+    this.checkedName.set(null);
     // A verdict about the last model, left on a window that is now about a new one, is a wrong
     // answer wearing a right one's clothes.
     this.check.set(null);
@@ -242,10 +264,14 @@ export class ModelCatalog implements OnInit {
     this.service.checkModel(model.name).subscribe({
       next: (verdict) => {
         this.check.set(verdict);
+        this.checkedName.set(model.name);
         this.checking.set(false);
       },
       error: (response: unknown) => {
         this.checking.set(false);
+        // Counted as looked-at. A diagnostic that cannot answer must not become a gate: the
+        // gateway may be down, and the catalog is Management's.
+        this.checkedName.set(model.name);
         this.error.set(errorMessage(response, 'Could not check this model.'));
       },
     });
@@ -311,6 +337,7 @@ export class ModelCatalog implements OnInit {
 
   protected edit(model: CatalogModel): void {
     this.check.set(null);
+    this.checkedName.set(null);
     this.name.set(model.name);
     this.displayName.set(model.display_name ?? '');
     this.provider.set(model.provider ?? '');

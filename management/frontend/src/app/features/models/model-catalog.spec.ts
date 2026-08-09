@@ -123,6 +123,15 @@ function setup(
     text: () => (fixture.nativeElement as HTMLElement).textContent ?? '',
     checked,
     html: () => fixture.nativeElement as HTMLElement,
+    /** Run the reachability check for whatever name is in the editor. Creating a model now
+     *  requires having *looked* (`FRD-506`), so every case that creates one does this — which is
+     *  also the cheapest possible proof that the gate is real. */
+    lookFirst: () => {
+      (
+        fixture.componentInstance as unknown as { runCheck: (m: { name: string }) => void }
+      ).runCheck({ name: (fixture.componentInstance as unknown as Catalog).name() });
+      fixture.detectChanges();
+    },
     /** Open the first row's declaration. What a model *is* lives in the panel now; the columns
      *  carry what a catalog is scanned by. */
     openFirst: () => {
@@ -228,17 +237,21 @@ describe('ModelCatalog', () => {
   });
 
   it('accepts a model with no price at all', () => {
-    const { component, saved } = setup();
+    const harness = setup();
+    const { component, saved } = harness;
     component.name.set('m-1');
+    harness.lookFirst();
     component.save();
     expect(saved[0]).toMatchObject({ name: 'm-1', input_price_per_million: null });
   });
 
   it('sends prices as strings and normalises a comma', () => {
-    const { component, saved } = setup();
+    const harness = setup();
+    const { component, saved } = harness;
     component.name.set('m-1');
     component.inputPrice.set('0,075');
     component.outputPrice.set('0.30');
+    harness.lookFirst();
     component.save();
     expect(saved[0].input_price_per_million).toBe('0.075');
     expect(typeof saved[0].input_price_per_million).toBe('string');
@@ -272,6 +285,7 @@ describe('ModelCatalog', () => {
       save: throwError(() => ({ status: 403, error: { error: { message: 'Not an admin.' } } })),
     });
     failedSave.component.name.set('m-1');
+    failedSave.lookFirst();
     failedSave.component.save();
     expect(failedSave.component.error()).toBe('Not an admin.');
   });
@@ -310,6 +324,13 @@ describe('ModelCatalog interactions', () => {
     harness.component.name.set('m-1');
     harness.component.inputPrice.set('1.00');
     harness.component.outputPrice.set('2.00');
+    harness.fixture.detectChanges();
+
+    // Save is unavailable until the model has been checked — the gate asserted through the DOM
+    // rather than through the method, since the button is what a person actually reaches for.
+    expect(html().querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled).toBe(true);
+    expect(html().querySelector('[data-testid="check-required"]')).not.toBeNull();
+    html().querySelector<HTMLButtonElement>('[data-testid="editor-check"]')?.click();
     harness.fixture.detectChanges();
 
     // Through the footer button, which lives *outside* the form and reaches it by `form=`. Firing
@@ -409,6 +430,7 @@ describe('ModelCatalog — declarations (FRD-114)', () => {
     page.component.maxOutput.set(64000);
     page.component.defaultOutput.set(4096);
     page.component.deprecated.set(true);
+    page.lookFirst();
     page.component.save();
 
     const sent = page.saved[page.saved.length - 1];

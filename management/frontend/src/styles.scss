@@ -445,6 +445,49 @@ $field-label-gap: 0.3rem;
   overflow-x: auto;
   scrollbar-width: thin;
 }
+
+/* Below this, the strip becomes a **list**.
+ *
+ * Scrolling was the old answer and it is the wrong one for navigation: a tab that has scrolled out
+ * of view is a section the reader does not know exists, and the use-case detail has seven. A
+ * vertical list hides nothing, gives every entry the same width, puts the counts in a column that
+ * can be compared, and needs no gesture to reveal.
+ *
+ * `60rem` rather than a phone width on purpose: the pain starts long before 360px — a
+ * seven-tab strip on a laptop half-window is already scrolling. */
+@media (max-width: 60rem) {
+  .tabs {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0;
+    overflow-x: visible;
+    border-bottom: none;
+    border-left: 1px solid var(--aira-border);
+  }
+
+  .tab {
+    /* The selected marker moves with the axis: an underline on a vertical list marks the gap
+     * between two entries rather than either of them. */
+    text-align: left;
+    border-bottom: none;
+    border-left: 3px solid transparent;
+    padding: 0.6rem 0.9rem;
+
+    &.is-active {
+      border-bottom: none;
+      border-left-color: var(--aira-brand);
+      border-radius: 0 var(--aira-radius-sm) var(--aira-radius-sm) 0;
+    }
+  }
+
+  /* Pushed to the trailing edge, so the numbers line up under one another and can be read as a
+   * column rather than hunted for after each label. */
+  .tab__count {
+    float: right;
+    margin-left: 0.75rem;
+  }
+}
 .tab {
   flex: none;
   white-space: nowrap;

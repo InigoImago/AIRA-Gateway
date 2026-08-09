@@ -316,3 +316,47 @@ test.describe('Authoring a rule that applies everywhere', () => {
     await expect(page.getByTestId('new-global-rule')).toHaveCount(0);
   });
 });
+
+test.describe('Navigation that hides nothing', () => {
+  test('the tab strip becomes a list rather than scrolling out of view', async ({ page }) => {
+    /**
+     * Scrolling was the old answer and it is the wrong one for navigation: a tab that has scrolled
+     * out of view is a section the reader does not know exists. Measured, not eyeballed — every
+     * entry must be inside the viewport, which is the property that was actually broken.
+     */
+    await login(page, USERS.useCaseAdmin);
+    const slug = await createUseCase(page, uniqueSlug('tabs'), 'Tab layout');
+    await page.setViewportSize({ width: 900, height: 900 });
+    await page.goto(`/use-cases/${slug}`);
+    await expect(page.locator('[role="tab"]').first()).toBeVisible();
+
+    const tabs = page.locator('[role="tab"]');
+    const count = await tabs.count();
+    expect(count, 'a strip of one proves nothing').toBeGreaterThan(3);
+
+    for (let index = 0; index < count; index += 1) {
+      const box = await tabs.nth(index).boundingBox();
+      expect(box, `tab ${index} has no box`).not.toBeNull();
+      expect(box!.x + box!.width, `tab ${index} runs past the viewport`).toBeLessThanOrEqual(901);
+    }
+
+    // A list, not a row: the entries sit under one another.
+    const first = await tabs.nth(0).boundingBox();
+    const last = await tabs.nth(count - 1).boundingBox();
+    expect(last!.y).toBeGreaterThan(first!.y);
+  });
+
+  test('and stays a row where there is room for one', async ({ page }) => {
+    await login(page, USERS.useCaseAdmin);
+    const slug = await createUseCase(page, uniqueSlug('wide'), 'Wide tabs');
+    await page.setViewportSize({ width: 1400, height: 900 });
+    await page.goto(`/use-cases/${slug}`);
+    await expect(page.locator('[role="tab"]').first()).toBeVisible();
+
+    const tabs = page.locator('[role="tab"]');
+    const first = await tabs.nth(0).boundingBox();
+    const second = await tabs.nth(1).boundingBox();
+
+    expect(second!.y).toBe(first!.y);
+  });
+});
