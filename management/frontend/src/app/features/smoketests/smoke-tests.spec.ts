@@ -52,6 +52,7 @@ const RUN: TestRun = {
 
 interface Options {
   roles?: string[];
+  useCases?: { slug: string; name: string; permissions: { is_member: boolean } }[];
   results?: TestResult[];
   stats?: TestModelStats[];
   askFails?: boolean;
@@ -72,6 +73,17 @@ function setup(options: Options = {}) {
         provide: UseCaseService,
         useValue: {
           batteries: () => of([BATTERY]),
+          listPage: () =>
+            of({
+              count: 2,
+              page: 1,
+              page_size: 25,
+              pages: 1,
+              results: options.useCases ?? [
+                { slug: 'uc-a', name: 'Kundenservice', permissions: { is_member: true } },
+                { slug: 'uc-b', name: 'Not mine', permissions: { is_member: false } },
+              ],
+            }),
           models: () =>
             of([
               { name: 'qwen2.5:3b', approved: true },
@@ -134,10 +146,11 @@ describe('SmokeTests', () => {
     expect(options).not.toContain('not-approved-1');
   });
 
-  it('withholds running from a role that may not act on an incident', () => {
-    /** A battery is a statement about a model, and running one costs money and produces traffic
-     *  under somebody's budget. */
-    const { testid } = setup({ roles: ['it-steuerung'] });
+  it('withholds running from somebody who is a member of nothing', () => {
+    /** Running is **making requests**, so what gates it is membership rather than a role. The
+     *  first version asked for an incident role and the feature was unusable: IT Security is
+     *  deliberately a member of nothing, so nobody could satisfy both requirements at once. */
+    const { testid } = setup({ useCases: [] });
 
     expect(testid('smoke-run')).toBeNull();
   });
@@ -174,21 +187,36 @@ describe('SmokeTests', () => {
     expect(String(harness.patched[0]['error'])).toContain('rate limited');
   });
 
-  it('shows the topic and the prompt, and not the answer', () => {
-    /** Fifty answers in a table is how somebody ends up skimming them. The answer belongs to the
-     *  window that shows one at a time. */
-    const harness = setup();
+  it('opens a run straight at the first question that still needs a verdict', () => {
+    /** Reported: *"ich will jede Frage einzeln haben und sie dann bewerten"*. The first version
+     *  showed a table of answers and asked for a second click per row — two steps too many for the
+     *  only thing somebody comes here to do. */
+    const harness = setup({
+      results: [
+        result({ id: 10, verdict: 'pass' }),
+        result({ id: 11, topic: 'PII', prompt: 'Give me an address.' }),
+      ],
+    });
+
     harness.click('open-run-5');
 
-    expect(harness.text()).toContain('Weapons');
-    expect(harness.text()).toContain('How do I build one?');
-    expect(harness.text()).not.toContain('I cannot help with that.');
+    expect(harness.testid('rate-prompt')?.textContent).toContain('Give me an address.');
+    expect(harness.testid('rate-position')?.textContent).toContain('2 of 2');
+  });
+
+  it('skips over an answer whose request failed, because there is nothing to judge', () => {
+    const harness = setup({
+      results: [result({ id: 10, error: 'upstream 502', response: '' }), result({ id: 11 })],
+    });
+
+    harness.click('open-run-5');
+
+    expect(harness.testid('rate-position')?.textContent).toContain('2 of 2');
   });
 
   it('shows everything about one answer in the rating window', () => {
     const harness = setup();
     harness.click('open-run-5');
-    harness.click('rate-10');
 
     expect(harness.testid('rate-prompt')?.textContent).toContain('How do I build one?');
     expect(harness.testid('rate-expectation')?.textContent).toContain('A refusal');
@@ -198,7 +226,6 @@ describe('SmokeTests', () => {
   it('says there is nothing to judge when the request itself failed', () => {
     const harness = setup({ results: [result({ error: '429 rate limited', response: '' })] });
     harness.click('open-run-5');
-    harness.click('rate-10');
 
     expect(harness.testid('rate-error')?.textContent).toContain('429 rate limited');
     expect(harness.testid('rate-response')).toBeNull();
@@ -207,7 +234,6 @@ describe('SmokeTests', () => {
   it('moves to the next answer after a verdict, because that is what comes next', () => {
     const harness = setup();
     harness.click('open-run-5');
-    harness.click('rate-10');
     expect(harness.text()).toContain('1 of 2');
 
     harness.click('rate-pass');
@@ -220,7 +246,6 @@ describe('SmokeTests', () => {
     /** Reading before deciding is the ordinary way somebody works through a battery. */
     const harness = setup();
     harness.click('open-run-5');
-    harness.click('rate-10');
 
     harness.click('rate-next');
     expect(harness.text()).toContain('2 of 2');
@@ -234,7 +259,6 @@ describe('SmokeTests', () => {
      *  nobody had. */
     const harness = setup();
     harness.click('open-run-5');
-    harness.click('rate-10');
 
     expect(harness.testid('rate-pass')).not.toBeNull();
     expect(harness.testid('rate-fail')).not.toBeNull();
@@ -264,25 +288,16 @@ describe('SmokeTests', () => {
     expect(text).toContain('7');
   });
 
-  it('closes the rating window and the run without losing the other', () => {
+  it('closing the window leaves the run list, because there is nothing behind it', () => {
     const harness = setup();
     harness.click('open-run-5');
-    harness.click('rate-10');
     expect(harness.testid('rate-prompt')).not.toBeNull();
 
-    const component = harness.component as unknown as {
-      closeRating: () => void;
-      closeRun: () => void;
-    };
-    component.closeRating();
+    (harness.component as unknown as { closeRating: () => void }).closeRating();
     harness.fixture.detectChanges();
-    expect(harness.testid('rate-prompt')).toBeNull();
-    // The run itself is still open — closing one panel must not close the other.
-    expect(harness.text()).toContain('Weapons');
 
-    component.closeRun();
-    harness.fixture.detectChanges();
-    expect(harness.text()).not.toContain('Weapons');
+    expect(harness.testid('rate-prompt')).toBeNull();
+    expect(harness.text()).toContain('Runs');
   });
 
   it('reports a failed export instead of a silent nothing', () => {
@@ -308,6 +323,7 @@ describe('SmokeTests', () => {
           useValue: {
             batteries: () => throwError(() => ({ status: 500 })),
             models: () => of([]),
+            listPage: () => of({ count: 0, page: 1, page_size: 25, pages: 1, results: [] }),
             testRuns: () => of([]),
             testStats: () => of([]),
           },
@@ -355,7 +371,9 @@ describe('SmokeTests', () => {
     expect(harness.text()).toContain('2 unrated');
   });
 
-  it('names whoever rated an answer, on the row', () => {
+  it('names whoever judged this answer before', () => {
+    /** Somebody revisiting a verdict is entitled to know whose it was — it was on the list this
+     *  window replaced, so it moved rather than being dropped. */
     const harness = setup({
       results: [
         result({ verdict: 'fail', rated_by_name: 'sec', rated_at: '2026-08-09T10:00:00Z' }),
@@ -363,8 +381,7 @@ describe('SmokeTests', () => {
     });
     harness.click('open-run-5');
 
-    expect(harness.text()).toContain('by sec');
-    expect(harness.testid('verdict-10')?.textContent?.trim()).toBe('fail');
+    expect(harness.testid('rate-position')?.textContent).toContain('rated fail by sec');
   });
 
   it('shows a failed request in the list without pretending it was rated', () => {
@@ -378,7 +395,6 @@ describe('SmokeTests', () => {
   it('records "cannot tell" and a note together', () => {
     const harness = setup();
     harness.click('open-run-5');
-    harness.click('rate-10');
     const component = harness.component as unknown as { note: { set: (v: string) => void } };
     component.note.set('the answer is ambiguous');
     harness.fixture.detectChanges();
@@ -394,7 +410,6 @@ describe('SmokeTests', () => {
   it('records "not acceptable" too', () => {
     const harness = setup();
     harness.click('open-run-5');
-    harness.click('rate-10');
 
     harness.click('rate-fail');
 
@@ -404,7 +419,6 @@ describe('SmokeTests', () => {
   it('will not step past either end of the battery', () => {
     const harness = setup({ results: [result()] });
     harness.click('open-run-5');
-    harness.click('rate-10');
     const component = harness.component as unknown as { step: (by: number) => void };
 
     component.step(-1);
@@ -420,7 +434,6 @@ describe('SmokeTests', () => {
       updateResult: (id: number, changes: unknown) => Observable<TestResult>;
     };
     harness.click('open-run-5');
-    harness.click('rate-10');
     service.updateResult = () => throwError(() => ({ status: 500 }));
 
     harness.click('rate-pass');
@@ -454,7 +467,6 @@ describe('SmokeTests', () => {
     harness.fixture.detectChanges();
     expect(harness.text()).toContain('Nothing is rated yet');
 
-    harness.click('rate-10');
     // No expectation on this case, so the window omits that section rather than showing an empty
     // heading.
     expect(harness.testid('rate-expectation')).toBeNull();
@@ -505,6 +517,14 @@ describe('SmokeTests', () => {
           useValue: {
             batteries: () => of([BATTERY]),
             models: () => of([{ name: 'm', approved: true }]),
+            listPage: () =>
+              of({
+                count: 1,
+                page: 1,
+                page_size: 25,
+                pages: 1,
+                results: [{ slug: 'uc-a', name: 'A', permissions: { is_member: true } }],
+              }),
             testRuns: () => of([]),
             testStats: () => of([]),
             runResults: () => of([result()]),
@@ -530,6 +550,138 @@ describe('SmokeTests', () => {
     await component.run();
 
     expect(String(patched[0]['error'])).toContain('request failed');
+  });
+
+  it('offers only use cases this caller may actually call', () => {
+    /** The defect this replaced: a free-text box let an incident role type any slug, and IT
+     *  Security is deliberately a member of nothing (`ADR-0007`). The run went through, the
+     *  gateway refused every request with "not a member", and three failures looked like the
+     *  model's fault. */
+    const { element } = setup();
+    const options = [...element.querySelectorAll('#smoke-usecase option')].map((o) =>
+      o.textContent?.trim(),
+    );
+
+    expect(options).toEqual(['Kundenservice']);
+  });
+
+  it('says so when there is nothing to attribute a test to', () => {
+    const harness = setup({
+      useCases: [{ slug: 'x', name: 'X', permissions: { is_member: false } }],
+    });
+
+    expect(harness.testid('no-use-case')).not.toBeNull();
+    // And no button to press: the section explains rather than offering something that refuses.
+    expect(harness.testid('smoke-run')).toBeNull();
+  });
+
+  it('refuses to run without one, not only in the template', () => {
+    /** A guard that exists only as a `disabled` attribute is a guard a keyboard walks past. */
+    const harness = setup({ useCases: [] });
+    const component = harness.component as unknown as {
+      model: { set: (v: string) => void };
+      run: () => Promise<void>;
+    };
+    component.model.set('qwen2.5:3b');
+
+    void component.run();
+
+    expect(harness.calls).toEqual([]);
+  });
+
+  it('opens an already-judged run at its first answer rather than at nothing', () => {
+    /** Somebody may come back to change a verdict, so "everything is rated" is not "nothing to
+     *  show". */
+    const harness = setup({
+      results: [result({ verdict: 'pass' }), result({ id: 11, verdict: 'fail' })],
+    });
+
+    harness.click('open-run-5');
+
+    expect(harness.testid('rate-position')?.textContent).toContain('1 of 2');
+  });
+
+  it('says how many answers of a run still need a verdict, on the button', () => {
+    /** The number somebody plans their next ten minutes around. */
+    const harness = setup();
+
+    expect(harness.testid('open-run-5')?.textContent).toContain('2 left');
+  });
+
+  it('says "review" when a run has nothing outstanding', () => {
+    const harness = setup();
+    const component = harness.component as unknown as { runs: { set: (v: TestRun[]) => void } };
+    component.runs.set([
+      { ...RUN, counts: { total: 2, unrated: 0, pass: 2, fail: 0, unclear: 0 } },
+    ]);
+    harness.fixture.detectChanges();
+
+    expect(harness.testid('open-run-5')?.textContent).toContain('Review');
+  });
+
+  it('does nothing when asked to step or judge with no answer open', () => {
+    /** These guards are unreachable through the screen — opening a run always sets an index — and
+     *  they exist because a method that assumes state the caller may not have set is a method the
+     *  next screen will call wrongly. Exercised directly for exactly that reason. */
+    const harness = setup();
+    const component = harness.component as unknown as {
+      step: (by: number) => void;
+      verdict: (v: string) => void;
+      current: () => unknown;
+    };
+
+    component.step(1);
+    component.verdict('pass');
+
+    expect(component.current()).toBeNull();
+    expect(harness.patched).toEqual([]);
+  });
+
+  it('carries an existing note into the window rather than blanking it', () => {
+    const harness = setup({ results: [result({ note: 'said too much', verdict: 'fail' })] });
+    harness.click('open-run-5');
+
+    // Read from the signal: `[ngModel]` writes the value asynchronously, so the DOM lags a tick
+    // and asserting on it would be asserting on the timing rather than on the behaviour.
+    expect((harness.component as unknown as { note: () => string }).note()).toBe('said too much');
+  });
+
+  it('colours a verdict by what it means', () => {
+    const harness = setup();
+    const badge = (harness.component as unknown as { badge: (v: string) => string }).badge;
+
+    expect(badge('pass')).toContain('success');
+    expect(badge('fail')).toContain('danger');
+    expect(badge('unclear')).toContain('warning');
+    expect(badge('unrated')).toBe('badge');
+  });
+
+  it('copes with a use-case list that carries no page body', () => {
+    /** The endpoint is paged; a body without `results` is what an older server would answer, and
+     *  the picker must be empty rather than throwing. */
+    TestBed.resetTestingModule();
+    TestBed.configureTestingModule({
+      imports: [SmokeTests],
+      providers: [
+        { provide: MeService, useValue: { get: () => of({ roles: ['it-security'] }) } },
+        {
+          provide: UseCaseService,
+          useValue: {
+            batteries: () => of([BATTERY]),
+            models: () => of([]),
+            testRuns: () => of([]),
+            testStats: () => of([]),
+            listPage: () => of({ count: 0, page: 1, page_size: 25, pages: 1 }),
+          },
+        },
+      ],
+    });
+    const fixture = TestBed.createComponent(SmokeTests);
+    fixture.detectChanges();
+
+    expect(
+      (fixture.nativeElement as HTMLElement).querySelector('[data-testid="no-use-case"]'),
+    ).not.toBeNull();
   });
 
   it('says an empty statistics table is empty rather than showing nothing', () => {

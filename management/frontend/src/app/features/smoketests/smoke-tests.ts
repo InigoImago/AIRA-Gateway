@@ -12,7 +12,6 @@ import {
   TestVerdict,
 } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
-import { mayActOnIncidents } from '../../core/auth/roles';
 import { InfoHint } from '../../core/ui/info-hint';
 import { PageFeedback } from '../../core/ui/page-feedback';
 
@@ -48,7 +47,15 @@ export class SmokeTests implements OnInit {
   protected readonly feedback = inject(PageFeedback);
 
   private readonly me = signal<{ roles: string[] } | null>(null);
-  protected readonly mayRun = computed(() => mayActOnIncidents(this.me()?.roles));
+  /**
+   * Whether this caller can start a run at all — which is **membership**, not a role.
+   *
+   * The first version asked for an incident role, and the feature was unusable: running needs a
+   * use case to attribute the traffic to, and IT Security is deliberately a member of nothing
+   * (`ADR-0007`). No user could satisfy both. Running a battery is making requests; whoever may
+   * call a model may test one. Authoring a battery stays with IT Security.
+   */
+  protected readonly mayRun = computed(() => this.mine().length > 0);
 
   protected readonly batteries = signal<TestBattery[]>([]);
   protected readonly models = signal<CatalogModel[]>([]);
@@ -60,6 +67,17 @@ export class SmokeTests implements OnInit {
   protected readonly battery = signal<number | null>(null);
   protected readonly model = signal('');
   protected readonly useCase = signal('');
+  /**
+   * The use cases this caller may actually attribute traffic to.
+   *
+   * A **picker, not a free-text box**, and the difference was a real defect: the first version let
+   * an incident role type any slug, and IT Security is deliberately a member of nothing
+   * (`ADR-0007` — oversight must never imply the right to act inside a use case). So the run went
+   * through, the gateway correctly refused every request with "not a member", and the screen
+   * collected three failures that looked like the model's fault. `FRD-206` in its usual shape: a
+   * control that promises what the server refuses.
+   */
+  protected readonly mine = signal<{ slug: string; name: string }[]>([]);
   protected readonly running = signal(false);
   /** How far a run has got, so a long battery does not look frozen. */
   protected readonly progress = signal('');
@@ -103,6 +121,21 @@ export class SmokeTests implements OnInit {
       next: (rows) => this.models.set(rows),
       error: () => undefined,
     });
+    // The **paged** endpoint. `list()` still exists and returns the same URL, which since paging
+    // landed answers with a `Page` object rather than an array — so `rows.filter` quietly walked
+    // over nothing and the picker was empty for everybody. Found by a browser, because a typed
+    // `Observable<UseCase[]>` over a body that is not one compiles perfectly.
+    this.service.listPage('', 1).subscribe({
+      next: (page) => {
+        const rows = page.results ?? [];
+        const usable = rows
+          .filter((row) => row.permissions?.is_member)
+          .map((r) => ({ slug: r.slug, name: r.name }));
+        this.mine.set(usable);
+        if (usable.length && !this.useCase()) this.useCase.set(usable[0].slug);
+      },
+      error: () => undefined,
+    });
     this.refreshRuns();
   }
 
@@ -126,7 +159,7 @@ export class SmokeTests implements OnInit {
    */
   protected async run(): Promise<void> {
     const batteryId = this.battery();
-    if (batteryId === null || !this.model() || this.running()) return;
+    if (batteryId === null || !this.model() || !this.useCase() || this.running()) return;
 
     this.running.set(true);
     this.feedback.clear();
@@ -182,11 +215,26 @@ export class SmokeTests implements OnInit {
     }
   }
 
+  /**
+   * Open a run **at the first answer that still needs a verdict**.
+   *
+   * The first version showed a table of answers and asked for a second click per row to open the
+   * window. That is two steps too many for the only thing somebody comes here to do: read one
+   * question, judge it, move on. Reported as *"ich will jede Frage einzeln haben und sie dann
+   * bewerten, so dass das Window nach der Bewertung zur nächsten geht"* — which is what the window
+   * already did, hidden behind a list nobody wanted.
+   */
   protected async open(run: TestRun): Promise<void> {
     this.openRun.set(run);
     this.rating.set(null);
     this.service.runResults(run.id).subscribe({
-      next: (rows) => this.results.set(rows),
+      next: (rows) => {
+        this.results.set(rows);
+        const first = rows.findIndex((row) => row.verdict === 'unrated' && !row.error);
+        // Everything rated already: open the first one anyway rather than nothing, because the
+        // reader may have come back to change a judgement.
+        this.rate(first >= 0 ? first : 0);
+      },
       error: (response: unknown) => this.feedback.fail(response, 'Could not load the answers.'),
     });
   }
@@ -206,6 +254,8 @@ export class SmokeTests implements OnInit {
 
   protected closeRating(): void {
     this.rating.set(null);
+    this.openRun.set(null);
+    this.results.set([]);
   }
 
   protected step(by: number): void {

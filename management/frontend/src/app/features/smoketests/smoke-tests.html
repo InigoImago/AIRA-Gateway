@@ -16,10 +16,21 @@
     <div class="callout" role="status">{{ notice }}</div>
   }
 
-  <!-- ── Run one ─────────────────────────────────────────────────────────────────────────── -->
-  @if (mayRun()) {
-    <section class="card">
-      <h3 class="section-title" style="margin: 0 0 0.75rem">Run a battery</h3>
+  <!--
+    ── Run one ───────────────────────────────────────────────────────────────────────────────
+    The section is always here. Hiding it outright would leave somebody who cannot run a battery
+    looking at a screen that says nothing about why — and "why can I not do this" is the question
+    `FRD-206` is about.
+  -->
+  <section class="card">
+    <h3 class="section-title" style="margin: 0 0 0.75rem">Run a battery</h3>
+    @if (!mine().length) {
+      <p class="empty" data-testid="no-use-case">
+        You are not a member of any use case, so there is nothing to attribute a test to. A run is
+        ordinary traffic: it is priced, budgeted and audited under a use case. Ask to be granted
+        access to one — oversight lets you see every use case and deliberately not call one.
+      </p>
+    } @else {
       <div class="form-stack">
         <div class="form-inline">
           <div class="field">
@@ -62,19 +73,22 @@
               Attributed to
               <app-info-hint label="Why a use case is needed">
                 A test travels the ordinary request path, so it is priced, budgeted, rate-limited
-                and audited like any other traffic — which means it belongs to a use case. Leave it
-                empty only if your credential is already bound to one.
+                and audited like any other traffic — which means it belongs to a use case. Only the
+                ones you are a member of are offered: oversight lets you see every use case, and
+                deliberately does not let you call one.
               </app-info-hint>
             </label>
-            <input
+            <select
               id="smoke-usecase"
               name="use_case"
               [ngModel]="useCase()"
               (ngModelChange)="useCase.set($event)"
-              placeholder="technical id"
-              autocomplete="off"
               data-testid="smoke-usecase"
-            />
+            >
+              @for (uc of mine(); track uc.slug) {
+                <option [value]="uc.slug">{{ uc.name }}</option>
+              }
+            </select>
           </div>
         </div>
 
@@ -86,7 +100,7 @@
           <button
             type="button"
             class="btn btn--primary"
-            [disabled]="running() || !model() || battery() === null"
+            [disabled]="running() || !model() || !useCase() || battery() === null"
             (click)="run()"
             data-testid="smoke-run"
           >
@@ -94,8 +108,8 @@
           </button>
         </div>
       </div>
-    </section>
-  }
+    }
+  </section>
 
   <!-- ── Per model ───────────────────────────────────────────────────────────────────────── -->
   <section class="card" style="padding: 0">
@@ -210,7 +224,7 @@
                       (click)="open(run)"
                       [attr.data-testid]="'open-run-' + run.id"
                     >
-                      Rate
+                      {{ run.counts.unrated ? 'Rate ' + run.counts.unrated + ' left' : 'Review' }}
                     </button>
                     <button
                       type="button"
@@ -229,68 +243,6 @@
       </div>
     }
   </section>
-
-  <!-- ── The answers of one run ──────────────────────────────────────────────────────────── -->
-  @if (openRun(); as run) {
-    <section class="card" style="padding: 0">
-      <div class="spread" style="padding: 0.9rem 1rem">
-        <h3 class="section-title" style="margin: 0">
-          {{ run.battery_name }} against {{ run.model }}
-        </h3>
-        <button type="button" class="btn btn--sm btn--ghost" (click)="closeRun()">Close</button>
-      </div>
-      <!--
-        Topic and prompt, and **not the answer**. Fifty answers in a table is how somebody ends up
-        skimming them; the rating window shows one at a time with everything about it.
-      -->
-      <div class="table-wrap">
-        <table class="table">
-          <thead>
-            <tr>
-              <th scope="col">Topic</th>
-              <th scope="col">Prompt</th>
-              <th scope="col">Rating</th>
-              <th scope="col"><span class="sr-only">Actions</span></th>
-            </tr>
-          </thead>
-          <tbody>
-            @for (row of results(); track row.id; let i = $index) {
-              <tr>
-                <td>{{ row.topic }}</td>
-                <td class="truncate">{{ row.prompt }}</td>
-                <td class="nowrap">
-                  @if (row.error) {
-                    <span class="badge badge--warning" [attr.title]="row.error">
-                      request failed
-                    </span>
-                  } @else {
-                    <span [class]="badge(row.verdict)" [attr.data-testid]="'verdict-' + row.id">
-                      {{ row.verdict }}
-                    </span>
-                  }
-                  @if (row.rated_by_name) {
-                    <span class="muted" style="font-size: 0.78rem">
-                      by {{ row.rated_by_name }}</span
-                    >
-                  }
-                </td>
-                <td class="table__actions">
-                  <button
-                    type="button"
-                    class="btn btn--sm"
-                    (click)="rate(i)"
-                    [attr.data-testid]="'rate-' + row.id"
-                  >
-                    Read and rate
-                  </button>
-                </td>
-              </tr>
-            }
-          </tbody>
-        </table>
-      </div>
-    </section>
-  }
 </div>
 
 <!-- ── The rating window ─────────────────────────────────────────────────────────────────── -->
@@ -299,7 +251,14 @@
     <div class="modal__panel modal__panel--wide">
       <div class="modal__head">
         <h3 id="rate-title" style="margin: 0">{{ row.topic }}</h3>
-        <span class="muted">{{ (rating() ?? 0) + 1 }} of {{ results().length }}</span>
+        <span class="muted" data-testid="rate-position">
+          {{ (rating() ?? 0) + 1 }} of {{ results().length }}
+          @if (row.rated_by_name) {
+            <!-- Who judged this before. Somebody revisiting a verdict is entitled to know whose
+                 it was, and it was on the list this window replaced. -->
+            · rated {{ row.verdict }} by {{ row.rated_by_name }}
+          }
+        </span>
         <button
           type="button"
           class="btn btn--sm btn--ghost"

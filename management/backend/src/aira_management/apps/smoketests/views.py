@@ -26,7 +26,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 
-from aira_management.rbac import IsITSecurity
+from aira_management.rbac import IsITSecurity, MayTestModels
 
 from .models import TestBattery, TestCase, TestResult, TestRun, Verdict
 from .serializers import (
@@ -38,20 +38,42 @@ from .serializers import (
 
 
 class TestBatteryViewSet(viewsets.ModelViewSet[TestBattery]):
+    """**Reading is not authoring.** Anybody who may run a battery must be able to choose one, or
+    the picker is empty and the Run button is disabled for a reason nothing on screen explains —
+    which is exactly what happened the first time. Writing one stays with IT Security: a battery is
+    a statement about what this installation considers acceptable."""
+
     queryset = TestBattery.objects.prefetch_related("cases").all()
     serializer_class = TestBatterySerializer
-    permission_classes = [IsAuthenticated, IsITSecurity]
+
+    def get_permissions(self) -> list[Any]:
+        if self.request.method in ("GET", "HEAD", "OPTIONS"):
+            return [IsAuthenticated(), MayTestModels()]
+        return [IsAuthenticated(), IsITSecurity()]
 
 
 class TestCaseViewSet(viewsets.ModelViewSet[TestCase]):
     queryset = TestCase.objects.select_related("battery").all()
     serializer_class = TestCaseSerializer
-    permission_classes = [IsAuthenticated, IsITSecurity]
+
+    def get_permissions(self) -> list[Any]:
+        if self.request.method in ("GET", "HEAD", "OPTIONS"):
+            return [IsAuthenticated(), MayTestModels()]
+        return [IsAuthenticated(), IsITSecurity()]
 
 
 class TestRunViewSet(viewsets.ModelViewSet[TestRun]):
+    """Running a battery is **making requests**, so whoever may call a model may test one.
+
+    Narrowing this to the incident roles was the first design and it did not survive contact:
+    running a run needs an incident role *and* membership of a use case to attribute the traffic
+    to — and IT Security is deliberately a member of nothing (`ADR-0007`). No seeded user could do
+    both, which is the clearest possible sign that the two requirements were not the same
+    requirement. Authoring a **battery** stays with IT Security; running one is ordinary work.
+    """
+
     serializer_class = TestRunSerializer
-    permission_classes = [IsAuthenticated, IsITSecurity]
+    permission_classes = [IsAuthenticated, MayTestModels]
     http_method_names = ["get", "post", "delete", "head", "options"]
 
     def get_queryset(self) -> QuerySet[TestRun]:
@@ -139,7 +161,7 @@ class TestRunViewSet(viewsets.ModelViewSet[TestRun]):
 class TestResultViewSet(viewsets.ModelViewSet[TestResult]):
     queryset = TestResult.objects.select_related("case", "run", "rated_by").all()
     serializer_class = TestResultSerializer
-    permission_classes = [IsAuthenticated, IsITSecurity]
+    permission_classes = [IsAuthenticated, MayTestModels]
     http_method_names = ["get", "patch", "head", "options"]
 
     def perform_update(self, serializer: Any) -> None:
@@ -158,7 +180,7 @@ class TestResultViewSet(viewsets.ModelViewSet[TestResult]):
 class TestStatsViewSet(viewsets.ViewSet):
     """How each model has done, across every run of it."""
 
-    permission_classes = [IsAuthenticated, IsITSecurity]
+    permission_classes = [IsAuthenticated, MayTestModels]
 
     def list(self, request: Request) -> Response:
         rows = (

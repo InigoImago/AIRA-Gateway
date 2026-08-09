@@ -136,5 +136,22 @@ class IsUseCaseAdmin(_HasAnyRole):
     roles = (Role.GLOBAL_ADMIN, Role.USE_CASE_ADMIN)
 
 
+class MayTestModels(_HasAnyRole):
+    """Who may put a battery of questions to a model (`FRD-504`).
+
+    Three roles rather than one set already in use, and each is here for its own reason: a Global
+    Administrator runs the installation, IT Security asks whether a model is fit to be trusted, and
+    a **use-case administrator** asks whether it is fit for their use case — which is the person
+    who most often wants to know.
+
+    Not `IsITSecurity`: running a battery also needs *membership* of a use case to attribute the
+    traffic to, and IT Security is deliberately a member of nothing (`ADR-0007`). Requiring both
+    made the feature unusable by everybody, which is the clearest sign that the two requirements
+    were never the same requirement.
+    """
+
+    roles = (Role.GLOBAL_ADMIN, Role.IT_SECURITY, Role.USE_CASE_ADMIN)
+
+
 class IsUseCaseUser(_HasAnyRole):
     roles = (Role.GLOBAL_ADMIN, Role.USE_CASE_ADMIN, Role.USE_CASE_USER)

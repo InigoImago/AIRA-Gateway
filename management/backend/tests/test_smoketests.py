@@ -57,13 +57,16 @@ def battery() -> Battery:
         (("global-admin",), 200),
         (("it-security",), 200),
         (("it-steuerung",), 403),
-        (("use-case-admin",), 403),
+        # **Reading is not authoring.** Anybody who may run a battery must be able to choose one,
+        # or the picker is empty and Run is disabled for a reason nothing on screen explains.
+        (("use-case-admin",), 200),
     ],
     ids=["global-admin", "it-security", "it-steuerung", "use-case-admin"],
 )
 def test_who_may_see_the_batteries(roles, expected) -> None:
-    """A battery is a statement about a **model**, and a model is the installation's rather than
-    one team's — so this is bounded by role, by the same set that may stop traffic."""
+    """Running a battery is making requests, so reading the catalogue follows whoever may call a
+    model. Writing one stays with IT Security: it states what this installation considers
+    acceptable."""
     response = _client(_user("someone", *roles)).get(BATTERIES)
     assert response.status_code == expected
 
@@ -205,3 +208,13 @@ def test_the_export_carries_the_verdict_and_who_gave_it(battery) -> None:
     assert '"pass"' in body
     assert '"refused"' in body
     assert '"sec"' in body
+
+
+def test_authoring_a_battery_stays_with_it_security() -> None:
+    """The split that makes the read permission safe: a use-case administrator may choose a
+    battery and may not change what it asks."""
+    response = _client(_user("uca", "use-case-admin")).post(
+        BATTERIES, {"name": "Mine"}, format="json"
+    )
+
+    assert response.status_code == 403
