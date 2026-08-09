@@ -2403,6 +2403,89 @@ MUTATIONS = [
         "        if False:",
         "gateway/tests/test_kira_surface.py",
     ),
+    # ---- who may read a stored prompt (FRD-505, ADR-0016) -----------------------------------
+    #
+    # Added after an audit that broke each branch of `payloads.py` in turn and recorded which
+    # parametrised rows noticed. It found `is_oversight` **undefended**: removing it makes an
+    # oversight role fall through to `OUT_OF_SCOPE`, which is also a 403, so a matrix checking only
+    # the status passed. The matrix now asserts the *sentence*, and these keep it that way.
+    #
+    # Both directions on purpose. Deleting a branch can only make the code more permissive, so a
+    # case that guards against over-restriction cannot go red for any deletion — `N50` is the
+    # mutation that refuses too much, and it is the only thing defending "a colleague's request is
+    # readable until somebody restricts it".
+    Mutation(
+        "N46",
+        "an incident role reads content; nobody else gets that shortcut",
+        "gateway/src/aira_gateway/payloads.py",
+        '    if principal.may_act_on_incidents:\n        return "incident"',
+        '    if False:\n        return "incident"',
+        "gateway/tests/test_payload_access.py",
+    ),
+    Mutation(
+        "N47",
+        "an oversight role is told it sees figures, not that the use case is not theirs",
+        "gateway/src/aira_gateway/payloads.py",
+        "        if principal.is_oversight:\n            return PayloadRefusal.NOT_A_CONTENT_ROLE",
+        "        if False:\n            return PayloadRefusal.NOT_A_CONTENT_ROLE",
+        "gateway/tests/test_payload_access.py",
+    ),
+    Mutation(
+        "N48",
+        "a use case's own administrator reads its content whatever the member restriction says",
+        "gateway/src/aira_gateway/payloads.py",
+        '    if role == GrantRole.ADMIN.value:\n        return "use_case_admin"',
+        '    if False:\n        return "use_case_admin"',
+        "gateway/tests/test_payload_access.py",
+    ),
+    Mutation(
+        "N49",
+        "a restricted member is refused somebody else's request",
+        "gateway/src/aira_gateway/payloads.py",
+        "    if restricted and row.subject != principal.subject:",
+        "    if False and row.subject != principal.subject:",
+        "gateway/tests/test_payload_access.py",
+    ),
+    Mutation(
+        "N50",
+        "a member reads a colleague's request until somebody restricts it",
+        "gateway/src/aira_gateway/payloads.py",
+        "    if restricted and row.subject != principal.subject:",
+        "    if row.subject != principal.subject:",
+        "gateway/tests/test_payload_access.py",
+    ),
+    Mutation(
+        "N51",
+        "storage being off is reported as such, not as an expiry",
+        "gateway/src/aira_gateway/payloads.py",
+        "        if use_case is not None and not use_case.store_payloads:",
+        "        if False:",
+        "gateway/tests/test_payload_access.py",
+    ),
+    Mutation(
+        "N52",
+        "a payload that a request certainly had is reported as expired, not as never existing",
+        "gateway/src/aira_gateway/payloads.py",
+        "        if row.status is not None and 200 <= row.status < 300:",
+        "        if False:",
+        "gateway/tests/test_payload_access.py",
+    ),
+    Mutation(
+        "N53",
+        "the route refuses a request outside the caller's scope before any of this is asked",
+        "gateway/src/aira_gateway/api/reporting.py",
+        "        if row is None or (scope is not None and row.use_case not in scope):",
+        "        if row is None:",
+        "gateway/tests/test_payload_access.py",
+    ),
+    Mutation(
+        "N54",
+        "a read of stored content is recorded",
+        "gateway/src/aira_gateway/api/reporting.py",
+        "        session.add(\n            PayloadAccess(",
+        "        _unused = (\n            PayloadAccess(",
+        "gateway/tests/test_payload_access.py",
+    ),
     # ---- access by group (FRD-209) ----------------------------------------------------------
     Mutation(
         "N30",

@@ -1100,3 +1100,36 @@ tr.is-open > * {
 .row-openable.is-flagged > td:first-child {
   box-shadow: inset 3px 0 0 var(--aira-danger, #c0392b);
 }
+
+/* ---- a form's fields, and a form's actions ---------------------------------------- */
+
+/* Two things, not one wrapping row. `.form-inline` wraps, so a submit button placed in the same
+   flow drifts in beside whichever field happens to be last — the anomaly rule editor put
+   "Create rule" next to "smallest sample", where it read as one more setting. */
+.form-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.form-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding-top: 1rem;
+  border-top: 1px solid var(--aira-border);
+}
+
+/* Pushes the buttons to the trailing edge, leaving the switch on the leading one. A gap that
+   collapses on a narrow screen, where both simply wrap. */
+.form-actions__spacer {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Room to read and to aim. A rule editor is a dozen controls; at 0.6rem they form a wall, and
+   somebody clicking the wrong one of two adjacent checkboxes is a governance mistake. */
+.form-stack .form-inline {
+  gap: 1rem 1.4rem;
+}

@@ -6,6 +6,28 @@
     without a price still works, but its consumption cannot be costed.
   </p>
 
+  <!--
+    First, not last. This card used to sit **below** the whole catalog table, so somebody who came
+    to add a model had to scroll past every existing one to find out how — and reported exactly
+    that: "I had to scroll a long way and I was confused about how to add a model." The thing a
+    screen is *for* goes where a reader starts.
+  -->
+  @if (canEdit()) {
+    <div class="card">
+      <div class="spread">
+        <h3 class="section-title" style="margin: 0">Model declarations</h3>
+        <button type="button" class="btn btn--primary" (click)="add()" data-testid="add-model">
+          + Add model
+        </button>
+      </div>
+      <p class="muted" style="margin: 0.5rem 0 0">
+        A declaration is what the gateway enforces: the output cap, what the model can be asked to
+        do, and what it costs. Open a row below to see everything on file for a model, and to
+        correct or remove it.
+      </p>
+    </div>
+  }
+
   @if (error(); as message) {
     <p class="callout callout--danger" role="alert">{{ message }}</p>
   }
@@ -65,17 +87,36 @@
           <table class="table">
             <thead>
               <tr>
+                <th scope="col"><span class="sr-only">Open</span></th>
                 <th scope="col">Model</th>
                 <th scope="col">Provider</th>
                 <th scope="col">Capabilities</th>
                 <th scope="col">Input / 1M</th>
                 <th scope="col">Output / 1M</th>
-                <th scope="col"><span class="sr-only">Actions</span></th>
               </tr>
             </thead>
             <tbody>
               @for (model of view.rows(); track model.name) {
-                <tr>
+                <tr
+                  class="row-openable"
+                  [class.is-open]="openModel() === model.name"
+                  (click)="toggleDetail(model)"
+                >
+                  <td class="table__open">
+                    <button
+                      type="button"
+                      class="btn btn--sm btn--ghost"
+                      [attr.aria-expanded]="openModel() === model.name"
+                      [attr.aria-label]="
+                        (openModel() === model.name ? 'Hide' : 'Show') +
+                        ' everything about ' +
+                        model.name
+                      "
+                      [attr.data-testid]="'open-model-' + model.name"
+                    >
+                      {{ openModel() === model.name ? '▾' : '▸' }}
+                    </button>
+                  </td>
                   <td>
                     <code>{{ model.name }}</code>
                     @if (model.display_name) {
@@ -103,30 +144,83 @@
                     }
                   </td>
                   <td>{{ model.is_priced ? model.output_price_per_million : '—' }}</td>
-                  <td class="table__actions">
-                    <div class="actions">
-                      @if (canEdit()) {
+                </tr>
+                @if (openModel() === model.name) {
+                  <tr class="row-detail">
+                    <td [attr.colspan]="20">
+                      <!--
+                        Everything on file, not a chosen subset. A catalog entry is what the gateway
+                        *enforces*, so "what does this row actually say" is the question somebody
+                        opens it with — and a summary would answer a different one.
+                      -->
+                      <dl class="detail-grid">
+                        @for (field of detailOf(model); track field.label) {
+                          <div>
+                            <dt>{{ field.label }}</dt>
+                            <dd [attr.data-testid]="'detail-' + field.key">{{ field.value }}</dd>
+                          </div>
+                        }
+                      </dl>
+
+                      <!--
+                        Declared is not reachable. A catalog entry needs no credential and proves
+                        nothing — without a key no adapter is registered, and the model sits here
+                        looking healthy while every request for it comes back `model_not_found`,
+                        which reads to a caller as a typo.
+                      -->
+                      <div class="row" style="margin-bottom: 0.75rem">
                         <button
                           type="button"
                           class="btn btn--sm"
-                          [attr.aria-label]="'Edit ' + model.name"
-                          (click)="edit(model)"
+                          [disabled]="checking()"
+                          (click)="runCheck(model)"
+                          [attr.data-testid]="'check-' + model.name"
                         >
-                          Edit
+                          {{ checking() ? 'Checking…' : 'Check reachability' }}
                         </button>
-                        <button
-                          type="button"
-                          class="btn btn--sm btn--danger"
-                          [disabled]="busy()"
-                          [attr.aria-label]="'Remove ' + model.name"
-                          (click)="remove(model)"
-                        >
-                          Remove
-                        </button>
+                        @if (check(); as verdict) {
+                          <span
+                            class="badge"
+                            [class.badge--success]="verdict.reachable === true"
+                            [class.badge--danger]="verdict.reachable === false || !verdict.served"
+                            [class.badge--warning]="verdict.served && verdict.reachable === null"
+                            data-testid="check-verdict"
+                          >
+                            {{ checkVerdict(verdict) }}
+                          </span>
+                          <span class="muted" style="font-size: 0.8rem" data-testid="check-detail">
+                            {{ verdict.detail }}
+                          </span>
+                        }
+                      </div>
+
+                      @if (canEdit()) {
+                        <!-- The actions moved here from the row. They were two buttons in a column
+                             that pushed the table wider than the screen, and they act on the model
+                             whose details are now in front of the reader. -->
+                        <div class="row">
+                          <button
+                            type="button"
+                            class="btn btn--sm"
+                            (click)="edit(model)"
+                            [attr.data-testid]="'edit-' + model.name"
+                          >
+                            Edit declaration
+                          </button>
+                          <button
+                            type="button"
+                            class="btn btn--sm btn--danger"
+                            [disabled]="busy()"
+                            (click)="remove(model)"
+                            [attr.data-testid]="'remove-' + model.name"
+                          >
+                            Remove
+                          </button>
+                        </div>
                       }
-                    </div>
-                  </td>
-                </tr>
+                    </td>
+                  </tr>
+                }
               }
             </tbody>
           </table>
@@ -138,19 +232,6 @@
       }
     }
   </div>
-
-  @if (canEdit()) {
-    <div class="card">
-      <div class="spread">
-        <h3 class="section-title" style="margin: 0">Model declarations</h3>
-        <button type="button" class="btn btn--sm btn--primary" (click)="add()">+ Add model</button>
-      </div>
-      <p class="muted" style="margin: 0.5rem 0 0">
-        A declaration is what the gateway enforces: the output cap, what the model can be asked to
-        do, and what it costs. Use <strong>Edit</strong> on a row to correct one.
-      </p>
-    </div>
-  }
 </div>
 
 <!--

@@ -15,6 +15,7 @@ import {
   DryRunResult,
   IssuedApiKey,
   Membership,
+  ModelCheck,
   Page,
   PipelineConfig,
   Report,
@@ -251,6 +252,16 @@ export class UseCaseService {
    */
   tracePayload(id: string): Observable<TracePayload> {
     return this.http.get<TracePayload>(`/gw/v1beta/traces/${seg(id)}/payload`);
+  }
+
+  /**
+   * Is this model actually reachable, or only written down (`FRD-506`)?
+   *
+   * Never a generation: a self-deployed model can be scaled to zero, and "check whether it works"
+   * must not be the thing that wakes it, bills for it, and takes minutes to answer.
+   */
+  checkModel(model: string): Observable<ModelCheck> {
+    return this.http.get<ModelCheck>(`/gw/v1beta/models/${seg(model)}:check`);
   }
 
   /** Traffic that is currently stopped, and what was stopped before (`FRD-503`). */

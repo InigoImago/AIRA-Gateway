@@ -185,3 +185,52 @@ async def test_liveness_needs_nothing_and_says_nothing_more() -> None:
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+
+
+# ═══ can this model be reached at all? (FRD-506) ════════════════════════════════════════════════
+#
+# The hermetic suite fakes the provider. Only here is the registry the real one, built from the
+# credentials this installation actually has — which is the whole question: a model is *declared*
+# without a key and *served* only with one.
+
+
+async def test_a_model_this_installation_serves_is_reachable(security_token) -> None:
+    """Against the real registry and the real local model. Never a generation — a check that woke
+    a scaled-to-zero endpoint would bill for the question it was asked."""
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(
+            f"{GATEWAY_URL}/v1beta/models/qwen3:0.6b:check",
+            headers={"Authorization": f"Bearer {security_token}"},
+        )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["served"] is True
+    assert body["reachable"] is True, body
+
+
+async def test_a_model_nobody_serves_says_so_rather_than_looking_healthy(security_token) -> None:
+    """The case a missing credential produces. Asked for a Vertex model, which this stack has no
+    key for: the catalog would happily hold it and every request would come back
+    `model_not_found`, which reads to a caller as a typo."""
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(
+            f"{GATEWAY_URL}/v1beta/models/gemini-2.5-pro:check",
+            headers={"Authorization": f"Bearer {security_token}"},
+        )
+
+    body = response.json()
+    assert response.status_code == 200, response.text
+    assert body["served"] is False
+    assert body["reachable"] is None, "nothing was contacted, so this is not a failure"
+    assert "credential" in body["detail"]
+
+
+async def test_checking_a_model_needs_a_role_that_may_act(governance_token) -> None:
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(
+            f"{GATEWAY_URL}/v1beta/models/qwen3:0.6b:check",
+            headers={"Authorization": f"Bearer {governance_token}"},
+        )
+
+    assert response.status_code == 403

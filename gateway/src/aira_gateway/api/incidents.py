@@ -13,7 +13,9 @@ independent events (§4.3).
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
@@ -24,6 +26,10 @@ from aira_gateway.anomalies.suspensions import AccessSuspension, as_dict
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.auth.dependencies import require_principal
 from aira_gateway.auth.principal import Principal
+from aira_gateway.catalog import ModelCatalog
+
+#: A check must be quick enough that somebody presses the button and waits for it.
+MODEL_CHECK_TIMEOUT_SECONDS = 5.0
 
 router = APIRouter(tags=["incidents"])
 
@@ -137,3 +143,86 @@ async def lift_suspension(
         payload = as_dict(row)
     request.app.state.suspensions.invalidate()
     return JSONResponse(payload)
+
+
+# ═══ can this model be reached at all? (FRD-506) ════════════════════════════════════════════════
+#
+# The question the console could not answer. A catalog entry is a **declaration** — it says what a
+# model costs and what it may be asked to do — and declaring one requires no credential and proves
+# nothing. Without a key no adapter is registered, so the model sits in the catalog looking
+# perfectly healthy and every request for it comes back `model_not_found`, which reads as a typo
+# rather than as a missing credential.
+#
+# So three separate answers, never collapsed into "ok":
+#
+#   declared    — somebody wrote it down. Says nothing about reachability.
+#   served      — an adapter is registered for it. This is the one a missing key fails.
+#   reachable   — the adapter's cheap remote question answered.
+#
+# **Never a generation.** `FRD-117` settled this for the readiness probe and it holds here for the
+# same reason: a self-deployed model can be scaled to zero, and "check whether it works" must not
+# be the thing that wakes it, bills for it, and waits minutes to say so.
+
+
+@router.get("/v1beta/models/{model:path}:check")
+async def check_model(
+    request: Request,
+    model: str,
+    principal: Principal = Depends(require_principal),
+) -> JSONResponse:
+    """Whether a declared model is actually served, and whether its provider answers.
+
+    Bounded by role rather than by use case: it describes the *installation*, not anybody's
+    traffic, and the people who need it are the ones who declare models and the ones who
+    investigate why a use case cannot reach one.
+    """
+    if not principal.may_act_on_incidents:
+        raise GeminiHTTPError(
+            403,
+            "Checking a model is available to IT Security and Global Administrators.",
+            "PERMISSION_DENIED",
+        )
+
+    catalog: ModelCatalog = request.app.state.catalog
+    registry = request.app.state.providers
+    declaration = await catalog.declaration(model)
+    provider = registry.provider_for(model)
+
+    result: dict[str, Any] = {
+        "model": model,
+        "declared": bool(declaration and declaration.declared),
+        "served": provider is not None,
+        "reachable": None,
+        "detail": "",
+    }
+
+    if provider is None:
+        # The case a missing credential produces, and the one worth naming precisely: an adapter is
+        # registered only when its credential is configured, so "declared but not served" is
+        # almost always "nobody gave this installation a key for it".
+        result["detail"] = (
+            "No upstream serves this model. A declaration is metadata; reaching a model needs a "
+            "provider, and a provider is registered only when its credential is configured."
+        )
+        return JSONResponse(result)
+
+    ping = getattr(provider, "ping", None)
+    if ping is None:
+        # Said, not assumed — the `FRD-117` rule. "We did not look" and "it is fine" are different
+        # answers and only one of them is safe to act on.
+        result["detail"] = "This upstream offers nothing cheap to ask; it was not contacted."
+        return JSONResponse(result)
+
+    try:
+        detail = await asyncio.wait_for(ping(), timeout=MODEL_CHECK_TIMEOUT_SECONDS)
+    except TimeoutError:
+        result["reachable"] = False
+        result["detail"] = f"Did not answer within {MODEL_CHECK_TIMEOUT_SECONDS:g}s."
+    except Exception as exc:  # noqa: BLE001 — anything here means "not reachable"
+        result["reachable"] = False
+        # The type, not the message: a provider's error text can carry a URL with a key in it.
+        result["detail"] = f"Not reachable ({type(exc).__name__})."
+    else:
+        result["reachable"] = True
+        result["detail"] = str(detail)
+    return JSONResponse(result)

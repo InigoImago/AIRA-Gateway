@@ -257,6 +257,22 @@ export interface CatalogModel {
   is_declared?: boolean;
 }
 
+/**
+ * Whether a declared model can actually be reached (`FRD-506`).
+ *
+ * Three separate facts, never collapsed. `declared` says somebody wrote the model down and proves
+ * nothing about reachability; `served` says an adapter exists for it, which is what a missing
+ * credential fails; `reachable` is `null` when nothing was contacted — "we did not look" and "it is
+ * fine" are different answers.
+ */
+export interface ModelCheck {
+  model: string;
+  declared: boolean;
+  served: boolean;
+  reachable: boolean | null;
+  detail: string;
+}
+
 /** One row of a report: a group, and what happened in it (FRD-601). */
 export interface ReportRow {
   /** The use case, model or member this row is about. */

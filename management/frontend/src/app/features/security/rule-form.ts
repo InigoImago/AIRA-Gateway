@@ -52,178 +52,188 @@ export const RULE_KINDS: { value: string; label: string }[] = [
   selector: 'app-rule-form',
   imports: [FormsModule],
   template: `
-    <form class="form-inline" (ngSubmit)="submit()">
-      @if (isNew()) {
-        <div class="field grow">
-          <label [attr.for]="id('name')">Name</label>
-          <input
-            [attr.id]="id('name')"
-            name="name"
-            [ngModel]="name()"
-            (ngModelChange)="name.set($event)"
-            placeholder="what somebody reading a finding should see"
-            autocomplete="off"
-            [attr.data-testid]="id('name')"
-          />
-        </div>
-        <div class="field grow">
-          <label [attr.for]="id('kind')">Watch for</label>
-          <select
-            [attr.id]="id('kind')"
-            name="kind"
-            [ngModel]="kind()"
-            (ngModelChange)="kind.set($event)"
-            [attr.data-testid]="id('kind')"
-          >
-            @for (option of kinds; track option.value) {
-              <option [value]="option.value">{{ option.label }}</option>
-            }
-          </select>
-          <!-- Said here rather than discovered on the next edit. -->
-          <span class="field__hint">
-            Fixed once the rule exists — the kind decides what the threshold means.
-          </span>
-        </div>
+    <!--
+      Fields and actions are two things, not one wrapping row. They used to share a single
+      form-inline row, so "Create rule" and "Cancel" flowed in beside "smallest sample" and read as
+      two more settings. A form's actions belong on their own line, after a rule, where a reader
+      looks for them.
+    -->
+    <form class="form-stack" (ngSubmit)="submit()">
+      <div class="form-inline">
+        @if (isNew()) {
+          <div class="field grow">
+            <label [attr.for]="id('name')">Name</label>
+            <input
+              [attr.id]="id('name')"
+              name="name"
+              [ngModel]="name()"
+              (ngModelChange)="name.set($event)"
+              placeholder="what somebody reading a finding should see"
+              autocomplete="off"
+              [attr.data-testid]="id('name')"
+            />
+          </div>
+          <div class="field grow">
+            <label [attr.for]="id('kind')">Watch for</label>
+            <select
+              [attr.id]="id('kind')"
+              name="kind"
+              [ngModel]="kind()"
+              (ngModelChange)="kind.set($event)"
+              [attr.data-testid]="id('kind')"
+            >
+              @for (option of kinds; track option.value) {
+                <option [value]="option.value">{{ option.label }}</option>
+              }
+            </select>
+            <!-- Said here rather than discovered on the next edit. -->
+            <span class="field__hint">
+              Fixed once the rule exists — the kind decides what the threshold means.
+            </span>
+          </div>
+          <div class="field">
+            <label [attr.for]="id('target')">Raised about</label>
+            <select
+              [attr.id]="id('target')"
+              name="target"
+              [ngModel]="target()"
+              (ngModelChange)="target.set($event)"
+            >
+              <option value="subject">each caller</option>
+              <option value="credential">each API key</option>
+              <option value="use_case">the use case as a whole</option>
+            </select>
+          </div>
+        }
+
         <div class="field">
-          <label [attr.for]="id('target')">Raised about</label>
-          <select
-            [attr.id]="id('target')"
-            name="target"
-            [ngModel]="target()"
-            (ngModelChange)="target.set($event)"
-          >
-            <option value="subject">each caller</option>
-            <option value="credential">each API key</option>
-            <option value="use_case">the use case as a whole</option>
-          </select>
-        </div>
-      }
-
-      <div class="field">
-        <label [attr.for]="id('threshold')">Above</label>
-        <input
-          [attr.id]="id('threshold')"
-          type="number"
-          name="threshold"
-          min="1"
-          [ngModel]="threshold()"
-          (ngModelChange)="threshold.set($event)"
-          [attr.data-testid]="id('threshold')"
-        />
-        <span class="field__hint">{{ unit() || 'as counted' }}</span>
-      </div>
-
-      <div class="field">
-        <label [attr.for]="id('window')">Over (minutes)</label>
-        <input
-          [attr.id]="id('window')"
-          type="number"
-          name="window"
-          min="1"
-          [ngModel]="window()"
-          (ngModelChange)="window.set($event)"
-          [attr.data-testid]="id('window')"
-        />
-      </div>
-
-      <div class="field">
-        <label [attr.for]="id('sample')">Smallest sample</label>
-        <input
-          [attr.id]="id('sample')"
-          type="number"
-          name="sample"
-          min="0"
-          [ngModel]="sample()"
-          (ngModelChange)="sample.set($event)"
-          [attr.data-testid]="id('sample')"
-        />
-        <span class="field__hint">Below this many requests it is not judged at all.</span>
-      </div>
-
-      @if (kind() === 'payload_size') {
-        <div class="field">
-          <label [attr.for]="id('parameter')">Larger than</label>
+          <label [attr.for]="id('threshold')">Above</label>
           <input
-            [attr.id]="id('parameter')"
+            [attr.id]="id('threshold')"
             type="number"
-            name="parameter"
+            name="threshold"
             min="1"
-            [ngModel]="parameter()"
-            (ngModelChange)="parameter.set($event)"
-            [attr.data-testid]="id('parameter')"
+            [ngModel]="threshold()"
+            (ngModelChange)="threshold.set($event)"
+            [attr.data-testid]="id('threshold')"
           />
-          <span class="field__hint">bytes</span>
+          <span class="field__hint">{{ unit() || 'as counted' }}</span>
         </div>
-      }
 
-      <div class="field">
-        <label [attr.for]="id('action')">Then</label>
-        <select
-          [attr.id]="id('action')"
-          name="action"
-          [ngModel]="action()"
-          (ngModelChange)="action.set($event)"
-          [attr.data-testid]="id('action')"
+        <div class="field">
+          <label [attr.for]="id('window')">Over (minutes)</label>
+          <input
+            [attr.id]="id('window')"
+            type="number"
+            name="window"
+            min="1"
+            [ngModel]="window()"
+            (ngModelChange)="window.set($event)"
+            [attr.data-testid]="id('window')"
+          />
+        </div>
+
+        <div class="field">
+          <label [attr.for]="id('sample')">Smallest sample</label>
+          <input
+            [attr.id]="id('sample')"
+            type="number"
+            name="sample"
+            min="0"
+            [ngModel]="sample()"
+            (ngModelChange)="sample.set($event)"
+            [attr.data-testid]="id('sample')"
+          />
+          <span class="field__hint">Below this many requests it is not judged at all.</span>
+        </div>
+
+        @if (kind() === 'payload_size') {
+          <div class="field">
+            <label [attr.for]="id('parameter')">Larger than</label>
+            <input
+              [attr.id]="id('parameter')"
+              type="number"
+              name="parameter"
+              min="1"
+              [ngModel]="parameter()"
+              (ngModelChange)="parameter.set($event)"
+              [attr.data-testid]="id('parameter')"
+            />
+            <span class="field__hint">bytes</span>
+          </div>
+        }
+
+        <div class="field">
+          <label [attr.for]="id('action')">Then</label>
+          <select
+            [attr.id]="id('action')"
+            name="action"
+            [ngModel]="action()"
+            (ngModelChange)="action.set($event)"
+            [attr.data-testid]="id('action')"
+          >
+            <option value="alert">record it (take nothing away)</option>
+            <option value="throttle">slow the traffic down</option>
+            <option value="block">stop the traffic</option>
+          </select>
+        </div>
+
+        @if (action() !== 'alert') {
+          <div class="field">
+            <label [attr.for]="id('minutes')">For (minutes)</label>
+            <input
+              [attr.id]="id('minutes')"
+              type="number"
+              name="minutes"
+              min="1"
+              [ngModel]="minutes()"
+              (ngModelChange)="minutes.set($event)"
+              [attr.data-testid]="id('minutes')"
+            />
+            <span class="field__hint">Empty means until somebody lifts it.</span>
+          </div>
+        }
+
+        @if (action() === 'throttle') {
+          <div class="field">
+            <label [attr.for]="id('rpm')">Slowed to</label>
+            <input
+              [attr.id]="id('rpm')"
+              type="number"
+              name="rpm"
+              min="1"
+              [ngModel]="rpm()"
+              (ngModelChange)="rpm.set($event)"
+              [attr.data-testid]="id('rpm')"
+            />
+            <span class="field__hint">
+              requests a minute — a throttle without a rate is not a decision.
+            </span>
+          </div>
+        }
+      </div>
+
+      <div class="form-actions">
+        <label class="checkline">
+          <input
+            type="checkbox"
+            [checked]="enabled()"
+            (change)="enabled.set($any($event.target).checked)"
+            [attr.data-testid]="id('enabled')"
+          />
+          Watching
+        </label>
+        <span class="form-actions__spacer"></span>
+        <button type="button" class="btn" (click)="cancelled.emit()">Cancel</button>
+        <button
+          type="submit"
+          class="btn btn--primary"
+          [disabled]="busy() || !canSubmit()"
+          [attr.data-testid]="id('save')"
         >
-          <option value="alert">record it (take nothing away)</option>
-          <option value="throttle">slow the traffic down</option>
-          <option value="block">stop the traffic</option>
-        </select>
+          {{ busy() ? 'Saving…' : isNew() ? 'Create rule' : 'Save' }}
+        </button>
       </div>
-
-      @if (action() !== 'alert') {
-        <div class="field">
-          <label [attr.for]="id('minutes')">For (minutes)</label>
-          <input
-            [attr.id]="id('minutes')"
-            type="number"
-            name="minutes"
-            min="1"
-            [ngModel]="minutes()"
-            (ngModelChange)="minutes.set($event)"
-            [attr.data-testid]="id('minutes')"
-          />
-          <span class="field__hint">Empty means until somebody lifts it.</span>
-        </div>
-      }
-
-      @if (action() === 'throttle') {
-        <div class="field">
-          <label [attr.for]="id('rpm')">Slowed to</label>
-          <input
-            [attr.id]="id('rpm')"
-            type="number"
-            name="rpm"
-            min="1"
-            [ngModel]="rpm()"
-            (ngModelChange)="rpm.set($event)"
-            [attr.data-testid]="id('rpm')"
-          />
-          <span class="field__hint">
-            requests a minute — a throttle without a rate is not a decision.
-          </span>
-        </div>
-      }
-
-      <label class="checkline" style="padding-bottom: 0.55rem">
-        <input
-          type="checkbox"
-          [checked]="enabled()"
-          (change)="enabled.set($any($event.target).checked)"
-          [attr.data-testid]="id('enabled')"
-        />
-        Watching
-      </label>
-
-      <button
-        type="submit"
-        class="btn btn--primary"
-        [disabled]="busy() || !canSubmit()"
-        [attr.data-testid]="id('save')"
-      >
-        {{ busy() ? 'Saving…' : isNew() ? 'Create rule' : 'Save' }}
-      </button>
-      <button type="button" class="btn" (click)="cancelled.emit()">Cancel</button>
     </form>
   `,
 })

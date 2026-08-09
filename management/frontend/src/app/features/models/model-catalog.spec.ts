@@ -1,7 +1,7 @@
 import { TestBed } from '@angular/core/testing';
 import { Observable, of, throwError } from 'rxjs';
 import { MeService } from '../../core/api/me.service';
-import { Capability, CatalogModel, Me } from '../../core/api/models';
+import { Capability, CatalogModel, Me, ModelCheck } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { ConfirmService } from '../../core/ui/confirm.service';
 import { ModelCatalog } from './model-catalog';
@@ -56,14 +56,25 @@ interface Catalog {
   remove: (m: CatalogModel) => void;
 }
 
+const CHECK: ModelCheck = {
+  model: 'gemini-2.0-flash',
+  declared: true,
+  served: true,
+  reachable: true,
+  detail: '3 models listed',
+};
+
 function setup(
   options: {
     models?: Observable<CatalogModel[]>;
     save?: Observable<CatalogModel>;
     roles?: string[];
     confirm?: boolean;
+    /** What `:check` answers (`FRD-506`). */
+    check?: Observable<ModelCheck>;
   } = {},
 ) {
+  const checked: string[] = [];
   TestBed.resetTestingModule();
   const saved: CatalogModel[] = [];
   const removed: string[] = [];
@@ -83,6 +94,10 @@ function setup(
       {
         provide: UseCaseService,
         useValue: {
+          checkModel: (name: string) => {
+            checked.push(name);
+            return options.check ? options.check : of(CHECK);
+          },
           models: () => options.models ?? of([FLASH, UNPRICED]),
           saveModel: (model: CatalogModel) => {
             saved.push(model);
@@ -105,7 +120,16 @@ function setup(
     removed,
     component: fixture.componentInstance as unknown as Catalog,
     text: () => (fixture.nativeElement as HTMLElement).textContent ?? '',
+    checked,
     html: () => fixture.nativeElement as HTMLElement,
+    /** Open the first row's declaration. What a model *is* lives in the panel now; the columns
+     *  carry what a catalog is scanned by. */
+    openFirst: () => {
+      (fixture.nativeElement as HTMLElement)
+        .querySelector<HTMLElement>('[data-testid^="open-model-"]')
+        ?.click();
+      fixture.detectChanges();
+    },
     testid: (id: string) =>
       (fixture.nativeElement as HTMLElement).querySelector(`[data-testid="${id}"]`),
     click: (selector: string) => {
@@ -140,12 +164,16 @@ describe('ModelCatalog', () => {
 
   it('hides the editing surface from everyone but a global admin', () => {
     const admin = setup();
+    admin.openFirst();
     expect(admin.component.canEdit()).toBe(true);
-    expect(admin.html().querySelector('[aria-label^="Edit"]')).not.toBeNull();
+    expect(admin.html().querySelector('[data-testid^="edit-"]')).not.toBeNull();
 
     const reader = setup({ roles: ['it-steuerung'] });
+    reader.openFirst();
     expect(reader.component.canEdit()).toBe(false);
-    expect(reader.html().querySelector('[aria-label^="Edit"]')).toBeNull();
+    // The panel still opens — reading a declaration is not editing one — and carries no actions.
+    expect(reader.html().querySelector('[data-testid^="detail-"]')).not.toBeNull();
+    expect(reader.html().querySelector('[data-testid^="edit-"]')).toBeNull();
     expect(reader.text()).not.toContain('Add model');
   });
 
@@ -311,20 +339,24 @@ describe('ModelCatalog interactions', () => {
     );
   });
 
-  it('removes a model from its row button', () => {
+  it('removes a model from the panel that shows what it is', () => {
+    /** The actions moved out of the row and into the opened declaration: they were two buttons in
+     *  a column that pushed the table past the screen, and they act on the model whose fields are
+     *  now in front of the reader. */
     const harness = setup();
-    const button = (harness.fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>(
-      '[aria-label="Remove gemini-2.0-flash"]',
-    );
-    button?.click();
+    harness.openFirst();
+    (harness.fixture.nativeElement as HTMLElement)
+      .querySelector<HTMLButtonElement>('[data-testid="remove-gemini-2.0-flash"]')
+      ?.click();
     harness.fixture.detectChanges();
     expect(harness.removed).toEqual(['gemini-2.0-flash']);
   });
 
-  it('edits a model from its row button', () => {
+  it('edits a model from the panel that shows what it is', () => {
     const harness = setup();
+    harness.openFirst();
     (harness.fixture.nativeElement as HTMLElement)
-      .querySelector<HTMLButtonElement>('[aria-label="Edit gemini-2.0-flash"]')
+      .querySelector<HTMLButtonElement>('[data-testid="edit-gemini-2.0-flash"]')
       ?.click();
     harness.fixture.detectChanges();
     expect(harness.component.name()).toBe('gemini-2.0-flash');
@@ -453,15 +485,164 @@ describe('ModelCatalog — finding one among many', () => {
     expect(harness.text()).toContain('26–50 of 60 models');
   });
 
-  it('keeps a row and its buttons in the same row', () => {
-    // `display: flex` on a `<td>` stops it being a table cell: it leaves the row's height and
-    // baseline and floats free of the row it belongs to, which reads as two lists side by side.
-    // The cell stays a cell and the flexing happens one element in.
-    const harness = setup({ models: of(models(1)) });
-    const actions = harness.html().querySelector('.table__actions');
+  // ---- is it reachable, or only written down? (`FRD-506`) -----------------------------------
 
-    expect(actions).not.toBeNull();
-    expect(getComputedStyle(actions!).display).not.toBe('flex');
-    expect(actions!.querySelector('.actions')).not.toBeNull();
+  it('says a declared model nothing serves is not reachable, and why', () => {
+    /** The case a missing credential produces, and the one the console could not show: an adapter
+     *  is registered only when its credential is configured, so the model sat in the catalog
+     *  looking healthy while every request for it came back `model_not_found`. */
+    const harness = setup({
+      check: of({
+        model: 'gemini-2.0-flash',
+        declared: true,
+        served: false,
+        reachable: null,
+        detail: 'No upstream serves this model. A declaration is metadata; …credential…',
+      }),
+    });
+    harness.openFirst();
+    harness.html().querySelector<HTMLElement>('[data-testid^="check-gemini"]')?.click();
+    harness.fixture.detectChanges();
+
+    expect(harness.html().querySelector('[data-testid="check-verdict"]')?.textContent).toContain(
+      'nothing serves it',
+    );
+    expect(harness.html().querySelector('[data-testid="check-detail"]')?.textContent).toContain(
+      'credential',
+    );
+  });
+
+  it('does not report "not contacted" as reachable', () => {
+    /** `FRD-117`'s rule: "we did not look" and "it is fine" are different answers, and only one of
+     *  them is safe to act on. */
+    const harness = setup({
+      check: of({
+        model: 'gemini-2.0-flash',
+        declared: true,
+        served: true,
+        reachable: null,
+        detail: 'This upstream offers nothing cheap to ask; it was not contacted.',
+      }),
+    });
+    harness.openFirst();
+    harness.html().querySelector<HTMLElement>('[data-testid^="check-gemini"]')?.click();
+    harness.fixture.detectChanges();
+
+    const badge = harness.html().querySelector('[data-testid="check-verdict"]');
+    expect(badge?.textContent).toContain('not contacted');
+    expect(badge?.classList.contains('badge--success')).toBe(false);
+  });
+
+  it('asks about the model whose panel is open', () => {
+    const harness = setup();
+    harness.openFirst();
+    harness.html().querySelector<HTMLElement>('[data-testid^="check-"]')?.click();
+
+    expect(harness.checked).toEqual(['gemini-2.0-flash']);
+  });
+
+  it('forgets a verdict when another model is opened', () => {
+    /** A verdict left on screen under a different model is worse than none — it is a wrong answer
+     *  that looks like a right one. */
+    const harness = setup();
+    harness.openFirst();
+    harness.html().querySelector<HTMLElement>('[data-testid^="check-"]')?.click();
+    harness.fixture.detectChanges();
+    expect(harness.html().querySelector('[data-testid="check-verdict"]')).not.toBeNull();
+
+    harness.openFirst();
+    harness.openFirst();
+
+    expect(harness.html().querySelector('[data-testid="check-verdict"]')).toBeNull();
+  });
+
+  it('leaves no declared field out of the panel', () => {
+    /**
+     * The claim `detailOf` makes is **exhaustiveness**: a catalog entry is what the gateway
+     * enforces, so "what does this row actually say" must be answered in full. A field added to
+     * `CatalogModel` and forgotten in the panel is a field the console silently does not show, and
+     * a partial answer to that question is worse than none.
+     *
+     * Asserted by populating every field with a value that could not appear by accident and
+     * requiring each to be on screen.
+     */
+    const harness = setup({
+      models: of([
+        {
+          name: 'everything-1',
+          display_name: 'Display Name Here',
+          provider: 'provider-x',
+          publisher: 'publisher-y',
+          platform: 'platform-z',
+          hosting: 'self_deployed' as const,
+          underlying_model: 'underlying-q',
+          addressing: { deployment: 'dep-42' },
+          capabilities: ['generate' as const, 'tools' as const],
+          is_declared: true,
+          max_output_tokens: 4096,
+          default_max_output_tokens: 512,
+          thinking: { modes: ['disabled'] },
+          embedding: { supports_batch: true },
+          attachments: { media_types: ['application/pdf'] },
+          is_priced: true,
+          input_price_per_million: '1.2345',
+          output_price_per_million: '6.7890',
+          numeric_id: 9001,
+          deprecated: true,
+          updated_at: '2026-08-09T10:00:00Z',
+        },
+      ]),
+    });
+    harness.openFirst();
+    const shown = harness.text();
+
+    for (const value of [
+      'Display Name Here',
+      'provider-x',
+      'publisher-y',
+      'platform-z',
+      'self_deployed',
+      'underlying-q',
+      'dep-42',
+      'tools',
+      '4096',
+      '512',
+      'disabled',
+      'supports_batch',
+      'application/pdf',
+      '1.2345',
+      '6.7890',
+      '9001',
+    ]) {
+      expect(shown, `the panel does not show ${value}`).toContain(value);
+    }
+  });
+
+  it('says "—" for a field nobody filled in, and never "null"', () => {
+    /** An empty declaration is the ordinary case for a model somebody has only priced. Rendering
+     *  `null` or `undefined` into the panel would read as a value. */
+    const harness = setup({ models: of([{ name: 'bare-1' }]) });
+    harness.openFirst();
+    const shown = harness.text();
+
+    expect(shown).not.toContain('null');
+    expect(shown).not.toContain('undefined');
+    expect(shown).toContain('undeclared');
+    expect(shown).toContain('no price');
+  });
+
+  it('shows everything on file, so the panel answers what the row abbreviates', () => {
+    /** Replaces "keeps a row and its buttons in the same row" (2026-08-09). That test guarded a
+     *  `display: flex` on a `<td>`, and this table no longer has an actions cell — the property
+     *  did not weaken, its subject left. Four other tables still carry `.table__actions`, and
+     *  `console-usability.spec.ts` measures the geometry on one of them in a real browser, which
+     *  is the only place `getComputedStyle` means anything. */
+    const harness = setup({ models: of(models(1)) });
+    harness.openFirst();
+    const panel = harness.html();
+
+    expect(panel.querySelector('[data-testid="detail-capabilities"]')).not.toBeNull();
+    expect(panel.querySelector('[data-testid="detail-thinking"]')).not.toBeNull();
+    expect(panel.querySelector('[data-testid="detail-numeric_id"]')).not.toBeNull();
   });
 });

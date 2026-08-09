@@ -31,6 +31,7 @@ from aira_gateway.auth.principal import Principal
 from aira_gateway.config import GatewaySettings
 from aira_gateway.db.base import build_engine, build_sessionmaker, create_all
 from aira_gateway.db.models import PayloadAccess, RequestLog, UseCaseMemberRead, UseCaseRead
+from aira_gateway.payloads import MESSAGES, PayloadRefusal
 
 NOW = datetime(2026, 8, 9, 12, 0, tzinfo=UTC)
 PROMPT = {"contents": [{"parts": [{"text": "the customer number is 4711"}]}]}
@@ -119,6 +120,12 @@ def _accesses(client: TestClient) -> list[PayloadAccess]:
 # is expected.
 
 
+#: A **status is not an answer.** Three different refusals all return 403, so a matrix that checked
+#: only the number would pass with any two of them swapped — and it did: an audit that broke each
+#: branch of `payloads.py` in turn found `is_oversight` **undefended**, because removing it makes an
+#: oversight role fall through to `OUT_OF_SCOPE`, which is also a 403. The distinction is the whole
+#: point of the message: "you see figures, not content" and "that use case is not yours" send the
+#: reader to two different people.
 @pytest.mark.parametrize(
     ("principal", "restricted", "expected", "reason", "ground"),
     [
@@ -127,9 +134,10 @@ def _accesses(client: TestClient) -> list[PayloadAccess]:
         (GLOBAL_ADMIN, True, 200, None, "incident"),
         (IT_SECURITY, False, 200, None, "incident"),
         (IT_SECURITY, True, 200, None, "incident"),
-        # Every figure, no content. The split this whole feature turns on.
-        (IT_STEUERUNG, False, 403, None, None),
-        (IT_STEUERUNG, True, 403, None, None),
+        # Every figure, no content. The split this whole feature turns on — and the *reason* is
+        # asserted, not just the status, or this row passes while the role boundary is gone.
+        (IT_STEUERUNG, False, 403, "not_a_content_role", None),
+        (IT_STEUERUNG, True, 403, "not_a_content_role", None),
         # The use case's own administrator, including under their own restriction.
         (UC_ADMIN, False, 200, None, "use_case_admin"),
         (UC_ADMIN, True, 200, None, "use_case_admin"),
@@ -138,7 +146,7 @@ def _accesses(client: TestClient) -> list[PayloadAccess]:
         (UC_USER, True, 200, None, "use_case_member"),
         # A user reading a colleague's: allowed until the administrator restricts it.
         (OTHER_USER, False, 200, None, "use_case_member"),
-        (OTHER_USER, True, 403, None, None),
+        (OTHER_USER, True, 403, "others_request", None),
         # Somebody else's use case entirely. 404, because saying 403 would confirm it exists.
         (OUTSIDER, False, 404, None, None),
     ],
@@ -164,9 +172,14 @@ def test_who_may_read_a_stored_prompt(principal, restricted, expected, reason, g
         response = client.get("/v1beta/traces/row-1/payload")
 
     assert response.status_code == expected, response.text
+    body = response.json()
+    if expected == 403:
+        # The sentence, not only the number. Every authority refusal is a 403, and which one it is
+        # decides who the reader goes and talks to.
+        assert MESSAGES[PayloadRefusal(reason)] in body["error"]["message"]
+        return
     if expected != 200:
         return
-    body = response.json()
     if reason is None:
         assert body["available"] is True
         assert "4711" in str(body["request"]), "the reader was allowed and got nothing"
