@@ -52,7 +52,8 @@ test.describe('Cost budgets', () => {
     await page.click('[data-testid="editor-check"]');
     await page.click('button[type="submit"][form="model-editor-form"]');
 
-    await expect(page.locator(`code:has-text("${model}")`)).toBeVisible();
+    await page.getByTestId('model-search').fill(model);
+    await expect(page.locator(`code:has-text("${model}")`)).toBeVisible({ timeout: 15_000 });
     await expect(page.locator('table')).toContainText('0.075');
 
     // A model without a price is catalogued but marked, because its traffic cannot be costed.
@@ -65,10 +66,17 @@ test.describe('Cost budgets', () => {
     // arrives is the ordinary order of work.
     await page.click('[data-testid="editor-check"]');
     await page.click('button[type="submit"][form="model-editor-form"]');
+
+    // Searched for, not scrolled to. The catalog is paged, and an installation with a few hundred
+    // models puts a freshly added one well off the first page — the same thing that happened to
+    // the rules tests the day paging landed there.
+    await page.getByTestId('model-search').fill(unpriced);
+    const row = page.locator('tr', { hasText: unpriced });
+    await expect(row).toBeVisible({ timeout: 15_000 });
     // Targeted by text rather than by position: the catalog now also flags models nobody has
     // *declared* (FRD-114), so `.first()` would assert about whichever badge happens to render
     // earlier — which is a fact about the column order, not about pricing.
-    await expect(page.locator('.badge--warning', { hasText: 'no price' }).first()).toBeVisible();
+    await expect(row.locator('.badge--warning', { hasText: 'no price' })).toBeVisible();
     await expect(
       page.locator('.callout--warning', { hasText: 'left out of every spend figure' }),
     ).toBeVisible();

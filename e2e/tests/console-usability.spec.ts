@@ -39,6 +39,33 @@ async function createRule(page: Page, name: string): Promise<void> {
   expect(status, 'the rule could not be created').toBeLessThan(300);
 }
 
+/**
+ * Delete a global rule this suite created.
+ *
+ * Written on 2026-08-09, after 56 of an installation's 61 global rules turned out to be residue
+ * from e2e runs. A rule is not a row that sits quietly: **every tick evaluates every rule**, so
+ * each leftover produces a finding for every caller that crosses it, forever. The security console
+ * filled with findings named "e2e editable 1786177466197", each tick did sixty times the work it
+ * should, and one tick wrote 57 findings in a single instant — which overflowed the findings
+ * endpoint's 50-row page and made an unrelated integration test fail by chance.
+ *
+ * A test that creates a *policy* has to remove it. Rows a test leaves behind are noise; policies a
+ * test leaves behind are behaviour.
+ */
+async function deleteRule(page: Page, name: string): Promise<void> {
+  await page.evaluate(async (ruleName) => {
+    const token = sessionStorage.getItem('access_token') ?? localStorage.getItem('access_token');
+    const headers = { Authorization: `Bearer ${token}` };
+    const list = await (await fetch('/api/v1/anomaly-rules/', { headers })).json();
+    const rows = Array.isArray(list) ? list : (list.results ?? []);
+    for (const rule of rows) {
+      if (rule.name === ruleName) {
+        await fetch(`/api/v1/anomaly-rules/${rule.id}/`, { method: 'DELETE', headers });
+      }
+    }
+  }, name);
+}
+
 test.describe('The page holds still', () => {
   test('a live view refreshes without moving anything', async ({ page }) => {
     // Measured, not eyeballed. The previous version shifted the Refresh button on every tick,
@@ -158,6 +185,8 @@ test.describe('The console explains itself', () => {
     await expect(detail).toBeVisible();
     await expect(detail).toContainText('Watches');
     await expect(detail).toContainText('minutes');
+
+    await deleteRule(page, name);
   });
 
   test('a global rule can be edited by IT Security and not by oversight', async ({ page }) => {
@@ -190,6 +219,8 @@ test.describe('The console explains itself', () => {
     await page.click('[role="tab"]:has-text("Rules")');
     await page.getByTestId('rule-search').fill(name);
     await expect(page.locator(`tr:has-text("${name}")`)).toContainText('65');
+
+    await deleteRule(page, name);
   });
 
   test('the export column explanations open on hover', async ({ page }) => {

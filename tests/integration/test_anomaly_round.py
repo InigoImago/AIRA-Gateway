@@ -1144,17 +1144,33 @@ async def test_f8_the_anomaly_list_is_scoped_like_the_report(
     await _tick(fixture.engine, fixture.slug)
 
     async with httpx.AsyncClient(timeout=30.0) as client:
+        # **Asked about this use case**, not fished out of the global list.
+        #
+        # This test used to read the unfiltered list and look for its own finding in it, and it
+        # failed intermittently for a reason worth writing down: one evaluator tick writes a
+        # finding for *every* scope that saw traffic — 57 in the same instant on this database —
+        # while the endpoint returns the newest 50, ties broken by `id`, which is a random UUID.
+        # So whether a particular finding landed on page one was decided by chance.
+        #
+        # It also tested the wrong thing. What this case is about is **scope**: the same
+        # `visible_scope` for the report and the findings. Filtering says that, and says it
+        # deterministically.
         oversight = await client.get(
             f"{GATEWAY_URL}/v1beta/anomalies",
             headers={"Authorization": f"Bearer {governance_token}"},
+            params={"use_case": fixture.slug},
         )
         scoped = await client.get(
-            f"{GATEWAY_URL}/v1beta/anomalies", headers={"Authorization": f"Bearer {member_token}"}
+            f"{GATEWAY_URL}/v1beta/anomalies",
+            headers={"Authorization": f"Bearer {member_token}"},
+            params={"use_case": fixture.slug},
         )
 
     assert oversight.status_code == 200
     assert oversight.json()["scope"] == "all"
-    assert any(e["use_case"] == fixture.slug for e in oversight.json()["events"])
+    assert any(e["use_case"] == fixture.slug for e in oversight.json()["events"]), (
+        "an oversight role could not see a finding for a use case it is entitled to see"
+    )
 
     assert scoped.status_code == 200
     assert scoped.json()["scope"] == "use_cases"

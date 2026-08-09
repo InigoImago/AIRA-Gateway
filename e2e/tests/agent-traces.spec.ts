@@ -306,6 +306,17 @@ test.describe('Authoring a rule that applies everywhere', () => {
     const row = page.locator(`tr:has-text("${name}")`);
     await expect(row).toBeVisible({ timeout: 20_000 });
     await expect(row).toContainText('everywhere');
+
+    // Removed again. A rule is a **policy**, not a row: every tick evaluates every rule, so one
+    // left behind produces findings for every caller that crosses it, forever. Fifty-six of one
+    // installation's sixty-one global rules turned out to be residue from runs of this suite.
+    await row.locator('[data-testid^="rule-toggle-"]').click();
+    // Deleting a rule asks first (`FRD-206`: destructive actions confirm), and Playwright
+    // auto-*dismisses* dialogs — so without this the click does nothing and the rule survives,
+    // which is how the leftovers accumulated in the first place.
+    page.once('dialog', (dialog) => dialog.accept());
+    await page.locator('[data-testid^="rule-delete-"]').first().click();
+    await expect(page.locator(`tr:has-text("${name}")`)).toHaveCount(0, { timeout: 15_000 });
   });
 
   test('a role that may stop nothing is not offered the button', async ({ page }) => {

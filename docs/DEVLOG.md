@@ -4360,3 +4360,49 @@ impossible to keep not noticing.
 Verified live, twice: removing `qwen3:0.6b` from the catalog produced *"is not in the model
 catalog"*, and un-approving it produced *"has not been approved for use"* — each naming the model
 and the action.
+
+## 2026-08-09 (night) — "Are they really leftover data?"
+
+Asked to check an intermittent failure rather than accept my own guess about it, and the guess was
+wrong in an instructive way. I had said "looks like leftover rows, but I have not proved it". It
+**is** leftover data — and not the kind I meant.
+
+### What actually happened
+
+`test_f8` asserts that an oversight role can see a finding for its use case. It read the
+**unfiltered** findings list and looked for its own row in it. The endpoint returns the newest 50,
+ties broken by `id` — which is a random UUID.
+
+Measured on the live database: **one evaluator tick wrote 57 findings in the same instant**, and
+the newest-50 page consisted entirely of rows from that one timestamp. So whether this test's
+finding landed on page one was decided by a random UUID. It passed alone, passed in its own file,
+and failed in a full run — which is exactly what "decided by chance, weighted by load" looks like.
+
+### Why one tick wrote 57 findings
+
+Not because of many use cases. Because of **56 leftover global rules**, all named `e2e editable …`
+or `e2e readable …`. Every e2e run created a global anomaly rule through the API and never removed
+it, and **every tick evaluates every rule** — so each leftover produced a finding on every tick,
+forever. 61 global rules on this installation, 5 of them real. 8054 of 8274 stored findings were
+their output: **97 % of the security console's content was test residue.**
+
+After deleting them, a tick writes **1** finding.
+
+### Two fixes, and the second is the one that generalises
+
+The test was also genuinely wrong: it means to assert *scope*, so it now asks about its own use
+case instead of fishing in a global list. Deterministic, and it tests the thing it is named after.
+
+And the e2e tests **delete the rules they create**. That is the rule worth stating: a test may leave
+rows behind — they are noise. A test that leaves a **policy** behind has changed the system's
+behaviour, permanently and invisibly, and this one had been doing it for weeks.
+
+Deleting a rule asks for confirmation, and Playwright auto-*dismisses* dialogs — so the first
+version of the cleanup clicked and did nothing, which is how the leftovers would have kept
+accumulating even after "adding cleanup".
+
+### One more thing it exposed
+
+The same round found two console tests looking for a freshly created row on page one of a paged
+list — the catalog and the rules. Both search now. Paging turns "it is on the screen" into "it is
+findable", and every test that was written before paging landed makes the old assumption.
