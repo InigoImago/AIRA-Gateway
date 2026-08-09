@@ -4318,3 +4318,45 @@ briefly read as "the test does not work".
 Checking what the file actually contained took ten seconds and turned a wrong conclusion into a
 right one. The lesson is the ordinary one, and it keeps arriving in new clothes: **when an
 experiment says something surprising, verify the experiment before believing the result.**
+
+## 2026-08-09 (night) — Only catalogued models, and what that cost to find out
+
+> *"Es dürfen nur die Modelle verwendet werden, die im Katalog stehen und explizit von einem
+> globalen Admin angelegt wurden."*
+
+The morning's version approved *declared* models and left a model with **no catalog row** alone, on
+`FRD-114` FR-7's reasoning that an undeclared model gets the baseline. That was the wrong side of
+the line, and for a reason better than tidiness: the rule could be defeated by **deleting** a
+declaration. Approval was removable by removing the thing that carried it.
+
+So the baseline for a model nobody catalogued is now nothing, and `FRD-114` FR-7 says so — "absence
+of information is not permission" now extends from *what a model may do* to *whether it may be used
+at all*.
+
+Two refusals, deliberately not one: *"not in the model catalog"* needs somebody to **add** the
+model, *"has not been approved"* needs somebody to **release** it. A single message would send the
+reader to the wrong person.
+
+### 58 tests, and the right way to read them
+
+Turning the rule on failed 58 hermetic tests. Not one was a defect — every one used an invented
+model with no catalog row, which is what a test does.
+
+The tempting fix was to catalogue invented models in fifty test files. That would have taught the
+suite to lie about the policy. The honest one was to notice what those objects **are**: test
+doubles. `MockProvider` and the stub upstreams now say so, and `ModelApproved` does not govern a
+double, because its answers are deterministic fiction and approving fiction is theatre.
+
+### And the hole that fell out of it
+
+The exemption needed a boundary stronger than a flag, and looking for one surfaced something worse
+than the thing being fixed: **the mock was registered in every environment**. A fake model could
+serve production traffic, billed as free — which is worse than an ungoverned real model, because at
+least the real one answers.
+
+It is now registered only in `local` or demo mode. `FRD-307` did not create that hole; it made it
+impossible to keep not noticing.
+
+Verified live, twice: removing `qwen3:0.6b` from the catalog produced *"is not in the model
+catalog"*, and un-approving it produced *"has not been approved for use"* — each naming the model
+and the action.

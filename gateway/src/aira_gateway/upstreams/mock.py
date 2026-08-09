@@ -34,6 +34,15 @@ _DEFAULT_DIMENSIONS = 8
 
 
 class MockProvider:
+    #: This is a **test double**, not a model.
+    #:
+    #: `FRD-307` requires every usable model to be catalogued and approved by a Global
+    #: Administrator. That question is about governing *model access*, and there is no model here:
+    #: the answers are deterministic fiction, they cost nothing, and approving them would be
+    #: theatre. The exemption is bounded by where this provider is registered at all — see
+    #: `create_app`, which now leaves it out of any environment but `local`.
+    is_test_double = True
+
     """A deterministic, offline provider exposing a single ``mock-1`` model."""
 
     def __init__(self, model: str = "mock-1") -> None:

@@ -25,6 +25,10 @@ async def test_the_heuristic_is_never_undetermined() -> None:
 
 
 class _StubProvider:
+    #: A test double, like `MockProvider` (`FRD-307`): it serves invented models, so the
+    #: catalogue-and-approve requirement does not apply to it.
+    is_test_double = True
+
     def __init__(self, verdict: str) -> None:
         self._verdict = verdict
         self.seen: list[CanonicalRequest] = []
@@ -110,6 +114,10 @@ async def test_the_router_asks_for_no_thinking_either() -> None:
 
 
 class _BoomProvider(_StubProvider):
+    #: A test double, like `MockProvider` (`FRD-307`): it serves invented models, so the
+    #: catalogue-and-approve requirement does not apply to it.
+    is_test_double = True
+
     async def generate(self, request: CanonicalRequest) -> CanonicalResponse:
         raise UpstreamError("guard down")
 

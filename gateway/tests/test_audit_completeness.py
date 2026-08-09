@@ -58,6 +58,10 @@ class _AlwaysOverBudget:
 
 
 class _FailingProvider:
+    #: A test double, like `MockProvider` (`FRD-307`): it serves invented models, so the
+    #: catalogue-and-approve requirement does not apply to it.
+    is_test_double = True
+
     def models(self) -> list[UpstreamModel]:
         return [UpstreamModel("mock-1", "mock-1", ("generateContent",))]
 
@@ -159,6 +163,9 @@ async def test_the_outcome_vocabulary_is_closed() -> None:
 
 
 class _PrimaryDownProvider:
+    #: A test double, like `MockProvider` (`FRD-307`): it serves invented models, so the
+    #: catalogue-and-approve requirement does not apply to it.
+    is_test_double = True
     """Primary fails, fallback answers — the shape a cross-vendor chain takes (ADR-0012)."""
 
     def models(self) -> list[UpstreamModel]:
@@ -223,6 +230,9 @@ async def test_a_direct_answer_is_not_labelled_as_a_substitution() -> None:
 
 
 class _RoutedThenFailing:
+    #: A test double (`FRD-307`): it serves invented models, so the catalogue-and-approve
+    #: requirement does not apply to it.
+    is_test_double = True
     """Serves the requested model and the routed one; the routed one is down."""
 
     def models(self) -> list[UpstreamModel]:

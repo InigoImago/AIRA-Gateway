@@ -82,22 +82,47 @@ class ModelApproved:
     the two are independent. A model appearing on an upstream is not the same event as somebody
     accepting it into this installation, and until today the first implied the second.
 
-    **An undeclared model is not refused here.** `FRD-114` FR-7 has always said an undeclared model
-    gets the baseline and nothing more; making it unusable instead is a separate decision with a
-    different blast radius — it would take out every model an operator has not catalogued, on the
-    day this shipped. Refused is a model somebody wrote down and nobody approved, which is exactly
-    the state approval exists to express.
+    **A model that is not in the catalog is refused too** — the owner's decision, 2026-08-09:
+    *"es dürfen nur die Modelle verwendet werden, die im Katalog stehen und explizit von einem
+    globalen Admin angelegt wurden."* That is a real narrowing of `FRD-114` FR-7, which said an
+    undeclared model gets the baseline and nothing more: the baseline is now *nothing*. It closes
+    the loophole the first version left — deleting a declaration made a model usable again — and
+    it means a model appearing on an upstream is inert until somebody accepts it.
+
+    The two refusals are kept apart. "Not in the catalog" needs somebody to add the model; "not
+    approved" needs somebody to release it, and one message for both sends the reader to the wrong
+    action.
 
     Checked at **every hop**, like the rest: a chain whose fallback is unapproved would otherwise
     route around the decision rather than honouring it.
     """
 
-    def __init__(self, catalog: ModelCatalog) -> None:
+    def __init__(self, catalog: ModelCatalog, registry: object | None = None) -> None:
         self._catalog = catalog
+        self._registry = registry
 
     async def refusal(self, model: str) -> str | None:
+        provider = (
+            self._registry.provider_for(model)  # type: ignore[attr-defined]
+            if self._registry is not None
+            else None
+        )
+        if getattr(provider, "is_test_double", False):
+            # Not a model. Governing deterministic fiction is theatre, and the exemption is bounded
+            # by where the double is registered at all — `create_app` leaves it out of every
+            # environment but `local`.
+            return None
+
         declaration = await self._catalog.declaration(model)
-        if not declaration.declared or declaration.approved:
+        if not declaration.in_catalog:
+            # A different fact from "not approved", and a different thing to do about it. One
+            # needs somebody to add the model; the other needs somebody to release it, and a
+            # message that conflated them would send the reader to the wrong action.
+            return (
+                f"'{model}' is not in the model catalog. Only models a Global Administrator has "
+                "catalogued and approved may be used."
+            )
+        if declaration.approved:
             return None
         return (
             f"'{model}' is in the catalog and has not been approved for use. A Global "

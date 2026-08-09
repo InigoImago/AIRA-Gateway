@@ -289,7 +289,7 @@ def requirements_for(request: Request, canonical: CanonicalRequest | None) -> Pe
         # Unconditional, unlike the rest: every other check here depends on what the *request*
         # asked for, and this one is a property of the installation. Whether a model may be used
         # at all is not a question a request gets to make go away (`FRD-307`).
-        ModelApproved(catalog_of(request)),
+        ModelApproved(catalog_of(request), registry_of(request)),
     ]
     if canonical is not None and canonical.media_types:
         checks.append(MediaTypesSupported(catalog_of(request), canonical.media_types))

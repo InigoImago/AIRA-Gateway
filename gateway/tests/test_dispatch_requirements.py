@@ -39,6 +39,9 @@ def _request(model: str) -> CanonicalRequest:
 
 
 class _Provider:
+    #: A test double, like `MockProvider` (`FRD-307`): it serves invented models, so the
+    #: catalogue-and-approve requirement does not apply to it.
+    is_test_double = True
     """Serves the given models, each optionally in a declared region."""
 
     def __init__(self, *models: tuple[str, str]) -> None:

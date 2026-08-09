@@ -182,13 +182,16 @@ async def test_a_declared_but_unapproved_model_is_refused_by_name() -> None:
 
 
 @pytest.mark.anyio
-async def test_an_undeclared_model_is_not_gated_by_approval() -> None:
-    """`FRD-114` FR-7 has always said an undeclared model gets the baseline and nothing more.
+async def test_a_model_that_is_not_in_the_catalog_at_all_is_refused() -> None:
+    """**Reversed by owner decision on 2026-08-09**, and worth stating plainly.
 
-    Making it *unusable* instead is a separate decision with a different blast radius — it would
-    take out every model an operator has not catalogued, on the day this shipped. What approval
-    refuses is a model somebody wrote down and nobody released, which is exactly the state it
-    exists to express.
+    This test asserted the opposite for about an hour: that an undeclared model keeps `FRD-114`
+    FR-7's baseline. The requirement is now *"es dürfen nur die Modelle verwendet werden, die im
+    Katalog stehen und explizit von einem globalen Admin angelegt wurden"* — so the baseline for a
+    model nobody catalogued is **nothing**.
+
+    It closes the loophole the first version left: deleting a declaration made a model usable
+    again, which meant approval could be removed by removing the thing that carried it.
     """
     from aira_gateway.catalog import ModelCatalog
     from aira_gateway.requirements import ModelApproved
@@ -196,4 +199,27 @@ async def test_an_undeclared_model_is_not_gated_by_approval() -> None:
     app = _client(IT_SECURITY)
     with TestClient(app):
         check = ModelApproved(ModelCatalog(app.state.db_sessionmaker))
-        assert await check.refusal("never-catalogued") is None
+        refusal = await check.refusal("never-catalogued")
+
+    assert refusal is not None
+    # Two facts, two actions: this one needs somebody to *add* the model, not to release it.
+    assert "not in the model catalog" in refusal
+    assert "catalogued and approved" in refusal
+
+
+@pytest.mark.anyio
+async def test_a_test_double_is_not_governed_as_a_model() -> None:
+    """The mock answers with deterministic fiction. Approving it would be theatre, and the
+    exemption is bounded by where it is registered at all — `create_app` leaves it out of every
+    environment but `local`."""
+    from aira_gateway.catalog import ModelCatalog
+    from aira_gateway.requirements import ModelApproved
+
+    class _Registry:
+        def provider_for(self, _model: str) -> object:
+            return type("Double", (), {"is_test_double": True})()
+
+    app = _client(IT_SECURITY)
+    with TestClient(app):
+        check = ModelApproved(ModelCatalog(app.state.db_sessionmaker), _Registry())
+        assert await check.refusal("mock-1") is None

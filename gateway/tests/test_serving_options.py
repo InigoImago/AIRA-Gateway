@@ -182,6 +182,10 @@ async def test_a_bound_is_enforced_at_the_surface() -> None:
 
 
 class _Provider:
+    #: A test double, like `MockProvider` (`FRD-307`): it serves invented models, so the
+    #: catalogue-and-approve requirement does not apply to it.
+    is_test_double = True
+
     def __init__(self, *models: str) -> None:
         self._models = models
 

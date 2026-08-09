@@ -100,16 +100,44 @@ The migration sets every **existing** row to approved. A governance improvement 
 outage is not an improvement, and nobody decided anything about the old models by installing an
 update.
 
-### What is *not* gated
+### The gap was closed the same day
 
-An **undeclared** model — one with no catalog row at all — is unaffected. `FRD-114` FR-7 has always
-said an undeclared model gets the baseline and nothing more, and making it unusable instead is a
-separate decision with a much larger blast radius: it would take out every model an operator has
-not catalogued, on the day this shipped. Approval refuses what somebody wrote down and nobody
-released, which is exactly the state it exists to express.
+The first version left a model with **no catalog row** ungated, on `FRD-114` FR-7's reasoning that
+an undeclared model gets the baseline. The owner closed it:
 
-Closing that gap — *nothing at all is callable unless approved* — is a one-line change to
-`ModelApproved` and a deliberate open question rather than an oversight.
+> *"Es dürfen nur die Modelle verwendet werden, die im Katalog stehen und explizit von einem
+> globalen Admin angelegt wurden."*
+
+So the baseline for a model nobody catalogued is **nothing**. That matters beyond tidiness: the
+first version could be defeated by *deleting* a declaration, which meant approval was removable by
+removing the thing that carried it.
+
+**This narrows `FRD-114` FR-7 and that FRD says so.** "Absence of information is not permission"
+now extends from *what a model may do* to *whether it may be used at all*.
+
+Two refusals, kept apart, because they need different actions:
+
+| | message | what to do |
+|---|---|---|
+| no catalog row | *"is not in the model catalog"* | add the model |
+| row, not approved | *"has not been approved for use"* | release it |
+
+### The one exemption, and why it is not a hole
+
+A **test double** — `MockProvider` and the stub upstreams in the suite — is not governed. Its
+answers are deterministic fiction, they cost nothing, and approving them would be theatre.
+
+The exemption is bounded by something stronger than a flag: the mock is **no longer registered
+outside `local`**. It used to be registered everywhere, which meant a fake model could serve real
+traffic and be billed as free — worse than an ungoverned real one, and a hole `FRD-307` made
+impossible to keep ignoring.
+
+### The blast radius, measured rather than estimated
+
+Turning the rule on failed **58** hermetic tests. Not one of them was a defect: every one used an
+invented model with no catalog row. Marking the stub providers as the doubles they are took it to
+zero, which is the honest fix — the alternative, cataloguing invented models in fifty test files,
+would have taught the suite to lie about what the policy is.
 
 ### Still open from the original FRD
 

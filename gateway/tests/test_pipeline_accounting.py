@@ -32,6 +32,10 @@ _BODY = {"contents": [{"role": "user", "parts": [{"text": "what is 2+2?"}]}]}
 class _Guard:
     """A model that answers the classifier and the caller, counting what each cost."""
 
+    #: A test double (`FRD-307`): it serves an invented model, so the catalogue-and-approve
+    #: requirement does not apply to it.
+    is_test_double = True
+
     def __init__(self, verdict: str = "SAFE") -> None:
         self._verdict = verdict
         self.calls = 0
@@ -273,6 +277,9 @@ async def test_the_pipeline_call_is_not_counted_as_a_second_request() -> None:
 
 
 class _Exhausted:
+    #: A test double (`FRD-307`): it serves invented models, so the catalogue-and-approve
+    #: requirement does not apply to it.
+    is_test_double = True
     """A budget service that refuses before anything has been spent."""
 
     async def refuse_if_exhausted(self, use_case, subject, now=None):  # noqa: ANN001, ANN201

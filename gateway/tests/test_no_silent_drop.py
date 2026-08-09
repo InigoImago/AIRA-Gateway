@@ -268,6 +268,10 @@ def test_the_anthropic_dialect_refuses_what_the_messages_api_has_no_word_for(fie
 
 
 class _Provider:
+    #: A test double, like `MockProvider` (`FRD-307`): it serves invented models, so the
+    #: catalogue-and-approve requirement does not apply to it.
+    is_test_double = True
+
     def __init__(self, supported: frozenset[str]) -> None:
         self.sampling_controls = supported
 
@@ -278,6 +282,9 @@ class _Provider:
 
 
 class _Undeclared(_Provider):
+    #: A test double, like `MockProvider` (`FRD-307`): it serves invented models, so the
+    #: catalogue-and-approve requirement does not apply to it.
+    is_test_double = True
     """An adapter that forgot. `sampling_controls` is deliberately absent, not empty."""
 
     def __init__(self) -> None:
@@ -382,6 +389,10 @@ def test_the_kira_surface_refuses_an_unknown_field_too() -> None:
 
 class _Limited:
     """A provider whose dialect has `top_p` and nothing else."""
+
+    #: A test double (`FRD-307`): it serves invented models, so the catalogue-and-approve
+    #: requirement does not apply to it.
+    is_test_double = True
 
     sampling_controls = frozenset({"top_p"})
 

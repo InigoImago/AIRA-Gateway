@@ -9,6 +9,10 @@ _BODY = {"contents": [{"role": "user", "parts": [{"text": "hi"}]}]}
 
 
 class _BoomProvider:
+    #: A test double, like `MockProvider` (`FRD-307`): it serves invented models, so the
+    #: catalogue-and-approve requirement does not apply to it.
+    is_test_double = True
+
     def models(self) -> list[UpstreamModel]:
         return [UpstreamModel("mock-1", "mock-1", ("generateContent",))]
 
@@ -38,6 +42,9 @@ def test_unexpected_error_on_api_returns_gemini_500() -> None:
 
 
 class _RaisingProvider:
+    #: A test double, like `MockProvider` (`FRD-307`): it serves invented models, so the
+    #: catalogue-and-approve requirement does not apply to it.
+    is_test_double = True
     """Provider whose methods raise an ``UpstreamError`` with a configurable upstream status."""
 
     def __init__(self, status: int | None) -> None:

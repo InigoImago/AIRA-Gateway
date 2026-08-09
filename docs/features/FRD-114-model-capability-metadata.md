@@ -109,6 +109,11 @@ usable, and `FRD-113` cannot tell a supported task type from a typo.
   `ADR-0011`'s "an ambiguous routing table refuses to boot", one level down — the same rule, because
   it is the same hazard.
 - **FR-7 Missing metadata fails closed.** See §5.3.
+  **Narrowed by `FRD-307` on 2026-08-09.** This requirement said an *undeclared* model gets the
+  baseline — generation and embedding — and nothing more. The owner's decision is that only
+  catalogued, approved models may be used at all, so the baseline for a model nobody catalogued is
+  now **nothing**. "Absence of information is not permission" extends from *what a model may do* to
+  *whether it may be used*.
 - **FR-8 Distributed, not queried.** The gateway reads its own read-model, never calls Management
   on the request path. This is the existing pattern and the reason the gateway survives a
   Management outage.

@@ -133,8 +133,14 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
 
     app = FastAPI(title=settings.app_name, version=__version__, lifespan=lifespan)
     app.state.settings = settings
-    # Deterministic mock is always available; the real Gemini provider is added when configured.
-    providers: list[Upstream] = [MockProvider()]
+    # The mock answers with deterministic fiction. That is exactly what the demo and the hermetic
+    # suite need and exactly what production must not have: a fake model serving real traffic,
+    # billed as free, is worse than an ungoverned real one — and until 2026-08-09 it was registered
+    # everywhere. `FRD-307` made the question unavoidable, because a test double cannot sensibly be
+    # "approved by a Global Administrator".
+    providers: list[Upstream] = []
+    if settings.environment == "local" or settings.demo_mode:
+        providers.append(MockProvider())
     gemini = build_gemini_upstream(settings)
     if gemini is not None:
         providers.append(gemini)

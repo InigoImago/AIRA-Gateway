@@ -74,6 +74,10 @@ class _AlwaysLimited:
 
 
 class _FailingProvider:
+    #: A test double, like `MockProvider` (`FRD-307`): it serves invented models, so the
+    #: catalogue-and-approve requirement does not apply to it.
+    is_test_double = True
+
     def models(self) -> list[UpstreamModel]:
         return [UpstreamModel("mock-1", "mock-1", ("generateContent",))]
 
@@ -161,6 +165,9 @@ def test_a_failed_upstream_releases_the_reservation() -> None:
 
 
 class _BoomProvider:
+    #: A test double, like `MockProvider` (`FRD-307`): it serves invented models, so the
+    #: catalogue-and-approve requirement does not apply to it.
+    is_test_double = True
     """Fails with something that is *not* an UpstreamError — a bug, not an outage."""
 
     def models(self) -> list[UpstreamModel]:

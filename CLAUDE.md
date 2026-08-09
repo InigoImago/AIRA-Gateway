@@ -1023,6 +1023,27 @@ case it does not create and the loop's `continue` dropped it silently — three 
 count looked plausible, and the missing one was the only rule that *acts*. Third instance of
 "returns silently for something unknown", after `record_to_outbox` and the missing Kafka topics.
 
+**Only catalogued models (`FRD-307`, 2026-08-09)** — owner decision: *only models in the catalog,
+explicitly created by a Global Administrator, may be used.* `approved` defaults **false** in
+Management (the default is the decision) and **true** in the gateway read-model (fed by events; an
+older Management sends no such field, and reading its absence as "not approved" would retire the
+whole catalog on a partial upgrade). Enforced as a dispatch condition, so it holds at **every hop**
+of a fallback chain. **This narrows `FRD-114` FR-7**: the baseline for a model nobody catalogued is
+now *nothing*, because the first version could be defeated by **deleting** a declaration — approval
+was removable by removing the thing that carried it. Two refusals kept apart, because they need
+different actions: *"not in the model catalog"* (add it) and *"has not been approved"* (release it).
+**58 hermetic tests failed when the rule went on and not one was a defect** — every one used an
+invented model, which is what a test does; the fix was to notice what those objects *are* (test
+doubles, now marked as such) rather than to catalogue fiction in fifty files. That exemption needed
+a boundary, and looking for one surfaced something worse: **the mock provider was registered in
+every environment**, so a fake model could serve production traffic billed as free. It is now
+registered only in `local`/demo. And **Vault was built and never wired**: `FRD-116` shipped on
+2026-08-06 and no container was given `VAULT_ADDR` for three days, so every credential came from the
+environment while the feature read as done — an unconfigured secret store is indistinguishable from
+an absent one. Both containers get the variables now (secret-id in a **file**, never the
+environment), `make vault-init` creates path, policy and AppRole, and **`/readyz` says where the
+secrets came from**, which is the only reason this could go unnoticed at all.
+
 Next candidates: **`FRD-114`** (model metadata — now also carries publisher + default output cap,
 prerequisite for 110–113 and 119), **`FRD-110`** (documents/images — the widest gap),
 **`FRD-115`/`FRD-119`** (Vertex EU + the Anthropic dialect — required), **`FRD-116`** (Vault),

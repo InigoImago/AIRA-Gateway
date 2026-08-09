@@ -12,6 +12,10 @@ from aira_gateway.upstreams.base import ProviderRegistry, UpstreamError, Upstrea
 
 
 class _Provider:
+    #: A test double, like `MockProvider` (`FRD-307`): it serves invented models, so the
+    #: catalogue-and-approve requirement does not apply to it.
+    is_test_double = True
+
     def __init__(self, name: str, *, fail: bool = False) -> None:
         self._name = name
         self._fail = fail

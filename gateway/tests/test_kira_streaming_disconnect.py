@@ -34,6 +34,9 @@ _BODY = {"request": {"parts": [{"text": "hi"}]}, "model_id": 1}
 
 
 class _SlowProvider:
+    #: A test double, like `MockProvider` (`FRD-307`): it serves invented models, so the
+    #: catalogue-and-approve requirement does not apply to it.
+    is_test_double = True
     """A model that takes its time, so a caller can go away while it is still answering."""
 
     def __init__(self) -> None:

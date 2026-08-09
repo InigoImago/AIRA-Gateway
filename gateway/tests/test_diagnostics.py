@@ -39,6 +39,9 @@ class _Clock:
 
 
 class _Provider:
+    #: A test double, like `MockProvider` (`FRD-307`): it serves invented models, so the
+    #: catalogue-and-approve requirement does not apply to it.
+    is_test_double = True
     """An adapter that can answer a cheap remote question.
 
     `generate` and `embed` raise: a probe that reached them would be paying a model to answer "are
@@ -78,6 +81,9 @@ class _Broken(_Provider):
 
 
 class _Slow(_Provider):
+    #: A test double, like `MockProvider` (`FRD-307`): it serves invented models, so the
+    #: catalogue-and-approve requirement does not apply to it.
+    is_test_double = True
     probe_name = "slow"
 
     async def ping(self) -> str:

@@ -56,6 +56,10 @@ class ModelDeclaration:
 
     name: str
     declared: bool = False
+    #: Whether the catalog holds a row for this model at all — distinct from :attr:`declared`,
+    #: which means somebody also wrote down what it can do. A model can be catalogued and priced
+    #: without a capability list; only the first of those is what `FRD-307` requires.
+    in_catalog: bool = False
     #: Whether a Global Administrator has released it (`FRD-307`). Undeclared models are not
     #: gated by this — see :class:`ModelApproved` for why.
     approved: bool = True
@@ -256,6 +260,7 @@ def _from_record(model: str, record: ModelRead) -> ModelDeclaration:
     return ModelDeclaration(
         name=model,
         declared=declared,
+        in_catalog=True,
         approved=bool(record.approved),
         # A row with prices but no capability list is *undeclared*, so it gets the baseline —
         # not an empty set, which would refuse the generation that already works today.
