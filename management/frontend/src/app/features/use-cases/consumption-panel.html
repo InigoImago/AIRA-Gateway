@@ -1,0 +1,94 @@
+<!--
+  Deliberately not a progress bar. There is no denominator here — that is the whole point of the
+  panel — and inventing one would be the defect it fixes, in the other direction.
+-->
+<div class="card" data-testid="consumption">
+  <div class="spread">
+    <h3 class="section-title" style="margin: 0">Consumption</h3>
+    <a class="btn btn--sm" routerLink="/reporting">Full reporting</a>
+  </div>
+  <p class="muted" style="margin: 0.25rem 0 0">
+    What this use case has used, whether or not a limit is set. Taken from the request log — the
+    same record the reporting screen and the audit trail are built from.
+  </p>
+
+  <!--
+    A plain callout, **not** a warning. Nothing is wrong here: the reader is simply not in the
+    group, which is the ordinary state of a use case they just created (`FRD-209` — AIRA never
+    writes to the directory). Dressing it as a warning greeted every new use case with an alarm
+    beside the retention warning already on this tab, and a page with two warnings on it about
+    nothing teaches the reader to skip the next one.
+  -->
+  @if (consumption().outOfScope) {
+    <p class="callout" style="margin-top: 1rem" data-testid="consumption-scope">
+      Consumption is not shown: the gateway takes membership from the Keycloak group
+      <code>/use-cases/{{ slug() }}</code
+      >, and this account is not in it. Administering a use case here does not put you in that group
+      — AIRA never writes to the directory. Ask an administrator to add you, or read the figures on
+      the reporting screen if your role covers them.
+    </p>
+  } @else if (consumption().unavailable) {
+    <p class="callout callout--warning" style="margin-top: 1rem" data-testid="consumption-down">
+      Consumption is unavailable: {{ consumption().reason }} This is
+      <strong>unknown, not zero</strong>.
+    </p>
+  } @else {
+    @if (consumption().partial) {
+      <p
+        class="callout callout--warning"
+        style="margin-top: 1rem"
+        data-testid="consumption-partial"
+      >
+        One of the two periods did not load and is shown as “—”: {{ consumption().reason }} What is
+        below arrived; the dash is <strong>unknown, not zero</strong>.
+      </p>
+    }
+
+    <div class="stack" style="margin-top: 1rem">
+      <div>
+        <p class="muted" style="margin: 0 0 0.35rem; font-size: 0.82rem">This month</p>
+        <dl class="stat-row">
+          @for (stat of monthStats(); track stat.key) {
+            <div class="stat">
+              <dt>
+                {{ stat.label }}
+                <app-info-hint
+                  [label]="stat.label"
+                  [testid]="'consumption-' + stat.key"
+                  [wide]="true"
+                >
+                  {{ stat.help }}
+                </app-info-hint>
+              </dt>
+              <dd [attr.data-testid]="'consumption-month-' + stat.key">{{ stat.value }}</dd>
+            </div>
+          }
+        </dl>
+      </div>
+      <div>
+        <p class="muted" style="margin: 0 0 0.35rem; font-size: 0.82rem">Today</p>
+        <dl class="stat-row">
+          @for (stat of todayStats(); track stat.key) {
+            <div class="stat">
+              <dt>{{ stat.label }}</dt>
+              <dd [attr.data-testid]="'consumption-today-' + stat.key">{{ stat.value }}</dd>
+            </div>
+          }
+        </dl>
+      </div>
+    </div>
+
+    @if (unpriced() > 0) {
+      <p
+        class="callout callout--warning"
+        style="margin-top: 1rem"
+        data-testid="consumption-unpriced"
+      >
+        {{ unpriced() }} request(s) this month ran on a model with no price on file. Their cost is
+        <strong>unknown, not zero</strong>, so the spend above is a lower bound. A Global
+        Administrator can add the missing prices under
+        <a routerLink="/models">Models &amp; prices</a>.
+      </p>
+    }
+  }
+</div>

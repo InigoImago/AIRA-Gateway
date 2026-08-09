@@ -9,7 +9,7 @@ import { USERS, createUseCase, login, uniqueSlug } from './support';
  */
 test.describe('Retention', () => {
   test('a new use case keeps payloads for a week, stated on its overview', async ({ page }) => {
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('retention');
     await createUseCase(page, slug, 'Retention probe');
 
@@ -24,7 +24,7 @@ test.describe('Retention', () => {
   });
 
   test('the period can be changed and the change is confirmed', async ({ page }) => {
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('change');
     await createUseCase(page, slug, 'Change probe');
 
@@ -38,7 +38,7 @@ test.describe('Retention', () => {
   });
 
   test('an impossible period is refused before it is sent', async ({ page }) => {
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('range');
     await createUseCase(page, slug, 'Range probe');
 
@@ -55,7 +55,7 @@ test.describe('Payload storage', () => {
   test('storage can be switched off entirely, with the consequence spelled out', async ({
     page,
   }) => {
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('nostore');
     await createUseCase(page, slug, 'No-store probe');
 
@@ -65,7 +65,10 @@ test.describe('Payload storage', () => {
     await page.uncheck('input[type="checkbox"][name="store_payloads"]');
     // With nothing kept there is no period to ask for.
     await expect(page.locator('#retention-days')).toHaveCount(0);
-    await expect(page.locator('.callout--warning')).toContainText(
+    // Addressed by its own id rather than as "the warning on this page": the overview carries
+    // more than one callout now, and a selector that means "whichever one there is" breaks the
+    // next time a panel is added. It did — `FRD-603`'s consumption card.
+    await expect(page.getByTestId('storage-off-warning')).toContainText(
       'Nothing a caller sends or receives is written',
     );
 
@@ -78,7 +81,7 @@ test.describe('Payload storage', () => {
   });
 
   test('storage can be switched back on and the period reappears', async ({ page }) => {
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('restore');
     await createUseCase(page, slug, 'Restore probe');
 

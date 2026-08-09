@@ -404,6 +404,46 @@ export interface Report {
   by_member: ReportRow[];
   /** Why requests ended the way they did — `served`, `rate_limited`, … (FRD-122). */
   by_outcome: ReportRow[];
+  /** The single use case this report was narrowed to, or `null` for all of them (FRD-603). */
+  use_case?: string | null;
+  /**
+   * Whether the caller was allowed to see what they asked for.
+   *
+   * `false` means the report is empty because the use case is not theirs, not because nothing
+   * happened in it. Two different facts that look identical in the rows, and a screen shown only
+   * the rows reports the second as the first.
+   */
+  in_scope?: boolean;
+}
+
+/**
+ * What a use case actually consumed, independent of any limit (FRD-603).
+ *
+ * The distinction this type exists to keep: `month`/`today` being `null` means **unknown** —
+ * the gateway was not reachable, or the caller may not see this use case — and is never the same
+ * as a row of zeroes, which means nothing was consumed. Rendering unknown as zero is how a page
+ * comes to state, confidently, that a use case cost nothing.
+ */
+export interface UseCaseConsumption {
+  month: ReportRow | null;
+  today: ReportRow | null;
+  /**
+   * **Nothing** arrived. Deliberately not "something went wrong": the two windows are two
+   * requests, and a single flag written by both meant whichever answered last decided what the
+   * reader saw — a month that had already been fetched was hidden because the day's request
+   * failed a moment later.
+   */
+  unavailable: boolean;
+  /** One window arrived and the other did not. What is known is shown; the rest says so. */
+  partial: boolean;
+  /**
+   * Why it did not arrive, **in the backend's own words** where there are any
+   * (`core/api/error-message.ts`). "The gateway did not answer" is a guess, and it is the wrong
+   * guess for every failure that is not a timeout — the server usually said something more useful.
+   */
+  reason: string;
+  /** The gateway answered, and this use case is not one this caller may see figures for. */
+  outOfScope: boolean;
 }
 
 /** One page of findings — cursor-paged, because findings are an append-only log. */

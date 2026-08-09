@@ -221,6 +221,20 @@ export class UseCaseService {
   }
 
   /**
+   * The same report, narrowed to one use case (FRD-603).
+   *
+   * The **same endpoint** on purpose. What a caller may see is one function on the gateway, and
+   * an endpoint of its own would be a second place to decide it — which is how an export comes to
+   * return more than the screen (`FRD-602` §1). The parameter can only ever intersect with what
+   * the token already allows, so this call cannot ask for somebody else's figures.
+   */
+  useCaseReport(slug: string, from: string, to: string): Observable<Report> {
+    return this.http.get<Report>('/gw/v1beta/reporting', {
+      params: { from, to, use_case: slug },
+    });
+  }
+
+  /**
    * The same report as a spreadsheet (FRD-602).
    *
    * A blob rather than a plain link, because the endpoint needs the bearer token and an `<a href>`

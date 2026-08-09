@@ -9,7 +9,7 @@ import { USERS, createUseCase, login, logout, uniqueSlug } from './support';
  */
 test.describe('Cost budgets', () => {
   test('a spend limit can be set and is shown as money', async ({ page }) => {
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('spend');
     await createUseCase(page, slug, 'Spend probe');
 
@@ -23,7 +23,7 @@ test.describe('Cost budgets', () => {
   });
 
   test('a budget still requires at least one limit, and refuses a non-amount', async ({ page }) => {
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('invalid');
     await createUseCase(page, slug, 'Invalid probe');
 
@@ -90,9 +90,7 @@ test.describe('Cost budgets', () => {
     await page.fill('#model-input', '1.00');
 
     await expect(page.locator('.field__hint--error')).toContainText('both');
-    await expect(
-      page.locator('button[type="submit"][form="model-editor-form"]'),
-    ).toBeDisabled();
+    await expect(page.locator('button[type="submit"][form="model-editor-form"]')).toBeDisabled();
   });
 
   test('only a global admin can change prices', async ({ page }) => {
@@ -107,5 +105,77 @@ test.describe('Cost budgets', () => {
     await expect(page.locator('h2')).toContainText('Models');
     await expect(page.locator('button:has-text("Add model")')).toHaveCount(0);
     await expect(page.locator('[aria-label^="Remove "]')).toHaveCount(0);
+  });
+});
+
+/**
+ * What a use case consumed, with **no budget at all** (`FRD-603`).
+ *
+ * An e2e test rather than a component one for the reason this project has paid for twice: the
+ * defect was never in the arithmetic. The figures existed in `request_logs` all along and nothing
+ * put them on screen, and only a browser can tell "the panel is wired" from "the panel renders".
+ *
+ * It runs against **`smoke-test`**, which is the use case the defect was reported on: seeded on
+ * every installation, deliberately unlimited, and one `ucadmin` is in the Keycloak group for. No
+ * figure is asserted — that would test the traffic — only that the figures are *there*, which is
+ * exactly what was missing.
+ *
+ * On the **overview** since 2026-08-09: consumption is a fact about the use case, not about its
+ * limits, and the overview is where somebody looks to see where it stands.
+ */
+test.describe('Consumption without a budget', () => {
+  test('an unlimited use case still shows what it has used', async ({ page }) => {
+    await login(page, USERS.useCaseAdmin);
+    await page.goto('/use-cases/smoke-test?tab=overview');
+
+    const card = page.getByTestId('consumption');
+    await expect(card).toBeVisible();
+    // Both windows: a month figure alone cannot say whether something is running away right now.
+    await expect(card).toContainText('This month');
+    await expect(card).toContainText('Today');
+    await expect(page.getByTestId('consumption-month-tokens')).toBeVisible();
+    await expect(page.getByTestId('consumption-month-cost')).toBeVisible();
+
+    // A figure, not an em dash: the unknown states are for a gateway that could not be reached or
+    // a report this caller may not fill, and neither is true here.
+    await expect(page.getByTestId('consumption-month-requests')).not.toHaveText('—');
+    await expect(page.getByTestId('consumption-down')).toHaveCount(0);
+    await expect(page.getByTestId('consumption-scope')).toHaveCount(0);
+
+    // And the budgets tab is unchanged by the move: no budget is still no budget, and it no
+    // longer has to carry a figure that was never about limits.
+    await page.goto('/use-cases/smoke-test?tab=budgets');
+    await expect(page.locator('text=No budgets yet')).toBeVisible();
+    await expect(page.getByTestId('consumption')).toHaveCount(0);
+  });
+
+  /**
+   * The other half, and it is the one this test round actually discovered.
+   *
+   * Creating a use case in the console makes you its administrator in Management; it does **not**
+   * put you in the Keycloak group the gateway takes membership from, because AIRA never writes to
+   * the directory (`FRD-209`). So the administrator of a brand-new use case is, to the gateway,
+   * nobody — and the panel says so **naming the group**, rather than showing zeroes that would
+   * read as "this use case has consumed nothing".
+   *
+   * That distinction is the whole of `in_scope`, and this is the only test that reaches it through
+   * a real token.
+   */
+  test('a use case the gateway does not have you in says so, rather than showing zero', async ({
+    page,
+  }) => {
+    // Created by a Global Administrator, because only they may (`ADR-0017`) — and then **read by
+    // somebody who is not oversight**, because that is the whole property: a Global Administrator
+    // sees every use case's figures, so asserting this as one would assert nothing.
+    await login(page, USERS.globalAdmin);
+    const slug = uniqueSlug('unlinked');
+    await createUseCase(page, slug, 'Unlinked probe');
+
+    await logout(page);
+    await login(page, USERS.useCaseAdmin);
+    await page.goto(`/use-cases/${slug}?tab=overview`);
+
+    await expect(page.getByTestId('consumption-scope')).toContainText(`/use-cases/${slug}`);
+    await expect(page.getByTestId('consumption-month-requests')).toHaveCount(0);
   });
 });

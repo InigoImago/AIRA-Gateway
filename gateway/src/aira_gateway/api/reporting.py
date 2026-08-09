@@ -27,7 +27,7 @@ from sqlalchemy import and_, or_, select
 
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.audit import Outcome
-from aira_gateway.auth.dependencies import require_principal
+from aira_gateway.auth.dependencies import require_principal, require_valid_use_case
 from aira_gateway.auth.principal import Principal
 from aira_gateway.db.models import AnomalyEvent, PayloadAccess, RequestLog
 from aira_gateway.payloads import may_read_payload, payload_body, restricted_use_cases
@@ -117,6 +117,7 @@ async def reporting(
     start: str | None = Query(default=None, alias="from"),
     end: str | None = Query(default=None, alias="to"),
     breakdown: str = Query(default="use_case"),
+    use_case: str = Query(default="", max_length=64),
 ) -> Response:
     """Spend and usage over a window, defaulting to the current calendar month.
 
@@ -124,6 +125,12 @@ async def reporting(
     endpoint (`FRD-602` §5.3). The visibility rule below is one function guarded by its own
     mutations; a second entry point would be a second chance to forget it, and the way an export
     comes to return more than the screen does.
+
+    `use_case` narrows the report to one of them (`FRD-603`). It exists because consumption was
+    only ever *displayed* as a fraction of a limit: with no budget configured there was no
+    denominator, so the console showed nothing at all — while every request had been counted and
+    priced in the request log all along. The figure needed a reader, not a calculation, and this
+    is the one query that already knows who may see which use case.
     """
     now = datetime.now(UTC)
     default_start, default_end = _month_window(now)
@@ -147,8 +154,28 @@ async def reporting(
 
     service: ReportingService = request.app.state.reporting
     scope = visible_scope(principal)
+
+    # **A filter narrows, never widens.** The same rule the trace view states (`FRD-505` FR-3),
+    # and the one that matters most here: `visible_scope` decides what this caller may be shown,
+    # and this parameter may only take an intersection of it. Assigning `scope = (use_case,)`
+    # unconditionally would read as a narrowing and be a widening — anybody could name any use
+    # case and be told its spend.
+    in_scope = True
+    if use_case:
+        require_valid_use_case(use_case)
+        if scope is None or use_case in scope:
+            scope = (use_case,)
+        else:
+            # Emptiness rather than a refusal, and `in_scope` saying which of the two empties this
+            # is. The same answer the findings list gives, for the same reason: "nothing happened
+            # here" and "this is not yours to see" are different facts, and a screen that cannot
+            # tell them apart reports the second as the first.
+            scope, in_scope = (), False
+
     report = await service.report(scope, window_start, window_end)
     report["scope"] = "all" if scope is None else "use_cases"
+    report["use_case"] = use_case or None
+    report["in_scope"] = in_scope
 
     if fmt == "json":
         return JSONResponse(report)

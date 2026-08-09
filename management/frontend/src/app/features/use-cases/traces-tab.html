@@ -222,6 +222,17 @@
                      you are reading, not something you scan a list by. -->
                 <div class="muted" style="font-size: 0.78rem">
                   {{ row.subject }}
+                  <!--
+                    **Whose name this is.** For an API key the caller is the person the key was
+                    issued to, which is who answers for it — not who wrote the request. Without
+                    this marker an investigator reads a colleague's name beside an agent's traffic
+                    and concludes a human typed it. The words carry the meaning rather than a
+                    tooltip, because a marker nobody can hover is a marker on a touch screen
+                    (`FRD-207`). An OIDC caller has no marker: there the name *is* the person.
+                  -->
+                  @if (row.credential) {
+                    <span class="badge badge--muted" data-testid="trace-via-key">via API key</span>
+                  }
                   @if (!slug() && row.use_case) {
                     · {{ row.use_case }}
                   }

@@ -2,7 +2,8 @@ import { TestBed } from '@angular/core/testing';
 import { Observable, of, throwError } from 'rxjs';
 import { Report, ReportRow } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
-import { ReportingPage, isoDay, windowFor } from './reporting-page';
+import { ReportingPage } from './reporting-page';
+import { isoDay, windowFor } from '../../core/ui/periods';
 
 function row(over: Partial<ReportRow> = {}): ReportRow {
   return {

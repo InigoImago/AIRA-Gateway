@@ -160,6 +160,13 @@
         </div>
       </div>
 
+      <!--
+        What it has actually used, beside how it is configured (`FRD-603`). On the overview rather
+        than in the budgets tab, because consumption is a fact about the use case and not a fact
+        about its limits — and a reader opening a use case wants both in one place.
+      -->
+      <app-consumption-panel [slug]="slug" [consumption]="consumption()" />
+
       <div class="disclosure">
         <h3 class="section-title" style="margin-bottom: 0.25rem">Data protection</h3>
         <p class="muted" style="margin: 0 0 0.75rem">
@@ -213,7 +220,11 @@
                 </div>
               </div>
             } @else {
-              <p class="callout callout--warning" style="margin: 0">
+              <p
+                class="callout callout--warning"
+                style="margin: 0"
+                data-testid="storage-off-warning"
+              >
                 Nothing a caller sends or receives is written for this use case. Anything already
                 stored is removed on the next retention run. Incidents can then only be traced
                 through the metadata.
@@ -299,6 +310,23 @@
       }
 
       @if (showIssueKey() && isMember()) {
+        <!--
+          Said before the button, not after the fact. Every request made with this key is recorded
+          under the name of whoever issues it, and the person clicking is the one who has to know
+          that — an agent that misbehaves is investigated by following the key back to a person
+          (`FRD-604`).
+
+          Worded to be true of a shared credential as well: it claims responsibility for the key,
+          never that its owner typed the prompt. A team key is a legitimate arrangement; a console
+          that implies a human sat behind every request would mislead exactly the reader who came
+          to find one.
+        -->
+        <p class="callout" style="margin-top: 1rem" data-testid="key-responsibility">
+          Requests made with this key are recorded under <strong>your name</strong>, and it is you
+          who answers for how it is used — including by anything you hand it to. If it is meant for
+          a team or a service rather than for you personally, issue it under an account that says
+          so.
+        </p>
         <form class="form-inline disclosure" (ngSubmit)="issueKey()">
           <div class="field grow">
             <label for="key-label">Label (optional)</label>
@@ -369,6 +397,12 @@
             never retrievable, so a config offered later could only carry a placeholder.
             <strong>It contains the key</strong> — treat the file as the credential it is.
           </span>
+          <!-- Repeated at the one moment the plaintext exists, because this is where it is about
+               to leave the screen and go somewhere the reader will not remember later. -->
+          <span class="field__hint" data-testid="key-issued-responsibility">
+            This key is recorded as yours. Whatever is done with it — by you, by a tool, or by an
+            agent you give it to — is attributed to your name.
+          </span>
           @if (copyFailed()) {
             <span class="field__hint field__hint--error">
               This browser would not let the page write to the clipboard — select the key above and
@@ -384,7 +418,15 @@
             <tr>
               <th scope="col">Prefix</th>
               <th scope="col">Label</th>
-              <th scope="col">Owner</th>
+              <th scope="col">
+                Owner
+                <app-info-hint label="Owner" testid="key-owner" [wide]="true">
+                  Who issued this key and answers for how it is used. Every request made with it is
+                  recorded under this name — which says who is accountable for the credential, not
+                  that this person wrote the request. A key handed to an agent, a script or a team
+                  still points here.
+                </app-info-hint>
+              </th>
               <th scope="col">Status</th>
               <th scope="col">Expires</th>
               <th scope="col"><span class="sr-only">Actions</span></th>

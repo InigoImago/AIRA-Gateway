@@ -1,10 +1,52 @@
 import { TestBed } from '@angular/core/testing';
 import { ActivatedRoute, provideRouter } from '@angular/router';
 import { Observable, of, throwError } from 'rxjs';
-import { ApiKey, Budget, BudgetUsage, Membership, RateLimit, UseCase } from '../../core/api/models';
+import {
+  ApiKey,
+  Budget,
+  BudgetUsage,
+  Membership,
+  RateLimit,
+  Report,
+  ReportRow,
+  UseCase,
+  UseCaseConsumption,
+} from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { ConfirmService } from '../../core/ui/confirm.service';
 import { UseCaseDetail } from './use-case-detail';
+
+function reportRow(over: Partial<ReportRow> = {}): ReportRow {
+  return {
+    key: 'demo-uc',
+    requests: 0,
+    prompt_tokens: 0,
+    completion_tokens: 0,
+    total_tokens: 0,
+    cost_nanos: 0,
+    cost: '0.00',
+    unpriced_requests: 0,
+    failed_requests: 0,
+    avg_latency_ms: null,
+    max_latency_ms: null,
+    ...over,
+  };
+}
+
+function emptyReport(over: Partial<Report> = {}): Report {
+  return {
+    from: '2026-08-01',
+    to: '2026-09-01',
+    scope: 'use_cases',
+    totals: reportRow(),
+    by_use_case: [],
+    by_model: [],
+    by_member: [],
+    by_outcome: [],
+    in_scope: true,
+    ...over,
+  };
+}
 
 const USE_CASE: UseCase = {
   slug: 'demo-uc',
@@ -26,6 +68,8 @@ interface Overrides {
   apiKeys?: Observable<ApiKey[]>;
   budgets?: Observable<Budget[]>;
   budgetUsage?: Observable<{ usage: BudgetUsage[] }>;
+  useCaseReport?: Observable<Report>;
+  useCaseReportPerCall?: () => Observable<Report>;
   addMember?: Observable<Membership>;
   removeMember?: Observable<void>;
   issueApiKey?: Observable<unknown>;
@@ -46,6 +90,7 @@ interface Detail {
   feedback: { error: () => string | null; notice: () => string | null; busy: () => boolean };
   usageUnavailable: () => boolean;
   usageRefused: () => boolean;
+  consumption: () => UseCaseConsumption;
   retentionDays: { set: (v: number | null) => void; (): number | null };
   storePayloads: { set: (v: boolean) => void; (): boolean };
   retentionError: () => string | null;
@@ -96,6 +141,7 @@ function setup(overrides: Overrides = {}, confirmAnswer = true, queryTab: string
   // Several tests build two components (accepted vs. declined confirmation) in one case.
   TestBed.resetTestingModule();
   const calls: string[] = [];
+  const reportCalls: string[] = [];
   const service = {
     // Each panel loads its own; the parent only opens it. Stubbed here so the walkthrough below
     // can visit all eight — which is the point of it.
@@ -113,6 +159,13 @@ function setup(overrides: Overrides = {}, confirmAnswer = true, queryTab: string
     apiKeys: () => overrides.apiKeys ?? of([]),
     budgets: () => overrides.budgets ?? of([]),
     budgetUsage: () => overrides.budgetUsage ?? of({ usage: [] }),
+    // Kept out of `calls`, which this spec uses for **mutations**: a load that appeared there
+    // would make every 'nothing was sent' assertion fail for a reason that is not a change.
+    useCaseReport: (slug: string, from: string, to: string) => {
+      reportCalls.push(`${slug}:${from}:${to}`);
+      if (overrides.useCaseReportPerCall) return overrides.useCaseReportPerCall();
+      return overrides.useCaseReport ?? of(emptyReport());
+    },
     addMember: (_s: string, username: string) => {
       calls.push(`addMember:${username}`);
       return overrides.addMember ?? of({ username, role: 'user' });
@@ -181,6 +234,7 @@ function setup(overrides: Overrides = {}, confirmAnswer = true, queryTab: string
   return {
     fixture,
     calls,
+    reportCalls,
     component: fixture.componentInstance as unknown as Detail,
     text: () => (fixture.nativeElement as HTMLElement).textContent ?? '',
     html: () => fixture.nativeElement as HTMLElement,
@@ -951,5 +1005,137 @@ describe('UseCaseDetail — retention', () => {
 
     expect(component.configCopied()).toBe(false);
     expect(component.issued()).toBeNull();
+  });
+});
+
+describe('UseCaseDetail — consumption (FRD-603)', () => {
+  /**
+   * Two windows, because they answer two questions: the month is the figure somebody reports,
+   * the day is the one that says whether something is running away right now.
+   *
+   * Asserted as the **requests that were made**, not as what ended up on screen: rendering is the
+   * panel's test, and a page that asks for one window and shows two would pass a rendering test
+   * and still be wrong.
+   */
+  it('asks the gateway for this month and for today', () => {
+    const harness = setup();
+
+    expect(harness.reportCalls.length).toBe(2);
+    expect(harness.reportCalls[0]).toMatch(/^demo-uc:\d{4}-\d{2}-01:/);
+    const [, todayFrom, todayTo] = harness.reportCalls[1].split(':');
+    expect(new Date(todayTo).getTime() - new Date(todayFrom).getTime()).toBe(24 * 3600 * 1000);
+  });
+
+  /**
+   * A consumption load that fails must not raise the page's banner.
+   *
+   * `PageFeedback` is one banner per page (`CLAUDE.md` §3), and it is how a *mutation* reports
+   * itself. A figure the reader did not ask for failing to arrive is not a page failure — putting
+   * it in the banner would say the use case failed to load, and the next thing doubted is
+   * everything else on the screen.
+   */
+  it('reports an unreachable gateway in the panel, not across the page', () => {
+    const harness = setup({ useCaseReport: httpError(503) });
+
+    expect(harness.component.consumption().unavailable).toBe(true);
+    expect(harness.component.consumption().month).toBeNull();
+    expect(harness.component.feedback.error()).toBeNull();
+  });
+
+  /** `in_scope: false` is an empty report the caller was not entitled to fill. Its zeroes are not
+   * a measurement, and showing them would state that this use case consumed nothing. */
+  it('keeps a report it may not see out of the figures rather than showing its zeroes', () => {
+    const harness = setup({ useCaseReport: of(emptyReport({ in_scope: false })) });
+
+    expect(harness.component.consumption().outOfScope).toBe(true);
+    expect(harness.component.consumption().month).toBeNull();
+    expect(harness.component.consumption().unavailable).toBe(false);
+  });
+
+  /**
+   * Two loads, one flag — and the second one to answer decides what the reader sees.
+   *
+   * Written after finding it by reading the code back: the month arrives, `unavailable` is set
+   * false, then today fails and sets it true, and the panel hides the month figure that had
+   * already been fetched. Whichever request finished last won, which is not a rule anybody chose.
+   */
+  it('keeps a window that arrived when the other one failed', () => {
+    let call = 0;
+    const harness = setup({
+      useCaseReport: undefined,
+      useCaseReportPerCall: () => {
+        call += 1;
+        return call === 1
+          ? of(emptyReport({ totals: reportRow({ requests: 42 }) }))
+          : httpError(503);
+      },
+    });
+
+    expect(harness.component.consumption().month?.requests).toBe(42);
+    // Not "unavailable": something *is* available, and hiding it would report a partial failure
+    // as a total one.
+    expect(harness.component.consumption().unavailable).toBe(false);
+    expect(harness.component.consumption().partial).toBe(true);
+  });
+
+  it('reports nothing arriving at all as unavailable rather than partial', () => {
+    const harness = setup({ useCaseReport: httpError(503) });
+
+    expect(harness.component.consumption().unavailable).toBe(true);
+    expect(harness.component.consumption().partial).toBe(false);
+  });
+
+  it('passes a real figure through', () => {
+    const harness = setup({
+      useCaseReport: of(emptyReport({ totals: reportRow({ requests: 59, total_tokens: 10664 }) })),
+    });
+
+    expect(harness.component.consumption().month?.total_tokens).toBe(10664);
+    expect(harness.component.consumption().today?.requests).toBe(59);
+  });
+});
+
+/**
+ * Who answers for a key (`FRD-604`).
+ *
+ * The console has always recorded the issuer; what it never did was **tell them**. In an agentic
+ * use case that is the whole accountability chain — people issue their own keys, hand them to a
+ * coding agent, and when one misbehaves IT Security follows the credential back to a person. That
+ * only works if the person knew, at the moment they clicked, that it would.
+ *
+ * Asserted on the rendered DOM at both moments it must appear: before issuing, and beside the
+ * plaintext, which is the point at which the key leaves the screen for good.
+ */
+describe('UseCaseDetail — accountability for a key', () => {
+  it('says whose name the key will carry before it is issued', () => {
+    const harness = setup();
+    harness.component.selectTab('keys');
+    harness.component.showIssueKey.set(true);
+    harness.fixture.detectChanges();
+
+    const notice = harness.html().querySelector('[data-testid="key-responsibility"]');
+    expect(notice?.textContent).toContain('your name');
+    // True of a shared credential as well: it claims responsibility for the key, never that its
+    // owner wrote the request.
+    expect(notice?.textContent).toContain('anything you hand it to');
+  });
+
+  it('repeats it beside the plaintext, which is the last moment anybody reads it', () => {
+    const harness = setup({
+      issueApiKey: of({
+        api_key: 'aira_ab12_secret',
+        prefix: 'ab12',
+        label: '',
+        use_case: 'demo-uc',
+      }),
+    });
+    harness.component.selectTab('keys');
+    harness.component.showIssueKey.set(true);
+    harness.fixture.detectChanges();
+    harness.component.issueKey();
+    harness.fixture.detectChanges();
+
+    const notice = harness.html().querySelector('[data-testid="key-issued-responsibility"]');
+    expect(notice?.textContent).toContain('attributed to your name');
   });
 });

@@ -10,12 +10,18 @@ import {
   IssuedApiKey,
   Membership,
   RateLimit,
+  ReportRow,
   UseCase,
+  UseCaseConsumption,
 } from '../../core/api/models';
+import { errorMessage } from '../../core/api/error-message';
 import { MeService } from '../../core/api/me.service';
 import { UseCaseService } from '../../core/api/use-case.service';
+import { InfoHint } from '../../core/ui/info-hint';
 import { PageFeedback } from '../../core/ui/page-feedback';
+import { windowFor } from '../../core/ui/periods';
 import { BudgetsTab } from './budgets-tab';
+import { ConsumptionPanel } from './consumption-panel';
 import { AccessPanel } from './access-panel';
 import { RulesTab } from './rules-tab';
 import { TracesTab } from './traces-tab';
@@ -45,6 +51,8 @@ const TABS: readonly Tab[] = [
     RouterLink,
     AccessPanel,
     BudgetsTab,
+    InfoHint,
+    ConsumptionPanel,
     RateLimitsTab,
     RulesTab,
     WarningsTab,
@@ -77,6 +85,35 @@ export class UseCaseDetail implements OnInit {
   protected readonly usageUnavailable = signal(false);
   /** Why consumption is missing: refused by the gateway, or not reachable at all. */
   protected readonly usageRefused = signal(false);
+  /**
+   * What this use case consumed, from the request log rather than from a budget counter
+   * (`FRD-603`). `null` is **unknown**, never zero — see `UseCaseConsumption`.
+   */
+  protected readonly consumptionMonth = signal<ReportRow | null>(null);
+  protected readonly consumptionToday = signal<ReportRow | null>(null);
+  /**
+   * How many of the two windows did not arrive — a **count**, not a flag.
+   *
+   * The first version was a boolean written by both subscriptions, so the second one to answer
+   * decided: a month that had already been fetched was hidden because the day's request failed a
+   * moment later. Neither request knows about the other, so neither of them can own that verdict.
+   */
+  private readonly consumptionFailures = signal(0);
+  private readonly consumptionReason = signal('');
+  protected readonly consumptionOutOfScope = signal(false);
+  protected readonly consumption = computed<UseCaseConsumption>(() => {
+    const month = this.consumptionMonth();
+    const today = this.consumptionToday();
+    const failed = this.consumptionFailures() > 0;
+    return {
+      month,
+      today,
+      unavailable: failed && month === null && today === null,
+      partial: failed && (month !== null || today !== null),
+      reason: this.consumptionReason(),
+      outOfScope: this.consumptionOutOfScope(),
+    };
+  });
   /** How many findings are about this use case. Owned here so the tab badge is right before the
    * tab is opened — the same reason loading stays in the parent (`CLAUDE.md` §3). */
   protected readonly warningCount = signal(0);
@@ -194,6 +231,10 @@ export class UseCaseDetail implements OnInit {
     this.loadKeys();
     this.loadBudgets();
     this.loadRateLimits();
+    // Not part of `loadBudgets`: consumption belongs to the overview and is a fact about the use
+    // case, not about its limits. Hanging it off the budget load would mean adding a budget
+    // refetched it and removing the budgets panel silently removed it.
+    this.loadConsumption();
   }
 
   protected loadRateLimits(): void {
@@ -208,6 +249,44 @@ export class UseCaseDetail implements OnInit {
       next: (keys) => this.apiKeys.set(keys),
       error: (response: unknown) => this.feedback.fail(response, 'Could not load the API keys.'),
     });
+  }
+
+  /**
+   * What this use case has actually consumed, whether or not anybody set a limit (`FRD-603`).
+   *
+   * Two windows, because they answer two questions: the month is the figure somebody reports, and
+   * the day is the one that says whether something is running away right now.
+   *
+   * A failure here is **not** reported through the page banner. Consumption is a figure this tab
+   * offers, not something the reader asked for; a red banner across the page for it would say the
+   * use case failed to load. The panel states its own absence instead — and states it as
+   * *unknown*, never as zero.
+   */
+  protected loadConsumption(): void {
+    this.consumptionFailures.set(0);
+    this.consumptionReason.set('');
+    const load = (preset: 'this-month' | 'today', into: (row: ReportRow | null) => void) => {
+      const { from, to } = windowFor(preset, new Date());
+      this.service.useCaseReport(this.slug, from, to).subscribe({
+        next: (report) => {
+          // `in_scope: false` is an empty report the caller was not entitled to fill. Showing its
+          // zeroes would tell them this use case consumed nothing, which is a statement nobody
+          // made — the gateway said only that it would not answer.
+          this.consumptionOutOfScope.set(report.in_scope === false);
+          into(report.in_scope === false ? null : report.totals);
+        },
+        error: (response: unknown) => {
+          into(null);
+          this.consumptionFailures.update((count) => count + 1);
+          // §3's rule — no silent failures, and the backend's envelope rather than our guess.
+          // Kept out of the page banner all the same: this is a figure the panel offers, and a
+          // red bar across the page would say the use case failed to load.
+          this.consumptionReason.set(errorMessage(response, 'The gateway could not be reached.'));
+        },
+      });
+    };
+    load('this-month', (row) => this.consumptionMonth.set(row));
+    load('today', (row) => this.consumptionToday.set(row));
   }
 
   protected loadBudgets(): void {

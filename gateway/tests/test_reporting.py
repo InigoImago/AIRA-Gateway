@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+import anyio
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -18,6 +19,7 @@ from sqlalchemy.pool import StaticPool
 from aira_common.money import to_nanos
 from aira_gateway.api.reporting import visible_scope
 from aira_gateway.app import create_app
+from aira_gateway.auth.dependencies import require_principal
 from aira_gateway.auth.principal import Principal
 from aira_gateway.config import GatewaySettings
 from aira_gateway.db.base import Base
@@ -345,3 +347,150 @@ async def test_a_row_written_before_outcomes_existed_still_counts_as_unpriced(
     totals = (await ReportingService(sessionmaker).report(None, AUGUST, SEPTEMBER))["totals"]
 
     assert totals["unpriced_requests"] == 1
+
+
+# ---- one use case at a time (FRD-603) ----------------------------------------------------
+
+
+def _filtered_client(principal: Principal | None = None) -> TestClient:
+    """A client whose caller is whoever the test says.
+
+    Driven through the **route** rather than against `ReportingService`, because the property
+    these tests are about lives in the route: the service has always been able to report one use
+    case, and what was missing was a caller able to ask for one without being able to ask for
+    somebody else's.
+    """
+    app = create_app(GatewaySettings(auth_required=False))
+    if principal is not None:
+        app.dependency_overrides[require_principal] = lambda: principal
+    return TestClient(app)
+
+
+def _fill(client: TestClient, *rows: RequestLog) -> None:
+    async def seed(sessions) -> None:
+        async with sessions() as session:
+            for row in rows:
+                session.add(row)
+            await session.commit()
+
+    with anyio.from_thread.start_blocking_portal() as portal:
+        portal.call(seed, client.app.state.db_sessionmaker)
+
+
+def _row(**over) -> RequestLog:
+    values = {
+        "subject": "alice",
+        "auth_method": "oidc",
+        "use_case": "uc-a",
+        "api": "gemini",
+        "operation": "generateContent",
+        "model": "mock-1",
+        "status": 200,
+        "outcome": "served",
+        "prompt_tokens": 10,
+        "completion_tokens": 20,
+        "total_tokens": 30,
+        "latency_ms": 40,
+        "cost_nanos": 1000,
+        "created_at": datetime.now(UTC),
+    }
+    values.update(over)
+    return RequestLog(**values)
+
+
+def test_a_use_case_with_no_budget_still_reports_what_it_consumed() -> None:
+    """The defect this endpoint parameter exists for, stated as the question that found it.
+
+    Consumption was only ever *displayed* as a fraction of a limit, and `BudgetService.usage`
+    iterates the use case's **budget rows** — so a use case with no budget answered `[]` and the
+    console showed nothing at all. Measured on the running stack: the smoke-test use case had 59
+    requests, 10,664 tokens and a real cost in `request_logs`, and not one of those figures was
+    reachable from its own page.
+
+    Nothing was ever uncalculated. The figure had no reader.
+    """
+    with _filtered_client() as client:
+        _fill(client, _row(use_case="smoke-test", total_tokens=180, cost_nanos=62_000))
+
+        body = client.get("/v1beta/reporting?use_case=smoke-test").json()
+
+    assert body["totals"]["requests"] == 1
+    assert body["totals"]["total_tokens"] == 180
+    assert body["totals"]["cost_nanos"] == 62_000
+    assert body["in_scope"] is True
+
+
+def test_a_use_case_filter_narrows_the_report_to_that_use_case() -> None:
+    with _filtered_client() as client:
+        _fill(
+            client, _row(use_case="uc-a", cost_nanos=1000), _row(use_case="uc-b", cost_nanos=9000)
+        )
+
+        body = client.get("/v1beta/reporting?use_case=uc-a").json()
+
+    assert body["totals"]["cost_nanos"] == 1000
+    assert [row["key"] for row in body["by_use_case"]] == ["uc-a"]
+    assert body["use_case"] == "uc-a"
+
+
+def test_a_use_case_filter_cannot_widen_what_a_member_may_see() -> None:
+    """**A filter narrows, never widens.**
+
+    The one mistake here that matters: `scope = (use_case,)` written unconditionally reads as a
+    narrowing and is a widening — every member of any use case could then name any other and be
+    told its spend, from an endpoint whose whole job is to keep one team's figures out of
+    another's screen.
+    """
+    caller = Principal(subject="alice", method="oidc", use_cases=("uc-a",))
+    with _filtered_client(caller) as client:
+        _fill(client, _row(use_case="uc-b", cost_nanos=9000))
+
+        body = client.get("/v1beta/reporting?use_case=uc-b").json()
+
+    assert body["totals"]["requests"] == 0
+    assert body["totals"]["cost_nanos"] == 0
+    assert body["in_scope"] is False
+
+
+def test_an_empty_report_says_whether_it_was_allowed_to_be_full() -> None:
+    """ "Nothing happened here" and "this is not yours to see" are both empty and are not the same
+    fact. A screen that cannot tell them apart reports the second as the first."""
+    caller = Principal(subject="alice", method="oidc", use_cases=("uc-a",))
+    with _filtered_client(caller) as client:
+        quiet = client.get("/v1beta/reporting?use_case=uc-a").json()
+        forbidden = client.get("/v1beta/reporting?use_case=uc-b").json()
+
+    assert quiet["totals"]["requests"] == 0 and quiet["in_scope"] is True
+    assert forbidden["totals"]["requests"] == 0 and forbidden["in_scope"] is False
+
+
+def test_an_unfiltered_report_says_it_was_not_narrowed() -> None:
+    with _filtered_client() as client:
+        body = client.get("/v1beta/reporting").json()
+
+    assert body["use_case"] is None
+    assert body["in_scope"] is True
+
+
+def test_the_export_is_narrowed_by_the_same_filter_as_the_screen() -> None:
+    """`FRD-602` §1 held once already and has to keep holding: the CSV is a **renderer over this
+    same result**, so a filter applied to the report is applied to the file by construction. A
+    second query here is how an export comes to return more than the screen it was exported
+    from — as a file, which gets forwarded and cannot be recalled."""
+    with _filtered_client() as client:
+        _fill(client, _row(use_case="uc-a"), _row(use_case="uc-b"))
+
+        body = client.get(
+            "/v1beta/reporting?use_case=uc-a", headers={"Accept": "text/csv"}
+        ).content.decode("utf-8")
+
+    assert "uc-a" in body
+    assert "uc-b" not in body
+
+
+def test_a_malformed_use_case_filter_is_refused_by_name() -> None:
+    with _filtered_client() as client:
+        response = client.get("/v1beta/reporting?use_case=not a slug")
+
+    assert response.status_code == 400
+    assert response.json()["error"]["status"] == "INVALID_ARGUMENT"

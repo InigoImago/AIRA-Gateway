@@ -3,49 +3,9 @@ import { FormsModule } from '@angular/forms';
 import { Report } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { InfoHint } from '../../core/ui/info-hint';
+import { Preset, isoDay, windowFor } from '../../core/ui/periods';
 import { PageFeedback } from '../../core/ui/page-feedback';
 import { BreakdownTable } from './breakdown-table';
-
-/** A period a person actually asks about, rather than two dates they have to compute. */
-export type Preset = 'this-month' | 'last-month' | 'last-7-days' | 'last-30-days' | 'custom';
-
-/**
- * A day as an `<input type="date">` writes it, in **local** time.
- *
- * Deliberately not `toISOString().slice(0, 10)`: that converts to UTC first, so for anyone east
- * of Greenwich "today" becomes yesterday for part of the day — an off-by-one in the period the
- * report covers, which is the kind of bug that is only ever noticed in the evening.
- */
-export function isoDay(date: Date): string {
-  const pad = (value: number) => String(value).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-}
-
-/** The `[from, to)` pair a preset means, as local days. `to` is exclusive throughout. */
-export function windowFor(preset: Preset, today: Date): { from: string; to: string } {
-  const day = (offset: number) =>
-    new Date(today.getFullYear(), today.getMonth(), today.getDate() + offset);
-  switch (preset) {
-    case 'last-month': {
-      const first = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-      return {
-        from: isoDay(first),
-        to: isoDay(new Date(today.getFullYear(), today.getMonth(), 1)),
-      };
-    }
-    case 'last-7-days':
-      return { from: isoDay(day(-6)), to: isoDay(day(1)) };
-    case 'last-30-days':
-      return { from: isoDay(day(-29)), to: isoDay(day(1)) };
-    default: {
-      const first = new Date(today.getFullYear(), today.getMonth(), 1);
-      return {
-        from: isoDay(first),
-        to: isoDay(new Date(today.getFullYear(), today.getMonth() + 1, 1)),
-      };
-    }
-  }
-}
 
 /**
  * Spend and usage over a period (FRD-601).
