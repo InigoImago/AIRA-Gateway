@@ -356,6 +356,17 @@ export class UseCaseService {
    * `PATCH`, not `PUT`: a rule has thirteen fields and most edits touch one of them. Sending the
    * whole object back would make every save a chance to overwrite a field the form never showed.
    */
+  /**
+   * Author a rule that applies to **every** use case (`FRD-500`).
+   *
+   * The server has accepted this since `FRD-500` and the console never offered it, so the only
+   * global rules that existed were the ones a seed had written — `FRD-206`'s defect inverted: not
+   * a control that refuses when used, but a capability nobody could reach.
+   */
+  createGlobalRule(rule: Partial<AnomalyRule>): Observable<AnomalyRule> {
+    return this.http.post<AnomalyRule>('/api/v1/anomaly-rules/', rule);
+  }
+
   updateRule(id: number, changes: Partial<AnomalyRule>): Observable<AnomalyRule> {
     return this.http.patch<AnomalyRule>(`/api/v1/anomaly-rules/${id}/`, changes);
   }

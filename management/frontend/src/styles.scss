@@ -1128,8 +1128,25 @@ tr.is-open > * {
   min-width: 0;
 }
 
-/* Room to read and to aim. A rule editor is a dozen controls; at 0.6rem they form a wall, and
-   somebody clicking the wrong one of two adjacent checkboxes is a governance mistake. */
+/* A **grid**, not a wrapping row. `flex-wrap` packs as many fields onto a line as happen to fit,
+   so a rule editor put five controls in a row on a wide screen and the reader had to hunt for the
+   one they wanted. A grid gives every field the same width and a predictable place: two across on
+   a narrow screen, three or four on a wide one, and never seven. */
 .form-stack .form-inline {
-  gap: 1rem 1.4rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 1.1rem 1.5rem;
+  align-items: start;
+}
+
+/* `grow` meant "take the slack in a flex row" and has no meaning in a grid. A field that needs
+   more room asks for two tracks instead. */
+.form-stack .form-inline .field.grow {
+  grid-column: span 2;
+}
+
+@media (max-width: 42rem) {
+  .form-stack .form-inline .field.grow {
+    grid-column: span 1;
+  }
 }

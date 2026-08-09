@@ -203,6 +203,9 @@ export class ModelCatalog implements OnInit {
   /** Open the window empty, for a model the catalog does not have yet. */
   protected add(): void {
     this.reset();
+    // A verdict about the last model, left on a window that is now about a new one, is a wrong
+    // answer wearing a right one's clothes.
+    this.check.set(null);
     this.editing.set('');
     this.showAdd.set(true);
   }
@@ -233,7 +236,7 @@ export class ModelCatalog implements OnInit {
   protected readonly check = signal<ModelCheck | null>(null);
   protected readonly checking = signal(false);
 
-  protected runCheck(model: CatalogModel): void {
+  protected runCheck(model: Pick<CatalogModel, 'name'>): void {
     this.checking.set(true);
     this.check.set(null);
     this.service.checkModel(model.name).subscribe({
@@ -307,6 +310,7 @@ export class ModelCatalog implements OnInit {
   }
 
   protected edit(model: CatalogModel): void {
+    this.check.set(null);
     this.name.set(model.name);
     this.displayName.set(model.display_name ?? '');
     this.provider.set(model.provider ?? '');

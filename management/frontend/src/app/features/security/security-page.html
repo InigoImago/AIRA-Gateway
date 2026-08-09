@@ -348,6 +348,25 @@
         </form>
       }
 
+      <!-- One box for both lists. "Has this caller ever been stopped?" is answered by what is
+           stopped now *together with* what was stopped before; a search over only the first would
+           answer it wrongly and look like it had answered it. -->
+      @if (suspensions().length) {
+        <div class="table-tools" style="margin-top: 1rem">
+          <label class="search">
+            <span>Find a decision</span>
+            <input
+              type="search"
+              [value]="activeView.query()"
+              (input)="searchSuspensions($any($event.target).value)"
+              placeholder="a caller, a key prefix, a use case"
+              data-testid="suspension-search"
+              autocomplete="off"
+            />
+          </label>
+        </div>
+      }
+
       <div class="table-wrap" style="margin-top: 1rem">
         <table class="table" data-testid="active-suspensions">
           <thead>
@@ -361,7 +380,7 @@
             </tr>
           </thead>
           <tbody>
-            @for (row of active(); track row.id) {
+            @for (row of activeView.rows(); track row.id) {
               <tr>
                 <td>
                   <code>{{ row.target_value }}</code>
@@ -407,6 +426,9 @@
           </tbody>
         </table>
       </div>
+      <div style="padding: 0 1rem 0.9rem">
+        <app-table-pager [view]="activeView" noun="suspensions" testid="active-pager" />
+      </div>
 
       @if (past().length) {
         <details style="margin-top: 1rem">
@@ -423,7 +445,7 @@
           <div class="table-wrap" style="margin-top: 0.5rem">
             <table class="table">
               <tbody>
-                @for (row of past(); track row.id) {
+                @for (row of pastView.rows(); track row.id) {
                   <tr>
                     <td>
                       <code>{{ row.target_value }}</code>
@@ -438,6 +460,9 @@
               </tbody>
             </table>
           </div>
+          <div style="padding: 0.5rem 0 0">
+            <app-table-pager [view]="pastView" noun="decisions" testid="past-pager" />
+          </div>
         </details>
       }
     </div>
@@ -446,6 +471,62 @@
   <!-- ── Rules ────────────────────────────────────────────────────────────────────────────── -->
   @if (tab() === 'rules') {
     <div class="card" style="padding: 0" role="tabpanel">
+      <!--
+        The button that was missing. The server has accepted a global rule since `FRD-500` — "a
+        global rule is IT Security's to author" — and the console never offered it, so the only
+        global rules that existed anywhere were the ones a seed had written straight into the
+        database. `FRD-206`'s defect inverted: not a control that refuses when used, but a
+        capability nobody could reach.
+      -->
+      <div class="spread" style="padding: 0.9rem 1rem">
+        <div>
+          <h3 class="section-title" style="margin: 0">Rules</h3>
+          <p class="muted" style="margin: 0.25rem 0 0; font-size: 0.85rem">
+            A rule that applies everywhere is authored here. A rule for one use case is created on
+            that use case, by somebody who administers it.
+          </p>
+        </div>
+        @if (canStop()) {
+          <button
+            type="button"
+            class="btn btn--primary"
+            (click)="startCreate()"
+            data-testid="new-global-rule"
+          >
+            + New global rule
+          </button>
+        }
+      </div>
+
+      @if (rules().length) {
+        <div class="table-tools" style="padding: 0 1rem 0.5rem">
+          <label class="search">
+            <span>Find a rule</span>
+            <input
+              type="search"
+              [value]="ruleView.query()"
+              (input)="ruleView.search($any($event.target).value)"
+              placeholder="name, kind, use case"
+              data-testid="rule-search"
+              autocomplete="off"
+            />
+          </label>
+        </div>
+      }
+
+      @if (draft(); as newRule) {
+        <div class="card" style="margin: 0 1rem 1rem">
+          <h4 class="section-title" style="margin: 0 0 0.75rem">A rule for every use case</h4>
+          <app-rule-form
+            [rule]="newRule"
+            [busy]="feedback.busy()"
+            formId="new-global-rule"
+            (saved)="createRule($event)"
+            (cancelled)="cancelCreate()"
+          />
+        </div>
+      }
+
       @if (!rules().length) {
         <p class="empty">
           No anomaly rules. Nothing is being watched — which is why an empty findings list means
@@ -464,7 +545,7 @@
               </tr>
             </thead>
             <tbody>
-              @for (rule of rules(); track rule.id) {
+              @for (rule of ruleView.rows(); track rule.id) {
                 <tr [class.is-open]="openRule() === rule.id">
                   <td>
                     <!-- A rule is a policy that can stop somebody's traffic. Printing its kind
@@ -627,6 +708,9 @@
               }
             </tbody>
           </table>
+        </div>
+        <div style="padding: 0 1rem 0.9rem">
+          <app-table-pager [view]="ruleView" noun="rules" testid="rule-pager" />
         </div>
       }
     </div>

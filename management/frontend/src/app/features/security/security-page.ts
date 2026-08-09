@@ -7,9 +7,11 @@ import { MeService } from '../../core/api/me.service';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { ConfirmService } from '../../core/ui/confirm.service';
 import { InfoHint } from '../../core/ui/info-hint';
+import { TablePager } from '../../core/ui/table-pager';
 import { Live, agoLabel } from '../../core/ui/live';
 import { PageFeedback } from '../../core/ui/page-feedback';
-import { RuleForm } from './rule-form';
+import { TableView } from '../../core/ui/table-view';
+import { NEW_RULE, RuleForm } from './rule-form';
 import { describeAction, describeEvent, describeRule, unitOf } from './rule-language';
 import { mayActOnIncidents } from '../../core/auth/roles';
 
@@ -30,7 +32,7 @@ const REFRESH_SECONDS = 15;
  */
 @Component({
   selector: 'app-security-page',
-  imports: [DatePipe, FormsModule, InfoHint, RouterLink, RuleForm],
+  imports: [DatePipe, FormsModule, InfoHint, TablePager, RouterLink, RuleForm],
   templateUrl: './security-page.html',
   providers: [PageFeedback, Live],
 })
@@ -150,6 +152,64 @@ export class SecurityPage implements OnInit {
    */
   protected mayEdit(rule: AnomalyRule): boolean {
     return rule.is_global && this.canStop();
+  }
+
+  /**
+   * Paging for the three lists that grow without bound (`FRD-505` FR-12).
+   *
+   * All three are append-only in practice — rules accumulate, and a suspension is *kept* after it
+   * is lifted because "blocked for two hours last Tuesday" is what a review asks. Client-side,
+   * deliberately: the endpoints return the caller's whole visible set and the counts on the tabs
+   * are over that whole set, so paging in the browser keeps "12 rules" meaning twelve rules
+   * rather than "twelve on this page" — the same reasoning that kept the model catalog local
+   * (`FRD-208`).
+   */
+  protected readonly ruleView = new TableView<AnomalyRule>(this.rules, (rule) =>
+    [rule.name, rule.kind, rule.use_case ?? 'everywhere', rule.action].join(' '),
+  );
+  protected readonly activeView = new TableView<Suspension>(this.active, (row) =>
+    [row.target, row.target_value, row.author, row.reason].join(' '),
+  );
+  protected readonly pastView = new TableView<Suspension>(this.past, (row) =>
+    [row.target, row.target_value, row.author, row.reason].join(' '),
+  );
+
+  /**
+   * One box, both suspension lists.
+   *
+   * "Has this caller ever been stopped?" is one question, and it is answered by what is stopped
+   * *now* together with what was stopped *before* — a search that covered only the first would
+   * answer it wrongly and look like it had answered it.
+   */
+  protected searchSuspensions(value: string): void {
+    this.activeView.search(value);
+    this.pastView.search(value);
+  }
+
+  /** A global rule being authored, if any. `null` when nothing is being created. */
+  protected readonly draft = signal<AnomalyRule | null>(null);
+
+  protected startCreate(): void {
+    this.editing.set(null);
+    this.draft.set(NEW_RULE);
+  }
+
+  protected cancelCreate(): void {
+    this.draft.set(null);
+  }
+
+  protected createRule(changes: Partial<AnomalyRule>): void {
+    this.feedback.run(this.service.createGlobalRule(changes), {
+      failure: 'Could not create this rule.',
+      success: () => {
+        this.feedback.succeed(
+          `"${changes.name}" now applies to every use case. It reaches the gateway within a few ` +
+            `seconds.`,
+        );
+        this.draft.set(null);
+        this.loadRules();
+      },
+    });
   }
 
   protected startEdit(rule: AnomalyRule): void {

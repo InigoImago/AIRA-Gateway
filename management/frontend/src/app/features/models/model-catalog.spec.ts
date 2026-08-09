@@ -30,6 +30,7 @@ const DECLARED: CatalogModel = {
 };
 
 interface Catalog {
+  add: () => void;
   models: () => CatalogModel[];
   loading: () => boolean;
   error: () => string | null;
@@ -554,6 +555,69 @@ describe('ModelCatalog — finding one among many', () => {
     harness.openFirst();
 
     expect(harness.html().querySelector('[data-testid="check-verdict"]')).toBeNull();
+  });
+
+  it('checks reachability from inside the editor, and never blocks saving on it', () => {
+    /**
+     * The design question this answers, asked directly: *"warum machen wir check reachability
+     * nicht im Window, und wenn reachability false ist, dann kein Anlegen?"*
+     *
+     * In the window: yes. Blocking: **no**, and deliberately. Declaring a model before its
+     * credential exists is the ordinary order of work — you write the catalog, then configure the
+     * platform — and an adapter is registered only once the credential is there. A hard gate would
+     * make it impossible to declare anything on a fresh installation, and impossible to declare a
+     * model for a platform this deployment has not been given a key for yet. `FRD-114`'s rule:
+     * deprecation warns, revocation blocks. A verdict is information.
+     */
+    const harness = setup({
+      check: of({
+        model: 'new-model',
+        declared: false,
+        served: false,
+        reachable: null,
+        detail: 'No upstream serves this model.',
+      }),
+    });
+    harness.component.add();
+    harness.component.name.set('new-model');
+    harness.fixture.detectChanges();
+
+    harness.html().querySelector<HTMLElement>('[data-testid="editor-check"]')?.click();
+    harness.fixture.detectChanges();
+
+    expect(harness.html().querySelector('[data-testid="editor-verdict"]')?.textContent).toContain(
+      'nothing serves it',
+    );
+    // The point of the test: Save is still available.
+    expect(harness.component.canSave()).toBe(true);
+  });
+
+  it('does not carry a verdict from one model into the next window', () => {
+    const harness = setup();
+    harness.component.add();
+    harness.component.name.set('a-model');
+    harness.fixture.detectChanges();
+    harness.html().querySelector<HTMLElement>('[data-testid="editor-check"]')?.click();
+    harness.fixture.detectChanges();
+    expect(harness.html().querySelector('[data-testid="editor-verdict"]')).not.toBeNull();
+
+    harness.component.add();
+    harness.fixture.detectChanges();
+
+    expect(harness.html().querySelector('[data-testid="editor-verdict"]')).toBeNull();
+  });
+
+  it('reports a check that could not be run, instead of an empty badge', () => {
+    /** The check itself can fail — the gateway may be unreachable, or the role may be wrong. That
+     *  is a different fact from "the model is not reachable", and showing nothing would let the
+     *  reader conclude the second. */
+    const harness = setup({ check: throwError(() => ({ status: 503 })) });
+    harness.openFirst();
+    harness.html().querySelector<HTMLElement>('[data-testid^="check-gemini"]')?.click();
+    harness.fixture.detectChanges();
+
+    expect(harness.html().querySelector('[data-testid="check-verdict"]')).toBeNull();
+    expect(harness.component.error()).toBeTruthy();
   });
 
   it('leaves no declared field out of the panel', () => {

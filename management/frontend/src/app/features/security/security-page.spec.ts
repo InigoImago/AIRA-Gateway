@@ -55,6 +55,27 @@ const RULE: AnomalyRule = {
   enabled: true,
 };
 
+/** Many rows, so a pager has something to page. */
+function manyRules(count: number): AnomalyRule[] {
+  return Array.from({ length: count }, (_, index) => ({
+    ...RULE,
+    id: index + 1,
+    name: `rule ${index + 1}`,
+  }));
+}
+
+function manySuspensions(count: number) {
+  const rows = Array.from({ length: count }, (_, index) => ({
+    ...SUSPENSION,
+    id: `s${index}`,
+    target_value: `caller-${index}`,
+    // Half of them lifted, so both lists are long enough to page.
+    lifted_at: index % 2 ? '2026-08-09T10:00:00Z' : null,
+    lifted_by: index % 2 ? 'sec' : null,
+  }));
+  return of({ suspensions: rows });
+}
+
 interface Options {
   roles?: string[];
   events?: AnomalyEvent[];
@@ -93,6 +114,10 @@ function setup(options: Options = {}) {
     liftSuspension: (id: string) => {
       calls.push(`lift:${id}`);
       return options.lift ?? of({ ...SUSPENSION, lifted_at: 'now', lifted_by: 'user:itsec' });
+    },
+    createGlobalRule: (rule: Record<string, unknown>) => {
+      calls.push(`createGlobalRule:${JSON.stringify(rule)}`);
+      return of({ ...rule, id: 99, is_global: true });
     },
     updateRule: (id: number, changes: Record<string, unknown>) => {
       calls.push(`update:${id}:${JSON.stringify(changes)}`);
@@ -138,6 +163,20 @@ function setup(options: Options = {}) {
     testid: (id: string) => element.querySelector(`[data-testid="${id}"]`),
     click: (selector: string) => {
       element.querySelector<HTMLElement>(selector)?.click();
+      fixture.detectChanges();
+    },
+    /** Switch tabs the way the existing cases do — through the signal, since the tab strip has no
+     *  test ids and adding some for this would be a second way to do one thing. */
+    toRules: () => {
+      (fixture.componentInstance as unknown as { tab: { set: (v: string) => void } }).tab.set(
+        'rules',
+      );
+      fixture.detectChanges();
+    },
+    toSuspensions: () => {
+      (fixture.componentInstance as unknown as { tab: { set: (v: string) => void } }).tab.set(
+        'suspensions',
+      );
       fixture.detectChanges();
     },
   };
@@ -705,5 +744,107 @@ describe('SecurityPage — while older findings are in flight', () => {
         harness.component as unknown as { feedback: { error: () => string | null } }
       ).feedback.error(),
     ).toContain('Could not load older findings.');
+  });
+  // ---- authoring a rule that applies everywhere (`FRD-500`, console side) ---------------------
+
+  it('offers a role that may act a way to author a global rule', () => {
+    /** The server has accepted this since `FRD-500` — "a global rule is IT Security's to author" —
+     *  and the console never offered it, so the only global rules that existed anywhere were the
+     *  ones a seed had written straight into the database. `FRD-206`'s defect inverted: not a
+     *  control that refuses when used, but a capability nobody could reach. */
+    const harness = setup({ roles: ['it-security'] });
+    harness.toRules();
+
+    expect(harness.testid('new-global-rule')).not.toBeNull();
+  });
+
+  it('withholds it from a role that sees everything and may stop nothing', () => {
+    const harness = setup({ roles: ['it-steuerung'] });
+    harness.toRules();
+
+    expect(harness.testid('new-global-rule')).toBeNull();
+  });
+
+  it('creates the rule it was given, and says where it applies', () => {
+    const harness = setup({ roles: ['it-security'] });
+    harness.toRules();
+
+    const component = harness.component as unknown as {
+      createRule: (changes: Record<string, unknown>) => void;
+    };
+    component.createRule({ name: 'spend doubled', kind: 'spend_spike', threshold: 2 });
+    harness.fixture.detectChanges();
+
+    expect(harness.calls.some((call) => call.startsWith('createGlobalRule:'))).toBe(true);
+    expect(harness.text()).toContain('every use case');
+  });
+
+  // ---- the three lists that grow without bound ------------------------------------------------
+
+  it('pages the rules rather than printing all of them', () => {
+    const harness = setup({ rules: manyRules(30) });
+    harness.toRules();
+
+    expect(harness.testid('rule-pager')).not.toBeNull();
+    expect(harness.element.querySelectorAll('tbody tr').length).toBeLessThan(30);
+  });
+
+  it('pages what is stopped now and what was stopped before', () => {
+    /** A suspension is **kept** after it is lifted, because "blocked for two hours last Tuesday"
+     *  is what a review asks — so the second list only ever grows. */
+    const harness = setup({ suspensions: manySuspensions(30) });
+    harness.toSuspensions();
+
+    expect(harness.testid('active-pager')).not.toBeNull();
+    expect(harness.testid('past-pager')).not.toBeNull();
+  });
+  it('searches the rules by name, kind and where they apply', () => {
+    const harness = setup({ rules: manyRules(30) });
+    harness.toRules();
+    const view = harness.component as unknown as { ruleView: { search: (v: string) => void } };
+
+    view.ruleView.search('rule 7');
+    harness.fixture.detectChanges();
+
+    expect(harness.text()).toContain('rule 7');
+    expect(harness.text()).not.toContain('rule 12');
+  });
+
+  it('searches what is stopped now and what was stopped before with one box', () => {
+    /** "Has this caller ever been stopped?" is one question. A search that covered only the live
+     *  list would answer it wrongly and look like it had answered it. */
+    const harness = setup({ suspensions: manySuspensions(30) });
+    harness.toSuspensions();
+    const page = harness.component as unknown as {
+      searchSuspensions: (v: string) => void;
+      activeView: { matches: () => unknown[] };
+      pastView: { matches: () => unknown[] };
+    };
+
+    page.searchSuspensions('caller-3');
+    harness.fixture.detectChanges();
+
+    // `caller-3` and `caller-30`…`caller-39`; what matters is that **both** lists narrowed.
+    expect(page.activeView.matches().length).toBeLessThan(15);
+    expect(page.pastView.matches().length).toBeLessThan(15);
+  });
+
+  it('finds a rule that applies everywhere by that word', () => {
+    /** A global rule has no use case, and the row says "everywhere" — so that is what somebody
+     *  types to find one. A haystack that read `null` there would make the word unsearchable. */
+    const harness = setup({
+      rules: [
+        { ...RULE, id: 1, name: 'global one', use_case: null, is_global: true },
+        { ...RULE, id: 2, name: 'local one', use_case: 'uc-a', is_global: false },
+      ],
+    });
+    harness.toRules();
+    const view = harness.component as unknown as { ruleView: { search: (v: string) => void } };
+
+    view.ruleView.search('everywhere');
+    harness.fixture.detectChanges();
+
+    expect(harness.text()).toContain('global one');
+    expect(harness.text()).not.toContain('local one');
   });
 });

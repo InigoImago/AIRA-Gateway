@@ -422,6 +422,36 @@
     </div>
 
     <div class="modal__foot">
+      <!--
+        The check, where the model is being defined rather than only on the row afterwards. It
+        **informs and does not block**: declaring a model before its credential exists is the
+        ordinary order of work — you write the catalog, then configure the platform — and an
+        adapter is registered only once the credential is there, so a hard gate would make it
+        impossible to declare anything on a fresh installation. The project's own rule, from
+        `FRD-114`: deprecation warns, revocation blocks. A reachability verdict is information.
+      -->
+      @if (name()) {
+        <button
+          type="button"
+          class="btn"
+          [disabled]="checking()"
+          (click)="runCheck({ name: name() })"
+          data-testid="editor-check"
+        >
+          {{ checking() ? 'Checking…' : 'Check reachability' }}
+        </button>
+      }
+      @if (check(); as verdict) {
+        <span
+          class="badge"
+          [class.badge--success]="verdict.reachable === true"
+          [class.badge--danger]="verdict.reachable === false || !verdict.served"
+          [class.badge--warning]="verdict.served && verdict.reachable === null"
+          data-testid="editor-verdict"
+        >
+          {{ checkVerdict(verdict) }}
+        </span>
+      }
       @if (formError(); as message) {
         <span class="field__hint field__hint--error grow">{{ message }}</span>
       }

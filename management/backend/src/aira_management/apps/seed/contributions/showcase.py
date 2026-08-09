@@ -30,6 +30,9 @@ from typing import Any
 from django.contrib.auth import get_user_model
 from django.db import transaction
 
+from aira_common.anomalies import RuleAction, RuleKind, RuleTarget
+from aira_management.apps.anomalies.models import AnomalyRule
+from aira_management.apps.anomalies.views import rule_payload
 from aira_management.apps.apikeys.models import ApiKey
 from aira_management.apps.budgets.models import Budget
 from aira_management.apps.pipelines.models import PipelineConfig
@@ -193,6 +196,72 @@ def _rate_limits() -> list[dict[str, Any]]:
     ]
 
 
+def _anomaly_rules() -> list[dict[str, Any]]:
+    """Rules worth looking at, not rules that fire (`FRD-500`).
+
+    Chosen so the console shows the **range** of the vocabulary and the range of what a rule may
+    *do* — one global, three per-use-case, three kinds of target, and both `alert` and `throttle`.
+
+    Every one of them is `alert` or `throttle`, and none is `block`. That is the demonstration:
+    `FRD-500` made `alert` the default because a system whose first setting is `block` blocks
+    wrongly once and is switched off forever — and a seeded demo that stopped somebody's traffic on
+    a first run would teach exactly that lesson the wrong way round.
+
+    Thresholds are set against what the demo traffic actually does, the same calibration
+    `FRD-130` had to make for its budgets: a rule that fires on the first request tells a reader
+    the system is noisy, and one that can never fire tells them nothing at all.
+    """
+    return [
+        {
+            # Global: IT Security's to author, everybody's to read. The one a reader should see
+            # first, because it is the one nobody in a use case can turn off.
+            "use_case": None,
+            "name": "A caller being refused over and over",
+            "kind": RuleKind.REFUSAL_RATE,
+            "window_minutes": 15,
+            "threshold": 40,
+            "min_sample": 20,
+            "target": RuleTarget.SUBJECT,
+            "action": RuleAction.ALERT,
+        },
+        {
+            "use_case": "entwicklung",
+            "name": "An API key that suddenly costs much more",
+            "kind": RuleKind.SPEND_SPIKE,
+            "window_minutes": 60,
+            # A ratio, not a number: a fixed figure is a budget, and there is one (`FRD-500`).
+            "threshold": 300,
+            "min_sample": 10,
+            "target": RuleTarget.CREDENTIAL,
+            "action": RuleAction.ALERT,
+        },
+        {
+            "use_case": "entwicklung",
+            "name": "A machine nobody has seen before",
+            "kind": RuleKind.NEW_SOURCE_IP,
+            "window_minutes": 60,
+            "threshold": 1,
+            "min_sample": 1,
+            "target": RuleTarget.SUBJECT,
+            "action": RuleAction.ALERT,
+        },
+        {
+            "use_case": "kundenservice",
+            "name": "Prompts the filter keeps objecting to",
+            "kind": RuleKind.BLOCKED_PROMPT_RATE,
+            "window_minutes": 30,
+            "threshold": 25,
+            "min_sample": 8,
+            "target": RuleTarget.SUBJECT,
+            # The one rule here that *does* something, and it slows a caller rather than stopping
+            # them: a throttle without a rate is not a decision (`FRD-503`).
+            "action": RuleAction.THROTTLE,
+            "action_minutes": 30,
+            "throttle_rpm": 5,
+        },
+    ]
+
+
 def _pipelines() -> dict[str, dict[str, Any]]:
     """One heuristic filter and one allow-list, both cheap and both deterministic.
 
@@ -253,6 +322,7 @@ def seed_showcase(fresh: bool) -> SeedResult:
         "memberships": 0,
         "budgets": 0,
         "rate_limits": 0,
+        "anomaly_rules": 0,
         "pipelines": 0,
         "api_keys": 0,
     }
@@ -327,6 +397,27 @@ def seed_showcase(fresh: bool) -> SeedResult:
             )
             events.emit("ratelimit.upserted", _rate_limit_payload(limit, target.slug))
             created["rate_limits"] += int(was_created)
+
+    for spec in _anomaly_rules():
+        slug = spec.pop("use_case")
+        target = UseCase.objects.filter(slug=slug).first() if slug else None
+        if slug and target is None:
+            # Loudly. A silent `continue` here cost this seed its only *acting* rule on the first
+            # run — the slug was wrong, three of four rules appeared, and the count looked
+            # plausible. The same shape as `record_to_outbox` returning silently for an unknown
+            # event type, which this repository has now found three times.
+            raise ValueError(
+                f"anomaly rule {spec['name']!r} names use case {slug!r}, which this seed does "
+                "not create"
+            )
+        with transaction.atomic():
+            # Keyed by (use case, name): the server upserts by name, so re-seeding corrects a rule
+            # rather than growing a second one beside it (`FRD-208`).
+            rule, was_created = AnomalyRule.objects.update_or_create(
+                use_case=target, name=spec["name"], defaults=spec
+            )
+            events.emit("anomaly_rule.upserted", rule_payload(rule))
+            created["anomaly_rules"] += int(was_created)
 
     for slug, config in _pipelines().items():
         target = UseCase.objects.filter(slug=slug).first()
