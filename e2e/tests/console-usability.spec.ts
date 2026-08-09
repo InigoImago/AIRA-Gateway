@@ -85,11 +85,28 @@ test.describe('The page holds still', () => {
     // tell the two apart reports the wrong thing.
     await page.waitForTimeout(1_000);
 
+    // **Only shifts the live control is part of.** Counting every shift on the page made this
+    // test report on the database rather than on the layout: a live view that gains a finding
+    // reflows, correctly, and the evaluator writes findings continuously — so it passed on a quiet
+    // database and failed inside the full suite, where earlier cases had produced traffic. That is
+    // the same confusion its own comment above records for the initial render, one level on: a
+    // test that cannot tell "a row arrived" from "the control moved" reports whichever happened.
+    //
+    // The defect this exists for is a control that moves under the reader's cursor on **every
+    // tick**, because the stamp beside it changes width. So the question asked is about that
+    // control, and new content is free to push the list around beneath it.
     const shifts = await page.evaluate(async () => {
+      const control = document.querySelector('[data-testid="live-stamp"]')?.parentElement ?? null;
       const seen: number[] = [];
       const observer = new PerformanceObserver((list) => {
-        for (const entry of list.getEntries() as unknown as { value: number }[]) {
-          seen.push(entry.value);
+        for (const entry of list.getEntries() as unknown as {
+          value: number;
+          sources?: { node?: Node | null }[];
+        }[]) {
+          const touchesControl = (entry.sources ?? []).some(
+            (source) => source.node && control && control.contains(source.node),
+          );
+          if (touchesControl) seen.push(entry.value);
         }
       });
       observer.observe({ type: 'layout-shift' });
@@ -99,7 +116,7 @@ test.describe('The page holds still', () => {
       return seen;
     });
 
-    expect(shifts, `the page shifted ${shifts.length} time(s) while refreshing`).toEqual([]);
+    expect(shifts, `the live control moved ${shifts.length} time(s) while refreshing`).toEqual([]);
   });
 
   test('the trace filters sit on one line', async ({ page }) => {
