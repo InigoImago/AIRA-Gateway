@@ -16,26 +16,32 @@ Legend: done built and verified · partly partial, with the missing half named �
 
 | # | Feature | Stand | Where |
 |--:|---|---|---|
-| 1 | Unified provision of models | partly | Vertex (Gemini + Anthropic) done, OpenAI-compatible/self-hosted done, Foundry **hermetic only** — no Azure subscription has ever run it |
-| 2 | Role assignment | done | `FRD-201`, `ADR-0009` |
+| 1 | Unified provision of models | partly | Vertex (Gemini + Anthropic) done, OpenAI-compatible/self-hosted done, Foundry built but **hermetic only** — no Azure subscription has ever run it |
+| 2 | Role assignment | done | `FRD-201`, `ADR-0009`, `ADR-0017`/`FRD-605` — a role is held **through a Keycloak group and nothing else**; a realm role assigned directly grants nothing |
 | 3 | KIRA API compatibility | done | `FRD-107` Stage A+B — text, documents, thinking, structured output, batch embedding |
 | 4 | Auditability | done | `FRD-122` — refusals recorded at the exception boundary, requested vs. served model, degradation per row |
 | 5 | Storage of requests/responses: which system, when, what, with what | done | `FRD-103` + `FRD-122` — the API-key prefix distinguishes the calling system |
 | 6 | Incident response | done | `FRD-503` — suspensions with author, expiry, reason; kill switch |
-| 7 | Blocking dangerous requests | partly | injection filter done, operator kill switch done — **no further categories** (jailbreak, data exfiltration, PII in the prompt) |
+| 7 | Blocking dangerous requests | partly | injection filter done, operator kill switch done, and `FRD-504` can now **measure** what a model refuses — but as *controls* there are still **no further categories** (jailbreak, data exfiltration, PII in the prompt, output filtering) |
 | 8 | Model routing from the definition | done | `FRD-300`, `FRD-306` |
 | 9 | Model fallback | done | capability-homogeneous: a chain skips an incapable candidate rather than degrading silently |
-| 10 | Independence from Google / Microsoft | partly | proven for **two** providers by an architecture assertion; Foundry unproven against a real subscription |
+| 10 | Independence from Google / Microsoft | partly | proven for **three** platforms by an architecture assertion — Foundry reused the OpenAI dialect unchanged and its diff never left `upstreams/`; still unproven against a real Azure subscription |
 | 11 | Overview of all use cases | partly | list and detail done — **no governance view of the processing logic** across use cases (`FRD-600`) |
 | 12 | Self-service filter and routing pipeline | done | `FRD-303`, `FRD-306` |
-| 13 | Permitted models per use case | partly | allow-list done, capabilities enforced done — **no approved catalog with pickers** (`FRD-307`) |
-| 14 | Model smoke tests and jailbreak batteries | missing | `FRD-504` written, **not built** |
-| 15 | Budget overview and limits | done | `FRD-400`–`403`, `FRD-601` |
+| 13 | Permitted models per use case | partly | allow-list done, capabilities enforced done, **approval enforced** (`FRD-307`, 2026-08-09 — a dispatch condition at every hop). Missing: the **pickers**. The pipeline builder still takes model names as free text and does not know the catalog, so it offers what the server refuses — `FRD-206`'s defect, one screen along |
+| 14 | Model smoke tests and jailbreak batteries | done | `FRD-504` (2026-08-09) — one flat catalogue of 100 questions, put to a model and judged by a person; a model's standing is its **latest run**, never a sum. Narrower than drafted: no repetition-as-a-rate, no two modes, no machine-checked expectations |
+| 15 | Budget overview and limits | done | `FRD-400`–`403`, `FRD-601`, `FRD-603` — a use case's consumption is shown **with or without a limit** |
 | 16 | Anomaly detection | done | `FRD-500`/`501` — seven kinds, evaluated against the audit trail |
 | 17 | Central overview of all use cases | partly | see 11 |
 
-**Score:** 9 built, 6 partial, 2 missing. The partials are all *breadth* rather than correctness —
-each does what it says for what it covers.
+**Score:** 11 built, 6 partial, 0 missing (re-counted 2026-08-09). The partials are all *breadth*
+rather than correctness — each does what it says for what it covers.
+
+> **Why this table was wrong.** Re-checked against the code on 2026-08-09 after `FRD-603`, and six
+> rows understated what exists — smoke tests and Foundry were built and still recorded as missing.
+> A reference table that undersells is not a harmless one: `CLAUDE.md` sends every planner here
+> first, and the next person plans to build something that is already there. The rows are dated now
+> so the same drift is visible rather than inferred.
 
 ---
 
@@ -44,7 +50,7 @@ each does what it says for what it covers.
 | # | Feature | Stand |
 |--:|---|---|
 | 18 | Document processing (PDF, images) | done `FRD-110` — 15 media types, signature checks, a model that cannot read it is **refused by name** |
-| 19 | Extensibility as a measurable property | partly architecture assertion passes; the claim "a new family is a catalog entry plus at most one dialect" has been tested twice, not three times |
+| 19 | Extensibility as a measurable property | done the assertion passes and the claim has now been tested **three** times — Vertex/Gemini, Vertex/Anthropic, and Foundry, which reused the OpenAI dialect without a line of change |
 | 20 | Secrets from Vault | done `FRD-116` — a settings source, fail-closed |
 | 21 | Operational diagnostics | partly `FRD-117` — build identity, upstream health, trace header, CORS done; **FR-7 (a second OpenAPI 3.0 document) not built** |
 | 22 | Masking sensitive content in stored payloads | partly `FRD-406` (2026-08-08) — **credentials** are masked; PII deliberately is not |

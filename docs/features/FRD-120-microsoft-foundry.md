@@ -1,7 +1,11 @@
 # FRD-120 — Microsoft Foundry: Azure OpenAI and Microsoft's own models
 
-> Phase: 8 (KIRA parity) / Phase 3 backlog · Status: **Draft — planned, not scheduled**
-> Owner: Vadim Scheibe · Last updated: 2026-08-06
+> Phase: 8 (KIRA parity) / Phase 3 backlog · Status: **Built, hermetically verified only**
+> Owner: Vadim Scheibe · Last updated: 2026-08-09
+>
+> `FoundryTransport` × the **unchanged** OpenAI dialect × `AzureRoutes` exist and are tested
+> (`gateway/tests/test_foundry.py`). What has never happened is a request to a real Azure
+> subscription — so this is *built*, not *proven*, and the two are recorded apart on purpose.
 > Architecture: `ADR-0011` (platform × dialect × identity). Requires `FRD-114`, `FRD-115`
 > (shared `TokenSource`). Named as an intended adapter since `FRD-304`.
 

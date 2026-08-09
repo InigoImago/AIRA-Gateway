@@ -124,11 +124,16 @@ Deliverables:
 - **IT Steuerung views**: all use cases with descriptions + processing logic (read-only), aggregate
   statistics and cost/usage analytics. — **`FRD-601` done (2026-08-06)**: spend and usage
   reporting, scoped so governance sees every use case and everyone else sees their own.
+  **`FRD-603` done (2026-08-09)**: a use case's own page states what it consumed this month and
+  today, **whether or not a budget is set** — the figures were always recorded and only ever
+  displayed as a fraction of a limit.
 - Global monitoring dashboards.
-- Still open here: charts, export, per-request browsing (blocked on `FRD-406` redaction — see
-  ADR-0009), and the read-only "processing logic" view of every use case.
+- Still open here: charts, and the read-only "processing logic" view of every use case. Export is
+  `FRD-602` (done); per-request browsing is `FRD-505` (done, `ADR-0016`).
 
-FRDs: `FRD-600-governance-views`, `FRD-601-spend-and-usage-reporting`.
+FRDs: `FRD-600-governance-views` (**not written** — the governance view of the processing
+logic is a named gap with no document behind it), `FRD-601-spend-and-usage-reporting`,
+`FRD-602-report-export`, `FRD-603-use-case-consumption`.
 
 ---
 
@@ -296,9 +301,10 @@ product owner; the reason for the order is recorded so it is not re-litigated la
 | ~~Per-caller rate limiting + the budget guard/record race~~ | `FRD-405` | **Done (2026-08-05).** Token buckets and atomic budget reservations over Redis (ADR-0008); the audit write also moved off the request path. |
 | **Content redaction** — masking sensitive values *inside* a stored payload | `FRD-406` | **Credentials: done (2026-08-08).** API keys, bearer tokens, JWTs, `Authorization:` values and PEM private key blocks are masked before storage, plus any pattern a deployment adds (`AIRA_REDACT_PATTERNS`, additive). **PII: deliberately not**, because names and customer numbers are what the payload is stored for and a redactor that mangles them ends with storage switched off entirely — for that, the control is `FRD-404`'s per-use-case switch. |
 | ~~Spend and usage reporting~~ | `FRD-601` | **Done (2026-08-06).** Gateway `GET /v1beta/reporting` + a **Reporting** screen: totals and breakdowns by use case, model and member over a chosen period, scoped by the caller's role (ADR-0009). Per-request *browsing* still waits for `FRD-406`. |
+| ~~A use case's consumption without a budget~~ | `FRD-603` | **Done (2026-08-09).** Consumption was rendered only inside a budget card, so an unlimited use case showed neither tokens nor spend while `request_logs` held both. `GET /v1beta/reporting?use_case=` plus a Consumption card above the budgets. |
 | Budget threshold alerting | `FRD-402` follow-up | Today a breach is a 429 and nothing else — nobody is told before the wall is hit. |
 | Membership reconciliation (Keycloak groups ↔ Management) | — | The two sources can drift; nothing detects it. |
-| Pagination | — | No list endpoint or screen paginates. |
+| ~~Pagination~~ | `FRD-207`/`FRD-208` | **Done (2026-08-08).** The use-case list is server-paged and explicitly ordered; findings are **cursor**-paged because they are an append-only log; the model catalog stays client-side on purpose, because two console warnings count over the *whole* catalog. |
 | ~~Read-model tombstones~~ | — | **Done (2026-08-05).** Deleting a use case left its keys authenticating and its budgets, limits and pipeline in force; the tombstone now cascades and migration 0011 cleared what earlier deletions had left. |
 
 ---
