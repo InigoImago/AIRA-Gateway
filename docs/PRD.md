@@ -75,9 +75,9 @@ product's central claim being true and being asserted.
 | 18 | **Verarbeitung von Dokumenten** (PDF, Bilder u. a. im Request) — KIRAs Kernfall | **fertig (2026-08-06)** — geordnete Teile, 15 Medientypen, Signaturprüfung, Grenzen; ein Modell, das den Typ nicht lesen kann, **lehnt ab** statt zu halluzinieren | `FRD-110` ✅ |
 | 19 | **Erweiterbarkeit als messbare Eigenschaft** — eine neue Modellfamilie ist ein Katalogeintrag plus höchstens ein Dialekt | **Architektur steht, ungeprüft** | `ADR-0011`, `FRD-115` §10 |
 | 20 | **Secrets aus Vault** — Richtlinie und Implementierung stehen seit Phase 0 auseinander | **fertig (2026-08-06)** — AppRole + KV-v2 als pydantic-Settings-Quelle über der Umgebung, **fail closed**; gegen eine echte AppRole im Stack verifiziert | `FRD-116` ✅ |
-| 21 | **Betriebsdiagnostik** — Build-Identität, Upstream-Health, Trace-Header, CORS, OpenAPI 3.0 | **fehlt** | `FRD-117` |
-| 22 | **Maskierung sensibler Inhalte** in gespeicherten Payloads | **fehlt** — `Redactor` ist ein No-Op | `FRD-406` |
-| 23 | **Export der Auswertung** (CSV mit Content Negotiation) | **fehlt** | `FRD-602` |
+| 21 | **Betriebsdiagnostik** — Build-Identität, Upstream-Health, Trace-Header, CORS, OpenAPI 3.0 | **fertig bis auf FR-7 (2026-08-06)** — Erreichbarkeit wird im Hintergrund geprüft und von `/readyz` *gelesen*, veraltet zählt als degradiert, `x-trace-id` als reines ASGI ganz außen; **das zweite OpenAPI-3.0-Dokument ist bewusst nicht gebaut** | `FRD-117` ✅ (FR-7 offen) |
+| 22 | **Maskierung sensibler Inhalte** in gespeicherten Payloads | **Credentials fertig (2026-08-08)** — API-Keys, Bearer-Token, JWTs, `Authorization:`, PEM-Blöcke, plus Deployment-Muster (additiv). **PII bewusst nicht**: Namen und Kundennummern sind der Grund, *warum* gespeichert wird — dafür ist der Schalter je Use Case (`FRD-404`) die Kontrolle | `FRD-406` ✅ (PII bewusst offen) |
+| 23 | **Export der Auswertung** (CSV mit Content Negotiation) | **fertig (2026-08-06)** — CSV als *Renderer* desselben Endpunkts, per `Accept` gewählt; BOM, CRLF, RFC 4180, unpreisliche Zeile als Nachsatz | `FRD-602` ✅ |
 | 24 | Mehrere Keycloak-Backends / Gruppen aus UserInfo | **fehlt — Bedarf ungeklärt** | `FRD-118` §11 |
 
 Feature 19 deserves the emphasis the owner put on it (*"so dass es einfach erweiterbar wäre"*).
