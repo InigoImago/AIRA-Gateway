@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 132 118" width="132" height="118"
+     role="img" aria-label="AIRA">
+  <title>AIRA</title>
+  <defs>
+    <linearGradient id="m" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2563eb"/>
+      <stop offset="1" stop-color="#0ea5e9"/>
+    </linearGradient>
+  </defs>
+  <!-- A gate: everything passes one way, and one thing is stopped at the threshold. -->
+  <g transform="translate(14 7)">
+    <rect x="14" y="0" width="76" height="13" rx="4" fill="url(#m)"/>
+    <rect x="14" y="13" width="13" height="91" rx="4" fill="url(#m)"/>
+    <rect x="77" y="13" width="13" height="91" rx="4" fill="url(#m)"/>
+    <g stroke="#94a3b8" stroke-width="6" stroke-linecap="round">
+      <line x1="-12" y1="38" x2="10" y2="38"/>
+      <line x1="-12" y1="58" x2="10" y2="58"/>
+      <line x1="-12" y1="78" x2="10" y2="78"/>
+    </g>
+    <g stroke="#2563eb" stroke-width="6" stroke-linecap="round">
+      <line x1="94" y1="38" x2="116" y2="38"/>
+      <line x1="94" y1="78" x2="116" y2="78"/>
+    </g>
+    <circle cx="52" cy="58" r="7" fill="#ef4444"/>
+  </g>
+</svg>

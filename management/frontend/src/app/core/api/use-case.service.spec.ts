@@ -357,6 +357,51 @@ describe('UseCaseService', () => {
     expect(request.params.get('limit')).toBe('10');
   });
 
+  // ---- model smoke tests (`FRD-504`) ---------------------------------------------------------
+
+  it('asks the model through the gateway, attributed to a use case', () => {
+    /** `FRD-504` §5: a smoke test travels the ordinary request path, so it is priced, budgeted,
+     *  rate-limited and audited like any other traffic. A harness that bypassed the gateway would
+     *  measure a path nobody uses. */
+    service.askModel('qwen2.5:3b', 'Say OK', 'uc-a').subscribe((answer) => {
+      expect(answer).toBe('OK.');
+    });
+
+    const request = http.expectOne((r) => r.url.includes(':generateContent'));
+    expect(request.request.url).toContain('/gw/uc/uc-a/');
+    request.flush({ candidates: [{ content: { parts: [{ text: 'OK.' }] } }] });
+  });
+
+  it('omits the selector when the credential already carries a use case', () => {
+    service.askModel('m', 'hi', '').subscribe();
+
+    const request = http.expectOne((r) => r.url.includes(':generateContent'));
+    expect(request.request.url).not.toContain('/uc/');
+    // An answer with no parts is an empty string, not a crash: a model that returns nothing is
+    // exactly the kind of behaviour a battery exists to record.
+    request.flush({ candidates: [{}] });
+  });
+
+  it('asks for the runs of one model when it is given one', () => {
+    service.testRuns('m-1').subscribe();
+    expect(http.expectOne((r) => r.url === '/api/v1/test-runs/').request.params.get('model')).toBe(
+      'm-1',
+    );
+
+    service.testRuns().subscribe();
+    expect(http.expectOne((r) => r.url === '/api/v1/test-runs/').request.params.has('model')).toBe(
+      false,
+    );
+  });
+
+  it('asks the server for the tool-call turns and the flagged ones separately', () => {
+    service.traces({ flaggedOnly: true }).subscribe();
+
+    expect(
+      http.expectOne((r) => r.url === '/gw/v1beta/traces').request.params.get('flagged_only'),
+    ).toBe('true');
+  });
+
   it('reads anomaly rules from management, not from the gateway', () => {
     // The rule is authored in the control plane; the finding is produced in the data plane. Asking
     // the wrong plane would work in a demo and return a stale copy in production.

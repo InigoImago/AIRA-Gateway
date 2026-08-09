@@ -1,6 +1,9 @@
 <header class="aira-header">
   <div class="aira-header__brand">
-    <span class="aira-logo" aria-hidden="true">AI</span>
+    <!-- The mark, not the letters. `aria-hidden` because the heading beside it already names the
+         product — an image and a heading saying the same thing is one thing said twice to a
+         screen reader. -->
+    <img class="aira-logo" src="aira-mark.svg" alt="" aria-hidden="true" width="34" height="30" />
     <div>
       <h1>{{ title() }}</h1>
       <p class="aira-subtitle">Management &amp; Monitoring</p>
@@ -35,6 +38,13 @@
     point is the content behind the figures. Offering it and refusing on use is `FRD-206`'s defect.
   -->
   @if (mayInvestigate()) {
+    <a
+      class="aira-nav__item"
+      routerLink="/model-tests"
+      routerLinkActive="is-active"
+      data-testid="nav-model-tests"
+      >Model tests</a
+    >
     <a
       class="aira-nav__item"
       routerLink="/requests"

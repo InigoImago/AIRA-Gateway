@@ -53,6 +53,7 @@ INSTALLED_APPS = [
     "aira_management.apps.budgets",
     "aira_management.apps.ratelimits",
     "aira_management.apps.anomalies",
+    "aira_management.apps.smoketests",
     "aira_management.apps.directory",
     "aira_management.apps.outbox",
 ]

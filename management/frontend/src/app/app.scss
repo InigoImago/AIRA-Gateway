@@ -32,16 +32,13 @@
   }
 }
 
+/* The mark, at the size it was drawn for. No background plate: the gate has its own shape, and a
+   coloured square behind it just makes it a square. */
 .aira-logo {
-  display: grid;
-  place-items: center;
-  width: 38px;
-  height: 38px;
-  font-weight: 800;
-  font-size: 0.9rem;
-  color: #fff;
-  background: linear-gradient(135deg, var(--aira-brand), var(--aira-brand-strong));
-  border-radius: 9px;
+  display: block;
+  width: 34px;
+  height: 30px;
+  flex: none;
 }
 
 .aira-subtitle {

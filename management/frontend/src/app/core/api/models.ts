@@ -276,6 +276,81 @@ export interface ModelCheck {
   detail: string;
 }
 
+/** A battery of questions to put to a model (`FRD-504`). */
+export interface TestBattery {
+  id: number;
+  name: string;
+  description: string;
+  case_count: number;
+  cases?: TestCase[];
+}
+
+export interface TestCase {
+  id: number;
+  battery: number;
+  topic: string;
+  prompt: string;
+  expectation: string;
+  position: number;
+}
+
+/**
+ * How a run stands.
+ *
+ * `unrated` is reported apart from everything else, deliberately: a run nobody has read is **not**
+ * a run with no failures, and reporting it as "0 failed" states something false in the most
+ * reassuring direction.
+ */
+export interface TestCounts {
+  total: number;
+  unrated: number;
+  pass: number;
+  fail: number;
+  unclear: number;
+}
+
+export interface TestRun {
+  id: number;
+  battery: number;
+  battery_name: string;
+  model: string;
+  use_case: string;
+  started_at: string;
+  finished_at: string | null;
+  requested_by_name: string;
+  counts: TestCounts;
+}
+
+export type TestVerdict = 'unrated' | 'pass' | 'fail' | 'unclear';
+
+export interface TestResult {
+  id: number;
+  run: number;
+  topic: string;
+  prompt: string;
+  expectation: string;
+  /** The model's answer. Hidden in the list on purpose — see `smoke-tests.ts`. */
+  response: string;
+  /** Set when the *request* failed, which is a different fact from a bad answer. */
+  error: string;
+  latency_ms: number | null;
+  verdict: TestVerdict;
+  note: string;
+  rated_by_name: string;
+  rated_at: string | null;
+}
+
+export interface TestModelStats {
+  model: string;
+  runs: number;
+  answers: number;
+  passed: number;
+  failed: number;
+  unclear: number;
+  unrated: number;
+  errored: number;
+}
+
 /** One row of a report: a group, and what happened in it (FRD-601). */
 export interface ReportRow {
   /** The use case, model or member this row is about. */

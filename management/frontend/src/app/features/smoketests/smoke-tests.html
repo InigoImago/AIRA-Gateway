@@ -1,0 +1,399 @@
+<div class="page">
+  <header class="page__head">
+    <div>
+      <h2 class="page__title">Model tests</h2>
+      <p class="muted" style="margin: 0.25rem 0 0">
+        Put a battery of questions to a model and read what comes back. Nothing here decides whether
+        an answer is good — a person does, and the rating carries their name.
+      </p>
+    </div>
+  </header>
+
+  @if (feedback.error(); as error) {
+    <div class="callout callout--danger" role="alert">{{ error }}</div>
+  }
+  @if (feedback.notice(); as notice) {
+    <div class="callout" role="status">{{ notice }}</div>
+  }
+
+  <!-- ── Run one ─────────────────────────────────────────────────────────────────────────── -->
+  @if (mayRun()) {
+    <section class="card">
+      <h3 class="section-title" style="margin: 0 0 0.75rem">Run a battery</h3>
+      <div class="form-stack">
+        <div class="form-inline">
+          <div class="field">
+            <label for="smoke-battery">Battery</label>
+            <select
+              id="smoke-battery"
+              name="battery"
+              [ngModel]="battery()"
+              (ngModelChange)="battery.set(+$event)"
+              data-testid="smoke-battery"
+            >
+              @for (b of batteries(); track b.id) {
+                <option [value]="b.id">{{ b.name }} ({{ b.case_count }})</option>
+              }
+            </select>
+          </div>
+          <div class="field">
+            <label for="smoke-model">
+              Model
+              <app-info-hint label="Which models can be tested">
+                Only models a Global Administrator has catalogued and approved, because only those
+                can be called at all.
+              </app-info-hint>
+            </label>
+            <select
+              id="smoke-model"
+              name="model"
+              [ngModel]="model()"
+              (ngModelChange)="model.set($event)"
+              data-testid="smoke-model"
+            >
+              <option value="">choose a model</option>
+              @for (m of runnable(); track m.name) {
+                <option [value]="m.name">{{ m.name }}</option>
+              }
+            </select>
+          </div>
+          <div class="field">
+            <label for="smoke-usecase">
+              Attributed to
+              <app-info-hint label="Why a use case is needed">
+                A test travels the ordinary request path, so it is priced, budgeted, rate-limited
+                and audited like any other traffic — which means it belongs to a use case. Leave it
+                empty only if your credential is already bound to one.
+              </app-info-hint>
+            </label>
+            <input
+              id="smoke-usecase"
+              name="use_case"
+              [ngModel]="useCase()"
+              (ngModelChange)="useCase.set($event)"
+              placeholder="technical id"
+              autocomplete="off"
+              data-testid="smoke-usecase"
+            />
+          </div>
+        </div>
+
+        <div class="form-actions">
+          @if (progress(); as done) {
+            <span class="muted" data-testid="smoke-progress">asking… {{ done }}</span>
+          }
+          <span class="form-actions__spacer"></span>
+          <button
+            type="button"
+            class="btn btn--primary"
+            [disabled]="running() || !model() || battery() === null"
+            (click)="run()"
+            data-testid="smoke-run"
+          >
+            {{ running() ? 'Running…' : 'Run' }}
+          </button>
+        </div>
+      </div>
+    </section>
+  }
+
+  <!-- ── Per model ───────────────────────────────────────────────────────────────────────── -->
+  <section class="card" style="padding: 0">
+    <div style="padding: 0.9rem 1rem 0">
+      <h3 class="section-title" style="margin: 0">
+        How each model has done
+        <app-info-hint label="What these numbers count">
+          Every answer this installation has collected for that model, across all runs. Unrated
+          answers are counted apart: a battery nobody has read is not a battery that passed, and a
+          rate computed over unread answers is a number that flatters.
+        </app-info-hint>
+      </h3>
+    </div>
+    @if (!stats().length) {
+      <p class="empty" data-testid="no-stats">No model has been tested yet.</p>
+    } @else {
+      <div class="table-wrap" style="margin-top: 0.75rem">
+        <table class="table">
+          <thead>
+            <tr>
+              <th scope="col">Model</th>
+              <th scope="col">Runs</th>
+              <th scope="col">Answers</th>
+              <th scope="col">Acceptable</th>
+              <th scope="col">Not acceptable</th>
+              <th scope="col">Cannot tell</th>
+              <th scope="col">Not yet rated</th>
+              <th scope="col">Request failed</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (row of stats(); track row.model) {
+              <tr>
+                <td>
+                  <code>{{ row.model }}</code>
+                </td>
+                <td class="nowrap">{{ row.runs }}</td>
+                <td class="nowrap">{{ row.answers }}</td>
+                <td class="nowrap">{{ row.passed }}</td>
+                <td class="nowrap">
+                  @if (row.failed) {
+                    <span class="badge badge--danger">{{ row.failed }}</span>
+                  } @else {
+                    0
+                  }
+                </td>
+                <td class="nowrap">{{ row.unclear }}</td>
+                <td class="nowrap">
+                  @if (row.unrated) {
+                    <span class="badge badge--warning">{{ row.unrated }}</span>
+                  } @else {
+                    0
+                  }
+                </td>
+                <td class="nowrap">{{ row.errored }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    }
+  </section>
+
+  <!-- ── Runs ────────────────────────────────────────────────────────────────────────────── -->
+  <section class="card" style="padding: 0">
+    <div style="padding: 0.9rem 1rem 0">
+      <h3 class="section-title" style="margin: 0">Runs</h3>
+    </div>
+    @if (loading()) {
+      <p class="loading">
+        <span class="spinner" aria-hidden="true"></span>
+        Loading…
+      </p>
+    } @else if (!runs().length) {
+      <p class="empty" data-testid="no-runs">Nothing has been run yet.</p>
+    } @else {
+      <div class="table-wrap" style="margin-top: 0.75rem">
+        <table class="table">
+          <thead>
+            <tr>
+              <th scope="col">When</th>
+              <th scope="col">Battery</th>
+              <th scope="col">Model</th>
+              <th scope="col">Answers</th>
+              <th scope="col">By</th>
+              <th scope="col"><span class="sr-only">Actions</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (run of runs(); track run.id) {
+              <tr>
+                <td class="nowrap">{{ run.started_at | date: 'dd.MM.yyyy HH:mm' }}</td>
+                <td>{{ run.battery_name }}</td>
+                <td>
+                  <code>{{ run.model }}</code>
+                </td>
+                <td class="nowrap">
+                  {{ run.counts.total }}
+                  @if (run.counts.unrated) {
+                    <span class="badge badge--warning">{{ run.counts.unrated }} unrated</span>
+                  }
+                  @if (run.counts.fail) {
+                    <span class="badge badge--danger">{{ run.counts.fail }} failed</span>
+                  }
+                </td>
+                <td>{{ run.requested_by_name }}</td>
+                <td class="table__actions">
+                  <div class="actions">
+                    <button
+                      type="button"
+                      class="btn btn--sm"
+                      (click)="open(run)"
+                      [attr.data-testid]="'open-run-' + run.id"
+                    >
+                      Rate
+                    </button>
+                    <button
+                      type="button"
+                      class="btn btn--sm"
+                      (click)="download(run)"
+                      [attr.data-testid]="'export-run-' + run.id"
+                    >
+                      Export CSV
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    }
+  </section>
+
+  <!-- ── The answers of one run ──────────────────────────────────────────────────────────── -->
+  @if (openRun(); as run) {
+    <section class="card" style="padding: 0">
+      <div class="spread" style="padding: 0.9rem 1rem">
+        <h3 class="section-title" style="margin: 0">
+          {{ run.battery_name }} against {{ run.model }}
+        </h3>
+        <button type="button" class="btn btn--sm btn--ghost" (click)="closeRun()">Close</button>
+      </div>
+      <!--
+        Topic and prompt, and **not the answer**. Fifty answers in a table is how somebody ends up
+        skimming them; the rating window shows one at a time with everything about it.
+      -->
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th scope="col">Topic</th>
+              <th scope="col">Prompt</th>
+              <th scope="col">Rating</th>
+              <th scope="col"><span class="sr-only">Actions</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (row of results(); track row.id; let i = $index) {
+              <tr>
+                <td>{{ row.topic }}</td>
+                <td class="truncate">{{ row.prompt }}</td>
+                <td class="nowrap">
+                  @if (row.error) {
+                    <span class="badge badge--warning" [attr.title]="row.error">
+                      request failed
+                    </span>
+                  } @else {
+                    <span [class]="badge(row.verdict)" [attr.data-testid]="'verdict-' + row.id">
+                      {{ row.verdict }}
+                    </span>
+                  }
+                  @if (row.rated_by_name) {
+                    <span class="muted" style="font-size: 0.78rem">
+                      by {{ row.rated_by_name }}</span
+                    >
+                  }
+                </td>
+                <td class="table__actions">
+                  <button
+                    type="button"
+                    class="btn btn--sm"
+                    (click)="rate(i)"
+                    [attr.data-testid]="'rate-' + row.id"
+                  >
+                    Read and rate
+                  </button>
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    </section>
+  }
+</div>
+
+<!-- ── The rating window ─────────────────────────────────────────────────────────────────── -->
+@if (current(); as row) {
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="rate-title">
+    <div class="modal__panel modal__panel--wide">
+      <div class="modal__head">
+        <h3 id="rate-title" style="margin: 0">{{ row.topic }}</h3>
+        <span class="muted">{{ (rating() ?? 0) + 1 }} of {{ results().length }}</span>
+        <button
+          type="button"
+          class="btn btn--sm btn--ghost"
+          aria-label="Close"
+          (click)="closeRating()"
+        >
+          Close
+        </button>
+      </div>
+
+      <div class="modal__body stack">
+        <div>
+          <h4 class="section-title" style="margin: 0 0 0.35rem">Prompt</h4>
+          <pre class="payload" data-testid="rate-prompt">{{ row.prompt }}</pre>
+        </div>
+
+        @if (row.expectation) {
+          <div>
+            <h4 class="section-title" style="margin: 0 0 0.35rem">What a good answer looks like</h4>
+            <p class="muted" style="margin: 0" data-testid="rate-expectation">
+              {{ row.expectation }}
+            </p>
+          </div>
+        }
+
+        <div>
+          <h4 class="section-title" style="margin: 0 0 0.35rem">The answer</h4>
+          @if (row.error) {
+            <!-- A failed **request** is not a bad **answer**. Saying which is the difference
+                 between "this model is unsafe" and "the gateway refused us". -->
+            <p class="callout callout--warning" data-testid="rate-error">
+              The request failed, so there is nothing to judge: {{ row.error }}
+            </p>
+          } @else {
+            <pre class="payload" data-testid="rate-response">{{ row.response }}</pre>
+          }
+        </div>
+
+        <div class="field">
+          <label for="rate-note">Note (optional)</label>
+          <textarea
+            id="rate-note"
+            rows="2"
+            [ngModel]="note()"
+            (ngModelChange)="note.set($event)"
+            placeholder="what makes this acceptable, or not"
+            data-testid="rate-note"
+          ></textarea>
+        </div>
+      </div>
+
+      <div class="modal__foot">
+        <button
+          type="button"
+          class="btn"
+          [disabled]="(rating() ?? 0) === 0"
+          (click)="step(-1)"
+          data-testid="rate-previous"
+        >
+          Previous
+        </button>
+        <button
+          type="button"
+          class="btn"
+          [disabled]="(rating() ?? 0) >= results().length - 1"
+          (click)="step(1)"
+          data-testid="rate-next"
+        >
+          Next
+        </button>
+        <span class="form-actions__spacer"></span>
+        <!-- Recording a verdict moves to the next answer, because that is what the reader wants
+             next. Three verdicts and not two: "cannot tell" is a real outcome, and forcing it into
+             pass or fail is how a battery comes to report a certainty nobody had. -->
+        <button type="button" class="btn" (click)="verdict('unclear')" data-testid="rate-unclear">
+          Cannot tell
+        </button>
+        <button
+          type="button"
+          class="btn btn--danger"
+          (click)="verdict('fail')"
+          data-testid="rate-fail"
+        >
+          Not acceptable
+        </button>
+        <button
+          type="button"
+          class="btn btn--primary"
+          (click)="verdict('pass')"
+          data-testid="rate-pass"
+        >
+          Acceptable
+        </button>
+      </div>
+    </div>
+  </div>
+}

@@ -1,6 +1,6 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
-import { Observable } from 'rxjs';
+import { Observable, map } from 'rxjs';
 import {
   AnomalyEvent,
   AnomalyPage,
@@ -21,6 +21,10 @@ import {
   Report,
   UseCase,
   Suspension,
+  TestBattery,
+  TestModelStats,
+  TestResult,
+  TestRun,
   Trace,
   TracePage,
   TracePayload,
@@ -262,6 +266,74 @@ export class UseCaseService {
    */
   checkModel(model: string): Observable<ModelCheck> {
     return this.http.get<ModelCheck>(`/gw/v1beta/models/${seg(model)}:check`);
+  }
+
+  // ---- model smoke tests (`FRD-504`) --------------------------------------------------------
+
+  batteries(): Observable<TestBattery[]> {
+    return this.http.get<TestBattery[]>('/api/v1/test-batteries/');
+  }
+
+  testRuns(model?: string): Observable<TestRun[]> {
+    const params: Record<string, string> = {};
+    if (model) params['model'] = model;
+    return this.http.get<TestRun[]>('/api/v1/test-runs/', { params });
+  }
+
+  startRun(battery: number, model: string, useCase: string): Observable<TestRun> {
+    return this.http.post<TestRun>('/api/v1/test-runs/', {
+      battery,
+      model,
+      use_case: useCase,
+    });
+  }
+
+  runResults(runId: number): Observable<TestResult[]> {
+    return this.http.get<TestResult[]>(`/api/v1/test-runs/${runId}/results/`);
+  }
+
+  finishRun(runId: number): Observable<TestRun> {
+    return this.http.post<TestRun>(`/api/v1/test-runs/${runId}/finish/`, {});
+  }
+
+  /**
+   * Store an answer, or a verdict, or both.
+   *
+   * Two different acts through one endpoint, and the server keeps them apart: writing a response
+   * does not stamp a rater, because nobody has read it yet.
+   */
+  updateResult(id: number, changes: Partial<TestResult>): Observable<TestResult> {
+    return this.http.patch<TestResult>(`/api/v1/test-results/${id}/`, changes);
+  }
+
+  /**
+   * Put one prompt to one model through the **gateway**, the ordinary way.
+   *
+   * `FRD-504` §5: a smoke test must travel the request path everybody else travels, or it measures
+   * a path nobody uses. It is priced, budgeted, rate-limited and audited like any other request —
+   * which also means an installation can see what its own testing costs.
+   */
+  askModel(model: string, prompt: string, useCase: string): Observable<string> {
+    const path = useCase ? `/gw/uc/${seg(useCase)}` : '/gw';
+    return this.http
+      .post<{ candidates?: { content?: { parts?: { text?: string }[] } }[] }>(
+        `${path}/v1beta/models/${seg(model)}:generateContent`,
+        { contents: [{ parts: [{ text: prompt }] }] },
+      )
+      .pipe(
+        map((body) =>
+          (body.candidates?.[0]?.content?.parts ?? []).map((part) => part.text ?? '').join(''),
+        ),
+      );
+  }
+
+  /** The evaluation as CSV. A blob, because a plain link carries no bearer token (`FRD-602`). */
+  testRunCsv(runId: number): Observable<Blob> {
+    return this.http.get(`/api/v1/test-runs/${runId}/export/`, { responseType: 'blob' });
+  }
+
+  testStats(): Observable<TestModelStats[]> {
+    return this.http.get<TestModelStats[]>('/api/v1/test-stats/');
   }
 
   /** Traffic that is currently stopped, and what was stopped before (`FRD-503`). */

@@ -673,6 +673,46 @@ describe('ModelCatalog — finding one among many', () => {
     expect(harness.component.approved()).toBe(true);
   });
 
+  it('says a reachable model is reachable, and an unreachable one is not', () => {
+    /** Three verdicts, three sentences. "Not contacted" is covered elsewhere; these are the two
+     *  that describe an actual attempt. */
+    const reachable = setup();
+    reachable.openFirst();
+    reachable.html().querySelector<HTMLElement>('[data-testid^="check-gemini"]')?.click();
+    reachable.fixture.detectChanges();
+    expect(reachable.html().querySelector('[data-testid="check-verdict"]')?.textContent).toContain(
+      'Reachable',
+    );
+
+    const unreachable = setup({
+      check: of({
+        model: 'gemini-2.0-flash',
+        declared: true,
+        served: true,
+        reachable: false,
+        detail: 'Not reachable (ConnectionError).',
+      }),
+    });
+    unreachable.openFirst();
+    unreachable.html().querySelector<HTMLElement>('[data-testid^="check-gemini"]')?.click();
+    unreachable.fixture.detectChanges();
+    expect(
+      unreachable.html().querySelector('[data-testid="check-verdict"]')?.textContent,
+    ).toContain('Not reachable');
+  });
+
+  it('finds a model by its display name and its provider, not only by its id', () => {
+    /** Somebody looking for "the cheap Anthropic one" types neither the model id nor the exact
+     *  display name, so the haystack carries all three. */
+    const harness = setup();
+    const view = harness.component as unknown as { view: { search: (v: string) => void } };
+
+    view.view.search('google');
+    harness.fixture.detectChanges();
+
+    expect(harness.text()).toContain('gemini-2.0-flash');
+  });
+
   it('leaves no declared field out of the panel', () => {
     /**
      * The claim `detailOf` makes is **exhaustiveness**: a catalog entry is what the gateway
