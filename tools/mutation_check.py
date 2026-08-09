@@ -2490,6 +2490,52 @@ MUTATIONS = [
         "        _unused = (\n            PayloadAccess(",
         "gateway/tests/test_payload_access.py",
     ),
+    # ---- the security round (2026-08-09) -----------------------------------------------------
+    #
+    # Four properties from a full read of the code. Each is a *refusal* or a *parse*, which is the
+    # kind of thing that keeps working when it stops working — nothing fails, and the guarantee is
+    # simply gone. `W1` is the one that had a comment claiming it: the model segment was documented
+    # as encoded and was not.
+    Mutation(
+        "W1",
+        "a model name is one path segment and cannot walk up the URL",
+        "gateway/src/aira_gateway/upstreams/vertex/transport.py",
+        'segment = quote(model, safe="@")',
+        'segment = httpx.URL(path=f"/{model}").path.lstrip("/")',
+        "gateway/tests/test_vertex.py",
+    ),
+    Mutation(
+        "W2",
+        "the forwarded address is read from the right, so a caller cannot choose it",
+        "gateway/src/aira_gateway/persistence/recorder.py",
+        "                return chain[-hops][:64]",
+        "                return chain[0][:64]",
+        "gateway/tests/test_persistence_recorder.py gateway/tests/test_auth_attempt_bound.py",
+    ),
+    Mutation(
+        "W3",
+        "a plaintext identity provider stops a deployment",
+        "libs/src/aira_common/transport_security.py",
+        '    if parts.scheme.lower() != "http":\n        return False',
+        "    if True:\n        return False",
+        "libs/tests/test_transport_security.py gateway/tests/test_deployment_safety.py",
+    ),
+    Mutation(
+        "W4",
+        "an unauthenticated event bus stops a deployment",
+        "gateway/src/aira_gateway/security.py",
+        "    if settings.kafka_bootstrap_servers.strip() and settings.kafka_security().is_plaintext:",
+        "    if False:",
+        "gateway/tests/test_deployment_safety.py",
+    ),
+    Mutation(
+        "W5",
+        "a pattern that could hang a worker is not compiled, wherever it came from",
+        "gateway/src/aira_gateway/pipeline/classifiers.py",
+        "            if is_catastrophic(pattern):",
+        "            if False:",
+        "gateway/tests/test_pipeline_classifiers.py libs/tests/test_patterns.py",
+    ),
     # ---- a role is held through a group, and only through a group (ADR-0017) ----------------
     #
     # The change with the most consequence in the system: three predicates decide oversight,

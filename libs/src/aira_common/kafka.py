@@ -27,6 +27,58 @@ EVENT_TYPE_HEADER = "event_type"
 
 
 @dataclass(frozen=True, slots=True)
+class KafkaSecurity:
+    """How both planes authenticate to the broker, in one place (2026-08-09).
+
+    **The bus is a trust boundary, and it had none.** Producer and consumer connected with
+    `bootstrap_servers` and nothing else — no protocol, no mechanism, no way to configure one. The
+    gateway applies whatever arrives on these topics straight into the read-model its
+    authorization is derived from, so anybody who could reach the broker could publish
+    `api_key.created` with a hash of their choosing, or `use_case_group.granted` naming a group
+    they are in, and hold administrator access to any use case. No credential is needed and no
+    audit row is written, because from the gateway's side nothing unusual happened: configuration
+    arrived, exactly as configuration does.
+
+    Applying events without question is the right design *if* the bus is authenticated — that is
+    what `FRD-204`'s idempotent consumer assumes. There was simply no way to make it true.
+
+    Defaults reproduce the previous behaviour (`PLAINTEXT`) so a laptop and the Compose stack keep
+    working; both planes refuse to start on it outside `local` (`ADR-0015`).
+    """
+
+    protocol: str = "PLAINTEXT"
+    sasl_mechanism: str = ""
+    sasl_username: str = ""
+    sasl_password: str = ""
+    #: Trust store for the broker's certificate. Empty uses the system trust store, which is what
+    #: a broker with a publicly-issued certificate needs; a private CA is named here.
+    ssl_cafile: str = ""
+
+    @property
+    def is_plaintext(self) -> bool:
+        return self.protocol.strip().upper() in {"", "PLAINTEXT"}
+
+    def client_kwargs(self) -> dict[str, Any]:
+        """The keyword arguments both aiokafka clients take.
+
+        Built here rather than at each call site: a producer that authenticates and a consumer
+        that does not is a deployment where half the bus is protected, and the half that is not is
+        the half that grants access.
+        """
+        protocol = self.protocol.strip().upper() or "PLAINTEXT"
+        kwargs: dict[str, Any] = {"security_protocol": protocol}
+        if protocol in {"SASL_PLAINTEXT", "SASL_SSL"}:
+            kwargs["sasl_mechanism"] = self.sasl_mechanism.strip().upper() or "SCRAM-SHA-512"
+            kwargs["sasl_plain_username"] = self.sasl_username
+            kwargs["sasl_plain_password"] = self.sasl_password
+        if protocol in {"SSL", "SASL_SSL"}:
+            import ssl
+
+            kwargs["ssl_context"] = ssl.create_default_context(cafile=self.ssl_cafile or None)
+        return kwargs
+
+
+@dataclass(frozen=True, slots=True)
 class KafkaRecord:
     """A record to publish: ``topic``/``key`` for partitioning, ``event_type`` + ``payload``."""
 
@@ -61,8 +113,11 @@ class InMemoryProducer:
 class AiokafkaProducer:
     """Real aiokafka-backed producer (integration-tested)."""
 
-    def __init__(self, bootstrap_servers: str) -> None:  # pragma: no cover
+    def __init__(
+        self, bootstrap_servers: str, security: KafkaSecurity | None = None
+    ) -> None:  # pragma: no cover
         self._bootstrap_servers = bootstrap_servers
+        self._security = security or KafkaSecurity()
         self._producer: Any = None
 
     async def start(self) -> None:  # pragma: no cover
@@ -71,6 +126,7 @@ class AiokafkaProducer:
         self._producer = AIOKafkaProducer(
             bootstrap_servers=self._bootstrap_servers,
             value_serializer=lambda value: json.dumps(value).encode("utf-8"),
+            **self._security.client_kwargs(),
         )
         await self._producer.start()
 

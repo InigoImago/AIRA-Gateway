@@ -43,7 +43,7 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
   inevitably do when both were written from the same mental model — and line coverage cannot see
   a *missing requirement*: on 2026-08-05 a review found seven real defects behind a green suite at
   99% coverage. So: **prove a test can fail.** Break the property, watch it go red, restore.
-  `make mutants` (`tools/mutation_check.py`) does this for **332 properties** across auth, budgets,
+  `make mutants` (`tools/mutation_check.py`) does this for **337 properties** across auth, budgets,
   pipeline, retention, the management control plane and the gateway's counters; when
   you fix a bug, add the mutation that reintroduces it. Two traps that cost real defects here:
   a stand-in that is more permissive than the thing it replaces (reuse the real method where you
@@ -1105,6 +1105,32 @@ every one of thirteen files had to be looked at — and a blanket rewrite to `gl
 frontend harness had the same trap: **a default nobody can hold is a harness testing a different
 product.** Boot refusal is environment-shaped (`ADR-0015`). Verified live: `groups:
 ['/aira/global-admins']`, `realm_access: None`, oversight resolved.
+
+**A security read of the whole code (`ADR-0018`, 2026-08-09)** — the request path held up (192-bit
+keys in constant time, pinned JWT algorithm with `exp`/`iat`/`sub` required, payload access gated
+and recorded, bounded bodies and schemas, no `eval`/raw SQL/disabled TLS, DRF authenticated by
+default). **Three of four findings were in the space *between* the services** — a link AIRA trusts
+completely and could not be told to verify. (1) **The event bus had no authentication and no way to
+add it**: `apply_event` writes config topics straight into the read-model authorization comes from,
+so anyone reaching the broker could publish `api_key.created` or `use_case_group.granted` and hold
+admin on any use case — no credential, **no audit row**, because configuration arriving is not
+unusual. (2) **Nothing required TLS to the identity provider or Vault**; over plaintext a
+substituted JWKS mints tokens that verify. One rule in `aira_common.transport_security`, **loopback
+exempt** — a rule worked around by `AIRA_ENVIRONMENT=local` disables every other check with it.
+(3) **`X-Forwarded-For` was read from the left** under a docstring assuming a proxy that
+*overwrites*, while the shipped nginx **appends** — so a caller chose their own audit address,
+`FRD-505`'s incident filter, and the key the brute-force bound counts, which rotating the header
+defeated. Read `AIRA_TRUSTED_PROXY_HOPS` from the **right** now. **The old test asserted the
+leftmost entry — it had written the vulnerability down as expected behaviour.** (4) A comment
+claimed the Vertex model segment was encoded; `httpx.URL(path=…)` leaves `/` and `..` alone and
+*decodes* `%2f`, and `AzureRoutes` had solved it correctly one directory away. Two structural
+guards, because the holes were invisible rather than wrong: every route must authenticate or be on
+a **written** list (the Gemini surface's whole protection is one `dependencies=[...]` at mount
+time), and building it taught that this FastAPI applies those from `_IncludedRouter`'s include
+context — a guard reading only `route.dependant` reports the *protected* routes as holes and gets
+"fixed" by exempting them. Test-quality pass: assertion-free tests were legitimate "does not raise"
+cases; the real gap was the catalog validator's thirteen untested refusal branches (83% → 99%).
+`W1`–`W4`. **Nothing the platform does changed.**
 
 Next candidates: **`FRD-114`** (model metadata — now also carries publisher + default output cap,
 prerequisite for 110–113 and 119), **`FRD-110`** (documents/images — the widest gap),

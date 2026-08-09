@@ -22,12 +22,16 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol, runtime_checkable
 
+from aira_common.logging import get_logger
 from aira_common.models import ThinkingMode
+from aira_common.patterns import is_catastrophic
 from aira_gateway.audit import ModelCall
 from aira_gateway.core.canonical import CanonicalMessage, CanonicalRequest, Role, Thinking
 from aira_gateway.upstreams.base import Upstream, UpstreamError
 
 # Built-in patterns, exposed so the UI can show operators exactly what the heuristic catches.
+_log = get_logger("aira_gateway.pipeline")
+
 BUILTIN_INJECTION_PATTERNS: tuple[str, ...] = (
     r"ignore\s+(all\s+)?(previous|prior|above)\s+(instructions|prompts)",
     r"disregard\s+(the\s+)?(previous|above|system|all)",
@@ -90,7 +94,26 @@ class HeuristicInjectionClassifier:
     def __init__(self, extra_patterns: tuple[str, ...] = (), *, use_builtins: bool = True) -> None:
         patterns = list(BUILTIN_INJECTION_PATTERNS) if use_builtins else []
         extras = [p for p in extra_patterns if p and len(p) <= MAX_PATTERN_LENGTH]
-        patterns += extras[:MAX_CUSTOM_PATTERNS]
+        # **Asked here too, not only where the pattern was written** (`ADR-0018`). Management
+        # refuses a nested quantifier at authoring time; this compiled whatever arrived in the
+        # read-model, which is reachable from a Kafka publish, a seed, a direct database write or
+        # an older Management. One such pattern against a long prompt stalls this worker for as
+        # long as it backtracks, and `re` has no timeout.
+        #
+        # Dropped rather than fatal, and **named in a log line**: the same treatment the length
+        # and count bounds beside it already give, and a use case whose filter has one pattern
+        # fewer is degraded, where a use case that cannot serve at all is down.
+        safe: list[str] = []
+        for pattern in extras[:MAX_CUSTOM_PATTERNS]:
+            if is_catastrophic(pattern):
+                _log.warning(
+                    "injection_pattern_rejected",
+                    pattern=pattern,
+                    reason="nested quantifier",
+                )
+                continue
+            safe.append(pattern)
+        patterns += safe
         self._compiled = [_compile(pattern) for pattern in patterns]
 
     async def classify_text(self, text: str) -> Classification:

@@ -8,6 +8,7 @@ Consumes the config topics and applies each event into the read-model via
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 
 from aira_common.kafka import (
@@ -57,7 +58,11 @@ async def run_consumer(settings: GatewaySettings) -> None:  # pragma: no cover
         bootstrap_servers=settings.kafka_bootstrap_servers,
         group_id="aira-gateway",
         auto_offset_reset="earliest",
-        value_deserializer=lambda value: __import__("json").loads(value.decode("utf-8")),
+        value_deserializer=lambda value: json.loads(value.decode("utf-8")),
+        # The consumer authenticates with the same settings the relay publishes under. An
+        # unauthenticated broker is a way to write straight into the read-model this gateway's
+        # authorization is read from — see `KafkaSecurity`.
+        **settings.kafka_security().client_kwargs(),
     )
     await consumer.start()
     try:

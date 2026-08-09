@@ -23,17 +23,31 @@ from aira_gateway.persistence.writer import PendingLog
 def client_ip(request: Request) -> str | None:
     """Return the client IP for the audit trail (FRD-105, PRD FR-GW-9).
 
-    ``X-Forwarded-For`` is honoured **only** when ``trust_forwarded_for`` is set — i.e. when the
-    gateway is known to sit behind a reverse proxy that overwrites the header. Trusting it
-    unconditionally would let any client forge its own entry in the audit log (ADR-0007).
+    ``X-Forwarded-For`` is honoured **only** when ``trust_forwarded_for`` is set, and then it is
+    read ``trusted_proxy_hops`` entries **from the right** — never from the left.
+
+    The left end is whatever the caller sent. A proxy *appends*: the nginx this repository ships
+    uses ``$proxy_add_x_forwarded_for``, so ``X-Forwarded-For: 10.9.9.9`` from a client arrives
+    here as ``10.9.9.9, <real address>``. Reading the leftmost entry — which this did until
+    2026-08-09, on a docstring that assumed a proxy which *overwrites* — let a caller choose:
+
+    - the address written onto every audit row,
+    - the address `FRD-505`'s incident view filters by, so a search for the real one finds nothing,
+    - and the key the failed-authentication bound counts against, so rotating the header made the
+      brute-force bound unreachable.
+
+    A chain shorter than the configured number of hops did not traverse them, so its header is
+    ignored in favour of the socket peer. That is the safe direction: an unspoofable address that
+    is merely the proxy's beats a spoofable one that claims to be the client's.
     """
     settings = request.app.state.settings
     if settings.trust_forwarded_for:
         forwarded = request.headers.get("x-forwarded-for")
         if forwarded:
-            first = forwarded.split(",")[0].strip()
-            if first:
-                return first[:64]
+            chain = [part.strip() for part in forwarded.split(",") if part.strip()]
+            hops = max(1, int(settings.trusted_proxy_hops))
+            if len(chain) >= hops:
+                return chain[-hops][:64]
     return request.client.host if request.client else None
 
 

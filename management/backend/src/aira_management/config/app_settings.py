@@ -9,6 +9,7 @@ Vault in real deployments (see PRD §9).
 from __future__ import annotations
 
 from aira_common.config import BaseAiraSettings
+from aira_common.kafka import KafkaSecurity
 
 # The well-known development signing key. ``config.security`` refuses to start any non-local
 # environment that is still using it.
@@ -42,6 +43,26 @@ class ManagementSettings(BaseAiraSettings):
     oidc_issuer: str = ""
     oidc_audience: str = ""
     oidc_jwks_uri: str = ""
+
+    # How this service authenticates to Kafka (2026-08-09). `PLAINTEXT` keeps the Compose stack
+    # working and is **refused outside `local`**: the gateway applies whatever arrives on these
+    # topics into the read-model its authorization comes from, so an unauthenticated broker is a
+    # way to grant yourself administrator access to any use case without a credential and without
+    # an audit row.
+    kafka_security_protocol: str = "PLAINTEXT"
+    kafka_sasl_mechanism: str = ""
+    kafka_sasl_username: str = ""
+    kafka_sasl_password: str = ""
+    kafka_ssl_cafile: str = ""
+
+    def kafka_security(self) -> KafkaSecurity:
+        return KafkaSecurity(
+            protocol=self.kafka_security_protocol,
+            sasl_mechanism=self.kafka_sasl_mechanism,
+            sasl_username=self.kafka_sasl_username,
+            sasl_password=self.kafka_sasl_password,
+            ssl_cafile=self.kafka_ssl_cafile,
+        )
 
     # Directory search (`FRD-209`). A **read-only** service account with `view-users` and
     # `query-groups` on the realm — the least it can be given. Absent by default: without it the

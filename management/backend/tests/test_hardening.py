@@ -99,10 +99,12 @@ def test_production_rejects_dev_defaults() -> None:
     problems = unsafe_settings(settings)
     # Every reason at once, never the first one: a configuration review that reports one problem
     # per deploy attempt is four deploys (`ADR-0015`).
-    assert len(problems) == 4  # secret key, wildcard hosts, debug, no global-admin group
+    # secret key, wildcard hosts, debug, no global-admin group, plaintext Kafka
+    assert len(problems) == 5
     assert any("SECRET_KEY" in problem for problem in problems)
     assert any("ALLOWED_HOSTS" in problem for problem in problems)
     assert any("AIRA_ROLE_GROUPS" in problem for problem in problems)
+    assert any("AIRA_KAFKA_SECURITY_PROTOCOL" in problem for problem in problems)
     assert effective_debug(settings) is False
 
 
@@ -113,6 +115,7 @@ def test_production_with_proper_settings_is_accepted() -> None:
         allowed_hosts="aira.example.com",
         debug=False,
         role_groups="global-admin=/aira/global-admins",
+        kafka_security_protocol="SASL_SSL",
     )
     assert unsafe_settings(settings) == []
     assert settings.secret_key != DEV_SECRET_KEY
@@ -129,6 +132,7 @@ def test_a_deployment_with_no_global_admin_group_refuses_to_start() -> None:
         allowed_hosts="aira.example.com",
         debug=False,
         role_groups="it-security=/aira/it-security",
+        kafka_security_protocol="SASL_SSL",
     )
 
     problems = unsafe_settings(settings)
@@ -228,3 +232,42 @@ def test_oidc_identity_str() -> None:
     user = get_user_model().objects.create(username="strtest")
     identity = OidcIdentity.objects.create(subject="sub-str", user=user)
     assert str(identity) == "sub-str -> strtest"
+
+
+def test_a_plaintext_identity_provider_refuses_to_start(monkeypatch) -> None:
+    """Management verifies the same tokens against the same JWKS, so it needs the same refusal.
+    Two planes, one rule (`aira_common.transport_security`) — a second copy is a second chance to
+    forget one, which is the shape this project keeps recording."""
+    monkeypatch.delenv("VAULT_ADDR", raising=False)
+
+    problems = unsafe_settings(
+        ManagementSettings(
+            environment="production",
+            secret_key="a-real-secret-from-vault",
+            allowed_hosts="aira.example.com",
+            debug=False,
+            role_groups="global-admin=/aira/global-admins",
+            kafka_security_protocol="SASL_SSL",
+            oidc_issuer="http://keycloak.example.com/realms/aira",
+            oidc_audience="aira-management",
+        )
+    )
+
+    assert any("AIRA_OIDC_ISSUER" in problem for problem in problems)
+
+
+def test_a_plaintext_vault_address_refuses_to_start(monkeypatch) -> None:
+    monkeypatch.setenv("VAULT_ADDR", "http://vault.example:8200")
+
+    problems = unsafe_settings(
+        ManagementSettings(
+            environment="production",
+            secret_key="a-real-secret-from-vault",
+            allowed_hosts="aira.example.com",
+            debug=False,
+            role_groups="global-admin=/aira/global-admins",
+            kafka_security_protocol="SASL_SSL",
+        )
+    )
+
+    assert any("VAULT_ADDR" in problem for problem in problems)

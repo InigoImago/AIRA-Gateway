@@ -646,3 +646,37 @@ def test_an_ordinary_answer_is_unaffected_by_the_structured_path() -> None:
         "usage": {"input_tokens": 1, "output_tokens": 1},
     }
     assert anthropic_to_canonical(payload, "claude-1").text == "hello"
+
+
+def test_a_model_name_cannot_escape_its_path_segment() -> None:
+    """**The comment claimed an encoding the code did not do.**
+
+    It built the segment with `httpx.URL(path=f"/{model}").path`, which leaves `/` and `..`
+    untouched and *decodes* `%2f` — so `..%2f..%2fx` arrived as `../../x`, worse than the input.
+    A model name that walks up the path reaches a different Google project, or a different API on
+    the same host, with this deployment's service-account token attached.
+
+    Two gates stand in front of it (`FRD-307`: only a catalogued, approved model dispatches) —
+    which is the argument this project refuses everywhere else — and `AzureRoutes` had already
+    solved the identical problem correctly one directory away.
+    """
+    url = _transport(lambda request: httpx.Response(200)).url(
+        region="eu",
+        publisher="google",
+        model="../../evil",
+        method="generateContent",
+    )
+
+    assert "/models/..%2F..%2Fevil:generateContent" in url
+    assert "/../" not in url
+
+
+def test_an_encoded_separator_is_not_decoded_into_one() -> None:
+    """The nastier half: the old call *decoded* `%2f`, so a caller who wrote the escape got the
+    separator. Encoding the percent is what stops one round of decoding from producing a path."""
+    url = _transport(lambda request: httpx.Response(200)).url(
+        region="eu", publisher="google", model="..%2f..%2fevil", method="generateContent"
+    )
+
+    assert "%252f" in url
+    assert "/../" not in url

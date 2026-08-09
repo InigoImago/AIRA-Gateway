@@ -244,3 +244,138 @@ def test_somebody_without_a_global_role_may_not_declare_a_model() -> None:
     )
     assert response.status_code == 403
     assert Model.objects.filter(name="sneaky-1").count() == 0
+
+
+# ---- the shapes a declaration can be wrong in (2026-08-09) --------------------------------
+#
+# Thirteen branches of `validation.py` had no test. Every one of them is a refusal, so an untested
+# branch is a malformed declaration the catalog would have accepted — and the catalog is a
+# *runtime authority* (`FRD-114`): what it holds decides what a request may ask for. A block of the
+# wrong type slipping through does not fail here, it fails per request against a vendor, with an
+# error nobody can trace back to a form somebody filled in once.
+#
+# Written as one case per wrong shape rather than one case with everything wrong, because a
+# validator that stops at the first problem would pass the second kind of test and leave an
+# operator fixing one field per attempt.
+
+
+@pytest.mark.parametrize(
+    ("declaration", "expected"),
+    [
+        ({"capabilities": "generate"}, "capabilities must be a list"),
+        ({"hosting": "somewhere"}, "hosting must be one of"),
+        ({"thinking": ["disabled"]}, "thinking must be an object"),
+        ({"thinking": {"modes": []}}, "thinking.modes must be a non-empty list"),
+        ({"thinking": {"modes": "limited"}}, "thinking.modes must be a non-empty list"),
+        ({"embedding": []}, "embedding must be an object"),
+        ({"embedding": {"task_types": "SEMANTIC"}}, "embedding.task_types must be a list"),
+        ({"embedding": {"task_types": [""]}}, "embedding.task_types must be a list"),
+        ({"embedding": {"dimensions": []}}, "embedding.dimensions must be a non-empty list"),
+        ({"embedding": {"dimensions": "768"}}, "embedding.dimensions must be a non-empty list"),
+        ({"embedding": {"dimensions": [768, 0]}}, "embedding.dimensions must be a positive"),
+        ({"embedding": {"dimensions": [768], "default": 512}}, "embedding.default must be one of"),
+        ({"embedding": {"default": -1}}, "embedding.default must be a positive"),
+        ({"attachments": []}, "attachments must be an object"),
+        ({"attachments": {"media_types": []}}, "media_types must be a non-empty object"),
+        (
+            {"thinking": {"modes": ["limited"], "levels": ["low"]}},
+            "thinking.levels must be an object",
+        ),
+        ({"attachments": {"media_types": {"pdf": {}}}}, "is not a media type"),
+        (
+            {"attachments": {"media_types": {"application/pdf": "yes"}}},
+            "must be an object",
+        ),
+    ],
+)
+def test_a_declaration_of_the_wrong_shape_is_refused_by_name(
+    declaration: dict[str, Any], expected: str
+) -> None:
+    errors = validate_declaration(declaration)
+
+    assert errors, f"{declaration} was accepted"
+    assert any(expected in error for error in errors), (
+        f"{declaration} was refused, but for a reason that does not name the field: {errors}"
+    )
+
+
+def test_attachments_without_media_types_declares_nothing_rather_than_failing() -> None:
+    """An `attachments` block that names no media types is a model that declares no attachment
+    support — not a malformed declaration. Refusing it would make the block impossible to write
+    incrementally, and `FRD-114` FR-7 already says undeclared means unsupported."""
+    assert validate_declaration({"attachments": {}}) == []
+
+
+def test_a_media_type_may_be_declared_with_no_specification() -> None:
+    """`{"application/pdf": null}` is "this model reads PDFs, with no per-type estimate" — the
+    ordinary case for a vendor that publishes no figure."""
+    assert validate_declaration({"attachments": {"media_types": {"application/pdf": None}}}) == []
+
+
+def test_a_boolean_is_not_a_positive_integer() -> None:
+    """`True == 1` in Python, so a naive `isinstance(value, int) and value > 0` accepts it. A
+    declaration carrying `dimensions: [true]` would then reach the gateway as a dimension of 1."""
+    assert validate_declaration({"embedding": {"dimensions": [True]}})
+
+
+def test_too_many_media_types_are_refused_rather_than_stored() -> None:
+    """A bound on a caller-shaped structure, for the same reason the response schema has one: the
+    catalog is read on the request path, and an unbounded map there is an unbounded cost."""
+    media_types = {f"application/x-{n}": {} for n in range(64)}
+
+    errors = validate_declaration({"attachments": {"media_types": media_types}})
+
+    assert any("at most" in error for error in errors)
+
+
+def test_too_many_dimensions_are_refused() -> None:
+    errors = validate_declaration({"embedding": {"dimensions": list(range(1, 20))}})
+
+    assert any("at most" in error for error in errors)
+
+
+def test_a_thinking_default_outside_the_declared_bounds_is_refused() -> None:
+    """`FRD-114`'s own rule, one level in: a default the model could never honour is a model that
+    answers differently for a reason nobody can see."""
+    errors = validate_declaration(
+        {
+            "thinking": {
+                "modes": ["limited"],
+                "min_tokens": 128,
+                "max_tokens": 512,
+                "default": {"mode": "limited", "tokens": 4096},
+            }
+        }
+    )
+
+    assert any("within the declared bounds" in error for error in errors)
+
+
+def test_a_default_naming_an_undeclared_mode_is_refused() -> None:
+    errors = validate_declaration(
+        {"thinking": {"modes": ["disabled"], "default": {"mode": "limited", "tokens": 100}}}
+    )
+
+    assert any("must be one of the declared modes" in error for error in errors)
+
+
+def test_a_valid_declaration_is_accepted() -> None:
+    """The other half of a refusal test: a validator that refused everything would pass every
+    case above."""
+    assert (
+        validate_declaration(
+            {
+                "capabilities": ["generate", "thinking", "attachments"],
+                "hosting": "managed",
+                "thinking": {
+                    "modes": ["disabled", "limited"],
+                    "min_tokens": 128,
+                    "max_tokens": 512,
+                    "default": {"mode": "limited", "tokens": 256},
+                },
+                "embedding": {"task_types": ["SEMANTIC_SIMILARITY"], "dimensions": [768]},
+                "attachments": {"media_types": {"application/pdf": {"tokens": 250}}},
+            }
+        )
+        == []
+    )

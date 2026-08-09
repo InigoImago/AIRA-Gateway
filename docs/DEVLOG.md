@@ -5,6 +5,74 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-09 — A security read of the whole code (`ADR-0018`)
+
+The request path held up: 192-bit keys compared in constant time, JWTs with a pinned algorithm and
+`exp`/`iat`/`sub` required, payload access gated and recorded, bodies and schemas bounded, no
+`eval`, no raw SQL, no disabled TLS verification, and DRF authenticated by default. Frontend
+dependencies clean; tokens in `sessionStorage`.
+
+**Three of the four findings were in the space between the services**, and they share one shape:
+a link AIRA trusts completely and could not be told to verify.
+
+**The event bus had no authentication and no way to add it.** `apply_event` writes what arrives on
+the config topics straight into the read-model the gateway's authorization comes from. Anyone able
+to reach the broker could publish `api_key.created` with a hash of their choosing, or
+`use_case_group.granted` naming a group they are in, and hold administrator access to any use case
+— no credential, and **no audit row**, because from the gateway's side nothing unusual happened:
+configuration arrived, as configuration does. Applying events without question is right *if* the
+bus is authenticated; there was simply no setting that could make it true. Both planes take a
+broker identity now and refuse `PLAINTEXT` outside `local`.
+
+**Nothing required the identity provider to be reached over TLS.** The JWKS is where signing keys
+come from: over plaintext anyone on the path substitutes a key set and mints tokens that verify.
+Same for Vault, whose address carries the AppRole login. One rule
+(`aira_common.transport_security`), read by both planes, with **loopback exempt** — a sidecar
+terminating TLS on `127.0.0.1` is normal, and a rule that gets worked around by setting
+`AIRA_ENVIRONMENT=local` switches every other check off with it.
+
+**`X-Forwarded-For` was read from the left**, under a docstring assuming a proxy that *overwrites*.
+The nginx this repository ships **appends**, as every default configuration does — so the left end
+was the caller's to write, and it lands on every audit row, drives `FRD-505`'s incident filter, and
+keys the failed-authentication bound. Rotating one header therefore made the brute-force bound
+unreachable. Read `AIRA_TRUSTED_PROXY_HOPS` entries from the **right** now; a chain shorter than
+that did not come through those proxies and the socket peer is used instead. The old test asserted
+the leftmost entry — it had **written the vulnerability down as the expected behaviour**, which is
+the sharpest example in this round of a test agreeing with the code instead of the requirement.
+
+**And a comment that claimed a protection the code did not provide.** The Vertex transport built
+its model segment with `httpx.URL(path=f"/{model}").path` beside a comment saying "the model
+segment is encoded". It leaves `/` and `..` untouched and *decodes* `%2f`, so `..%2f..%2fx` came
+out as `../../x` — worse than the input. `AzureRoutes` had solved the identical problem correctly
+one directory away with `quote(..., safe="")`.
+
+**Two structural guards, because both holes were invisible rather than wrong.**
+`test_every_route_is_guarded.py` walks the app and requires every route to authenticate or be on a
+written list — the Gemini surface's *entire* protection is one `dependencies=[...]` argument at
+mount time, and nothing said so. Building it taught its own lesson: this FastAPI keeps routers
+nested behind `_IncludedRouter` and applies those dependencies from the include context, so a
+guard reading only `route.dependant` reports the correctly protected routes as holes and gets
+"fixed" by exempting them. Inheriting the context is the difference between the file guarding
+something and excusing it.
+
+**Test quality**: twelve assertion-free tests turned out to be legitimate "does not raise" cases
+with their positive counterpart beside them. The real gap was the catalog validator — thirteen
+refusal branches with no test, in the module `FRD-114` relies on to stop a declaration that cannot
+work. 83% → 99%, 24 cases, one per wrong shape rather than one with everything wrong, because a
+validator that stops at the first problem passes the second kind and leaves an operator fixing one
+field per attempt.
+
+`W1`–`W4` guard the four fixes. Nothing about what the platform *does* changed.
+
+**And the live suite caught what the default gate could not.** `tests/integration/` is excluded
+from the default run (`-m 'not integration'`), so `ADR-0017`'s migration passed it over even though
+`grep realm_access` had listed the files: one test asserted `claims["realm_access"]["roles"]` and
+raised a `KeyError`, and five fixtures created a use case as an account that may no longer. **A
+test layer excluded from the default run is a layer a migration forgets** — the same shape as
+`FRD-206` and `FRD-505`, arriving from the other direction.
+
+---
+
 ## 2026-08-09 — A role is held through a group, and only through a group (`ADR-0017`, `FRD-605`)
 
 Owner's rule: **group memberships are the single point of truth**, and individual memberships are

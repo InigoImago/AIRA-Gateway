@@ -7,11 +7,11 @@ turning into a denial of service on the shared data plane (ADR-0007).
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 from rest_framework import serializers
 
+from aira_common.patterns import is_catastrophic
 from aira_management.apps.pipelines.models import PipelineConfig
 
 STEP_TYPES = {"injection_filter", "allow_check", "model_route"}
@@ -32,19 +32,16 @@ MAX_TEXT_LENGTH = 4_000
 #: about, one layer up.
 UNDETERMINED_POLICIES = ("block", "allow")
 
-# Nested quantifiers ("(a+)+", "(a*)*", "(ab|a)+" …) are the classic trigger for catastrophic
-# backtracking: matching one against a long prompt can take exponential time and stall a
-# gateway worker. Custom patterns that fail to compile are matched literally by the gateway, so
-# rejecting these costs operators nothing they cannot express another way.
-_NESTED_QUANTIFIER = re.compile(r"\([^)]*[+*}][^)]*\)\s*[+*]|\([^)]*\|[^)]*\)\s*[+*]")
-
 
 def _check_regex(pattern: str) -> None:
-    try:
-        re.compile(pattern)
-    except re.error:
-        return  # invalid regex is matched literally by the gateway — harmless
-    if _NESTED_QUANTIFIER.search(pattern):
+    """Refuse a pattern that could hang a gateway worker, **where it is written**.
+
+    The rule itself lives in `aira_common.patterns`, because the gateway asks it too: it used to
+    compile whatever reached its read-model, so the protection was at one end of a link and the
+    trust at the other (`ADR-0018`). Refusing here is what makes the operator hear about it at the
+    moment they can still rewrite the pattern.
+    """
+    if is_catastrophic(pattern):
         raise serializers.ValidationError(
             f"Pattern '{pattern}' nests quantifiers, which can hang the gateway. "
             "Rewrite it without a repeated group."

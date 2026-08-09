@@ -23,6 +23,9 @@ demo could not exist.
 
 from __future__ import annotations
 
+import os
+
+from aira_common.transport_security import plaintext_problems
 from aira_gateway.config import GatewaySettings
 
 LOCAL_ENVIRONMENT = "local"
@@ -61,6 +64,25 @@ def unsafe_settings(settings: GatewaySettings) -> list[str]:
             "AIRA_OIDC_AUDIENCE is unset — any token this issuer minted would be accepted, "
             "including one issued to a different client. Name the audience this gateway answers to."
         )
+    if settings.kafka_bootstrap_servers.strip() and settings.kafka_security().is_plaintext:
+        problems.append(
+            "AIRA_KAFKA_SECURITY_PROTOCOL is PLAINTEXT — the config topics are applied straight "
+            "into the read-model this gateway's authorization is derived from, so anyone who can "
+            "reach the broker can grant themselves access to any use case, with no credential and "
+            "no audit row. Use SASL_SSL (or SSL) and give this service a broker identity."
+        )
+    # The JWKS is where signing keys come from: over plaintext, anyone on the path substitutes a
+    # key set and mints tokens that verify. Checked here rather than in the verifier so a laptop
+    # keeps working against a local Keycloak (`ADR-0015`).
+    problems.extend(
+        plaintext_problems(
+            {
+                "AIRA_OIDC_ISSUER": settings.oidc_issuer,
+                "AIRA_OIDC_JWKS_URI": settings.jwks_uri() if settings.oidc_issuer else "",
+                "VAULT_ADDR": os.environ.get("VAULT_ADDR", ""),
+            }
+        )
+    )
     return problems
 
 

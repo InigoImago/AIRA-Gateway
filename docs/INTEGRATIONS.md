@@ -202,10 +202,50 @@ Configuration flows Management → Kafka → gateway. **Eight compacted topics**
 **Single-writer processes.** Run exactly **one** relay and **one** consumer. They are not
 horizontally scalable and do not need to be.
 
-> done eight compacted topics, created explicitly · one relay · one consumer · bootstrap servers
-> reachable from both planes
+### The bus is a trust boundary
+
+> **Anything that can publish to these topics can grant itself access.** The gateway applies what
+> arrives straight into the read-model its authorization is derived from — that is what makes
+> `FRD-204`'s idempotent consumer simple, and it is only safe if the broker is authenticated. A
+> publisher who is not AIRA can send `api_key.created` with a hash of their choosing, or
+> `use_case_group.granted` naming a group they belong to, and hold administrator access to any use
+> case. No credential is presented and **no audit row is written**, because from the gateway's side
+> nothing unusual happened: configuration arrived, exactly as configuration does.
+
+So both planes take a broker identity, and both **refuse to start on `PLAINTEXT` outside `local`**:
+
+```
+AIRA_KAFKA_SECURITY_PROTOCOL=SASL_SSL
+AIRA_KAFKA_SASL_MECHANISM=SCRAM-SHA-512    # default when unset; PLAIN sends the password in clear
+AIRA_KAFKA_SASL_USERNAME=aira-gateway      # a separate identity per service
+AIRA_KAFKA_SASL_PASSWORD=…                 # from Vault
+AIRA_KAFKA_SSL_CAFILE=/etc/ssl/private-ca.pem   # only for a private CA
+```
+
+**What you provide**: one broker principal per service (relay and consumer), each with `Write` on
+the eight topics for the relay and `Read` for the consumer — nothing wider. ACLs are what make the
+identity worth having; an authenticated principal that may publish to any topic is the same hole
+with a login.
+
+> done eight compacted topics, created explicitly · one relay · one consumer · **a broker identity
+> per service and ACLs scoped to these topics** · bootstrap servers reachable from both planes
 
 ---
+
+### If a reverse proxy sits in front of the gateway
+
+`AIRA_TRUST_FORWARDED_FOR=true` makes the gateway read the caller's address from
+`X-Forwarded-For`, and `AIRA_TRUSTED_PROXY_HOPS` says how many proxies append to it (**1** for a
+single nginx, which is what this repository ships).
+
+The address is read that many entries **from the right**. The left end is whatever the *caller*
+sent: a proxy appends, so `X-Forwarded-For: 10.9.9.9` from a client arrives as
+`10.9.9.9, <real address>`. Getting this wrong is not cosmetic — the value lands on every audit
+row, it is what `FRD-505`'s incident view filters by, and it is the key the failed-authentication
+bound counts against, so a caller who could choose it could also rotate it and never be bounded.
+
+Set the hop count to match your topology. A chain **shorter** than it is treated as not having
+come through those proxies at all, and the socket peer is used instead.
 
 ## 4. Redis
 

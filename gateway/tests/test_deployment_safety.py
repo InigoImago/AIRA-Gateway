@@ -25,6 +25,11 @@ def _production(**overrides: object) -> GatewaySettings:
         "environment": "production",
         "auth_required": True,
         "postgres_password": "a-real-secret",
+        # A broker identity, because the config topics feed the read-model this gateway's
+        # authorization is read from — see `KafkaSecurity`. Every "correctly configured
+        # production" fixture needs one now, and a test that forgot it would be asserting that a
+        # deployment nobody would ship is fine.
+        "kafka_security_protocol": "SASL_SSL",
     }
     base.update(overrides)
     return GatewaySettings(**base)  # type: ignore[arg-type]
@@ -95,3 +100,110 @@ def test_staging_is_not_local() -> None:
     )
 
     assert problems != []
+
+
+def test_a_plaintext_identity_provider_refuses_to_start() -> None:
+    """**The one misconfiguration that defeats authentication outright.**
+
+    The JWKS is where signing keys come from. Fetched over plaintext, anyone on the path
+    substitutes a key set of their own and mints tokens that verify — every role, every use case,
+    every audit identity. Nothing checked it until 2026-08-09.
+    """
+    problems = unsafe_settings(
+        GatewaySettings(
+            environment="production",
+            auth_required=True,
+            postgres_password="a-real-secret",
+            kafka_security_protocol="SASL_SSL",
+            oidc_enabled=True,
+            oidc_issuer="http://keycloak.example.com/realms/aira",
+            oidc_audience="aira-gateway",
+        )
+    )
+
+    assert any("AIRA_OIDC_ISSUER" in problem for problem in problems)
+    # The derived JWKS URI is checked too — it is the URL the keys actually come from, and an
+    # issuer that is https with a jwks_uri override that is not would otherwise pass.
+    assert any("AIRA_OIDC_JWKS_URI" in problem for problem in problems)
+
+
+def test_a_plaintext_jwks_override_is_caught_even_behind_an_https_issuer() -> None:
+    problems = unsafe_settings(
+        GatewaySettings(
+            environment="production",
+            auth_required=True,
+            postgres_password="a-real-secret",
+            kafka_security_protocol="SASL_SSL",
+            oidc_enabled=True,
+            oidc_issuer="https://keycloak.example.com/realms/aira",
+            oidc_jwks_uri="http://keycloak.internal/realms/aira/protocol/openid-connect/certs",
+            oidc_audience="aira-gateway",
+        )
+    )
+
+    assert any("AIRA_OIDC_JWKS_URI" in problem for problem in problems)
+
+
+def test_a_plaintext_vault_address_refuses_to_start(monkeypatch) -> None:
+    """The AppRole login and every secret read cross that address (`FRD-116`)."""
+    monkeypatch.setenv("VAULT_ADDR", "http://vault.example:8200")
+
+    problems = unsafe_settings(
+        GatewaySettings(
+            environment="production",
+            auth_required=True,
+            postgres_password="a-real-secret",
+            kafka_security_protocol="SASL_SSL",
+            oidc_audience="aira-gateway",
+        )
+    )
+
+    assert any("VAULT_ADDR" in problem for problem in problems)
+
+
+def test_a_loopback_identity_provider_is_accepted(monkeypatch) -> None:
+    """A sidecar terminating TLS on loopback is a normal deployment. Refusing it would push
+    operators to `AIRA_ENVIRONMENT=local`, which switches every other check off as well."""
+    monkeypatch.delenv("VAULT_ADDR", raising=False)
+
+    problems = unsafe_settings(
+        GatewaySettings(
+            environment="production",
+            auth_required=True,
+            postgres_password="a-real-secret",
+            kafka_security_protocol="SASL_SSL",
+            oidc_enabled=True,
+            oidc_issuer="http://127.0.0.1:8080/realms/aira",
+            oidc_audience="aira-gateway",
+        )
+    )
+
+    assert problems == []
+
+
+def test_an_unauthenticated_event_bus_refuses_to_start() -> None:
+    """**The bus is a trust boundary, and it had none.**
+
+    `apply_event` writes whatever arrives on the config topics straight into the read-model this
+    gateway derives authorization from. On a plaintext broker anybody who can reach it publishes
+    `api_key.created` with a hash of their choosing, or `use_case_group.granted` naming a group
+    they are in, and holds administrator access to any use case — with no credential presented and
+    no audit row written, because from this side nothing unusual happened: configuration arrived,
+    exactly as configuration does.
+
+    Applying events without question is right *if* the bus is authenticated. There was simply no
+    setting that could make it true, which is why this is a refusal and not a warning.
+    """
+    problems = unsafe_settings(_production(kafka_security_protocol="PLAINTEXT"))
+
+    assert any("AIRA_KAFKA_SECURITY_PROTOCOL" in problem for problem in problems)
+
+
+def test_a_deployment_with_no_broker_at_all_is_not_asked_for_one() -> None:
+    """A single-node install with Kafka switched off has no bus to protect, and demanding a
+    credential for a connection nobody makes is the kind of rule operators route around."""
+    problems = unsafe_settings(
+        _production(kafka_bootstrap_servers="", kafka_security_protocol="PLAINTEXT")
+    )
+
+    assert not any("KAFKA" in problem for problem in problems)

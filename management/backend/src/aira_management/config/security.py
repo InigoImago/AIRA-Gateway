@@ -11,9 +11,12 @@ start outside ``environment=local`` while any of them is still in place.
 
 from __future__ import annotations
 
+import os
+
 from django.core.exceptions import ImproperlyConfigured
 
 from aira_common.roles import Role, RoleMappingError, parse_role_groups
+from aira_common.transport_security import plaintext_problems
 from aira_management.config.app_settings import DEV_SECRET_KEY, ManagementSettings
 
 LOCAL_ENVIRONMENT = "local"
@@ -69,6 +72,21 @@ def unsafe_settings(settings: ManagementSettings) -> list[str]:
             "AIRA_ROLE_GROUPS=global-admin=/aira/global-admins;it-security=/aira/it-security;"
             "it-steuerung=/aira/it-steuerung"
         )
+    if settings.kafka_bootstrap_servers.strip() and settings.kafka_security().is_plaintext:
+        problems.append(
+            "AIRA_KAFKA_SECURITY_PROTOCOL is PLAINTEXT — every configuration change this service "
+            "publishes crosses the broker in the clear and anyone who can reach it can publish "
+            "their own. Use SASL_SSL (or SSL) and give this service a broker identity."
+        )
+    problems.extend(
+        plaintext_problems(
+            {
+                "AIRA_OIDC_ISSUER": settings.oidc_issuer,
+                "AIRA_OIDC_JWKS_URI": settings.jwks_uri() if settings.oidc_issuer else "",
+                "VAULT_ADDR": os.environ.get("VAULT_ADDR", ""),
+            }
+        )
+    )
     if settings.oidc_issuer.strip() and not settings.oidc_audience.strip():
         problems.append(
             "AIRA_OIDC_AUDIENCE is unset — any token this issuer minted would be accepted, "

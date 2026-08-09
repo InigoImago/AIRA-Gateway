@@ -58,6 +58,14 @@ services:
       AIRA_POSTGRES_USER: ${POSTGRES_USER:-aira}
       AIRA_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aira-local}
       AIRA_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      # How this service authenticates to the broker. PLAINTEXT is the local default and is
+      # **refused outside `local`**: the config topics are applied straight into the gateway's
+      # read-model, so an unauthenticated broker grants access without a credential.
+      AIRA_KAFKA_SECURITY_PROTOCOL: ${AIRA_KAFKA_SECURITY_PROTOCOL:-PLAINTEXT}
+      AIRA_KAFKA_SASL_MECHANISM: ${AIRA_KAFKA_SASL_MECHANISM:-}
+      AIRA_KAFKA_SASL_USERNAME: ${AIRA_KAFKA_SASL_USERNAME:-}
+      AIRA_KAFKA_SASL_PASSWORD: ${AIRA_KAFKA_SASL_PASSWORD:-}
+      AIRA_KAFKA_SSL_CAFILE: ${AIRA_KAFKA_SSL_CAFILE:-}
       # Shared counters for rate limits and budget reservations (ADR-0008). Empty disables
       # them: limits then hold per process and budgets use the racy read-then-book path.
       AIRA_REDIS_URL: ${AIRA_REDIS_URL:-redis://redis:6379/0}
@@ -136,6 +144,14 @@ services:
       AIRA_POSTGRES_USER: ${POSTGRES_USER:-aira}
       AIRA_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aira-local}
       AIRA_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      # How this service authenticates to the broker. PLAINTEXT is the local default and is
+      # **refused outside `local`**: the config topics are applied straight into the gateway's
+      # read-model, so an unauthenticated broker grants access without a credential.
+      AIRA_KAFKA_SECURITY_PROTOCOL: ${AIRA_KAFKA_SECURITY_PROTOCOL:-PLAINTEXT}
+      AIRA_KAFKA_SASL_MECHANISM: ${AIRA_KAFKA_SASL_MECHANISM:-}
+      AIRA_KAFKA_SASL_USERNAME: ${AIRA_KAFKA_SASL_USERNAME:-}
+      AIRA_KAFKA_SASL_PASSWORD: ${AIRA_KAFKA_SASL_PASSWORD:-}
+      AIRA_KAFKA_SSL_CAFILE: ${AIRA_KAFKA_SSL_CAFILE:-}
       AIRA_OIDC_ISSUER: ${AIRA_OIDC_ISSUER:-http://localhost:8080/realms/aira}
       AIRA_OIDC_JWKS_URI: ${AIRA_OIDC_JWKS_URI:-http://keycloak:8080/realms/aira/protocol/openid-connect/certs}
       AIRA_OIDC_AUDIENCE: ${AIRA_OIDC_AUDIENCE:-}

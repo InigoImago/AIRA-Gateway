@@ -110,6 +110,24 @@ would have destroyed the keys — `ApiKey.owner` cascades, and one account here 
 is a **rebind**, written into `deploy/compose/README.md` because a real change of identity provider
 does exactly the same thing.
 
+## 6.2 The layer the migration missed, and why
+
+The hermetic suites and the browser suites were migrated; **`tests/integration/` was not**, and it
+is excluded from the default run (`-m 'not integration'`). Twelve cases failed the first time the
+live suite ran after the change, in two families:
+
+- `test_oversight.py` asserted `claims["realm_access"]["roles"]` — a **`KeyError`**, because that
+  claim is not read any more. It now asserts the `groups` claim, which is what the realm has to
+  put the account in; the mapping from path to role is the gateway's and is tested there.
+- Five fixtures created a use case as the `member` service account, which no longer may. Created
+  by the `admin` account now, exactly as the browser tests were changed — the same narrowing,
+  discovered twice because the layers were migrated separately.
+
+The general point: `grep realm_access` listed these files during the change and they were passed
+over because the default gate stayed green. **A test layer that is excluded from the default run is
+a layer a migration forgets** — the same reason `FRD-206` and `FRD-505` each shipped a defect that
+only the fourth layer could see, arriving from the opposite direction.
+
 ## 7. Risks
 
 - **The `groups` claim is now load-bearing for all authorization.** A token without it grants

@@ -7,6 +7,7 @@ gateway needs for its readiness checks and (later) persistence and eventing.
 from __future__ import annotations
 
 from aira_common.config import BaseAiraSettings
+from aira_common.kafka import KafkaSecurity
 from aira_common.roles import Role, parse_role_groups
 
 
@@ -94,10 +95,44 @@ class GatewaySettings(BaseAiraSettings):
     # a request durably logged before its response goes out, at the latency cost that implies.
     log_queue_size: int = 512
 
-    # Trust ``X-Forwarded-For`` for the recorded source IP. Only enable when the gateway sits
-    # behind a reverse proxy that *overwrites* the header — otherwise any client can forge the
-    # audit trail. Off by default: the socket peer is used (ADR-0007).
+    # How this service authenticates to Kafka (2026-08-09). `PLAINTEXT` keeps the Compose stack
+    # working and is **refused outside `local`**: the gateway applies whatever arrives on these
+    # topics into the read-model its authorization comes from, so an unauthenticated broker is a
+    # way to grant yourself administrator access to any use case without a credential and without
+    # an audit row.
+    kafka_security_protocol: str = "PLAINTEXT"
+    kafka_sasl_mechanism: str = ""
+    kafka_sasl_username: str = ""
+    kafka_sasl_password: str = ""
+    kafka_ssl_cafile: str = ""
+
+    def kafka_security(self) -> KafkaSecurity:
+        return KafkaSecurity(
+            protocol=self.kafka_security_protocol,
+            sasl_mechanism=self.kafka_sasl_mechanism,
+            sasl_username=self.kafka_sasl_username,
+            sasl_password=self.kafka_sasl_password,
+            ssl_cafile=self.kafka_ssl_cafile,
+        )
+
+    # Trust ``X-Forwarded-For`` for the recorded source IP. Off by default: the socket peer is
+    # used (ADR-0007). Enable it only when this gateway sits behind a reverse proxy it controls.
     trust_forwarded_for: bool = False
+
+    # How many reverse proxies append to ``X-Forwarded-For`` in front of this gateway.
+    #
+    # The address is read **that many entries from the right**, never from the left. The left end
+    # is whatever the *caller* sent: `X-Forwarded-For: 10.9.9.9` from a client arrives at the
+    # gateway as `10.9.9.9, <real address>` because a proxy **appends** — the shipped nginx uses
+    # `$proxy_add_x_forwarded_for`, and so does every default configuration in the wild. Reading
+    # the left end therefore let a caller choose the address that lands in the audit trail, the
+    # address `FRD-505`'s incident filter searches, and the key the failed-authentication bound
+    # counts against — so rotating the header defeated the brute-force bound entirely.
+    #
+    # 1 is the shipped topology (one nginx). Raise it by one for each additional proxy that
+    # appends. A chain **shorter** than this is a request that did not come through them, and its
+    # header is ignored in favour of the socket peer.
+    trusted_proxy_hops: int = 1
 
     # Hard ceiling on an accepted request body; larger bodies are rejected with 413 before
     # they are buffered (ADR-0007).

@@ -78,3 +78,35 @@ def test_zero_switches_it_off() -> None:
         ]
 
     assert set(statuses) == {401}
+
+
+def test_rotating_a_forwarded_header_does_not_buy_a_fresh_bucket() -> None:
+    """**The bound is only as strong as the address it counts.**
+
+    It keys on `client_ip`, which honours `X-Forwarded-For` when the deployment says a proxy sits
+    in front. A proxy *appends*, so the left of that header is whatever the caller wrote — and
+    while this read the leftmost entry, a prober could send a different forged address on every
+    attempt and never meet the limit. The database round trip per attempt that the bound exists to
+    stop was available without limit to anyone who set one header.
+
+    Written as the attack, through the topology that is actually deployed: the caller forges an
+    entry and the proxy **appends** their real address, exactly as `$proxy_add_x_forwarded_for`
+    does. Modelling it without the appended address would test a misconfiguration — a deployment
+    that claims a proxy while none is in front trusts a header nobody rewrote, and no parsing rule
+    can rescue that.
+    """
+    real = "203.0.113.7"
+    with _client(max_auth_failures_per_minute=3, trust_forwarded_for=True) as client:
+        statuses = [
+            client.post(
+                PATH,
+                json=BODY,
+                headers={
+                    "x-goog-api-key": "aira_x_y",
+                    "x-forwarded-for": f"10.0.0.{n}, {real}",
+                },
+            ).status_code
+            for n in range(6)
+        ]
+
+    assert 429 in statuses, "a prober rotating the header was never bounded"

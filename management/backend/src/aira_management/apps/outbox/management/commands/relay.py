@@ -18,7 +18,8 @@ from aira_management.config.runtime import get_settings
 
 
 def build_producer() -> Producer:
-    return AiokafkaProducer(get_settings().kafka_bootstrap_servers)
+    settings = get_settings()
+    return AiokafkaProducer(settings.kafka_bootstrap_servers, settings.kafka_security())
 
 
 async def _publish(producer: Producer, pending: list[OutboxEvent]) -> list[int]:

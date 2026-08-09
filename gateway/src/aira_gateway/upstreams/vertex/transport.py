@@ -18,6 +18,7 @@ vendor-specific vocabulary, and a per-cloud list would mean a per-cloud audit (`
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -51,10 +52,19 @@ class VertexTransport:
 
     def url(self, *, region: str, publisher: str, model: str, method: str) -> str:
         check_region(region, self._allowed)
-        # The model segment is encoded: Anthropic model ids carry an `@version` suffix
-        # (`claude-sonnet-4-5@20250929`), which is exactly the kind of character that turns out to
-        # be a problem in one place nobody checked.
-        segment = httpx.URL(path=f"/{model}").path.lstrip("/")
+        # **Percent-encoded, one segment.** This used to read `httpx.URL(path=f"/{model}").path`
+        # under a comment claiming the segment was encoded. It was not: that call leaves `/` and
+        # `..` untouched and *decodes* `%2f`, so `..%2f..%2fx` came out as `../../x` — worse than
+        # the input it was given. Two gates stand in front of it today (`FRD-307`: only a
+        # catalogued, approved model dispatches), which is exactly the argument this project
+        # refuses elsewhere, and the comment made the next reader trust a protection that was not
+        # there.
+        #
+        # `@` stays literal because an Anthropic model id carries an `@version` suffix
+        # (`claude-sonnet-4-5@20250929`) and RFC 3986 allows it in a path. Everything else,
+        # including `/`, is encoded — the same thing `AzureRoutes` does with a deployment name,
+        # which is where this should have been copied from in the first place.
+        segment = quote(model, safe="@")
         return (
             f"https://{host_for(region)}/v1/projects/{self._project}"
             f"/locations/{region}/publishers/{publisher}/models/{segment}:{method}"
