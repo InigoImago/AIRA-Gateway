@@ -2825,6 +2825,38 @@ MUTATIONS = [
         "gateway/tests/test_vertex.py",
     ),
     Mutation(
+        "Q1",
+        "a model's standing is its latest run, never a total across every run",
+        "management/backend/src/aira_management/apps/smoketests/views.py",
+        '"model", "battery_id", "-started_at"',
+        '"model", "battery_id", "started_at"',
+        "management/backend/tests/test_smoketests.py",
+    ),
+    Mutation(
+        "Q2",
+        "a run nobody has read is not a run that passed",
+        "management/backend/src/aira_management/apps/smoketests/views.py",
+        "counts[result.verdict] = counts.get(result.verdict, 0) + 1",
+        "counts[result.verdict] = counts.get(result.verdict, 0)",
+        "management/backend/tests/test_smoketests.py",
+    ),
+    Mutation(
+        "Q3",
+        "the seed corrects a renamed question in place instead of adding a second one",
+        "management/backend/src/aira_management/apps/seed/contributions/test_batteries.py",
+        "                    position=position,\n                    retired=False,",
+        "                    topic=topic,\n                    retired=False,",
+        "management/backend/tests/test_smoketests.py",
+    ),
+    Mutation(
+        "Q4",
+        "a retired question is not asked, so a model is judged against the current standard",
+        "management/backend/src/aira_management/apps/smoketests/views.py",
+        "for case in run.battery.cases.filter(retired=False)",
+        "for case in run.battery.cases.all()",
+        "management/backend/tests/test_smoketests.py",
+    ),
+    Mutation(
         "T30",
         "the provider's required schema tightenings are added, not assumed",
         "gateway/src/aira_gateway/upstreams/vertex/anthropic_mapping.py",
@@ -2858,7 +2890,33 @@ def _pytest(selection: str) -> bool:
     return result.returncode == 0
 
 
+def _refuse_duplicate_ids() -> None:
+    """An id must name exactly one property.
+
+    On 2026-08-07 a live round found **38 ids naming more than one**, which makes every report
+    ambiguous: "N3 survived" says nothing when two unrelated properties answer to `N3`, and
+    `--only=N3` silently runs both. The duplicates were renamed then and this check was recorded as
+    the fix — it was never written, and the very next addition (2026-08-09) collided with `S1` and
+    `S2` and the harness reported four confident results for two requested properties.
+
+    A check that only exists in a commit message is the thing it was meant to prevent.
+    """
+    seen: dict[str, str] = {}
+    clashes = []
+    for mutation in MUTATIONS:
+        if mutation.ident in seen:
+            clashes.append(
+                f"  {mutation.ident}: {seen[mutation.ident]!r} and {mutation.property_defended!r}"
+            )
+        seen[mutation.ident] = mutation.property_defended
+    if clashes:
+        print("Two properties share an id, so no result about it can be read:")
+        print("\n".join(clashes))
+        raise SystemExit(2)
+
+
 def main() -> int:
+    _refuse_duplicate_ids()
     _recover()
     # `--only A1,B2` runs a subset. Added 2026-08-08 after a five-mutation change cost a full
     # 306-property run: the whole set is what CI checks, and the whole set is not what somebody

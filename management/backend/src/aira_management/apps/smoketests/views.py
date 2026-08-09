@@ -17,7 +17,7 @@ import csv
 import io
 from typing import Any
 
-from django.db.models import Count, Q, QuerySet
+from django.db.models import Prefetch, QuerySet
 from django.http import HttpResponse
 from django.utils import timezone
 from rest_framework import viewsets
@@ -43,7 +43,10 @@ class TestBatteryViewSet(viewsets.ModelViewSet[TestBattery]):
     which is exactly what happened the first time. Writing one stays with IT Security: a battery is
     a statement about what this installation considers acceptable."""
 
-    queryset = TestBattery.objects.prefetch_related("cases").all()
+    queryset = TestBattery.objects.prefetch_related(
+        # A retired question is history, not part of the standard: it is not listed and not asked.
+        Prefetch("cases", queryset=TestCase.objects.filter(retired=False))
+    ).all()
     serializer_class = TestBatterySerializer
 
     def get_permissions(self) -> list[Any]:
@@ -89,7 +92,7 @@ class TestRunViewSet(viewsets.ModelViewSet[TestRun]):
         """
         run = serializer.save(requested_by=self.request.user)
         TestResult.objects.bulk_create(
-            TestResult(run=run, case=case) for case in run.battery.cases.all()
+            TestResult(run=run, case=case) for case in run.battery.cases.filter(retired=False)
         )
 
     @action(detail=True, methods=["get"])
@@ -178,39 +181,57 @@ class TestResultViewSet(viewsets.ModelViewSet[TestResult]):
 
 
 class TestStatsViewSet(viewsets.ViewSet):
-    """How each model has done, across every run of it."""
+    """**The latest run per model**, and deliberately not a total across all of them.
+
+    The point of a standardised catalogue is comparing models against the *same* questions — so the
+    figure that answers "how does this model do" is its **most recent** run, not an average over
+    every run it has ever had. Summing them makes an old, worse result drag a corrected one down
+    forever, and makes the number move when somebody re-runs an unrelated battery. That was the
+    first version and it was wrong: it answered a question nobody asked.
+
+    A model that has been run against two different batteries appears once per battery, because
+    those are two different standards and averaging them would compare nothing to nothing.
+    """
 
     permission_classes = [IsAuthenticated, MayTestModels]
 
     def list(self, request: Request) -> Response:
-        rows = (
-            TestResult.objects.values("run__model")
-            .annotate(
-                runs=Count("run", distinct=True),
-                total=Count("id"),
-                passed=Count("id", filter=Q(verdict=Verdict.PASS)),
-                failed=Count("id", filter=Q(verdict=Verdict.FAIL)),
-                unclear=Count("id", filter=Q(verdict=Verdict.UNCLEAR)),
-                unrated=Count("id", filter=Q(verdict=Verdict.UNRATED)),
-                errored=Count("id", filter=~Q(error="")),
-            )
-            .order_by("run__model")
+        runs = TestRun.objects.select_related("battery").order_by(
+            "model", "battery_id", "-started_at"
         )
-        return Response(
-            [
+        wanted = request.query_params.get("battery", "")
+        if wanted:
+            # Parsed, not passed through. `?battery=abc` reaching the ORM as a string is a 500
+            # where the honest answer is "that is not a battery id" — the routing-handler finding
+            # of 2026-08-06, one layer in. mypy caught this before a caller did.
+            if not wanted.isdigit():
+                return Response(
+                    {"error": {"code": "INVALID_ARGUMENT", "message": "battery must be an id"}},
+                    status=400,
+                )
+            runs = runs.filter(battery_id=int(wanted))
+
+        latest: dict[tuple[str, int], TestRun] = {}
+        for run in runs:
+            latest.setdefault((run.model, run.battery_id), run)
+
+        rows = []
+        for (model, _battery_id), run in sorted(latest.items()):
+            counts = {"total": 0, "unrated": 0, "pass": 0, "fail": 0, "unclear": 0, "errored": 0}
+            for result in run.results.all():
+                counts["total"] += 1
+                counts[result.verdict] = counts.get(result.verdict, 0) + 1
+                if result.error:
+                    counts["errored"] += 1
+            rows.append(
                 {
-                    "model": row["run__model"],
-                    "runs": row["runs"],
-                    "answers": row["total"],
-                    "passed": row["passed"],
-                    "failed": row["failed"],
-                    "unclear": row["unclear"],
-                    # Reported, never folded into a total: a battery nobody has read is not a
-                    # battery that passed, and a rate computed over unrated answers is a number
-                    # that flatters.
-                    "unrated": row["unrated"],
-                    "errored": row["errored"],
+                    "model": model,
+                    "battery": run.battery_id,
+                    "battery_name": run.battery.name,
+                    "run": run.id,
+                    "started_at": run.started_at.isoformat(),
+                    "requested_by": getattr(run.requested_by, "username", "") or "",
+                    **counts,
                 }
-                for row in rows
-            ]
-        )
+            )
+        return Response(rows)

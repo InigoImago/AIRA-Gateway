@@ -5,6 +5,49 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-09 — A catalogue is a standard, and a standing is the latest run (`FRD-504`)
+
+The smoke-test screen was built as one page that summed every run a model had ever had. Reported
+as *"ich will im Laufe der Zeit standardisierten Fragenkatalog für die Bewertung von Modellen
+definieren und nach dem Standard Modelle bewerten"* — which is a different thing, and the summing
+was actively wrong for it.
+
+**Three sub-tabs, because there are three activities.** The **question catalogue** is written once
+and grows slowly; a **run** puts it to a model; the **latest results** say where each model stands.
+Seeded with **100 questions in eight batteries**, each isolating one failure mode — refusal,
+invention, instruction handling, injection resistance, German and domain, personal data, checkable
+reasoning, output format. A battery mixing failure modes produces a score that moves for reasons
+nobody can attribute. After the seed it is edited in the console: a catalogue that can only be
+changed by editing a seed file is one that stops being edited.
+
+**The headline figure is the newest run per model and battery.** Summing is wrong twice: an old,
+since-corrected result drags the current one down forever, and the number moves whenever somebody
+re-runs something unrelated. Older runs are **history** and stay readable — how a model behaved
+before its version changed is the question anybody upgrading one actually has, and only the history
+answers it. Two batteries against one model are two standings, never an average: two standards
+averaged compare nothing to nothing.
+
+Three things fell out of building it, and two are about the harness rather than the feature:
+
+- **A break that never broke.** The first attempt to prove the new test could fail replaced a
+  string that `ruff format` had since wrapped across two lines, so the edit matched nothing, the
+  suite stayed green, and the run looked like a passing verification. The test was only shown to
+  fail once the anchor was taken from the file rather than from memory. A break-and-restore that
+  does not assert the break happened is a green run about nothing — the same shape as the info-hint
+  guard that was itself inert, two days ago.
+- **The duplicate-id check existed only in a commit message.** 2026-08-07 recorded that 38 mutation
+  ids named more than one property, that the later ones were renamed, and that *"the harness now
+  refuses them"*. It never did. The very next addition collided with `S1` and `S2`, and
+  `--only=S1,S2` cheerfully ran four properties and reported four confident results for the two
+  that were asked for. `_refuse_duplicate_ids()` is now written, and shown to fire. A check that
+  exists only as a claim is the thing it was meant to prevent.
+- **`confirm()` where the codebase has a `ConfirmService`.** Caught by writing the test: the
+  existing idiom is injectable precisely so a component can be tested without stubbing `window`.
+
+`Q1`/`Q2` guard the two properties that matter here — the standing is the latest run, and an
+unrated answer is not a passed one. Frontend gates held without being touched (statements 92.2%,
+branches 92.1%, functions 75.1%).
+
 ## 2026-08-08 — access follows the group, and three things that carried nothing (`FRD-209`)
 
 Access to a use case was granted **one person at a time**, by username. Two things were wrong with

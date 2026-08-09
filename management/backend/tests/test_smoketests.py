@@ -151,15 +151,59 @@ def test_an_unrated_run_is_not_a_run_that_passed(battery) -> None:
 def test_the_statistics_report_unrated_apart_from_everything_else(battery) -> None:
     client = _client(_user("sec", "it-security"))
     run_id = client.post(RUNS, {"battery": battery.id, "model": "m-1"}, format="json").data["id"]
-    first, second = Result.objects.filter(run_id=run_id).order_by("id")
+    first, _second = Result.objects.filter(run_id=run_id).order_by("id")
     client.patch(f"{RESULTS}{first.pk}/", {"verdict": "fail"}, format="json")
 
     row = next(r for r in client.get(STATS).data if r["model"] == "m-1")
 
-    assert row["answers"] == 2
-    assert row["failed"] == 1
+    assert row["total"] == 2
+    assert row["fail"] == 1
     assert row["unrated"] == 1
-    assert row["passed"] == 0
+    assert row["pass"] == 0
+
+
+def test_only_the_latest_run_counts_and_the_one_before_it_is_history(battery) -> None:
+    """**The headline figure is the newest run, not a total across every run.**
+
+    A standardised catalogue exists so models can be compared against the same questions. Summing
+    every run a model has ever had is the wrong shape twice: an old, since-corrected result drags
+    the current one down forever, and the number moves whenever somebody re-runs something
+    unrelated. The first version summed them, which is why this test exists.
+
+    The earlier run is not deleted — it stays readable as history, which is the only way a change
+    in a model's behaviour between two versions is visible at all.
+    """
+    client = _client(_user("sec", "it-security"))
+    old = client.post(RUNS, {"battery": battery.id, "model": "m-1"}, format="json").data["id"]
+    for result in Result.objects.filter(run_id=old):
+        client.patch(f"{RESULTS}{result.pk}/", {"verdict": "fail"}, format="json")
+
+    new = client.post(RUNS, {"battery": battery.id, "model": "m-1"}, format="json").data["id"]
+    for result in Result.objects.filter(run_id=new):
+        client.patch(f"{RESULTS}{result.pk}/", {"verdict": "pass"}, format="json")
+
+    rows = [r for r in client.get(STATS).data if r["model"] == "m-1"]
+
+    assert len(rows) == 1, "one row per model and battery, not one per run"
+    assert rows[0]["run"] == new
+    assert rows[0]["pass"] == 2
+    assert rows[0]["fail"] == 0, "the earlier run's verdicts must not be added in"
+    # …and the run it superseded is still there to be read.
+    assert {run["id"] for run in client.get(RUNS).data} >= {old, new}
+
+
+def test_two_batteries_against_one_model_are_two_standings(battery) -> None:
+    """Two batteries are two different standards. Averaging them compares nothing to nothing."""
+    other = Battery.objects.create(name="Second standard")
+    Case.objects.create(battery=other, topic="Recht", prompt="Was gilt?")
+    client = _client(_user("sec", "it-security"))
+    client.post(RUNS, {"battery": battery.id, "model": "m-1"}, format="json")
+    client.post(RUNS, {"battery": other.id, "model": "m-1"}, format="json")
+
+    rows = [r for r in client.get(STATS).data if r["model"] == "m-1"]
+
+    assert len(rows) == 2
+    assert {r["battery_name"] for r in rows} == {battery.name, "Second standard"}
 
 
 def test_a_failed_request_is_counted_apart_from_a_bad_answer(battery) -> None:
@@ -174,7 +218,7 @@ def test_a_failed_request_is_counted_apart_from_a_bad_answer(battery) -> None:
     row = next(r for r in client.get(STATS).data if r["model"] == "m-1")
 
     assert row["errored"] == 1
-    assert row["failed"] == 0
+    assert row["fail"] == 0
 
 
 # ---- the export --------------------------------------------------------------------------------
@@ -218,3 +262,74 @@ def test_authoring_a_battery_stays_with_it_security() -> None:
     )
 
     assert response.status_code == 403
+
+
+# ---- the catalogue is a standard ----------------------------------------------------------------
+
+
+def test_renaming_a_question_corrects_it_instead_of_adding_a_second_one(monkeypatch) -> None:
+    """The seed keys questions on **position**, not on topic.
+
+    Keying on the name looks natural and is wrong: a rename is then a *create*, so the old wording
+    survives beside the new one — with its answers still attached, which is exactly what makes it
+    invisible. That happened on 2026-08-09 and a battery silently grew by two questions. The same
+    lesson `FRD-208` recorded for anomaly rules, in a second place.
+
+    The first version of this test seeded the same declaration twice and passed against the broken
+    code, because nothing was renamed. A test named after a rename has to rename something.
+    """
+    from aira_management.apps.seed.contributions import test_batteries as seed_module
+
+    spec: dict = {"Trial": {"description": "", "cases": [("Old name", "What is 2+2?", "4")]}}
+    monkeypatch.setattr(seed_module, "BATTERIES", spec)
+    seed_module.seed_test_batteries(fresh=False)
+
+    spec["Trial"]["cases"] = [("New name", "What is 2+2?", "4")]
+    seed_module.seed_test_batteries(fresh=False)
+
+    questions = Case.objects.filter(battery__name="Trial", retired=False)
+
+    assert questions.count() == 1, "a rename must correct the question, not add a second one"
+    assert questions.first().topic == "New name"
+
+
+def test_a_question_dropped_from_the_standard_is_retired_and_its_answers_survive(battery) -> None:
+    """**Retired, never deleted.** Somebody judged those answers against the wording as it stood,
+    and those verdicts are the only evidence that a model's behaviour has changed at all."""
+    dropped = Case.objects.create(battery=battery, topic="Withdrawn", prompt="…", position=99)
+    client = _client(_user("sec", "it-security"))
+    run_id = client.post(RUNS, {"battery": battery.id, "model": "m-1"}, format="json").data["id"]
+    answers = Result.objects.filter(run_id=run_id, case=dropped).count()
+    assert answers == 1, "the question was still in the standard when the run happened"
+
+    dropped.retired = True
+    dropped.save()
+
+    assert Case.objects.filter(pk=dropped.pk).exists()
+    assert Result.objects.filter(run_id=run_id, case=dropped).count() == 1
+
+
+def test_a_retired_question_is_neither_listed_nor_asked(battery) -> None:
+    """Listing it would promise a longer run than is performed; asking it would judge a model
+    against a standard the installation has already withdrawn."""
+    Case.objects.create(battery=battery, topic="Withdrawn", prompt="…", position=99, retired=True)
+    client = _client(_user("sec", "it-security"))
+
+    listed = client.get(BATTERIES).data
+    row = next(b for b in listed if b["id"] == battery.id)
+    run_id = client.post(RUNS, {"battery": battery.id, "model": "m-1"}, format="json").data["id"]
+
+    assert "Withdrawn" not in [c["topic"] for c in row["cases"]]
+    assert row["case_count"] == 2, "the count beside a battery is what somebody plans time by"
+    assert Result.objects.filter(run_id=run_id).count() == 2
+
+
+def test_a_battery_filter_that_is_not_an_id_is_refused_by_name(battery) -> None:
+    """`?battery=abc` is a caller mistake with an obvious message; reaching the ORM with it is a
+    500 that says nothing. Found by mypy rather than by a caller, which is the cheap way."""
+    client = _client(_user("sec", "it-security"))
+
+    response = client.get(f"{STATS}?battery=abc")
+
+    assert response.status_code == 400
+    assert "battery" in response.data["error"]["message"]

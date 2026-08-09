@@ -3,8 +3,8 @@
     <div>
       <h2 class="page__title">Model tests</h2>
       <p class="muted" style="margin: 0.25rem 0 0">
-        Put a battery of questions to a model and read what comes back. Nothing here decides whether
-        an answer is good — a person does, and the rating carries their name.
+        A standing catalogue of questions, put to a model, and judged by a person. Nothing here
+        decides whether an answer is good — the rating carries the name of whoever gave it.
       </p>
     </div>
   </header>
@@ -16,234 +16,532 @@
     <div class="callout" role="status">{{ notice }}</div>
   }
 
+  <div class="tabs" role="tablist" aria-label="Model test sections">
+    <button
+      type="button"
+      class="tab"
+      role="tab"
+      [attr.aria-selected]="tab() === 'results'"
+      [class.is-active]="tab() === 'results'"
+      (click)="tab.set('results')"
+      data-testid="tab-results"
+    >
+      Latest results <span class="tab__count">{{ stats().length }}</span>
+    </button>
+    <button
+      type="button"
+      class="tab"
+      role="tab"
+      [attr.aria-selected]="tab() === 'runs'"
+      [class.is-active]="tab() === 'runs'"
+      (click)="tab.set('runs')"
+      data-testid="tab-runs"
+    >
+      Runs <span class="tab__count">{{ runs().length }}</span>
+    </button>
+    <button
+      type="button"
+      class="tab"
+      role="tab"
+      [attr.aria-selected]="tab() === 'catalogue'"
+      [class.is-active]="tab() === 'catalogue'"
+      (click)="tab.set('catalogue')"
+      data-testid="tab-catalogue"
+    >
+      Question catalogue <span class="tab__count">{{ cases().length }}</span>
+    </button>
+  </div>
+
   <!--
-    ── Run one ───────────────────────────────────────────────────────────────────────────────
-    The section is always here. Hiding it outright would leave somebody who cannot run a battery
-    looking at a screen that says nothing about why — and "why can I not do this" is the question
-    `FRD-206` is about.
+    ── Latest results ────────────────────────────────────────────────────────────────────────
+    The **most recent run per model and battery**, never a sum across runs. The point of a fixed
+    catalogue is that models can be compared against the same questions; averaging every run a
+    model has ever had makes an old, since-corrected result drag the current one down forever, and
+    makes the number move when somebody re-runs something unrelated. Older runs are history and
+    live under Runs.
   -->
-  <section class="card">
-    <h3 class="section-title" style="margin: 0 0 0.75rem">Run a battery</h3>
-    @if (!mine().length) {
-      <p class="empty" data-testid="no-use-case">
-        You are not a member of any use case, so there is nothing to attribute a test to. A run is
-        ordinary traffic: it is priced, budgeted and audited under a use case. Ask to be granted
-        access to one — oversight lets you see every use case and deliberately not call one.
-      </p>
-    } @else {
-      <div class="form-stack">
-        <div class="form-inline">
-          <div class="field">
-            <label for="smoke-battery">Battery</label>
-            <select
-              id="smoke-battery"
-              name="battery"
-              [ngModel]="battery()"
-              (ngModelChange)="battery.set(+$event)"
-              data-testid="smoke-battery"
-            >
-              @for (b of batteries(); track b.id) {
-                <option [value]="b.id">{{ b.name }} ({{ b.case_count }})</option>
+  @if (tab() === 'results') {
+    <section class="card" style="padding: 0">
+      <div style="padding: 0.9rem 1rem 0">
+        <h3 class="section-title" style="margin: 0">
+          Where each model stands
+          <app-info-hint label="What these numbers count">
+            The latest run of a battery against that model, and only that run. Earlier runs are kept
+            as history under Runs. Unrated answers are counted apart: a battery nobody has read is
+            not a battery that passed, and a rate computed over unread answers flatters.
+          </app-info-hint>
+        </h3>
+      </div>
+      @if (!stats().length) {
+        <p class="empty" data-testid="no-stats">
+          No model has been tested yet. Start a run under Runs.
+        </p>
+      } @else {
+        <div class="table-wrap" style="margin-top: 0.75rem">
+          <table class="table">
+            <thead>
+              <tr>
+                <th scope="col">Model</th>
+                <th scope="col">Battery</th>
+                <th scope="col">Run</th>
+                <th scope="col">Answers</th>
+                <th scope="col">Acceptable</th>
+                <th scope="col">Not acceptable</th>
+                <th scope="col">Cannot tell</th>
+                <th scope="col">Not yet rated</th>
+                <th scope="col">Request failed</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (row of stats(); track row.model + ':' + row.battery) {
+                <tr [attr.data-testid]="'stat-' + row.model">
+                  <td>
+                    <code>{{ row.model }}</code>
+                  </td>
+                  <td>{{ row.battery_name }}</td>
+                  <td class="nowrap">{{ row.started_at | date: 'dd.MM.yyyy HH:mm' }}</td>
+                  <td class="nowrap">{{ row.total }}</td>
+                  <td class="nowrap">{{ row.pass }}</td>
+                  <td class="nowrap">
+                    @if (row.fail) {
+                      <span class="badge badge--danger">{{ row.fail }}</span>
+                    } @else {
+                      0
+                    }
+                  </td>
+                  <td class="nowrap">{{ row.unclear }}</td>
+                  <td class="nowrap">
+                    @if (row.unrated) {
+                      <span class="badge badge--warning">{{ row.unrated }}</span>
+                    } @else {
+                      0
+                    }
+                  </td>
+                  <td class="nowrap">{{ row.errored }}</td>
+                </tr>
               }
-            </select>
+            </tbody>
+          </table>
+        </div>
+      }
+    </section>
+  }
+
+  <!-- ── Runs ────────────────────────────────────────────────────────────────────────────── -->
+  @if (tab() === 'runs') {
+    <section class="card">
+      <h3 class="section-title" style="margin: 0 0 0.75rem">Run the catalogue against a model</h3>
+      @if (!mine().length) {
+        <p class="empty" data-testid="no-use-case">
+          You are not a member of any use case, so there is nothing to attribute a test to. A run is
+          ordinary traffic: it is priced, budgeted and audited under a use case. Ask to be granted
+          access to one — oversight lets you see every use case and deliberately not call one.
+        </p>
+      } @else {
+        <div class="form-stack">
+          <div class="form-inline">
+            <div class="field">
+              <label for="smoke-battery">Battery</label>
+              <select
+                id="smoke-battery"
+                name="battery"
+                [ngModel]="battery()"
+                (ngModelChange)="battery.set(+$event)"
+                data-testid="smoke-battery"
+              >
+                @for (b of batteries(); track b.id) {
+                  <option [value]="b.id">{{ b.name }} ({{ b.case_count }})</option>
+                }
+              </select>
+            </div>
+            <div class="field">
+              <label for="smoke-model">
+                Model
+                <app-info-hint label="Which models can be tested">
+                  Only models a Global Administrator has catalogued and approved, because only those
+                  can be called at all.
+                </app-info-hint>
+              </label>
+              <select
+                id="smoke-model"
+                name="model"
+                [ngModel]="model()"
+                (ngModelChange)="model.set($event)"
+                data-testid="smoke-model"
+              >
+                <option value="">choose a model</option>
+                @for (m of runnable(); track m.name) {
+                  <option [value]="m.name">{{ m.name }}</option>
+                }
+              </select>
+            </div>
+            <div class="field">
+              <label for="smoke-usecase">
+                Attributed to
+                <app-info-hint label="Why a use case is needed">
+                  A test travels the ordinary request path, so it is priced, budgeted, rate-limited
+                  and audited like any other traffic — which means it belongs to a use case. Only
+                  the ones you are a member of are offered: oversight lets you see every use case,
+                  and deliberately does not let you call one.
+                </app-info-hint>
+              </label>
+              <select
+                id="smoke-usecase"
+                name="use_case"
+                [ngModel]="useCase()"
+                (ngModelChange)="useCase.set($event)"
+                data-testid="smoke-usecase"
+              >
+                @for (uc of mine(); track uc.slug) {
+                  <option [value]="uc.slug">{{ uc.name }}</option>
+                }
+              </select>
+            </div>
           </div>
-          <div class="field">
-            <label for="smoke-model">
-              Model
-              <app-info-hint label="Which models can be tested">
-                Only models a Global Administrator has catalogued and approved, because only those
-                can be called at all.
-              </app-info-hint>
-            </label>
-            <select
-              id="smoke-model"
-              name="model"
-              [ngModel]="model()"
-              (ngModelChange)="model.set($event)"
-              data-testid="smoke-model"
+
+          <div class="form-actions">
+            @if (progress(); as done) {
+              <span class="muted" data-testid="smoke-progress">asking… {{ done }}</span>
+            }
+            <span class="form-actions__spacer"></span>
+            <button
+              type="button"
+              class="btn btn--primary"
+              [disabled]="running() || !model() || !useCase() || battery() === null"
+              (click)="run()"
+              data-testid="smoke-run"
             >
-              <option value="">choose a model</option>
-              @for (m of runnable(); track m.name) {
-                <option [value]="m.name">{{ m.name }}</option>
-              }
-            </select>
-          </div>
-          <div class="field">
-            <label for="smoke-usecase">
-              Attributed to
-              <app-info-hint label="Why a use case is needed">
-                A test travels the ordinary request path, so it is priced, budgeted, rate-limited
-                and audited like any other traffic — which means it belongs to a use case. Only the
-                ones you are a member of are offered: oversight lets you see every use case, and
-                deliberately does not let you call one.
-              </app-info-hint>
-            </label>
-            <select
-              id="smoke-usecase"
-              name="use_case"
-              [ngModel]="useCase()"
-              (ngModelChange)="useCase.set($event)"
-              data-testid="smoke-usecase"
-            >
-              @for (uc of mine(); track uc.slug) {
-                <option [value]="uc.slug">{{ uc.name }}</option>
-              }
-            </select>
+              {{ running() ? 'Running…' : 'Run' }}
+            </button>
           </div>
         </div>
+      }
+    </section>
 
-        <div class="form-actions">
-          @if (progress(); as done) {
-            <span class="muted" data-testid="smoke-progress">asking… {{ done }}</span>
-          }
-          <span class="form-actions__spacer"></span>
+    <section class="card" style="padding: 0">
+      <div style="padding: 0.9rem 1rem 0">
+        <h3 class="section-title" style="margin: 0">
+          Every run, newest first
+          <app-info-hint label="Why older runs stay">
+            Only the newest run of a battery against a model counts as that model's standing.
+            Everything before it is history: it says how the model behaved then, and it is how a
+            change in behaviour becomes visible at all.
+          </app-info-hint>
+        </h3>
+      </div>
+      @if (loading()) {
+        <p class="loading">
+          <span class="spinner" aria-hidden="true"></span>
+          Loading…
+        </p>
+      } @else if (!runs().length) {
+        <p class="empty" data-testid="no-runs">Nothing has been run yet.</p>
+      } @else {
+        <div class="table-wrap" style="margin-top: 0.75rem">
+          <table class="table">
+            <thead>
+              <tr>
+                <th scope="col">When</th>
+                <th scope="col">Battery</th>
+                <th scope="col">Model</th>
+                <th scope="col">Answers</th>
+                <th scope="col">By</th>
+                <th scope="col"><span class="sr-only">Actions</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (run of runs(); track run.id) {
+                <tr>
+                  <td class="nowrap">
+                    {{ run.started_at | date: 'dd.MM.yyyy HH:mm' }}
+                    @if (isLatest(run)) {
+                      <span class="badge badge--success">current</span>
+                    }
+                  </td>
+                  <td>{{ run.battery_name }}</td>
+                  <td>
+                    <code>{{ run.model }}</code>
+                  </td>
+                  <td class="nowrap">
+                    {{ run.counts.total }}
+                    @if (run.counts.unrated) {
+                      <span class="badge badge--warning">{{ run.counts.unrated }} unrated</span>
+                    }
+                    @if (run.counts.fail) {
+                      <span class="badge badge--danger">{{ run.counts.fail }} failed</span>
+                    }
+                  </td>
+                  <td>{{ run.requested_by_name }}</td>
+                  <td class="table__actions">
+                    <div class="actions">
+                      <button
+                        type="button"
+                        class="btn btn--sm"
+                        (click)="open(run)"
+                        [attr.data-testid]="'open-run-' + run.id"
+                      >
+                        {{ run.counts.unrated ? 'Rate ' + run.counts.unrated + ' left' : 'Review' }}
+                      </button>
+                      <button
+                        type="button"
+                        class="btn btn--sm"
+                        (click)="download(run)"
+                        [attr.data-testid]="'export-run-' + run.id"
+                      >
+                        Export CSV
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    </section>
+  }
+
+  <!--
+    ── The catalogue ─────────────────────────────────────────────────────────────────────────
+    The questions themselves. This is the standard the models are held to, so it is a *standing*
+    document that grows — not something typed per run. Authoring is IT Security's, for the same
+    reason a global anomaly rule is: it states what this installation considers acceptable.
+  -->
+  @if (tab() === 'catalogue') {
+    <section class="card">
+      <div class="form-inline" style="align-items: flex-end">
+        <div class="field">
+          <label for="cat-battery">Battery</label>
+          <select
+            id="cat-battery"
+            name="cat-battery"
+            [ngModel]="battery()"
+            (ngModelChange)="battery.set(+$event)"
+            data-testid="catalogue-battery"
+          >
+            @for (b of batteries(); track b.id) {
+              <option [value]="b.id">{{ b.name }} ({{ b.case_count }})</option>
+            }
+          </select>
+        </div>
+        <span class="form-actions__spacer"></span>
+        @if (mayAuthor()) {
+          <button
+            type="button"
+            class="btn"
+            (click)="startBattery()"
+            data-testid="catalogue-new-battery"
+          >
+            New battery
+          </button>
           <button
             type="button"
             class="btn btn--primary"
-            [disabled]="running() || !model() || !useCase() || battery() === null"
-            (click)="run()"
-            data-testid="smoke-run"
+            [disabled]="battery() === null"
+            (click)="startCase()"
+            data-testid="catalogue-add"
           >
-            {{ running() ? 'Running…' : 'Run' }}
+            Add question
           </button>
+        }
+      </div>
+      @if (selectedBattery(); as b) {
+        @if (b.description) {
+          <p class="muted" style="margin: 0.6rem 0 0">{{ b.description }}</p>
+        }
+      }
+      @if (!mayAuthor()) {
+        <!-- `FRD-206`: a withheld action names who performs it, rather than being an absent
+             control the reader has to guess at. -->
+        <p class="muted" style="margin: 0.6rem 0 0" data-testid="catalogue-readonly">
+          The catalogue is the standard models are judged against, so it is written by IT Security.
+          You can run it and rate the answers.
+        </p>
+      }
+    </section>
+
+    @if (newBattery()) {
+      <section class="card">
+        <h3 class="section-title" style="margin: 0 0 0.75rem">New battery</h3>
+        <div class="form-stack">
+          <div class="field">
+            <label for="battery-name">Name</label>
+            <input
+              id="battery-name"
+              [ngModel]="batteryName()"
+              (ngModelChange)="batteryName.set($event)"
+              placeholder="e.g. Refusal behaviour"
+              data-testid="battery-name"
+            />
+          </div>
+          <div class="field">
+            <label for="battery-desc">What this battery is for</label>
+            <textarea
+              id="battery-desc"
+              rows="2"
+              [ngModel]="batteryDescription()"
+              (ngModelChange)="batteryDescription.set($event)"
+              data-testid="battery-description"
+            ></textarea>
+          </div>
+          <div class="form-actions">
+            <span class="form-actions__spacer"></span>
+            <button type="button" class="btn" (click)="newBattery.set(false)">Cancel</button>
+            <button
+              type="button"
+              class="btn btn--primary"
+              [disabled]="!batteryName().trim()"
+              (click)="saveBattery()"
+              data-testid="battery-save"
+            >
+              Create battery
+            </button>
+          </div>
+        </div>
+      </section>
+    }
+
+    <section class="card" style="padding: 0">
+      @if (!cases().length) {
+        <p class="empty" data-testid="no-cases">
+          This battery has no questions yet.
+          @if (mayAuthor()) {
+            Add the first one above.
+          }
+        </p>
+      } @else {
+        <div class="table-wrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th scope="col" style="width: 3rem">#</th>
+                <th scope="col">Topic</th>
+                <th scope="col">Question</th>
+                <th scope="col">What a good answer looks like</th>
+                @if (mayAuthor()) {
+                  <th scope="col"><span class="sr-only">Actions</span></th>
+                }
+              </tr>
+            </thead>
+            <tbody>
+              @for (item of cases(); track item.id; let i = $index) {
+                <tr [attr.data-testid]="'case-' + item.id">
+                  <td class="nowrap muted">{{ i + 1 }}</td>
+                  <td>{{ item.topic }}</td>
+                  <td class="wrap">{{ item.prompt }}</td>
+                  <td class="wrap muted">{{ item.expectation }}</td>
+                  @if (mayAuthor()) {
+                    <td class="table__actions">
+                      <div class="actions">
+                        <button
+                          type="button"
+                          class="btn btn--sm"
+                          (click)="startCase(item)"
+                          [attr.data-testid]="'edit-case-' + item.id"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          class="btn btn--sm btn--danger"
+                          (click)="removeCase(item)"
+                          [attr.data-testid]="'delete-case-' + item.id"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </td>
+                  }
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    </section>
+  }
+</div>
+
+<!-- ── Writing a question ────────────────────────────────────────────────────────────────── -->
+@if (editing(); as draft) {
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="case-title">
+    <div class="modal__panel">
+      <div class="modal__head">
+        <h3 id="case-title" style="margin: 0">
+          {{ draft.id ? 'Edit question' : 'New question' }}
+        </h3>
+        <button
+          type="button"
+          class="btn btn--sm btn--ghost"
+          aria-label="Close"
+          (click)="cancelCase()"
+        >
+          Close
+        </button>
+      </div>
+      <div class="modal__body stack">
+        <div class="field">
+          <label for="case-topic">Topic</label>
+          <input
+            id="case-topic"
+            [ngModel]="caseTopic()"
+            (ngModelChange)="caseTopic.set($event)"
+            placeholder="e.g. Refusal · medical advice"
+            data-testid="case-topic"
+          />
+        </div>
+        <div class="field">
+          <label for="case-prompt">
+            The question put to the model
+            <app-info-hint label="How the question is sent">
+              Sent as written, through the ordinary request path, with no wrapper and no system
+              prompt of ours. What you type here is exactly what the model receives.
+            </app-info-hint>
+          </label>
+          <textarea
+            id="case-prompt"
+            rows="6"
+            [ngModel]="casePrompt()"
+            (ngModelChange)="casePrompt.set($event)"
+            data-testid="case-prompt"
+          ></textarea>
+        </div>
+        <div class="field">
+          <label for="case-expectation">
+            What a good answer looks like
+            <app-info-hint label="Why this is prose and not a rule">
+              This is shown to whoever rates the answer; nothing matches against it. A
+              expected-substring check would turn a judgement into a number nobody trusts and
+              everybody quotes.
+            </app-info-hint>
+          </label>
+          <textarea
+            id="case-expectation"
+            rows="3"
+            [ngModel]="caseExpectation()"
+            (ngModelChange)="caseExpectation.set($event)"
+            data-testid="case-expectation"
+          ></textarea>
         </div>
       </div>
-    }
-  </section>
-
-  <!-- ── Per model ───────────────────────────────────────────────────────────────────────── -->
-  <section class="card" style="padding: 0">
-    <div style="padding: 0.9rem 1rem 0">
-      <h3 class="section-title" style="margin: 0">
-        How each model has done
-        <app-info-hint label="What these numbers count">
-          Every answer this installation has collected for that model, across all runs. Unrated
-          answers are counted apart: a battery nobody has read is not a battery that passed, and a
-          rate computed over unread answers is a number that flatters.
-        </app-info-hint>
-      </h3>
-    </div>
-    @if (!stats().length) {
-      <p class="empty" data-testid="no-stats">No model has been tested yet.</p>
-    } @else {
-      <div class="table-wrap" style="margin-top: 0.75rem">
-        <table class="table">
-          <thead>
-            <tr>
-              <th scope="col">Model</th>
-              <th scope="col">Runs</th>
-              <th scope="col">Answers</th>
-              <th scope="col">Acceptable</th>
-              <th scope="col">Not acceptable</th>
-              <th scope="col">Cannot tell</th>
-              <th scope="col">Not yet rated</th>
-              <th scope="col">Request failed</th>
-            </tr>
-          </thead>
-          <tbody>
-            @for (row of stats(); track row.model) {
-              <tr>
-                <td>
-                  <code>{{ row.model }}</code>
-                </td>
-                <td class="nowrap">{{ row.runs }}</td>
-                <td class="nowrap">{{ row.answers }}</td>
-                <td class="nowrap">{{ row.passed }}</td>
-                <td class="nowrap">
-                  @if (row.failed) {
-                    <span class="badge badge--danger">{{ row.failed }}</span>
-                  } @else {
-                    0
-                  }
-                </td>
-                <td class="nowrap">{{ row.unclear }}</td>
-                <td class="nowrap">
-                  @if (row.unrated) {
-                    <span class="badge badge--warning">{{ row.unrated }}</span>
-                  } @else {
-                    0
-                  }
-                </td>
-                <td class="nowrap">{{ row.errored }}</td>
-              </tr>
-            }
-          </tbody>
-        </table>
+      <div class="modal__foot">
+        <span class="form-actions__spacer"></span>
+        <button type="button" class="btn" (click)="cancelCase()" data-testid="case-cancel">
+          Cancel
+        </button>
+        <button
+          type="button"
+          class="btn btn--primary"
+          [disabled]="!caseTopic().trim() || !casePrompt().trim()"
+          (click)="saveCase()"
+          data-testid="case-save"
+        >
+          {{ draft.id ? 'Save question' : 'Add question' }}
+        </button>
       </div>
-    }
-  </section>
-
-  <!-- ── Runs ────────────────────────────────────────────────────────────────────────────── -->
-  <section class="card" style="padding: 0">
-    <div style="padding: 0.9rem 1rem 0">
-      <h3 class="section-title" style="margin: 0">Runs</h3>
     </div>
-    @if (loading()) {
-      <p class="loading">
-        <span class="spinner" aria-hidden="true"></span>
-        Loading…
-      </p>
-    } @else if (!runs().length) {
-      <p class="empty" data-testid="no-runs">Nothing has been run yet.</p>
-    } @else {
-      <div class="table-wrap" style="margin-top: 0.75rem">
-        <table class="table">
-          <thead>
-            <tr>
-              <th scope="col">When</th>
-              <th scope="col">Battery</th>
-              <th scope="col">Model</th>
-              <th scope="col">Answers</th>
-              <th scope="col">By</th>
-              <th scope="col"><span class="sr-only">Actions</span></th>
-            </tr>
-          </thead>
-          <tbody>
-            @for (run of runs(); track run.id) {
-              <tr>
-                <td class="nowrap">{{ run.started_at | date: 'dd.MM.yyyy HH:mm' }}</td>
-                <td>{{ run.battery_name }}</td>
-                <td>
-                  <code>{{ run.model }}</code>
-                </td>
-                <td class="nowrap">
-                  {{ run.counts.total }}
-                  @if (run.counts.unrated) {
-                    <span class="badge badge--warning">{{ run.counts.unrated }} unrated</span>
-                  }
-                  @if (run.counts.fail) {
-                    <span class="badge badge--danger">{{ run.counts.fail }} failed</span>
-                  }
-                </td>
-                <td>{{ run.requested_by_name }}</td>
-                <td class="table__actions">
-                  <div class="actions">
-                    <button
-                      type="button"
-                      class="btn btn--sm"
-                      (click)="open(run)"
-                      [attr.data-testid]="'open-run-' + run.id"
-                    >
-                      {{ run.counts.unrated ? 'Rate ' + run.counts.unrated + ' left' : 'Review' }}
-                    </button>
-                    <button
-                      type="button"
-                      class="btn btn--sm"
-                      (click)="download(run)"
-                      [attr.data-testid]="'export-run-' + run.id"
-                    >
-                      Export CSV
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            }
-          </tbody>
-        </table>
-      </div>
-    }
-  </section>
-</div>
+  </div>
+}
 
 <!-- ── The rating window ─────────────────────────────────────────────────────────────────── -->
 @if (current(); as row) {
@@ -271,7 +569,7 @@
 
       <div class="modal__body stack">
         <div>
-          <h4 class="section-title" style="margin: 0 0 0.35rem">Prompt</h4>
+          <h4 class="section-title" style="margin: 0 0 0.35rem">Question</h4>
           <pre class="payload" data-testid="rate-prompt">{{ row.prompt }}</pre>
         </div>
 

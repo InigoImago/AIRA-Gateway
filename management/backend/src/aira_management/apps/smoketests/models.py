@@ -48,11 +48,31 @@ class TestCase(models.Model):
     #: What a good answer looks like, in a sentence. Shown to the person rating — not matched
     #: against, because matching is the thing this design deliberately does not do.
     expectation = models.TextField(blank=True)
-    #: Position in the battery, so a run walks it in the order somebody intended.
+    #: Position in the battery, so a run walks it in the order somebody intended — **and the key
+    #: the seed upserts on**. Keying on `topic` cost two duplicate questions on 2026-08-09: the
+    #: seed renamed three questions, and a rename against a name key is a *create*, so the old
+    #: ones stayed with their answers attached and the battery quietly grew by two. The same
+    #: lesson `FRD-208` recorded for anomaly rules, in a second place.
     position = models.PositiveIntegerField(default=0)
+    #: A question that is no longer part of the standard but has already been answered.
+    #:
+    #: **Retired rather than deleted.** Its answers were judged by a person against the wording as
+    #: it then stood; deleting the question would take those verdicts with it, and a standard whose
+    #: history disappears each time it is corrected cannot show that anything improved.
+    retired = models.BooleanField(default=False)
 
     class Meta:
         ordering = ["position", "id"]
+        constraints = [
+            # One question per position, among the questions still in the standard. Retired ones
+            # keep their old position and are excluded, because they are history rather than part
+            # of the catalogue.
+            models.UniqueConstraint(
+                fields=["battery", "position"],
+                condition=models.Q(retired=False),
+                name="unique_position_per_battery",
+            )
+        ]
 
     def __str__(self) -> str:
         return f"{self.topic}: {self.prompt[:40]}"

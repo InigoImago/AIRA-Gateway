@@ -3,15 +3,18 @@ import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { firstValueFrom } from 'rxjs';
 import { MeService } from '../../core/api/me.service';
+import { maySetStandards } from '../../core/auth/roles';
 import {
   CatalogModel,
   TestBattery,
+  TestCase,
   TestModelStats,
   TestResult,
   TestRun,
   TestVerdict,
 } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
+import { ConfirmService } from '../../core/ui/confirm.service';
 import { InfoHint } from '../../core/ui/info-hint';
 import { PageFeedback } from '../../core/ui/page-feedback';
 
@@ -34,6 +37,16 @@ import { PageFeedback } from '../../core/ui/page-feedback';
  * The list deliberately shows **topic and prompt and not the answer**. Reading fifty answers in a
  * table is how somebody ends up skimming; the rating window shows one at a time, with everything
  * about it, and moves with previous and next.
+ *
+ * **Three sub-tabs, because there are three activities and they belong to different moments.**
+ * The catalogue is written once and grows slowly — it is the *standard*, a hundred questions that
+ * outlive any one model. A run puts that standard to a model. And the first thing anybody wants is
+ * the answer to "where does each model stand", which is the **latest** run per model and battery —
+ * never a total across every run a model has ever had. That first version summed them, and summing
+ * is the wrong shape twice over: an old, since-corrected result drags the current one down forever,
+ * and the figure moves when somebody re-runs something unrelated. Earlier runs are **history**, and
+ * they stay readable — how a model's behaviour changed between two versions is a question only the
+ * history can answer.
  */
 @Component({
   selector: 'app-smoke-tests',
@@ -44,6 +57,7 @@ import { PageFeedback } from '../../core/ui/page-feedback';
 export class SmokeTests implements OnInit {
   private readonly service = inject(UseCaseService);
   private readonly meService = inject(MeService);
+  private readonly confirmService = inject(ConfirmService);
   protected readonly feedback = inject(PageFeedback);
 
   private readonly me = signal<{ roles: string[] } | null>(null);
@@ -56,6 +70,9 @@ export class SmokeTests implements OnInit {
    * call a model may test one. Authoring a battery stays with IT Security.
    */
   protected readonly mayRun = computed(() => this.mine().length > 0);
+
+  /** Which of the three activities the reader is on. */
+  protected readonly tab = signal<'results' | 'runs' | 'catalogue'>('results');
 
   protected readonly batteries = signal<TestBattery[]>([]);
   protected readonly models = signal<CatalogModel[]>([]);
@@ -93,6 +110,33 @@ export class SmokeTests implements OnInit {
   protected readonly runnable = computed(() =>
     this.models().filter((m) => m.approved !== false && m.name),
   );
+
+  /**
+   * Authoring the catalogue is IT Security's, matching the server's `IsITSecurity`.
+   *
+   * A battery states what this installation considers an acceptable answer — the same kind of
+   * statement as a global anomaly rule, and owned by the same role. Everyone who may call a model
+   * may **run** it and rate what comes back.
+   */
+  protected readonly mayAuthor = computed(() => maySetStandards(this.me()?.roles));
+
+  protected readonly selectedBattery = computed(
+    () => this.batteries().find((b) => b.id === this.battery()) ?? null,
+  );
+
+  /** The questions of the selected battery, in the order they are asked. */
+  protected readonly cases = computed(() =>
+    [...(this.selectedBattery()?.cases ?? [])].sort((a, b) => a.position - b.position),
+  );
+
+  // The question being written, and its fields. Signals because Angular is zoneless (FRD-203 §4).
+  protected readonly editing = signal<Partial<TestCase> | null>(null);
+  protected readonly caseTopic = signal('');
+  protected readonly casePrompt = signal('');
+  protected readonly caseExpectation = signal('');
+  protected readonly newBattery = signal(false);
+  protected readonly batteryName = signal('');
+  protected readonly batteryDescription = signal('');
 
   protected readonly current = computed(() => {
     const index = this.rating();
@@ -280,6 +324,97 @@ export class SmokeTests implements OnInit {
         else this.closeRating();
       },
       error: (response: unknown) => this.feedback.fail(response, 'Could not save this rating.'),
+    });
+  }
+
+  /**
+   * Is this the run that counts as the model's current standing?
+   *
+   * Answered from the same rows the results tab is built from, rather than recomputed here — a
+   * second definition of "latest" would eventually disagree with the first, which is the defect
+   * this project has now recorded under several names.
+   */
+  protected isLatest(run: TestRun): boolean {
+    return this.stats().some((row) => row.run === run.id);
+  }
+
+  // ---- the catalogue -------------------------------------------------------------------------
+
+  protected startCase(item?: TestCase): void {
+    this.editing.set(item ? { ...item } : { battery: this.battery() ?? undefined });
+    this.caseTopic.set(item?.topic ?? '');
+    this.casePrompt.set(item?.prompt ?? '');
+    this.caseExpectation.set(item?.expectation ?? '');
+  }
+
+  protected cancelCase(): void {
+    this.editing.set(null);
+  }
+
+  protected saveCase(): void {
+    const draft = this.editing();
+    const batteryId = this.battery();
+    if (!draft || batteryId === null) return;
+
+    const body = {
+      battery: batteryId,
+      topic: this.caseTopic().trim(),
+      prompt: this.casePrompt().trim(),
+      expectation: this.caseExpectation().trim(),
+      // Appended at the end. A catalogue is added to far more often than it is reordered, and a
+      // position somebody has to choose on every question is a field they will get wrong.
+      position: draft.id ? (draft.position ?? 0) : this.cases().length + 1,
+    };
+    const request = draft.id
+      ? this.service.updateCase(draft.id, body)
+      : this.service.createCase(body);
+
+    request.subscribe({
+      next: () => {
+        this.editing.set(null);
+        this.feedback.succeed(draft.id ? 'Question saved.' : 'Question added to the catalogue.');
+        this.reloadBatteries();
+      },
+      error: (response: unknown) => this.feedback.fail(response, 'Could not save this question.'),
+    });
+  }
+
+  protected removeCase(item: TestCase): void {
+    const question = `Remove "${item.topic}" from the catalogue? Answers already given to it stay.`;
+    if (!this.confirmService.ask(question)) return;
+    this.service.deleteCase(item.id).subscribe({
+      next: () => {
+        this.feedback.succeed('Question removed.');
+        this.reloadBatteries();
+      },
+      error: (response: unknown) => this.feedback.fail(response, 'Could not remove this question.'),
+    });
+  }
+
+  protected startBattery(): void {
+    this.newBattery.set(true);
+    this.batteryName.set('');
+    this.batteryDescription.set('');
+  }
+
+  protected saveBattery(): void {
+    this.service
+      .createBattery({ name: this.batteryName().trim(), description: this.batteryDescription() })
+      .subscribe({
+        next: (created) => {
+          this.newBattery.set(false);
+          this.battery.set(created.id);
+          this.feedback.succeed('Battery created. Add its questions below.');
+          this.reloadBatteries();
+        },
+        error: (response: unknown) => this.feedback.fail(response, 'Could not create the battery.'),
+      });
+  }
+
+  private reloadBatteries(): void {
+    this.service.batteries().subscribe({
+      next: (rows) => this.batteries.set(rows),
+      error: (response: unknown) => this.feedback.fail(response, 'Could not reload the catalogue.'),
     });
   }
 

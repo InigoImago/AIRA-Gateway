@@ -22,6 +22,7 @@ import {
   UseCase,
   Suspension,
   TestBattery,
+  TestCase,
   TestModelStats,
   TestResult,
   TestRun,
@@ -330,6 +331,23 @@ export class UseCaseService {
   /** The evaluation as CSV. A blob, because a plain link carries no bearer token (`FRD-602`). */
   testRunCsv(runId: number): Observable<Blob> {
     return this.http.get(`/api/v1/test-runs/${runId}/export/`, { responseType: 'blob' });
+  }
+
+  /** Authoring the catalogue. IT Security only on the server; the console offers it to nobody else. */
+  createCase(body: Partial<TestCase>): Observable<TestCase> {
+    return this.http.post<TestCase>('/api/v1/test-cases/', body);
+  }
+
+  updateCase(id: number, body: Partial<TestCase>): Observable<TestCase> {
+    return this.http.patch<TestCase>(`/api/v1/test-cases/${id}/`, body);
+  }
+
+  deleteCase(id: number): Observable<void> {
+    return this.http.delete<void>(`/api/v1/test-cases/${id}/`);
+  }
+
+  createBattery(body: Partial<TestBattery>): Observable<TestBattery> {
+    return this.http.post<TestBattery>('/api/v1/test-batteries/', body);
   }
 
   testStats(): Observable<TestModelStats[]> {

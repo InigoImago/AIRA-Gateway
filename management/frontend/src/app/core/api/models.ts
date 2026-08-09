@@ -340,14 +340,26 @@ export interface TestResult {
   rated_at: string | null;
 }
 
+/**
+ * **The latest run of one battery against one model** — not a total across every run.
+ *
+ * A standardised catalogue exists so models can be compared against the *same* questions. The
+ * figure that answers "how does this model do" is therefore its most recent result, not an average
+ * that an old, since-corrected run drags down forever. Earlier runs are **history**, and they stay
+ * readable under Runs.
+ */
 export interface TestModelStats {
   model: string;
-  runs: number;
-  answers: number;
-  passed: number;
-  failed: number;
-  unclear: number;
+  battery: number;
+  battery_name: string;
+  run: number;
+  started_at: string;
+  requested_by: string;
+  total: number;
   unrated: number;
+  pass: number;
+  fail: number;
+  unclear: number;
   errored: number;
 }
 

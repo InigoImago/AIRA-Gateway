@@ -35,8 +35,7 @@ test.describe('Traces — the controls an investigation reaches for', () => {
 
     // And the two are independent questions, so turning the second one on keeps the first.
     const both = page.waitForRequest(
-      (request) =>
-        request.url().includes('tools_only=true') && request.url().includes('mine=true'),
+      (request) => request.url().includes('tools_only=true') && request.url().includes('mine=true'),
     );
     await page.getByTestId('mine-only').check();
     await both;
@@ -242,10 +241,13 @@ test.describe('The list holds still and fits', () => {
     await page.goto('/requests');
     await expect(page.locator('tbody tr').first()).toBeVisible({ timeout: 30_000 });
 
-    const overflow = await page.locator('.table-wrap').first().evaluate((el) => ({
-      scroll: el.scrollWidth,
-      client: el.clientWidth,
-    }));
+    const overflow = await page
+      .locator('.table-wrap')
+      .first()
+      .evaluate((el) => ({
+        scroll: el.scrollWidth,
+        client: el.clientWidth,
+      }));
 
     expect(
       overflow.scroll,
@@ -393,6 +395,47 @@ test.describe('Model tests', () => {
       (img) => (img as HTMLImageElement).complete && (img as HTMLImageElement).naturalWidth > 0,
     );
     expect(loaded, 'the logo element is there and the file behind it is not').toBe(true);
+  });
+
+  test('the three activities are three tabs, and the catalogue is a standard', async ({ page }) => {
+    /**
+     * The shape the owner asked for: a catalogue defined once, runs that put it to a model, and a
+     * first view showing where each model stands. The first version was one page that summed every
+     * run a model had ever had — which answers a question nobody asked, and which no unit test
+     * could call wrong because the code and its test came from the same idea.
+     */
+    await login(page, USERS.security);
+    await page.goto('/model-tests');
+
+    await expect(page.getByTestId('tab-results')).toBeVisible();
+    await expect(page.getByTestId('tab-runs')).toBeVisible();
+
+    await page.getByTestId('tab-catalogue').click();
+
+    // Eight batteries, each isolating one failure mode, and a hundred questions between them.
+    const batteries = page.getByTestId('catalogue-battery').locator('option');
+    await expect(batteries).toHaveCount(8);
+
+    // The count beside a battery is what somebody plans their time by, so it has to be the number
+    // of questions that will actually be asked — retired ones excluded.
+    const label = await batteries.first().textContent();
+    const declared = Number(label?.match(/\((\d+)\)/)?.[1]);
+    await expect(page.locator('tbody tr')).toHaveCount(declared);
+
+    // IT Security writes the standard; everybody else reads it.
+    await expect(page.getByTestId('catalogue-add')).toBeVisible();
+  });
+
+  test('a member may read the standard and may not rewrite it', async ({ page }) => {
+    /** `FRD-206`: a withheld action names who performs it, rather than being an absent control the
+     *  reader has to guess at — and read-only stays *usable*. */
+    await login(page, USERS.useCaseAdmin);
+    await page.goto('/model-tests');
+    await page.getByTestId('tab-catalogue').click();
+
+    await expect(page.locator('tbody tr').first()).toBeVisible();
+    await expect(page.getByTestId('catalogue-add')).toHaveCount(0);
+    await expect(page.getByTestId('catalogue-readonly')).toContainText('IT Security');
   });
 
   test('a role that may not act on an incident is not offered it', async ({ page }) => {

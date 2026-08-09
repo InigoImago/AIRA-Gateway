@@ -12,12 +12,20 @@ from .models import TestBattery, TestCase, TestResult, TestRun
 class TestCaseSerializer(serializers.ModelSerializer[TestCase]):
     class Meta:
         model = TestCase
-        fields = ["id", "battery", "topic", "prompt", "expectation", "position"]
+        fields = ["id", "battery", "topic", "prompt", "expectation", "position", "retired"]
 
 
 class TestBatterySerializer(serializers.ModelSerializer[TestBattery]):
     cases = TestCaseSerializer(many=True, read_only=True)
-    case_count = serializers.IntegerField(source="cases.count", read_only=True)
+    case_count = serializers.SerializerMethodField()
+
+    def get_case_count(self, battery: TestBattery) -> int:
+        """How many questions the standard *currently* asks — retired ones excluded.
+
+        Counting them would make the picker promise a longer run than it performs, and the number
+        beside a battery is the one somebody uses to decide whether they have time for it.
+        """
+        return battery.cases.filter(retired=False).count()
 
     class Meta:
         model = TestBattery

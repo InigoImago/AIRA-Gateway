@@ -28,6 +28,21 @@ export function mayActOnIncidents(roles: readonly string[] | undefined): boolean
   return (roles ?? []).some((role) => INCIDENT_ROLES.includes(role));
 }
 
+/**
+ * May this caller write the standards this installation holds itself to — a global anomaly rule,
+ * the question catalogue models are judged against (the server's `IsITSecurity`)?
+ *
+ * The same two roles as `INCIDENT_ROLES` today, and deliberately a **separate** list: they are two
+ * different questions that happen to have the same answer, and folding them together would make a
+ * future change to one silently change the other.
+ */
+export function maySetStandards(roles: readonly string[] | undefined): boolean {
+  return (roles ?? []).some((role) => SECURITY_ROLES.includes(role));
+}
+
+/** Roles that write security-level configuration (the server's `IsITSecurity`). */
+const SECURITY_ROLES = ['it-security', 'global-admin'];
+
 /** Does this caller see every use case, whether or not they may change anything in one? */
 export function hasOversight(roles: readonly string[] | undefined): boolean {
   return (roles ?? []).some((role) => OVERSIGHT_ROLES.includes(role));

@@ -155,6 +155,42 @@ evidence, so it is stored — but under its own retention, visible to IT Securit
 use case's members, and outside the ordinary production payload rules (`FRD-404`), because these are
 not a team's prompts and should not follow a team's policy.
 
+### 5.7 The catalogue is a standard, and the standing figure is the latest run
+
+Added 2026-08-09, after the first version got the shape wrong in a way worth writing down.
+
+The screen is **three activities in three sub-tabs**, because they happen at different times and to
+different people:
+
+| Sub-tab | What it answers | Who |
+|---|---|---|
+| **Latest results** | where does each model stand | anybody who may test |
+| **Runs** | put the catalogue to a model; judge the answers; read older runs | anybody who may test |
+| **Question catalogue** | what are we asking, and why | reading: anybody; writing: IT Security |
+
+**The catalogue comes first in importance and last in the tab order on purpose.** It is written
+once and grows slowly — a hundred questions that outlive any one model. Everything else is an
+application of it. Seeded with **100 questions across eight batteries**, each battery isolating one
+failure mode (refusal, invention, instruction handling, injection resistance, German and domain,
+personal data, checkable reasoning, output format), because a battery mixing all of them produces a
+score that moves for reasons nobody can attribute. From then on it is edited in the console: a
+catalogue that can only be changed by editing a seed file is one that stops being edited.
+
+**A model's standing is its latest run against a battery — never a total across every run it has
+had.** The first implementation summed them, and summing is the wrong shape twice over: an old,
+since-corrected result drags the current figure down forever, and the number moves when somebody
+re-runs something unrelated. The whole point of a fixed catalogue is that two models were asked the
+same questions; an average over runs compares neither to anything.
+
+Earlier runs are **history**, and they are kept and readable. How a model behaved before its
+version changed is a question only the history can answer, and it is the question anybody upgrading
+a model actually has. The row that currently counts is badged in the run list, from the same rows
+the results tab is built from — a second definition of "latest" would eventually disagree with the
+first.
+
+Two batteries against one model are **two standings**, not one averaged: they are two different
+standards, and averaging them compares nothing to nothing.
+
 ## 6. Data Model
 
 Management: `TestBattery` (name, version, restricted), `TestCase` (battery, category, prompt,
