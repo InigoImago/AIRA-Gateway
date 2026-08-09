@@ -48,6 +48,29 @@ one). Everybody else gets a 403 naming who may.
 
 ## 3. Console
 
+**FR-5 — Adding a model requires having *looked*, not having *succeeded*** *(2026-08-09, after the
+first version was reported as absent)*.
+
+The button was inside `@if (name())`, so opening "Add model" showed nothing at all and the check
+read as missing. A control that appears only once you have done something else is a control nobody
+finds. It is always present now, disabled until there is a name.
+
+And Save is unavailable until a check has been **answered** for the name in the form. The
+distinction that makes this safe:
+
+| | |
+|---|---|
+| refusing on a **failed verdict** | would make a fresh installation undeclarable — no credential, no adapter, no model ever declared |
+| refusing on **not having asked** | rules out the one outcome a single button can: *"I did not know it was unreachable"* |
+
+A check that **errors** counts as looked-at: a diagnostic that cannot answer must not become a gate,
+since the gateway may be down and the catalog is Management's. **Editing is exempt** — correcting a
+price on a model that already exists is not the moment to demand a network round trip.
+
+This does not contradict `FRD-114`'s "deprecation warns, revocation blocks". The verdict still only
+warns. What is required is the *asking*.
+
+
 A **Check reachability** button inside the model's declaration panel, with the verdict beside it in
 a sentence — "Declared, but nothing serves it" is the one that answers the original question. The
 verdict is cleared when another model is opened: a verdict left on screen under a different model is

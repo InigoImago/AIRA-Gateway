@@ -4276,3 +4276,45 @@ the platform — and an adapter is registered only once the credential is there.
 make a fresh installation undeclarable, and would make it impossible to prepare a catalog for a
 platform whose key arrives next week. `FRD-114` already settled the shape of this: deprecation
 warns, revocation blocks. A reachability verdict is information, and it is shown as such.
+
+## 2026-08-09 (late) — A button that was invisible when it mattered, and tabs that stop hiding
+
+### "Test connection is still not in the window"
+
+It was — inside `@if (name())`. Opening "Add model" starts with an empty name, so there was **no
+button at all**, and the feature read as missing because from where the reader stood it *was*
+missing. A control that appears only after you have done something else is a control nobody finds.
+
+The follow-up was sharper: *"und ich kann ein Modell ohne Testen anlegen"*. Yesterday I argued
+against blocking on a failed verdict and that argument still holds — declaring a model before its
+credential arrives is the ordinary order of work, and an adapter exists only once the credential
+does, so refusing on `served: false` would make a fresh installation undeclarable.
+
+But that was an answer to a different question. **Refusing the verdict and refusing the ignorance
+are not the same refusal.** Save now needs a check to have been *answered* for the name in the
+form — whatever it answered. It rules out the one outcome a single button can rule out: nobody adds
+a model without having found out. An erroring check counts as looked-at, because a diagnostic that
+cannot answer must not become a gate.
+
+Five unit tests and one e2e test started failing immediately, all of them creating a model without
+checking. That is the gate working, and updating them is the cheapest possible proof of it.
+
+### Tabs that stop hiding themselves
+
+Below 60rem the strip is a vertical list. Scrolling was the old answer and it is the wrong one for
+*navigation*: a tab that has scrolled out of view is a section the reader does not know exists, and
+the use-case detail has seven of them. The breakpoint is 60rem rather than a phone width because the
+pain starts on a laptop half-window, not at 360px.
+
+CSS only — no template changed, so nothing that clicks a tab by role or text had to move.
+
+### And the mistake worth writing down
+
+Proving the layout test could fail, I cut the media query out of the stylesheet by searching for an
+end marker that appears *earlier* in the file than the block. The slice silently **duplicated**
+content instead of removing it, the rule stayed in effect, and the test stayed green — which I
+briefly read as "the test does not work".
+
+Checking what the file actually contained took ten seconds and turned a wrong conclusion into a
+right one. The lesson is the ordinary one, and it keeps arriving in new clothes: **when an
+experiment says something surprising, verify the experiment before believing the result.**
