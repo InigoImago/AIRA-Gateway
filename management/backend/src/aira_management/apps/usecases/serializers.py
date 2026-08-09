@@ -47,6 +47,7 @@ class UseCaseSerializer(serializers.ModelSerializer[UseCase]):
             "description",
             "processing_notes",
             "store_payloads",
+            "restrict_members_to_own_requests",
             "tools_enabled",
             "retention_days",
             "created_at",

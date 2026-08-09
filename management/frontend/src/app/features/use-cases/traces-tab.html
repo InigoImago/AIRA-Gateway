@@ -57,6 +57,15 @@
     <label class="checkline">
       <input
         type="checkbox"
+        [checked]="flaggedOnly()"
+        (change)="toggleFlagged($any($event.target).checked)"
+        data-testid="flagged-only"
+      />
+      Warnings only
+    </label>
+    <label class="checkline">
+      <input
+        type="checkbox"
         [checked]="toolsOnly()"
         (change)="toggleTools($any($event.target).checked)"
         data-testid="tools-only"
@@ -106,12 +115,10 @@
       <div class="field field--narrow">
         <label for="trace-source-ip">
           Source address
-          <app-info-hint
-            label="What the source address is"
-            testid="hint-source-ip"
-            text="The address AIRA saw the request come from. Offered to IT Security and Global
-                  Administrators, because it identifies a machine rather than a use case."
-          />
+          <app-info-hint label="What the source address is" testid="hint-source-ip">
+            The address AIRA saw the request come from. Offered to IT Security and Global
+            Administrators, because it identifies a machine rather than a use case.
+          </app-info-hint>
         </label>
         <input
           id="trace-source-ip"
@@ -155,29 +162,68 @@
       <table class="table">
         <thead>
           <tr>
+            <!--
+              First column, and deliberately. It was last, and the table scrolls horizontally now
+              that it carries a use case and an address — so the control that opens a request was
+              **off screen**, and a reader had no way to learn it existed. An action behind a
+              scrollbar is an action that is not there.
+            -->
+            <th scope="col"><span class="sr-only">Open</span></th>
             <th scope="col">When</th>
+            <!-- Only when the table spans use cases. Inside one, the column would repeat the page
+                 heading on every row. -->
+            @if (!slug()) {
+              <th scope="col">Use case</th>
+            }
             <th scope="col">Operation</th>
             <th scope="col">Model</th>
             <th scope="col">Outcome</th>
             <th scope="col">Tokens</th>
             <th scope="col">Cost</th>
             <th scope="col">Latency</th>
+            @if (mayInvestigate()) {
+              <!-- The address was a filter and not a column, which meant it could be searched for
+                   and never seen. A filter you cannot populate from the screen is one you cannot
+                   use. -->
+              <th scope="col">From</th>
+            }
             <th scope="col">
               Tools
-              <app-info-hint
-                label="What tool calls are"
-                text="What the model asked the caller to run, and how many functions it was
-                      offered. Names only — never the arguments, which are the caller's content
-                      and live under the use case's payload storage and retention."
-              />
+              <app-info-hint label="What tool calls are">
+                What the model asked the caller to run, and how many functions it was offered. Names
+                only — never the arguments, which are the caller's content and live under the use
+                case's payload storage and retention.
+              </app-info-hint>
             </th>
             <th scope="col">Trace</th>
           </tr>
         </thead>
         <tbody>
           @for (row of traces(); track row.id) {
-            <tr>
+            <tr
+              class="row-openable"
+              [class.is-open]="openPayload() === row.id"
+              (click)="togglePayload(row)"
+            >
+              <td class="table__open">
+                <button
+                  type="button"
+                  class="btn btn--sm btn--ghost"
+                  [attr.aria-expanded]="openPayload() === row.id"
+                  [attr.aria-label]="
+                    (openPayload() === row.id ? 'Hide' : 'Show') + ' the prompt and response'
+                  "
+                  [attr.data-testid]="'open-payload-' + row.id"
+                >
+                  {{ openPayload() === row.id ? '▾' : '▸' }}
+                </button>
+              </td>
               <td class="nowrap">{{ row.created_at | date: 'short' }}</td>
+              @if (!slug()) {
+                <td>
+                  <a [routerLink]="['/use-cases', row.use_case]">{{ row.use_case }}</a>
+                </td>
+              }
               <td>
                 {{ row.operation }}
                 <div class="muted" style="font-size: 0.78rem">{{ row.subject }}</div>
@@ -196,10 +242,19 @@
                 }
               </td>
               <td>
+                @if (row.flagged) {
+                  <!-- The interesting case is a *served* flagged request: it looks like every
+                       other 200 until something says otherwise. -->
+                  <span class="badge badge--warning" data-testid="flagged">flagged</span>
+                }
                 @if (served(row)) {
                   <span class="badge badge--success">served</span>
+                } @else if (row.outcome) {
+                  <span class="badge badge--danger">{{ row.outcome }}</span>
                 } @else {
-                  <span class="badge badge--danger">{{ row.outcome ?? row.status }}</span>
+                  <!-- A non-2xx row from before `FRD-122`: the status is all that was recorded,
+                       and calling it by a name nobody wrote down would be an invention. -->
+                  <span class="badge badge--warning">{{ row.status }}</span>
                 }
               </td>
               <td class="nowrap">
@@ -211,6 +266,11 @@
               </td>
               <td class="nowrap">{{ cost(row) }}</td>
               <td class="nowrap">{{ row.latency_ms === null ? '—' : row.latency_ms + ' ms' }}</td>
+              @if (mayInvestigate()) {
+                <td class="nowrap">
+                  <code>{{ row.source_ip || '—' }}</code>
+                </td>
+              }
               <td>
                 @if (row.tool_calls; as tools) {
                   @if (tools.called.length) {
@@ -228,6 +288,45 @@
                 <span class="trace-id">{{ row.trace_id ?? '—' }}</span>
               </td>
             </tr>
+            @if (openPayload() === row.id) {
+              <tr class="row-detail">
+                <td [attr.colspan]="20">
+                  @if (payloadLoading()) {
+                    <p class="loading">
+                      <span class="spinner" aria-hidden="true"></span>
+                      Opening…
+                    </p>
+                  } @else if (payload(); as content) {
+                    @if (content.available) {
+                      <!-- Content, not metadata. The reader is entitled to it, and the server has
+                           already recorded that they looked — that record is the condition on
+                           which ADR-0009 was reopened, not a log line beside it. -->
+                      <p class="muted" style="font-size: 0.78rem" data-testid="payload-recorded">
+                        Opening this was recorded, with your name and the time.
+                      </p>
+                      <div class="payload-grid">
+                        <div>
+                          <h4 class="section-title">Prompt</h4>
+                          <pre class="payload" data-testid="payload-request">{{
+                            asText(content.request)
+                          }}</pre>
+                        </div>
+                        <div>
+                          <h4 class="section-title">Response</h4>
+                          <pre class="payload" data-testid="payload-response">{{
+                            asText(content.response)
+                          }}</pre>
+                        </div>
+                      </div>
+                    } @else {
+                      <!-- Three different facts, never one message: a setting somebody can change,
+                           a clock that has run out, and a request that never reached a model. -->
+                      <p class="empty" data-testid="payload-unavailable">{{ content.message }}</p>
+                    }
+                  }
+                </td>
+              </tr>
+            }
           }
         </tbody>
       </table>

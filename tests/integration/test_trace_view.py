@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import httpx
 import pytest
+from sqlalchemy import text
 
 from .conftest import GATEWAY_URL
 
@@ -338,3 +339,109 @@ async def test_a_trace_carries_the_functions_the_model_was_offered(
     # anybody with an oversight role can read.
     assert all(isinstance(name, str) for name in recorded.get("called", []))
     assert "arguments" not in recorded
+
+
+# ═══ reading what was actually sent (FRD-505) ══════════════════════════════════════════════════
+#
+# `ADR-0009` refused this view; the owner granted it on 2026-08-09 for the two incident roles, on
+# the condition that every read is recorded. These tests check the condition, not only the feature —
+# a permission whose audit trail did not work would be the ADR's objection with a feature on top.
+
+
+async def _payload(client: httpx.AsyncClient, token: str, row_id: str) -> httpx.Response:
+    return await client.get(
+        f"{GATEWAY_URL}/v1beta/traces/{row_id}/payload",
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=30.0,
+    )
+
+
+async def _first_trace_id(client: httpx.AsyncClient, token: str, slug: str) -> str:
+    for _ in range(20):
+        body = await _traces(client, token, use_case=slug)
+        if body["traces"]:
+            return str(body["traces"][0]["id"])
+    raise AssertionError("no trace row appeared for a request that certainly happened")
+
+
+async def test_an_incident_role_reads_the_prompt_and_the_read_is_recorded(
+    fixture, security_token, engine
+) -> None:
+    """The record is the condition the permission rests on, so it is asserted in the database
+    rather than inferred from a 200."""
+    async with httpx.AsyncClient(timeout=180.0) as client:
+        assert (await _generate(client, fixture, "Say OK")).status_code == 200
+        row_id = await _first_trace_id(client, security_token, fixture.slug)
+        response = await _payload(client, security_token, row_id)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["available"] is True
+    assert body["ground"] == "incident"
+    assert "Say OK" in str(body["request"]), "the reader was allowed and handed nothing"
+
+    async with engine.connect() as connection:
+        rows = (
+            await connection.execute(
+                text("SELECT subject, ground FROM payload_access WHERE request_log_id = :id"),
+                {"id": row_id},
+            )
+        ).all()
+    assert len(rows) == 1, "reading a stored prompt left no record"
+    assert rows[0][1] == "incident"
+
+
+async def test_an_oversight_role_that_may_not_act_is_refused_the_content(
+    fixture, security_token, governance_token
+) -> None:
+    """`it-steuerung` sees every figure about every use case and no content. Visibility and content
+    are different answers — the split this whole feature turns on."""
+    async with httpx.AsyncClient(timeout=180.0) as client:
+        assert (await _generate(client, fixture)).status_code == 200
+        row_id = await _first_trace_id(client, security_token, fixture.slug)
+        # It can see the row itself…
+        listed = await _traces(client, governance_token, use_case=fixture.slug)
+        # …and not what was in it.
+        response = await _payload(client, governance_token, row_id)
+
+    assert listed["traces"], "the oversight role lost sight of the request as well"
+    assert response.status_code == 403
+    assert "IT Security" in response.json()["error"]["message"]
+
+
+async def test_a_refused_read_leaves_no_access_record(
+    fixture, security_token, governance_token, engine
+) -> None:
+    """An access log filling up with attempts nobody was granted would make the real reads harder
+    to find, and the attempt is a 403 in the request log already."""
+    async with httpx.AsyncClient(timeout=180.0) as client:
+        assert (await _generate(client, fixture)).status_code == 200
+        row_id = await _first_trace_id(client, security_token, fixture.slug)
+        assert (await _payload(client, governance_token, row_id)).status_code == 403
+
+    async with engine.connect() as connection:
+        count = (
+            await connection.execute(
+                text("SELECT count(*) FROM payload_access WHERE request_log_id = :id"),
+                {"id": row_id},
+            )
+        ).scalar_one()
+    assert count == 0
+
+
+async def test_a_use_case_that_stores_nothing_says_so_rather_than_showing_an_empty_panel(
+    fixture, security_token
+) -> None:
+    """Three ways to have nothing, and this is the one somebody can change. A single "not
+    available" would leave the reader unable to tell a setting from a clock."""
+    await fixture.set_store_payloads(False)
+    async with httpx.AsyncClient(timeout=180.0) as client:
+        assert (await _generate(client, fixture)).status_code == 200
+        row_id = await _first_trace_id(client, security_token, fixture.slug)
+        response = await _payload(client, security_token, row_id)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["available"] is False
+    assert body["reason"] == "not_stored"
+    assert "storage" in body["message"].lower()

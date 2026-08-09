@@ -88,6 +88,13 @@ async def _upsert_usecase(session: AsyncSession, payload: dict[str, Any]) -> Non
         # Absent means **off**, which matters for an event written by an older Management: a
         # missing field must not read as permission (`FRD-114` FR-7, one layer over).
         "tools_enabled": bool(payload.get("tools_enabled", False)),
+        # Absent means **unrestricted**, unlike `tools_enabled` above — and the difference is
+        # deliberate. A missing capability must not read as permission; a missing *restriction*
+        # must not read as one either, or an event from an older Management would silently narrow
+        # what every member of that use case can see.
+        "restrict_members_to_own_requests": bool(
+            payload.get("restrict_members_to_own_requests", False)
+        ),
         "retention_days": int(payload.get("retention_days") or DEFAULT_RETENTION_DAYS),
     }
     if existing is None:

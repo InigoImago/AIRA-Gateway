@@ -133,6 +133,8 @@ export class UseCaseDetail implements OnInit {
   /** Data-protection settings being edited on the overview tab (FRD-404). */
   protected readonly retentionDays = signal<number | null>(null);
   protected readonly storePayloads = signal(true);
+  /** Whether members of this use case see only their own requests (`FRD-505` FR-4). */
+  protected readonly restrictMembers = signal(false);
 
   ngOnInit(): void {
     this.slug = this.route.snapshot.paramMap.get('slug') ?? '';
@@ -180,6 +182,7 @@ export class UseCaseDetail implements OnInit {
         this.useCase.set(useCase);
         this.retentionDays.set(useCase.retention_days ?? null);
         this.storePayloads.set(useCase.store_payloads ?? true);
+        this.restrictMembers.set(useCase.restrict_members_to_own_requests ?? false);
         this.loading.set(false);
       },
       error: (response: unknown) => {
@@ -384,7 +387,8 @@ export class UseCaseDetail implements OnInit {
   protected retentionChanged(): boolean {
     return (
       this.retentionDays() !== (this.useCase()?.retention_days ?? null) ||
-      this.storePayloads() !== (this.useCase()?.store_payloads ?? true)
+      this.storePayloads() !== (this.useCase()?.store_payloads ?? true) ||
+      this.restrictMembers() !== (this.useCase()?.restrict_members_to_own_requests ?? false)
     );
   }
 
@@ -401,6 +405,7 @@ export class UseCaseDetail implements OnInit {
     this.feedback.run(
       this.service.update(this.slug, {
         store_payloads: store,
+        restrict_members_to_own_requests: this.restrictMembers(),
         ...(store && days != null ? { retention_days: days } : {}),
       }),
       {
@@ -409,6 +414,7 @@ export class UseCaseDetail implements OnInit {
           this.useCase.set(useCase);
           this.retentionDays.set(useCase.retention_days ?? null);
           this.storePayloads.set(useCase.store_payloads ?? true);
+          this.restrictMembers.set(useCase.restrict_members_to_own_requests ?? false);
           this.feedback.succeed(
             store
               ? `Prompts and responses are now kept for ${days} day(s). Anything already past that is removed on the next run.`

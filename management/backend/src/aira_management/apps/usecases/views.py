@@ -95,6 +95,7 @@ def _snapshot(usecase: UseCase) -> dict[str, Any]:
         "description": usecase.description,
         "processing_notes": usecase.processing_notes,
         "store_payloads": usecase.store_payloads,
+        "restrict_members_to_own_requests": usecase.restrict_members_to_own_requests,
         "tools_enabled": usecase.tools_enabled,
         "retention_days": usecase.retention_days,
     }

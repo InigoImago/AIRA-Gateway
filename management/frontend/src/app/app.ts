@@ -3,6 +3,7 @@ import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { MeService } from './core/api/me.service';
 import { Me } from './core/api/models';
 import { AuthService } from './core/auth/auth.service';
+import { hasOversight, mayActOnIncidents } from './core/auth/roles';
 
 const ROLE_LABELS: Record<string, string> = {
   'global-admin': 'Global administrator',
@@ -54,9 +55,19 @@ export class App implements OnInit {
    * conflating "may look" with "may act" is a mistake this project has made once already.
    */
   protected hasOversight(): boolean {
-    return (
-      this.hasRole('it-security') || this.hasRole('it-steuerung') || this.hasRole('global-admin')
-    );
+    return hasOversight(this.me()?.roles);
+  }
+
+  /**
+   * May this person act on an incident — and therefore read what was actually sent?
+   *
+   * Narrower than {@link hasOversight} by exactly `it-steuerung`, which sees every figure and no
+   * content (`FRD-505`). Both predicates come from `core/auth/roles.ts`: this method used to write
+   * the role list out by hand, which is the shape of the 2026-08-07 finding where one plane let
+   * `it-steuerung` stop traffic and the other refused it.
+   */
+  protected mayInvestigate(): boolean {
+    return mayActOnIncidents(this.me()?.roles);
   }
 
   /**

@@ -92,4 +92,33 @@ describe('App', () => {
     await fixture.whenStable();
     expect((fixture.nativeElement as HTMLElement).querySelector('.aira-user')).toBeNull();
   });
+  // ---- the requests screen (`FRD-505`) -------------------------------------------------------
+
+  function render(roles: string[]): HTMLElement {
+    configure(true, roles);
+    const fixture = TestBed.createComponent(App);
+    fixture.detectChanges();
+    return fixture.nativeElement as HTMLElement;
+  }
+
+  it('offers cross-use-case requests to a role that may act on an incident', () => {
+    const el = render(['it-security']);
+
+    expect(el.querySelector('[data-testid="nav-requests"]')).not.toBeNull();
+  });
+
+  it('does not offer it to a role that sees figures and not content', () => {
+    /** `it-steuerung` sees every use case and reads no prompts. Offering the screen and refusing
+     *  on use is `FRD-206`'s defect; withholding the tab is the boundary stated plainly. */
+    const el = render(['it-steuerung']);
+
+    expect(el.querySelector('[data-testid="nav-requests"]')).toBeNull();
+    expect(el.querySelector('[data-testid="nav-security"]')).not.toBeNull();
+  });
+
+  it('does not offer it to somebody who only runs a use case', () => {
+    const el = render(['use-case-admin']);
+
+    expect(el.querySelector('[data-testid="nav-requests"]')).toBeNull();
+  });
 });

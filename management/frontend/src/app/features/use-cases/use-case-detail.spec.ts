@@ -50,6 +50,7 @@ interface Detail {
   storePayloads: { set: (v: boolean) => void; (): boolean };
   retentionError: () => string | null;
   retentionChanged: () => boolean;
+  restrictMembers: { set: (v: boolean) => void; (): boolean };
   canManage: () => boolean;
   isMember: () => boolean;
   canSaveRetention: () => boolean;
@@ -487,7 +488,9 @@ describe('UseCaseDetail retention', () => {
     expect(component.canSaveRetention()).toBe(true);
 
     component.saveRetention();
-    expect(calls).toContain('update:{"store_payloads":true,"retention_days":1}');
+    expect(calls).toContain(
+      'update:{"store_payloads":true,"restrict_members_to_own_requests":false,"retention_days":1}',
+    );
     expect(component.feedback.notice()).toContain('kept for 1 day(s)');
     expect(component.useCase()?.retention_days).toBe(1);
   });
@@ -516,7 +519,9 @@ describe('UseCaseDetail retention', () => {
     forms[forms.length - 1].dispatchEvent(new Event('submit'));
     harness.fixture.detectChanges();
 
-    expect(harness.calls).toContain('update:{"store_payloads":true,"retention_days":14}');
+    expect(harness.calls).toContain(
+      'update:{"store_payloads":true,"restrict_members_to_own_requests":false,"retention_days":14}',
+    );
   });
 });
 
@@ -579,7 +584,9 @@ describe('UseCaseDetail payload storage', () => {
     expect(component.retentionChanged()).toBe(true);
 
     component.saveRetention();
-    expect(calls).toContain('update:{"store_payloads":false}');
+    expect(calls).toContain(
+      'update:{"store_payloads":false,"restrict_members_to_own_requests":false}',
+    );
     expect(component.feedback.notice()).toContain('no longer stored');
     expect(component.feedback.notice()).toContain('removed on the next run');
   });
@@ -912,6 +919,28 @@ describe('UseCaseDetail — retention', () => {
 
     expect(component.configCopied()).toBe(true);
     expect(written).toContain('aira_ab_cd');
+  });
+
+  // ---- who inside the use case sees whose requests (`FRD-505` FR-4) ------------------------
+
+  it('offers its administrator a switch for who sees whose requests', () => {
+    const { component } = setup();
+    component.selectTab('overview');
+
+    expect(component.restrictMembers()).toBe(false);
+    component.restrictMembers.set(true);
+
+    expect(component.retentionChanged()).toBe(true);
+  });
+
+  it('sends the restriction with the data-protection settings', () => {
+    /** One form, one save. A second button beside it would be a second thing to forget, and the
+     *  two settings answer one question together: what is kept, and who may read it. */
+    const { component, calls } = setup();
+    component.restrictMembers.set(true);
+    component.saveRetention();
+
+    expect(calls.some((call) => call.includes('update'))).toBe(true);
   });
 
   it('forgets the copied state when the key is dismissed', () => {

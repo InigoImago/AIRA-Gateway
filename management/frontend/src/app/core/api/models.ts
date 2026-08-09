@@ -47,6 +47,8 @@ export interface UseCase {
   processing_notes: string;
   /** Whether prompts and responses are stored at all (FRD-404). */
   store_payloads?: boolean;
+  /** Show each use-case *user* only their own requests. An administrator still sees all of them. */
+  restrict_members_to_own_requests?: boolean;
   /** How long stored prompts and responses are kept, in days (FRD-404). */
   retention_days?: number;
   created_at?: string;
@@ -361,9 +363,29 @@ export interface Trace {
   use_case: string | null;
   /** What the model asked to have run (`FRD-131` FR-7) — **names and counts, never arguments**. */
   tool_calls: { declared: number; called: string[] } | null;
+  /** A pipeline step objected to this request — blocked it, or flagged it and let it through. */
+  flagged?: boolean;
   /** Only sent to an incident role. Absent for everybody else, which is why it is optional here
    *  rather than nullable: "the column is not for you" and "the row has no address" differ. */
   source_ip?: string | null;
+}
+
+/**
+ * A stored prompt and answer, or the precise reason there is none (`FRD-505`).
+ *
+ * `available: false` is not an error — it is an answer, and `reason` says which of three: the use
+ * case does not store payloads, retention has removed them, or this request never reached a model.
+ * A screen that rendered one sentence for all three would teach its reader to distrust it.
+ */
+export interface TracePayload {
+  id: string;
+  available: boolean;
+  request?: unknown;
+  response?: unknown;
+  reason?: string;
+  message?: string;
+  /** The authority the read rested on, recorded with it: `incident`, `use_case_admin`, … */
+  ground?: string;
 }
 
 export interface TracePage {

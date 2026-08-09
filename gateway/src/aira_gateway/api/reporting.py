@@ -20,6 +20,7 @@ from __future__ import annotations
 import calendar
 from datetime import UTC, datetime, timedelta
 
+import structlog
 from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy import and_, or_, select
@@ -28,9 +29,12 @@ from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.audit import Outcome
 from aira_gateway.auth.dependencies import require_principal
 from aira_gateway.auth.principal import Principal
-from aira_gateway.db.models import AnomalyEvent, RequestLog
+from aira_gateway.db.models import AnomalyEvent, PayloadAccess, RequestLog
+from aira_gateway.payloads import may_read_payload, payload_body, restricted_use_cases
 from aira_gateway.reporting.csv_export import BREAKDOWNS, filename, render
 from aira_gateway.reporting.service import ReportingService, Scope
+
+_log = structlog.get_logger(__name__)
 
 router = APIRouter(tags=["reporting"])
 
@@ -200,6 +204,17 @@ async def anomalies(
     # page two of an offset-paged list pushes rows across the boundary, so they see one row twice
     # and never see another — invisibly. The cursor is `(created_at, id)` because two findings can
     # share a millisecond, written out because SQLite has no tuple comparison.
+    # A use case may show its **users** their own requests only (`FRD-505` FR-4). Applied to the
+    # list and not only to the payload: leaving the rows visible would still disclose who else
+    # calls, how often and at what cost, which is the interesting half of what is being withheld.
+    sessionmaker = request.app.state.db_sessionmaker
+    async with sessionmaker() as session:
+        restricted = await restricted_use_cases(session, principal)
+    if restricted:
+        stmt = stmt.where(
+            or_(RequestLog.use_case.notin_(restricted), RequestLog.subject == principal.subject)
+        )
+
     if cursor:
         at, row_id = _parse_cursor(cursor)
         stmt = stmt.where(
@@ -277,6 +292,10 @@ TRACE_FIELDS = (
     #: The most-asked question of this whole view: a governed *model* is evidenced by tokens and
     #: cost, a governed *agent* is evidenced by what it tried to do.
     "tool_calls",
+    #: Whether a pipeline step objected — blocked, or flagged and let through (`FRD-505` FR-5).
+    #: The second is the interesting one on a screen: a blocked request announces itself by
+    #: failing, a flagged one is a 200 with a note nobody would otherwise look at twice.
+    "flagged",
 )
 
 #: Fields only an incident role sees (`FRD-502` FR-12, added 2026-08-08).
@@ -344,6 +363,7 @@ async def traces(
     #: Only requests where the model asked for a function. The fastest way to the rows that matter
     #: when the question is "what has this agent been trying to do".
     tools_only: bool = Query(False),
+    flagged_only: bool = Query(False),
     limit: int = Query(TRACE_PAGE, ge=1, le=MAX_TRACE_PAGE),
     cursor: str = Query("", max_length=128),
 ) -> JSONResponse:
@@ -395,6 +415,20 @@ async def traces(
         stmt = stmt.where(RequestLog.subject == principal.subject)
     if tools_only:
         stmt = stmt.where(RequestLog.tool_calls.is_not(None))
+    if flagged_only:
+        stmt = stmt.where(RequestLog.flagged.is_(True))
+
+    # A use case may show its **users** their own requests only (`FRD-505` FR-4). Applied to the
+    # list and not only to the payload: leaving the rows visible would still disclose who else
+    # calls, how often and at what cost — the interesting half of what is being withheld — while
+    # the content refusal beside it would read as a broken screen rather than a boundary.
+    sessionmaker = request.app.state.db_sessionmaker
+    async with sessionmaker() as session:
+        restricted = await restricted_use_cases(session, principal)
+    if restricted:
+        stmt = stmt.where(
+            or_(RequestLog.use_case.notin_(restricted), RequestLog.subject == principal.subject)
+        )
 
     if cursor:
         at, row_id = _parse_cursor(cursor)
@@ -410,7 +444,6 @@ async def traces(
 
     stmt = stmt.order_by(RequestLog.created_at.desc(), RequestLog.id.desc()).limit(limit + 1)
 
-    sessionmaker = request.app.state.db_sessionmaker
     async with sessionmaker() as session:
         rows = list((await session.execute(stmt)).mappings().all())
 
@@ -434,3 +467,67 @@ async def traces(
             "in_scope": True,
         }
     )
+
+
+@router.get("/v1beta/traces/{trace_row_id}/payload")
+async def trace_payload(
+    request: Request,
+    trace_row_id: str,
+    principal: Principal = Depends(require_principal),
+) -> Response:
+    """The prompt and the answer, for a reader entitled to them — and a record that they looked.
+
+    The authorization is `payloads.may_read_payload`, deliberately in its own module: it is the
+    one place four roles, a per-use-case switch, a storage switch and a retention clock meet, and
+    a decision spread over an endpoint is a decision the next endpoint restates differently.
+
+    The access row is written **before** the content is returned. If recording the read fails, the
+    read does not happen — the record is the condition on which `ADR-0009` was reopened, not a log
+    line beside it.
+    """
+    scope = visible_scope(principal)
+    sessionmaker = request.app.state.db_sessionmaker
+    async with sessionmaker() as session:
+        row = (
+            await session.execute(select(RequestLog).where(RequestLog.id == trace_row_id))
+        ).scalar_one_or_none()
+        if row is None or (scope is not None and row.use_case not in scope):
+            # One answer for "no such row" and "not yours": distinguishing them would confirm that
+            # a request exists to somebody who may not see it.
+            raise GeminiHTTPError(404, "No such request.", "NOT_FOUND")
+
+        verdict = await may_read_payload(session, principal, row)
+        if not verdict.allowed:
+            if verdict.is_authority_refusal:
+                raise GeminiHTTPError(403, verdict.message, "PERMISSION_DENIED")
+            # Absent, not forbidden. A 200 saying *which* absence, because "not stored", "expired"
+            # and "never had one" are three different facts about the installation and a single
+            # message for all three teaches the reader to distrust the screen.
+            return JSONResponse(
+                {
+                    "id": row.id,
+                    "available": False,
+                    "reason": verdict.refusal,
+                    "message": verdict.message,
+                }
+            )
+
+        session.add(
+            PayloadAccess(
+                request_log_id=row.id,
+                use_case=row.use_case or "",
+                subject=principal.subject,
+                ground=verdict.ground,
+            )
+        )
+        await session.commit()
+        body = payload_body(row)
+
+    _log.info(
+        "payload_read",
+        request_log_id=row.id,
+        use_case=row.use_case,
+        subject=principal.subject,
+        ground=verdict.ground,
+    )
+    return JSONResponse({**body, "available": True, "ground": verdict.ground})

@@ -91,6 +91,15 @@ class RequestLog(Base):
     outcome: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     #: Which pipeline steps ran and what each decided — never the classifier's reasoning text.
     pipeline_decisions: Mapped[Any | None] = mapped_column(JSON(none_as_null=True), nullable=True)
+    #: True when a pipeline step objected to this request — blocked it, or flagged it and let it
+    #: through (`FRD-505` FR-5).
+    #:
+    #: A **column**, not a query over `pipeline_decisions`. Two reasons, and the second is the one
+    #: that decided it: JSON containment is written differently on SQLite and Postgres, and the
+    #: hermetic tests run on one while production runs on the other — a filter exercised against
+    #: only one of the two is a filter tested on one of the two. The first is simpler: this is the
+    #: question an incident opens with, and it should be an index rather than a scan.
+    flagged: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     #: What the model asked to have run, and how much it was offered (`FRD-131` FR-7).
     #:
     #: **Names and counts only, never arguments.** Arguments are caller content: they belong under
@@ -131,6 +140,37 @@ class RequestLog(Base):
     response_payload: Mapped[dict[str, Any] | None] = mapped_column(
         JSON(none_as_null=True), nullable=True
     )
+
+
+class PayloadAccess(Base):
+    """One reading of a stored prompt or response (`FRD-505` FR-6).
+
+    The record is not a nicety attached to the feature — it is the **reason the feature could be
+    granted at all**. `ADR-0009` refused this view because it shows content to people outside the
+    use case that produced it; what makes that acceptable is that the act leaves a trail naming who
+    read what and on what authority. An access nobody can review is exactly what the ADR was
+    protecting against.
+
+    Written **before** the payload is handed over, so a reader cannot receive content whose access
+    failed to record. Kept independently of `request_logs` retention: the content expires, the fact
+    that somebody read it does not.
+    """
+
+    __tablename__ = "payload_access"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+    #: The request whose content was read. Not a foreign key: the row it points at is deleted by
+    #: retention, and losing the access record with it would be the wrong way round.
+    request_log_id: Mapped[str] = mapped_column(String(36), index=True)
+    use_case: Mapped[str] = mapped_column(String(64), default="", index=True)
+    #: Who read it.
+    subject: Mapped[str] = mapped_column(String(255), index=True)
+    #: On what authority — `incident`, `use_case_admin` or `use_case_member`. Two people may read
+    #: the same prompt for entirely different reasons, and a review asks which.
+    ground: Mapped[str] = mapped_column(String(32), default="")
 
 
 class AnomalyEvent(Base):
@@ -219,6 +259,14 @@ class UseCaseRead(Base):
     # kept once written (FRD-404).
     store_payloads: Mapped[bool] = mapped_column(Boolean, default=True)
     retention_days: Mapped[int] = mapped_column(Integer, default=7)
+    #: When true, a use-case **user** sees only the requests they made themselves; an
+    #: administrator of the use case still sees all of them (`FRD-505`).
+    #:
+    #: Default **false**, which is the behaviour that already existed: a team sees its own team's
+    #: traffic. This is an added restriction an administrator may impose, not a permission that
+    #: was previously assumed — flipping the default would silently narrow every existing use case
+    #: on the day it shipped.
+    restrict_members_to_own_requests: Mapped[bool] = mapped_column(Boolean, default=False)
     #: Whether this use case may declare functions for the model to call (`FRD-131`). **Default
     #: false**, and the default is the feature: least privilege is not a setting somebody remembers
     #: to switch off, it is the state a use case starts in.

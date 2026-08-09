@@ -37,6 +37,15 @@ class UseCase(models.Model):
             "smallest set that needs tool calling is the right set to have it."
         ),
     )
+    restrict_members_to_own_requests = models.BooleanField(
+        default=False,
+        help_text=(
+            "Show each use-case *user* only the requests they made themselves. An administrator "
+            "of the use case still sees all of them. Default off, which is the behaviour that "
+            "already existed — this is a restriction an administrator may impose, not a "
+            "permission that was previously assumed."
+        ),
+    )
     retention_days = models.PositiveSmallIntegerField(
         default=DEFAULT_RETENTION_DAYS,
         validators=[MinValueValidator(1), MaxValueValidator(3650)],

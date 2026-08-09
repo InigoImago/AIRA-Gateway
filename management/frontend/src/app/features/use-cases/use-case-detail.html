@@ -220,6 +220,27 @@
               </p>
             }
 
+            <!--
+              Who inside the use case may read whose requests. A separate question from *whether*
+              anything is stored, and it belongs to the administrator of the use case rather than
+              to IT Security (`FRD-505` FR-4).
+            -->
+            <label class="checkline">
+              <input
+                type="checkbox"
+                id="restrict-members"
+                name="restrict_members"
+                [checked]="restrictMembers()"
+                (change)="restrictMembers.set($any($event.target).checked)"
+                data-testid="restrict-members"
+              />
+              Show each member only their own requests
+            </label>
+            <span class="field__hint">
+              Administrators of this use case always see all of them. Off means everyone in the use
+              case sees the whole use case's traffic, which is how it has always worked.
+            </span>
+
             <div class="row">
               <button type="submit" class="btn btn--primary" [disabled]="!canSaveRetention()">
                 {{ feedback.busy() ? 'Saving…' : 'Save' }}

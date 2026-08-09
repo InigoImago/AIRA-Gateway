@@ -30,6 +30,20 @@
   >
   <a class="aira-nav__item" routerLink="/reporting" routerLinkActive="is-active">Reporting</a>
   <!--
+    Cross-use-case request browsing, for the roles that may act on an incident (`FRD-505`). Not
+    offered to `it-steuerung`: that role sees every figure and no content, and this screen's whole
+    point is the content behind the figures. Offering it and refusing on use is `FRD-206`'s defect.
+  -->
+  @if (mayInvestigate()) {
+    <a
+      class="aira-nav__item"
+      routerLink="/requests"
+      routerLinkActive="is-active"
+      data-testid="nav-requests"
+      >Requests</a
+    >
+  }
+  <!--
     The tab an oversight role could not previously be given, because there was nothing behind it.
     `FRD-502` built the screen; a tab that does not respond is what `FRD-206` removed.
   -->

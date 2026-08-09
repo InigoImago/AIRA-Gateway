@@ -15,7 +15,7 @@ from typing import Any
 from fastapi import Request
 
 from aira_common.observability import set_span_attributes, trace_context_fields
-from aira_gateway.audit import Outcome
+from aira_gateway.audit import Outcome, was_flagged
 from aira_gateway.core.canonical import CanonicalUsage
 from aira_gateway.persistence.writer import PendingLog
 
@@ -134,6 +134,11 @@ async def record_request(
             requested_model=requested_model,
             model_selection=model_selection,
             pipeline_decisions=pipeline_decisions,
+            # Derived **here**, from the argument every caller already passes, rather than at the
+            # three call sites that build it. `FRD-122` learned this once: a fact repeated at every
+            # exit is a fact eventually missing from one of them, and a fourth surface would have
+            # to remember. The rule is one site or none.
+            flagged=was_flagged(pipeline_decisions, outcome),
             tool_calls=tool_calls,
             degraded=_degradation_snapshot(request),
             provider=provenance[0] if provenance else None,

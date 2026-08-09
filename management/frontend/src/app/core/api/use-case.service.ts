@@ -22,6 +22,7 @@ import {
   Suspension,
   Trace,
   TracePage,
+  TracePayload,
 } from './models';
 
 /**
@@ -241,6 +242,17 @@ export class UseCaseService {
     return this.http.get<AnomalyPage>('/gw/v1beta/anomalies', { params });
   }
 
+  /**
+   * The prompt and the answer for one request — and, on the server, a record that it was read.
+   *
+   * Deliberately a second call rather than a field on the row: content is not metadata, the two
+   * have different audiences, and a list that carried payloads would disclose to everybody who
+   * may see the list.
+   */
+  tracePayload(id: string): Observable<TracePayload> {
+    return this.http.get<TracePayload>(`/gw/v1beta/traces/${seg(id)}/payload`);
+  }
+
   /** Traffic that is currently stopped, and what was stopped before (`FRD-503`). */
   suspensions(): Observable<{ suspensions: Suspension[] }> {
     return this.http.get<{ suspensions: Suspension[] }>('/gw/v1beta/suspensions');
@@ -282,6 +294,8 @@ export class UseCaseService {
     mine?: boolean;
     /** Only the turns where the model asked for a function. */
     toolsOnly?: boolean;
+    /** Only the requests a pipeline step objected to (`FRD-505` FR-5). */
+    flaggedOnly?: boolean;
     cursor?: string;
     limit?: number;
   }): Observable<TracePage> {
@@ -294,6 +308,7 @@ export class UseCaseService {
     if (options.sourceIp) params['source_ip'] = options.sourceIp;
     if (options.mine) params['mine'] = true;
     if (options.toolsOnly) params['tools_only'] = true;
+    if (options.flaggedOnly) params['flagged_only'] = true;
     if (options.cursor) params['cursor'] = options.cursor;
     return this.http.get<TracePage>('/gw/v1beta/traces', { params });
   }

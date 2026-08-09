@@ -1026,3 +1026,47 @@ tr.is-open > * {
   font-size: 0.85rem;
   line-height: 1.5;
 }
+
+/* ---- a request's content, opened in place (`FRD-505`) ------------------------------ */
+
+/* In the row rather than in a drawer: the figures that made somebody open it stay on screen, and
+   a panel that covers the table makes the reader lose the row they came from. */
+.row-detail > td {
+  background: var(--surface-2, rgba(127, 127, 127, 0.06));
+}
+
+.payload-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1rem;
+}
+
+/* Prompts are long and arrive as JSON. Scrolls inside itself, so the page never scrolls
+   sideways — the rule every wide element on this console follows. */
+.payload {
+  max-height: 22rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.8rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: 6px;
+  background: var(--code-bg, rgba(127, 127, 127, 0.12));
+}
+
+/* The control that opens a request. First column, because the table scrolls sideways once it
+   carries a use case and an address — and an action behind a scrollbar is an action nobody
+   finds. */
+.table__open {
+  width: 2.5rem;
+  padding-right: 0;
+}
+
+.row-openable {
+  cursor: pointer;
+}
+
+.row-openable:hover,
+.row-openable.is-open {
+  background: var(--surface-2, rgba(127, 127, 127, 0.06));
+}

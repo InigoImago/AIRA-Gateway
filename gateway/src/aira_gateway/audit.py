@@ -180,3 +180,17 @@ def tool_summary(trail: AuditTrail) -> dict[str, Any] | None:
     if not trail.tools_declared and not trail.tool_calls:
         return None
     return {"declared": trail.tools_declared, "called": list(trail.tool_calls)}
+
+
+def was_flagged(decisions: list[dict[str, Any]] | None, outcome: str) -> bool:
+    """Did a pipeline step object to this request (`FRD-505` FR-5)?
+
+    Two ways to object, and both count. A step can **block** — which ends as
+    `blocked_by_pipeline` — or it can **flag** and let the request through, which is the
+    `injection_filter`'s `flag` action and leaves a served request nobody would otherwise look at
+    twice. The second is the more interesting of the two on a screen: a blocked request already
+    announces itself by failing, while a flagged one is a 200 with a note attached.
+    """
+    if outcome == Outcome.BLOCKED_BY_PIPELINE.value:
+        return True
+    return any(bool(decision.get("flagged")) for decision in decisions or ())

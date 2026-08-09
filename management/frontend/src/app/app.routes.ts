@@ -25,6 +25,11 @@ export const routes: Routes = [
     loadComponent: () => import('./features/reporting/reporting-page').then((m) => m.ReportingPage),
   },
   {
+    path: 'requests',
+    canActivate: [authGuard],
+    loadComponent: () => import('./features/requests/requests-page').then((m) => m.RequestsPage),
+  },
+  {
     path: 'security',
     canActivate: [authGuard],
     loadComponent: () => import('./features/security/security-page').then((m) => m.SecurityPage),

@@ -1,0 +1,22 @@
+<div class="page">
+  <header class="page__head">
+    <div>
+      <h2 class="page__title">Requests</h2>
+      <p class="muted" style="margin: 0.25rem 0 0">
+        Every request across every use case you can see, newest first. Open a row to read what was
+        actually sent — the numbers are on the row, the content is one click away.
+      </p>
+    </div>
+  </header>
+
+  @if (feedback.error(); as error) {
+    <div class="callout callout--danger" role="alert">{{ error }}</div>
+  }
+
+  <!--
+    The same table the use-case detail shows, with no slug: one implementation, two homes. A second
+    copy is exactly how the two API surfaces of `FRD-126` and the two consoles of `FRD-206` came to
+    disagree with each other.
+  -->
+  <app-traces-tab />
+</div>

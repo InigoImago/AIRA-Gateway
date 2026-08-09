@@ -51,6 +51,9 @@ interface Options {
   /** What `/me` answers. Absent means a role with no incident authority. */
   roles?: string[];
   pages?: TracePage[];
+  /** What `GET /traces/{id}/payload` answers. */
+  payload?: Record<string, unknown>;
+  payloadFails?: boolean;
   failMore?: boolean;
 }
 
@@ -69,6 +72,19 @@ function setup(options: Options = {}) {
       {
         provide: UseCaseService,
         useValue: {
+          tracePayload: (id: string) => {
+            queries.push({ payloadFor: id });
+            if (options.payloadFails) return throwError(() => ({ status: 403 }));
+            return of(
+              options.payload ?? {
+                id,
+                available: true,
+                request: { text: 'hello' },
+                response: { text: 'hi' },
+                ground: 'incident',
+              },
+            );
+          },
           traces: (query: Record<string, unknown>) => {
             queries.push(query);
             if (options.failMore && query['cursor']) return throwError(() => ({ status: 500 }));
@@ -443,6 +459,166 @@ describe('TracesTab — while a page is in flight', () => {
     const asked = queries.filter((query) => query['sourceIp']);
     expect(asked.length).toBe(1);
     expect(asked[0]['sourceIp']).toBe('10.0.0.7');
+  });
+
+  // ---- the prompt and the answer (`FRD-505`) -----------------------------------------------
+
+  it("opens a request's content in place, and says the read was recorded", () => {
+    /** The record is the condition on which `ADR-0009` was reopened, not a log line beside it —
+     *  so the reader is told, rather than it happening quietly behind them. */
+    const { fixture, testid, element } = setup({ roles: ['it-security'] });
+    element.querySelector<HTMLElement>('[data-testid^="open-payload-"]')?.click();
+    fixture.detectChanges();
+
+    expect(testid('payload-request')?.textContent).toContain('hello');
+    expect(testid('payload-response')?.textContent).toContain('hi');
+    expect(testid('payload-recorded')).not.toBeNull();
+  });
+
+  it("closes it again, so one request's content is open at a time", () => {
+    const { fixture, testid, element } = setup({ roles: ['it-security'] });
+    const open = () => {
+      element.querySelector<HTMLElement>('[data-testid^="open-payload-"]')?.click();
+      fixture.detectChanges();
+    };
+    open();
+    expect(testid('payload-request')).not.toBeNull();
+
+    open();
+
+    expect(testid('payload-request')).toBeNull();
+  });
+
+  it('states which kind of nothing it found', () => {
+    /** "Storage is off", "retention removed it" and "this never reached a model" are three
+     *  different facts about the installation, and two of them are somebody's to change. A single
+     *  "not available" teaches the reader to distrust the screen. */
+    const { fixture, testid } = setup({
+      roles: ['it-security'],
+      payload: {
+        id: 't1',
+        available: false,
+        reason: 'not_stored',
+        message: 'This use case does not store prompts and responses.',
+      },
+    });
+    (fixture.nativeElement as HTMLElement)
+      .querySelector<HTMLElement>('[data-testid^="open-payload-"]')
+      ?.click();
+    fixture.detectChanges();
+
+    expect(testid('payload-unavailable')?.textContent).toContain('does not store');
+    expect(testid('payload-request')).toBeNull();
+  });
+
+  it('reports a refused read instead of leaving an empty panel open', () => {
+    /** Asserted on the page's **single** `PageFeedback` rather than on this panel's own DOM: one
+     *  banner per page is the rule, and the parent renders it. A first version of this test looked
+     *  for the sentence inside the tab and failed for exactly that reason — which is the design
+     *  working, not a gap. */
+    const { fixture, testid } = setup({ roles: ['use-case-user'], payloadFails: true });
+    (fixture.nativeElement as HTMLElement)
+      .querySelector<HTMLElement>('[data-testid^="open-payload-"]')
+      ?.click();
+    fixture.detectChanges();
+
+    // From the **host's** injector, not `TestBed.inject`: the harness provides `PageFeedback` on
+    // the host component exactly as a page does, and an environment-level lookup would resolve a
+    // different instance — the `Live` teardown lesson of `FRD-502`, one service over.
+    const feedback = fixture.debugElement.injector.get(PageFeedback);
+    // The **server's** sentence, not the fallback: a refusal here is a real answer about a real
+    // permission, and it names who may. The fallback exists for a request that failed without
+    // saying anything (`core/api/error-message.ts`), which is a different situation.
+    expect(feedback.error()).toBeTruthy();
+    expect(testid('payload-request')).toBeNull();
+  });
+
+  it('shows the calling machine as a column, not only as a filter', () => {
+    /** The defect this fixes: the address could be searched for and never seen, so the filter
+     *  could not be populated from the screen that offered it. */
+    const { element } = setup({ roles: ['it-security'] });
+
+    const headers = [...element.querySelectorAll('th')].map((th) => th.textContent?.trim());
+    expect(headers).toContain('From');
+  });
+
+  it('withholds that column from a role that may not act on an incident', () => {
+    const { element } = setup({ roles: ['use-case-admin'] });
+
+    const headers = [...element.querySelectorAll('th')].map((th) => th.textContent?.trim());
+    expect(headers).not.toContain('From');
+  });
+
+  // ---- what the reader is actually looking at ----------------------------------------------
+
+  it('does not mark a served request as a failure', () => {
+    /** Reported from the running console: a **200 shown in red**. `outcome` arrived with
+     *  `FRD-122`, so every row written before it is NULL, and the badge fell through to the
+     *  danger branch showing the status. A status column that calls a success a problem is the
+     *  one thing it must never do. */
+    const { element } = setup({
+      pages: [{ traces: [trace({ outcome: null, status: 200 })], next_cursor: null, scope: 'all' }],
+    });
+
+    expect(element.querySelector('.badge--danger')).toBeNull();
+    expect(element.querySelector('.badge--success')?.textContent?.trim()).toBe('served');
+  });
+
+  it('names a failure by its outcome, and falls back to the status only when there is none', () => {
+    const named = setup({
+      pages: [
+        {
+          traces: [trace({ outcome: 'rate_limited', status: 429 })],
+          next_cursor: null,
+          scope: 'all',
+        },
+      ],
+    });
+    expect(named.element.querySelector('.badge--danger')?.textContent?.trim()).toBe('rate_limited');
+
+    const unnamed = setup({
+      pages: [{ traces: [trace({ outcome: null, status: 500 })], next_cursor: null, scope: 'all' }],
+    });
+    // Warning, not danger: nobody recorded *why*, and inventing a name would be worse than the
+    // number that was actually written down.
+    expect(unnamed.element.querySelector('.badge--warning')?.textContent?.trim()).toBe('500');
+  });
+
+  it('puts the control that opens a request in the first column', () => {
+    /** It was last. The table scrolls sideways once it carries a use case and an address, so the
+     *  control was **off screen** and a reader had no way to learn it existed — reported as "the
+     *  button was hidden behind the scroll, I did not even know it was there". */
+    const { element } = setup({ roles: ['it-security'] });
+
+    const firstCell = element.querySelector('tbody tr td');
+    expect(firstCell?.querySelector('[data-testid^="open-payload-"]')).not.toBeNull();
+  });
+
+  it('opens a request by clicking anywhere on its row', () => {
+    /** A 2.5rem target at the far left of a wide table is a small target. The row is the whole
+     *  width of the thing the reader is looking at. */
+    const { fixture, element, testid } = setup({ roles: ['it-security'] });
+    element.querySelector<HTMLElement>('tbody tr')?.click();
+    fixture.detectChanges();
+
+    expect(testid('payload-request')).not.toBeNull();
+  });
+
+  it('marks a request a pipeline step objected to', () => {
+    /** The interesting one is a **served** flagged request: it looks like every other 200 until
+     *  something says otherwise. */
+    const { element } = setup({
+      pages: [{ traces: [trace({ flagged: true })], next_cursor: null, scope: 'all' }],
+    });
+
+    expect(element.querySelector('[data-testid="flagged"]')).not.toBeNull();
+  });
+
+  it('asks the server for only those requests', () => {
+    const { click, queries } = setup();
+    click('flagged-only');
+
+    expect(queries.some((query) => query['flaggedOnly'] === true)).toBe(true);
   });
 
   it('carries the filters onto the next page', () => {

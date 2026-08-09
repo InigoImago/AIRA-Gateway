@@ -3,9 +3,10 @@ import { Component, DestroyRef, OnInit, computed, inject, input, signal } from '
 import { FormsModule } from '@angular/forms';
 import { Subject, debounceTime, distinctUntilChanged } from 'rxjs';
 import { MeService } from '../../core/api/me.service';
-import { Trace } from '../../core/api/models';
+import { Trace, TracePayload } from '../../core/api/models';
 import { mayActOnIncidents } from '../../core/auth/roles';
 import { UseCaseService } from '../../core/api/use-case.service';
+import { RouterLink } from '@angular/router';
 import { InfoHint } from '../../core/ui/info-hint';
 import { Live, agoLabel } from '../../core/ui/live';
 import { PageFeedback } from '../../core/ui/page-feedback';
@@ -30,7 +31,7 @@ const TYPING_PAUSE_MS = 300;
  */
 @Component({
   selector: 'app-traces-tab',
-  imports: [DatePipe, FormsModule, InfoHint],
+  imports: [DatePipe, FormsModule, InfoHint, RouterLink],
   templateUrl: './traces-tab.html',
   // `Live` is provided **here**, on the component, and not in the root injector: a timer that
   // outlives the screen that started it is a timer nobody stops. `PageFeedback` is deliberately
@@ -39,7 +40,15 @@ const TYPING_PAUSE_MS = 300;
   providers: [Live],
 })
 export class TracesTab implements OnInit {
-  readonly slug = input.required<string>();
+  /**
+   * The use case to show, or **empty for every one this caller may see**.
+   *
+   * One component, two homes (`FRD-505` FR-2). IT Security works across use cases and had to open
+   * one first — which means guessing which use case the incident is in, from a screen that exists
+   * because nobody knows yet. The alternative was a second table; a rule restated at a second call
+   * site is the defect `FRD-126`, `FRD-206` and `FRD-602` each paid for once.
+   */
+  readonly slug = input<string>('');
 
   private readonly service = inject(UseCaseService);
   private readonly meService = inject(MeService);
@@ -68,6 +77,9 @@ export class TracesTab implements OnInit {
   /** Only the turns where the model asked for a function — the fastest way to what an agent has
    *  been trying to do (`FRD-131` FR-7). */
   protected readonly toolsOnly = signal(false);
+  /** Only the requests a pipeline step objected to — blocked, or flagged and let through.
+   *  The owner's question in their own words: "show me the prompts that threw a warning". */
+  protected readonly flaggedOnly = signal(false);
   /** "Only my own requests", offered to every role including those that see everything: somebody
    *  checking what *they* did should not have to read past everybody else. */
   protected readonly mine = signal(false);
@@ -160,11 +172,17 @@ export class TracesTab implements OnInit {
       outcome: this.outcome(),
       refusalsOnly: this.refusalsOnly(),
       toolsOnly: this.toolsOnly(),
+      flaggedOnly: this.flaggedOnly(),
       mine: this.mine(),
       credential: this.credential().trim(),
       sourceIp: this.sourceIp().trim(),
       limit: PAGE,
     };
+  }
+
+  protected toggleFlagged(value: boolean): void {
+    this.flaggedOnly.set(value);
+    this.startLive();
   }
 
   protected toggleTools(value: boolean): void {
@@ -218,7 +236,51 @@ export class TracesTab implements OnInit {
   }
 
   protected served(row: Trace): boolean {
-    return row.outcome === 'served';
+    // A 2xx with **no recorded outcome** is a served request, not a failure. `outcome` arrived
+    // with `FRD-122`; every row written before it is NULL, and the template's `outcome ?? status`
+    // fallback then rendered a red badge reading "200" — a success marked as a problem, which is
+    // the one thing a status column must never do. Reported from the running console.
+    if (row.outcome) return row.outcome === 'served';
+    return row.status >= 200 && row.status < 300;
+  }
+
+  // ---- the prompt and the answer (`FRD-505`) ----------------------------------------------
+
+  /** The row whose content is open, if any. One at a time: a list of expanded payloads is a
+   *  screen nobody can read and a disclosure nobody meant to make. */
+  protected readonly openPayload = signal<string | null>(null);
+  protected readonly payload = signal<TracePayload | null>(null);
+  protected readonly payloadLoading = signal(false);
+
+  protected togglePayload(row: Trace): void {
+    if (this.openPayload() === row.id) {
+      this.openPayload.set(null);
+      this.payload.set(null);
+      return;
+    }
+    this.openPayload.set(row.id);
+    this.payload.set(null);
+    this.payloadLoading.set(true);
+    // Live is switched off while content is open: a refresh would replace the rows underneath
+    // and leave an open panel pointing at a request that is no longer on screen.
+    this.live.enabled.set(false);
+    this.service.tracePayload(row.id).subscribe({
+      next: (body) => {
+        this.payload.set(body);
+        this.payloadLoading.set(false);
+      },
+      error: (response: unknown) => {
+        this.payloadLoading.set(false);
+        this.openPayload.set(null);
+        this.feedback.fail(response, 'Could not open this request.');
+      },
+    });
+  }
+
+  /** Pretty-printed, because a prompt is read by a person. */
+  protected asText(value: unknown): string {
+    if (value === null || value === undefined) return '';
+    return typeof value === 'string' ? value : JSON.stringify(value, null, 2);
   }
 
   /** Money for people. The exact integer stays in the API, which is what a script should read. */

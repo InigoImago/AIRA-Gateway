@@ -38,6 +38,7 @@ class RequestLogService:
         requested_model: str | None = None,
         model_selection: str | None = None,
         pipeline_decisions: list[dict[str, Any]] | None = None,
+        flagged: bool = False,
         tool_calls: dict[str, Any] | None = None,
         degraded: dict[str, str] | None = None,
         provider: str | None = None,
@@ -59,6 +60,7 @@ class RequestLogService:
             status=status,
             outcome=outcome,
             pipeline_decisions=pipeline_decisions,
+            flagged=flagged,
             tool_calls=tool_calls,
             # An empty mapping means "nothing was degraded", which is a fact worth keeping
             # distinct from "we did not look" — so it is stored rather than collapsed to NULL.
