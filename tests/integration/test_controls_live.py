@@ -53,6 +53,29 @@ async def _require(fixture: Fixture, *models: str) -> None:
         pytest.skip(f"not registered: {missing} — see AIRA_OPENAI_SERVERS")
 
 
+async def _catalogue(engine: AsyncEngine, model: str) -> None:
+    """Put a model in the catalog, approved (`FRD-307`).
+
+    Needed since only catalogued models may be used. It also makes these two cases *more*
+    realistic than they were: a model that is in the catalog and that the upstream no longer
+    serves is exactly how a 404-from-every-candidate happens in practice — somebody removed it
+    from the server and the declaration outlived it. Before, the scenario was reached with a name
+    nobody had ever written down, which the gateway now refuses one step earlier and for a
+    different reason.
+    """
+    async with engine.begin() as connection:
+        await connection.execute(
+            text("DELETE FROM model_catalog WHERE model = :model"), {"model": model}
+        )
+        await connection.execute(
+            text(
+                "INSERT INTO model_catalog (model, display_name, provider, capabilities, approved)"
+                " VALUES (:model, :model, 'test', '[\"generate\"]', true)"
+            ),
+            {"model": model},
+        )
+
+
 async def _fallback_chain(engine: AsyncEngine, slug: str, models: list[str]) -> None:
     """Configure the use case's dispatch chain, the way `FRD-300` distributes it."""
     import json
@@ -123,12 +146,13 @@ async def test_the_audit_names_both_the_model_asked_for_and_the_one_that_answere
 
 
 async def test_a_chain_with_nothing_behind_it_fails_as_a_precondition_not_an_outage(
-    fixture: Fixture,
+    fixture: Fixture, engine: AsyncEngine
 ) -> None:
     """A 404 from every candidate is an upstream problem and reports as one; being *excluded* is a
     configuration problem an operator can fix. Here the only candidate is genuinely broken, so a
     502 is the correct answer — the distinction is what `NoCapableModel` exists for."""
     await _require(fixture, GHOST_MODEL)
+    await _catalogue(engine, GHOST_MODEL)
 
     async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=120.0) as client:
         response = await client.post(
@@ -145,6 +169,7 @@ async def test_a_failed_chain_is_recorded_as_an_upstream_error(
     engine: AsyncEngine, fixture: Fixture
 ) -> None:
     await _require(fixture, GHOST_MODEL)
+    await _catalogue(engine, GHOST_MODEL)
     async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=120.0) as client:
         await client.post(
             f"/v1beta/models/{GHOST_MODEL}:generateContent",
