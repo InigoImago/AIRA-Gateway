@@ -19,6 +19,8 @@ from aira_management.rbac import django_group_name, sync_user_groups, sync_user_
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
 
+from .conftest import role_claims
+
 pytestmark = pytest.mark.django_db
 
 BASE = "/api/v1/use-cases/"
@@ -28,7 +30,7 @@ GROUP = "/ai/kundenservice"
 def _user(username: str, *roles: str, groups: tuple[str, ...] = ()) -> Any:
     """A user as an authenticated request would leave them: roles and groups synced from a token."""
     user = get_user_model().objects.create(username=username)
-    sync_user_roles(user, {"realm_access": {"roles": list(roles)}})
+    sync_user_roles(user, role_claims(*roles))
     sync_user_groups(user, {"groups": list(groups)})
     return user
 
@@ -47,7 +49,7 @@ def _create(client: APIClient, slug: str) -> None:
 
 
 def test_an_admin_grants_a_group_and_it_appears_in_the_access_list() -> None:
-    admin = _user("a", "use-case-admin")
+    admin = _user("a", "global-admin")
     client = _client(admin)
     _create(client, "uc-a")
 
@@ -62,7 +64,7 @@ def test_an_admin_grants_a_group_and_it_appears_in_the_access_list() -> None:
 
 def test_the_grant_records_who_made_it() -> None:
     """Kept for the same reason a suspension keeps its author: a review asks."""
-    admin = _user("a", "use-case-admin")
+    admin = _user("a", "global-admin")
     client = _client(admin)
     _create(client, "uc-a")
     client.post(f"{BASE}uc-a/groups/", {"group_path": GROUP}, format="json")
@@ -71,8 +73,10 @@ def test_the_grant_records_who_made_it() -> None:
 
 
 def test_somebody_who_does_not_administer_the_use_case_cannot_grant() -> None:
-    owner = _user("a", "use-case-admin")
-    outsider = _user("b", "use-case-admin")
+    owner = _user("a", "global-admin")
+    # No organisation-wide role: a Global Administrator administers everything, so using one as
+    # the outsider would assert nothing at all (`ADR-0017`).
+    outsider = _user("b")
     _create(_client(owner), "uc-a")
 
     response = _client(outsider).post(f"{BASE}uc-a/groups/", {"group_path": GROUP}, format="json")
@@ -83,7 +87,7 @@ def test_somebody_who_does_not_administer_the_use_case_cannot_grant() -> None:
 
 
 def test_a_group_path_must_look_like_a_path() -> None:
-    admin = _user("a", "use-case-admin")
+    admin = _user("a", "global-admin")
     client = _client(admin)
     _create(client, "uc-a")
 
@@ -98,7 +102,7 @@ def test_a_group_path_must_look_like_a_path() -> None:
 def test_a_group_that_does_not_exist_yet_is_still_grantable() -> None:
     """The identity provider may create it tomorrow. Refusing would make onboarding a department a
     two-step dance across two systems."""
-    admin = _user("a", "use-case-admin")
+    admin = _user("a", "global-admin")
     client = _client(admin)
     _create(client, "uc-a")
 
@@ -109,7 +113,7 @@ def test_a_group_that_does_not_exist_yet_is_still_grantable() -> None:
 
 
 def test_granting_the_same_group_twice_changes_the_role_rather_than_adding_a_row() -> None:
-    admin = _user("a", "use-case-admin")
+    admin = _user("a", "global-admin")
     client = _client(admin)
     _create(client, "uc-a")
     client.post(f"{BASE}uc-a/groups/", {"group_path": GROUP, "role": "user"}, format="json")
@@ -125,34 +129,34 @@ def test_granting_the_same_group_twice_changes_the_role_rather_than_adding_a_row
 
 def test_a_person_in_a_granted_group_can_see_the_use_case_without_any_row_naming_them() -> None:
     """The whole point of the feature."""
-    owner = _user("a", "use-case-admin")
+    owner = _user("a", "global-admin")
     _create(_client(owner), "uc-a")
     _client(owner).post(f"{BASE}uc-a/groups/", {"group_path": GROUP}, format="json")
 
-    member = _user("b", "use-case-user", groups=(GROUP,))
+    member = _user("b", groups=(GROUP,))
     listed = _client(member).get(BASE).data["results"]
 
     assert [row["slug"] for row in listed] == ["uc-a"]
 
 
 def test_a_person_in_no_granted_group_still_sees_nothing() -> None:
-    owner = _user("a", "use-case-admin")
+    owner = _user("a", "global-admin")
     _create(_client(owner), "uc-a")
     _client(owner).post(f"{BASE}uc-a/groups/", {"group_path": GROUP}, format="json")
 
-    outsider = _user("b", "use-case-user", groups=("/ai/vertrieb",))
+    outsider = _user("b", groups=("/ai/vertrieb",))
 
     assert _client(outsider).get(BASE).data["results"] == []
 
 
 def test_an_admin_grant_lets_the_group_change_the_use_case() -> None:
-    owner = _user("a", "use-case-admin")
+    owner = _user("a", "global-admin")
     _create(_client(owner), "uc-a")
     _client(owner).post(
         f"{BASE}uc-a/groups/", {"group_path": GROUP, "role": "admin"}, format="json"
     )
 
-    member = _user("b", "use-case-admin", groups=(GROUP,))
+    member = _user("b", groups=(GROUP,))
     response = _client(member).patch(f"{BASE}uc-a/", {"name": "renamed"}, format="json")
 
     assert response.status_code == 200
@@ -160,11 +164,11 @@ def test_an_admin_grant_lets_the_group_change_the_use_case() -> None:
 
 def test_a_user_grant_does_not() -> None:
     """`user` may use it and read the figures; changing it is what `admin` is for."""
-    owner = _user("a", "use-case-admin")
+    owner = _user("a", "global-admin")
     _create(_client(owner), "uc-a")
     _client(owner).post(f"{BASE}uc-a/groups/", {"group_path": GROUP, "role": "user"}, format="json")
 
-    member = _user("b", "use-case-admin", groups=(GROUP,))
+    member = _user("b", groups=(GROUP,))
 
     assert (
         _client(member).patch(f"{BASE}uc-a/", {"name": "renamed"}, format="json").status_code == 403
@@ -173,14 +177,14 @@ def test_a_user_grant_does_not() -> None:
 
 def test_lowering_a_grant_actually_lowers_it() -> None:
     """A demotion that demotes nothing is worse than none, because it reads as done."""
-    owner = _user("a", "use-case-admin")
+    owner = _user("a", "global-admin")
     _create(_client(owner), "uc-a")
     _client(owner).post(
         f"{BASE}uc-a/groups/", {"group_path": GROUP, "role": "admin"}, format="json"
     )
     _client(owner).post(f"{BASE}uc-a/groups/", {"group_path": GROUP, "role": "user"}, format="json")
 
-    member = _user("b", "use-case-admin", groups=(GROUP,))
+    member = _user("b", groups=(GROUP,))
 
     assert _client(member).patch(f"{BASE}uc-a/", {"name": "x"}, format="json").status_code == 403
 
@@ -188,13 +192,13 @@ def test_lowering_a_grant_actually_lowers_it() -> None:
 def test_the_console_reports_the_permission_the_server_would_enforce() -> None:
     """`FRD-206`'s agreement rule, now over a group grant: the object says what this caller may do,
     and the answer has to match what the request would return."""
-    owner = _user("a", "use-case-admin")
+    owner = _user("a", "global-admin")
     _create(_client(owner), "uc-a")
     _client(owner).post(
         f"{BASE}uc-a/groups/", {"group_path": GROUP, "role": "admin"}, format="json"
     )
 
-    member = _user("b", "use-case-admin", groups=(GROUP,))
+    member = _user("b", groups=(GROUP,))
     reported = _client(member).get(f"{BASE}uc-a/").data["permissions"]
 
     assert reported["can_manage"] is True
@@ -207,10 +211,10 @@ def test_the_console_reports_the_permission_the_server_would_enforce() -> None:
 
 
 def test_revoking_a_group_takes_its_access_away() -> None:
-    owner = _user("a", "use-case-admin")
+    owner = _user("a", "global-admin")
     _create(_client(owner), "uc-a")
     _client(owner).post(f"{BASE}uc-a/groups/", {"group_path": GROUP}, format="json")
-    member = _user("b", "use-case-user", groups=(GROUP,))
+    member = _user("b", groups=(GROUP,))
     assert _client(member).get(BASE).data["count"] == 1
 
     _client(owner).delete(f"{BASE}uc-a/groups/revoke/?group_path={GROUP}")
@@ -220,10 +224,10 @@ def test_revoking_a_group_takes_its_access_away() -> None:
 
 def test_revoking_a_group_leaves_a_direct_grant_intact() -> None:
     """`FRD-209` FR-5. Revoking one route must not silently close another."""
-    owner = _user("a", "use-case-admin")
+    owner = _user("a", "global-admin")
     _create(_client(owner), "uc-a")
     _client(owner).post(f"{BASE}uc-a/groups/", {"group_path": GROUP}, format="json")
-    member = _user("b", "use-case-user", groups=(GROUP,))
+    member = _user("b", groups=(GROUP,))
     _client(owner).post(f"{BASE}uc-a/members/", {"username": "b", "role": "user"}, format="json")
 
     _client(owner).delete(f"{BASE}uc-a/groups/revoke/?group_path={GROUP}")
@@ -232,7 +236,7 @@ def test_revoking_a_group_leaves_a_direct_grant_intact() -> None:
 
 
 def test_revoking_something_that_was_never_granted_says_so() -> None:
-    owner = _user("a", "use-case-admin")
+    owner = _user("a", "global-admin")
     _create(_client(owner), "uc-a")
 
     response = _client(owner).delete(f"{BASE}uc-a/groups/revoke/?group_path=/nope")
@@ -243,11 +247,11 @@ def test_revoking_something_that_was_never_granted_says_so() -> None:
 def test_a_reader_may_see_who_has_access_but_not_change_it() -> None:
     """Who can reach a use case is not a secret from its own members — and hiding it makes "why
     can that person call this" unanswerable without a database."""
-    owner = _user("a", "use-case-admin")
+    owner = _user("a", "global-admin")
     _create(_client(owner), "uc-a")
     _client(owner).post(f"{BASE}uc-a/groups/", {"group_path": GROUP}, format="json")
 
-    member = _user("b", "use-case-user", groups=(GROUP,))
+    member = _user("b", groups=(GROUP,))
     assert _client(member).get(f"{BASE}uc-a/groups/").status_code == 200
     assert (
         _client(member).post(f"{BASE}uc-a/groups/", {"group_path": "/x"}, format="json").status_code
@@ -261,7 +265,7 @@ def test_a_reader_may_see_who_has_access_but_not_change_it() -> None:
 def test_a_grant_reaching_nobody_is_visible_as_such() -> None:
     """A path that matches nobody is silently inert; an access list that showed it identically to
     a working one could not be audited (`FRD-209` FR-8)."""
-    owner = _user("a", "use-case-admin")
+    owner = _user("a", "global-admin")
     _create(_client(owner), "uc-a")
     _client(owner).post(f"{BASE}uc-a/groups/", {"group_path": "/nobody/here"}, format="json")
 
@@ -269,11 +273,11 @@ def test_a_grant_reaching_nobody_is_visible_as_such() -> None:
 
 
 def test_the_count_is_of_people_management_has_seen() -> None:
-    owner = _user("a", "use-case-admin")
+    owner = _user("a", "global-admin")
     _create(_client(owner), "uc-a")
     _client(owner).post(f"{BASE}uc-a/groups/", {"group_path": GROUP}, format="json")
-    _user("b", "use-case-user", groups=(GROUP,))
-    _user("c", "use-case-user", groups=(GROUP,))
+    _user("b", groups=(GROUP,))
+    _user("c", groups=(GROUP,))
 
     assert _client(owner).get(f"{BASE}uc-a/groups/").data[0]["reaches"] == 2
 
@@ -284,10 +288,10 @@ def test_the_count_is_of_people_management_has_seen() -> None:
 def test_leaving_a_group_in_keycloak_takes_the_access_away_on_the_next_token() -> None:
     """The identity provider stays the source of truth — this is the failure the feature exists to
     prevent: an access list that only ever grows."""
-    owner = _user("a", "use-case-admin")
+    owner = _user("a", "global-admin")
     _create(_client(owner), "uc-a")
     _client(owner).post(f"{BASE}uc-a/groups/", {"group_path": GROUP}, format="json")
-    member = _user("b", "use-case-user", groups=(GROUP,))
+    member = _user("b", groups=(GROUP,))
     assert _client(member).get(BASE).data["count"] == 1
 
     sync_user_groups(member, {"groups": []})
@@ -325,10 +329,10 @@ def test_adding_a_person_grants_the_permission_it_promises() -> None:
     exactly what it is for. Both kinds of grant go through the same `_grant`, so one of them
     silently stopping would take the other with it.
     """
-    owner = _user("a", "use-case-admin")
+    owner = _user("a", "global-admin")
     client = _client(owner)
     _create(client, "uc-a")
-    added = _user("b", "use-case-user")
+    added = _user("b")
 
     response = client.post(f"{BASE}uc-a/members/", {"username": "b", "role": "user"}, format="json")
 
@@ -338,20 +342,20 @@ def test_adding_a_person_grants_the_permission_it_promises() -> None:
 
 def test_a_direct_admin_grant_may_change_the_use_case() -> None:
     """The other half of what `_grant` promises: `admin` is not the same as `user`."""
-    owner = _user("a", "use-case-admin")
+    owner = _user("a", "global-admin")
     client = _client(owner)
     _create(client, "uc-a")
-    added = _user("b", "use-case-admin")
+    added = _user("b", "global-admin")
     client.post(f"{BASE}uc-a/members/", {"username": "b", "role": "admin"}, format="json")
 
     assert _client(added).patch(f"{BASE}uc-a/", {"name": "x"}, format="json").status_code == 200
 
 
 def test_removing_a_person_takes_the_permission_away() -> None:
-    owner = _user("a", "use-case-admin")
+    owner = _user("a", "global-admin")
     client = _client(owner)
     _create(client, "uc-a")
-    added = _user("b", "use-case-user")
+    added = _user("b")
     client.post(f"{BASE}uc-a/members/", {"username": "b", "role": "user"}, format="json")
     assert _client(added).get(BASE).data["count"] == 1
 
@@ -361,7 +365,7 @@ def test_removing_a_person_takes_the_permission_away() -> None:
 
 
 def test_deleting_the_use_case_takes_its_grants_with_it() -> None:
-    owner = _user("a", "use-case-admin")
+    owner = _user("a", "global-admin")
     client = _client(owner)
     _create(client, "uc-a")
     client.post(f"{BASE}uc-a/groups/", {"group_path": GROUP}, format="json")

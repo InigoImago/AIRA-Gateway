@@ -37,7 +37,7 @@ async function grantViaApi(page: Page, slug: string, path: string, role = 'user'
 
 test.describe('Access by group', () => {
   test('a granted group is listed as a group, with how far it reaches', async ({ page }) => {
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('grant');
     await createUseCase(page, slug, 'Group grant probe');
     await grantViaApi(page, slug, DEPARTMENT);
@@ -55,7 +55,7 @@ test.describe('Access by group', () => {
   }) => {
     // A path matching nobody is silently inert: nothing fails, nobody gets access, and an access
     // list that showed it identically to a working grant could not be audited.
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('empty');
     await createUseCase(page, slug, 'Empty grant probe');
     await grantViaApi(page, slug, '/abteilungen/nobody-is-in-this');
@@ -70,7 +70,7 @@ test.describe('Access by group', () => {
     // Typing, waiting for the debounce, and choosing from a list are interactions jsdom has no
     // concept of — and the picker refusing to grant until something is *chosen* is the property
     // that stops a grant naming a group that does not exist.
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('picker');
     await createUseCase(page, slug, 'Picker probe');
     // The directory falls back to what the console already knows when no admin client is
@@ -105,7 +105,7 @@ test.describe('Access by group', () => {
   });
 
   test('a person can still be granted, and is labelled as a person', async ({ page }) => {
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('person');
     await createUseCase(page, slug, 'Person grant probe');
 
@@ -123,7 +123,7 @@ test.describe('Access by group', () => {
   });
 
   test('revoking a group takes it off the list', async ({ page }) => {
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('revoke');
     await createUseCase(page, slug, 'Revoke probe');
     await grantViaApi(page, slug, DEPARTMENT);
@@ -161,7 +161,7 @@ test.describe('Access by group', () => {
     // "No results" from a directory nobody could reach reads exactly like "no such group", and
     // those are different answers to act on. This stack has no admin client, so it is the
     // degraded case — and it has to say so.
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('degraded');
     await createUseCase(page, slug, 'Degraded directory probe');
 

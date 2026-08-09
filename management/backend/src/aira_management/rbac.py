@@ -1,35 +1,77 @@
-"""Role-based access control (FRD-201).
+"""Role-based access control (FRD-201, ADR-0017).
 
-Keycloak realm roles are the source of truth: on authentication they are synced onto the
-user's Django groups (the five AIRA roles). DRF permission classes gate views by role, and
-``scope_queryset`` narrows list results to what the caller may see (governance roles see
-everything; others are limited to their object-level permissions via ``django-guardian``).
+**Group membership is the source of truth.** On authentication the Keycloak groups in the token
+are resolved through the configured mapping and synced onto the user's Django groups. A realm role
+on the same token is not read: assigning one directly grants nothing, which is the guarantee that
+made group membership a single point of truth rather than a convention.
+
+Only three roles arrive this way. `use-case-admin` and `use-case-user` are not organisation-wide
+facts about a person — they are a group's relationship to *one* use case, held in
+`UseCaseGroupGrant` and enforced through `django-guardian` object permissions (`FRD-209`). A
+predicate that wants "administers a use case" asks the object, never the token.
+
+DRF permission classes gate views by role, and ``scope_queryset`` narrows list results to what the
+caller may see (oversight roles see everything; others are limited to their object-level
+permissions).
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+from django.conf import settings
 from django.contrib.auth.models import Group
 from django.db.models import QuerySet
 from guardian.shortcuts import get_objects_for_user
 from rest_framework.permissions import BasePermission
 
+from aira_common.roles import parse_role_groups, roles_from_groups
 from aira_management.roles import ALL_ROLES, GOVERNANCE_ROLES, OVERSIGHT_ROLES, Role
+
+#: The two object permissions a role gate ever has to ask about. Defined here rather than in
+#: `apps.usecases.access` because that module imports *this* one — and one definition is the whole
+#: reason `access.py` exists (`FRD-206`: a predicate restated is a predicate that drifts).
+VIEW_PERM = "usecases.view_usecase"
+MANAGE_PERM = "usecases.manage_members"
 
 # Roles with organisation-wide read visibility (oversight).
 # Defined once in aira_common.roles so the gateway cannot drift from it (ADR-0009).
 
 
+def role_groups() -> dict[Role, tuple[str, ...]]:
+    """The configured group → role mapping (`ADR-0017`).
+
+    Read from Django settings on each call rather than captured at import: the tests configure it
+    per case, and a module-level snapshot would make the first test's mapping everybody's.
+    """
+    return parse_role_groups(getattr(settings, "AIRA_ROLE_GROUPS", "") or "")
+
+
 def sync_user_roles(user: Any, claims: dict[str, Any]) -> None:
-    """Make the user's group membership match the realm roles in the token."""
-    token_roles = set((claims.get("realm_access") or {}).get("roles", []))
+    """Make the user's Django groups match the roles their **Keycloak groups** confer.
+
+    The token is the source of truth on every request, so somebody removed from the group in the
+    directory loses the role on their next token without anything here being told — the same
+    property `sync_user_groups` relies on for use-case access.
+
+    Every role is removed as well as added. A role that is only ever granted is one nobody can
+    take away, and the whole point of reading this from the directory is that the directory
+    decides.
+    """
+    held = roles_from_groups(_token_groups(claims), role_groups())
     for role in ALL_ROLES:
         group, _created = Group.objects.get_or_create(name=str(role))
-        if str(role) in token_roles:
+        if str(role) in held:
             user.groups.add(group)
         else:
             user.groups.remove(group)
+
+
+def _token_groups(claims: dict[str, Any]) -> list[str]:
+    """The `groups` claim, defensively. A malformed claim confers nothing rather than raising:
+    a realm misconfiguration must not stop authentication, it must stop *authority*."""
+    raw = claims.get("groups")
+    return [path for path in (raw if isinstance(raw, list) else []) if isinstance(path, str)]
 
 
 #: Django groups that mirror a Keycloak group path are prefixed, so they can never collide with
@@ -132,11 +174,31 @@ class IsITSteuerung(_HasAnyRole):
     roles = (Role.GLOBAL_ADMIN, Role.IT_STEUERUNG)
 
 
-class IsUseCaseAdmin(_HasAnyRole):
-    roles = (Role.GLOBAL_ADMIN, Role.USE_CASE_ADMIN)
+class IsGlobalAdminOrUseCaseAdministrator(BasePermission):
+    """A Global Administrator, or somebody who administers **at least one** use case (`ADR-0017`).
+
+    `use-case-admin` was a realm role and is not one any more: administering a use case is a group
+    grant on *that* use case. The question this class asks is the one the old role approximated —
+    "is this person an administrator anywhere" — and it asks the object grants, which is where the
+    answer has actually lived since `FRD-209`.
+
+    Used by the directory search. Narrowing it to Global Administrators would take the group and
+    person picker away from exactly the people who add members, which is `FRD-206`'s defect
+    inverted: a capability with no way in, and that kind does not announce itself.
+    """
+
+    def has_permission(self, request: Any, view: Any) -> bool:  # noqa: ARG002
+        from aira_management.apps.usecases.models import UseCase
+
+        user = request.user
+        if has_role(user, Role.GLOBAL_ADMIN):
+            return True
+        if not getattr(user, "is_authenticated", False):
+            return False
+        return get_objects_for_user(user, MANAGE_PERM, klass=UseCase).exists()
 
 
-class MayTestModels(_HasAnyRole):
+class MayTestModels(BasePermission):
     """Who may put a battery of questions to a model (`FRD-504`).
 
     Three roles rather than one set already in use, and each is here for its own reason: a Global
@@ -148,10 +210,20 @@ class MayTestModels(_HasAnyRole):
     traffic to, and IT Security is deliberately a member of nothing (`ADR-0007`). Requiring both
     made the feature unusable by everybody, which is the clearest sign that the two requirements
     were never the same requirement.
+
+    **Re-derived for `ADR-0017`.** The third clause used to be the `use-case-admin` realm role.
+    That role no longer exists, and the honest replacement is not "administers a use case" but
+    `FRD-504`'s own sentence — *whoever may call a model may test one* — which is: belongs to at
+    least one use case. Narrowing it to administrators would have taken the feature away from
+    people the previous rule included, silently, while looking like a faithful translation.
     """
 
-    roles = (Role.GLOBAL_ADMIN, Role.IT_SECURITY, Role.USE_CASE_ADMIN)
+    def has_permission(self, request: Any, view: Any) -> bool:  # noqa: ARG002
+        from aira_management.apps.usecases.models import UseCase
 
-
-class IsUseCaseUser(_HasAnyRole):
-    roles = (Role.GLOBAL_ADMIN, Role.USE_CASE_ADMIN, Role.USE_CASE_USER)
+        user = request.user
+        if has_role(user, Role.GLOBAL_ADMIN, Role.IT_SECURITY):
+            return True
+        if not getattr(user, "is_authenticated", False):
+            return False
+        return get_objects_for_user(user, VIEW_PERM, klass=UseCase).exists()

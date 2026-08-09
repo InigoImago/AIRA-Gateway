@@ -9,6 +9,8 @@ from aira_management.rbac import sync_user_roles
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
 
+from .conftest import role_claims
+
 pytestmark = pytest.mark.django_db
 
 BASE = "/api/v1/models/"
@@ -16,7 +18,7 @@ BASE = "/api/v1/models/"
 
 def _user(username: str, *roles: str):
     user = get_user_model().objects.create(username=username)
-    sync_user_roles(user, {"realm_access": {"roles": list(roles)}})
+    sync_user_roles(user, role_claims(*roles))
     return user
 
 
@@ -49,15 +51,18 @@ PRICED = {
 def test_only_a_global_admin_may_set_prices() -> None:
     # Prices come from the provider contract, not from a use case — so they are maintained
     # centrally, and everyone else only reads them.
-    for role in ("use-case-admin", "it-steuerung", "it-security"):
+    # Every role that is **not** global-admin, plus somebody holding none — since `ADR-0017` the
+    # last of those is what a use-case administrator looks like at the installation level.
+    for role in ("it-steuerung", "it-security"):
         response = _client(_user(f"u-{role}", role)).post(BASE, PRICED, format="json")
         assert response.status_code == 403, role
+    assert _client(_user("u-none")).post(BASE, PRICED, format="json").status_code == 403
     assert Model.objects.count() == 0
 
 
 def test_any_authenticated_user_may_read_the_catalog() -> None:
     _client(_user("admin", "global-admin")).post(BASE, PRICED, format="json")
-    response = _client(_user("reader", "use-case-user")).get(BASE)
+    response = _client(_user("reader")).get(BASE)
     assert response.status_code == 200
     assert response.json()[0]["name"] == "gemini-2.0-flash"
 

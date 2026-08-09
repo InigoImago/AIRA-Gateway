@@ -50,6 +50,15 @@ class ManagementSettings(BaseAiraSettings):
     directory_client_id: str = ""
     directory_client_secret: str = ""
 
+    #: Which Keycloak group confers which AIRA role (`ADR-0017`), as
+    #: ``role=/path[,/path];role=/path``. Group membership is the **only** source of a role — a
+    #: realm role on the same token is not read, so assigning one directly grants nothing.
+    #:
+    #: `use-case-admin` and `use-case-user` are deliberately not settable here: administering a use
+    #: case is a relationship between a group and *that* use case, held in `UseCaseGroupGrant`
+    #: (`FRD-209`), and naming it here would grant somebody every use case at once.
+    role_groups: str = ""
+
     @property
     def oidc_issuer_base(self) -> str:
         """The Keycloak root, derived from the issuer (`.../realms/<realm>`).

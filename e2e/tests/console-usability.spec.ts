@@ -263,7 +263,7 @@ test.describe('Lists stay usable as they grow', () => {
   test('the use-case overview can be searched', async ({ page }) => {
     // A live round found 801 use cases in one installation. Nothing about the screen was wrong,
     // and it was unusable.
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('findme');
     await createUseCase(page, slug, 'Findable probe');
 
@@ -360,7 +360,7 @@ test.describe("Paging is the server's, where the list is unbounded", () => {
   });
 
   test('the search is answered by the database, not by the page', async ({ page }) => {
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('needle');
     await createUseCase(page, slug, 'Needle probe');
 
@@ -382,7 +382,7 @@ test.describe("A use case's own anomaly rules", () => {
   test('can be created and changed by whoever administers the use case', async ({ page }) => {
     // The security console said a use-case rule "is changed on that use case" and there was no
     // such screen — an instruction with no destination. This is the destination.
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('rules');
     await createUseCase(page, slug, 'Rules probe');
 

@@ -117,7 +117,7 @@ describe('App', () => {
   });
 
   it('does not offer it to somebody who only runs a use case', () => {
-    const el = render(['use-case-admin']);
+    const el = render([]);
 
     expect(el.querySelector('[data-testid="nav-requests"]')).toBeNull();
   });

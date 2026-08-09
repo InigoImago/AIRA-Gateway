@@ -50,7 +50,9 @@ function setup(
           get: () =>
             of({
               username: 'u',
-              roles: options.roles ?? ['use-case-admin'],
+              // A real caller: `use-case-admin` is not a role any more (`ADR-0017`), and a
+              // harness whose default nobody can hold is a harness testing a different product.
+              roles: options.roles ?? ['global-admin'],
               use_cases: [],
             } as unknown as Me),
         },
@@ -216,11 +218,21 @@ describe('UseCaseList', () => {
   });
 
   it('offers the action only to somebody the server would let through', () => {
-    const reader = setup({ roles: ['use-case-user'], open: false });
+    /**
+     * **Narrowed with `ADR-0017`.** Creating a use case is a Global Administrator's act — they
+     * create it and name the group that administers it. `use-case-admin` used to pass this gate
+     * and is not a role at all any more, so the case that proves the narrowing is somebody who
+     * administers a use case and is refused here.
+     */
+    const reader = setup({ roles: [], open: false });
     expect(reader.component.canCreate()).toBe(false);
     expect(reader.text()).not.toContain('New use case');
 
-    const admin = setup({ roles: ['use-case-admin'], open: false });
+    // Oversight is not authority: IT Steuerung sees every use case and creates none.
+    const governance = setup({ roles: ['it-steuerung'], open: false });
+    expect(governance.component.canCreate()).toBe(false);
+
+    const admin = setup({ roles: ['global-admin'], open: false });
     expect(admin.component.canCreate()).toBe(true);
     expect(admin.text()).toContain('New use case');
   });

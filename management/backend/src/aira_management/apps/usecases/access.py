@@ -19,12 +19,14 @@ from django.db.models import QuerySet
 
 from aira_common.access import resolve
 from aira_management.apps.usecases.models import UseCase, UseCaseGroupGrant, UseCaseMembership
-from aira_management.rbac import KEYCLOAK_GROUP_PREFIX, has_role
+from aira_management.rbac import KEYCLOAK_GROUP_PREFIX, MANAGE_PERM, VIEW_PERM, has_role
 from aira_management.roles import Role
 
-VIEW = "usecases.view_usecase"
+#: Re-exported from `rbac`, which the role gates also read. Two spellings of one permission string
+#: is the drift this module was created to stop.
+VIEW = VIEW_PERM
 CHANGE = "usecases.change_usecase"
-MANAGE = "usecases.manage_members"
+MANAGE = MANAGE_PERM
 
 
 def may_admin(user: Any, usecase: UseCase) -> bool:

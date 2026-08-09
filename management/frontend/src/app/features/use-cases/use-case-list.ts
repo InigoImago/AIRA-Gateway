@@ -91,13 +91,17 @@ export class UseCaseList implements OnInit {
   }
 
   /**
-   * Who may create one. Offering the action to somebody the backend will refuse is the same
-   * defect as showing member controls to a reader: the console says yes and the server says no.
+   * Who may create one: a **Global Administrator**, and nobody else (`ADR-0017`).
+   *
+   * It read `global-admin || use-case-admin` while that was a realm role. It is not one any more,
+   * so the second clause could only ever be false — and a condition that cannot fire is worse than
+   * one that is wrong, because it reads as a rule somebody still relies on. The narrowing is the
+   * owner's: a Global Administrator creates a use case and names the group that administers it.
+   *
+   * Offering the action to somebody the backend will refuse is the same defect as showing member
+   * controls to a reader: the console says yes and the server says no.
    */
-  protected readonly canCreate = computed(() => {
-    const roles = this.me()?.roles ?? [];
-    return roles.includes('global-admin') || roles.includes('use-case-admin');
-  });
+  protected readonly canCreate = computed(() => (this.me()?.roles ?? []).includes('global-admin'));
 
   /** Why the form cannot be submitted yet — shown inline instead of failing silently. */
   protected slugError(): string | null {

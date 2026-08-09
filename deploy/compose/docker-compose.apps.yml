@@ -69,6 +69,10 @@ services:
       AIRA_OIDC_ISSUER: ${AIRA_OIDC_ISSUER:-http://localhost:8080/realms/aira}
       AIRA_OIDC_JWKS_URI: ${AIRA_OIDC_JWKS_URI:-http://keycloak:8080/realms/aira/protocol/openid-connect/certs}
       AIRA_OIDC_AUDIENCE: ${AIRA_OIDC_AUDIENCE:-}
+      # Which Keycloak group confers which AIRA role (`ADR-0017`). Group membership is the **only**
+      # source of a role — a realm role on the same token is not read — so an installation that
+      # leaves this empty has nobody holding one.
+      AIRA_ROLE_GROUPS: ${AIRA_ROLE_GROUPS:-global-admin=/aira/global-admins;it-security=/aira/it-security;it-steuerung=/aira/it-steuerung}
       AIRA_GOOGLE_API_KEY: ${AIRA_GOOGLE_API_KEY:-}
       # Servers speaking the OpenAI dialect (FRD-123). Empty registers none. The in-network name
       # is `ollama`, not `localhost` — the same split as the JWKS URI above, and the same reason.
@@ -135,6 +139,10 @@ services:
       AIRA_OIDC_ISSUER: ${AIRA_OIDC_ISSUER:-http://localhost:8080/realms/aira}
       AIRA_OIDC_JWKS_URI: ${AIRA_OIDC_JWKS_URI:-http://keycloak:8080/realms/aira/protocol/openid-connect/certs}
       AIRA_OIDC_AUDIENCE: ${AIRA_OIDC_AUDIENCE:-}
+      # Which Keycloak group confers which AIRA role (`ADR-0017`). Group membership is the **only**
+      # source of a role — a realm role on the same token is not read — so an installation that
+      # leaves this empty has nobody holding one.
+      AIRA_ROLE_GROUPS: ${AIRA_ROLE_GROUPS:-global-admin=/aira/global-admins;it-security=/aira/it-security;it-steuerung=/aira/it-steuerung}
       AIRA_OTEL_ENABLED: ${AIRA_OTEL_ENABLED:-false}
       AIRA_OTEL_ENDPOINT: http://otel-collector:4318
       AIRA_LOG_JSON: "true"

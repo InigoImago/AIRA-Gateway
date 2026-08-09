@@ -10,7 +10,7 @@ import { USERS, createUseCase, expectNoHorizontalOverflow, login, uniqueSlug } f
  */
 test.describe('Rate limits', () => {
   test('a limit can be set and is listed with its effective burst', async ({ page }) => {
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('rate');
     await createUseCase(page, slug, 'Rate probe');
 
@@ -29,7 +29,7 @@ test.describe('Rate limits', () => {
 
   test('an unset burst is shown as the per-minute figure, not as zero', async ({ page }) => {
     // Otherwise the table reads as "nothing may arrive at once", which is not what was saved.
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('burst');
     await createUseCase(page, slug, 'Burst probe');
 
@@ -44,7 +44,7 @@ test.describe('Rate limits', () => {
   });
 
   test('an invalid limit is refused with a reason, not just a dead button', async ({ page }) => {
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('invalid-rate');
     await createUseCase(page, slug, 'Invalid rate probe');
 
@@ -63,7 +63,7 @@ test.describe('Rate limits', () => {
   });
 
   test('a member limit names the member it binds', async ({ page }) => {
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('member-rate');
     await createUseCase(page, slug, 'Member rate probe');
 
@@ -82,7 +82,7 @@ test.describe('Rate limits', () => {
   });
 
   test('a limit can be removed again', async ({ page }) => {
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('remove-rate');
     await createUseCase(page, slug, 'Remove rate probe');
 
@@ -98,7 +98,7 @@ test.describe('Rate limits', () => {
   });
 
   test('the tab is deep-linkable and does not overflow its width', async ({ page }) => {
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('rate-layout');
     await createUseCase(page, slug, 'Rate layout probe');
 

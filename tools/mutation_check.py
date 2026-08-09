@@ -803,11 +803,15 @@ MUTATIONS = [
         "gateway/tests/test_attribution.py",
     ),
     Mutation(
+        # **Re-anchored 2026-08-09** (`ADR-0017`). It named `realm_roles(claims)`, which no longer
+        # exists — so the harness replaced nothing and reported a property no test would have
+        # noticed losing. The property itself is unchanged: the roles a token confers must reach
+        # the principal, or every oversight decision in the data plane silently answers "no".
         "O3",
-        "the roles a token carries reach the principal",
+        "the roles a token confers reach the principal",
         "gateway/src/aira_gateway/auth/oidc.py",
-        "            roles=realm_roles(claims),",
-        "            roles=(),",
+        "            roles=roles_from_groups(",
+        "            roles=(),  # was: roles_from_groups(",
         "gateway/tests/test_attribution.py gateway/tests/test_auth_oidc.py",
     ),
     Mutation(
@@ -2485,6 +2489,103 @@ MUTATIONS = [
         "        session.add(\n            PayloadAccess(",
         "        _unused = (\n            PayloadAccess(",
         "gateway/tests/test_payload_access.py",
+    ),
+    # ---- a role is held through a group, and only through a group (ADR-0017) ----------------
+    #
+    # The change with the most consequence in the system: three predicates decide oversight,
+    # governance and incident authority, and all three read what these mutations guard. `R1` is
+    # the guarantee itself — a realm role must confer nothing — and it is stated as the thing that
+    # must *not* work, because reading the code only shows the claim is unused, which is not the
+    # same as showing it cannot grant.
+    Mutation(
+        "R20",
+        "a realm role on the token confers nothing; only a configured group does",
+        "management/backend/src/aira_management/rbac.py",
+        "    held = roles_from_groups(_token_groups(claims), role_groups())",
+        '    held = set((claims.get("realm_access") or {}).get("roles", []))',
+        "management/backend/tests/test_rbac.py",
+    ),
+    Mutation(
+        "R21",
+        "a role the caller no longer holds is removed, not merely never added",
+        "management/backend/src/aira_management/rbac.py",
+        "        else:\n            user.groups.remove(group)",
+        "        else:\n            pass",
+        "management/backend/tests/test_rbac.py",
+    ),
+    Mutation(
+        "R22",
+        "the group match is exact, so a neighbouring path confers nothing",
+        "libs/src/aira_common/roles.py",
+        "if role in mapping and any(path in held for path in mapping[role])",
+        "if role in mapping and any(h.startswith(path) for path in mapping[role] for h in held)",
+        "libs/tests/test_roles.py",
+    ),
+    Mutation(
+        "R23",
+        "a use-case role cannot be conferred by a group, which would grant every use case at once",
+        "libs/src/aira_common/roles.py",
+        "        if role not in CONFIGURABLE_ROLES:",
+        "        if False:",
+        "libs/tests/test_roles.py",
+    ),
+    Mutation(
+        "R24",
+        "an unknown role in the mapping refuses instead of granting nothing quietly",
+        "libs/src/aira_common/roles.py",
+        "            raise RoleMappingError(\n"
+        "                f\"'{name.strip()}' is not an AIRA role. Expected: {allowed}.\"\n"
+        "            ) from exc",
+        "            continue",
+        "libs/tests/test_roles.py",
+    ),
+    Mutation(
+        "R25",
+        "a deployment with no global-admin group refuses to start",
+        "management/backend/src/aira_management/config/security.py",
+        "    if Role.GLOBAL_ADMIN not in _role_groups(settings):",
+        "    if False:",
+        "management/backend/tests/test_hardening.py",
+    ),
+    Mutation(
+        "R26",
+        "/me reports the roles the server enforces, not the token's claim",
+        "management/backend/src/aira_management/apps/api/views.py",
+        '                "roles": [str(role) for role in ALL_ROLES if str(role) in held],',
+        '                "roles": (claims.get("realm_access") or {}).get("roles", []),',
+        "management/backend/tests/test_api.py",
+    ),
+    Mutation(
+        "R27",
+        "creating a use case is a Global Administrator's act",
+        "management/backend/src/aira_management/apps/usecases/views.py",
+        "            return [IsAuthenticated(), IsGlobalAdmin()]",
+        "            return [IsAuthenticated()]",
+        "management/backend/tests/test_usecases.py",
+    ),
+    # ---- one use case's own consumption (FRD-603) --------------------------------------------
+    #
+    # The endpoint could always report one use case; what it could not do was let a caller *ask*
+    # for one without letting them ask for somebody else's. `N55` is the whole security property
+    # of this parameter — written as `scope = (use_case,)` it reads as a narrowing and is a
+    # widening. `N56` guards the distinction the console is built on: an empty report because
+    # nothing happened, and an empty report because the use case is not this caller's, are two
+    # facts, and a screen told only "empty" reports the second as the first.
+    Mutation(
+        "N55",
+        "a use-case filter narrows what a caller may see and can never widen it",
+        "gateway/src/aira_gateway/api/reporting.py",
+        "        if scope is None or use_case in scope:\n            scope = (use_case,)",
+        "        if True:\n            scope = (use_case,)",
+        "gateway/tests/test_reporting.py",
+    ),
+    Mutation(
+        "N56",
+        "an empty report says whether it was allowed to be full",
+        "gateway/src/aira_gateway/api/reporting.py",
+        "            scope, in_scope = (), False",
+        "            scope, in_scope = (), True",
+        "gateway/tests/test_reporting.py",
     ),
     # ---- access by group (FRD-209) ----------------------------------------------------------
     Mutation(

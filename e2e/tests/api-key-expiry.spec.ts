@@ -12,7 +12,7 @@ import { USERS, createUseCase, login, uniqueSlug } from './support';
  */
 test.describe('API key expiry', () => {
   test('a key issued with a lifetime shows its end date', async ({ page }) => {
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = await createUseCase(page, uniqueSlug('expiry'), 'Key expiry');
 
     await page.goto(`/use-cases/${slug}?tab=keys`);
@@ -37,7 +37,7 @@ test.describe('API key expiry', () => {
      * It is the case that decides whether anybody has to *remember* to set a lifetime, and nobody
      * does, so the server fills in the configured default and the row shows a date either way.
      */
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = await createUseCase(page, uniqueSlug('default'), 'Key with the default life');
 
     await page.goto(`/use-cases/${slug}?tab=keys`);
@@ -57,7 +57,7 @@ test.describe('API key expiry', () => {
   test('the form states the policy the server enforces', async ({ page }) => {
     /** A number the console invents would be confidently wrong the first time an installation
      *  changed the setting — and the reader would then face a refusal they cannot explain. */
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = await createUseCase(page, uniqueSlug('policy'), 'Key policy shown');
 
     await page.goto(`/use-cases/${slug}?tab=keys`);

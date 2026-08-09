@@ -5,6 +5,164 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-09 — A role is held through a group, and only through a group (`ADR-0017`, `FRD-605`)
+
+Owner's rule: **group memberships are the single point of truth**, and individual memberships are
+set in Keycloak or by an external system driving it. AIRA had two mechanisms answering "who is
+this" — realm roles for the five roles, groups for use-case access — which is `FRD-209`'s defect
+one level up, and `FRD-209` was written to remove exactly that shape.
+
+Two ways to get there with Keycloak, and the difference is the whole decision. **Mapping the realm
+role onto a group** costs no code and leaves the single point of truth a *convention*: nothing stops
+an administrator also assigning the role to a person, and a screen that reports it is a witness, not
+a rule. **AIRA mapping group → role** makes a direct assignment structurally inert. The requirement
+was the guarantee, so: `AIRA_ROLE_GROUPS=global-admin=/aira/global-admins;…`, and
+`realm_access.roles` is not read at all.
+
+**The other two roles cease to exist.** `use-case-admin` and `use-case-user` were never
+organisation-wide facts about a person — administering a use case is a group's relationship to
+*that* use case, and `UseCaseGroupGrant` has held it since `FRD-209`. Evidence that they had been
+redundant for months: `may_admin`, `may_manage`, `is_member` and `scope_queryset` needed **no
+change**, and `IsUseCaseUser` turned out to be defined, exported and used by nothing.
+
+**Smaller than expected in the data plane, sharper than expected in the tests.** The gateway's
+whole role vocabulary is oversight/governance/incident, all three organisation-wide — so its diff is
+**one call**. Management needed `sync_user_roles` and three predicates, each re-derived from what it
+*meant*: creating a use case is a Global Administrator's act (a narrowing — the old role let anybody
+administering one use case create another); the directory picker is "administers **any** use case",
+because taking it from the people who add members is `FRD-206`'s defect inverted; running a model
+test is `FRD-504`'s own sentence, *whoever may call a model may test one*.
+
+The migration of thirteen test files **was** the audit. The shared helper refuses the two dead roles
+**by name** instead of granting nothing, so every call site had to be looked at — and a blanket
+rewrite to `global-admin` made the *boundary* tests pass for the wrong reason, because a Global
+Administrator is refused by nothing. They use a caller with no organisation-wide role now, which is
+what a use-case administrator is at that level. Same trap in the frontend harness, whose default
+role was `use-case-admin`: **a default nobody can hold is a harness testing a different product.**
+
+Two things the change turned up rather than caused: all five Keycloak clients already carried the
+`groups` mapper (`FRD-209`'s live round had closed that), and the console's create gate read
+`global-admin || use-case-admin` — a second clause that could now never be true, which is worse than
+a wrong one because it reads as a rule somebody still relies on.
+
+Verified live: a token carrying `groups: ['/aira/global-admins']` and `realm_access: None` resolves
+to oversight. Boot refusal is **environment-shaped** (`ADR-0015`), not unconditional — the demo has
+to start on a fresh checkout.
+
+**And the live round found the thing reading had not.** `/me` reported `realm_access.roles`
+**straight off the claim** — a third answer beside `sync_user_roles` and the permission classes,
+which agreed only because all three read the same claim. The moment roles came from groups they did
+not: the server let a Global Administrator through and the console was told they held no roles,
+which showed up as a missing "New use case" button. It reports the caller's Django groups now — what
+every permission class compares against — and `use_cases` returns slugs rather than the whole
+`groups` claim, which was loose before and wrong once that claim carries the role groups too.
+
+Second finding, from recreating the realm: **new realm, new subject ids**, and `OidcIdentity` binds
+to the old ones — so the next sign-in provisions `admin-ec05a3db` beside `admin`, owning nothing.
+Deleting the duplicates would have cascaded through `ApiKey.owner` and destroyed 323 keys. The
+repair is a **rebind**, now in `deploy/compose/README.md`, because a real change of identity
+provider does exactly the same thing.
+
+---
+
+## 2026-08-09 — Who answers for a credential (`FRD-604`, Stage A)
+
+Owner's context, and it decides the shape: an **agentic coding** project where people issue their
+**own** keys and hand them to an assistant — IT Security's question when one goes wrong is *whose
+agent was that* — beside a **RAG chatbot** with no agentic capability and one credential for the
+whole service. One console, two opposite credential shapes.
+
+**The chain already existed and nobody was told.** `ApiKey.owner` is a foreign key to a person, the
+issue event carries `subject = user.get_username()`, the gateway writes it onto **every** audit row
+beside the key's prefix, and the requests view filters by key. Nothing was missing in the data. What
+was missing is that the console recorded the issuer and never said so at the moment of issuing — and
+then printed that person's username beside an agent's traffic with no sign that it names *who
+answers for the credential* rather than *who wrote the request*. An investigator reads a colleague's
+name next to a rogue agent and draws the obvious wrong conclusion. Worse than an absent figure,
+because it is a confident one and it is about a person.
+
+Four sentences and a badge: the notice before the button, the same fact beside the plaintext (the
+last moment anybody reads that panel), an "i" on the `Owner` column, and **`via API key` on the
+row** — an OIDC caller is deliberately unmarked, because there the name *is* the person and marking
+both makes the distinction useless. The wording is true of a shared key as well: it claims
+responsibility for the **credential**, never that its owner typed the prompt.
+
+**Stage B is specified and not built**: `issued_by` beside `owner`, so a team credential names a
+technical account while the console still records which human created it. Logging in *as* the
+technical user was the obvious alternative and is wrong — shared credentials for a governance
+console, and it destroys the one fact worth keeping.
+
+Test note worth carrying: three of the four properties went red when broken, and the fourth —
+*an interactive caller is not marked* — **could not**, because deleting the marker satisfies it.
+It needed the **inverse** mutation (mark everything). Second recorded instance after `N50`: a test
+that asserts an absence is defended by the mutation that adds, never by the one that removes.
+
+---
+
+## 2026-08-09 — What a use case consumed, with or without a budget (`FRD-603`)
+
+Owner's question, looking at the smoke-test use case: *"da sehe ich aber, dass da nicht die
+verbrauchte Anzahl an Tokens und kein Geld steht — wird dann, wenn kein Budget gesetzt wurde,
+nichts kalkuliert?"*
+
+Nearly, and the near-miss is the whole of it. **Everything was calculated.** Measured against the
+running stack before touching anything: `smoke-test` had **59 requests, 10,664 tokens and 3,674,900
+nanos** in `request_logs`, priced, with no unpriced rows. What it had in `budget_usage` was **no row
+at all**, because it has no budget — and consumption was only ever *displayed* as a fraction of a
+limit. `BudgetService.usage()` iterates the use case's **budget rows**; the tab renders every figure
+**inside a budget card**. No limit, no denominator, no number — not even the numerator, which
+existed. A use case deliberately left unlimited showed a page on which nothing appeared to be
+counted, which reads as "this system does not track what I spend".
+
+Two correct halves and nothing carrying the fact across, in different services this time.
+
+The fix is a **reader, not a calculation**: `GET /v1beta/reporting?use_case=<slug>` narrows the
+report `FRD-601` already serves, and a **Consumption** card sits above the budgets with this month
+and today. Source is the **request log**, so the use-case page, the reporting screen and the CSV
+export are three views of one number rather than three chances to disagree — `budget_usage` stays
+what it is, an enforcement counter that exists only where somebody set a limit and is allowed to be
+approximate between reconciliations.
+
+Three rules, two of them already written down here and one of them nearly broken again:
+
+- **A filter narrows, never widens.** `scope = (use_case,)` is the natural way to write it, reads as
+  a narrowing and **is a widening**: every member of any use case could then name any other and be
+  told its spend, from the one endpoint whose job is keeping those apart. It intersects with
+  `visible_scope` instead. `N55`, shown red before green.
+- **An empty report says whether it was allowed to be full.** `in_scope: false` — "not yours to
+  see" and "nothing happened here" are both zero rows and only one is a measurement. `N56`.
+- **Unknown is never rendered as zero.** An unreachable gateway prints an em dash and says so. A
+  page that shows `0.00` because a request failed has stated something nobody measured —
+  `FRD-403`'s rule about unpriced traffic, one level up.
+
+No table, no column, no migration. `windowFor`/`isoDay` moved out of the reporting screen into
+`core/ui/periods.ts` rather than being restated, because the rule inside them is an off-by-one that
+only appears in the evening. Verified live against the stack's own Postgres: smoke-test reports its
+59 / 10,664 / 0.0037, and a member of `kundenservice` asking for it gets zeroes with
+`in_scope: false`.
+
+**Two corrections the same day, one from the owner and one from reading the code back.** It shipped
+inside the **budgets tab**, which was the shape of the defect it fixes — consumption living with
+limits — and the owner moved it to the **overview**, where the tiles already say how a use case is
+configured and this says what it has done. It is a child component now (`consumption-panel`), and
+its load hangs off the page's `load()` rather than off `loadBudgets()`: otherwise adding a budget
+refetches it, and removing the budgets panel one day silently removes it. And the two windows are
+two requests whose failure was tracked in **one boolean written by both** — the month would arrive,
+clear the flag, and the day's failure would set it again and hide a figure already fetched.
+Whichever request finished last decided what the reader saw. **Partial is a third state**: what
+arrived is shown, the rest is an em dash that says so. Found by reading, not by a red test, so the
+test was written to fail against it first.
+
+**And the browser suite found the third thing**, which no unit test could: the retention spec broke
+on a Playwright **strict-mode violation** — the overview now had two `.callout--warning` elements.
+The selector was fragile and got an id, but the failure was pointing at something better than a
+selector. Not being in a Keycloak group is **not a warning**: nothing is wrong, the reader simply
+created this use case a minute ago and AIRA does not write to directories. It is a plain callout
+now. Every new use case had been greeted by two alarms about nothing, and a page that cries wolf
+twice teaches the reader to skip the third.
+
+---
+
 ## 2026-08-09 — One use case for all model testing (`FRD-504`)
 
 Owner's decision, after the attribution defect: *"es soll dann einfach als Standard ein Use Case

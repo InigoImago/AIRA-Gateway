@@ -62,7 +62,7 @@ from aira_management.apps.usecases.serializers import (
     UseCaseSerializer,
 )
 from aira_management.pagination import ConsolePagination, apply_search
-from aira_management.rbac import IsUseCaseAdmin, django_group_name, scope_queryset
+from aira_management.rbac import IsGlobalAdmin, django_group_name, scope_queryset
 
 # One definition, in `access.py`, because the console asks the same questions to decide what to
 # put on screen — see the module docstring there.
@@ -171,7 +171,12 @@ class UseCaseViewSet(viewsets.ModelViewSet[UseCase]):
 
     def get_permissions(self) -> list[Any]:
         if self.action == "create":
-            return [IsAuthenticated(), IsUseCaseAdmin()]
+            # **A Global Administrator creates a use case** (`ADR-0017`), and names the group that
+            # administers it. This was `global-admin or use-case-admin`, and it is a deliberate
+            # narrowing: `use-case-admin` was an organisation-wide realm role, so it let anybody
+            # who administered one use case create another — which is not what administering a use
+            # case means.
+            return [IsAuthenticated(), IsGlobalAdmin()]
         return [IsAuthenticated()]
 
     def perform_create(self, serializer: Any) -> None:

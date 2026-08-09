@@ -48,7 +48,7 @@ test.describe('Layout', () => {
   });
 
   test('no route overflows its viewport at any width', async ({ page }) => {
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('layout');
     await createUseCase(page, slug, 'Layout probe');
 
@@ -72,7 +72,7 @@ test.describe('Layout', () => {
   });
 
   test('every detail tab stays inside the viewport on a phone', async ({ page }) => {
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('tabs');
     await createUseCase(page, slug, 'Tab probe');
 
@@ -88,7 +88,7 @@ test.describe('Layout', () => {
   test('a long name and description do not widen the page', async ({ page }) => {
     // The regression this guards: one unbroken server-supplied string used to push the whole
     // layout wider than the screen.
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('long');
     const longName = 'Ein-ausgesprochen-langer-Name-ohne-Leerzeichen-'.repeat(4);
 
@@ -107,7 +107,7 @@ test.describe('Layout', () => {
   });
 
   test('a wide table scrolls inside its card, not the page', async ({ page }) => {
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('table');
     await createUseCase(page, slug, 'Table probe');
 
@@ -132,7 +132,7 @@ test.describe('Layout', () => {
   }) => {
     // The bug this guards: a sticky element taller than the viewport pinned its top and left
     // its lower fields permanently unreachable.
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('inspector');
     await createUseCase(page, slug, 'Inspector probe');
 
@@ -162,7 +162,7 @@ test.describe('Form alignment', () => {
   // Regression: `.form-inline` was bottom-aligned, so a field carrying a hint under its input
   // grew and pushed its control upwards — the row became a staircase of uneven inputs.
   test('every inline form lines its controls up', async ({ page }) => {
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('align');
 
     await page.goto('/use-cases');
@@ -192,7 +192,7 @@ test.describe('Form alignment', () => {
   });
 
   test('forms stay aligned when they wrap on a narrow screen', async ({ page }) => {
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('wrap');
     await createUseCase(page, slug, 'Wrap probe');
 

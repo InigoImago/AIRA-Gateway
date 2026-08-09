@@ -4,11 +4,14 @@ import aira_management.apps.api.authentication as authentication
 import jwt
 import pytest
 from aira_management.config.app_settings import ManagementSettings
+from aira_management.rbac import sync_user_roles
 from cryptography.hazmat.primitives.asymmetric import rsa
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
 
 from aira_common.oidc import JwtVerifier
+
+from .conftest import role_claims
 
 pytestmark = pytest.mark.django_db
 
@@ -73,9 +76,12 @@ def test_me_requires_auth() -> None:
 
 
 def test_me_with_valid_token(monkeypatch) -> None:
+    """**Rewritten for `ADR-0017`.** The token used to carry `realm_access.roles` and this asserted
+    the claim came back. A realm role grants nothing now, so the role arrives through the group —
+    and the response reports slugs rather than the raw group list."""
     private, public = _keypair()
     _use_fake_verifier(monkeypatch, public)
-    token = _token(private, roles=["global-admin"], groups=["/use-cases/demo-uc"])
+    token = _token(private, groups=["/aira/global-admins", "/use-cases/demo-uc"])
 
     resp = APIClient().get("/api/v1/me", HTTP_AUTHORIZATION=f"Bearer {token}")
     assert resp.status_code == 200
@@ -84,7 +90,7 @@ def test_me_with_valid_token(monkeypatch) -> None:
     assert data["username"] == "demo-user"
     assert data["email"] == "demo-user@demo.aira"
     assert "global-admin" in data["roles"]
-    assert "/use-cases/demo-uc" in data["use_cases"]
+    assert data["use_cases"] == ["demo-uc"]
 
 
 def test_provisioning_is_idempotent(monkeypatch) -> None:
@@ -147,3 +153,45 @@ def test_exception_handler_wraps_field_errors() -> None:
     assert response is not None
     assert response.data["error"]["code"] == "invalid_argument"
     assert response.data["error"]["details"] == {"slug": ["invalid"]}
+
+
+# ---- /me reports what the server enforces (ADR-0017) --------------------------------------
+
+
+def test_me_reports_the_roles_the_server_enforces_not_the_token_claim() -> None:
+    """**Found live**: a Global Administrator was shown no "New use case" button.
+
+    This view read `realm_access.roles` straight off the claim, which made it a *third* answer to
+    "which roles does this caller hold" beside `sync_user_roles` and the permission classes. While
+    all three read the same claim they agreed by accident. The moment roles came from group
+    membership they did not: the server let the caller through and the console was told they had
+    no roles at all.
+    """
+    user = get_user_model().objects.create(username="me-user")
+    sync_user_roles(user, role_claims("global-admin"))
+    client = APIClient()
+    client.force_authenticate(user=user, token={"sub": "s", "groups": ["/aira/global-admins"]})
+
+    body = client.get("/api/v1/me").json()
+
+    assert body["roles"] == ["global-admin"]
+
+
+def test_me_reports_use_case_slugs_rather_than_every_group_the_token_carries() -> None:
+    """It returned the whole `groups` claim. That was loose before and is wrong now: the claim
+    also carries the role groups, so a console asking "which use cases am I in" was told
+    `/aira/global-admins`."""
+    user = get_user_model().objects.create(username="me-slugs")
+    sync_user_roles(user, role_claims("global-admin"))
+    client = APIClient()
+    client.force_authenticate(
+        user=user,
+        token={
+            "sub": "s",
+            "groups": ["/aira/global-admins", "/use-cases/demo-uc", "/abteilungen/x"],
+        },
+    )
+
+    body = client.get("/api/v1/me").json()
+
+    assert body["use_cases"] == ["demo-uc"]

@@ -1,6 +1,7 @@
 import pytest
 from aira_management.apps.usecases import events
 from aira_management.apps.usecases.models import UseCase, UseCaseMembership
+from aira_management.apps.usecases.views import _grant
 from aira_management.rbac import sync_user_roles
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
@@ -10,10 +11,41 @@ pytestmark = pytest.mark.django_db
 BASE = "/api/v1/use-cases/"
 
 
+#: What an installation configures (`ADR-0017`), read as the string a deployment sets.
+ROLE_GROUPS = (
+    "global-admin=/aira/global-admins;it-security=/aira/it-security;it-steuerung=/aira/it-steuerung"
+)
+GROUP_FOR = {
+    "global-admin": "/aira/global-admins",
+    "it-security": "/aira/it-security",
+    "it-steuerung": "/aira/it-steuerung",
+}
+
+
+@pytest.fixture(autouse=True)
+def _role_groups(settings):
+    settings.AIRA_ROLE_GROUPS = ROLE_GROUPS
+
+
 def _user(username: str, *roles: str):
+    """A user holding organisation-wide ``roles``, via **group membership** (`ADR-0017`)."""
     user = get_user_model().objects.create(username=username)
-    sync_user_roles(user, {"realm_access": {"roles": list(roles)}})
+    sync_user_roles(user, {"groups": [GROUP_FOR[role] for role in roles]})
     return user
+
+
+def _administrator(username: str, usecase: UseCase):
+    """Somebody who administers **one** use case and holds no organisation-wide role.
+
+    This is what `use-case-admin` used to approximate and never was: the realm role said "an
+    administrator somewhere", the object grant says "an administrator *here*". Most of the cases
+    below are about the second, and using the first as a stand-in is why a role that granted too
+    much survived as long as it did.
+    """
+    user = _user(username)
+    _grant(user, usecase, UseCaseMembership.ADMIN)
+    UseCaseMembership.objects.create(use_case=usecase, user=user, role=UseCaseMembership.ADMIN)
+    return get_user_model().objects.get(pk=user.pk)
 
 
 def _client(user) -> APIClient:
@@ -42,7 +74,7 @@ def captured_events():
 
 
 def test_create_as_use_case_admin() -> None:
-    admin = _user("admin1", "use-case-admin")
+    admin = _user("admin1", "global-admin")
     resp = _create(_client(admin), "my-uc")
     assert resp.status_code == 201
     assert resp.json()["slug"] == "my-uc"
@@ -53,17 +85,17 @@ def test_create_as_use_case_admin() -> None:
 
 
 def test_create_forbidden_for_plain_user() -> None:
-    user = _user("plain", "use-case-user")
+    user = _user("plain")
     assert _create(_client(user), "x").status_code == 403
 
 
 def test_invalid_slug_rejected() -> None:
-    admin = _user("a", "use-case-admin")
+    admin = _user("a", "global-admin")
     assert _create(_client(admin), "Bad_Slug").status_code == 400
 
 
 def test_duplicate_slug_rejected() -> None:
-    admin = _user("a", "use-case-admin")
+    admin = _user("a", "global-admin")
     _create(_client(admin), "uc")
     assert _create(_client(admin), "uc").status_code == 400
 
@@ -72,11 +104,16 @@ def test_duplicate_slug_rejected() -> None:
 
 
 def test_list_is_scoped_and_governance_sees_all() -> None:
-    admin_a = _user("a", "use-case-admin")
-    admin_b = _user("b", "use-case-admin")
-    gov = _user("g", "global-admin")
-    _create(_client(admin_a), "uc-a")
-    _create(_client(admin_b), "uc-b")
+    """**Rewritten for `ADR-0017`.** It used to scope by the `use-case-admin` realm role, which is
+    gone; the creator is now a Global Administrator, and a Global Administrator sees everything —
+    so scoping one *by that user* would have asserted nothing. The scoped caller is an
+    administrator of one use case and nothing else, which is what the role always stood for.
+    """
+    creator = _user("creator", "global-admin")
+    gov = _user("g", "it-steuerung")
+    _create(_client(creator), "uc-a")
+    _create(_client(creator), "uc-b")
+    admin_a = _administrator("a", UseCase.objects.get(slug="uc-a"))
 
     # The list is a **page** now (`FRD-208`): `results` plus a total. The total is part of the
     # answer, not decoration — a list that does not say how much it is not showing reads as
@@ -102,7 +139,7 @@ def test_may_call_is_the_gateways_question_and_grants_a_global_admin_nothing() -
     the one that would have caught it, and the one it replaced asserted agreement with `is_member`
     — the wrong reference, which locked the defect in rather than finding it.
     """
-    admin = _user("a", "use-case-admin")
+    admin = _user("a", "global-admin")
     _create(_client(admin), "uc-a")
     global_admin = _user("g", "global-admin")
 
@@ -122,9 +159,9 @@ def test_may_call_follows_the_group_the_token_carries() -> None:
     from aira_management.rbac import KEYCLOAK_GROUP_PREFIX
     from django.contrib.auth.models import Group
 
-    member = _user("m", "use-case-user")
-    _create(_client(_user("a", "use-case-admin")), "uc-a")
-    _create(_client(_user("b", "use-case-admin")), "uc-b")
+    member = _user("m")
+    _create(_client(_user("a", "global-admin")), "uc-a")
+    _create(_client(_user("b", "global-admin")), "uc-b")
     group, _ = Group.objects.get_or_create(name=f"{KEYCLOAK_GROUP_PREFIX}/use-cases/uc-a")
     member.groups.add(group)
 
@@ -142,8 +179,8 @@ def test_may_call_answers_even_where_management_shows_nothing() -> None:
     from aira_management.rbac import KEYCLOAK_GROUP_PREFIX
     from django.contrib.auth.models import Group
 
-    caller = _user("c", "use-case-user")
-    _create(_client(_user("a", "use-case-admin")), "uc-a")
+    caller = _user("c")
+    _create(_client(_user("a", "global-admin")), "uc-a")
     group, _ = Group.objects.get_or_create(name=f"{KEYCLOAK_GROUP_PREFIX}/use-cases/uc-a")
     caller.groups.add(group)
 
@@ -161,7 +198,7 @@ def test_the_list_is_searched_at_the_server() -> None:
     built — and this serializer computes object-level permissions per row, which is the part that
     actually costs seconds.
     """
-    admin = _user("a", "use-case-admin")
+    admin = _user("a", "global-admin")
     client = _client(admin)
     _create(client, "kundenservice")
     _create(client, "entwicklung")
@@ -177,7 +214,7 @@ def test_the_list_is_searched_at_the_server() -> None:
 
 def test_a_page_is_a_page() -> None:
     """Bounded, ordered, and honest about the whole."""
-    admin = _user("a", "use-case-admin")
+    admin = _user("a", "global-admin")
     client = _client(admin)
     for index in range(7):
         _create(client, f"uc-{index}")
@@ -194,7 +231,7 @@ def test_a_page_is_a_page() -> None:
 
 
 def test_non_member_gets_404() -> None:
-    admin = _user("a", "use-case-admin")
+    admin = _user("a", "global-admin")
     outsider = _user("o")
     _create(_client(admin), "uc")
     assert _client(outsider).get(f"{BASE}uc/").status_code == 404
@@ -204,7 +241,7 @@ def test_non_member_gets_404() -> None:
 
 
 def test_admin_can_update_member_cannot() -> None:
-    admin = _user("a", "use-case-admin")
+    admin = _user("a", "global-admin")
     member = _user("m")
     _create(_client(admin), "uc")
     _client(admin).post(f"{BASE}uc/members/", {"username": "m", "role": "user"}, format="json")
@@ -215,14 +252,14 @@ def test_admin_can_update_member_cannot() -> None:
 
 
 def test_global_admin_can_update_any() -> None:
-    owner = _user("o", "use-case-admin")
+    owner = _user("o", "global-admin")
     gov = _user("g", "global-admin")
     _create(_client(owner), "uc")
     assert _client(gov).patch(f"{BASE}uc/", {"name": "x"}, format="json").status_code == 200
 
 
 def test_admin_can_delete_member_cannot() -> None:
-    admin = _user("a", "use-case-admin")
+    admin = _user("a", "global-admin")
     member = _user("m")
     _create(_client(admin), "uc")
     _client(admin).post(f"{BASE}uc/members/", {"username": "m", "role": "user"}, format="json")
@@ -236,7 +273,7 @@ def test_admin_can_delete_member_cannot() -> None:
 
 
 def test_add_list_and_remove_member() -> None:
-    admin = _user("a", "use-case-admin")
+    admin = _user("a", "global-admin")
     member = _user("m")
     _create(_client(admin), "uc")
 
@@ -256,7 +293,7 @@ def test_add_list_and_remove_member() -> None:
 
 
 def test_member_cannot_add_members() -> None:
-    admin = _user("a", "use-case-admin")
+    admin = _user("a", "global-admin")
     member = _user("m")
     _create(_client(admin), "uc")
     _client(admin).post(f"{BASE}uc/members/", {"username": "m", "role": "user"}, format="json")
@@ -266,14 +303,14 @@ def test_member_cannot_add_members() -> None:
 
 
 def test_add_unknown_user_returns_400() -> None:
-    admin = _user("a", "use-case-admin")
+    admin = _user("a", "global-admin")
     _create(_client(admin), "uc")
     resp = _client(admin).post(f"{BASE}uc/members/", {"username": "ghost"}, format="json")
     assert resp.status_code == 400
 
 
 def test_member_cannot_remove_members() -> None:
-    admin = _user("a", "use-case-admin")
+    admin = _user("a", "global-admin")
     member = _user("m")
     _create(_client(admin), "uc")
     _client(admin).post(f"{BASE}uc/members/", {"username": "m", "role": "user"}, format="json")
@@ -281,7 +318,7 @@ def test_member_cannot_remove_members() -> None:
 
 
 def test_model_str() -> None:
-    admin = _user("a", "use-case-admin")
+    admin = _user("a", "global-admin")
     _create(_client(admin), "uc", name="My UC")
     usecase = UseCase.objects.get(slug="uc")
     assert str(usecase) == "uc"
@@ -290,7 +327,7 @@ def test_model_str() -> None:
 
 
 def test_add_admin_member_grants_change() -> None:
-    admin = _user("a", "use-case-admin")
+    admin = _user("a", "global-admin")
     second = _user("s")
     _create(_client(admin), "uc")
     _client(admin).post(f"{BASE}uc/members/", {"username": "s", "role": "admin"}, format="json")
@@ -302,7 +339,7 @@ def test_add_admin_member_grants_change() -> None:
 
 
 def test_change_hook_fires(captured_events) -> None:
-    admin = _user("a", "use-case-admin")
+    admin = _user("a", "global-admin")
     _create(_client(admin), "uc")
     _client(admin).post(f"{BASE}uc/members/", {"username": "a", "role": "user"}, format="json")
 
@@ -322,13 +359,13 @@ def test_unsubscribe_not_present_is_noop() -> None:
 
 
 def test_a_new_use_case_keeps_payloads_for_a_week_by_default() -> None:
-    admin = _user("admin1", "use-case-admin")
+    admin = _user("admin1", "global-admin")
     resp = _create(_client(admin), "demo-uc", "Demo")
     assert resp.json()["retention_days"] == 7
 
 
 def test_an_admin_can_shorten_or_extend_the_period() -> None:
-    admin = _user("admin1", "use-case-admin")
+    admin = _user("admin1", "global-admin")
     _create(_client(admin), "demo-uc", "Demo")
 
     resp = _client(admin).patch(f"{BASE}demo-uc/", {"retention_days": 1}, format="json")
@@ -340,7 +377,7 @@ def test_an_admin_can_shorten_or_extend_the_period() -> None:
 
 
 def test_a_period_outside_the_allowed_range_is_refused() -> None:
-    admin = _user("admin1", "use-case-admin")
+    admin = _user("admin1", "global-admin")
     _create(_client(admin), "demo-uc", "Demo")
     # Zero would mean "delete immediately", which is a mistake, not a policy.
     client = _client(admin)
@@ -350,7 +387,7 @@ def test_a_period_outside_the_allowed_range_is_refused() -> None:
 
 
 def test_the_period_is_published_to_the_gateway(captured_events) -> None:
-    admin = _user("admin1", "use-case-admin")
+    admin = _user("admin1", "global-admin")
     _create(_client(admin), "demo-uc", "Demo")
     _client(admin).patch(f"{BASE}demo-uc/", {"retention_days": 14}, format="json")
 
@@ -371,9 +408,9 @@ def test_the_detail_says_what_this_caller_may_do() -> None:
 
     The answer is the same predicates that enforce it, returned on the object.
     """
-    admin = _user("perm-admin", "use-case-admin")
+    admin = _user("perm-admin", "global-admin")
     _create(_client(admin), "perm-uc")
-    member = _user("perm-user", "use-case-user")
+    member = _user("perm-user")
     _client(admin).post(
         f"{BASE}perm-uc/members/", {"username": "perm-user", "role": "user"}, format="json"
     )
@@ -393,7 +430,7 @@ def test_seeing_every_use_case_is_not_being_in_one() -> None:
     as "I belong to it" would put a key-issuing button in front of exactly the roles that must
     not have one.
     """
-    admin = _user("scope-admin", "use-case-admin")
+    admin = _user("scope-admin", "global-admin")
     _create(_client(admin), "scope-uc")
     steering = _user("scope-gov", "it-steuerung")
 
@@ -405,9 +442,9 @@ def test_seeing_every_use_case_is_not_being_in_one() -> None:
 def test_the_permissions_a_use_case_reports_are_the_ones_it_enforces() -> None:
     """A restatement of a rule is a rule that drifts. This holds the two together: for each of the
     three answers, the corresponding request must agree with what the object said."""
-    admin = _user("agree-admin", "use-case-admin")
+    admin = _user("agree-admin", "global-admin")
     _create(_client(admin), "agree-uc")
-    member = _user("agree-user", "use-case-user")
+    member = _user("agree-user")
     _client(admin).post(
         f"{BASE}agree-uc/members/", {"username": "agree-user", "role": "user"}, format="json"
     )

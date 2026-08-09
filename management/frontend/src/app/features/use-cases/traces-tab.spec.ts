@@ -71,7 +71,7 @@ function setup(options: Options = {}) {
       provideRouter([]),
       {
         provide: MeService,
-        useValue: { get: () => of({ roles: options.roles ?? ['use-case-admin'] }) },
+        useValue: { get: () => of({ roles: options.roles ?? [] }) },
       },
       {
         provide: UseCaseService,
@@ -448,7 +448,7 @@ describe('TracesTab — while a page is in flight', () => {
     const investigator = setup({ roles: ['it-security'] });
     expect(investigator.testid('trace-source-ip')).not.toBeNull();
 
-    const administrator = setup({ roles: ['use-case-admin'] });
+    const administrator = setup({ roles: [] });
     expect(administrator.testid('trace-source-ip')).toBeNull();
     // …while everything an administrator *may* ask stays available to them.
     expect(administrator.testid('trace-credential')).not.toBeNull();
@@ -534,7 +534,7 @@ describe('TracesTab — while a page is in flight', () => {
      *  banner per page is the rule, and the parent renders it. A first version of this test looked
      *  for the sentence inside the tab and failed for exactly that reason — which is the design
      *  working, not a gap. */
-    const { fixture, testid } = setup({ roles: ['use-case-user'], payloadFails: true });
+    const { fixture, testid } = setup({ roles: [], payloadFails: true });
     (fixture.nativeElement as HTMLElement)
       .querySelector<HTMLElement>('[data-testid^="open-payload-"]')
       ?.click();
@@ -561,7 +561,7 @@ describe('TracesTab — while a page is in flight', () => {
   });
 
   it('withholds that column from a role that may not act on an incident', () => {
-    const { element } = setup({ roles: ['use-case-admin'] });
+    const { element } = setup({ roles: [] });
 
     const headers = [...element.querySelectorAll('th')].map((th) => th.textContent?.trim());
     expect(headers).not.toContain('From');
@@ -664,5 +664,47 @@ describe('TracesTab — while a page is in flight', () => {
     click('mine-only');
 
     expect(queries.some((query) => query['mine'] === true)).toBe(true);
+  });
+});
+
+/**
+ * Whose name the caller line is (`FRD-604`).
+ *
+ * The question this answers is IT Security's on a bad day: a coding agent misbehaved, whose was
+ * it? The audit row names the person the key was **issued to**, which is who answers for the
+ * credential — and is not necessarily who wrote the request. Without a marker an investigator
+ * reads a colleague's name beside an agent's traffic and concludes a human typed it, which is
+ * both wrong and the sort of wrong that gets somebody accused.
+ */
+describe('TracesTab — whose name is on the row', () => {
+  it('marks a request made with an API key as made with one', () => {
+    const { text, testid } = setup({
+      pages: [
+        {
+          traces: [trace({ subject: 'vscheibe', credential: 'aira_ab12' })],
+          next_cursor: null,
+          scope: 'use_cases',
+        },
+      ],
+    });
+
+    expect(text()).toContain('vscheibe');
+    expect(testid('trace-via-key')).not.toBeNull();
+  });
+
+  /** An interactive caller has no marker, because there the name really is the person who asked.
+   *  Marking both would make the distinction useless, which is the same as not making it. */
+  it('leaves an interactive caller unmarked', () => {
+    const { testid } = setup({
+      pages: [
+        {
+          traces: [trace({ subject: 'vscheibe', credential: null })],
+          next_cursor: null,
+          scope: 'use_cases',
+        },
+      ],
+    });
+
+    expect(testid('trace-via-key')).toBeNull();
   });
 });

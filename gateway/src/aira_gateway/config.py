@@ -7,6 +7,7 @@ gateway needs for its readiness checks and (later) persistence and eventing.
 from __future__ import annotations
 
 from aira_common.config import BaseAiraSettings
+from aira_common.roles import Role, parse_role_groups
 
 
 class GatewaySettings(BaseAiraSettings):
@@ -204,6 +205,17 @@ class GatewaySettings(BaseAiraSettings):
     oidc_issuer: str = ""
     oidc_audience: str = ""  # empty → skip audience verification (set in enterprise deployments)
     oidc_jwks_uri: str = ""  # empty → derived from the issuer
+
+    #: Which Keycloak group confers which AIRA role (`ADR-0017`), as
+    #: ``role=/path[,/path];role=/path``. Group membership is the **only** source of a role; a
+    #: realm role on the same token is not read. Empty here grants no oversight to anybody, which
+    #: is the safe direction for a data plane — Management is the plane that refuses to boot
+    #: without a global-admin group, because it is the one an installation is repaired from.
+    role_groups: str = ""
+
+    def parsed_role_groups(self) -> dict[Role, tuple[str, ...]]:
+        """The mapping, parsed once at startup so a malformed value fails loudly and early."""
+        return parse_role_groups(self.role_groups)
 
     def jwks_uri(self) -> str:
         """Return the JWKS URI, deriving it from the issuer when not set explicitly."""

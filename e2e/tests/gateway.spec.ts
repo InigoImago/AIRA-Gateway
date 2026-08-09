@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { USERS, createUseCase, ensureUseCase, login, uniqueSlug } from './support';
+import { USERS, createUseCase, ensureUseCase, login, logout, uniqueSlug } from './support';
 
 /**
  * The SPA talking to the *gateway* (not just the control plane).
@@ -10,7 +10,7 @@ import { USERS, createUseCase, ensureUseCase, login, uniqueSlug } from './suppor
  */
 test.describe('Gateway integration', () => {
   test('runs a dry-run through the gateway with the browser session token', async ({ page }) => {
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('dryrun');
     await createUseCase(page, slug, 'Dry-run probe');
 
@@ -31,7 +31,7 @@ test.describe('Gateway integration', () => {
   });
 
   test('a harmless prompt passes the dry-run', async ({ page }) => {
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('pass');
     await createUseCase(page, slug, 'Pass probe');
 
@@ -46,7 +46,7 @@ test.describe('Gateway integration', () => {
   });
 
   test('saves a pipeline and reports it as saved', async ({ page }) => {
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('save');
     await createUseCase(page, slug, 'Save probe');
 
@@ -87,14 +87,35 @@ test.describe('Gateway integration', () => {
   test('explains that consumption is hidden without gateway membership', async ({ page }) => {
     // A use case created in Management has no matching Keycloak group yet, so the gateway will
     // not show its numbers. The tab must say exactly that instead of implying an outage.
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('nogroup');
     await createUseCase(page, slug, 'No-group probe');
 
+    // The limit is set by the administrator, because setting one is administering the use case.
     await page.goto(`/use-cases/${slug}?tab=budgets`);
     await page.click('button:has-text("Add budget")');
     await page.fill('#budget-requests', '5');
     await page.click('form button[type="submit"]');
+
+    // The reader has to be in exactly the state the message is about: **administers the use case
+    // in Management, is not in the gateway's Keycloak group for it.** A Global Administrator sees
+    // every use case's figures so the warning is unreachable for them, and somebody with no grant
+    // at all cannot see the use case in the first place — so the grant is made here, on a group
+    // `ucadmin` already holds, while nobody is in `/use-cases/<slug>`.
+    const granted = await page.evaluate(async (slug) => {
+      const token = sessionStorage.getItem('access_token') ?? localStorage.getItem('access_token');
+      const response = await fetch(`/api/v1/use-cases/${slug}/groups/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ group_path: '/use-cases/demo-uc', role: 'admin' }),
+      });
+      return response.status;
+    }, slug);
+    expect(granted, 'the grant that makes the reader an administrator').toBe(201);
+
+    await logout(page);
+    await login(page, USERS.useCaseAdmin);
+    await page.goto(`/use-cases/${slug}?tab=budgets`);
 
     // The remedy is the Keycloak group, and the message has to say so *and* say it is not the
     // member list on the same page — a reader looking at their own name there reads a bare "not a

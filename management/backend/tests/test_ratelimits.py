@@ -8,6 +8,8 @@ from aira_management.rbac import sync_user_roles
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
 
+from .conftest import role_claims
+
 pytestmark = pytest.mark.django_db
 
 BASE = "/api/v1/use-cases/"
@@ -15,7 +17,7 @@ BASE = "/api/v1/use-cases/"
 
 def _user(username: str, *roles: str):
     user = get_user_model().objects.create(username=username)
-    sync_user_roles(user, {"realm_access": {"roles": list(roles)}})
+    sync_user_roles(user, role_claims(*roles))
     return user
 
 
@@ -43,7 +45,7 @@ def captured_events():
 
 
 def test_create_rate_limit_and_emit(captured_events) -> None:
-    admin = _user("admin1", "use-case-admin")
+    admin = _user("admin1", "global-admin")
     _make_uc(admin, "demo-uc")
 
     resp = _client(admin).post(
@@ -62,7 +64,7 @@ def test_create_rate_limit_and_emit(captured_events) -> None:
 
 
 def test_upsert_replaces_rather_than_duplicating(captured_events) -> None:
-    admin = _user("admin1", "use-case-admin")
+    admin = _user("admin1", "global-admin")
     _make_uc(admin, "demo-uc")
     body = {"scope": "use_case", "limit_rpm": 60}
     _client(admin).post(f"{BASE}demo-uc/rate-limits/", body, format="json")
@@ -75,7 +77,7 @@ def test_upsert_replaces_rather_than_duplicating(captured_events) -> None:
 
 
 def test_member_limit_requires_a_subject() -> None:
-    admin = _user("admin1", "use-case-admin")
+    admin = _user("admin1", "global-admin")
     _make_uc(admin, "demo-uc")
 
     resp = _client(admin).post(
@@ -89,7 +91,7 @@ def test_member_limit_requires_a_subject() -> None:
 def test_a_use_case_scoped_limit_drops_any_subject_sent_with_it() -> None:
     """Otherwise the uniqueness constraint keys on a subject nobody meant to set, and a second
     edit silently creates a second limit instead of replacing the first."""
-    admin = _user("admin1", "use-case-admin")
+    admin = _user("admin1", "global-admin")
     _make_uc(admin, "demo-uc")
 
     _client(admin).post(
@@ -104,7 +106,7 @@ def test_a_use_case_scoped_limit_drops_any_subject_sent_with_it() -> None:
 def test_a_limit_of_zero_is_refused() -> None:
     """Zero would mean "refuse everything", which is a use case being switched off by accident
     rather than a rate being configured."""
-    admin = _user("admin1", "use-case-admin")
+    admin = _user("admin1", "global-admin")
     _make_uc(admin, "demo-uc")
 
     resp = _client(admin).post(
@@ -115,9 +117,9 @@ def test_a_limit_of_zero_is_refused() -> None:
 
 
 def test_members_may_read_but_not_set_limits() -> None:
-    admin = _user("admin1", "use-case-admin")
+    admin = _user("admin1", "global-admin")
     usecase = _make_uc(admin, "demo-uc")
-    member = _user("member1", "use-case-user")
+    member = _user("member1")
     _client(admin).post(
         f"{BASE}demo-uc/members/", {"username": "member1", "role": "user"}, format="json"
     )
@@ -131,7 +133,7 @@ def test_members_may_read_but_not_set_limits() -> None:
 
 
 def test_delete_removes_and_emits(captured_events) -> None:
-    admin = _user("admin1", "use-case-admin")
+    admin = _user("admin1", "global-admin")
     usecase = _make_uc(admin, "demo-uc")
     limit = RateLimit.objects.create(use_case=usecase, scope="use_case", limit_rpm=60)
 
@@ -144,7 +146,7 @@ def test_delete_removes_and_emits(captured_events) -> None:
 
 
 def test_deleting_an_unknown_limit_is_reported_rather_than_silently_accepted() -> None:
-    admin = _user("admin1", "use-case-admin")
+    admin = _user("admin1", "global-admin")
     _make_uc(admin, "demo-uc")
 
     resp = _client(admin).delete(f"{BASE}demo-uc/rate-limits/999/")
@@ -153,7 +155,7 @@ def test_deleting_an_unknown_limit_is_reported_rather_than_silently_accepted() -
 
 
 def test_a_limit_of_another_use_case_cannot_be_deleted_through_this_one() -> None:
-    admin = _user("admin1", "use-case-admin")
+    admin = _user("admin1", "global-admin")
     _make_uc(admin, "demo-uc")
     other = _make_uc(admin, "other-uc")
     limit = RateLimit.objects.create(use_case=other, scope="use_case", limit_rpm=60)

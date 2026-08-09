@@ -3,7 +3,7 @@ import { USERS, createUseCase, login, logout, uniqueSlug } from './support';
 
 test.describe('Use-case management', () => {
   test('creates a use case, lands on its settings, and adds a member', async ({ page }) => {
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('flow');
     await createUseCase(page, slug, 'Flow probe');
 
@@ -32,7 +32,7 @@ test.describe('Use-case management', () => {
     // earlier: a grant names something **chosen from the directory**, so a name that matches
     // nothing never reaches a request. That is the better failure — the earlier one was a round
     // trip to be told what the picker already knew.
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('unknown');
     await createUseCase(page, slug, 'Unknown member probe');
 
@@ -44,17 +44,26 @@ test.describe('Use-case management', () => {
   });
 
   test('issues a key once and revokes it after confirmation', async ({ page }) => {
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('keys');
     await createUseCase(page, slug, 'Key probe');
 
     await page.goto(`/use-cases/${slug}?tab=keys`);
     await page.click('button:has-text("Issue key")');
+    // Said **before** the button (`FRD-604`): everything done with this key is recorded under the
+    // issuer's name, and the person clicking is the one who has to know it. In an agentic use case
+    // this is the whole accountability chain — an agent goes wrong, and the credential leads to a
+    // person. Asserted in a real browser because that is where the sentence either exists or does
+    // not; a component test cannot tell a shipped template from a stale build.
+    await expect(page.getByTestId('key-responsibility')).toContainText('your name');
     await page.fill('#key-label', 'e2e');
     await page.click('form button[type="submit"]');
 
     const secret = page.locator('.secret');
     await expect(secret).toBeVisible();
+    await expect(page.getByTestId('key-issued-responsibility')).toContainText(
+      'attributed to your name',
+    );
     const plaintext = (await secret.textContent())?.trim() ?? '';
     expect(plaintext).toMatch(/^aira_[0-9a-f]+_[0-9a-f]+$/);
     await expect(page.locator('table')).toContainText('active');
@@ -71,7 +80,7 @@ test.describe('Use-case management', () => {
   });
 
   test('the plaintext key is never returned again', async ({ page }) => {
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('once');
     await createUseCase(page, slug, 'Once probe');
 
@@ -88,7 +97,7 @@ test.describe('Use-case management', () => {
 
   test('a governance role sees every use case but cannot mint a key for one', async ({ page }) => {
     // ADR-0007: organisation-wide read visibility must not imply data-plane access.
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('gov');
     await createUseCase(page, slug, 'Governance probe');
     await logout(page);
@@ -105,7 +114,7 @@ test.describe('Use-case management', () => {
   });
 
   test('budget limits are shown even when consumption is present', async ({ page }) => {
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('budget');
     await createUseCase(page, slug, 'Budget probe');
 
@@ -119,7 +128,8 @@ test.describe('Use-case management', () => {
   });
 
   test('an invalid technical id is refused before the request is sent', async ({ page }) => {
-    await login(page, USERS.useCaseAdmin);
+    // The creation window is a Global Administrator's (`ADR-0017`).
+    await login(page, USERS.globalAdmin);
     await page.goto('/use-cases');
     await page.click('button:has-text("New use case")');
     await page.fill('#uc-name', 'Invalid');

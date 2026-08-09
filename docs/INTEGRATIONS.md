@@ -60,20 +60,38 @@ dropped table and then failed every event against it.
 
 ## 2. Keycloak (or another OIDC provider)
 
-AIRA needs **one realm** with five roles, one group hierarchy, and two clients.
+AIRA needs **one realm**, three role groups, whatever groups your organisation already uses, and
+two clients.
 
-### Realm roles
+### Roles come from groups (`ADR-0017`)
+
+**Group membership is the only source of a role.** Three groups carry the organisation-wide roles,
+and you tell AIRA which is which:
+
+```
+AIRA_ROLE_GROUPS=global-admin=/aira/global-admins;it-security=/aira/it-security;it-steuerung=/aira/it-steuerung
+```
 
 | Role | Means |
 |---|---|
-| `global-admin` | everything; the only role that may price a model |
+| `global-admin` | everything; the only role that may create a use case or price a model |
 | `it-steuerung` | sees every use case and every figure; **writes nothing** |
 | `it-security` | sees every use case's configuration; may author global anomaly rules and stop traffic |
-| `use-case-admin` | administers the use cases they are a member of |
-| `use-case-user` | uses the use cases they are a member of |
 
-Realm roles are the **source of truth**. On authentication they are synced onto Django groups;
-removing a role in Keycloak removes it in AIRA on the next login.
+The paths are yours — `/it/security-team` is as good as `/aira/it-security`, and several groups may
+confer one role (`it-security=/a/one,/b/two`). The match is **exact**: a sub-group does not inherit,
+and `/aira/global-admins-readonly` confers nothing.
+
+> **A Keycloak realm role grants nothing.** AIRA does not read `realm_access.roles`. Assigning
+> `global-admin` directly to a person has no effect — which is the point: there is exactly one place
+> a role is granted, so there is exactly one place to audit and one place to revoke.
+
+Outside `local`, Management **refuses to start** when no group is named for `global-admin`: an
+installation nobody can administer cannot be repaired through its own console.
+
+**There is no `use-case-admin` or `use-case-user` role.** Administering or belonging to a use case
+is a grant on *that* use case — a Global Administrator creates it and names the group that
+administers it; administrators name the groups that are its members. See the next section.
 
 ### Groups — who reaches which use case
 
@@ -146,7 +164,9 @@ used, so on a fresh installation the first grant of a new group has to be typed.
 - **Client description length**: Keycloak stores it in `varchar(255)`. A longer one breaks the
   realm import, and the failure looks like Keycloak not starting.
 
-> done five realm roles · a **`groups` claim with full paths on every client** · a public PKCE client
+> done three role groups named in `AIRA_ROLE_GROUPS` · a **`groups` claim with full paths on
+> every client, including service accounts** — without it nobody holds any role at all · a public
+> PKCE client
 > with pinned URIs · password grant off · issuer reachable from both services · *(optional)* a
 > read-only service account for directory search
 

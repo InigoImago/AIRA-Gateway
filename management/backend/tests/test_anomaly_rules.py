@@ -11,6 +11,8 @@ from rest_framework.test import APIClient
 
 from aira_common.anomalies import RuleAction, RuleKind, RuleTarget
 
+from .conftest import role_claims
+
 pytestmark = pytest.mark.django_db
 
 BASE = "/api/v1/use-cases/"
@@ -19,7 +21,7 @@ GLOBAL = "/api/v1/anomaly-rules/"
 
 def _user(username: str, *roles: str):
     user = get_user_model().objects.create(username=username)
-    sync_user_roles(user, {"realm_access": {"roles": list(roles)}})
+    sync_user_roles(user, role_claims(*roles))
     return user
 
 
@@ -62,7 +64,7 @@ def _rule(**over):
 
 
 def test_a_rule_is_authored_listed_and_distributed(captured_events) -> None:
-    admin = _user("rule-admin", "use-case-admin")
+    admin = _user("rule-admin", "global-admin")
     slug = _use_case(admin, "rules-uc")
 
     created = _client(admin).post(f"{BASE}{slug}/anomaly-rules/", _rule(), format="json")
@@ -84,7 +86,7 @@ def test_a_rule_is_authored_listed_and_distributed(captured_events) -> None:
 def test_a_new_rule_only_alerts_until_somebody_says_otherwise() -> None:
     """A detection system whose first setting is `block` blocks the wrong thing once and is then
     switched off forever (`FRD-500` §4.3)."""
-    admin = _user("default-admin", "use-case-admin")
+    admin = _user("default-admin", "global-admin")
     slug = _use_case(admin, "default-uc")
 
     created = _client(admin).post(f"{BASE}{slug}/anomaly-rules/", _rule(), format="json")
@@ -94,7 +96,7 @@ def test_a_new_rule_only_alerts_until_somebody_says_otherwise() -> None:
 
 
 def test_a_rule_is_replaced_by_name_rather_than_duplicated() -> None:
-    admin = _user("upsert-admin", "use-case-admin")
+    admin = _user("upsert-admin", "global-admin")
     slug = _use_case(admin, "upsert-uc")
     client = _client(admin)
 
@@ -107,7 +109,7 @@ def test_a_rule_is_replaced_by_name_rather_than_duplicated() -> None:
 
 
 def test_a_rule_can_be_deleted_and_the_gateway_is_told(captured_events) -> None:
-    admin = _user("del-admin", "use-case-admin")
+    admin = _user("del-admin", "global-admin")
     slug = _use_case(admin, "del-uc")
     rule_id = (
         _client(admin).post(f"{BASE}{slug}/anomaly-rules/", _rule(), format="json").json()["id"]
@@ -123,7 +125,7 @@ def test_a_rule_can_be_deleted_and_the_gateway_is_told(captured_events) -> None:
 def test_deleting_a_use_case_takes_its_rules_with_it() -> None:
     """The mistake `FRD-205` made once with API keys: config that outlives the thing it configured
     is config that a recreated slug silently inherits."""
-    admin = _user("cascade-admin", "use-case-admin")
+    admin = _user("cascade-admin", "global-admin")
     slug = _use_case(admin, "cascade-uc")
     _client(admin).post(f"{BASE}{slug}/anomaly-rules/", _rule(), format="json")
 
@@ -136,7 +138,7 @@ def test_deleting_a_use_case_takes_its_rules_with_it() -> None:
 
 
 def test_a_share_above_one_hundred_percent_is_refused() -> None:
-    admin = _user("share-admin", "use-case-admin")
+    admin = _user("share-admin", "global-admin")
     slug = _use_case(admin, "share-uc")
 
     response = _client(admin).post(
@@ -150,7 +152,7 @@ def test_a_share_above_one_hundred_percent_is_refused() -> None:
 def test_a_spike_at_or_below_the_previous_window_is_refused() -> None:
     """A ratio of 100 % fires on traffic that did not grow at all — every window, forever. The
     alert that never stops is the one people mute."""
-    admin = _user("spike-admin", "use-case-admin")
+    admin = _user("spike-admin", "global-admin")
     slug = _use_case(admin, "spike-uc")
 
     response = _client(admin).post(
@@ -165,7 +167,7 @@ def test_a_spike_at_or_below_the_previous_window_is_refused() -> None:
 
 def test_an_action_that_takes_something_away_must_say_for_how_long() -> None:
     """An automatic block with no expiry is an outage with a good reason (`ADR-0014` §2)."""
-    admin = _user("expiry-admin", "use-case-admin")
+    admin = _user("expiry-admin", "global-admin")
     slug = _use_case(admin, "expiry-uc")
 
     refused = _client(admin).post(
@@ -187,7 +189,7 @@ def test_an_action_that_takes_something_away_must_say_for_how_long() -> None:
 
 def test_a_rate_rule_needs_a_sample_floor() -> None:
     """Without one, a single refused request out of one is 100 %."""
-    admin = _user("sample-admin", "use-case-admin")
+    admin = _user("sample-admin", "global-admin")
     slug = _use_case(admin, "sample-uc")
 
     response = _client(admin).post(
@@ -201,7 +203,7 @@ def test_a_rate_rule_needs_a_sample_floor() -> None:
 def test_an_event_kind_carries_no_sample_floor() -> None:
     """A credential used from a new address is one observation, not a proportion — requiring
     twenty of them would be requiring twenty leaks."""
-    admin = _user("event-admin", "use-case-admin")
+    admin = _user("event-admin", "global-admin")
     slug = _use_case(admin, "event-uc")
 
     created = _client(admin).post(
@@ -216,7 +218,7 @@ def test_an_event_kind_carries_no_sample_floor() -> None:
 
 def test_an_alert_carries_no_expiry_even_if_one_is_offered() -> None:
     """An expiry on an alert would read as though the alert stopped applying."""
-    admin = _user("alert-admin", "use-case-admin")
+    admin = _user("alert-admin", "global-admin")
     slug = _use_case(admin, "alert-uc")
 
     created = _client(admin).post(
@@ -230,11 +232,11 @@ def test_an_alert_carries_no_expiry_even_if_one_is_offered() -> None:
 
 
 def test_a_member_cannot_author_a_rule_but_can_read_them() -> None:
-    admin = _user("read-admin", "use-case-admin")
+    admin = _user("read-admin", "global-admin")
     slug = _use_case(admin, "read-uc")
     _client(admin).post(f"{BASE}{slug}/anomaly-rules/", _rule(), format="json")
 
-    member = _user("read-member", "use-case-user")
+    member = _user("read-member")
     _client(admin).post(
         f"{BASE}{slug}/members/", {"username": "read-member", "role": "user"}, format="json"
     )
@@ -251,7 +253,10 @@ def test_a_member_cannot_author_a_rule_but_can_read_them() -> None:
 def test_only_oversight_may_author_a_rule_that_acts_everywhere(captured_events) -> None:
     """A global rule's effects land on use cases its author may not be able to see, so authoring
     one is IT Security's job description (PRD §154) — and the API says so, not the UI."""
-    uc_admin = _user("global-ucadmin", "use-case-admin")
+    # Somebody whose authority is a use case, not the installation — which since `ADR-0017` means
+    # somebody holding no organisation-wide role at all. A Global Administrator here would be
+    # refused by nothing, because they *are* oversight.
+    uc_admin = _user("global-ucadmin")
     refused = _client(uc_admin).post(GLOBAL, _rule(name="everywhere"), format="json")
     assert refused.status_code == 403
 
@@ -272,29 +277,29 @@ def test_a_global_rule_is_visible_to_everybody_it_could_act_on() -> None:
     itsec = _user("visible-itsec", "it-security")
     _client(itsec).post(GLOBAL, _rule(name="everywhere"), format="json")
 
-    plain = _user("visible-user", "use-case-user")
+    plain = _user("visible-user")
     listed = _client(plain).get(GLOBAL).json()
 
     assert [r["name"] for r in listed] == ["everywhere"]
 
 
 def test_a_use_case_rule_is_not_listed_among_the_global_ones_for_a_stranger() -> None:
-    admin = _user("hidden-admin", "use-case-admin")
+    admin = _user("hidden-admin", "global-admin")
     slug = _use_case(admin, "hidden-uc")
     _client(admin).post(f"{BASE}{slug}/anomaly-rules/", _rule(name="theirs"), format="json")
 
-    stranger = _user("hidden-stranger", "use-case-user")
+    stranger = _user("hidden-stranger")
 
     assert _client(stranger).get(GLOBAL).json() == []
     assert [r["name"] for r in _client(admin).get(GLOBAL).json()] == ["theirs"]
 
 
-def test_a_use_case_admin_cannot_change_a_global_rule_through_the_global_list() -> None:
+def test_somebody_without_oversight_cannot_change_a_global_rule_through_the_global_list() -> None:
     """Editing follows the scope, not the endpoint."""
     itsec = _user("edit-itsec", "it-security")
     rule_id = _client(itsec).post(GLOBAL, _rule(name="everywhere"), format="json").json()["id"]
 
-    uc_admin = _user("edit-ucadmin", "use-case-admin")
+    uc_admin = _user("edit-ucadmin")
 
     assert _client(uc_admin).delete(f"{GLOBAL}{rule_id}/").status_code == 403
     assert AnomalyRule.objects.filter(pk=rule_id).exists()
@@ -302,7 +307,7 @@ def test_a_use_case_admin_cannot_change_a_global_rule_through_the_global_list() 
 
 def test_the_global_list_is_not_a_way_around_the_use_case_boundary() -> None:
     """A use-case rule reachable through the global list is still that use case's to change."""
-    owner = _user("boundary-owner", "use-case-admin")
+    owner = _user("boundary-owner", "global-admin")
     slug = _use_case(owner, "boundary-uc")
     rule_id = (
         _client(owner)
@@ -317,7 +322,7 @@ def test_the_global_list_is_not_a_way_around_the_use_case_boundary() -> None:
 
 
 def test_the_str_of_a_rule_says_where_it_applies() -> None:
-    admin = _user("str-admin", "use-case-admin")
+    admin = _user("str-admin", "global-admin")
     slug = _use_case(admin, "str-uc")
     _client(admin).post(f"{BASE}{slug}/anomaly-rules/", _rule(), format="json")
     itsec = _user("str-itsec", "it-security")
@@ -339,7 +344,7 @@ def test_a_kind_that_measures_against_a_size_must_be_given_one() -> None:
     requests above a byte threshold", and the rule carried one threshold — the share. Stage A's
     model, API, 18 tests and six mutations were all green, because nothing had yet tried to
     *evaluate* a rule."""
-    admin = _user("param-admin", "use-case-admin")
+    admin = _user("param-admin", "global-admin")
     slug = _use_case(admin, "param-uc")
 
     refused = _client(admin).post(
@@ -362,7 +367,7 @@ def test_a_kind_that_measures_against_a_size_must_be_given_one() -> None:
 def test_a_kind_that_takes_no_second_number_refuses_one() -> None:
     """Refused rather than ignored. A number a rule accepts and never reads is a setting somebody
     will tune, and then wonder why nothing changes (`FRD-124`)."""
-    admin = _user("noparam-admin", "use-case-admin")
+    admin = _user("noparam-admin", "global-admin")
     slug = _use_case(admin, "noparam-uc")
 
     response = _client(admin).post(
@@ -374,7 +379,7 @@ def test_a_kind_that_takes_no_second_number_refuses_one() -> None:
 
 
 def test_the_byte_figure_travels_to_the_gateway(captured_events) -> None:
-    admin = _user("param-event-admin", "use-case-admin")
+    admin = _user("param-event-admin", "global-admin")
     slug = _use_case(admin, "param-event-uc")
 
     _client(admin).post(

@@ -18,6 +18,8 @@ from rest_framework.test import APIClient
 from aira_common.access import SubjectKind
 from aira_common.directory import DirectoryEntry, DirectoryUnavailable
 
+from .conftest import role_claims
+
 pytestmark = pytest.mark.django_db
 
 URL = "/api/v1/directory/"
@@ -25,7 +27,7 @@ URL = "/api/v1/directory/"
 
 def _user(username: str, *roles: str) -> Any:
     user = get_user_model().objects.create(username=username)
-    sync_user_roles(user, {"realm_access": {"roles": list(roles)}})
+    sync_user_roles(user, role_claims(*roles))
     return user
 
 
@@ -49,7 +51,7 @@ def test_a_role_that_administers_nothing_may_not_search_the_directory() -> None:
 
 
 def test_a_use_case_admin_may() -> None:
-    assert _client(_user("a", "use-case-admin")).get(f"{URL}?q=ada").status_code == 200
+    assert _client(_user("a", "global-admin")).get(f"{URL}?q=ada").status_code == 200
 
 
 # ---- what an empty query does ---------------------------------------------------------------
@@ -58,7 +60,7 @@ def test_a_use_case_admin_may() -> None:
 def test_one_letter_returns_nothing_and_says_why() -> None:
     """A picker that dumps the whole directory the moment it is focused is a picker nobody reads,
     and on a real realm it is thousands of rows."""
-    body = _client(_user("a", "use-case-admin")).get(f"{URL}?q=a").data
+    body = _client(_user("a", "global-admin")).get(f"{URL}?q=a").data
 
     assert body["results"] == []
     assert body["source"] == "none"
@@ -66,7 +68,7 @@ def test_one_letter_returns_nothing_and_says_why() -> None:
 
 
 def test_no_query_at_all_is_the_same() -> None:
-    assert _client(_user("a", "use-case-admin")).get(URL).data["results"] == []
+    assert _client(_user("a", "global-admin")).get(URL).data["results"] == []
 
 
 # ---- the local fallback ---------------------------------------------------------------------
@@ -74,7 +76,7 @@ def test_no_query_at_all_is_the_same() -> None:
 
 def test_without_an_admin_client_it_answers_from_what_management_knows() -> None:
     """Enough to run the demo and to re-grant an existing group — and it cannot invent one."""
-    admin = _user("a", "use-case-admin")
+    admin = _user("a", "global-admin")
     _user("ada")
     usecase = UseCase.objects.create(slug="uc-a", name="uc-a")
     UseCaseGroupGrant.objects.create(use_case=usecase, group_path="/ai/kundenservice")
@@ -86,7 +88,7 @@ def test_without_an_admin_client_it_answers_from_what_management_knows() -> None
 
 
 def test_the_local_fallback_offers_a_group_already_granted_somewhere() -> None:
-    admin = _user("a", "use-case-admin")
+    admin = _user("a", "global-admin")
     usecase = UseCase.objects.create(slug="uc-a", name="uc-a")
     UseCaseGroupGrant.objects.create(use_case=usecase, group_path="/ai/kundenservice")
 
@@ -97,13 +99,13 @@ def test_the_local_fallback_offers_a_group_already_granted_somewhere() -> None:
 
 
 def test_the_local_fallback_cannot_invent_a_group_nobody_has_used() -> None:
-    admin = _user("a", "use-case-admin")
+    admin = _user("a", "global-admin")
 
     assert _client(admin).get(f"{URL}?q=vertrieb").data["results"] == []
 
 
 def test_a_person_is_findable_by_name_and_by_address_not_only_by_username() -> None:
-    admin = _user("a", "use-case-admin")
+    admin = _user("a", "global-admin")
     get_user_model().objects.create(
         username="al", first_name="Ada", last_name="Lovelace", email="ada@example.org"
     )
@@ -115,7 +117,7 @@ def test_a_person_is_findable_by_name_and_by_address_not_only_by_username() -> N
 
 def test_it_never_returns_a_credential() -> None:
     """A directory entry is a name and a way to tell two of them apart. Nothing else."""
-    admin = _user("a", "use-case-admin")
+    admin = _user("a", "global-admin")
     user = get_user_model().objects.create(username="ada", email="ada@example.org")
     user.set_password("hunter2")
     user.save()
@@ -136,7 +138,7 @@ def test_a_configured_directory_is_used_and_says_so(monkeypatch: pytest.MonkeyPa
             return [DirectoryEntry(SubjectKind.GROUP, "/ai/kundenservice", "kundenservice", "/ai")]
 
     monkeypatch.setattr("aira_management.apps.directory.views._build_directory", lambda: Fake())
-    body = _client(_user("a", "use-case-admin")).get(f"{URL}?q=kunden").data
+    body = _client(_user("a", "global-admin")).get(f"{URL}?q=kunden").data
 
     assert body["source"] == "keycloak"
     assert body["results"][0]["id"] == "/ai/kundenservice"
@@ -156,7 +158,7 @@ def test_an_unreachable_provider_falls_back_rather_than_failing(
     usecase = UseCase.objects.create(slug="uc-a", name="uc-a")
     UseCaseGroupGrant.objects.create(use_case=usecase, group_path="/ai/kundenservice")
 
-    body = _client(_user("a", "use-case-admin")).get(f"{URL}?q=kunden").data
+    body = _client(_user("a", "global-admin")).get(f"{URL}?q=kunden").data
 
     assert body["source"] == "local"
     assert body["results"][0]["id"] == "/ai/kundenservice"

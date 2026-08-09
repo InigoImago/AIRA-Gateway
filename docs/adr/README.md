@@ -27,3 +27,4 @@ Each ADR is immutable once **Accepted** — to change a decision, add a new ADR 
 | 0014 | [Detection is asynchronous; enforcement is not](ADR-0014-detection-is-asynchronous-enforcement-is-not.md) | Accepted | 2026-08-07 |
 | 0015 | [A convenience default is a production default](ADR-0015-a-convenience-default-is-a-production-default.md) | Accepted | 2026-08-08 |
 | 0016 | [Stored prompts are readable, and every read is recorded](ADR-0016-content-is-readable-and-every-read-is-recorded.md) | Accepted | 2026-08-09 |
+| 0017 | [A role is held through a group, and only through a group](ADR-0017-a-role-is-held-through-a-group.md) | Accepted | 2026-08-09 |

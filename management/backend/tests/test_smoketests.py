@@ -20,6 +20,8 @@ from aira_management.rbac import sync_user_roles
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
 
+from .conftest import role_claims
+
 pytestmark = pytest.mark.django_db
 
 CASES = "/api/v1/test-cases/"
@@ -30,7 +32,7 @@ STATS = "/api/v1/test-stats/"
 
 def _user(username: str, *roles: str):
     user = get_user_model().objects.create(username=username)
-    sync_user_roles(user, {"realm_access": {"roles": list(roles)}})
+    sync_user_roles(user, role_claims(*roles))
     return user
 
 
@@ -60,9 +62,9 @@ def catalogue() -> list[Case]:
         (("it-steuerung",), 403),
         # **Reading is not authoring.** Anybody who may run the catalogue must be able to read
         # it, or Run is disabled for a reason nothing on screen explains.
-        (("use-case-admin",), 200),
+        (("global-admin",), 200),
     ],
-    ids=["global-admin", "it-security", "it-steuerung", "use-case-admin"],
+    ids=["global-admin", "it-security", "it-steuerung", "global-admin"],
 )
 def test_who_may_see_the_catalogue(roles, expected) -> None:
     """Running the catalogue is making requests, so reading it follows whoever may call a model.
@@ -239,9 +241,11 @@ def test_the_export_carries_the_verdict_and_who_gave_it(catalogue) -> None:
 
 
 def test_authoring_the_catalogue_stays_with_it_security() -> None:
-    """The split that makes the read permission safe: a use-case administrator may read the
-    catalogue and may not change what it asks."""
-    response = _client(_user("uca", "use-case-admin")).post(
+    """The split that makes the read permission safe: somebody who may *run* the catalogue may not
+    change what it asks. Since `ADR-0017` that caller holds no organisation-wide role — their
+    authority is a use case — so the test says so rather than naming a role that no longer
+    exists."""
+    response = _client(_user("uca")).post(
         CASES, {"topic": "Mine", "prompt": "?", "position": 9}, format="json"
     )
 
@@ -355,7 +359,7 @@ def test_a_caller_whose_group_reaches_it_may_run_one() -> None:
     from django.contrib.auth.models import Group
 
     seed_test_catalogue(fresh=False)
-    caller = _user("uca", "use-case-admin")
+    caller = _user("uca", "global-admin")
     group, _ = Group.objects.get_or_create(
         name=f"{KEYCLOAK_GROUP_PREFIX}/use-cases/{SMOKE_TEST_USE_CASE}"
     )

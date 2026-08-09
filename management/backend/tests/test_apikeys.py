@@ -17,6 +17,8 @@ from django.contrib.auth import get_user_model
 from django.utils import timezone
 from rest_framework.test import APIClient
 
+from .conftest import role_claims
+
 
 @contextmanager
 def override_settings_value(**values: Any) -> Iterator[None]:
@@ -43,7 +45,7 @@ BASE = "/api/v1/use-cases/"
 
 def _user(username: str, *roles: str):
     user = get_user_model().objects.create(username=username)
-    sync_user_roles(user, {"realm_access": {"roles": list(roles)}})
+    sync_user_roles(user, role_claims(*roles))
     return user
 
 
@@ -74,7 +76,7 @@ def captured_events():
 
 
 def test_issue_returns_plaintext_once_and_stores_only_hash() -> None:
-    admin = _user("admin1", "use-case-admin")
+    admin = _user("admin1", "global-admin")
     _make_uc(admin, "demo-uc")
 
     resp = _client(admin).post(f"{BASE}demo-uc/api-keys/", {"label": "cli"}, format="json")
@@ -93,7 +95,7 @@ def test_issue_returns_plaintext_once_and_stores_only_hash() -> None:
 
 
 def test_issue_emits_created_event_without_plaintext(captured_events) -> None:
-    admin = _user("admin1", "use-case-admin")
+    admin = _user("admin1", "global-admin")
     _make_uc(admin, "demo-uc")
     resp = _client(admin).post(f"{BASE}demo-uc/api-keys/", {"label": "cli"}, format="json")
     full = resp.json()["api_key"]
@@ -110,9 +112,9 @@ def test_issue_emits_created_event_without_plaintext(captured_events) -> None:
 
 
 def test_member_with_user_role_may_issue() -> None:
-    admin = _user("admin1", "use-case-admin")
+    admin = _user("admin1", "global-admin")
     _make_uc(admin, "demo-uc")
-    member = _user("bob", "use-case-user")
+    member = _user("bob")
     _client(admin).post(
         f"{BASE}demo-uc/members/", {"username": "bob", "role": "user"}, format="json"
     )
@@ -123,9 +125,11 @@ def test_member_with_user_role_may_issue() -> None:
 
 
 def test_issue_forbidden_for_non_member() -> None:
-    admin = _user("admin1", "use-case-admin")
+    admin = _user("admin1", "global-admin")
     _make_uc(admin, "demo-uc")
-    outsider = _user("eve", "use-case-admin")  # has the role but is not a member
+    # Not a member, and no organisation-wide role: a Global Administrator is a member of
+    # everything (`access.is_member`), so one would not be an outsider at all.
+    outsider = _user("eve")
     resp = _client(outsider).post(f"{BASE}demo-uc/api-keys/", {}, format="json")
     assert resp.status_code == 404
 
@@ -134,7 +138,7 @@ def test_issue_forbidden_for_non_member() -> None:
 
 
 def test_list_keys_is_masked() -> None:
-    admin = _user("admin1", "use-case-admin")
+    admin = _user("admin1", "global-admin")
     _make_uc(admin, "demo-uc")
     _client(admin).post(f"{BASE}demo-uc/api-keys/", {"label": "one"}, format="json")
 
@@ -159,7 +163,7 @@ def test_list_keys_is_masked() -> None:
 
 
 def test_revoke_deactivates_and_emits(captured_events) -> None:
-    admin = _user("admin1", "use-case-admin")
+    admin = _user("admin1", "global-admin")
     _make_uc(admin, "demo-uc")
     prefix = _client(admin).post(f"{BASE}demo-uc/api-keys/", {}, format="json").json()["prefix"]
 
@@ -174,16 +178,16 @@ def test_revoke_deactivates_and_emits(captured_events) -> None:
 
 
 def test_revoke_unknown_prefix_is_400() -> None:
-    admin = _user("admin1", "use-case-admin")
+    admin = _user("admin1", "global-admin")
     _make_uc(admin, "demo-uc")
     assert _client(admin).delete(f"{BASE}demo-uc/api-keys/nope/").status_code == 400
 
 
 def test_revoke_forbidden_for_non_admin_member() -> None:
-    admin = _user("admin1", "use-case-admin")
+    admin = _user("admin1", "global-admin")
     _make_uc(admin, "demo-uc")
     prefix = _client(admin).post(f"{BASE}demo-uc/api-keys/", {}, format="json").json()["prefix"]
-    member = _user("bob", "use-case-user")
+    member = _user("bob")
     _client(admin).post(
         f"{BASE}demo-uc/members/", {"username": "bob", "role": "user"}, format="json"
     )
@@ -204,7 +208,7 @@ def test_revoke_forbidden_for_non_admin_member() -> None:
 def test_a_key_issued_without_asking_still_gets_the_default_lifetime() -> None:
     """The case that matters: nobody has to remember. Omitting the field is the common path, so it
     is the one that must not produce an unbounded credential."""
-    admin = _user("exp-admin1", "use-case-admin")
+    admin = _user("exp-admin1", "global-admin")
     _make_uc(admin, "exp-uc-1")
 
     resp = _client(admin).post(f"{BASE}exp-uc-1/api-keys/", {"label": "one"}, format="json")
@@ -217,7 +221,7 @@ def test_a_key_issued_without_asking_still_gets_the_default_lifetime() -> None:
 
 def test_the_default_comes_from_configuration() -> None:
     """A policy nobody can change is one an installation works around."""
-    admin = _user("exp-admin4", "use-case-admin")
+    admin = _user("exp-admin4", "global-admin")
     _make_uc(admin, "exp-uc-4")
 
     with override_settings_value(api_key_default_days=7):
@@ -230,7 +234,7 @@ def test_the_default_comes_from_configuration() -> None:
 def test_a_lifetime_past_the_maximum_is_refused_by_name() -> None:
     """Refused, not silently truncated: a shortened lifetime would leave the requester believing a
     date that is not the one in the database."""
-    admin = _user("exp-admin5", "use-case-admin")
+    admin = _user("exp-admin5", "global-admin")
     _make_uc(admin, "exp-uc-5")
 
     resp = _client(admin).post(
@@ -243,7 +247,7 @@ def test_a_lifetime_past_the_maximum_is_refused_by_name() -> None:
 
 def test_the_maximum_itself_is_allowed() -> None:
     """An off-by-one here would make the documented ceiling unreachable."""
-    admin = _user("exp-admin6", "use-case-admin")
+    admin = _user("exp-admin6", "global-admin")
     _make_uc(admin, "exp-uc-6")
 
     resp = _client(admin).post(
@@ -258,7 +262,7 @@ def test_the_maximum_itself_is_allowed() -> None:
 def test_there_is_no_way_to_ask_for_a_key_that_never_expires() -> None:
     """`null` is the shape a client would reach for. It takes the default rather than meaning
     "forever" — the whole point of the bound."""
-    admin = _user("exp-admin7", "use-case-admin")
+    admin = _user("exp-admin7", "global-admin")
     _make_uc(admin, "exp-uc-7")
 
     resp = _client(admin).post(
@@ -270,7 +274,7 @@ def test_there_is_no_way_to_ask_for_a_key_that_never_expires() -> None:
 
 
 def test_an_expiry_is_recorded_and_published() -> None:
-    admin = _user("exp-admin2", "use-case-admin")
+    admin = _user("exp-admin2", "global-admin")
     _make_uc(admin, "exp-uc-2")
 
     resp = _client(admin).post(
@@ -288,7 +292,7 @@ def test_an_expiry_is_recorded_and_published() -> None:
 
 
 def test_a_nonsensical_lifetime_is_refused() -> None:
-    admin = _user("exp-admin3", "use-case-admin")
+    admin = _user("exp-admin3", "global-admin")
     _make_uc(admin, "exp-uc-3")
 
     resp = _client(admin).post(

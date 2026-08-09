@@ -21,6 +21,8 @@ from django.contrib.auth import get_user_model
 from django.core.exceptions import ImproperlyConfigured
 from rest_framework.test import APIClient
 
+from .conftest import role_claims
+
 pytestmark = pytest.mark.django_db
 
 BASE = "/api/v1/use-cases/"
@@ -28,7 +30,7 @@ BASE = "/api/v1/use-cases/"
 
 def _user(username: str, *roles: str):
     user = get_user_model().objects.create(username=username)
-    sync_user_roles(user, {"realm_access": {"roles": list(roles)}})
+    sync_user_roles(user, role_claims(*roles))
     return user
 
 
@@ -48,7 +50,7 @@ def _make_uc(admin, slug: str = "demo-uc") -> UseCase:
 
 def test_governance_role_cannot_mint_keys_for_a_use_case_it_only_oversees() -> None:
     """it-steuerung sees every use case (oversight) but must not get data-plane access."""
-    admin = _user("uc-admin", "use-case-admin")
+    admin = _user("uc-admin", "global-admin")
     _make_uc(admin, "demo-uc")
     governance = _user("gov", "it-steuerung")
 
@@ -61,9 +63,9 @@ def test_governance_role_cannot_mint_keys_for_a_use_case_it_only_oversees() -> N
 
 
 def test_member_may_still_issue_a_key() -> None:
-    admin = _user("uc-admin2", "use-case-admin")
+    admin = _user("uc-admin2", "global-admin")
     usecase = _make_uc(admin, "member-uc")
-    member = _user("member", "use-case-user")
+    member = _user("member")
     _client(admin).post(
         f"{BASE}member-uc/members/", {"username": "member", "role": "user"}, format="json"
     )
@@ -74,7 +76,7 @@ def test_member_may_still_issue_a_key() -> None:
 
 
 def test_global_admin_may_issue_a_key() -> None:
-    admin = _user("uc-admin3", "use-case-admin")
+    admin = _user("uc-admin3", "global-admin")
     _make_uc(admin, "ga-uc")
     resp = _client(_user("ga", "global-admin")).post(
         f"{BASE}ga-uc/api-keys/", {"label": "cli"}, format="json"
@@ -95,9 +97,12 @@ def test_local_environment_tolerates_dev_defaults() -> None:
 def test_production_rejects_dev_defaults() -> None:
     settings = ManagementSettings(environment="production")
     problems = unsafe_settings(settings)
-    assert len(problems) == 3  # secret key, wildcard hosts, debug
+    # Every reason at once, never the first one: a configuration review that reports one problem
+    # per deploy attempt is four deploys (`ADR-0015`).
+    assert len(problems) == 4  # secret key, wildcard hosts, debug, no global-admin group
     assert any("SECRET_KEY" in problem for problem in problems)
     assert any("ALLOWED_HOSTS" in problem for problem in problems)
+    assert any("AIRA_ROLE_GROUPS" in problem for problem in problems)
     assert effective_debug(settings) is False
 
 
@@ -107,9 +112,46 @@ def test_production_with_proper_settings_is_accepted() -> None:
         secret_key="a-real-secret-from-vault",
         allowed_hosts="aira.example.com",
         debug=False,
+        role_groups="global-admin=/aira/global-admins",
     )
     assert unsafe_settings(settings) == []
     assert settings.secret_key != DEV_SECRET_KEY
+
+
+def test_a_deployment_with_no_global_admin_group_refuses_to_start() -> None:
+    """Roles come from group membership and nothing else (`ADR-0017`), so an unnamed global-admin
+    group is not a permissive default — it is a console with no administrator, discovered hours
+    later as "nobody can log in properly". Local is exempt (`ADR-0015`): the demo has to start on
+    a fresh checkout, and there the console states the mapping instead."""
+    settings = ManagementSettings(
+        environment="production",
+        secret_key="a-real-secret-from-vault",
+        allowed_hosts="aira.example.com",
+        debug=False,
+        role_groups="it-security=/aira/it-security",
+    )
+
+    problems = unsafe_settings(settings)
+
+    assert len(problems) == 1
+    assert "global-admin" in problems[0]
+    assert unsafe_settings(ManagementSettings(environment="local")) == []
+
+
+def test_a_malformed_role_mapping_is_reported_rather_than_raised_at_import() -> None:
+    """It is a *reason*, listed beside the others, so a review sees every problem at once — and
+    because raising from a settings module turns a typo into a stack trace nobody can place."""
+    settings = ManagementSettings(
+        environment="production",
+        secret_key="a-real-secret-from-vault",
+        allowed_hosts="aira.example.com",
+        debug=False,
+        role_groups="global-admin=/aira/admins;nonsense",
+    )
+
+    problems = unsafe_settings(settings)
+
+    assert any("AIRA_ROLE_GROUPS is malformed" in problem for problem in problems)
 
 
 def test_enforce_safe_settings_raises_for_unsafe_deployment() -> None:

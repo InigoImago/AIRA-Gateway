@@ -1,12 +1,25 @@
 import datetime as dt
 
 import jwt
+import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 
+from aira_common.roles import parse_role_groups
 from aira_gateway.auth.oidc import OidcValidator, build_oidc_validator
 from aira_gateway.config import GatewaySettings
 
 ISSUER = "https://kc.example/realms/aira"
+
+
+@pytest.fixture
+def role_groups():
+    """The mapping an installation configures (`ADR-0017`). Parsed from the same string a
+    deployment sets, rather than hand-built, so a test cannot pass against a mapping the parser
+    would have refused."""
+    return parse_role_groups(
+        "global-admin=/aira/global-admins;it-security=/aira/it-security;"
+        "it-steuerung=/aira/it-steuerung"
+    )
 
 
 def _keypair() -> tuple[rsa.RSAPrivateKey, rsa.RSAPublicKey]:
@@ -140,20 +153,60 @@ def test_build_validator_with_audience_skips_the_warning() -> None:
     assert validator is not None
 
 
-def test_the_realm_roles_reach_the_principal() -> None:
-    """The claim is already in the token; before ADR-0009 the validator simply dropped it, and a
-    governance caller was indistinguishable from someone with no memberships at all."""
+def test_a_configured_group_confers_its_role(role_groups) -> None:
+    """**Rewritten, not repaired (`ADR-0017`).** It used to assert that `realm_access.roles`
+    reached the principal; roles now come from group membership and nothing else, so the property
+    it guarded no longer exists and a patched version would have tested a contract nobody has."""
     private, public = _keypair()
-    validator = OidcValidator(ISSUER, None, _Resolver(public))
+    validator = OidcValidator(ISSUER, None, _Resolver(public), role_groups=role_groups)
 
-    principal = validator.validate(_token(private, roles=["it-steuerung", "use-case-user"]))
+    principal = validator.validate(_token(private, groups=["/aira/it-steuerung"]))
 
     assert principal is not None
-    assert principal.roles == ("it-steuerung", "use-case-user")
+    assert principal.roles == ("it-steuerung",)
     assert principal.is_governance is True
 
 
-def test_a_token_without_roles_yields_a_principal_with_none() -> None:
+def test_a_realm_role_on_the_token_confers_nothing(role_groups) -> None:
+    """The point of the change, stated as the thing that must **not** happen. A realm role is no
+    longer read, so an administrator who assigns one directly has granted nothing — that is the
+    guarantee the owner asked for, and the only way to know it holds is to send one."""
+    private, public = _keypair()
+    validator = OidcValidator(ISSUER, None, _Resolver(public), role_groups=role_groups)
+
+    principal = validator.validate(_token(private, roles=["global-admin", "it-steuerung"]))
+
+    assert principal is not None
+    assert principal.roles == ()
+    assert principal.is_governance is False
+    assert principal.is_oversight is False
+
+
+def test_a_group_the_configuration_does_not_name_confers_nothing(role_groups) -> None:
+    private, public = _keypair()
+    validator = OidcValidator(ISSUER, None, _Resolver(public), role_groups=role_groups)
+
+    principal = validator.validate(_token(private, groups=["/aira/somebody-elses-admins"]))
+
+    assert principal is not None
+    assert principal.roles == ()
+
+
+def test_without_a_mapping_nobody_holds_a_role() -> None:
+    """An unconfigured gateway withholds oversight rather than assuming it. Reading a token that
+    carries every group in the realm must not make somebody governance by default."""
+    private, public = _keypair()
+    validator = OidcValidator(ISSUER, None, _Resolver(public))
+
+    principal = validator.validate(
+        _token(private, groups=["/aira/global-admins"], roles=["global-admin"])
+    )
+
+    assert principal is not None
+    assert principal.roles == ()
+
+
+def test_a_token_without_groups_yields_a_principal_with_no_roles() -> None:
     private, public = _keypair()
     validator = OidcValidator(ISSUER, None, _Resolver(public))
 

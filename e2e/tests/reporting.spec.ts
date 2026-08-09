@@ -58,7 +58,7 @@ test.describe('Reporting', () => {
   }) => {
     // A fresh use case, so the assertion is about this slug and not about whatever else the
     // suite has left in the database.
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('report');
     await createUseCase(page, slug, 'Reporting probe');
     await sendTraffic(request, await issueKey(page, slug));

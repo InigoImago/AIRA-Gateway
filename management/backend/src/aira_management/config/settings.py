@@ -30,6 +30,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Directory search (`FRD-209`) — read-only, and absent unless an admin client is configured.
 AIRA_OIDC_ISSUER_BASE = _settings.oidc_issuer_base
 AIRA_OIDC_REALM = _settings.oidc_realm
+AIRA_ROLE_GROUPS = _settings.role_groups
 AIRA_DIRECTORY_CLIENT_ID = _settings.directory_client_id
 AIRA_DIRECTORY_CLIENT_SECRET = _settings.directory_client_secret
 

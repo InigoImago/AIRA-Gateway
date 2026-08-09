@@ -43,7 +43,7 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
   inevitably do when both were written from the same mental model — and line coverage cannot see
   a *missing requirement*: on 2026-08-05 a review found seven real defects behind a green suite at
   99% coverage. So: **prove a test can fail.** Break the property, watch it go red, restore.
-  `make mutants` (`tools/mutation_check.py`) does this for **322 properties** across auth, budgets,
+  `make mutants` (`tools/mutation_check.py`) does this for **332 properties** across auth, budgets,
   pipeline, retention, the management control plane and the gateway's counters; when
   you fix a bug, add the mutation that reintroduces it. Two traps that cost real defects here:
   a stand-in that is more permissive than the thing it replaces (reuse the real method where you
@@ -1043,6 +1043,68 @@ environment while the feature read as done — an unconfigured secret store is i
 an absent one. Both containers get the variables now (secret-id in a **file**, never the
 environment), `make vault-init` creates path, policy and AppRole, and **`/readyz` says where the
 secrets came from**, which is the only reason this could go unnoticed at all.
+
+**Everything was calculated; nothing read it (`FRD-603`, 2026-08-09)** — the smoke-test use case
+showed neither tokens nor money on its own page, and the owner asked whether anything is calculated
+when no budget is set. Measured before touching it: **59 requests, 10,664 tokens, 3,674,900 nanos**
+in `request_logs`, priced, and **no row at all** in `budget_usage` — because it has no budget, and
+consumption was only ever *displayed* as a fraction of a limit. `BudgetService.usage()` iterates the
+use case's **budget rows**, the tab rendered every figure **inside a budget card**: no limit, no
+denominator, no number — not even the numerator, which existed. **Two correct halves and no wire**,
+in two different services. The fix is a **reader, not a calculation**:
+`GET /v1beta/reporting?use_case=<slug>` narrows the report `FRD-601` already serves, and a
+**Consumption** card sits on the **overview** beside the configuration tiles (this month, today) —
+it shipped in the budgets tab, which was the defect's own shape, and the owner moved it. Source is the **request log**, so
+the use-case page, the reporting screen and the export are three views of one number; `budget_usage`
+stays what it is — an enforcement counter that exists only where somebody set a limit. Three rules:
+**a filter narrows, never widens** (`scope = (use_case,)` is the natural way to write it, reads as a
+narrowing and **is a widening** — every member of any use case could then be told any other's spend;
+`N55`); **an empty report says whether it was allowed to be full** (`in_scope: false` — "not yours to
+see" and "nothing happened" are both zero rows and only one is a measurement; `N56`); and **unknown
+is never rendered as zero**, which is `FRD-403`'s unpriced rule one level up. No table, no column, no
+migration. `windowFor`/`isoDay` moved into `core/ui/periods.ts` rather than being restated — the rule
+inside them is an off-by-one that only appears in the evening. One correction found by reading the
+code back: the two windows are **two requests** whose failure was tracked in **one boolean written by
+both**, so a month already fetched was hidden when the day's request failed a moment later —
+whichever finished last decided what the reader saw. **Partial is a third state**, not a variety of
+unavailable; the test for it was written to fail first.
+
+**Who answers for a credential (`FRD-604` Stage A, 2026-08-09)** — the installation ahead has an
+**agentic coding** project where people issue their **own** keys and hand them to an assistant, and
+a **RAG chatbot** served by one shared credential. One console, two opposite shapes. The
+accountability chain already existed end to end — `ApiKey.owner` is a person, the issue event
+carries their username, the gateway writes it onto **every** audit row beside the key prefix, and
+the requests view filters by key — and **nobody was told**. The console recorded the issuer without
+saying so at the moment of issuing, then printed that name beside an agent's traffic with no sign
+that it means *who answers for the credential*, not *who wrote the request*: an investigator reads a
+colleague's name next to a rogue agent and concludes a human typed it. Worse than an absent figure —
+confident, and about a person. Stage A is four sentences and a badge (`via API key` on the row; an
+OIDC caller is deliberately **unmarked**, because there the name *is* the person and marking both
+makes the distinction useless), worded to hold for a shared key too. **Stage B specified, not
+built**: `issued_by` beside `owner`, because signing in *as* a technical user needs shared
+credentials for a governance console and destroys the one fact worth keeping. Test lesson, second
+instance after `N50`: three properties went red when broken and the fourth **could not** — a test
+asserting an **absence** is defended by the mutation that *adds*, never by the one that removes.
+
+**A role is held through a group (`ADR-0017`, `FRD-605`, 2026-08-09)** — the owner's rule: group
+membership is the single point of truth. AIRA had **two** mechanisms answering "who is this" (realm
+roles for the five roles, groups for use-case access), which is `FRD-209`'s defect one level up.
+Mapping the realm role *onto* a group was the cheaper option and leaves the guarantee a
+**convention**; `AIRA_ROLE_GROUPS=global-admin=/aira/global-admins;…` makes a direct assignment
+**structurally inert**, and the requirement was the guarantee. `realm_access.roles` is no longer
+read. **The two use-case roles cease to exist** — administering a use case is a group's relationship
+to *that* use case (`UseCaseGroupGrant`), and the proof they were redundant is that `may_admin`,
+`may_manage`, `is_member` and `scope_queryset` needed **no change** while `IsUseCaseUser` turned out
+to be used by nothing. The gateway's diff is **one call** (its vocabulary is all organisation-wide);
+Management re-derived three predicates from what they *meant* — creating a use case is a Global
+Administrator's act (a narrowing), the directory picker is "administers **any** use case" (removing
+it would be `FRD-206` inverted), and a model test is `FRD-504`'s *whoever may call a model may test
+one*. **The test migration was the audit**: the helper refuses the two dead roles **by name**, so
+every one of thirteen files had to be looked at — and a blanket rewrite to `global-admin` made the
+*boundary* tests pass for the wrong reason, since a Global Administrator is refused by nothing. The
+frontend harness had the same trap: **a default nobody can hold is a harness testing a different
+product.** Boot refusal is environment-shaped (`ADR-0015`). Verified live: `groups:
+['/aira/global-admins']`, `realm_access: None`, oversight resolved.
 
 Next candidates: **`FRD-114`** (model metadata — now also carries publisher + default output cap,
 prerequisite for 110–113 and 119), **`FRD-110`** (documents/images — the widest gap),

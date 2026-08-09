@@ -5,6 +5,23 @@
   "registrationAllowed": false,
   "groups": [
     {
+      "name": "aira",
+      "subGroups": [
+        {
+          "name": "global-admins",
+          "path": "/aira/global-admins"
+        },
+        {
+          "name": "it-security",
+          "path": "/aira/it-security"
+        },
+        {
+          "name": "it-steuerung",
+          "path": "/aira/it-steuerung"
+        }
+      ]
+    },
+    {
       "name": "use-cases",
       "subGroups": [
         {
@@ -202,11 +219,10 @@
           "temporary": false
         }
       ],
-      "realmRoles": [
-        "global-admin"
-      ],
+      "realmRoles": [],
       "groups": [
-        "/use-cases/smoke-test"
+        "/use-cases/smoke-test",
+        "/aira/global-admins"
       ]
     },
     {
@@ -223,11 +239,10 @@
           "temporary": false
         }
       ],
-      "realmRoles": [
-        "it-security"
-      ],
+      "realmRoles": [],
       "groups": [
-        "/use-cases/smoke-test"
+        "/use-cases/smoke-test",
+        "/aira/it-security"
       ]
     },
     {
@@ -244,10 +259,10 @@
           "temporary": false
         }
       ],
-      "realmRoles": [
-        "it-steuerung"
-      ],
-      "groups": []
+      "realmRoles": [],
+      "groups": [
+        "/aira/it-steuerung"
+      ]
     },
     {
       "username": "ucadmin",
@@ -263,9 +278,7 @@
           "temporary": false
         }
       ],
-      "realmRoles": [
-        "use-case-admin"
-      ],
+      "realmRoles": [],
       "groups": [
         "/use-cases/kundenservice",
         "/use-cases/entwicklung",
@@ -287,9 +300,7 @@
           "temporary": false
         }
       ],
-      "realmRoles": [
-        "use-case-user"
-      ],
+      "realmRoles": [],
       "groups": [
         "/use-cases/kundenservice",
         "/use-cases/demo-uc",
@@ -310,9 +321,7 @@
           "temporary": false
         }
       ],
-      "realmRoles": [
-        "use-case-admin"
-      ],
+      "realmRoles": [],
       "groups": [
         "/use-cases/demo-uc"
       ]
@@ -321,17 +330,16 @@
       "username": "service-account-aira-integration-tests",
       "enabled": true,
       "serviceAccountClientId": "aira-integration-tests",
-      "realmRoles": [
-        "it-steuerung"
+      "realmRoles": [],
+      "groups": [
+        "/aira/it-steuerung"
       ]
     },
     {
       "username": "service-account-aira-integration-tests-member",
       "enabled": true,
       "serviceAccountClientId": "aira-integration-tests-member",
-      "realmRoles": [
-        "use-case-admin"
-      ],
+      "realmRoles": [],
       "groups": [
         "/abteilungen/kundendienst"
       ]
@@ -340,16 +348,18 @@
       "username": "service-account-aira-integration-tests-security",
       "enabled": true,
       "serviceAccountClientId": "aira-integration-tests-security",
-      "realmRoles": [
-        "it-security"
+      "realmRoles": [],
+      "groups": [
+        "/aira/it-security"
       ]
     },
     {
       "username": "service-account-aira-integration-tests-admin",
       "enabled": true,
       "serviceAccountClientId": "aira-integration-tests-admin",
-      "realmRoles": [
-        "global-admin"
+      "realmRoles": [],
+      "groups": [
+        "/aira/global-admins"
       ]
     }
   ],

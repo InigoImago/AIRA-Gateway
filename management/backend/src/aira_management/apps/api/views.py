@@ -8,23 +8,41 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from aira_common.access import usecases_from_group_paths
 from aira_management.config.runtime import get_settings
+from aira_management.roles import ALL_ROLES
 
 
 class MeView(APIView):
-    """Return the authenticated user with their realm roles and use-case groups."""
+    """Return the authenticated user with the roles the server enforces and their use cases.
+
+    **The roles are read from the user, not from the token (`ADR-0017`).** This view used to
+    report `realm_access.roles` straight off the claim, which made it a *third* answer to "which
+    roles does this caller hold" beside `sync_user_roles` and the permission classes. While all
+    three read the same claim they agreed by accident; the moment roles came from group membership
+    they did not, and the console — which decides what to offer from this response — was told the
+    caller had no roles at all while the server happily let them through. Found live, by a Global
+    Administrator being shown no "New use case" button.
+
+    So it reports what the caller's Django groups say, which is what every permission class
+    compares against. One answer, one source.
+    """
 
     def get(self, request: Request) -> Response:
         claims: dict[str, Any] = request.auth if isinstance(request.auth, dict) else {}
-        realm_access = claims.get("realm_access") or {}
         settings = get_settings()
+        held = set(request.user.groups.values_list("name", flat=True))
         return Response(
             {
                 "subject": claims.get("sub"),
                 "username": request.user.get_username(),
                 "email": getattr(request.user, "email", ""),
-                "roles": realm_access.get("roles", []),
-                "use_cases": claims.get("groups", []),
+                "roles": [str(role) for role in ALL_ROLES if str(role) in held],
+                # Slugs, not raw group paths. It returned the whole `groups` claim, which was
+                # already loose and became actively wrong once that claim also carries the role
+                # groups — a console asking "which use cases am I in" would have been told
+                # `/aira/global-admins`.
+                "use_cases": list(usecases_from_group_paths(claims.get("groups") or [])),
                 # The key policy, so the console states the numbers the server enforces instead of
                 # carrying its own copy. A second definition would be confidently wrong the first
                 # time an installation changed the setting — and the reader would then be told a

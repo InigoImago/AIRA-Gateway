@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { USERS, createUseCase, login, uniqueSlug } from './support';
+import { USERS, createUseCase, login, logout, uniqueSlug } from './support';
 
 /**
  * What an incident actually does, in a real browser (`FRD-131` FR-7, `FRD-502`).
@@ -21,7 +21,7 @@ test.describe('Traces — the controls an investigation reaches for', () => {
     // A use-case administrator, because these two filters are everybody's. IT Security cannot
     // *create* a use case — an authority it does not have, and the console correctly does not
     // offer it — so the incident case below borrows one instead.
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = await createUseCase(page, uniqueSlug('traces'), 'Trace filters');
 
     await page.goto(`/use-cases/${slug}?tab=traces`);
@@ -49,8 +49,14 @@ test.describe('Traces — the controls an investigation reaches for', () => {
      */
     // Created by the role that may create one, and read by the role that may investigate. IT
     // Security sees every use case without being a member of any — that is what oversight is.
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = await createUseCase(page, uniqueSlug('addr'), 'Address column');
+    // The negative half is asserted as somebody who may **not** act on an incident: a Global
+    // Administrator is offered the address field, so leaving them signed in here would have the
+    // test prove the opposite of its name. `login` does not switch users on its own — it accepts
+    // whatever session it finds — so the sign-out is the switch.
+    await logout(page);
+    await login(page, USERS.useCaseAdmin);
 
     await page.goto(`/use-cases/${slug}?tab=traces`);
     await expect(page.getByTestId('tools-only')).toBeVisible();
@@ -88,7 +94,7 @@ test.describe('The OpenCode configuration', () => {
      * that can tell "renders a button" from "produces a file" — the distinction `FRD-206` shipped
      * a defect on when an info button was a `title` attribute and showed nothing at all.
      */
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = await createUseCase(page, uniqueSlug('opencode'), 'Assistant access');
 
     await page.goto(`/use-cases/${slug}?tab=keys`);
@@ -116,7 +122,7 @@ test.describe('The OpenCode configuration', () => {
   test('the configuration disappears with the key it carries', async ({ page }) => {
     /** It contains the credential. Leaving the buttons on screen after "Done" would mean the key
      *  is retrievable from a page that has just said it is not. */
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = await createUseCase(page, uniqueSlug('once'), 'Shown once');
 
     await page.goto(`/use-cases/${slug}?tab=keys`);
@@ -143,7 +149,7 @@ test.describe('Reading what was actually sent', () => {
     // the top and failed against rows another suite had left there — no payload, dated 2031. A
     // test that depends on ambient data is flaky by construction, and worse, it is flaky in a way
     // that looks like a product defect.
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = await createUseCase(page, uniqueSlug('payload'), 'Reading a prompt');
     await page.goto(`/use-cases/${slug}?tab=keys`);
     await page.click('button:has-text("+ Issue key")');
@@ -337,7 +343,7 @@ test.describe('Navigation that hides nothing', () => {
      * out of view is a section the reader does not know exists. Measured, not eyeballed — every
      * entry must be inside the viewport, which is the property that was actually broken.
      */
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = await createUseCase(page, uniqueSlug('tabs'), 'Tab layout');
     await page.setViewportSize({ width: 900, height: 900 });
     await page.goto(`/use-cases/${slug}`);
@@ -360,7 +366,7 @@ test.describe('Navigation that hides nothing', () => {
   });
 
   test('and stays a row where there is room for one', async ({ page }) => {
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = await createUseCase(page, uniqueSlug('wide'), 'Wide tabs');
     await page.setViewportSize({ width: 1400, height: 900 });
     await page.goto(`/use-cases/${slug}`);

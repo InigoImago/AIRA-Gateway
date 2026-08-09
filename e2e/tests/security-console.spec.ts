@@ -137,7 +137,7 @@ test.describe('Warnings and traces on a use case', () => {
     // **groups** (FRD-102), and creating a use case in this console does not create one — so the
     // account that just created it can see no requests for it, and the oversight role can. The
     // console now says which of those two empties it is; the next test asserts that.
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('trace');
     await createUseCase(page, slug, 'Trace probe');
     const key = await issueKey(page, slug);
@@ -161,10 +161,14 @@ test.describe('Warnings and traces on a use case', () => {
     // gateway could not see them as a member at all. An empty state that states the wrong reason
     // is worse than one that states none: the reader concludes the recording is broken, and then
     // distrusts every figure on the page.
-    await login(page, USERS.useCaseAdmin);
+    // Same split as the consumption panel: created by the only role that may, read by a role that
+    // is not oversight — `not-in-scope` is unreachable for anybody who sees every use case.
+    await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('scope');
     await createUseCase(page, slug, 'Scope probe');
 
+    await logout(page);
+    await login(page, USERS.useCaseAdmin);
     await page.goto(`/use-cases/${slug}?tab=traces`);
     const notice = page.locator('[data-testid="not-in-scope"]');
     await expect(notice).toBeVisible({ timeout: 20_000 });
@@ -181,7 +185,7 @@ test.describe('Warnings and traces on a use case', () => {
     // FRD-502 FR-11 asserted where somebody could actually be harmed by the opposite: in the
     // rendered page. The use case stores payloads by default, so the prompt *is* in the row the
     // endpoint selects from.
-    await login(page, USERS.useCaseAdmin);
+    await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('nopay');
     await createUseCase(page, slug, 'Payload probe');
     const key = await issueKey(page, slug);

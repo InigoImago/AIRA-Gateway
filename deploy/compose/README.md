@@ -94,6 +94,20 @@ make destroy && make up          # drops all volumes, cleanest
 # or: delete the realm in the admin console (or via the admin API) and restart the container
 ```
 
+> **A recreated realm issues new subject ids, and Management binds users to them.**
+> Every Keycloak user gets a fresh `sub`, and `OidcIdentity` binds a Django user to the old one
+> (`ADR-0007`). The next sign-in therefore **provisions a second user** — `admin` becomes
+> `admin-ec05a3db` — which owns nothing: no API keys, no memberships, no object permissions. The
+> console shows the suffixed name and the original account looks abandoned.
+>
+> Do **not** delete the duplicates and let the originals re-provision: `ApiKey.owner` cascades, so
+> that destroys every key those users issued. **Rebind instead** — point each original
+> `api_oidcidentity.subject` at the user's new Keycloak id (including the service accounts, whose
+> ids change too), then remove the duplicates. Keys, grants and guardian permissions survive.
+>
+> The same applies to a real change of identity provider, which is why it is written here rather
+> than left as a local-stack curiosity.
+
 Two things to watch when editing it:
 
 - `CLIENT.DESCRIPTION` is `varchar(255)`. A longer description makes the import fail and

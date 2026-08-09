@@ -8,6 +8,8 @@ from aira_management.rbac import sync_user_roles
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
 
+from .conftest import role_claims
+
 pytestmark = pytest.mark.django_db
 
 BASE = "/api/v1/use-cases/"
@@ -26,7 +28,7 @@ _STEPS = [
 
 def _user(username: str, *roles: str):
     user = get_user_model().objects.create(username=username)
-    sync_user_roles(user, {"realm_access": {"roles": list(roles)}})
+    sync_user_roles(user, role_claims(*roles))
     return user
 
 
@@ -54,7 +56,7 @@ def captured_events():
 
 
 def test_get_returns_empty_default() -> None:
-    admin = _user("admin1", "use-case-admin")
+    admin = _user("admin1", "global-admin")
     _make_uc(admin, "demo-uc")
     resp = _client(admin).get(f"{BASE}demo-uc/pipeline/")
     assert resp.status_code == 200
@@ -62,7 +64,7 @@ def test_get_returns_empty_default() -> None:
 
 
 def test_get_returns_saved_config() -> None:
-    admin = _user("admin1", "use-case-admin")
+    admin = _user("admin1", "global-admin")
     _make_uc(admin, "demo-uc")
     client = _client(admin)
     client.put(
@@ -75,7 +77,7 @@ def test_get_returns_saved_config() -> None:
 
 
 def test_put_saves_and_emits(captured_events) -> None:
-    admin = _user("admin1", "use-case-admin")
+    admin = _user("admin1", "global-admin")
     _make_uc(admin, "demo-uc")
 
     resp = _client(admin).put(
@@ -93,7 +95,7 @@ def test_put_saves_and_emits(captured_events) -> None:
 
 
 def test_put_is_idempotent_update() -> None:
-    admin = _user("admin1", "use-case-admin")
+    admin = _user("admin1", "global-admin")
     _make_uc(admin, "demo-uc")
     client = _client(admin)
     client.put(f"{BASE}demo-uc/pipeline/", {"steps": _STEPS, "fallback_models": []}, format="json")
@@ -105,7 +107,7 @@ def test_put_is_idempotent_update() -> None:
 
 
 def test_put_rejects_invalid_step_type() -> None:
-    admin = _user("admin1", "use-case-admin")
+    admin = _user("admin1", "global-admin")
     _make_uc(admin, "demo-uc")
     resp = _client(admin).put(
         f"{BASE}demo-uc/pipeline/",
@@ -116,7 +118,7 @@ def test_put_rejects_invalid_step_type() -> None:
 
 
 def test_put_rejects_non_list_steps() -> None:
-    admin = _user("admin1", "use-case-admin")
+    admin = _user("admin1", "global-admin")
     _make_uc(admin, "demo-uc")
     resp = _client(admin).put(
         f"{BASE}demo-uc/pipeline/",
@@ -127,7 +129,7 @@ def test_put_rejects_non_list_steps() -> None:
 
 
 def test_put_rejects_non_dict_step_config() -> None:
-    admin = _user("admin1", "use-case-admin")
+    admin = _user("admin1", "global-admin")
     _make_uc(admin, "demo-uc")
     resp = _client(admin).put(
         f"{BASE}demo-uc/pipeline/",
@@ -138,7 +140,7 @@ def test_put_rejects_non_dict_step_config() -> None:
 
 
 def test_put_rejects_bad_fallback_models() -> None:
-    admin = _user("admin1", "use-case-admin")
+    admin = _user("admin1", "global-admin")
     _make_uc(admin, "demo-uc")
     resp = _client(admin).put(
         f"{BASE}demo-uc/pipeline/",
@@ -149,9 +151,9 @@ def test_put_rejects_bad_fallback_models() -> None:
 
 
 def test_put_forbidden_for_non_admin_member() -> None:
-    admin = _user("admin1", "use-case-admin")
+    admin = _user("admin1", "global-admin")
     _make_uc(admin, "demo-uc")
-    member = _user("bob", "use-case-user")
+    member = _user("bob")
     _client(admin).post(
         f"{BASE}demo-uc/members/", {"username": "bob", "role": "user"}, format="json"
     )
@@ -162,9 +164,9 @@ def test_put_forbidden_for_non_admin_member() -> None:
 
 
 def test_member_may_read_pipeline() -> None:
-    admin = _user("admin1", "use-case-admin")
+    admin = _user("admin1", "global-admin")
     _make_uc(admin, "demo-uc")
-    member = _user("bob", "use-case-user")
+    member = _user("bob")
     _client(admin).post(
         f"{BASE}demo-uc/members/", {"username": "bob", "role": "user"}, format="json"
     )
@@ -172,7 +174,7 @@ def test_member_may_read_pipeline() -> None:
 
 
 def test_str_representation() -> None:
-    admin = _user("admin1", "use-case-admin")
+    admin = _user("admin1", "global-admin")
     uc = _make_uc(admin, "demo-uc")
     config = PipelineConfig.objects.create(use_case=uc)
     assert str(config) == "pipeline for demo-uc"
@@ -182,7 +184,7 @@ def test_str_representation() -> None:
 
 
 def _save(steps=None, fallback_models=None):
-    admin = _user("admin1", "use-case-admin")
+    admin = _user("admin1", "global-admin")
     _make_uc(admin, "demo-uc")
     return _client(admin).put(
         f"{BASE}demo-uc/pipeline/",
@@ -266,7 +268,7 @@ def test_the_undetermined_policy_is_validated_where_it_is_authored() -> None:
     """`FRD-125` gave a blocking LLM filter a choice about what to do when its classifier reaches
     no verdict. The gateway reads anything that is not "allow" as blocking, so a typo is *safe* —
     and silently means the opposite of what somebody typed. Caught here, where they typed it."""
-    admin = _user("admin1", "use-case-admin")
+    admin = _user("admin1", "global-admin")
     _make_uc(admin, "demo-uc")
 
     resp = _client(admin).put(
@@ -288,7 +290,7 @@ def test_the_undetermined_policy_is_validated_where_it_is_authored() -> None:
 
 
 def test_both_undetermined_policies_are_accepted() -> None:
-    admin = _user("admin1", "use-case-admin")
+    admin = _user("admin1", "global-admin")
     _make_uc(admin, "demo-uc")
     client = _client(admin)
 

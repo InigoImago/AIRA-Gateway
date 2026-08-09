@@ -9,16 +9,12 @@ const ROLE_LABELS: Record<string, string> = {
   'global-admin': 'Global administrator',
   'it-steuerung': 'IT Steuerung',
   'it-security': 'IT Security',
-  'use-case-admin': 'Use-case administrator',
-  'use-case-user': 'Use-case user',
 };
 
 const ROLE_EXPLANATIONS: Record<string, string> = {
   'global-admin': 'Sees every use case and is the only role that may price a model.',
   'it-steuerung': 'Sees every use case and the whole spend report, and may change none of it.',
   'it-security': 'Sees every use case for security oversight — its configuration, not its content.',
-  'use-case-admin': 'Administers the use cases you are a member of.',
-  'use-case-user': 'Uses the use cases you are a member of; read-only here.',
 };
 
 @Component({

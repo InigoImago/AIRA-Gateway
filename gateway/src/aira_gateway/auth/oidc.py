@@ -2,13 +2,20 @@
 
 Wraps the shared :class:`aira_common.oidc.JwtVerifier` and maps verified claims to a
 gateway :class:`Principal` (subject + use-case membership from Keycloak groups).
+
+**Roles come from groups (`ADR-0017`).** Until 2026-08-09 this read `realm_access.roles` while
+use-case membership came from the `groups` claim — two mechanisms answering "who is this". The
+gateway's whole role vocabulary is `is_governance`, `is_oversight` and `may_act_on_incidents`,
+all built from three organisation-wide roles, so the change is exactly this one call: the two
+use-case roles were never read here at all.
 """
 
 from __future__ import annotations
 
 from aira_common.logging import get_logger
 from aira_common.oidc import JwtVerifier, SigningKeyResolver, build_jwks_client
-from aira_gateway.auth.attribution import realm_roles, usecases_from_groups
+from aira_common.roles import Role, roles_from_groups
+from aira_gateway.auth.attribution import usecases_from_groups
 from aira_gateway.auth.principal import Principal
 from aira_gateway.config import GatewaySettings
 
@@ -22,8 +29,12 @@ class OidcValidator:
         audience: str | None,
         jwks: SigningKeyResolver,
         algorithms: tuple[str, ...] = ("RS256",),
+        role_groups: dict[Role, tuple[str, ...]] | None = None,
     ) -> None:
         self._verifier = JwtVerifier(issuer, audience, jwks, algorithms)
+        # An absent mapping grants no roles, which is the safe reading and the one an installation
+        # that has not configured `AIRA_ROLE_GROUPS` gets: oversight is withheld, never assumed.
+        self._role_groups = role_groups or {}
 
     def validate(self, token: str) -> Principal | None:
         claims = self._verifier.verify(token)
@@ -49,7 +60,9 @@ class OidcValidator:
             # the read-model cannot be read.
             use_cases=usecases_from_groups(groups),
             groups=tuple(str(group) for group in groups if isinstance(group, str)),
-            roles=realm_roles(claims),
+            roles=roles_from_groups(
+                (str(group) for group in groups if isinstance(group, str)), self._role_groups
+            ),
         )
 
 
@@ -69,4 +82,5 @@ def build_oidc_validator(settings: GatewaySettings) -> OidcValidator | None:
         issuer=settings.oidc_issuer,
         audience=settings.oidc_audience,
         jwks=build_jwks_client(settings.jwks_uri()),
+        role_groups=settings.parsed_role_groups(),
     )

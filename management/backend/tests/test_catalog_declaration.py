@@ -231,10 +231,15 @@ def test_a_model_with_only_a_price_is_undeclared_rather_than_invalid() -> None:
     assert Model.objects.get(name="legacy-1").is_declared is False
 
 
-def test_a_use_case_admin_may_not_declare_a_model() -> None:
+def test_somebody_without_a_global_role_may_not_declare_a_model() -> None:
     """A thinking maximum is a cost ceiling: whoever can raise it can make one request cost as
-    much as a month. Same restriction as prices, with more direct leverage (FRD-114 §5.4)."""
-    response = _client(_user("ucadmin", "use-case-admin")).post(
+    much as a month. Same restriction as prices, with more direct leverage (FRD-114 §5.4).
+
+    Named for the caller it now describes: `use-case-admin` was an organisation-wide role and is
+    one no longer (`ADR-0017`), so the person this guards against is anybody whose authority is a
+    use case rather than the installation.
+    """
+    response = _client(_user("ucadmin")).post(
         BASE, {"name": "sneaky-1", "capabilities": ["generate"]}, format="json"
     )
     assert response.status_code == 403

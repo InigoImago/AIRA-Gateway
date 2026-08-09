@@ -8,6 +8,8 @@ from aira_management.rbac import sync_user_roles
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
 
+from .conftest import role_claims
+
 pytestmark = pytest.mark.django_db
 
 BASE = "/api/v1/use-cases/"
@@ -15,7 +17,7 @@ BASE = "/api/v1/use-cases/"
 
 def _user(username: str, *roles: str):
     user = get_user_model().objects.create(username=username)
-    sync_user_roles(user, {"realm_access": {"roles": list(roles)}})
+    sync_user_roles(user, role_claims(*roles))
     return user
 
 
@@ -43,7 +45,7 @@ def captured_events():
 
 
 def test_create_use_case_budget_and_emit(captured_events) -> None:
-    admin = _user("admin1", "use-case-admin")
+    admin = _user("admin1", "global-admin")
     _make_uc(admin, "demo-uc")
 
     resp = _client(admin).post(
@@ -61,7 +63,7 @@ def test_create_use_case_budget_and_emit(captured_events) -> None:
 
 
 def test_member_budget_requires_subject() -> None:
-    admin = _user("admin1", "use-case-admin")
+    admin = _user("admin1", "global-admin")
     _make_uc(admin, "demo-uc")
     resp = _client(admin).post(
         f"{BASE}demo-uc/budgets/",
@@ -72,7 +74,7 @@ def test_member_budget_requires_subject() -> None:
 
 
 def test_member_budget_created_with_subject() -> None:
-    admin = _user("admin1", "use-case-admin")
+    admin = _user("admin1", "global-admin")
     _make_uc(admin, "demo-uc")
     resp = _client(admin).post(
         f"{BASE}demo-uc/budgets/",
@@ -84,7 +86,7 @@ def test_member_budget_created_with_subject() -> None:
 
 
 def test_budget_requires_a_limit() -> None:
-    admin = _user("admin1", "use-case-admin")
+    admin = _user("admin1", "global-admin")
     _make_uc(admin, "demo-uc")
     resp = _client(admin).post(
         f"{BASE}demo-uc/budgets/",
@@ -95,7 +97,7 @@ def test_budget_requires_a_limit() -> None:
 
 
 def test_budget_rejects_negative_limit() -> None:
-    admin = _user("admin1", "use-case-admin")
+    admin = _user("admin1", "global-admin")
     _make_uc(admin, "demo-uc")
     resp = _client(admin).post(
         f"{BASE}demo-uc/budgets/",
@@ -106,7 +108,7 @@ def test_budget_rejects_negative_limit() -> None:
 
 
 def test_post_upserts_same_scope_period() -> None:
-    admin = _user("admin1", "use-case-admin")
+    admin = _user("admin1", "global-admin")
     _make_uc(admin, "demo-uc")
     client = _client(admin)
     client.post(
@@ -125,9 +127,9 @@ def test_post_upserts_same_scope_period() -> None:
 
 
 def test_member_may_read_budgets() -> None:
-    admin = _user("admin1", "use-case-admin")
+    admin = _user("admin1", "global-admin")
     _make_uc(admin, "demo-uc")
-    member = _user("bob", "use-case-user")
+    member = _user("bob")
     _client(admin).post(
         f"{BASE}demo-uc/members/", {"username": "bob", "role": "user"}, format="json"
     )
@@ -135,7 +137,7 @@ def test_member_may_read_budgets() -> None:
 
 
 def test_delete_budget_emits(captured_events) -> None:
-    admin = _user("admin1", "use-case-admin")
+    admin = _user("admin1", "global-admin")
     _make_uc(admin, "demo-uc")
     created = _client(admin).post(
         f"{BASE}demo-uc/budgets/",
@@ -151,20 +153,20 @@ def test_delete_budget_emits(captured_events) -> None:
 
 
 def test_delete_unknown_budget_is_400() -> None:
-    admin = _user("admin1", "use-case-admin")
+    admin = _user("admin1", "global-admin")
     _make_uc(admin, "demo-uc")
     assert _client(admin).delete(f"{BASE}demo-uc/budgets/999/").status_code == 400
 
 
 def test_delete_budget_forbidden_for_non_admin_member() -> None:
-    admin = _user("admin1", "use-case-admin")
+    admin = _user("admin1", "global-admin")
     _make_uc(admin, "demo-uc")
     created = _client(admin).post(
         f"{BASE}demo-uc/budgets/",
         {"scope": "use_case", "period": "month", "limit_tokens": 1000},
         format="json",
     )
-    member = _user("bob", "use-case-user")
+    member = _user("bob")
     _client(admin).post(
         f"{BASE}demo-uc/members/", {"username": "bob", "role": "user"}, format="json"
     )
@@ -173,9 +175,9 @@ def test_delete_budget_forbidden_for_non_admin_member() -> None:
 
 
 def test_budget_write_forbidden_for_non_admin_member() -> None:
-    admin = _user("admin1", "use-case-admin")
+    admin = _user("admin1", "global-admin")
     _make_uc(admin, "demo-uc")
-    member = _user("bob", "use-case-user")
+    member = _user("bob")
     _client(admin).post(
         f"{BASE}demo-uc/members/", {"username": "bob", "role": "user"}, format="json"
     )
@@ -188,7 +190,7 @@ def test_budget_write_forbidden_for_non_admin_member() -> None:
 
 
 def test_str_representation() -> None:
-    admin = _user("admin1", "use-case-admin")
+    admin = _user("admin1", "global-admin")
     uc = _make_uc(admin, "demo-uc")
     budget = Budget.objects.create(use_case=uc, scope="member", subject="bob", period="day")
     assert str(budget) == "budget member:bob (day)"
@@ -198,7 +200,7 @@ def test_str_representation() -> None:
 
 
 def test_a_budget_may_cap_cost() -> None:
-    admin = _user("admin1", "use-case-admin")
+    admin = _user("admin1", "global-admin")
     _make_uc(admin, "demo-uc")
     resp = _client(admin).post(
         f"{BASE}demo-uc/budgets/",
@@ -210,7 +212,7 @@ def test_a_budget_may_cap_cost() -> None:
 
 
 def test_a_budget_still_needs_at_least_one_limit() -> None:
-    admin = _user("admin1", "use-case-admin")
+    admin = _user("admin1", "global-admin")
     _make_uc(admin, "demo-uc")
     resp = _client(admin).post(
         f"{BASE}demo-uc/budgets/", {"scope": "use_case", "period": "month"}, format="json"
@@ -220,7 +222,7 @@ def test_a_budget_still_needs_at_least_one_limit() -> None:
 
 
 def test_the_cost_limit_is_published_as_a_string(captured_events) -> None:
-    admin = _user("admin1", "use-case-admin")
+    admin = _user("admin1", "global-admin")
     _make_uc(admin, "demo-uc")
     _client(admin).post(
         f"{BASE}demo-uc/budgets/",

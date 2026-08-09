@@ -21,6 +21,8 @@ from aira_management.apps.usecases.views import _grant
 from aira_management.rbac import scope_queryset, sync_user_roles
 from django.contrib.auth import get_user_model
 
+from .conftest import role_claims
+
 pytestmark = pytest.mark.django_db
 
 
@@ -52,8 +54,12 @@ def test_the_roles_do_not_all_see_the_same_thing(seeded) -> None:
     """**The property the walkthrough rests on.** `ucadmin` administers two of three; governance
     sees all three. If those were equal, switching accounts would demonstrate nothing."""
     users = {u.get_username(): u for u in get_user_model().objects.all()}
-    sync_user_roles(users["ucadmin"], {"realm_access": {"roles": ["use-case-admin"]}})
-    sync_user_roles(users["itgov"], {"realm_access": {"roles": ["it-steuerung"]}})
+    # `ucadmin` holds **no** organisation-wide role (`ADR-0017`): what it administers comes from
+    # the grants the seed writes on two of the three use cases, which is exactly the property this
+    # test is about. Giving it a role here would have made the seed's grants irrelevant to the
+    # answer and the assertion would have passed on the wrong evidence.
+    sync_user_roles(users["ucadmin"], role_claims())
+    sync_user_roles(users["itgov"], role_claims("it-steuerung"))
 
     admin_sees = set(
         scope_queryset(

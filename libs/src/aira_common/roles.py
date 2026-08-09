@@ -80,3 +80,90 @@ def is_governance(roles: Iterable[str]) -> bool:
     heard of does not break authentication.
     """
     return any(role in GOVERNANCE_ROLES for role in roles)
+
+
+# ---- where a role comes from (ADR-0017) ---------------------------------------------------
+#
+# **Group membership, and nothing else.** Until 2026-08-09 both planes read `realm_access.roles`,
+# while use-case access came from the `groups` claim (`FRD-209`) — two mechanisms answering
+# "who is this", which is the shape of defect `FRD-209` was written to remove one level down.
+#
+# The two use-case roles are gone from this path entirely. They were never organisation-wide facts
+# about a person: administering *a* use case is a relationship between a group and that use case,
+# and `UseCaseGroupGrant` already holds it. What remains here are the three roles that really are
+# properties of somebody within the whole installation.
+
+#: The roles a group may confer. A closed set, and deliberately not `ALL_ROLES`: naming
+#: `use-case-admin` in the mapping would grant somebody every use case at once, which is exactly
+#: the blanket authority the object grants exist to avoid.
+CONFIGURABLE_ROLES: frozenset[Role] = frozenset(
+    {Role.GLOBAL_ADMIN, Role.IT_SECURITY, Role.IT_STEUERUNG}
+)
+
+
+class RoleMappingError(ValueError):
+    """A role mapping that cannot be honoured. Raised at startup, never at request time."""
+
+
+def parse_role_groups(raw: str) -> dict[Role, tuple[str, ...]]:
+    """Parse ``role=/path[,/path...][;role=...]`` into the mapping both planes read.
+
+    Refuses rather than ignores, on every count: an unknown role name, a role that cannot be
+    conferred by a group, an entry with no ``=``, and a group path that is not absolute. A typo
+    here grants nothing and would do so **silently** — the failure this project has now recorded
+    four times (a topic nothing created, `record_to_outbox` returning for an unknown type, the
+    seed's `continue`, a filter that had been switched off by an empty answer).
+
+    The bare realm root is refused for the same reason `FRD-209` refuses it as a grant: `/` matches
+    no group path Keycloak ever emits, so it is a rule that can never fire.
+    """
+    mapping: dict[Role, tuple[str, ...]] = {}
+    for entry in (part.strip() for part in raw.split(";")):
+        if not entry:
+            continue
+        name, sep, paths = entry.partition("=")
+        if not sep:
+            raise RoleMappingError(f"'{entry}' is not a 'role=/group/path' pair.")
+        try:
+            role = Role(name.strip())
+        except ValueError as exc:
+            allowed = ", ".join(sorted(str(r) for r in CONFIGURABLE_ROLES))
+            raise RoleMappingError(
+                f"'{name.strip()}' is not an AIRA role. Expected: {allowed}."
+            ) from exc
+        if role not in CONFIGURABLE_ROLES:
+            raise RoleMappingError(
+                f"'{role}' is not conferred by a group — it is granted on a single use case "
+                "(FRD-209). Remove it from AIRA_ROLE_GROUPS."
+            )
+        cleaned = tuple(p.strip() for p in paths.split(",") if p.strip())
+        for path in cleaned:
+            if not path.startswith("/") or path == "/":
+                raise RoleMappingError(
+                    f"'{path}' is not a group path. Keycloak emits full paths such as "
+                    "'/aira/global-admins', and the realm root matches nothing."
+                )
+        if not cleaned:
+            raise RoleMappingError(f"'{role}' names no group.")
+        # Two entries for one role are merged rather than the second silently winning: an
+        # installation that lists a group twice meant both.
+        mapping[role] = tuple(dict.fromkeys(mapping.get(role, ()) + cleaned))
+    return mapping
+
+
+def roles_from_groups(
+    groups: Iterable[str], mapping: dict[Role, tuple[str, ...]]
+) -> tuple[str, ...]:
+    """The roles a caller holds, given the groups their token carries (`ADR-0017`).
+
+    Exact path match, never a prefix. `/aira/global-admins-readonly` starting with
+    `/aira/global-admins` must not confer anything, and a sub-group is a different group — if an
+    installation wants a hierarchy to confer a role, Keycloak's own group inheritance puts the
+    parent path in the token and the mapping names the parent.
+    """
+    held = set(groups)
+    return tuple(
+        str(role)
+        for role in ALL_ROLES
+        if role in mapping and any(path in held for path in mapping[role])
+    )
