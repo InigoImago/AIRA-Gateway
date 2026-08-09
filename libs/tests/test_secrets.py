@@ -401,3 +401,22 @@ def test_the_client_token_does_not_reach_a_log(monkeypatch: pytest.MonkeyPatch) 
     with capture_logs() as entries:
         VaultClient(_config(), _vault(_happy())).login()
     assert "s.client-token" not in repr(entries)
+
+
+def test_an_empty_variable_means_unset_rather_than_a_parse_error() -> None:
+    """`${VAULT_TIMEOUT:-}` in a compose file is an empty string, not an absent one, and
+    `float("")` raises — which took the whole stack down the first time these variables were
+    passed through. The same trap `BaseAiraSettings._empty_means_unset` exists for."""
+    config = VaultConfig.from_env(
+        {
+            "VAULT_ADDR": "http://vault:8200",
+            "VAULT_TIMEOUT": "",
+            "VAULT_MOUNT": "",
+            "VAULT_PATH": "",
+        }
+    )
+
+    assert config.timeout > 0
+    # And the string fields keep their defaults rather than becoming empty.
+    assert config.mount == "secret"
+    assert config.path == "aira"

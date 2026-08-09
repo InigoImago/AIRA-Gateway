@@ -150,3 +150,33 @@ def test_no_search_box_lives_inside_a_block_a_load_toggles() -> None:
     assert offenders == [], (
         f"a search box inside a block its own query toggles is destroyed mid-typing: {offenders}"
     )
+
+
+# ---- the deployment passes the variables the code actually reads ------------------------------
+
+
+def test_compose_passes_every_vault_variable_the_loader_reads() -> None:
+    """`FRD-116` built Vault reading and the stack passed **none** of its variables for three days.
+
+    The mechanism was tested against a real AppRole the whole time; what was missing was the wire,
+    and nothing could see the gap because an unconfigured secret store behaves exactly like an
+    absent one — it returns an empty mapping and every credential comes from the environment.
+
+    Fixing it, the first attempt passed `VAULT_DEV_TOKEN`, which the loader does not read: it
+    reads `VAULT_TOKEN`. Same defect, same day, one letter of difference. So the names are compared
+    rather than remembered.
+    """
+    loader = (ROOT / "libs/src/aira_common/secrets.py").read_text()
+    # Every `source.get("VAULT_…")` and `os.environ.get(VAULT_…)` the loader consults.
+    names = set(re.findall(r'"(VAULT_[A-Z_]+)"', loader))
+    # Read by the Vault *server* container, not by us.
+    names -= {"VAULT_DEV_ROOT_TOKEN_ID", "VAULT_DEV_LISTEN_ADDRESS"}
+    assert names, "no VAULT_* names found in the loader — this assertion would describe nothing"
+
+    compose = (ROOT / "deploy/compose/docker-compose.apps.yml").read_text()
+    missing = sorted(name for name in names if f"{name}:" not in compose)
+
+    assert missing == [], (
+        "the loader reads these and no application container is given them, so they are silently "
+        f"ignored: {missing}"
+    )

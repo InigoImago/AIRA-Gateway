@@ -26,6 +26,7 @@ from fastapi.responses import JSONResponse
 
 from aira_common.counters import CountersUnavailable
 from aira_common.health import check_tcp
+from aira_common.secrets import secrets_state
 from aira_gateway.auth.dependencies import resolve_principal
 from aira_gateway.config import GatewaySettings
 from aira_gateway.security import is_local
@@ -142,6 +143,17 @@ async def readyz(request: Request) -> JSONResponse:
             "fallbacks": fallbacks,
             "checks": checks,
             "upstreams": upstreams,
+            # **Where the credentials came from.**
+            #
+            # `FRD-116` built Vault reading and the compose stack never passed `VAULT_ADDR`, so
+            # for three days every credential came from the environment while the feature was
+            # marked done. Nothing anywhere said so, and that is why nobody noticed: an absent
+            # secret store is indistinguishable from a present one when neither is reported.
+            #
+            # Names only, never values — the same rule the loader logs under. Behind the same
+            # credential gate as the rest of this body: which secrets an installation holds is
+            # not a fact for an unauthenticated prober.
+            "secrets": secrets_state(),
         },
     )
 

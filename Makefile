@@ -214,6 +214,13 @@ relay: ## Publish pending management outbox events to Kafka
 consume: ## Run the gateway config consumer (applies events into the read-model)
 	uv run python -m aira_gateway.consumer.worker
 
+vault-init: ## Create the Vault path, policy and AppRole; optionally copy AIRA_* secrets in
+	@echo "Setting up Vault at $${VAULT_ADDR:-http://localhost:8200}…"
+	uv run python tools/vault_setup.py --from-env
+
+vault-status: ## Where does the gateway say its secrets came from?
+	@curl -s http://localhost:8001/readyz | python3 -c "import json,sys; d=json.load(sys.stdin); print(json.dumps(d.get('secrets', {'note': 'authenticate to see this'}), indent=2))"
+
 seed: ## Migrate + seed demo data (idempotent; requires 'make up')
 	cd management/backend && AIRA_DEMO_MODE=true uv run python manage.py migrate --noinput
 	cd management/backend && AIRA_DEMO_MODE=true uv run python manage.py seed_demo

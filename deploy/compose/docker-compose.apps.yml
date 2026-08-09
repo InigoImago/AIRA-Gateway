@@ -22,6 +22,36 @@ services:
     command: ["alembic", "upgrade", "head"]
     environment: &gateway-env
       AIRA_ENVIRONMENT: ${AIRA_ENVIRONMENT:-local}
+      # ── Secrets from Vault (FRD-116) ──────────────────────────────────────────────────────
+      #
+      # These were **missing until 2026-08-09**, and their absence was silent by construction:
+      # `VaultConfig.configured` is false without an address, `load_secrets()` returns an empty
+      # mapping, and every credential quietly comes from the environment instead. The mechanism
+      # had been built and tested against a real AppRole for three days while the running stack
+      # used none of it — the fourth "two correct halves and no wire" in this repository.
+      #
+      # An address and a role id **identify**; they are not secrets and belong here. The secret-id
+      # is the one value that authorises, and it is read from a file so it never appears in
+      # `docker inspect`, in a process list, or in this file.
+      VAULT_ADDR: ${VAULT_ADDR:-}
+      VAULT_MOUNT: ${VAULT_MOUNT:-secret}
+      VAULT_PATH: ${VAULT_PATH:-aira}
+      VAULT_ROLE_ID: ${VAULT_ROLE_ID:-}
+      # A **file**, not a variable. A secret-id in the environment shows up in `docker inspect`,
+      # in `/proc/<pid>/environ`, and in any library that dumps its configuration when it panics.
+      VAULT_SECRET_ID_FILE: ${VAULT_SECRET_ID_FILE:-}
+      # Passed through because the loader reads them, not because they are recommended.
+      # `VAULT_SECRET_ID` is the file's alternative and the worse one — a secret-id in the
+      # environment is in `docker inspect` and in `/proc/<pid>/environ` — but omitting a variable
+      # the code consults is how this whole feature came to be inert, so it is here and empty.
+      # `VAULT_NAMESPACE` is Vault Enterprise; `VAULT_TIMEOUT` is seconds.
+      VAULT_SECRET_ID: ${VAULT_SECRET_ID:-}
+      VAULT_NAMESPACE: ${VAULT_NAMESPACE:-}
+      VAULT_TIMEOUT: ${VAULT_TIMEOUT:-}
+      # Local only. The dev server's root token stands in for an AppRole so `make up` works with
+      # no ceremony; `aira_common.secrets` logs a warning every time it is used, because a root
+      # token in a deployment is the thing this whole feature exists to avoid.
+      VAULT_TOKEN: ${VAULT_TOKEN:-}
       AIRA_POSTGRES_HOST: postgres
       AIRA_POSTGRES_PORT: "5432"
       AIRA_POSTGRES_DB: aira_gateway
@@ -74,6 +104,24 @@ services:
     container_name: aira-management-migrate
     command: ["python", "manage.py", "migrate", "--noinput"]
     environment: &management-env
+      # Same as the gateway's: Management holds the Django SECRET_KEY and the database password,
+      # which are exactly the values `FRD-116` exists to move out of the environment.
+      VAULT_ADDR: ${VAULT_ADDR:-}
+      VAULT_MOUNT: ${VAULT_MOUNT:-secret}
+      VAULT_PATH: ${VAULT_PATH:-aira}
+      VAULT_ROLE_ID: ${VAULT_ROLE_ID:-}
+      # A **file**, not a variable. A secret-id in the environment shows up in `docker inspect`,
+      # in `/proc/<pid>/environ`, and in any library that dumps its configuration when it panics.
+      VAULT_SECRET_ID_FILE: ${VAULT_SECRET_ID_FILE:-}
+      # Passed through because the loader reads them, not because they are recommended.
+      # `VAULT_SECRET_ID` is the file's alternative and the worse one — a secret-id in the
+      # environment is in `docker inspect` and in `/proc/<pid>/environ` — but omitting a variable
+      # the code consults is how this whole feature came to be inert, so it is here and empty.
+      # `VAULT_NAMESPACE` is Vault Enterprise; `VAULT_TIMEOUT` is seconds.
+      VAULT_SECRET_ID: ${VAULT_SECRET_ID:-}
+      VAULT_NAMESPACE: ${VAULT_NAMESPACE:-}
+      VAULT_TIMEOUT: ${VAULT_TIMEOUT:-}
+      VAULT_TOKEN: ${VAULT_TOKEN:-}
       AIRA_ENVIRONMENT: ${AIRA_ENVIRONMENT:-local}
       AIRA_SECRET_KEY: ${AIRA_SECRET_KEY:-dev-insecure-secret-key-change-me}
       AIRA_DEBUG: ${AIRA_DEBUG:-true}

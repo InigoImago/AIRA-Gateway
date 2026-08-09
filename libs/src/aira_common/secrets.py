@@ -30,6 +30,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import httpx
 
@@ -93,7 +94,11 @@ class VaultConfig:
             path=source.get("VAULT_PATH", "aira").strip() or "aira",
             role_id=source.get("VAULT_ROLE_ID", "").strip(),
             namespace=source.get("VAULT_NAMESPACE", "").strip(),
-            timeout=float(source.get("VAULT_TIMEOUT", DEFAULT_TIMEOUT)),
+            # An **empty** value means unset, not "parse this". A compose file writing
+            # `${VAULT_TIMEOUT:-}` produces an empty string, and `float("")` raises — which is how
+            # a boot failed the day these variables were first passed through. The same trap
+            # `BaseAiraSettings._empty_means_unset` was written for, one module over.
+            timeout=float(source.get("VAULT_TIMEOUT", "").strip() or DEFAULT_TIMEOUT),
         )
 
 
@@ -236,6 +241,7 @@ def load_secrets(
     secrets = vault.read(vault.login())
     # Names only. Answering "did it pick up the new key?" must never require answering "what is
     # it?" — and a log line is the single most likely place for a secret to escape.
+    VaultSourceCache.remember(secrets)
     _log.info(
         "vault_secrets_loaded",
         address=config.address,
@@ -266,3 +272,45 @@ def resolve(
         name = key.strip().upper()
         merged[name if name.startswith(env_prefix) else f"{env_prefix}{name}"] = value
     return merged
+
+
+def secrets_state(config: VaultConfig | None = None) -> dict[str, Any]:
+    """Where this process's secrets came from — **names only, never values**.
+
+    Exists because its absence cost three days. `FRD-116` shipped Vault reading, the compose stack
+    never passed `VAULT_ADDR`, and every credential quietly came from the environment while the
+    feature was recorded as done. Nothing reported the difference, so there was nothing to notice:
+    a configured secret store and an unconfigured one looked identical from outside.
+
+    `source` is the answer to "is Vault actually being used?", which should never have required
+    reading a compose file to find out.
+    """
+    config = config or VaultConfig.from_env()
+    if not config.configured:
+        return {"source": "environment", "vault_configured": False}
+    return {
+        "source": "vault",
+        "vault_configured": True,
+        "address": config.address,
+        "path": f"{config.mount}/{config.path}",
+        # Which keys Vault supplied, so "did it pick up the new one?" is answerable without ever
+        # answering "what is it?".
+        "keys": sorted(VaultSourceCache.keys()),
+        # A root token standing in for an AppRole is a local convenience and a production
+        # accident; saying so here means it cannot pass unnoticed.
+        "dev_token": bool(_dev_token()),
+    }
+
+
+class VaultSourceCache:
+    """The names loaded at startup, so `/readyz` never re-reads Vault to answer a health check."""
+
+    _keys: tuple[str, ...] = ()
+
+    @classmethod
+    def remember(cls, secrets: dict[str, str]) -> None:
+        cls._keys = tuple(sorted(secrets))
+
+    @classmethod
+    def keys(cls) -> tuple[str, ...]:
+        return cls._keys
