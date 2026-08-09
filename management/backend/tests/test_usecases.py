@@ -89,45 +89,69 @@ def test_list_is_scoped_and_governance_sees_all() -> None:
     assert {"uc-a", "uc-b"} <= {x["slug"] for x in gov_page["results"]}
 
 
-def test_mine_narrows_to_what_a_caller_may_act_in_not_what_they_can_see() -> None:
-    """**Visibility is not membership** (`ADR-0007`), and a screen that needs somewhere to attribute
-    traffic to needs the second one.
+def test_may_call_is_the_gateways_question_and_grants_a_global_admin_nothing() -> None:
+    """**Three questions live near each other, and this is the third one.**
 
-    IT Security sees every use case and is deliberately a member of none. Asking the visible list
-    for "the ones I may call" is `FRD-206`'s defect: the console offers one, the gateway refuses the
-    request, and the failures read as the model misbehaving.
+    What may I *see* is `scope_queryset`. What may I *administer here* is `is_member`, which grants
+    a global administrator everything because in Management they may act anywhere. What may I
+    *call* is neither: the gateway decides it from a token's groups and grants nobody a blanket.
+
+    The first version of this filter reused `is_member`, and the console then offered a global
+    admin the alphabetically first of nine hundred use cases. The gateway answered
+    `Not a member of use case 'addr-1nn4ss'` on every question of a smoke-test run. This test is
+    the one that would have caught it, and the one it replaced asserted agreement with `is_member`
+    — the wrong reference, which locked the defect in rather than finding it.
     """
-    admin_a = _user("a", "use-case-admin")
-    admin_b = _user("b", "use-case-admin")
-    security = _user("s", "it-security")
-    _create(_client(admin_a), "uc-a")
-    _create(_client(admin_b), "uc-b")
-
-    visible = _client(security).get(BASE).json()
-    mine = _client(security).get(f"{BASE}?mine=true").json()
-
-    assert {"uc-a", "uc-b"} <= {x["slug"] for x in visible["results"]}
-    assert mine["results"] == [], "oversight is a member of nothing, and may call nothing"
-
-    # And the creator of a use case is a member of it, so the same question answers differently.
-    assert {x["slug"] for x in _client(admin_a).get(f"{BASE}?mine=true").json()["results"]} == {
-        "uc-a"
-    }
-
-
-def test_mine_agrees_with_the_permission_the_row_reports() -> None:
-    """One predicate, asked two ways. `member_queryset` sits beside the `is_member` the serializer
-    reports with, so a list that answers "which may I act in" cannot drift from the per-row answer
-    the same screen renders — which is the only reason either can be trusted."""
     admin = _user("a", "use-case-admin")
     _create(_client(admin), "uc-a")
+    global_admin = _user("g", "global-admin")
+
+    visible = _client(global_admin).get(BASE).json()
+    callable_ = _client(global_admin).get(f"{BASE}?may_call=true").json()
+
+    assert "uc-a" in {x["slug"] for x in visible["results"]}, "a global admin sees everything"
+    assert callable_["results"] == [], (
+        "and may call nothing: the gateway reads groups, and this token carries none"
+    )
+
+
+def test_may_call_follows_the_group_the_token_carries() -> None:
+    """The rule is `aira_common.access.resolve` — the same function the gateway's grant resolver
+    calls, rather than a second statement of it in Django. A slug decided twice is a slug that
+    disagrees with itself eventually, and this pair of planes has paid for that before."""
+    from aira_management.rbac import KEYCLOAK_GROUP_PREFIX
+    from django.contrib.auth.models import Group
+
+    member = _user("m", "use-case-user")
+    _create(_client(_user("a", "use-case-admin")), "uc-a")
     _create(_client(_user("b", "use-case-admin")), "uc-b")
+    group, _ = Group.objects.get_or_create(name=f"{KEYCLOAK_GROUP_PREFIX}/use-cases/uc-a")
+    member.groups.add(group)
 
-    rows = _client(admin).get(BASE).json()["results"]
-    reported = {row["slug"] for row in rows if row["permissions"]["is_member"]}
-    listed = {row["slug"] for row in _client(admin).get(f"{BASE}?mine=true").json()["results"]}
+    listed = {x["slug"] for x in _client(member).get(f"{BASE}?may_call=true").json()["results"]}
 
-    assert listed == reported
+    assert listed == {"uc-a"}
+
+
+def test_may_call_answers_even_where_management_shows_nothing() -> None:
+    """The `/use-cases/<slug>` convention grants **calling** without granting a guardian object
+    permission, so a caller can be entitled to attribute traffic to a use case that
+    `scope_queryset` does not show them. Filtering the visible set here would hand them an empty
+    attribution list while the gateway accepted their requests — the same class of disagreement,
+    pointing the other way."""
+    from aira_management.rbac import KEYCLOAK_GROUP_PREFIX
+    from django.contrib.auth.models import Group
+
+    caller = _user("c", "use-case-user")
+    _create(_client(_user("a", "use-case-admin")), "uc-a")
+    group, _ = Group.objects.get_or_create(name=f"{KEYCLOAK_GROUP_PREFIX}/use-cases/uc-a")
+    caller.groups.add(group)
+
+    visible = _client(caller).get(BASE).json()["results"]
+    callable_ = _client(caller).get(f"{BASE}?may_call=true").json()["results"]
+
+    assert visible == [], "no object permission, so Management shows nothing"
+    assert {x["slug"] for x in callable_} == {"uc-a"}
 
 
 def test_the_list_is_searched_at_the_server() -> None:

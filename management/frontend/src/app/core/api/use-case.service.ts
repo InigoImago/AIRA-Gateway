@@ -50,16 +50,21 @@ export class UseCaseService {
    * happening on every load, which is the part that actually takes seconds.
    */
   /**
-   * The use cases this caller may **act** in, which is not what they may see (`ADR-0007`).
+   * The use cases the **gateway** will accept traffic for from this caller.
+   *
+   * Three questions live near each other and only this one is right for attributing a request:
+   * not what may I see, not what may I administer, but what will the gateway accept — which it
+   * decides from a token's groups and grants nobody a blanket. The first version asked "am I a
+   * member" in Management's sense, which grants a global administrator everything, and the console
+   * then offered a global admin the alphabetically first of nine hundred use cases; every question
+   * of the run came back `Not a member of use case 'addr-1nn4ss'`.
    *
    * Asked of the server rather than filtered in the browser: the list is paged, so filtering page
-   * one answers "the ones I am a member of *among the first 25*" — which is how a picker comes to
-   * omit the use case somebody actually works in and looks, from the outside, like a permission
-   * problem.
+   * one answers the question only for the first 25 rows.
    */
-  myUseCases(): Observable<Page<UseCase>> {
+  callableUseCases(): Observable<Page<UseCase>> {
     return this.http.get<Page<UseCase>>('/api/v1/use-cases/', {
-      params: { mine: 'true', page_size: 100 },
+      params: { may_call: 'true', page_size: 100 },
     });
   }
 

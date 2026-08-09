@@ -93,9 +93,10 @@ function setup(options: Options = {}) {
         provide: UseCaseService,
         useValue: {
           testCases: () => of(options.emptyCatalogue ? [] : CATALOGUE),
-          // `?mine=true`: the server answers with the ones this caller may act in. The screen
-          // never filters a visible list, because visibility is not membership.
-          myUseCases: () =>
+          // `?may_call=true`: the server answers with the ones the **gateway** will accept. The
+          // screen never filters a visible list — visibility, administration and the right to call
+          // are three different answers, and asking the wrong one is what shipped a broken run.
+          callableUseCases: () =>
             of({
               count: 1,
               page: 1,
@@ -379,7 +380,8 @@ describe('SmokeTests', () => {
           useValue: {
             testCases: () => throwError(() => ({ status: 500 })),
             models: () => of([]),
-            myUseCases: () => of({ count: 0, page: 1, page_size: 100, pages: 1, results: [] }),
+            callableUseCases: () =>
+              of({ count: 0, page: 1, page_size: 100, pages: 1, results: [] }),
             testRuns: () => of([]),
             testStats: () => of([]),
           },
@@ -578,7 +580,7 @@ describe('SmokeTests', () => {
           useValue: {
             testCases: () => of(CATALOGUE),
             models: () => of([{ name: 'm', approved: true }]),
-            myUseCases: () =>
+            callableUseCases: () =>
               of({
                 count: 1,
                 page: 1,
@@ -618,9 +620,9 @@ describe('SmokeTests', () => {
      *  Security is deliberately a member of nothing (`ADR-0007`). The run went through, the gateway
      *  refused every request with "not a member", and three failures looked like the model's fault.
      *
-     *  The question is the server's now — `?mine=true`, one predicate, `access.member_queryset`
-     *  beside the `is_member` the viewset enforces with. What is asserted here is that the screen
-     *  uses that answer and sends it. */
+     *  The question is the server's now — `?may_call=true`, resolved with the same
+     *  `aira_common.access.resolve` the gateway's own grant resolver calls. What is asserted here
+     *  is that the screen uses that answer and sends it. */
     const harness = setup();
     const component = harness.component as unknown as {
       model: { set: (v: string) => void };
@@ -737,7 +739,7 @@ describe('SmokeTests', () => {
             models: () => of([]),
             testRuns: () => of([]),
             testStats: () => of([]),
-            myUseCases: () => of({ count: 0, page: 1, page_size: 100, pages: 1 }),
+            callableUseCases: () => of({ count: 0, page: 1, page_size: 100, pages: 1 }),
           },
         },
       ],

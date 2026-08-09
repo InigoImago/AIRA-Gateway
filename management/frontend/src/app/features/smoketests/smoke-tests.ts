@@ -102,10 +102,13 @@ export class SmokeTests implements OnInit {
    * and audited like any other request; which one it lands on is not the tester's decision to
    * make.
    *
-   * So the screen resolves it and **states** it. Asked of the server (`?mine=true`), because
-   * membership is not visibility: an oversight role sees every use case and may call none of them,
-   * and filtering the visible list in the browser would offer one the gateway then refuses —
-   * `FRD-206`'s defect, which this screen has already had once.
+   * So the screen resolves it and **states** it. Asked of the server (`?may_call=true`), which is
+   * the *gateway's* question and not Management's: `is_member` grants a global administrator every
+   * use case, the gateway grants nobody a blanket, and the first version of this asked the wrong
+   * one — the console offered a global admin the alphabetically first of nine hundred use cases
+   * and every question of the run came back `Not a member of use case 'addr-1nn4ss'`. `FRD-206`'s
+   * defect for the third time on this screen, and the first two were the same mistake in smaller
+   * print.
    */
   protected readonly mine = signal<{ slug: string; name: string }[]>([]);
   protected readonly running = signal(false);
@@ -186,13 +189,13 @@ export class SmokeTests implements OnInit {
       next: (rows) => this.models.set(rows),
       error: () => undefined,
     });
-    this.service.myUseCases().subscribe({
+    this.service.callableUseCases().subscribe({
       next: (page) => {
         const usable = (page.results ?? []).map((r) => ({ slug: r.slug, name: r.name }));
         this.mine.set(usable);
-        // Whichever comes first, by name — the list is ordered by the server. A tester has no
-        // opinion about this, and the screen says which one it landed on so the figure is still
-        // traceable to a budget.
+        // Whichever comes first, by name — the list is ordered by the server, and every entry in
+        // it is one the gateway will accept. A tester has no opinion about this; the screen says
+        // which one it landed on so the spend stays traceable to a budget.
         if (usable.length && !this.useCase()) this.useCase.set(usable[0].slug);
       },
       error: (response: unknown) =>

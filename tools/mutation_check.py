@@ -2844,10 +2844,10 @@ MUTATIONS = [
     ),
     Mutation(
         "Q5",
-        "the use cases offered for attribution are the ones a caller may act in, not merely see",
-        "management/backend/src/aira_management/apps/usecases/views.py",
-        "            scoped = member_queryset(self.request.user, scoped)",
-        "            pass",
+        "attribution offers what the gateway accepts, which grants a global admin no blanket",
+        "management/backend/src/aira_management/apps/usecases/access.py",
+        '    if not getattr(user, "is_authenticated", False):\n        return queryset.none()\n    held = held_group_paths(user)',
+        "    if has_role(user, Role.GLOBAL_ADMIN):\n        return queryset\n    held = held_group_paths(user)",
         "management/backend/tests/test_usecases.py",
     ),
     Mutation(

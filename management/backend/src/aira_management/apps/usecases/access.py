@@ -15,8 +15,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from django.db.models import Q, QuerySet
+from django.db.models import QuerySet
 
+from aira_common.access import resolve
 from aira_management.apps.usecases.models import UseCase, UseCaseGroupGrant, UseCaseMembership
 from aira_management.rbac import KEYCLOAK_GROUP_PREFIX, has_role
 from aira_management.roles import Role
@@ -57,23 +58,38 @@ def is_member(user: Any, usecase: UseCase) -> bool:
     ).exists()
 
 
-def member_queryset(user: Any, queryset: QuerySet[UseCase]) -> QuerySet[UseCase]:
-    """Narrow to the use cases this caller is a **member** of.
+def may_call_queryset(user: Any, queryset: QuerySet[UseCase]) -> QuerySet[UseCase]:
+    """Narrow to the use cases this caller may attribute **gateway traffic** to.
 
-    The set form of `is_member`, and written beside it so the two cannot drift: a list that answers
-    "which ones may I act in" by a different rule than the one the server enforces per object is
-    `FRD-206`'s defect in bulk — the console would offer a use case the request is then refused for,
-    or withhold one it would have allowed.
+    This is a third question, and conflating it with either of the other two produced a live defect
+    on 2026-08-09. It is not `scope_queryset` (what may I *see*) and it is not `is_member` (what may
+    I *administer here*): it is **what will the gateway accept from my token**, and the gateway has
+    its own rule — the `/use-cases/<slug>` convention plus group grants, from `aira_common.access`.
 
-    A global admin is a member of everything, exactly as in `is_member`.
+    Two consequences that are the whole point:
+
+    - **No global-admin blanket.** `is_member` grants a global administrator everything, because in
+      *Management* they may act anywhere. The gateway has no such rule: it reads a token's groups.
+      The first version of this function reused `is_member`, so the console offered a global admin
+      the alphabetically first of nine hundred use cases and the gateway answered
+      `Not a member of use case 'addr-1nn4ss'` — a control that fails the moment it is used, which
+      is the `FRD-206` defect this very screen had already had once.
+    - **The rule is `aira_common.access.resolve`**, the same function the gateway's
+      `GroupGrantResolver` calls. Restating it here in Django would be a second definition of an
+      access rule across two planes, which this project has paid for repeatedly.
+
+    An oversight role therefore gets an **empty** answer: it sees every use case and may call none
+    (`ADR-0007`). That is not a gap, it is the rule, and the screen says so in words.
     """
-    if has_role(user, Role.GLOBAL_ADMIN):
-        return queryset
     if not getattr(user, "is_authenticated", False):
         return queryset.none()
-    return queryset.filter(
-        Q(memberships__user=user) | Q(group_grants__group_path__in=held_group_paths(user))
-    ).distinct()
+    held = held_group_paths(user)
+    grants = list(
+        UseCaseGroupGrant.objects.filter(group_path__in=held).values_list(
+            "group_path", "use_case__slug", "role"
+        )
+    )
+    return queryset.filter(slug__in=list(resolve(held, grants)))
 
 
 def held_group_paths(user: Any) -> list[str]:

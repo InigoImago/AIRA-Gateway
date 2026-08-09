@@ -427,6 +427,31 @@ test.describe('Model tests', () => {
     await expect(page.getByTestId('catalogue-add')).toBeVisible();
   });
 
+  test('a role that may call nothing is told so, rather than offered a use case', async ({
+    page,
+  }) => {
+    /**
+     * The defect this exists for: attribution was resolved with Management's `is_member`, which
+     * grants a global administrator every use case. The console offered the alphabetically first
+     * of nine hundred, and every question of the run came back
+     * `Not a member of use case 'addr-1nn4ss'`.
+     *
+     * The gateway reads a token's groups and grants nobody a blanket, so a global admin — who sees
+     * everything and is in no use-case group — may call nothing. The screen says that in words
+     * instead of offering something that fails.
+     *
+     * This is the layer that would have caught it, and it is the layer I did not point at the
+     * question: the earlier version asserted that *a name was displayed*, never that the name was
+     * one the gateway accepts.
+     */
+    await login(page, USERS.globalAdmin);
+    await page.goto('/model-tests');
+    await page.getByTestId('tab-runs').click();
+
+    await expect(page.getByTestId('no-use-case')).toBeVisible();
+    await expect(page.getByTestId('smoke-run')).toHaveCount(0);
+  });
+
   test('attribution is stated, not asked', async ({ page }) => {
     /**
      * Reported as *"Attributed to hat endlose Menge der Column. Dieser Punkt ist überhaupt nicht
@@ -441,9 +466,13 @@ test.describe('Model tests', () => {
     await page.getByTestId('tab-runs').click();
 
     await expect(page.locator('#smoke-usecase')).toHaveCount(0);
-    await expect(page.getByTestId('smoke-attribution')).toContainText('Attributed to');
-    // A real use case, resolved from membership rather than from what this account can see.
-    await expect(page.getByTestId('smoke-attribution')).not.toContainText('Attributed to .');
+    // A use case this account's **token** reaches, named rather than merely present: "a name is
+    // displayed" is exactly what the broken version satisfied. `ucadmin` holds three group paths
+    // in the dev realm — `/use-cases/{kundenservice,entwicklung,demo-uc}` — and the first by name
+    // wins, so the assertion is the set and not a guess at which.
+    await expect(page.getByTestId('smoke-attribution')).toContainText(
+      /Kundenservice|Entwicklung|Demo use case/,
+    );
   });
 
   test('a member may read the standard and may not rewrite it', async ({ page }) => {

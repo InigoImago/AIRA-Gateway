@@ -49,8 +49,8 @@ from aira_management.apps.usecases.access import (
 from aira_management.apps.usecases.access import (
     is_member,
     may_admin,
+    may_call_queryset,
     may_manage,
-    member_queryset,
 )
 from aira_management.apps.usecases.events import emit
 from aira_management.apps.usecases.models import UseCase, UseCaseGroupGrant, UseCaseMembership
@@ -149,13 +149,21 @@ class UseCaseViewSet(viewsets.ModelViewSet[UseCase]):
         # to hand back the same row on two pages and no row for a third. By name, because that is
         # what the list is read by.
         scoped = scoped.order_by("name", "slug")
-        # `?mine=true` narrows to the use cases this caller may actually **act** in, which is a
-        # different question from what they may see (`ADR-0007`). A screen that needs somewhere to
-        # attribute traffic to needs this set and not the visible one — an oversight role sees
-        # every use case and may call none of them, so offering the visible list there is a control
-        # that fails the moment it is used.
-        if str(self.request.query_params.get("mine", "")).lower() in ("1", "true", "yes"):
-            scoped = member_queryset(self.request.user, scoped)
+        # `?may_call=true` narrows to the use cases the **gateway** will accept from this
+        # caller's token. Three different questions live near each other here and the first version
+        # of this filter conflated two of them: what may I see (`scope_queryset`), what may I
+        # administer (`is_member`, which grants a global admin everything), and what may I call —
+        # which the gateway decides from a token's groups and grants nobody a blanket.
+        if str(self.request.query_params.get("may_call", "")).lower() in ("1", "true", "yes"):
+            # Resolved against **every** use case, not against the visible ones. The gateway's
+            # answer does not depend on Management visibility, and the `/use-cases/<slug>`
+            # convention (`FRD-102`) grants calling without granting a guardian object permission —
+            # so filtering the visible set here would hand somebody an empty attribution list while
+            # the gateway happily accepted their requests. Nothing is disclosed by it: these are
+            # exactly the use cases this caller may already name in a request.
+            scoped = may_call_queryset(self.request.user, UseCase.objects.all()).order_by(
+                "name", "slug"
+            )
         # The search runs here, so the rows a reader is not looking at are never built. That is the
         # whole reason this moved off the browser: the serializer computes object-level permissions
         # per row (`access.py`), and client-side paging left every one of them happening.

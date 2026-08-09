@@ -5,6 +5,73 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-09 — Three questions that look like one, and the tests that agreed with me
+
+Reported from the running console: every question of a smoke-test run came back
+`Not a member of use case 'addr-1nn4ss'`. The slug is a leftover from an old test round, and it was
+the alphabetically first of some nine hundred use cases.
+
+**Cause, and it was mine, from the commit immediately before.** Attribution resolved the use case
+with `?mine=true`, implemented as Management's `is_member` — which grants a **global administrator
+everything**, because in Management they may act anywhere. The gateway has no such rule: it reads a
+token's groups (`/use-cases/<slug>` plus grants) and grants nobody a blanket. So the console offered
+a global admin a use case their token has never reached, and the gateway correctly refused all
+hundred requests.
+
+Three questions live next to each other and only the third is right for attributing traffic:
+
+| Question | Answered by | A global admin |
+|---|---|---|
+| What may I **see**? | `scope_queryset` | everything |
+| What may I **administer here**? | `is_member` | everything |
+| What will the **gateway accept**? | `may_call_queryset` → `aira_common.access.resolve` | nothing, unless a group says so |
+
+`?may_call=true` now answers the third, using the **same `resolve`** the gateway's own grant
+resolver calls rather than restating it in Django. A global admin with no use-case group therefore
+gets an empty answer and the screen says so in words — which is `ADR-0007` working, not a gap.
+
+Resolving it also surfaced the inverse: the `/use-cases/<slug>` convention grants **calling**
+without granting a guardian object permission, so a caller can be entitled to attribute traffic to
+a use case Management does not show them. Filtering the visible set would have handed them an empty
+list while the gateway accepted their requests — the same disagreement pointing the other way. The
+filter therefore resolves against every use case, disclosing nothing: these are exactly the use
+cases the caller may already name in a request.
+
+### Why four test layers said yes
+
+Worth writing out, because each layer failed differently and none of them failed by accident:
+
+1. **Unit (frontend)** — the fake service returned one membership and the component picked it. It
+   tested my assumption, faithfully.
+2. **Unit (backend)** — the test I had just written asserted that `?mine=true` **agrees with
+   `is_member`**. That is the wrong reference: it did not miss the defect, it *encoded* it. A test
+   written from the same idea as the code will agree with the code.
+3. **Mutation** — `Q5` broke the filter and the test noticed. It was guarding the wrong property
+   competently.
+4. **End-to-end** — asserted that *a name was displayed*. Never that the name worked. And the one
+   test that would have caught it — an actual run against a real model — is the one I had left
+   skipped, with a justification I wrote myself.
+
+The layer that finds a defect is the one pointed at the **outcome** rather than at the mechanism.
+`FRD-206`'s agreement test got this right a year of lessons ago: *for each answer, attempt the
+request and require the status to match*. The new e2e case does that — a global admin is offered
+nothing, and a use-case administrator's stated attribution is one their token actually reaches —
+and a live probe run produced a **served** audit row (508 tokens, `demo-uc`, `qwen3:0.6b`), which is
+the assertion that was missing all along.
+
+### Found while investigating, not fixed, deliberately
+
+`aira_common.access.resolve` takes a `direct` argument for grants naming a **person** — and no
+caller supplies it. The gateway resolves OIDC membership from groups and group grants only, so a
+membership added in the console (a `UseCaseMembership` row, distributed to `use_case_members` since
+`FRD-204`) grants **nothing at the gateway**. `FRD-209` said a grant binds "a group *or* a person";
+the person half never reached the request path. Fourth recorded instance of *two correct halves and
+no wire*.
+
+Not fixed here because it **widens** who may call the gateway, which is a decision rather than a
+repair. It is also why the demo works at all: `ucadmin` and `ucuser` hold `/use-cases/*` groups in
+the dev realm, and `admin`, `itsec` and `itgov` hold none.
+
 ## 2026-08-09 — Attribution is stated, not asked (`FRD-504`)
 
 *"Attributed to hat endlose Menge der Column. Dieser Punkt ist überhaupt nicht notwendig."* Two
