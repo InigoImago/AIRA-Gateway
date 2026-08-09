@@ -99,6 +99,7 @@ def _declarations() -> list[dict[str, Any]]:
             #   thinking declaration at all** (`FRD-114` FR-7 — absence of information is not
             #   permission). A capability belongs to a model, not to a family or a runtime.
             "thinking": THINKING_BY_MODEL.get(CHAT_MODEL),
+            "approved": True,
             "numeric_id": 9001,
         },
         {
@@ -115,6 +116,7 @@ def _declarations() -> list[dict[str, Any]]:
             # Task types are **not** declared, because the wire format has none — and `FRD-113`
             # refuses an undeclared one rather than sending a request that would be ignored.
             "embedding": {"supports_batch": True},
+            "approved": True,
             "numeric_id": 9002,
         },
     ]

@@ -4,7 +4,7 @@
 > `Model` record and its Kafka distribution exist now, carrying prices. Approval, the candidate
 > list and the builder pickers described below are still open and build on the same row.
 
-> Phase: 3 · Status: **Requested (backlog)** · Owner: Vadim Scheibe · Last updated: 2026-08-04
+> Phase: 3 · Status: **Approval delivered 2026-08-09; candidate lists and builder pickers still open** · Owner: Vadim Scheibe · Last updated: 2026-08-04
 > Origin: user feature request — "an overview of all models, and pick them in the injection filter /
 > allowed-model config." Refined: **model availability is governed — only models a Global
 > Administrator has approved are usable; the raw gateway model list is not the same as the usable set.**
@@ -71,3 +71,47 @@ Per-model pricing/context/health metadata (later); registering upstream provider
 ## 7. Dependencies
 `/v1beta/models` (FRD-100), RBAC roles + permission classes (FRD-201), Kafka distribution pattern
 (FRD-204) for enforcement, pipeline builder (FRD-303/306).
+
+## Approval, delivered 2026-08-09
+
+> *"Modelle dürfen nur durch Global Administrator freigegeben werden."*
+
+The catalog was already Global-Admin-only to **write**. What was missing is approval as a *state*:
+a model could be declared, priced and immediately callable, so **a model appearing on an upstream
+implied a decision nobody had made**.
+
+- `Model.approved`, **default false**. The default is the decision: a new declaration is not a
+  release.
+- Distributed on the existing `aira.models` event and enforced in the gateway as a **dispatch
+  condition** (`ModelApproved`), beside residency, media types and capabilities — so it is checked
+  at **every hop** of a fallback chain. A chain that routed around an unapproved model would be
+  honouring the letter and losing the point.
+- The refusal **names who releases a model**, because an operator reading "not approved" needs to
+  know whose decision it is.
+
+### Two defaults that point in opposite directions, deliberately
+
+| | default | why |
+|---|---|---|
+| Management (`catalog_model.approved`) | **false** | the decision is made here, and a new declaration has not had one |
+| Gateway read-model | **true** | fed by events; an event from an older Management carries no such field, and reading its absence as "not approved" would retire every model the moment one plane is upgraded before the other |
+
+The migration sets every **existing** row to approved. A governance improvement delivered as an
+outage is not an improvement, and nobody decided anything about the old models by installing an
+update.
+
+### What is *not* gated
+
+An **undeclared** model — one with no catalog row at all — is unaffected. `FRD-114` FR-7 has always
+said an undeclared model gets the baseline and nothing more, and making it unusable instead is a
+separate decision with a much larger blast radius: it would take out every model an operator has
+not catalogued, on the day this shipped. Approval refuses what somebody wrote down and nobody
+released, which is exactly the state it exists to express.
+
+Closing that gap — *nothing at all is callable unless approved* — is a one-line change to
+`ModelApproved` and a deliberate open question rather than an oversight.
+
+### Still open from the original FRD
+
+The candidate lists and builder pickers: a use case's allow-list and the pipeline builder still
+take a typed model name rather than choosing from the approved set.

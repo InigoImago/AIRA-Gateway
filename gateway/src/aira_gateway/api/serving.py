@@ -57,6 +57,7 @@ from aira_gateway.pipeline.store import PipelineStore
 from aira_gateway.ratelimit.errors import RateLimited
 from aira_gateway.requirements import (
     MediaTypesSupported,
+    ModelApproved,
     RegionAllowed,
     Requirement,
     SamplingExpressible,
@@ -284,7 +285,11 @@ def requirements_for(request: Request, canonical: CanonicalRequest | None) -> Pe
     # One list, every transport (`ADR-0012` §6) — reading a Vertex-named setting here would make
     # the first Azure model fail a check named after Google.
     checks: list[Requirement] = [
-        RegionAllowed(registry_of(request), parse_allowed(settings.allowed_regions))
+        RegionAllowed(registry_of(request), parse_allowed(settings.allowed_regions)),
+        # Unconditional, unlike the rest: every other check here depends on what the *request*
+        # asked for, and this one is a property of the installation. Whether a model may be used
+        # at all is not a question a request gets to make go away (`FRD-307`).
+        ModelApproved(catalog_of(request)),
     ]
     if canonical is not None and canonical.media_types:
         checks.append(MediaTypesSupported(catalog_of(request), canonical.media_types))

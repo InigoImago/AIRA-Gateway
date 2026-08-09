@@ -31,6 +31,7 @@ const DECLARED: CatalogModel = {
 
 interface Catalog {
   add: () => void;
+  approved: { set: (v: boolean) => void; (): boolean };
   models: () => CatalogModel[];
   loading: () => boolean;
   error: () => string | null;
@@ -640,6 +641,36 @@ describe('ModelCatalog — finding one among many', () => {
 
     expect(harness.html().querySelector('[data-testid="check-verdict"]')).toBeNull();
     expect(harness.component.error()).toBeTruthy();
+  });
+
+  // ---- only an approved model may be used (`FRD-307`) --------------------------------------
+
+  it('starts a new declaration unapproved, and sends that', () => {
+    /** A model appearing on an upstream is not the same event as somebody deciding it may be used
+     *  here. The default is the decision. */
+    const harness = setup();
+    harness.component.add();
+    harness.component.name.set('brand-new');
+    harness.lookFirst();
+    harness.component.save();
+
+    expect(harness.saved[0]).toMatchObject({ name: 'brand-new', approved: false });
+  });
+
+  it('marks an unapproved model in the list, not only inside the row', () => {
+    /** The one state a reader must not have to open a row to discover: this model is in the
+     *  catalog and cannot be called. */
+    const harness = setup({ models: of([{ ...FLASH, approved: false }]) });
+
+    expect(harness.html().querySelector('[data-testid="not-approved"]')).not.toBeNull();
+  });
+
+  it('carries an existing approval into the editor rather than clearing it', () => {
+    /** Editing a price must not quietly retire a model. */
+    const harness = setup({ models: of([{ ...FLASH, approved: true }]) });
+    harness.component.edit({ ...FLASH, approved: true });
+
+    expect(harness.component.approved()).toBe(true);
   });
 
   it('leaves no declared field out of the panel', () => {

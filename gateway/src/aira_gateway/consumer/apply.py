@@ -375,6 +375,9 @@ _DECLARATION_DEFAULTS: dict[str, Any] = {
 async def _upsert_model(session: AsyncSession, payload: dict[str, Any]) -> None:
     """Upsert a catalogued model, keyed by model name (FRD-403, FRD-114)."""
     fields: dict[str, Any] = {
+        # Absent means approved, for the reason on the column: an event written by an older
+        # Management must not retire every model in the catalog.
+        "approved": bool(payload.get("approved", True)),
         "display_name": payload.get("display_name", ""),
         "provider": payload.get("provider", ""),
         "input_price_per_million_nanos": _price_nanos(payload.get("input_price_per_million")),

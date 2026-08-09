@@ -416,6 +416,14 @@ class ModelRead(Base):
     __tablename__ = "model_catalog"
 
     model: Mapped[str] = mapped_column(String(128), primary_key=True)
+    #: Whether a Global Administrator has released this model for use (`FRD-307`).
+    #:
+    #: **True by default here, false by default in Management** — and the asymmetry is deliberate.
+    #: Management is where the decision is made, so a new declaration starts unapproved. This
+    #: table is fed by events, and an event from an older Management carries no such field; reading
+    #: its absence as "not approved" would take every model out of service the moment one plane is
+    #: upgraded before the other.
+    approved: Mapped[bool] = mapped_column(Boolean, default=True)
     display_name: Mapped[str] = mapped_column(String(255), default="")
     provider: Mapped[str] = mapped_column(String(64), default="")
     input_price_per_million_nanos: Mapped[int | None] = mapped_column(BigInteger, nullable=True)

@@ -126,6 +126,7 @@ DECLARATIONS = [
         "hosting": "self_deployed",
         "max_output_tokens": 4096,
         "default_max_output_tokens": 512,
+        "approved": True,
         "numeric_id": CHAT_NUMERIC_ID,
     },
     {
@@ -141,6 +142,7 @@ DECLARATIONS = [
         # Task types are **not** declared, because this dialect has none — and `FRD-113` refuses an
         # undeclared one rather than sending a field the endpoint would ignore.
         "embedding": {"supports_batch": True},
+        "approved": True,
         "numeric_id": EMBED_NUMERIC_ID,
     },
 ]

@@ -228,6 +228,9 @@ export const CAPABILITIES: readonly Capability[] = [
 export interface CatalogModel {
   name: string;
   display_name?: string;
+  /** Released for use by a Global Administrator (`FRD-307`). Only an approved model may be
+   *  called by a use case; an *undeclared* model is not gated by this. */
+  approved?: boolean;
   provider?: string;
   input_price_per_million?: string | null;
   output_price_per_million?: string | null;

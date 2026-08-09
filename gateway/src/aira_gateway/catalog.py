@@ -56,6 +56,9 @@ class ModelDeclaration:
 
     name: str
     declared: bool = False
+    #: Whether a Global Administrator has released it (`FRD-307`). Undeclared models are not
+    #: gated by this — see :class:`ModelApproved` for why.
+    approved: bool = True
     capabilities: frozenset[Capability] = BASELINE_CAPABILITIES
     max_output_tokens: int | None = None
     default_max_output_tokens: int | None = None
@@ -253,6 +256,7 @@ def _from_record(model: str, record: ModelRead) -> ModelDeclaration:
     return ModelDeclaration(
         name=model,
         declared=declared,
+        approved=bool(record.approved),
         # A row with prices but no capability list is *undeclared*, so it gets the baseline —
         # not an empty set, which would refuse the generation that already works today.
         capabilities=capabilities if declared else BASELINE_CAPABILITIES,

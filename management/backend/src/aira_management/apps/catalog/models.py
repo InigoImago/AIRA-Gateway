@@ -34,6 +34,14 @@ class Model(models.Model):
         max_length=128, unique=True, help_text="Model id as the gateway exposes it"
     )
     display_name = models.CharField(max_length=255, blank=True)
+    approved = models.BooleanField(
+        default=False,
+        help_text=(
+            "Only a Global Administrator may approve a model, and only an approved model may be "
+            "used by a use case (FRD-307). Default off: a model appearing on an upstream is not "
+            "the same event as somebody deciding it may be used here."
+        ),
+    )
     provider = models.CharField(max_length=64, blank=True)
 
     # Null means "no price on file": the gateway still serves the model, but its consumption is

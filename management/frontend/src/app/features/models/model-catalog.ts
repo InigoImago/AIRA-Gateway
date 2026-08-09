@@ -83,6 +83,9 @@ export class ModelCatalog implements OnInit {
   protected readonly maxOutput = signal<number | null>(null);
   protected readonly defaultOutput = signal<number | null>(null);
   protected readonly deprecated = signal(false);
+  /** Released for use (`FRD-307`). New declarations start **off**: a model appearing on an
+   *  upstream is not the same event as somebody deciding it may be used here. */
+  protected readonly approved = signal(false);
 
   /** Models nobody has described. The gateway serves them at the baseline and refuses everything
    * beyond it (FRD-114 FR-7), so an undeclared model quietly does less than the list suggests. */
@@ -189,6 +192,7 @@ export class ModelCatalog implements OnInit {
         max_output_tokens: this.maxOutput(),
         default_max_output_tokens: this.defaultOutput(),
         deprecated: this.deprecated(),
+        approved: this.approved(),
       })
       .subscribe({
         next: (model) => {
@@ -219,6 +223,7 @@ export class ModelCatalog implements OnInit {
     this.maxOutput.set(null);
     this.defaultOutput.set(null);
     this.deprecated.set(false);
+    this.approved.set(false);
   }
 
   /** Open the window empty, for a model the catalog does not have yet. */
@@ -330,6 +335,11 @@ export class ModelCatalog implements OnInit {
         value: model.is_priced ? dash(model.output_price_per_million) : 'no price',
       },
       { key: 'numeric_id', label: 'KIRA id', value: dash(model.numeric_id) },
+      {
+        key: 'approved',
+        label: 'Approved for use',
+        value: model.approved ? 'yes' : 'no — a use case cannot call it',
+      },
       { key: 'deprecated', label: 'Deprecated', value: model.deprecated ? 'yes' : 'no' },
       { key: 'updated_at', label: 'Last changed', value: dash(model.updated_at) },
     ];
@@ -350,6 +360,7 @@ export class ModelCatalog implements OnInit {
     this.maxOutput.set(model.max_output_tokens ?? null);
     this.defaultOutput.set(model.default_max_output_tokens ?? null);
     this.deprecated.set(model.deprecated ?? false);
+    this.approved.set(model.approved ?? false);
     this.editing.set(model.name);
     this.showAdd.set(true);
   }

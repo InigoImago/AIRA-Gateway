@@ -149,3 +149,51 @@ def test_who_may_ask(principal: Principal, expected: int) -> None:
     assert response.status_code == expected
     if expected == 403:
         assert "IT Security" in response.json()["error"]["message"]
+
+
+# ═══ only an approved model may be used (FRD-307) ══════════════════════════════════════════════
+
+
+@pytest.mark.anyio
+async def test_a_declared_but_unapproved_model_is_refused_by_name() -> None:
+    """The governance question the catalog could not answer.
+
+    Every other requirement asks whether a model *can* do something; this asks whether anybody
+    *decided* it may be used. A model appearing on an upstream is not the same event as somebody
+    accepting it into this installation, and until `FRD-307` the first implied the second.
+    """
+    from aira_gateway.catalog import ModelCatalog
+    from aira_gateway.requirements import ModelApproved
+
+    app = _client(IT_SECURITY)
+    with TestClient(app):
+        async with app.state.db_sessionmaker() as session:
+            session.add(ModelRead(model="pending-1", capabilities=["generate"], approved=False))
+            session.add(ModelRead(model="allowed-1", capabilities=["generate"], approved=True))
+            await session.commit()
+
+        check = ModelApproved(ModelCatalog(app.state.db_sessionmaker))
+        refusal = await check.refusal("pending-1")
+        assert refusal is not None
+        assert "has not been approved" in refusal
+        assert "Global Administrator" in refusal, "the refusal must name who releases a model"
+
+        assert await check.refusal("allowed-1") is None
+
+
+@pytest.mark.anyio
+async def test_an_undeclared_model_is_not_gated_by_approval() -> None:
+    """`FRD-114` FR-7 has always said an undeclared model gets the baseline and nothing more.
+
+    Making it *unusable* instead is a separate decision with a different blast radius — it would
+    take out every model an operator has not catalogued, on the day this shipped. What approval
+    refuses is a model somebody wrote down and nobody released, which is exactly the state it
+    exists to express.
+    """
+    from aira_gateway.catalog import ModelCatalog
+    from aira_gateway.requirements import ModelApproved
+
+    app = _client(IT_SECURITY)
+    with TestClient(app):
+        check = ModelApproved(ModelCatalog(app.state.db_sessionmaker))
+        assert await check.refusal("never-catalogued") is None

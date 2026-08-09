@@ -28,6 +28,7 @@ def _payload(model: Model) -> dict[str, Any]:
     return {
         "name": model.name,
         "display_name": model.display_name,
+        "approved": model.approved,
         "provider": model.provider,
         "input_price_per_million": (
             str(model.input_price_per_million)

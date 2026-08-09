@@ -19,6 +19,7 @@ class ModelSerializer(serializers.ModelSerializer[Model]):
         fields = [
             "name",
             "display_name",
+            "approved",
             "provider",
             "input_price_per_million",
             "output_price_per_million",

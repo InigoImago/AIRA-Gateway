@@ -74,6 +74,37 @@ class RegionAllowed:
         return None
 
 
+class ModelApproved:
+    """A Global Administrator must have released this model for use (`FRD-307`).
+
+    The governance question the catalog could not answer. Every other requirement here asks whether
+    a model *can* do something; this one asks whether anybody *decided* it may be used at all — and
+    the two are independent. A model appearing on an upstream is not the same event as somebody
+    accepting it into this installation, and until today the first implied the second.
+
+    **An undeclared model is not refused here.** `FRD-114` FR-7 has always said an undeclared model
+    gets the baseline and nothing more; making it unusable instead is a separate decision with a
+    different blast radius — it would take out every model an operator has not catalogued, on the
+    day this shipped. Refused is a model somebody wrote down and nobody approved, which is exactly
+    the state approval exists to express.
+
+    Checked at **every hop**, like the rest: a chain whose fallback is unapproved would otherwise
+    route around the decision rather than honouring it.
+    """
+
+    def __init__(self, catalog: ModelCatalog) -> None:
+        self._catalog = catalog
+
+    async def refusal(self, model: str) -> str | None:
+        declaration = await self._catalog.declaration(model)
+        if not declaration.declared or declaration.approved:
+            return None
+        return (
+            f"'{model}' is in the catalog and has not been approved for use. A Global "
+            "Administrator releases a model before a use case may call it."
+        )
+
+
 class ToolsSupported:
     """The model must be able to answer with a function call (`FRD-131` FR-4).
 

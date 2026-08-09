@@ -135,6 +135,13 @@
                     @if (model.deprecated) {
                       <span class="badge badge--danger">deprecated</span>
                     }
+                    @if (model.approved === false) {
+                      <!-- The one state a reader must not have to open a row to discover: this
+                           model is in the catalog and cannot be called. -->
+                      <span class="badge badge--warning" data-testid="not-approved">
+                        not approved
+                      </span>
+                    }
                   </td>
                   <td>
                     @if (model.is_priced) {
@@ -408,6 +415,22 @@
             embedding and refuses everything beyond it.
           </span>
         </fieldset>
+
+        <!--
+          Approval, and it starts **off**. A model appearing on an upstream is not the same event
+          as somebody deciding it may be used here (`FRD-307`) — and the whole editor is already
+          Global-Admin-only, which is who releases one.
+        -->
+        <label class="checkline">
+          <input
+            type="checkbox"
+            name="approved"
+            [ngModel]="approved()"
+            (ngModelChange)="approved.set($event)"
+            data-testid="model-approved"
+          />
+          Approved for use — a use case may call it
+        </label>
 
         <label class="checkline">
           <input
