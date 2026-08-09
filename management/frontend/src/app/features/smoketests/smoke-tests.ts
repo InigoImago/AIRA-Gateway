@@ -87,15 +87,25 @@ export class SmokeTests implements OnInit {
   // What a new run will be.
   protected readonly model = signal('');
   protected readonly useCase = signal('');
+  /** The name of the use case a run will be attributed to, for saying so on screen. */
+  protected readonly attribution = computed(
+    () => this.mine().find((uc) => uc.slug === this.useCase())?.name ?? '',
+  );
   /**
-   * The use cases this caller may actually attribute traffic to.
+   * The use cases this caller may attribute traffic to.
    *
-   * A **picker, not a free-text box**, and the difference was a real defect: the first version let
-   * an incident role type any slug, and IT Security is deliberately a member of nothing
-   * (`ADR-0007` — oversight must never imply the right to act inside a use case). So the run went
-   * through, the gateway correctly refused every request with "not a member", and the screen
-   * collected three failures that looked like the model's fault. `FRD-206` in its usual shape: a
-   * control that promises what the server refuses.
+   * **Not a control.** It was a picker, and the picker was wrong twice: it listed whatever page
+   * one of a paged list happened to hold — on an installation with hundreds of use cases, an
+   * endless dropdown that frequently did not contain the one somebody works in — and it asked a
+   * question the person running a model test does not have an opinion about. A run has to be
+   * attributed *somewhere*, because it is ordinary traffic and is priced, budgeted, rate-limited
+   * and audited like any other request; which one it lands on is not the tester's decision to
+   * make.
+   *
+   * So the screen resolves it and **states** it. Asked of the server (`?mine=true`), because
+   * membership is not visibility: an oversight role sees every use case and may call none of them,
+   * and filtering the visible list in the browser would offer one the gateway then refuses —
+   * `FRD-206`'s defect, which this screen has already had once.
    */
   protected readonly mine = signal<{ slug: string; name: string }[]>([]);
   protected readonly running = signal(false);
@@ -176,20 +186,17 @@ export class SmokeTests implements OnInit {
       next: (rows) => this.models.set(rows),
       error: () => undefined,
     });
-    // The **paged** endpoint. `list()` still exists and returns the same URL, which since paging
-    // landed answers with a `Page` object rather than an array — so `rows.filter` quietly walked
-    // over nothing and the picker was empty for everybody. Found by a browser, because a typed
-    // `Observable<UseCase[]>` over a body that is not one compiles perfectly.
-    this.service.listPage('', 1).subscribe({
+    this.service.myUseCases().subscribe({
       next: (page) => {
-        const rows = page.results ?? [];
-        const usable = rows
-          .filter((row) => row.permissions?.is_member)
-          .map((r) => ({ slug: r.slug, name: r.name }));
+        const usable = (page.results ?? []).map((r) => ({ slug: r.slug, name: r.name }));
         this.mine.set(usable);
+        // Whichever comes first, by name — the list is ordered by the server. A tester has no
+        // opinion about this, and the screen says which one it landed on so the figure is still
+        // traceable to a budget.
         if (usable.length && !this.useCase()) this.useCase.set(usable[0].slug);
       },
-      error: () => undefined,
+      error: (response: unknown) =>
+        this.feedback.fail(response, 'Could not work out which use case to attribute a run to.'),
     });
     this.refreshRuns();
   }

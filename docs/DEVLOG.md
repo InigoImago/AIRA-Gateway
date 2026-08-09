@@ -5,6 +5,33 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-09 — Attribution is stated, not asked (`FRD-504`)
+
+*"Attributed to hat endlose Menge der Column. Dieser Punkt ist überhaupt nicht notwendig."* Two
+defects wearing one control.
+
+The picker listed **page one** of a paged list, so on an installation with hundreds of use cases it
+was an endless dropdown that frequently did not hold the one somebody actually works in — the
+defect recorded and parked two commits ago. And it asked a question the person running a model test
+has no opinion about: a run has to be attributed *somewhere*, because it is ordinary traffic and is
+priced, budgeted, rate-limited and audited like any other request, but **which** one is not the
+tester's decision to make.
+
+So the screen resolves it and says which: *"Attributed to Kundenservice."* Not a control, a
+statement — the spend stays traceable and nobody is asked to choose.
+
+The resolution is a new server-side question, `GET /use-cases/?mine=true`, because **visibility is
+not membership** (`ADR-0007`) and filtering the visible list in the browser gets it wrong in both
+directions: an oversight role sees every use case and may call none, and a paged list only ever
+answers "the ones I am a member of *among the first 25*". `access.member_queryset` is the set form
+of `is_member` and sits beside it, so a list answering "which may I act in" cannot drift from the
+per-row permission the same screen renders — a test asserts the two agree, which is the only reason
+either can be trusted. `Q5`, shown to fail first.
+
+The end-to-end run test stays skipped and its reason has **changed**: the picker defect is fixed,
+and what blocks it now is that a run asks all hundred questions one at a time against a small local
+model. That is minutes, and it does not belong in a suite everything else waits on.
+
 ## 2026-08-09 — One catalogue of questions, and a standing that is the latest run (`FRD-504`)
 
 The smoke-test screen was built as one page that summed every run a model had ever had. Two

@@ -57,7 +57,7 @@ const RUN: TestRun = {
 
 interface Options {
   roles?: string[];
-  useCases?: { slug: string; name: string; permissions: { is_member: boolean } }[];
+  useCases?: { slug: string; name: string }[];
   results?: TestResult[];
   stats?: TestModelStats[];
   askFails?: boolean;
@@ -93,16 +93,15 @@ function setup(options: Options = {}) {
         provide: UseCaseService,
         useValue: {
           testCases: () => of(options.emptyCatalogue ? [] : CATALOGUE),
-          listPage: () =>
+          // `?mine=true`: the server answers with the ones this caller may act in. The screen
+          // never filters a visible list, because visibility is not membership.
+          myUseCases: () =>
             of({
-              count: 2,
+              count: 1,
               page: 1,
-              page_size: 25,
+              page_size: 100,
               pages: 1,
-              results: options.useCases ?? [
-                { slug: 'uc-a', name: 'Kundenservice', permissions: { is_member: true } },
-                { slug: 'uc-b', name: 'Not mine', permissions: { is_member: false } },
-              ],
+              results: options.useCases ?? [{ slug: 'uc-a', name: 'Kundenservice' }],
             }),
           models: () =>
             of([
@@ -184,6 +183,19 @@ describe('SmokeTests', () => {
 
     expect(options).toContain('qwen2.5:3b');
     expect(options).not.toContain('not-approved-1');
+  });
+
+  it('says which use case a run will be attributed to, rather than asking', () => {
+    /** Reported as *"Attributed to hat endlose Menge der Column. Dieser Punkt ist überhaupt nicht
+     *  notwendig"* — and it was two defects in one control. It listed page one of a paged list, so
+     *  on an installation with hundreds of use cases it was an endless dropdown that frequently did
+     *  not contain the one somebody works in; and it asked a question a person running a model test
+     *  has no opinion about. A run must be attributed somewhere because it is ordinary traffic —
+     *  which one is not the tester's decision. So it is resolved and stated. */
+    const harness = setup({ tab: 'runs' });
+
+    expect(harness.element.querySelector('#smoke-usecase')).toBeNull();
+    expect(harness.testid('smoke-attribution')?.textContent).toContain('Kundenservice');
   });
 
   it('withholds running from somebody who is a member of nothing', () => {
@@ -367,7 +379,7 @@ describe('SmokeTests', () => {
           useValue: {
             testCases: () => throwError(() => ({ status: 500 })),
             models: () => of([]),
-            listPage: () => of({ count: 0, page: 1, page_size: 25, pages: 1, results: [] }),
+            myUseCases: () => of({ count: 0, page: 1, page_size: 100, pages: 1, results: [] }),
             testRuns: () => of([]),
             testStats: () => of([]),
           },
@@ -566,13 +578,13 @@ describe('SmokeTests', () => {
           useValue: {
             testCases: () => of(CATALOGUE),
             models: () => of([{ name: 'm', approved: true }]),
-            listPage: () =>
+            myUseCases: () =>
               of({
                 count: 1,
                 page: 1,
-                page_size: 25,
+                page_size: 100,
                 pages: 1,
-                results: [{ slug: 'uc-a', name: 'A', permissions: { is_member: true } }],
+                results: [{ slug: 'uc-a', name: 'A' }],
               }),
             testRuns: () => of([]),
             testStats: () => of([]),
@@ -601,22 +613,27 @@ describe('SmokeTests', () => {
     expect(String(patched[0]['error'])).toContain('request failed');
   });
 
-  it('offers only use cases this caller may actually call', () => {
-    /** The defect this replaced: a free-text box let an incident role type any slug, and IT
-     *  Security is deliberately a member of nothing (`ADR-0007`). The run went through, the
-     *  gateway refused every request with "not a member", and three failures looked like the
-     *  model's fault. */
-    const { element } = setup();
-    const options = [...element.querySelectorAll('#smoke-usecase option')].map((o) =>
-      o.textContent?.trim(),
-    );
+  it('attributes a run to a use case this caller may actually call', () => {
+    /** The defect behind all of this: a free-text box let an incident role type any slug, and IT
+     *  Security is deliberately a member of nothing (`ADR-0007`). The run went through, the gateway
+     *  refused every request with "not a member", and three failures looked like the model's fault.
+     *
+     *  The question is the server's now — `?mine=true`, one predicate, `access.member_queryset`
+     *  beside the `is_member` the viewset enforces with. What is asserted here is that the screen
+     *  uses that answer and sends it. */
+    const harness = setup();
+    const component = harness.component as unknown as {
+      model: { set: (v: string) => void };
+      useCase: () => string;
+    };
+    component.model.set('qwen2.5:3b');
 
-    expect(options).toEqual(['Kundenservice']);
+    expect(component.useCase()).toBe('uc-a');
   });
 
   it('says so when there is nothing to attribute a test to', () => {
     const harness = setup({
-      useCases: [{ slug: 'x', name: 'X', permissions: { is_member: false } }],
+      useCases: [],
     });
 
     expect(harness.testid('no-use-case')).not.toBeNull();
@@ -707,7 +724,7 @@ describe('SmokeTests', () => {
 
   it('copes with a use-case list that carries no page body', () => {
     /** The endpoint is paged; a body without `results` is what an older server would answer, and
-     *  the picker must be empty rather than throwing. */
+     *  the screen must find no attribution rather than throwing. */
     TestBed.resetTestingModule();
     TestBed.configureTestingModule({
       imports: [SmokeTests],
@@ -720,7 +737,7 @@ describe('SmokeTests', () => {
             models: () => of([]),
             testRuns: () => of([]),
             testStats: () => of([]),
-            listPage: () => of({ count: 0, page: 1, page_size: 25, pages: 1 }),
+            myUseCases: () => of({ count: 0, page: 1, page_size: 100, pages: 1 }),
           },
         },
       ],

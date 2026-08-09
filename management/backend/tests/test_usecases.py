@@ -89,6 +89,47 @@ def test_list_is_scoped_and_governance_sees_all() -> None:
     assert {"uc-a", "uc-b"} <= {x["slug"] for x in gov_page["results"]}
 
 
+def test_mine_narrows_to_what_a_caller_may_act_in_not_what_they_can_see() -> None:
+    """**Visibility is not membership** (`ADR-0007`), and a screen that needs somewhere to attribute
+    traffic to needs the second one.
+
+    IT Security sees every use case and is deliberately a member of none. Asking the visible list
+    for "the ones I may call" is `FRD-206`'s defect: the console offers one, the gateway refuses the
+    request, and the failures read as the model misbehaving.
+    """
+    admin_a = _user("a", "use-case-admin")
+    admin_b = _user("b", "use-case-admin")
+    security = _user("s", "it-security")
+    _create(_client(admin_a), "uc-a")
+    _create(_client(admin_b), "uc-b")
+
+    visible = _client(security).get(BASE).json()
+    mine = _client(security).get(f"{BASE}?mine=true").json()
+
+    assert {"uc-a", "uc-b"} <= {x["slug"] for x in visible["results"]}
+    assert mine["results"] == [], "oversight is a member of nothing, and may call nothing"
+
+    # And the creator of a use case is a member of it, so the same question answers differently.
+    assert {x["slug"] for x in _client(admin_a).get(f"{BASE}?mine=true").json()["results"]} == {
+        "uc-a"
+    }
+
+
+def test_mine_agrees_with_the_permission_the_row_reports() -> None:
+    """One predicate, asked two ways. `member_queryset` sits beside the `is_member` the serializer
+    reports with, so a list that answers "which may I act in" cannot drift from the per-row answer
+    the same screen renders — which is the only reason either can be trusted."""
+    admin = _user("a", "use-case-admin")
+    _create(_client(admin), "uc-a")
+    _create(_client(_user("b", "use-case-admin")), "uc-b")
+
+    rows = _client(admin).get(BASE).json()["results"]
+    reported = {row["slug"] for row in rows if row["permissions"]["is_member"]}
+    listed = {row["slug"] for row in _client(admin).get(f"{BASE}?mine=true").json()["results"]}
+
+    assert listed == reported
+
+
 def test_the_list_is_searched_at_the_server() -> None:
     """Filtered by the database, not by the browser.
 

@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from django.db.models import Q, QuerySet
+
 from aira_management.apps.usecases.models import UseCase, UseCaseGroupGrant, UseCaseMembership
 from aira_management.rbac import KEYCLOAK_GROUP_PREFIX, has_role
 from aira_management.roles import Role
@@ -53,6 +55,25 @@ def is_member(user: Any, usecase: UseCase) -> bool:
     return UseCaseGroupGrant.objects.filter(
         use_case=usecase, group_path__in=held_group_paths(user)
     ).exists()
+
+
+def member_queryset(user: Any, queryset: QuerySet[UseCase]) -> QuerySet[UseCase]:
+    """Narrow to the use cases this caller is a **member** of.
+
+    The set form of `is_member`, and written beside it so the two cannot drift: a list that answers
+    "which ones may I act in" by a different rule than the one the server enforces per object is
+    `FRD-206`'s defect in bulk — the console would offer a use case the request is then refused for,
+    or withhold one it would have allowed.
+
+    A global admin is a member of everything, exactly as in `is_member`.
+    """
+    if has_role(user, Role.GLOBAL_ADMIN):
+        return queryset
+    if not getattr(user, "is_authenticated", False):
+        return queryset.none()
+    return queryset.filter(
+        Q(memberships__user=user) | Q(group_grants__group_path__in=held_group_paths(user))
+    ).distinct()
 
 
 def held_group_paths(user: Any) -> list[str]:

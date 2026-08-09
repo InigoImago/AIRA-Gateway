@@ -427,6 +427,25 @@ test.describe('Model tests', () => {
     await expect(page.getByTestId('catalogue-add')).toBeVisible();
   });
 
+  test('attribution is stated, not asked', async ({ page }) => {
+    /**
+     * Reported as *"Attributed to hat endlose Menge der Column. Dieser Punkt ist überhaupt nicht
+     * notwendig"* — two defects in one control. It listed page one of a paged list, so on this
+     * installation (hundreds of use cases) it was an endless dropdown that often did not hold the
+     * one somebody works in; and it asked a question a person running a model test has no opinion
+     * about. A run must be attributed *somewhere* because it is ordinary traffic — which one is not
+     * the tester's decision.
+     */
+    await login(page, USERS.useCaseAdmin);
+    await page.goto('/model-tests');
+    await page.getByTestId('tab-runs').click();
+
+    await expect(page.locator('#smoke-usecase')).toHaveCount(0);
+    await expect(page.getByTestId('smoke-attribution')).toContainText('Attributed to');
+    // A real use case, resolved from membership rather than from what this account can see.
+    await expect(page.getByTestId('smoke-attribution')).not.toContainText('Attributed to .');
+  });
+
   test('a member may read the standard and may not rewrite it', async ({ page }) => {
     /** `FRD-206`: a withheld action names who performs it, rather than being an absent control the
      *  reader has to guess at — and read-only stays *usable*. */
@@ -445,11 +464,11 @@ test.describe('Model tests', () => {
     await expect(page.getByTestId('nav-model-tests')).toHaveCount(0);
   });
 
-  // Skipped, and the reason is a real defect rather than a flaky test: the use-case picker asks
-  // for **page one** of the use-case list, so on an installation with many use cases the one you
-  // want may simply not be listed. Paging turns "it is in the list" into "it is findable" — the
-  // third time that lesson has arrived this week. Unskip when the picker is searchable or the API
-  // can answer "the use cases I am a member of".
+  // Still skipped, and the reason has changed. The picker defect is fixed — attribution is
+  // resolved from `?mine=true` and stated rather than asked — but a run now asks **all hundred**
+  // questions, one at a time, against a small local model. That is minutes per run, which does not
+  // belong in a suite everything else waits on. Unskip against a short catalogue, or give it the
+  // time deliberately.
   test.skip('runs the catalogue against a real model and rates an answer', async ({ page }) => {
     /**
      * End to end, against a model that actually answers. What is asserted is never the *content*
@@ -468,17 +487,12 @@ test.describe('Model tests', () => {
     // satisfy both requirements at once.
     await login(page, USERS.useCaseAdmin);
     await page.goto('/model-tests');
+    await page.getByTestId('tab-runs').click();
     await expect(page.getByRole('heading', { level: 2, name: 'Model tests' })).toBeVisible();
 
     // The model the seed declares and approves in *Management's* catalog. Only what a Global
     // Administrator has catalogued may be called, and the console offers exactly that set.
     await page.getByTestId('smoke-model').selectOption('qwen3:0.6b');
-    // A picker, not a free-text box: only use cases this caller is a **member** of. IT Security
-    // sees every use case and is deliberately a member of none, so this is the assertion that
-    // caught the first version of this screen letting it run and collect three refusals.
-    // By label, not by position: the picker holds whatever this account is a member of, and a
-    // leftover use case from another test would be attributed traffic the gateway then refuses.
-    await page.getByTestId('smoke-usecase').selectOption({ label: 'Kundenservice' });
     await page.getByTestId('smoke-run').click();
 
     // The run opens by itself when it finishes, and says nothing has been rated.

@@ -173,29 +173,18 @@
                 }
               </select>
             </div>
-            <div class="field">
-              <label for="smoke-usecase">
-                Attributed to
-                <app-info-hint label="Why a use case is needed">
-                  A test travels the ordinary request path, so it is priced, budgeted, rate-limited
-                  and audited like any other traffic — which means it belongs to a use case. Only
-                  the ones you are a member of are offered: oversight lets you see every use case,
-                  and deliberately does not let you call one.
-                </app-info-hint>
-              </label>
-              <select
-                id="smoke-usecase"
-                name="use_case"
-                [ngModel]="useCase()"
-                (ngModelChange)="useCase.set($event)"
-                data-testid="smoke-usecase"
-              >
-                @for (uc of mine(); track uc.slug) {
-                  <option [value]="uc.slug">{{ uc.name }}</option>
-                }
-              </select>
-            </div>
           </div>
+
+          <p class="muted" style="margin: 0.6rem 0 0" data-testid="smoke-attribution">
+            Attributed to <strong>{{ attribution() }}</strong
+            >.
+            <app-info-hint label="Why a run is attributed to a use case">
+              A test travels the ordinary request path, so it is priced, budgeted, rate-limited and
+              audited like any other traffic — which means it belongs to a use case. It is not a
+              choice worth making here: it is whichever one you are a member of, named so the spend
+              stays traceable. Oversight lets you see every use case and deliberately not call one.
+            </app-info-hint>
+          </p>
 
           <div class="form-actions">
             @if (progress(); as done) {

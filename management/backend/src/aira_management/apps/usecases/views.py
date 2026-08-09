@@ -50,6 +50,7 @@ from aira_management.apps.usecases.access import (
     is_member,
     may_admin,
     may_manage,
+    member_queryset,
 )
 from aira_management.apps.usecases.events import emit
 from aira_management.apps.usecases.models import UseCase, UseCaseGroupGrant, UseCaseMembership
@@ -148,6 +149,13 @@ class UseCaseViewSet(viewsets.ModelViewSet[UseCase]):
         # to hand back the same row on two pages and no row for a third. By name, because that is
         # what the list is read by.
         scoped = scoped.order_by("name", "slug")
+        # `?mine=true` narrows to the use cases this caller may actually **act** in, which is a
+        # different question from what they may see (`ADR-0007`). A screen that needs somewhere to
+        # attribute traffic to needs this set and not the visible one — an oversight role sees
+        # every use case and may call none of them, so offering the visible list there is a control
+        # that fails the moment it is used.
+        if str(self.request.query_params.get("mine", "")).lower() in ("1", "true", "yes"):
+            scoped = member_queryset(self.request.user, scoped)
         # The search runs here, so the rows a reader is not looking at are never built. That is the
         # whole reason this moved off the browser: the serializer computes object-level permissions
         # per row (`access.py`), and client-side paging left every one of them happening.

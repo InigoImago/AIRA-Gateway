@@ -2843,6 +2843,14 @@ MUTATIONS = [
         "management/backend/tests/test_smoketests.py",
     ),
     Mutation(
+        "Q5",
+        "the use cases offered for attribution are the ones a caller may act in, not merely see",
+        "management/backend/src/aira_management/apps/usecases/views.py",
+        "            scoped = member_queryset(self.request.user, scoped)",
+        "            pass",
+        "management/backend/tests/test_usecases.py",
+    ),
+    Mutation(
         "Q3",
         "the seed corrects a renamed question in place instead of adding a second one",
         "management/backend/src/aira_management/apps/seed/contributions/test_catalogue.py",

@@ -49,6 +49,20 @@ export class UseCaseService {
    * per row: fetching all of them and slicing locally leaves every one of those computations
    * happening on every load, which is the part that actually takes seconds.
    */
+  /**
+   * The use cases this caller may **act** in, which is not what they may see (`ADR-0007`).
+   *
+   * Asked of the server rather than filtered in the browser: the list is paged, so filtering page
+   * one answers "the ones I am a member of *among the first 25*" — which is how a picker comes to
+   * omit the use case somebody actually works in and looks, from the outside, like a permission
+   * problem.
+   */
+  myUseCases(): Observable<Page<UseCase>> {
+    return this.http.get<Page<UseCase>>('/api/v1/use-cases/', {
+      params: { mine: 'true', page_size: 100 },
+    });
+  }
+
   listPage(query: string, page: number): Observable<Page<UseCase>> {
     const params: Record<string, string | number> = { page };
     if (query) params['q'] = query;
