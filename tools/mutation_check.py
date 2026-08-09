@@ -2828,8 +2828,10 @@ MUTATIONS = [
         "Q1",
         "a model's standing is its latest run, never a total across every run",
         "management/backend/src/aira_management/apps/smoketests/views.py",
-        '"model", "battery_id", "-started_at"',
-        '"model", "battery_id", "started_at"',
+        # Re-anchored 2026-08-09: the battery axis went away, so the ordering this points at is
+        # now over the model alone. A mutation whose anchor has moved protects nothing.
+        'order_by("model", "-started_at")',
+        'order_by("model", "started_at")',
         "management/backend/tests/test_smoketests.py",
     ),
     Mutation(
@@ -2843,17 +2845,17 @@ MUTATIONS = [
     Mutation(
         "Q3",
         "the seed corrects a renamed question in place instead of adding a second one",
-        "management/backend/src/aira_management/apps/seed/contributions/test_batteries.py",
-        "                    position=position,\n                    retired=False,",
-        "                    topic=topic,\n                    retired=False,",
+        "management/backend/src/aira_management/apps/seed/contributions/test_catalogue.py",
+        "                position=position,\n                retired=False,",
+        "                topic=topic,\n                retired=False,",
         "management/backend/tests/test_smoketests.py",
     ),
     Mutation(
         "Q4",
         "a retired question is not asked, so a model is judged against the current standard",
         "management/backend/src/aira_management/apps/smoketests/views.py",
-        "for case in run.battery.cases.filter(retired=False)",
-        "for case in run.battery.cases.all()",
+        "for case in TestCase.objects.filter(retired=False)",
+        "for case in TestCase.objects.all()",
         "management/backend/tests/test_smoketests.py",
     ),
     Mutation(
@@ -2976,10 +2978,22 @@ def main() -> int:
 
     print()
     if survivors:
-        print(f"{len(survivors)} of {len(chosen)} properties are undefended:")
-        for mutation in survivors:
-            print(f"  {mutation.ident}  {mutation.property_defended}")
-        print("\nEach one is a property no test would notice losing. Add the test.")
+        # A stale anchor and a surviving mutation are different problems with the same consequence,
+        # and saying "no test would notice losing this" about a stale one sends the reader looking
+        # for a missing test that is probably right there. Walked into on 2026-08-09.
+        stale = [m for m in survivors if m.old not in (ROOT / m.path).read_text()]
+        survived = [m for m in survivors if m not in stale]
+        print(f"{len(survivors)} of {len(chosen)} properties are unguarded:")
+        for mutation in survived:
+            print(f"  {mutation.ident}  SURVIVED  {mutation.property_defended}")
+        for mutation in stale:
+            print(f"  {mutation.ident}  STALE     {mutation.property_defended}")
+        if survived:
+            print("\nA survivor is a property no test would notice losing. Add the test.")
+        if stale:
+            print("\nA stale anchor points at code that has moved. Re-anchor it, or remove it if")
+            print("the rule it guarded is gone — a mutation defending deleted code is worse than")
+            print("none, because it reports green about nothing.")
         return 1
     print(f"All {len(chosen)} properties are defended by at least one test.")
     return 0

@@ -5,48 +5,57 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
-## 2026-08-09 — A catalogue is a standard, and a standing is the latest run (`FRD-504`)
+## 2026-08-09 — One catalogue of questions, and a standing that is the latest run (`FRD-504`)
 
-The smoke-test screen was built as one page that summed every run a model had ever had. Reported
-as *"ich will im Laufe der Zeit standardisierten Fragenkatalog für die Bewertung von Modellen
-definieren und nach dem Standard Modelle bewerten"* — which is a different thing, and the summing
-was actively wrong for it.
+The smoke-test screen was built as one page that summed every run a model had ever had. Two
+corrections from the owner, and the second was the interesting one.
 
-**Three sub-tabs, because there are three activities.** The **question catalogue** is written once
-and grows slowly; a **run** puts it to a model; the **latest results** say where each model stands.
-Seeded with **100 questions in eight batteries**, each isolating one failure mode — refusal,
-invention, instruction handling, injection resistance, German and domain, personal data, checkable
-reasoning, output format. A battery mixing failure modes produces a score that moves for reasons
-nobody can attribute. After the seed it is edited in the console: a catalogue that can only be
-changed by editing a seed file is one that stops being edited.
+**First: a standing catalogue, not an ad-hoc run.** *"Ich will im Laufe der Zeit standardisierten
+Fragenkatalog für die Bewertung von Modellen definieren und nach dem Standard Modelle bewerten"* —
+so three sub-tabs: the **questions** (written once, grown slowly), a **run** that puts them to a
+model, and **latest results** saying where each model stands. And the standing is the **newest run
+per model**, never a total: summing is wrong twice over, because an old since-corrected result
+drags the current figure down forever and the number moves whenever somebody re-runs something
+unrelated. Older runs are history and stay readable — how a model behaved before its version
+changed is the question anybody upgrading one actually has, and only the history answers it.
 
-**The headline figure is the newest run per model and battery.** Summing is wrong twice: an old,
-since-corrected result drags the current one down forever, and the number moves whenever somebody
-re-runs something unrelated. Older runs are **history** and stay readable — how a model behaved
-before its version changed is the question anybody upgrading one actually has, and only the history
-answers it. Two batteries against one model are two standings, never an average: two standards
-averaged compare nothing to nothing.
+**Second: no grouping at all.** The first version of that sorted the hundred questions into eight
+named batteries. *"Ich meine keine Kategorisierung, einfach nur die Liste an Fragen."* Removing it
+turned out to be a correctness fix rather than a simplification: with several batteries, "how does
+this model do" has as many answers as there are groups, and **none of them compares to a model that
+was asked a different group**. The whole value of a fixed catalogue is that every model is asked
+every question. `topic` stays as the keyword saying what a question tests — a label on a row,
+nothing branches on it — and the search covers the wording too, because somebody looking for "the
+one about explosives" remembers the question and not the label.
 
-Three things fell out of building it, and two are about the harness rather than the feature:
+`TestBattery` is gone; runs, answers and verdicts were carried across, because a run is evidence
+about what a model did on a day and reorganising the catalogue is not a reason to lose it.
 
-- **A break that never broke.** The first attempt to prove the new test could fail replaced a
-  string that `ruff format` had since wrapped across two lines, so the edit matched nothing, the
-  suite stayed green, and the run looked like a passing verification. The test was only shown to
-  fail once the anchor was taken from the file rather than from memory. A break-and-restore that
-  does not assert the break happened is a green run about nothing — the same shape as the info-hint
-  guard that was itself inert, two days ago.
+Four findings, three about the harness rather than the feature:
+
+- **A break that never broke.** The first attempt to prove a new test could fail replaced a string
+  `ruff` had since wrapped across two lines, so the edit matched nothing, the suite stayed green,
+  and the run looked like a passing verification. Break-and-restore has to assert the break landed.
 - **The duplicate-id check existed only in a commit message.** 2026-08-07 recorded that 38 mutation
-  ids named more than one property, that the later ones were renamed, and that *"the harness now
-  refuses them"*. It never did. The very next addition collided with `S1` and `S2`, and
-  `--only=S1,S2` cheerfully ran four properties and reported four confident results for the two
-  that were asked for. `_refuse_duplicate_ids()` is now written, and shown to fire. A check that
-  exists only as a claim is the thing it was meant to prevent.
-- **`confirm()` where the codebase has a `ConfirmService`.** Caught by writing the test: the
-  existing idiom is injectable precisely so a component can be tested without stubbing `window`.
+  ids named more than one property, that they were renamed, and that *"the harness now refuses
+  them"*. It never did: the next addition collided with `S1`/`S2`, and `--only=S1,S2` ran four
+  properties and reported four confident results for the two that were asked for. Written now, and
+  shown to fire. The summary line also called a **stale anchor** "a property no test would notice
+  losing", which sends the reader hunting for a test that is right there — stale and survived are
+  now reported apart.
+- **A rename against a name key is a create.** The seed keyed questions on `topic`, so renaming
+  three left the old wording in place with its answers attached, and the catalogue silently grew to
+  102. Keyed on position now; superseded questions are **retired, not deleted**, because somebody
+  judged their answers against the wording as it then stood and those verdicts are the only
+  evidence that anything has changed. `FRD-208` recorded this for anomaly rules; this is the second
+  place.
+- **mypy found a 500 before a caller did**: a query parameter reached the ORM as a string.
 
-`Q1`/`Q2` guard the two properties that matter here — the standing is the latest run, and an
-unrated answer is not a passed one. Frontend gates held without being touched (statements 92.2%,
-branches 92.1%, functions 75.1%).
+`Q1`–`Q4` guard the four rules, each shown to fail first; `Q1` was re-anchored when the battery axis
+went away. 1652 Python tests, 617 frontend, gates untouched (statements 92.4%, branches 92.4%).
+Verified in the browser against the rebuilt console: 100 questions in one list, the search reaching
+the wording, and authoring offered to IT Security and withheld from a use-case administrator with a
+sentence saying who does it.
 
 ## 2026-08-08 — access follows the group, and three things that carried nothing (`FRD-209`)
 

@@ -397,12 +397,15 @@ test.describe('Model tests', () => {
     expect(loaded, 'the logo element is there and the file behind it is not').toBe(true);
   });
 
-  test('the three activities are three tabs, and the catalogue is a standard', async ({ page }) => {
+  test('the three activities are three tabs, and the catalogue is one flat list', async ({
+    page,
+  }) => {
     /**
-     * The shape the owner asked for: a catalogue defined once, runs that put it to a model, and a
-     * first view showing where each model stands. The first version was one page that summed every
-     * run a model had ever had — which answers a question nobody asked, and which no unit test
-     * could call wrong because the code and its test came from the same idea.
+     * The shape the owner asked for: one catalogue of questions defined once, runs that put it to a
+     * model, and a first view showing where each model stands. Two earlier versions were wrong in
+     * ways no unit test could call wrong, because the code and its test came from the same idea —
+     * one page that summed every run a model had ever had, and then a grouping into batteries that
+     * bought nothing and cost comparability.
      */
     await login(page, USERS.security);
     await page.goto('/model-tests');
@@ -412,15 +415,13 @@ test.describe('Model tests', () => {
 
     await page.getByTestId('tab-catalogue').click();
 
-    // Eight batteries, each isolating one failure mode, and a hundred questions between them.
-    const batteries = page.getByTestId('catalogue-battery').locator('option');
-    await expect(batteries).toHaveCount(8);
+    // A hundred questions, in one list, every model asked all of them.
+    await expect(page.locator('tbody tr')).toHaveCount(100);
 
-    // The count beside a battery is what somebody plans their time by, so it has to be the number
-    // of questions that will actually be asked — retired ones excluded.
-    const label = await batteries.first().textContent();
-    const declared = Number(label?.match(/\((\d+)\)/)?.[1]);
-    await expect(page.locator('tbody tr')).toHaveCount(declared);
+    // The search reaches the wording, not only the keyword: a reader looking for "the one about
+    // explosives" remembers the question, not the label.
+    await page.getByTestId('catalogue-search').fill('explosive');
+    await expect(page.locator('tbody tr')).toHaveCount(1);
 
     // IT Security writes the standard; everybody else reads it.
     await expect(page.getByTestId('catalogue-add')).toBeVisible();
@@ -449,15 +450,19 @@ test.describe('Model tests', () => {
   // want may simply not be listed. Paging turns "it is in the list" into "it is findable" — the
   // third time that lesson has arrived this week. Unskip when the picker is searchable or the API
   // can answer "the use cases I am a member of".
-  test.skip('runs a battery against a real model and rates an answer', async ({ page }) => {
+  test.skip('runs the catalogue against a real model and rates an answer', async ({ page }) => {
     /**
      * End to end, against a model that actually answers. What is asserted is never the *content*
      * of an answer — that tests the model and flakes. What is asserted is that a run collects one
      * answer per question, that nothing is rated until somebody rates it, and that a verdict
      * sticks and carries a name.
+     *
+     * Note for whoever unskips this: the catalogue is a hundred questions and a run asks all of
+     * them, one at a time, against a small local model. Point it at a short catalogue or give it
+     * the time.
      */
     test.setTimeout(240_000);
-    // A use-case administrator, because running a battery is **making requests**: what gates it is
+    // A use-case administrator, because running the catalogue is **making requests**: what gates it is
     // membership of a use case, not a role. The first design asked for an incident role and was
     // unusable — IT Security is deliberately a member of nothing (`ADR-0007`), so no user could
     // satisfy both requirements at once.

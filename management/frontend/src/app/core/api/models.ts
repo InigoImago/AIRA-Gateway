@@ -277,17 +277,14 @@ export interface ModelCheck {
 }
 
 /** A battery of questions to put to a model (`FRD-504`). */
-export interface TestBattery {
-  id: number;
-  name: string;
-  description: string;
-  case_count: number;
-  cases?: TestCase[];
-}
-
+/**
+ * One question in the catalogue.
+ *
+ * `topic` is the keyword saying what it tests — a label on a row, not a categorisation. Nothing
+ * branches on it and nothing is grouped by it.
+ */
 export interface TestCase {
   id: number;
-  battery: number;
   topic: string;
   prompt: string;
   expectation: string;
@@ -311,8 +308,6 @@ export interface TestCounts {
 
 export interface TestRun {
   id: number;
-  battery: number;
-  battery_name: string;
   model: string;
   use_case: string;
   started_at: string;
@@ -347,12 +342,14 @@ export interface TestResult {
  * figure that answers "how does this model do" is therefore its most recent result, not an average
  * that an old, since-corrected run drags down forever. Earlier runs are **history**, and they stay
  * readable under Runs.
+ *
+ * One row per model, because there is one catalogue.
  */
 export interface TestModelStats {
   model: string;
-  battery: number;
-  battery_name: string;
   run: number;
+  /** How many questions the catalogue asks today, which an older run may not have been asked. */
+  catalogue: number;
   started_at: string;
   requested_by: string;
   total: number;

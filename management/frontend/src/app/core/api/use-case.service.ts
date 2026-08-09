@@ -21,7 +21,6 @@ import {
   Report,
   UseCase,
   Suspension,
-  TestBattery,
   TestCase,
   TestModelStats,
   TestResult,
@@ -271,8 +270,9 @@ export class UseCaseService {
 
   // ---- model smoke tests (`FRD-504`) --------------------------------------------------------
 
-  batteries(): Observable<TestBattery[]> {
-    return this.http.get<TestBattery[]>('/api/v1/test-batteries/');
+  /** The whole catalogue. A hundred rows, so it is fetched once and read in the browser. */
+  testCases(): Observable<TestCase[]> {
+    return this.http.get<TestCase[]>('/api/v1/test-cases/');
   }
 
   testRuns(model?: string): Observable<TestRun[]> {
@@ -281,9 +281,8 @@ export class UseCaseService {
     return this.http.get<TestRun[]>('/api/v1/test-runs/', { params });
   }
 
-  startRun(battery: number, model: string, useCase: string): Observable<TestRun> {
+  startRun(model: string, useCase: string): Observable<TestRun> {
     return this.http.post<TestRun>('/api/v1/test-runs/', {
-      battery,
       model,
       use_case: useCase,
     });
@@ -344,10 +343,6 @@ export class UseCaseService {
 
   deleteCase(id: number): Observable<void> {
     return this.http.delete<void>(`/api/v1/test-cases/${id}/`);
-  }
-
-  createBattery(body: Partial<TestBattery>): Observable<TestBattery> {
-    return this.http.post<TestBattery>('/api/v1/test-batteries/', body);
   }
 
   testStats(): Observable<TestModelStats[]> {

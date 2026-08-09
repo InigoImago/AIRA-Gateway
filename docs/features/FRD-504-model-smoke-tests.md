@@ -1,9 +1,17 @@
-# FRD-504 — Model smoke tests and jailbreak batteries for IT Security
+# FRD-504 — Model smoke tests for IT Security
 
-> Phase: 5 (IT Security) · Status: **Draft** · Owner: Vadim Scheibe · Last updated: 2026-08-06
+> Phase: 5 (IT Security) · Status: **Built**, narrower than drafted · Owner: Vadim Scheibe
+> Last updated: 2026-08-09
 > Origin: the owner's feature definition (PRD §1.1, item 14).
 > Related: `FRD-300` (injection filter), `FRD-114` (model catalog), `FRD-403` (cost), `FRD-122`
 > (audit), `FRD-502` (IT Security console).
+
+> **Read §5.7, §6 and §7 for what exists.** Sections 1 to 5.6 are the original draft and are kept
+> as the record of what was intended; several of their ideas were dropped on evidence and the
+> deviations are named where they occur. The largest is vocabulary: the draft speaks throughout of
+> **batteries**, plural and named. There is **one flat catalogue** of questions and no grouping —
+> the owner's decision on 2026-08-09, and §5.7 says why grouping was not merely unnecessary but
+> harmful to the thing the catalogue is for. Read "battery" below as "the catalogue".
 
 ## 1. Problem
 
@@ -155,58 +163,90 @@ evidence, so it is stored — but under its own retention, visible to IT Securit
 use case's members, and outside the ordinary production payload rules (`FRD-404`), because these are
 not a team's prompts and should not follow a team's policy.
 
-### 5.7 The catalogue is a standard, and the standing figure is the latest run
+### 5.7 One catalogue, and a standing that is the latest run
 
-Added 2026-08-09, after the first version got the shape wrong in a way worth writing down.
+Added 2026-08-09. Two versions of this were wrong first, and both were wrong in the same way — they
+answered a question nobody had asked, and no test could call them wrong because the code and the
+test came from the same idea.
 
-The screen is **three activities in three sub-tabs**, because they happen at different times and to
-different people:
+The screen is **three activities in three sub-tabs**:
 
 | Sub-tab | What it answers | Who |
 |---|---|---|
 | **Latest results** | where does each model stand | anybody who may test |
 | **Runs** | put the catalogue to a model; judge the answers; read older runs | anybody who may test |
-| **Question catalogue** | what are we asking, and why | reading: anybody; writing: IT Security |
+| **Questions** | what are we asking | reading: anybody; writing: IT Security |
 
-**The catalogue comes first in importance and last in the tab order on purpose.** It is written
-once and grows slowly — a hundred questions that outlive any one model. Everything else is an
-application of it. Seeded with **100 questions across eight batteries**, each battery isolating one
-failure mode (refusal, invention, instruction handling, injection resistance, German and domain,
-personal data, checkable reasoning, output format), because a battery mixing all of them produces a
-score that moves for reasons nobody can attribute. From then on it is edited in the console: a
-catalogue that can only be changed by editing a seed file is one that stops being edited.
+**One flat list of questions. No grouping.** The first implementation sorted them into named
+batteries. There is nothing to group — and grouping quietly cost the property that makes the
+catalogue a *standard*: with several batteries, "how does this model do" has as many answers as
+there are groups, and none of them compares to a model that was asked a different group. Every
+model is asked every question, which is the only reason two models are comparable at all.
 
-**A model's standing is its latest run against a battery — never a total across every run it has
-had.** The first implementation summed them, and summing is the wrong shape twice over: an old,
-since-corrected result drags the current figure down forever, and the number moves when somebody
-re-runs something unrelated. The whole point of a fixed catalogue is that two models were asked the
-same questions; an average over runs compares neither to anything.
+`topic` stays, as the keyword saying what a question tests. It is a **label on a row, not a
+categorisation**: nothing branches on it, nothing is grouped by it, and two questions may share
+one. It exists so a reader scanning a hundred rows sees what is being asked about without reading a
+hundred prompts. The search covers the wording as well as the label, because somebody looking for
+"the one about explosives" remembers the question and not the label.
 
-Earlier runs are **history**, and they are kept and readable. How a model behaved before its
-version changed is a question only the history can answer, and it is the question anybody upgrading
-a model actually has. The row that currently counts is badged in the run list, from the same rows
-the results tab is built from — a second definition of "latest" would eventually disagree with the
-first.
+Seeded with 100 questions and then owned by IT Security in the console: a catalogue that can only
+be changed by editing a seed file is one that stops being edited.
 
-Two batteries against one model are **two standings**, not one averaged: they are two different
-standards, and averaging them compares nothing to nothing.
+**A model's standing is its latest run — never a total across every run it has had.** Summing is
+the wrong shape twice over: an old, since-corrected result drags the current figure down forever,
+and the number moves when somebody re-runs something unrelated. Earlier runs are **history**, kept
+and readable: how a model behaved before its version changed is the question anybody upgrading one
+actually has, and only the history answers it. The run that currently counts is badged in the run
+list, read from the same rows the results tab is built from — a second definition of "latest" would
+eventually disagree with the first.
+
+The results table states **how many of today's questions that run covered**. A run made before
+questions were added answered fewer of them, and "40 out of a catalogue that has since grown to
+100" is a different statement from "40".
+
+**Questions are keyed by position, and dropped ones are retired rather than deleted.** Keying on
+the topic looks natural and is wrong: a rename is then a *create*, so the previous wording survives
+beside the new one with its answers still attached — which is exactly what makes it invisible. It
+happened, and the catalogue silently grew by two. Retiring rather than deleting keeps the verdicts
+somebody gave against the old wording, which are the only evidence that anything has changed. A
+retired question is not listed and not asked.
 
 ## 6. Data Model
 
-Management: `TestBattery` (name, version, restricted), `TestCase` (battery, category, prompt,
-system prompt, expectation type, expectation value), `TestRun` (battery version, model, model
-version, publisher, region, mode, started, finished, requested by), `TestResult` (run, case,
-attempts, matches, outcome, stored responses).
+As built (2026-08-09), which is smaller than this section originally proposed:
+
+- `TestCase` — `topic`, `prompt`, `expectation`, `position`, `retired`. **One flat list**; there is
+  no battery, no category and no expectation *type*, because nothing matches against an expectation
+  (§5.2) and nothing groups the catalogue (§5.7).
+- `TestRun` — `model` (a **string**, not a foreign key: a run is evidence about what a model did on
+  a day, and it must survive that model leaving the catalog), `use_case`, `started_at`,
+  `finished_at`, `requested_by`.
+- `TestResult` — `run`, `case`, `response`, `error` (a failed *request* is not a bad *answer* and
+  they are stored apart), `latency_ms`, `verdict`, `note`, `rated_by`, `rated_at`.
 
 Runs execute against the gateway; results live in Management, because this is a governance artefact
 that outlives any individual gateway instance.
 
+Not built: `version` on the catalogue, `restricted`, `attempts`/`repetitions`, and the
+publisher/region columns on a run. Each is recoverable from the audit row the gateway already
+writes, and none was needed to answer the question this feature exists for.
+
 ## 7. API / Interface Contract
 
-- `GET/POST /api/v1/test-batteries/` and cases — IT Security / Global Admin.
-- `POST /api/v1/test-runs/` `{battery, models[], mode, repetitions}` — starts a run, asynchronously.
-- `GET /api/v1/test-runs/{id}` — status and results, with the previous run for comparison (FR-7).
-- New SPA screen under a **Security** section, which is currently a disabled nav placeholder.
+- `GET /api/v1/test-cases/` — the catalogue, retired questions excluded. Readable by anyone who may
+  test a model; **writable by IT Security only**, because it states what this installation
+  considers an acceptable answer.
+- `POST /api/v1/test-runs/` `{model, use_case}` — creates the run and one empty result per
+  question. The prompts are then sent by the console **one at a time**: a run is ordinary traffic,
+  and firing a hundred at once would trip the use case's own rate limit and produce a run full of
+  429s that says nothing about the model.
+- `GET /api/v1/test-runs/{id}/results/` — the answers. `PATCH /api/v1/test-results/{id}/` stores an
+  answer or records a verdict; the rating's author is whoever is signed in and is never a field a
+  caller may set.
+- `GET /api/v1/test-runs/{id}/export/` — CSV, BOM and CRLF, every field quoted (`FRD-602`'s rules).
+- `GET /api/v1/test-stats/` — **one row per model**: its latest run, that run's counts, and how
+  many questions the catalogue asks today.
+- SPA screen **Model tests**, three sub-tabs.
 
 ## 8. Security & Privacy
 

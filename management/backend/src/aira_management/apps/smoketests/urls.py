@@ -5,7 +5,6 @@ from __future__ import annotations
 from rest_framework.routers import DefaultRouter
 
 from aira_management.apps.smoketests.views import (
-    TestBatteryViewSet,
     TestCaseViewSet,
     TestResultViewSet,
     TestRunViewSet,
@@ -13,7 +12,6 @@ from aira_management.apps.smoketests.views import (
 )
 
 router = DefaultRouter()
-router.register("test-batteries", TestBatteryViewSet, basename="test-battery")
 router.register("test-cases", TestCaseViewSet, basename="test-case")
 router.register("test-runs", TestRunViewSet, basename="test-run")
 router.register("test-results", TestResultViewSet, basename="test-result")

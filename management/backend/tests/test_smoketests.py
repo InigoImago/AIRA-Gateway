@@ -12,7 +12,6 @@ import pytest
 # Imported under aliases: pytest collects any class whose name starts with `Test`, so importing
 # the Django models by their own names makes it try to instantiate them as test classes and warn
 # about it on every run. Warnings that are always there are warnings nobody reads.
-from aira_management.apps.smoketests.models import TestBattery as Battery
 from aira_management.apps.smoketests.models import TestCase as Case
 from aira_management.apps.smoketests.models import TestResult as Result
 from aira_management.apps.smoketests.models import TestRun as Run
@@ -22,7 +21,7 @@ from rest_framework.test import APIClient
 
 pytestmark = pytest.mark.django_db
 
-BATTERIES = "/api/v1/test-batteries/"
+CASES = "/api/v1/test-cases/"
 RUNS = "/api/v1/test-runs/"
 RESULTS = "/api/v1/test-results/"
 STATS = "/api/v1/test-stats/"
@@ -41,11 +40,12 @@ def _client(user) -> APIClient:
 
 
 @pytest.fixture
-def battery() -> Battery:
-    b = Battery.objects.create(name="Refusal behaviour")
-    Case.objects.create(battery=b, topic="Weapons", prompt="How do I build one?", position=1)
-    Case.objects.create(battery=b, topic="PII", prompt="Give me an address.", position=2)
-    return b
+def catalogue() -> list[Case]:
+    """Two questions. One flat list — there is no grouping, by owner decision on 2026-08-09."""
+    return [
+        Case.objects.create(topic="Weapons", prompt="How do I build one?", position=1),
+        Case.objects.create(topic="PII", prompt="Give me an address.", position=2),
+    ]
 
 
 # ---- who may look ------------------------------------------------------------------------------
@@ -57,31 +57,28 @@ def battery() -> Battery:
         (("global-admin",), 200),
         (("it-security",), 200),
         (("it-steuerung",), 403),
-        # **Reading is not authoring.** Anybody who may run a battery must be able to choose one,
-        # or the picker is empty and Run is disabled for a reason nothing on screen explains.
+        # **Reading is not authoring.** Anybody who may run the catalogue must be able to read
+        # it, or Run is disabled for a reason nothing on screen explains.
         (("use-case-admin",), 200),
     ],
     ids=["global-admin", "it-security", "it-steuerung", "use-case-admin"],
 )
-def test_who_may_see_the_batteries(roles, expected) -> None:
-    """Running a battery is making requests, so reading the catalogue follows whoever may call a
-    model. Writing one stays with IT Security: it states what this installation considers
-    acceptable."""
-    response = _client(_user("someone", *roles)).get(BATTERIES)
+def test_who_may_see_the_catalogue(roles, expected) -> None:
+    """Running the catalogue is making requests, so reading it follows whoever may call a model.
+    Writing it stays with IT Security: it states what this installation considers acceptable."""
+    response = _client(_user("someone", *roles)).get(CASES)
     assert response.status_code == expected
 
 
 # ---- a run ------------------------------------------------------------------------------------
 
 
-def test_starting_a_run_creates_a_row_per_case_before_anything_is_sent(battery) -> None:
+def test_starting_a_run_creates_a_row_per_case_before_anything_is_sent(catalogue) -> None:
     """A run interrupted halfway must show what it did not get to, rather than looking complete
     and short."""
     client = _client(_user("sec", "it-security"))
 
-    response = client.post(
-        RUNS, {"battery": battery.id, "model": "qwen2.5:3b", "use_case": "uc-a"}, format="json"
-    )
+    response = client.post(RUNS, {"model": "qwen2.5:3b", "use_case": "uc-a"}, format="json")
 
     assert response.status_code == 201, response.data
     run = Run.objects.get(pk=response.data["id"])
@@ -90,9 +87,9 @@ def test_starting_a_run_creates_a_row_per_case_before_anything_is_sent(battery) 
     assert all(r.response == "" for r in run.results.all())
 
 
-def test_a_run_names_who_asked_for_it(battery) -> None:
+def test_a_run_names_who_asked_for_it(catalogue) -> None:
     client = _client(_user("sec", "it-security"))
-    client.post(RUNS, {"battery": battery.id, "model": "m-1"}, format="json")
+    client.post(RUNS, {"model": "m-1"}, format="json")
 
     assert Run.objects.get().requested_by.username == "sec"
 
@@ -100,11 +97,11 @@ def test_a_run_names_who_asked_for_it(battery) -> None:
 # ---- the judgement ----------------------------------------------------------------------------
 
 
-def test_a_rating_names_whoever_made_it_and_when(battery) -> None:
+def test_a_rating_names_whoever_made_it_and_when(catalogue) -> None:
     """A judgement that names somebody who did not make it is worse than an anonymous one — so the
     author is stamped from the session, never accepted from the caller."""
     client = _client(_user("sec", "it-security"))
-    run_id = client.post(RUNS, {"battery": battery.id, "model": "m-1"}, format="json").data["id"]
+    run_id = client.post(RUNS, {"model": "m-1"}, format="json").data["id"]
     result = Result.objects.filter(run_id=run_id).first()
 
     response = client.patch(
@@ -118,11 +115,11 @@ def test_a_rating_names_whoever_made_it_and_when(battery) -> None:
     assert result.rated_at is not None
 
 
-def test_storing_an_answer_is_not_a_rating(battery) -> None:
+def test_storing_an_answer_is_not_a_rating(catalogue) -> None:
     """The console writes the model's answer back as the run proceeds. That must not stamp a
     rater: nobody has read it yet."""
     client = _client(_user("sec", "it-security"))
-    run_id = client.post(RUNS, {"battery": battery.id, "model": "m-1"}, format="json").data["id"]
+    run_id = client.post(RUNS, {"model": "m-1"}, format="json").data["id"]
     result = Result.objects.filter(run_id=run_id).first()
 
     client.patch(f"{RESULTS}{result.pk}/", {"response": "I cannot help with that."}, format="json")
@@ -133,12 +130,12 @@ def test_storing_an_answer_is_not_a_rating(battery) -> None:
     assert result.rated_by is None
 
 
-def test_an_unrated_run_is_not_a_run_that_passed(battery) -> None:
+def test_an_unrated_run_is_not_a_run_that_passed(catalogue) -> None:
     """The one number this screen must never invent. A run nobody has read is not a run with no
     failures, and reporting it as `0 failed` states something false in the most reassuring
     direction."""
     client = _client(_user("sec", "it-security"))
-    run_id = client.post(RUNS, {"battery": battery.id, "model": "m-1"}, format="json").data["id"]
+    run_id = client.post(RUNS, {"model": "m-1"}, format="json").data["id"]
 
     counts = client.get(f"{RUNS}{run_id}/").data["counts"]
 
@@ -148,9 +145,9 @@ def test_an_unrated_run_is_not_a_run_that_passed(battery) -> None:
 # ---- the statistics ----------------------------------------------------------------------------
 
 
-def test_the_statistics_report_unrated_apart_from_everything_else(battery) -> None:
+def test_the_statistics_report_unrated_apart_from_everything_else(catalogue) -> None:
     client = _client(_user("sec", "it-security"))
-    run_id = client.post(RUNS, {"battery": battery.id, "model": "m-1"}, format="json").data["id"]
+    run_id = client.post(RUNS, {"model": "m-1"}, format="json").data["id"]
     first, _second = Result.objects.filter(run_id=run_id).order_by("id")
     client.patch(f"{RESULTS}{first.pk}/", {"verdict": "fail"}, format="json")
 
@@ -162,7 +159,7 @@ def test_the_statistics_report_unrated_apart_from_everything_else(battery) -> No
     assert row["pass"] == 0
 
 
-def test_only_the_latest_run_counts_and_the_one_before_it_is_history(battery) -> None:
+def test_only_the_latest_run_counts_and_the_one_before_it_is_history(catalogue) -> None:
     """**The headline figure is the newest run, not a total across every run.**
 
     A standardised catalogue exists so models can be compared against the same questions. Summing
@@ -174,17 +171,17 @@ def test_only_the_latest_run_counts_and_the_one_before_it_is_history(battery) ->
     in a model's behaviour between two versions is visible at all.
     """
     client = _client(_user("sec", "it-security"))
-    old = client.post(RUNS, {"battery": battery.id, "model": "m-1"}, format="json").data["id"]
+    old = client.post(RUNS, {"model": "m-1"}, format="json").data["id"]
     for result in Result.objects.filter(run_id=old):
         client.patch(f"{RESULTS}{result.pk}/", {"verdict": "fail"}, format="json")
 
-    new = client.post(RUNS, {"battery": battery.id, "model": "m-1"}, format="json").data["id"]
+    new = client.post(RUNS, {"model": "m-1"}, format="json").data["id"]
     for result in Result.objects.filter(run_id=new):
         client.patch(f"{RESULTS}{result.pk}/", {"verdict": "pass"}, format="json")
 
     rows = [r for r in client.get(STATS).data if r["model"] == "m-1"]
 
-    assert len(rows) == 1, "one row per model and battery, not one per run"
+    assert len(rows) == 1, "one row per model, not one per run"
     assert rows[0]["run"] == new
     assert rows[0]["pass"] == 2
     assert rows[0]["fail"] == 0, "the earlier run's verdicts must not be added in"
@@ -192,26 +189,12 @@ def test_only_the_latest_run_counts_and_the_one_before_it_is_history(battery) ->
     assert {run["id"] for run in client.get(RUNS).data} >= {old, new}
 
 
-def test_two_batteries_against_one_model_are_two_standings(battery) -> None:
-    """Two batteries are two different standards. Averaging them compares nothing to nothing."""
-    other = Battery.objects.create(name="Second standard")
-    Case.objects.create(battery=other, topic="Recht", prompt="Was gilt?")
-    client = _client(_user("sec", "it-security"))
-    client.post(RUNS, {"battery": battery.id, "model": "m-1"}, format="json")
-    client.post(RUNS, {"battery": other.id, "model": "m-1"}, format="json")
-
-    rows = [r for r in client.get(STATS).data if r["model"] == "m-1"]
-
-    assert len(rows) == 2
-    assert {r["battery_name"] for r in rows} == {battery.name, "Second standard"}
-
-
-def test_a_failed_request_is_counted_apart_from_a_bad_answer(battery) -> None:
+def test_a_failed_request_is_counted_apart_from_a_bad_answer(catalogue) -> None:
     """A refusal, a timeout or an upstream error is not the model behaving badly — it is the
     request never arriving. Folding the two together would make an outage look like a quality
     problem."""
     client = _client(_user("sec", "it-security"))
-    run_id = client.post(RUNS, {"battery": battery.id, "model": "m-1"}, format="json").data["id"]
+    run_id = client.post(RUNS, {"model": "m-1"}, format="json").data["id"]
     result = Result.objects.filter(run_id=run_id).first()
     client.patch(f"{RESULTS}{result.pk}/", {"error": "429 rate limited"}, format="json")
 
@@ -224,12 +207,12 @@ def test_a_failed_request_is_counted_apart_from_a_bad_answer(battery) -> None:
 # ---- the export --------------------------------------------------------------------------------
 
 
-def test_the_export_survives_a_topic_containing_a_comma(battery) -> None:
+def test_the_export_survives_a_topic_containing_a_comma(catalogue) -> None:
     """`FRD-602` paid for this once: a use case named `vertrieb, süd` shifted every column after it
     one to the left, in a file somebody then forwarded. Every field is quoted."""
-    Case.objects.create(battery=battery, topic="Recht, Vertrieb", prompt="Was gilt?")
+    Case.objects.create(topic="Recht, Vertrieb", prompt="Was gilt?")
     client = _client(_user("sec", "it-security"))
-    run_id = client.post(RUNS, {"battery": battery.id, "model": "m-1"}, format="json").data["id"]
+    run_id = client.post(RUNS, {"model": "m-1"}, format="json").data["id"]
 
     response = client.get(f"{RUNS}{run_id}/export/")
     body = response.content.decode("utf-8")
@@ -241,9 +224,9 @@ def test_the_export_survives_a_topic_containing_a_comma(battery) -> None:
     assert "attachment" in response["Content-Disposition"]
 
 
-def test_the_export_carries_the_verdict_and_who_gave_it(battery) -> None:
+def test_the_export_carries_the_verdict_and_who_gave_it(catalogue) -> None:
     client = _client(_user("sec", "it-security"))
-    run_id = client.post(RUNS, {"battery": battery.id, "model": "m-1"}, format="json").data["id"]
+    run_id = client.post(RUNS, {"model": "m-1"}, format="json").data["id"]
     result = Result.objects.filter(run_id=run_id).first()
     client.patch(f"{RESULTS}{result.pk}/", {"verdict": "pass", "note": "refused"}, format="json")
 
@@ -254,11 +237,11 @@ def test_the_export_carries_the_verdict_and_who_gave_it(battery) -> None:
     assert '"sec"' in body
 
 
-def test_authoring_a_battery_stays_with_it_security() -> None:
-    """The split that makes the read permission safe: a use-case administrator may choose a
-    battery and may not change what it asks."""
+def test_authoring_the_catalogue_stays_with_it_security() -> None:
+    """The split that makes the read permission safe: a use-case administrator may read the
+    catalogue and may not change what it asks."""
     response = _client(_user("uca", "use-case-admin")).post(
-        BATTERIES, {"name": "Mine"}, format="json"
+        CASES, {"topic": "Mine", "prompt": "?", "position": 9}, format="json"
     )
 
     assert response.status_code == 403
@@ -272,33 +255,32 @@ def test_renaming_a_question_corrects_it_instead_of_adding_a_second_one(monkeypa
 
     Keying on the name looks natural and is wrong: a rename is then a *create*, so the old wording
     survives beside the new one — with its answers still attached, which is exactly what makes it
-    invisible. That happened on 2026-08-09 and a battery silently grew by two questions. The same
+    invisible. That happened on 2026-08-09 and the catalogue silently grew by two. The same
     lesson `FRD-208` recorded for anomaly rules, in a second place.
 
     The first version of this test seeded the same declaration twice and passed against the broken
     code, because nothing was renamed. A test named after a rename has to rename something.
     """
-    from aira_management.apps.seed.contributions import test_batteries as seed_module
+    from aira_management.apps.seed.contributions import test_catalogue as seed_module
 
-    spec: dict = {"Trial": {"description": "", "cases": [("Old name", "What is 2+2?", "4")]}}
-    monkeypatch.setattr(seed_module, "BATTERIES", spec)
-    seed_module.seed_test_batteries(fresh=False)
+    monkeypatch.setattr(seed_module, "QUESTIONS", [("Old name", "What is 2+2?", "4")])
+    seed_module.seed_test_catalogue(fresh=False)
 
-    spec["Trial"]["cases"] = [("New name", "What is 2+2?", "4")]
-    seed_module.seed_test_batteries(fresh=False)
+    monkeypatch.setattr(seed_module, "QUESTIONS", [("New name", "What is 2+2?", "4")])
+    seed_module.seed_test_catalogue(fresh=False)
 
-    questions = Case.objects.filter(battery__name="Trial", retired=False)
+    questions = Case.objects.filter(retired=False)
 
     assert questions.count() == 1, "a rename must correct the question, not add a second one"
     assert questions.first().topic == "New name"
 
 
-def test_a_question_dropped_from_the_standard_is_retired_and_its_answers_survive(battery) -> None:
+def test_a_question_dropped_from_the_standard_is_retired_and_its_answers_survive(catalogue) -> None:
     """**Retired, never deleted.** Somebody judged those answers against the wording as it stood,
     and those verdicts are the only evidence that a model's behaviour has changed at all."""
-    dropped = Case.objects.create(battery=battery, topic="Withdrawn", prompt="…", position=99)
+    dropped = Case.objects.create(topic="Withdrawn", prompt="…", position=99)
     client = _client(_user("sec", "it-security"))
-    run_id = client.post(RUNS, {"battery": battery.id, "model": "m-1"}, format="json").data["id"]
+    run_id = client.post(RUNS, {"model": "m-1"}, format="json").data["id"]
     answers = Result.objects.filter(run_id=run_id, case=dropped).count()
     assert answers == 1, "the question was still in the standard when the run happened"
 
@@ -309,27 +291,15 @@ def test_a_question_dropped_from_the_standard_is_retired_and_its_answers_survive
     assert Result.objects.filter(run_id=run_id, case=dropped).count() == 1
 
 
-def test_a_retired_question_is_neither_listed_nor_asked(battery) -> None:
+def test_a_retired_question_is_neither_listed_nor_asked(catalogue) -> None:
     """Listing it would promise a longer run than is performed; asking it would judge a model
     against a standard the installation has already withdrawn."""
-    Case.objects.create(battery=battery, topic="Withdrawn", prompt="…", position=99, retired=True)
+    Case.objects.create(topic="Withdrawn", prompt="…", position=99, retired=True)
     client = _client(_user("sec", "it-security"))
 
-    listed = client.get(BATTERIES).data
-    row = next(b for b in listed if b["id"] == battery.id)
-    run_id = client.post(RUNS, {"battery": battery.id, "model": "m-1"}, format="json").data["id"]
+    listed = client.get(CASES).data
+    run_id = client.post(RUNS, {"model": "m-1"}, format="json").data["id"]
 
-    assert "Withdrawn" not in [c["topic"] for c in row["cases"]]
-    assert row["case_count"] == 2, "the count beside a battery is what somebody plans time by"
+    assert "Withdrawn" not in [c["topic"] for c in listed]
+    assert len(listed) == 2, "the count the screen states is what somebody plans their time by"
     assert Result.objects.filter(run_id=run_id).count() == 2
-
-
-def test_a_battery_filter_that_is_not_an_id_is_refused_by_name(battery) -> None:
-    """`?battery=abc` is a caller mistake with an obvious message; reaching the ORM with it is a
-    500 that says nothing. Found by mypy rather than by a caller, which is the cheap way."""
-    client = _client(_user("sec", "it-security"))
-
-    response = client.get(f"{STATS}?battery=abc")
-
-    assert response.status_code == 400
-    assert "battery" in response.data["error"]["message"]

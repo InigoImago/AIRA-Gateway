@@ -3,8 +3,8 @@
 `FRD-504` asked for evidence about how the **models** behave, as opposed to how callers behave —
 every other control in AIRA governs access, and none of them says anything about what comes back.
 
-The shape here is the owner's: a battery of questions, run against one model, then **a person reads
-each answer and rates it**. Deliberately not an automatic pass/fail on a substring: whether an
+The shape here is the owner's: a catalogue of questions, run against one model, then **a person
+reads each answer and rates it**. Deliberately not an automatic pass/fail on a substring: whether an
 answer is acceptable is a judgement, and a regex that pretends otherwise produces a number nobody
 trusts and everybody quotes.
 
@@ -18,31 +18,21 @@ from django.conf import settings
 from django.db import models
 
 
-class TestBattery(models.Model):
-    """A named set of questions — "refusal behaviour", "German legal wording", "PII handling"."""
-
-    name = models.CharField(max_length=120, unique=True)
-    description = models.TextField(blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        ordering = ["name"]
-        verbose_name_plural = "test batteries"
-
-    def __str__(self) -> str:
-        return self.name
-
-
 class TestCase(models.Model):
-    """One question, and what it is about.
+    """One question in the catalogue.
 
-    `topic` groups the catalogue so a reader can see *what* was tested rather than only how much;
-    `prompt` is what is actually sent. The pair is what the evaluation table shows before anybody
-    has opened an answer.
+    **One flat list, deliberately.** The first version grouped questions into named batteries, and
+    the owner's answer was that there is nothing to group: there is a catalogue of questions, and
+    every model is asked all of them. Grouping bought nothing and cost the property that makes the
+    catalogue a *standard* — with several batteries, "how does this model do" has as many answers
+    as there are groups, and none of them is comparable to another model that was asked a different
+    group.
+
+    `topic` is the keyword saying what the question tests. It is a label on a row, not a
+    categorisation: nothing branches on it, nothing is grouped by it, and two questions may
+    perfectly well share one.
     """
 
-    battery = models.ForeignKey(TestBattery, on_delete=models.CASCADE, related_name="cases")
     topic = models.CharField(max_length=120)
     prompt = models.TextField()
     #: What a good answer looks like, in a sentence. Shown to the person rating — not matched
@@ -64,13 +54,12 @@ class TestCase(models.Model):
     class Meta:
         ordering = ["position", "id"]
         constraints = [
-            # One question per position, among the questions still in the standard. Retired ones
-            # keep their old position and are excluded, because they are history rather than part
-            # of the catalogue.
+            # One question per position in the catalogue. Retired ones keep their old position
+            # and are excluded, because they are history rather than part of the standard.
             models.UniqueConstraint(
-                fields=["battery", "position"],
+                fields=["position"],
                 condition=models.Q(retired=False),
-                name="unique_position_per_battery",
+                name="unique_position_in_catalogue",
             )
         ]
 
@@ -79,14 +68,13 @@ class TestCase(models.Model):
 
 
 class TestRun(models.Model):
-    """One battery, against one model, at one time.
+    """The catalogue, against one model, at one time.
 
     The model is stored as a **string** rather than a foreign key to the catalog: a run is evidence
     about what a model did on a day, and it must survive that model being removed from the catalog.
     Deleting the declaration must not delete the finding.
     """
 
-    battery = models.ForeignKey(TestBattery, on_delete=models.PROTECT, related_name="runs")
     model = models.CharField(max_length=128)
     #: Which use case the traffic was attributed to. A smoke test is real traffic: it is priced,
     #: budgeted, rate-limited and audited exactly like any other request (`FRD-504` §5).
@@ -101,7 +89,7 @@ class TestRun(models.Model):
         ordering = ["-started_at"]
 
     def __str__(self) -> str:
-        return f"{self.battery.name} against {self.model}"
+        return f"catalogue against {self.model}"
 
 
 class Verdict(models.TextChoices):

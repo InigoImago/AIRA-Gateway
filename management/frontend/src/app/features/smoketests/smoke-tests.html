@@ -3,8 +3,9 @@
     <div>
       <h2 class="page__title">Model tests</h2>
       <p class="muted" style="margin: 0.25rem 0 0">
-        A standing catalogue of questions, put to a model, and judged by a person. Nothing here
-        decides whether an answer is good — the rating carries the name of whoever gave it.
+        One catalogue of questions, put to a model, and judged by a person. Every model is asked all
+        of them, which is what makes two models comparable. Nothing here decides whether an answer
+        is good — the rating carries the name of whoever gave it.
       </p>
     </div>
   </header>
@@ -48,17 +49,17 @@
       (click)="tab.set('catalogue')"
       data-testid="tab-catalogue"
     >
-      Question catalogue <span class="tab__count">{{ cases().length }}</span>
+      Questions <span class="tab__count">{{ cases().length }}</span>
     </button>
   </div>
 
   <!--
     ── Latest results ────────────────────────────────────────────────────────────────────────
-    The **most recent run per model and battery**, never a sum across runs. The point of a fixed
-    catalogue is that models can be compared against the same questions; averaging every run a
-    model has ever had makes an old, since-corrected result drag the current one down forever, and
-    makes the number move when somebody re-runs something unrelated. Older runs are history and
-    live under Runs.
+    The **most recent run per model**, never a sum across runs. The point of a fixed catalogue is
+    that models can be compared against the same questions; averaging every run a model has ever
+    had makes an old, since-corrected result drag the current one down forever, and makes the
+    number move when somebody re-runs something unrelated. Older runs are history and live under
+    Runs.
   -->
   @if (tab() === 'results') {
     <section class="card" style="padding: 0">
@@ -66,9 +67,10 @@
         <h3 class="section-title" style="margin: 0">
           Where each model stands
           <app-info-hint label="What these numbers count">
-            The latest run of a battery against that model, and only that run. Earlier runs are kept
-            as history under Runs. Unrated answers are counted apart: a battery nobody has read is
-            not a battery that passed, and a rate computed over unread answers flatters.
+            That model's latest run, and only that run. Earlier runs are kept as history under Runs.
+            Unrated answers are counted apart: a run nobody has read is not a run that passed, and a
+            rate computed over unread answers flatters. "Asked" says how many of today's questions
+            that run covered — a run made before questions were added answered fewer of them.
           </app-info-hint>
         </h3>
       </div>
@@ -82,9 +84,8 @@
             <thead>
               <tr>
                 <th scope="col">Model</th>
-                <th scope="col">Battery</th>
                 <th scope="col">Run</th>
-                <th scope="col">Answers</th>
+                <th scope="col">Asked</th>
                 <th scope="col">Acceptable</th>
                 <th scope="col">Not acceptable</th>
                 <th scope="col">Cannot tell</th>
@@ -93,14 +94,18 @@
               </tr>
             </thead>
             <tbody>
-              @for (row of stats(); track row.model + ':' + row.battery) {
+              @for (row of stats(); track row.model) {
                 <tr [attr.data-testid]="'stat-' + row.model">
                   <td>
                     <code>{{ row.model }}</code>
                   </td>
-                  <td>{{ row.battery_name }}</td>
                   <td class="nowrap">{{ row.started_at | date: 'dd.MM.yyyy HH:mm' }}</td>
-                  <td class="nowrap">{{ row.total }}</td>
+                  <td class="nowrap">
+                    {{ row.total }} of {{ row.catalogue }}
+                    @if (row.total < row.catalogue) {
+                      <span class="badge badge--warning">catalogue has grown</span>
+                    }
+                  </td>
                   <td class="nowrap">{{ row.pass }}</td>
                   <td class="nowrap">
                     @if (row.fail) {
@@ -130,7 +135,14 @@
   <!-- ── Runs ────────────────────────────────────────────────────────────────────────────── -->
   @if (tab() === 'runs') {
     <section class="card">
-      <h3 class="section-title" style="margin: 0 0 0.75rem">Run the catalogue against a model</h3>
+      <h3 class="section-title" style="margin: 0 0 0.75rem">
+        Run the catalogue against a model
+        <app-info-hint label="What a run asks">
+          Every question in the catalogue, in order, one at a time. Sequential because firing a
+          hundred at once would trip the use case's own rate limit and produce a run full of 429s
+          that says nothing about the model.
+        </app-info-hint>
+      </h3>
       @if (!mine().length) {
         <p class="empty" data-testid="no-use-case">
           You are not a member of any use case, so there is nothing to attribute a test to. A run is
@@ -140,20 +152,6 @@
       } @else {
         <div class="form-stack">
           <div class="form-inline">
-            <div class="field">
-              <label for="smoke-battery">Battery</label>
-              <select
-                id="smoke-battery"
-                name="battery"
-                [ngModel]="battery()"
-                (ngModelChange)="battery.set(+$event)"
-                data-testid="smoke-battery"
-              >
-                @for (b of batteries(); track b.id) {
-                  <option [value]="b.id">{{ b.name }} ({{ b.case_count }})</option>
-                }
-              </select>
-            </div>
             <div class="field">
               <label for="smoke-model">
                 Model
@@ -207,7 +205,7 @@
             <button
               type="button"
               class="btn btn--primary"
-              [disabled]="running() || !model() || !useCase() || battery() === null"
+              [disabled]="running() || !model() || !useCase() || !cases().length"
               (click)="run()"
               data-testid="smoke-run"
             >
@@ -223,9 +221,9 @@
         <h3 class="section-title" style="margin: 0">
           Every run, newest first
           <app-info-hint label="Why older runs stay">
-            Only the newest run of a battery against a model counts as that model's standing.
-            Everything before it is history: it says how the model behaved then, and it is how a
-            change in behaviour becomes visible at all.
+            Only a model's newest run counts as its standing. Everything before it is history: it
+            says how the model behaved then, and it is how a change in behaviour becomes visible at
+            all.
           </app-info-hint>
         </h3>
       </div>
@@ -242,7 +240,6 @@
             <thead>
               <tr>
                 <th scope="col">When</th>
-                <th scope="col">Battery</th>
                 <th scope="col">Model</th>
                 <th scope="col">Answers</th>
                 <th scope="col">By</th>
@@ -258,7 +255,6 @@
                       <span class="badge badge--success">current</span>
                     }
                   </td>
-                  <td>{{ run.battery_name }}</td>
                   <td>
                     <code>{{ run.model }}</code>
                   </td>
@@ -310,34 +306,22 @@
   @if (tab() === 'catalogue') {
     <section class="card">
       <div class="form-inline" style="align-items: flex-end">
-        <div class="field">
-          <label for="cat-battery">Battery</label>
-          <select
-            id="cat-battery"
-            name="cat-battery"
-            [ngModel]="battery()"
-            (ngModelChange)="battery.set(+$event)"
-            data-testid="catalogue-battery"
-          >
-            @for (b of batteries(); track b.id) {
-              <option [value]="b.id">{{ b.name }} ({{ b.case_count }})</option>
-            }
-          </select>
+        <div class="field" style="flex: 1 1 22rem">
+          <label for="cat-search">Search</label>
+          <input
+            id="cat-search"
+            type="search"
+            [ngModel]="search()"
+            (ngModelChange)="search.set($event)"
+            placeholder="a keyword or a phrase from a question"
+            data-testid="catalogue-search"
+          />
         </div>
         <span class="form-actions__spacer"></span>
         @if (mayAuthor()) {
           <button
             type="button"
-            class="btn"
-            (click)="startBattery()"
-            data-testid="catalogue-new-battery"
-          >
-            New battery
-          </button>
-          <button
-            type="button"
             class="btn btn--primary"
-            [disabled]="battery() === null"
             (click)="startCase()"
             data-testid="catalogue-add"
           >
@@ -345,68 +329,30 @@
           </button>
         }
       </div>
-      @if (selectedBattery(); as b) {
-        @if (b.description) {
-          <p class="muted" style="margin: 0.6rem 0 0">{{ b.description }}</p>
-        }
-      }
+      <p class="muted" style="margin: 0.6rem 0 0">
+        {{ cases().length }} question(s). Every model is asked all of them, in this order — which is
+        what makes two models comparable at all.
+      </p>
       @if (!mayAuthor()) {
         <!-- `FRD-206`: a withheld action names who performs it, rather than being an absent
              control the reader has to guess at. -->
-        <p class="muted" style="margin: 0.6rem 0 0" data-testid="catalogue-readonly">
+        <p class="muted" style="margin: 0.35rem 0 0" data-testid="catalogue-readonly">
           The catalogue is the standard models are judged against, so it is written by IT Security.
           You can run it and rate the answers.
         </p>
       }
     </section>
 
-    @if (newBattery()) {
-      <section class="card">
-        <h3 class="section-title" style="margin: 0 0 0.75rem">New battery</h3>
-        <div class="form-stack">
-          <div class="field">
-            <label for="battery-name">Name</label>
-            <input
-              id="battery-name"
-              [ngModel]="batteryName()"
-              (ngModelChange)="batteryName.set($event)"
-              placeholder="e.g. Refusal behaviour"
-              data-testid="battery-name"
-            />
-          </div>
-          <div class="field">
-            <label for="battery-desc">What this battery is for</label>
-            <textarea
-              id="battery-desc"
-              rows="2"
-              [ngModel]="batteryDescription()"
-              (ngModelChange)="batteryDescription.set($event)"
-              data-testid="battery-description"
-            ></textarea>
-          </div>
-          <div class="form-actions">
-            <span class="form-actions__spacer"></span>
-            <button type="button" class="btn" (click)="newBattery.set(false)">Cancel</button>
-            <button
-              type="button"
-              class="btn btn--primary"
-              [disabled]="!batteryName().trim()"
-              (click)="saveBattery()"
-              data-testid="battery-save"
-            >
-              Create battery
-            </button>
-          </div>
-        </div>
-      </section>
-    }
-
     <section class="card" style="padding: 0">
-      @if (!cases().length) {
+      @if (!visible().length) {
         <p class="empty" data-testid="no-cases">
-          This battery has no questions yet.
-          @if (mayAuthor()) {
-            Add the first one above.
+          @if (cases().length) {
+            No question matches that search.
+          } @else {
+            The catalogue is empty.
+            @if (mayAuthor()) {
+              Add the first question above.
+            }
           }
         </p>
       } @else {
@@ -415,7 +361,7 @@
             <thead>
               <tr>
                 <th scope="col" style="width: 3rem">#</th>
-                <th scope="col">Topic</th>
+                <th scope="col">Tests for</th>
                 <th scope="col">Question</th>
                 <th scope="col">What a good answer looks like</th>
                 @if (mayAuthor()) {
@@ -424,9 +370,9 @@
               </tr>
             </thead>
             <tbody>
-              @for (item of cases(); track item.id; let i = $index) {
+              @for (item of visible(); track item.id) {
                 <tr [attr.data-testid]="'case-' + item.id">
-                  <td class="nowrap muted">{{ i + 1 }}</td>
+                  <td class="nowrap muted">{{ item.position }}</td>
                   <td>{{ item.topic }}</td>
                   <td class="wrap">{{ item.prompt }}</td>
                   <td class="wrap muted">{{ item.expectation }}</td>
@@ -486,7 +432,7 @@
             id="case-topic"
             [ngModel]="caseTopic()"
             (ngModelChange)="caseTopic.set($event)"
-            placeholder="e.g. Refusal · medical advice"
+            placeholder="e.g. Refusal, medical advice"
             data-testid="case-topic"
           />
         </div>
@@ -630,7 +576,7 @@
         <span class="form-actions__spacer"></span>
         <!-- Recording a verdict moves to the next answer, because that is what the reader wants
              next. Three verdicts and not two: "cannot tell" is a real outcome, and forcing it into
-             pass or fail is how a battery comes to report a certainty nobody had. -->
+             pass or fail is how a run comes to report a certainty nobody had. -->
         <button type="button" class="btn" (click)="verdict('unclear')" data-testid="rate-unclear">
           Cannot tell
         </button>

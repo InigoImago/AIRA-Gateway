@@ -6,7 +6,6 @@ import { MeService } from '../../core/api/me.service';
 import { maySetStandards } from '../../core/auth/roles';
 import {
   CatalogModel,
-  TestBattery,
   TestCase,
   TestModelStats,
   TestResult,
@@ -19,7 +18,7 @@ import { InfoHint } from '../../core/ui/info-hint';
 import { PageFeedback } from '../../core/ui/page-feedback';
 
 /**
- * Putting a battery of questions to a model, and reading what came back (`FRD-504`).
+ * Putting the question catalogue to a model, and reading what came back (`FRD-504`).
  *
  * Every other control in AIRA governs *access*. None of them says anything about what the model
  * actually answers — and "is this model fit for this use case" is a question somebody has to be
@@ -41,12 +40,16 @@ import { PageFeedback } from '../../core/ui/page-feedback';
  * **Three sub-tabs, because there are three activities and they belong to different moments.**
  * The catalogue is written once and grows slowly — it is the *standard*, a hundred questions that
  * outlive any one model. A run puts that standard to a model. And the first thing anybody wants is
- * the answer to "where does each model stand", which is the **latest** run per model and battery —
- * never a total across every run a model has ever had. That first version summed them, and summing
- * is the wrong shape twice over: an old, since-corrected result drags the current one down forever,
- * and the figure moves when somebody re-runs something unrelated. Earlier runs are **history**, and
+ * the answer to "where does each model stand", which is the **latest** run per model — never a
+ * total across every run a model has ever had. That first version summed them, and summing is the
+ * wrong shape twice over: an old, since-corrected result drags the current one down forever, and
+ * the figure moves when somebody re-runs something unrelated. Earlier runs are **history**, and
  * they stay readable — how a model's behaviour changed between two versions is a question only the
  * history can answer.
+ *
+ * **One flat catalogue, no grouping.** An earlier version sorted the questions into named
+ * batteries; there is nothing to group, and grouping cost the property that makes this a standard:
+ * with several batteries, "how does this model do" has as many answers as there are groups.
  */
 @Component({
   selector: 'app-smoke-tests',
@@ -66,22 +69,22 @@ export class SmokeTests implements OnInit {
    *
    * The first version asked for an incident role, and the feature was unusable: running needs a
    * use case to attribute the traffic to, and IT Security is deliberately a member of nothing
-   * (`ADR-0007`). No user could satisfy both. Running a battery is making requests; whoever may
-   * call a model may test one. Authoring a battery stays with IT Security.
+   * (`ADR-0007`). No user could satisfy both. Running the catalogue is making requests; whoever
+   * may call a model may test one. Writing the catalogue stays with IT Security.
    */
   protected readonly mayRun = computed(() => this.mine().length > 0);
 
   /** Which of the three activities the reader is on. */
   protected readonly tab = signal<'results' | 'runs' | 'catalogue'>('results');
 
-  protected readonly batteries = signal<TestBattery[]>([]);
+  /** The catalogue itself: one flat list of questions, in the order they are asked. */
+  protected readonly cases = signal<TestCase[]>([]);
   protected readonly models = signal<CatalogModel[]>([]);
   protected readonly runs = signal<TestRun[]>([]);
   protected readonly stats = signal<TestModelStats[]>([]);
   protected readonly loading = signal(true);
 
   // What a new run will be.
-  protected readonly battery = signal<number | null>(null);
   protected readonly model = signal('');
   protected readonly useCase = signal('');
   /**
@@ -96,7 +99,7 @@ export class SmokeTests implements OnInit {
    */
   protected readonly mine = signal<{ slug: string; name: string }[]>([]);
   protected readonly running = signal(false);
-  /** How far a run has got, so a long battery does not look frozen. */
+  /** How far a run has got, so a hundred questions do not look frozen. */
   protected readonly progress = signal('');
 
   // The run being read.
@@ -114,29 +117,38 @@ export class SmokeTests implements OnInit {
   /**
    * Authoring the catalogue is IT Security's, matching the server's `IsITSecurity`.
    *
-   * A battery states what this installation considers an acceptable answer — the same kind of
+   * The catalogue states what this installation considers an acceptable answer — the same kind of
    * statement as a global anomaly rule, and owned by the same role. Everyone who may call a model
    * may **run** it and rate what comes back.
    */
   protected readonly mayAuthor = computed(() => maySetStandards(this.me()?.roles));
 
-  protected readonly selectedBattery = computed(
-    () => this.batteries().find((b) => b.id === this.battery()) ?? null,
-  );
+  /** What the reader typed into the catalogue's search box. */
+  protected readonly search = signal('');
 
-  /** The questions of the selected battery, in the order they are asked. */
-  protected readonly cases = computed(() =>
-    [...(this.selectedBattery()?.cases ?? [])].sort((a, b) => a.position - b.position),
-  );
+  /**
+   * The catalogue as the reader sees it.
+   *
+   * Filtered in the browser on purpose. A hundred rows is not a paging problem, and the count the
+   * screen states is a count over the **whole** catalogue — server-side paging would turn "100
+   * questions" into "100 on this page", which is the decision `FRD-208` already made for the model
+   * catalog for the same reason.
+   */
+  protected readonly visible = computed(() => {
+    const needle = this.search().trim().toLowerCase();
+    const rows = [...this.cases()].sort((a, b) => a.position - b.position);
+    if (!needle) return rows;
+    return rows.filter(
+      (row) =>
+        row.topic.toLowerCase().includes(needle) || row.prompt.toLowerCase().includes(needle),
+    );
+  });
 
   // The question being written, and its fields. Signals because Angular is zoneless (FRD-203 §4).
   protected readonly editing = signal<Partial<TestCase> | null>(null);
   protected readonly caseTopic = signal('');
   protected readonly casePrompt = signal('');
   protected readonly caseExpectation = signal('');
-  protected readonly newBattery = signal(false);
-  protected readonly batteryName = signal('');
-  protected readonly batteryDescription = signal('');
 
   protected readonly current = computed(() => {
     const index = this.rating();
@@ -150,15 +162,14 @@ export class SmokeTests implements OnInit {
 
   protected load(): void {
     this.loading.set(true);
-    this.service.batteries().subscribe({
+    this.service.testCases().subscribe({
       next: (rows) => {
-        this.batteries.set(rows);
-        if (rows.length && this.battery() === null) this.battery.set(rows[0].id);
+        this.cases.set(rows);
         this.loading.set(false);
       },
       error: (response: unknown) => {
         this.loading.set(false);
-        this.feedback.fail(response, 'Could not load the test batteries.');
+        this.feedback.fail(response, 'Could not load the question catalogue.');
       },
     });
     this.service.models().subscribe({
@@ -195,22 +206,19 @@ export class SmokeTests implements OnInit {
   }
 
   /**
-   * Run the selected battery against the selected model, one prompt at a time.
+   * Run the catalogue against the selected model, one prompt at a time.
    *
-   * Sequential on purpose. Firing a battery of fifty at once would trip the use case's own rate
+   * Sequential on purpose. Firing a hundred at once would trip the use case's own rate
    * limit — the control this installation configured — and produce a run full of `429`s that says
    * nothing about the model.
    */
   protected async run(): Promise<void> {
-    const batteryId = this.battery();
-    if (batteryId === null || !this.model() || !this.useCase() || this.running()) return;
+    if (!this.model() || !this.useCase() || this.running()) return;
 
     this.running.set(true);
     this.feedback.clear();
     try {
-      const run = await firstValueFrom(
-        this.service.startRun(batteryId, this.model(), this.useCase()),
-      );
+      const run = await firstValueFrom(this.service.startRun(this.model(), this.useCase()));
       const results = await firstValueFrom(this.service.runResults(run.id));
 
       for (const [index, result] of results.entries()) {
@@ -341,7 +349,7 @@ export class SmokeTests implements OnInit {
   // ---- the catalogue -------------------------------------------------------------------------
 
   protected startCase(item?: TestCase): void {
-    this.editing.set(item ? { ...item } : { battery: this.battery() ?? undefined });
+    this.editing.set(item ? { ...item } : {});
     this.caseTopic.set(item?.topic ?? '');
     this.casePrompt.set(item?.prompt ?? '');
     this.caseExpectation.set(item?.expectation ?? '');
@@ -353,11 +361,9 @@ export class SmokeTests implements OnInit {
 
   protected saveCase(): void {
     const draft = this.editing();
-    const batteryId = this.battery();
-    if (!draft || batteryId === null) return;
+    if (!draft) return;
 
     const body = {
-      battery: batteryId,
       topic: this.caseTopic().trim(),
       prompt: this.casePrompt().trim(),
       expectation: this.caseExpectation().trim(),
@@ -373,7 +379,7 @@ export class SmokeTests implements OnInit {
       next: () => {
         this.editing.set(null);
         this.feedback.succeed(draft.id ? 'Question saved.' : 'Question added to the catalogue.');
-        this.reloadBatteries();
+        this.reloadCatalogue();
       },
       error: (response: unknown) => this.feedback.fail(response, 'Could not save this question.'),
     });
@@ -385,35 +391,15 @@ export class SmokeTests implements OnInit {
     this.service.deleteCase(item.id).subscribe({
       next: () => {
         this.feedback.succeed('Question removed.');
-        this.reloadBatteries();
+        this.reloadCatalogue();
       },
       error: (response: unknown) => this.feedback.fail(response, 'Could not remove this question.'),
     });
   }
 
-  protected startBattery(): void {
-    this.newBattery.set(true);
-    this.batteryName.set('');
-    this.batteryDescription.set('');
-  }
-
-  protected saveBattery(): void {
-    this.service
-      .createBattery({ name: this.batteryName().trim(), description: this.batteryDescription() })
-      .subscribe({
-        next: (created) => {
-          this.newBattery.set(false);
-          this.battery.set(created.id);
-          this.feedback.succeed('Battery created. Add its questions below.');
-          this.reloadBatteries();
-        },
-        error: (response: unknown) => this.feedback.fail(response, 'Could not create the battery.'),
-      });
-  }
-
-  private reloadBatteries(): void {
-    this.service.batteries().subscribe({
-      next: (rows) => this.batteries.set(rows),
+  private reloadCatalogue(): void {
+    this.service.testCases().subscribe({
+      next: (rows) => this.cases.set(rows),
       error: (response: unknown) => this.feedback.fail(response, 'Could not reload the catalogue.'),
     });
   }

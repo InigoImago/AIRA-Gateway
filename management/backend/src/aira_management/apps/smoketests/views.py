@@ -1,6 +1,6 @@
 """The smoke-test API (`FRD-504`).
 
-Bounded by **role, not by use case**: a battery is a statement about a model, and a model is the
+Bounded by **role, not by use case**: the catalogue is a statement about a model, and a model is the
 installation's, not one team's. IT Security and Global Administrators — the same `INCIDENT_ROLES`
 that may stop traffic and author a global rule, because this is the same job.
 
@@ -17,7 +17,7 @@ import csv
 import io
 from typing import Any
 
-from django.db.models import Prefetch, QuerySet
+from django.db.models import QuerySet
 from django.http import HttpResponse
 from django.utils import timezone
 from rest_framework import viewsets
@@ -28,35 +28,20 @@ from rest_framework.response import Response
 
 from aira_management.rbac import IsITSecurity, MayTestModels
 
-from .models import TestBattery, TestCase, TestResult, TestRun, Verdict
+from .models import TestCase, TestResult, TestRun, Verdict
 from .serializers import (
-    TestBatterySerializer,
     TestCaseSerializer,
     TestResultSerializer,
     TestRunSerializer,
 )
 
 
-class TestBatteryViewSet(viewsets.ModelViewSet[TestBattery]):
-    """**Reading is not authoring.** Anybody who may run a battery must be able to choose one, or
-    the picker is empty and the Run button is disabled for a reason nothing on screen explains —
-    which is exactly what happened the first time. Writing one stays with IT Security: a battery is
-    a statement about what this installation considers acceptable."""
-
-    queryset = TestBattery.objects.prefetch_related(
-        # A retired question is history, not part of the standard: it is not listed and not asked.
-        Prefetch("cases", queryset=TestCase.objects.filter(retired=False))
-    ).all()
-    serializer_class = TestBatterySerializer
-
-    def get_permissions(self) -> list[Any]:
-        if self.request.method in ("GET", "HEAD", "OPTIONS"):
-            return [IsAuthenticated(), MayTestModels()]
-        return [IsAuthenticated(), IsITSecurity()]
-
-
 class TestCaseViewSet(viewsets.ModelViewSet[TestCase]):
-    queryset = TestCase.objects.select_related("battery").all()
+    """The catalogue. **Retired questions are not part of it** — they are history, kept because
+    somebody judged answers against their wording, and listing them would promise a longer run than
+    is performed."""
+
+    queryset = TestCase.objects.filter(retired=False)
     serializer_class = TestCaseSerializer
 
     def get_permissions(self) -> list[Any]:
@@ -66,13 +51,13 @@ class TestCaseViewSet(viewsets.ModelViewSet[TestCase]):
 
 
 class TestRunViewSet(viewsets.ModelViewSet[TestRun]):
-    """Running a battery is **making requests**, so whoever may call a model may test one.
+    """Running the catalogue is **making requests**, so whoever may call a model may test one.
 
     Narrowing this to the incident roles was the first design and it did not survive contact:
     running a run needs an incident role *and* membership of a use case to attribute the traffic
     to — and IT Security is deliberately a member of nothing (`ADR-0007`). No seeded user could do
     both, which is the clearest possible sign that the two requirements were not the same
-    requirement. Authoring a **battery** stays with IT Security; running one is ordinary work.
+    requirement. Authoring the **catalogue** stays with IT Security; running it is ordinary work.
     """
 
     serializer_class = TestRunSerializer
@@ -80,7 +65,7 @@ class TestRunViewSet(viewsets.ModelViewSet[TestRun]):
     http_method_names = ["get", "post", "delete", "head", "options"]
 
     def get_queryset(self) -> QuerySet[TestRun]:
-        runs = TestRun.objects.select_related("battery").prefetch_related("results")
+        runs = TestRun.objects.prefetch_related("results")
         model = self.request.query_params.get("model", "")
         return runs.filter(model=model) if model else runs
 
@@ -92,7 +77,7 @@ class TestRunViewSet(viewsets.ModelViewSet[TestRun]):
         """
         run = serializer.save(requested_by=self.request.user)
         TestResult.objects.bulk_create(
-            TestResult(run=run, case=case) for case in run.battery.cases.filter(retired=False)
+            TestResult(run=run, case=case) for case in TestCase.objects.filter(retired=False)
         )
 
     @action(detail=True, methods=["get"])
@@ -186,37 +171,25 @@ class TestStatsViewSet(viewsets.ViewSet):
     The point of a standardised catalogue is comparing models against the *same* questions — so the
     figure that answers "how does this model do" is its **most recent** run, not an average over
     every run it has ever had. Summing them makes an old, worse result drag a corrected one down
-    forever, and makes the number move when somebody re-runs an unrelated battery. That was the
+    forever, and makes the number move when somebody re-runs something unrelated. That was the
     first version and it was wrong: it answered a question nobody asked.
 
-    A model that has been run against two different batteries appears once per battery, because
-    those are two different standards and averaging them would compare nothing to nothing.
+    One row per model, because there is one catalogue. The first version grouped questions into
+    batteries and reported a row per model *and battery*, so "how does this model do" had
+    as many answers as there were groups and none of them compared to a model asked a different
+    group.
     """
 
     permission_classes = [IsAuthenticated, MayTestModels]
 
     def list(self, request: Request) -> Response:
-        runs = TestRun.objects.select_related("battery").order_by(
-            "model", "battery_id", "-started_at"
-        )
-        wanted = request.query_params.get("battery", "")
-        if wanted:
-            # Parsed, not passed through. `?battery=abc` reaching the ORM as a string is a 500
-            # where the honest answer is "that is not a battery id" — the routing-handler finding
-            # of 2026-08-06, one layer in. mypy caught this before a caller did.
-            if not wanted.isdigit():
-                return Response(
-                    {"error": {"code": "INVALID_ARGUMENT", "message": "battery must be an id"}},
-                    status=400,
-                )
-            runs = runs.filter(battery_id=int(wanted))
-
-        latest: dict[tuple[str, int], TestRun] = {}
-        for run in runs:
-            latest.setdefault((run.model, run.battery_id), run)
+        latest: dict[str, TestRun] = {}
+        for run in TestRun.objects.order_by("model", "-started_at"):
+            latest.setdefault(run.model, run)
 
         rows = []
-        for (model, _battery_id), run in sorted(latest.items()):
+        asked = TestCase.objects.filter(retired=False).count()
+        for model, run in sorted(latest.items()):
             counts = {"total": 0, "unrated": 0, "pass": 0, "fail": 0, "unclear": 0, "errored": 0}
             for result in run.results.all():
                 counts["total"] += 1
@@ -226,11 +199,14 @@ class TestStatsViewSet(viewsets.ViewSet):
             rows.append(
                 {
                     "model": model,
-                    "battery": run.battery_id,
-                    "battery_name": run.battery.name,
                     "run": run.id,
                     "started_at": run.started_at.isoformat(),
                     "requested_by": getattr(run.requested_by, "username", "") or "",
+                    # How many questions the catalogue asks *today*. A run made before questions
+                    # were added answered fewer, and saying so is the difference between "this
+                    # model scored 40" and "this model scored 40 out of a catalogue that has since
+                    # grown to 100".
+                    "catalogue": asked,
                     **counts,
                 }
             )

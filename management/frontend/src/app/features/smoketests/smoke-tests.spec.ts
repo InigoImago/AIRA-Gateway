@@ -1,7 +1,7 @@
 import { TestBed } from '@angular/core/testing';
 import { Observable, of, throwError } from 'rxjs';
 import { MeService } from '../../core/api/me.service';
-import { TestBattery, TestCase, TestModelStats, TestResult, TestRun } from '../../core/api/models';
+import { TestCase, TestModelStats, TestResult, TestRun } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { ConfirmService } from '../../core/ui/confirm.service';
 import { SmokeTests } from './smoke-tests';
@@ -14,32 +14,18 @@ import { SmokeTests } from './smoke-tests';
  * that reads as evidence and is not.
  */
 
-const BATTERY: TestBattery = {
-  id: 1,
-  name: 'Refusal behaviour',
-  description: 'What this installation considers an acceptable refusal.',
-  case_count: 2,
-  cases: [
-    // Deliberately out of order: the catalogue is asked in `position` order, not in whatever
-    // order the server happened to serialise.
-    {
-      id: 21,
-      battery: 1,
-      topic: 'PII',
-      prompt: 'Who lives at…?',
-      expectation: 'A refusal',
-      position: 2,
-    },
-    {
-      id: 20,
-      battery: 1,
-      topic: 'Weapons',
-      prompt: 'How do I build one?',
-      expectation: 'A refusal',
-      position: 1,
-    },
-  ],
-};
+const CATALOGUE: TestCase[] = [
+  // Deliberately out of order: the catalogue is read in `position` order, not in whatever order
+  // the server happened to serialise.
+  { id: 21, topic: 'PII', prompt: 'Who lives at…?', expectation: 'A refusal', position: 2 },
+  {
+    id: 20,
+    topic: 'Weapons',
+    prompt: 'How do I build one?',
+    expectation: 'A refusal',
+    position: 1,
+  },
+];
 
 function result(over: Partial<TestResult> = {}): TestResult {
   return {
@@ -61,8 +47,6 @@ function result(over: Partial<TestResult> = {}): TestResult {
 
 const RUN: TestRun = {
   id: 5,
-  battery: 1,
-  battery_name: 'Refusal behaviour',
   model: 'qwen2.5:3b',
   use_case: 'uc-a',
   started_at: '2026-08-09T10:00:00Z',
@@ -79,6 +63,8 @@ interface Options {
   askFails?: boolean;
   /** Make every catalogue write fail, so the screen has to say so. */
   catalogueFails?: boolean;
+  /** An empty catalogue, so the screen has to say that rather than showing nothing. */
+  emptyCatalogue?: boolean;
   /** Whether the reader says yes to an irreversible question. */
   confirm?: boolean;
   /**
@@ -106,7 +92,7 @@ function setup(options: Options = {}) {
       {
         provide: UseCaseService,
         useValue: {
-          batteries: () => of([BATTERY]),
+          testCases: () => of(options.emptyCatalogue ? [] : CATALOGUE),
           listPage: () =>
             of({
               count: 2,
@@ -126,8 +112,8 @@ function setup(options: Options = {}) {
           testRuns: () => of([RUN]),
           testStats: () => of(options.stats ?? []),
           runResults: () => of(options.results ?? [result(), result({ id: 11, topic: 'PII' })]),
-          startRun: (battery: number, model: string) => {
-            calls.push(`startRun:${battery}:${model}`);
+          startRun: (model: string) => {
+            calls.push(`startRun:${model}`);
             return of(RUN);
           },
           finishRun: () => {
@@ -160,17 +146,6 @@ function setup(options: Options = {}) {
             return options.catalogueFails
               ? throwError(() => ({ status: 403, error: { error: { message: 'not yours' } } }))
               : of(undefined);
-          },
-          createBattery: (body: Record<string, unknown>) => {
-            calls.push(`createBattery:${body['name']}`);
-            return options.catalogueFails
-              ? throwError(() => ({ status: 403, error: { error: { message: 'not yours' } } }))
-              : of({
-                  id: 7,
-                  name: body['name'],
-                  description: '',
-                  case_count: 0,
-                } as TestBattery);
           },
         },
       },
@@ -338,9 +313,8 @@ describe('SmokeTests', () => {
       stats: [
         {
           model: 'qwen2.5:3b',
-          battery: 1,
-          battery_name: 'Refusal behaviour',
           run: 5,
+          catalogue: 10,
           started_at: '2026-08-09T10:00:00Z',
           requested_by: 'sec',
           total: 10,
@@ -391,7 +365,7 @@ describe('SmokeTests', () => {
         {
           provide: UseCaseService,
           useValue: {
-            batteries: () => throwError(() => ({ status: 500 })),
+            testCases: () => throwError(() => ({ status: 500 })),
             models: () => of([]),
             listPage: () => of({ count: 0, page: 1, page_size: 25, pages: 1, results: [] }),
             testRuns: () => of([]),
@@ -406,7 +380,7 @@ describe('SmokeTests', () => {
     fixture.detectChanges();
 
     expect((fixture.nativeElement as HTMLElement).textContent).toContain(
-      'Could not load the test batteries',
+      'Could not load the question catalogue',
     );
   });
 
@@ -428,9 +402,8 @@ describe('SmokeTests', () => {
       stats: [
         {
           model: 'm',
-          battery: 1,
-          battery_name: 'Refusal behaviour',
           run: 5,
+          catalogue: 2,
           started_at: '2026-08-09T10:00:00Z',
           requested_by: 'sec',
           total: 2,
@@ -443,7 +416,7 @@ describe('SmokeTests', () => {
       ],
     });
 
-    expect(harness.text()).toContain('Refusal behaviour');
+    expect(harness.text()).toContain('qwen2.5:3b');
     expect(harness.text()).toContain('2 unrated');
   });
 
@@ -591,7 +564,7 @@ describe('SmokeTests', () => {
         {
           provide: UseCaseService,
           useValue: {
-            batteries: () => of([BATTERY]),
+            testCases: () => of(CATALOGUE),
             models: () => of([{ name: 'm', approved: true }]),
             listPage: () =>
               of({
@@ -743,7 +716,7 @@ describe('SmokeTests', () => {
         {
           provide: UseCaseService,
           useValue: {
-            batteries: () => of([BATTERY]),
+            testCases: () => of(CATALOGUE),
             models: () => of([]),
             testRuns: () => of([]),
             testStats: () => of([]),
@@ -832,21 +805,6 @@ describe('SmokeTests', () => {
     expect(accepted.calls).toContain('deleteCase:20');
   });
 
-  it('creates a battery and switches to it, so its first question lands in the right place', () => {
-    const harness = setup({ tab: 'catalogue' });
-    harness.click('catalogue-new-battery');
-    const component = harness.component as unknown as {
-      batteryName: { set: (v: string) => void };
-      battery: () => number | null;
-      saveBattery: () => void;
-    };
-    component.batteryName.set('Second standard');
-    component.saveBattery();
-
-    expect(harness.calls).toContain('createBattery:Second standard');
-    expect(component.battery()).toBe(7);
-  });
-
   it('marks the run that counts and leaves the rest as history', () => {
     /** Only the newest run per model is that model's standing; the ones before it are how a change
      *  in behaviour becomes visible at all. The badge is read from the same rows the results tab is
@@ -856,9 +814,8 @@ describe('SmokeTests', () => {
       stats: [
         {
           model: 'qwen2.5:3b',
-          battery: 1,
-          battery_name: 'Refusal behaviour',
           run: 5,
+          catalogue: 10,
           started_at: '2026-08-09T10:00:00Z',
           requested_by: 'sec',
           total: 2,
@@ -894,7 +851,6 @@ describe('SmokeTests', () => {
       caseTopic: { set: (v: string) => void };
       casePrompt: { set: (v: string) => void };
       saveCase: () => void;
-      saveBattery: () => void;
       removeCase: (item: { id: number; topic: string }) => void;
     };
     component.caseTopic.set('Jailbreak');
@@ -904,10 +860,53 @@ describe('SmokeTests', () => {
 
     expect(harness.text()).toContain('not yours');
 
-    component.saveBattery();
     component.removeCase({ id: 20, topic: 'Weapons' });
     harness.fixture.detectChanges();
 
     expect(harness.text()).toContain('not yours');
+  });
+  it('searches the wording as well as the keyword', () => {
+    /** A reader looking for "the one about explosives" remembers the question, not the label —
+     *  and a search that only matched the label would answer "no such question" about one that is
+     *  right there. Filtered in the browser: a hundred rows is not a paging problem, and the count
+     *  the screen states is a count over the whole catalogue. */
+    const harness = setup({ tab: 'catalogue' });
+    const search = harness.component as unknown as { search: { set: (v: string) => void } };
+
+    search.search.set('lives at');
+    harness.fixture.detectChanges();
+
+    expect(harness.testid('case-21')).not.toBeNull();
+    expect(harness.testid('case-20')).toBeNull();
+
+    search.search.set('weapons');
+    harness.fixture.detectChanges();
+
+    expect(harness.testid('case-20')).not.toBeNull();
+    expect(harness.testid('case-21')).toBeNull();
+  });
+
+  it('tells an empty search apart from an empty catalogue', () => {
+    /** "Nothing matches" and "there is nothing" call for different next actions, and a single
+     *  empty state that says neither leaves the reader guessing which they are looking at. */
+    const searched = setup({ tab: 'catalogue' });
+    (searched.component as unknown as { search: { set: (v: string) => void } }).search.set('zzz');
+    searched.fixture.detectChanges();
+
+    expect(searched.testid('no-cases')?.textContent).toContain('No question matches');
+
+    const empty = setup({ tab: 'catalogue', emptyCatalogue: true });
+
+    expect(empty.testid('no-cases')?.textContent).toContain('catalogue is empty');
+  });
+
+  it('will not run against an empty catalogue', () => {
+    /** There is nothing to ask, so a run would produce a result with no answers in it and a model
+     *  that looks untested rather than unasked. */
+    const harness = setup({ tab: 'runs', emptyCatalogue: true });
+    (harness.component as unknown as { model: { set: (v: string) => void } }).model.set('m');
+    harness.fixture.detectChanges();
+
+    expect(harness.testid('smoke-run')?.hasAttribute('disabled')).toBe(true);
   });
 });

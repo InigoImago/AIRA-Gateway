@@ -127,6 +127,9 @@ Complete, and honest about what is not there. Anything unbuilt is in
   a reason; it is read at the one pre-dispatch gate and kept after being lifted.
 - **Per-use-case retention** for stored prompts, seven days by default, with payload storage
   switchable per use case and a kill switch above it.
+- **Model tests.** A standing catalogue of 100 questions every model is asked, answers judged by a
+  person whose name the verdict carries, and a standing per model that is its **latest** run — not
+  an average that an old, since-corrected result drags down forever. CSV export for the numbers.
 - **Tracing** with `aira.*` span attributes, and a trace id on every response.
 
 ---
@@ -202,8 +205,6 @@ Details: [**Testing**](docs/TESTING.md).
   deliberately are not, because they are what the payload is stored *for*. The control is the
   per-use-case storage switch.
 - **No alert delivery.** Findings appear in the console; nothing sends mail or calls a webhook.
-- **No model smoke tests.** How *models* behave — jailbreak resistance, refusal rates — is not
-  measured.
 - **No Kubernetes or Helm charts**, and no load or performance testing.
 - **Microsoft Foundry is untested against a real Azure subscription.**
 
