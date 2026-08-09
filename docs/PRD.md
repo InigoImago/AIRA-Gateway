@@ -1,7 +1,11 @@
 # AIRA Gateway — Project Requirements Document (PRD)
 
 > **AIRA** = **AI R**est **A**PI Gateway
-> Status: **Draft v0.1** · Owner: Vadim Scheibe · Last updated: 2026-08-04
+> Status: **Draft v0.1** · Owner: Vadim Scheibe · Last updated: 2026-08-09
+>
+> §1.1 ist der Maßstab, an dem geplant wird — eine veraltete Zeile darin ist teurer als eine
+> veraltete Zeile irgendwo sonst. Am 2026-08-09 meldeten vier Zeilen „fehlt" für Dinge, die seit
+> Tagen liefen (6, 16, 20) oder zur Hälfte (7).
 
 ---
 
@@ -47,17 +51,17 @@ gap, not an aspiration.
 | 3 | Kompatibilität mit der KIRA-API | **fertig (2026-08-06)** — vollständiger Vertrag: Text, Dokumente, Thinking, strukturierte Ausgabe, Batch-Embedding. Was ein *Modell* nicht kann, wird weiterhin abgewiesen, nie ignoriert | `FRD-107` ✅ `FRD-111`–`113` ✅ |
 | 4 | Auditierbarkeit | **fertig (2026-08-06)** — alle fünf Lücken geschlossen | `FRD-122` ✅ |
 | 5 | Speicherung von Requests/Responses: *welches System wann was womit* | **fertig (2026-08-06)** — das aufrufende System ist über den Key-Prefix unterscheidbar, Ablehnungen erzeugen eine Zeile | `FRD-103` ✓, `FRD-122` ✅ |
-| 6 | Incident Response | **fehlt** | `FRD-503` (Phase 5) |
-| 7 | Blockierung gefährlicher Anfragen | **teilweise** — Prompt-Injection-Filter ✓; kein Betriebs-Kill-Switch, keine weiteren Kategorien | `FRD-300` ✓, `FRD-503` |
+| 6 | Incident Response | **fertig (2026-08-07)** — eine Sperre ist eine *geschriebene Entscheidung*: Ziel, Aktion, Ablauf, **Autor**, **Grund**; am einen Pre-Dispatch-Gate gelesen, nach dem Aufheben aufbewahrt (429, eigener Audit-Ausgang `suspended`, **nicht über Kafka**) | `FRD-503` ✅ |
+| 7 | Blockierung gefährlicher Anfragen | **teilweise** — Prompt-Injection-Filter ✓, Betriebs-Kill-Switch ✓ (`FRD-503`); weitere Kategorien (Jailbreak, Exfiltration, PII im Prompt, Ausgabefilter) fehlen weiterhin | `FRD-300` ✓, `FRD-503` ✅, `FRD-504` |
 | 8 | Model Routing anhand der Definition | **fertig** | `FRD-300`, `FRD-306` |
 | 9 | Modell-Fallback | **fertig** — muss noch capability-homogen werden | `FRD-302` ✓, `ADR-0012` §3 |
 | 10 | Unabhängigkeit von Google / Microsoft | **belegt für zwei Anbieter** — die Architektur-Assertion ist ein Test: kein Code oberhalb der Adapter kennt den Vendor. Foundry offen | `ADR-0011` ✅, `FRD-115`/`119` ✅, `FRD-120` |
 | 11 | Übersicht über alle Use Cases | **teilweise** — Liste ✓, Governance-Sicht auf die Verarbeitungslogik fehlt | `FRD-202` ✓, `FRD-600` |
 | 12 | Self-Service: Filter- und Routing-Pipeline | **fertig** | `FRD-303`, `FRD-306` |
 | 13 | Zugelassene Modelle je Use Case | **teilweise** — `allow_check` ✓, Fähigkeiten deklariert und durchgesetzt (`FRD-114` ✅), genehmigter Katalog fehlt noch | `FRD-300` ✓, `FRD-114` ✅, `FRD-307` |
-| 14 | IT-Security-Unterstützung: Modell-Smoke-Tests und Jailbreak-Versuche | **fehlt** | `FRD-504` |
+| 14 | IT-Security-Unterstützung: Modell-Smoke-Tests und Jailbreak-Versuche | **fehlt** — als einziges der siebzehn Merkmale ohne jede Umsetzung; braucht **keine Cloud**, das lokale Modell genügt | `FRD-504` |
 | 15 | Budgetübersicht und Budgetgrenze | **fertig** | `FRD-400`–`403`, `FRD-601` |
-| 16 | Anomalieerkennung | **fehlt** | `FRD-500`/`501` (Phase 5) |
+| 16 | Anomalieerkennung | **fertig (2026-08-07/08)** — sieben Regelarten in geschlossenem Vokabular, ausgewertet gegen das Request-Log (auch Ablehnungen), `alert` als Standard, IT-Security-Konsole + Warnungen je Use Case | `FRD-500`/`501`/`502` ✅ |
 | 17 | Zentrale Übersicht über alle Use Cases | siehe 11 | `FRD-600`, `FRD-601` ✓ |
 
 ### 1.2 Additional features from the code review (2026-08-06)
@@ -70,7 +74,7 @@ product's central claim being true and being asserted.
 |--:|---|---|---|
 | 18 | **Verarbeitung von Dokumenten** (PDF, Bilder u. a. im Request) — KIRAs Kernfall | **fertig (2026-08-06)** — geordnete Teile, 15 Medientypen, Signaturprüfung, Grenzen; ein Modell, das den Typ nicht lesen kann, **lehnt ab** statt zu halluzinieren | `FRD-110` ✅ |
 | 19 | **Erweiterbarkeit als messbare Eigenschaft** — eine neue Modellfamilie ist ein Katalogeintrag plus höchstens ein Dialekt | **Architektur steht, ungeprüft** | `ADR-0011`, `FRD-115` §10 |
-| 20 | **Secrets aus Vault** — Richtlinie und Implementierung stehen seit Phase 0 auseinander | **fehlt** — Vault läuft im Stack, kein Code liest daraus | `FRD-116` |
+| 20 | **Secrets aus Vault** — Richtlinie und Implementierung stehen seit Phase 0 auseinander | **fertig (2026-08-06)** — AppRole + KV-v2 als pydantic-Settings-Quelle über der Umgebung, **fail closed**; gegen eine echte AppRole im Stack verifiziert | `FRD-116` ✅ |
 | 21 | **Betriebsdiagnostik** — Build-Identität, Upstream-Health, Trace-Header, CORS, OpenAPI 3.0 | **fehlt** | `FRD-117` |
 | 22 | **Maskierung sensibler Inhalte** in gespeicherten Payloads | **fehlt** — `Redactor` ist ein No-Op | `FRD-406` |
 | 23 | **Export der Auswertung** (CSV mit Content Negotiation) | **fehlt** | `FRD-602` |
