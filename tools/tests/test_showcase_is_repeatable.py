@@ -41,8 +41,47 @@ def test_the_dev_vault_is_provisioned_by_the_stack_that_wipes_it() -> None:
         "nothing provisions the dev Vault, which forgets on every restart — the stack boots only "
         "for somebody who remembered a separate command"
     )
-    assert services["vault-init"].get("profiles") == ["demo"], (
-        "a real Vault is provisioned by whoever owns it; this must not run against one"
+    # Guarded by the environment rather than by a profile, and that distinction is the second
+    # defect this file records: a service that other services depend on cannot itself sit behind a
+    # profile, or the project is invalid whenever that profile is off (see the test below). So it
+    # is always defined and decides for itself whether there is anything to do.
+    command = " ".join(services["vault-init"]["command"])
+
+    assert "profiles" not in services["vault-init"]
+    assert "VAULT_ADDR" in command, "it writes even when no Vault is configured"
+    assert "AIRA_ENVIRONMENT" in command, (
+        "a real Vault is provisioned by whoever owns it, and nothing here says so"
+    )
+
+
+def test_no_service_depends_on_one_a_profile_could_switch_off() -> None:
+    """**The project must be valid for every profile combination anyone uses.**
+
+    Compose refuses a project outright — not the one service, the whole project — when a service
+    depends on one that the active profiles leave out. `vault-init` was written with
+    `profiles: ["demo"]` and two non-profiled migration jobs depending on it, so
+    `docker compose -f … -f …` with no profile answered `invalid compose project`. That took CI's
+    log-dumping fallback with it, which runs without profiles and exists for the moment something
+    else has already gone wrong.
+
+    The rule, stated as the containment it is: whatever enables a service must also enable
+    everything it depends on.
+    """
+    services = _services()
+
+    broken: list[str] = []
+    for name, definition in services.items():
+        mine = set(definition.get("profiles") or [])
+        for dependency in definition.get("depends_on") or {}:
+            theirs = set(services.get(dependency, {}).get("profiles") or [])
+            # A dependency with no profile is always present. Otherwise it must be enabled by
+            # every profile that enables the dependent — and a dependent with no profile is
+            # enabled by all of them, so any profile on the dependency is a hole.
+            if theirs and (not mine or not theirs <= mine):
+                broken.append(f"{name} -> {dependency}")
+
+    assert not broken, (
+        f"{broken}: compose rejects the entire project when the dependency's profile is off"
     )
 
 

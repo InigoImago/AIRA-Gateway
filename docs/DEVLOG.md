@@ -164,9 +164,16 @@ The dev Vault runs `server -dev` and keeps everything in memory, so `docker comp
 `secret/aira`. `load_secrets()` fails closed — correctly — and every application container refuses
 to boot. So the showcase depended on somebody having run `make vault-init` **after the current
 Vault container started**: follow our own documentation, bring the stack down, and the one command
-that must always work stops working. A `vault-init` service in the demo profile provisions it now,
-with the migrations waiting on it, because ordering belongs in the file that owns ordering rather
-than in one of four entry points. Two mistakes while writing it, both worth keeping: it wrote all
+that must always work stops working. A `vault-init` service provisions it now, with the
+migrations waiting on it, because ordering belongs in the file that owns ordering rather than in
+one of four entry points. **It was written with `profiles: ["demo"]` first, and that was a
+regression of its own**: compose rejects the _whole project_ — not the one service — when
+something depends on a service the active profiles leave out, so
+`docker compose -f … -f …` with no profile answered `invalid compose project`, taking CI's
+log-dumping fallback with it, which runs without profiles and exists for the moment something else
+has already gone wrong. Guarded by the environment instead (`ADR-0015`'s shape): no address means
+nothing to do, and anything but `local`/`demo` means somebody else owns this Vault. A test now
+states the containment — whatever enables a service must enable everything it depends on. Two mistakes while writing it, both worth keeping: it wrote all
 three known secrets unconditionally, and **Vault ranks above the environment**, so the empty string
 won and the stack came up with `no password supplied` — _absent and empty are different answers_;
 then, writing nothing, `vault kv put` failed with `Must supply data`, because an empty write is not

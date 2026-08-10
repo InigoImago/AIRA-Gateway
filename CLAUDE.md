@@ -1226,8 +1226,12 @@ The dev Vault runs `server -dev` and forgets on every restart, so after a `down`
 `secret/aira` is gone, `load_secrets()` fails closed (correctly) and **every container refuses to
 boot** — the showcase silently required somebody to have run `make vault-init` *after* the current
 Vault container started, which is a trap laid by our own documentation. Provisioned by a `vault-init`
-service in the demo profile now, with the migrations waiting on it, because ordering belongs in the
-file that owns ordering rather than in one of four entry points; two mistakes while writing it are
+service now, with the migrations waiting on it, because ordering belongs in the file that owns
+ordering rather than in one of four entry points — and putting that service **behind a profile was
+a regression of its own**, since compose rejects the *whole project* when something depends on a
+service the active profiles omit (`invalid compose project` without `--profile demo`, which is how
+CI dumps logs when something has already gone wrong); it is gated by the **environment** instead,
+and a test states the containment: whatever enables a service must enable everything it depends on; two mistakes while writing it are
 the keepers — writing all three known secrets unconditionally made the **empty string win over the
 environment** (Vault ranks above it: *absent and empty are different answers*, `no password
 supplied`), and writing none failed with `Must supply data`, because **an empty write is not a

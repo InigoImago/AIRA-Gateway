@@ -25,14 +25,19 @@ services:
   # Ordering belongs in the file that owns the ordering, so it is a service with a condition on it
   # rather than a step in a Makefile target that three other entry points do not run.
   #
-  # **Demo profile only.** A real Vault is provisioned by whoever owns it, with a policy and an
-  # AppRole; this repairs a development server that forgets by design. It writes only the
-  # `AIRA_*` values this compose file already has, and writing none of them is fine — the path is
-  # what the readers need to exist.
+  # **Guarded by the environment, not by a profile.** A real Vault is provisioned by whoever owns
+  # it, with a policy and an AppRole; this repairs a development server that forgets by design, so
+  # it must never write to a real one. The first version expressed that as `profiles: ["demo"]` —
+  # and a service two non-profiled services depend on cannot itself be behind a profile: without
+  # `--profile demo` compose refuses the whole project as invalid, which took `make up-full`'s
+  # log-dumping fallback in CI with it, at exactly the moment somebody needs the logs.
+  #
+  # So it is always defined and decides for itself, the environment-shaped gating `ADR-0015`
+  # settled: no address means nothing to do, and anything but a local or demo environment means
+  # somebody else owns this Vault.
   vault-init:
     image: hashicorp/vault:1.18
     container_name: aira-vault-init
-    profiles: ["demo"]
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -41,6 +46,13 @@ services:
           echo "no VAULT_ADDR — secrets come from the environment, nothing to provision"
           exit 0
         fi
+        case "$${AIRA_ENVIRONMENT:-local}" in
+          local|demo) ;;
+          *)
+            echo "environment '$$AIRA_ENVIRONMENT' — this Vault is somebody else's to provision"
+            exit 0
+            ;;
+        esac
         # **Only variables that are actually set.** Vault ranks *above* the environment
         # (`FRD-116`), so writing a key with an empty value does not mean "nothing here" — it
         # means "the value is the empty string", and it silently wins over the real one. The
@@ -69,6 +81,7 @@ services:
       VAULT_TOKEN: ${VAULT_TOKEN:-${VAULT_DEV_ROOT_TOKEN_ID:-root}}
       VAULT_MOUNT: ${VAULT_MOUNT:-secret}
       VAULT_PATH: ${VAULT_PATH:-aira}
+      AIRA_ENVIRONMENT: ${AIRA_ENVIRONMENT:-local}
       AIRA_GOOGLE_API_KEY: ${AIRA_GOOGLE_API_KEY:-}
       AIRA_POSTGRES_PASSWORD: ${AIRA_POSTGRES_PASSWORD:-}
       AIRA_SECRET_KEY: ${AIRA_SECRET_KEY:-}
