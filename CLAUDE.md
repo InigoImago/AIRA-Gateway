@@ -1242,6 +1242,15 @@ clears what earlier runs **consumed** (Postgres *and* the shared Redis counters 
 leaves the other refusing for a period nobody can see) and nothing the demo **is**; `make
 showcase-traffic` deliberately does not, since filling the bars until a limit is reached is what
 that target is for. Two consecutive runs now produce the same thing: ten served, one refused.
+**The two build systems also ran at different levels, and that was not cosmetic**: both Python
+images build from the repository root, the frontend built from `management/frontend`, and
+**Docker reads `.dockerignore` only from the context root** — so the repo's ignore file never
+applied to the frontend and its `COPY . .` copied a developer's **287 MB `node_modules` on top of
+the tree `npm ci` had just installed** (proved with a marker file: the host's copy wins). The image
+was therefore built against whatever was on that machine's disk — esbuild and rollup ship *native*
+binaries — which is a generator of "it builds for me" and nothing else, with the `npm ci` layer
+above it doing nothing. One context root now, named copies instead of `COPY . .`, context **1.5 MB
+instead of 302 MB**, and a test requires every image to share the root.
 
 Next candidates: **`FRD-114`** (model metadata — now also carries publisher + default output cap,
 prerequisite for 110–113 and 119), **`FRD-110`** (documents/images — the widest gap),

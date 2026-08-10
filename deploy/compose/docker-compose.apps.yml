@@ -409,8 +409,8 @@ services:
   frontend:
     image: aira-frontend:${AIRA_IMAGE_TAG:-dev}
     build:
-      context: ../../management/frontend
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: management/frontend/Dockerfile
     container_name: aira-frontend
     environment:
       AIRA_MANAGEMENT_UPSTREAM: http://management:8002

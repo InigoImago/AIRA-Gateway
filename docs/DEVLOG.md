@@ -189,7 +189,20 @@ reading zero after every run is the opposite defect. `make showcase-traffic` del
 reset — filling the bars until a limit is reached is what that target is for. Two consecutive runs
 now produce the same thing: ten served, one refused by the filter.
 
-**And before either of those, `make showcase` tried to _pull_ `aira-gateway` and
+**The two build systems ran at different levels, and that was not cosmetic.** Both Python images
+build from the repository root; the frontend built from `management/frontend`. **Docker reads
+`.dockerignore` only from the context root**, so the repository's own ignore file — which excludes
+`**/node_modules`, `**/dist`, `**/.angular` — did not apply to the frontend at all. Its `COPY . .`
+therefore copied a developer's **287 MB `node_modules` into the builder on top of the tree
+`npm ci` had just installed**. Proved with a marker file rather than argued: the host's copy wins.
+So the image was built against whatever happened to be on that machine's disk — a different
+platform's native binaries for esbuild and rollup, a different Node version, or simply something
+stale. A generator of "it builds for me" and of nothing else, and the `npm ci` layer above it was
+doing nothing. One context root now, named copies instead of `COPY . .`, and the context is
+**1.5 MB instead of 302 MB**. A test requires every image to share the root, shown to fail by
+moving the frontend back.
+
+**And before any of those, `make showcase` tried to _pull_ `aira-gateway` and
 `aira-management`.** Four services
 carried `image:` with no `build:`, because they run a second process out of an image a sibling
 builds — the consumer, the relay, the retention job, the seed. Compose pulls anything it is not
