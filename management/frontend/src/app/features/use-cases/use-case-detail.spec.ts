@@ -110,6 +110,7 @@ interface Detail {
   retentionError: () => string | null;
   retentionChanged: () => boolean;
   restrictMembers: { set: (v: boolean) => void; (): boolean };
+  toolsEnabled: { set: (v: boolean) => void; (): boolean };
   promptCaching: { set: (v: boolean) => void; (): boolean };
   cacheTtl: { set: (v: string) => void; (): string };
   canManage: () => boolean;
@@ -1277,6 +1278,65 @@ describe('UseCaseDetail — tuning the cache (`FRD-133`)', () => {
       prompt_caching_enabled: true,
       prompt_cache_ttl: '1h',
     });
+  });
+
+  it('does not claim a saving when caching is switched off', () => {
+    /** The message after a save is the only feedback there is, and "caching is on, keeping the
+     *  prefix for five minutes" after switching it *off* would be a confident statement about the
+     *  wrong thing — the defect this panel was split out of the retention form to stop. */
+    const harness = setup({ get: of({ ...USE_CASE, prompt_caching_enabled: true }) });
+    harness.fixture.detectChanges();
+    harness.component.promptCaching.set(false);
+
+    harness.component.saveCapabilities();
+    harness.fixture.detectChanges();
+
+    const banner = harness.html().querySelector('[role="status"]')?.textContent ?? '';
+    expect(banner).toContain('charged in full');
+    expect(banner).not.toContain('Cached share');
+  });
+
+  it('names the lifetime it actually saved, in words', () => {
+    /** "5m" is a wire value. A reader who has just chosen a lifetime should be told which one
+     *  took effect, because the two differ in price and not merely in length. */
+    const harness = setup();
+    harness.fixture.detectChanges();
+    harness.component.promptCaching.set(true);
+
+    harness.component.saveCapabilities();
+    harness.fixture.detectChanges();
+
+    expect(harness.html().querySelector('[role="status"]')?.textContent).toContain('five minutes');
+  });
+
+  it('sends nothing when nothing was changed', () => {
+    /** Save is disabled in the template, but the method is the thing that guards it: a second
+     *  entry point (a keyboard submit, a future button) must not post an unchanged object and
+     *  report success for work nobody did. */
+    const harness = setup();
+    harness.fixture.detectChanges();
+    const before = harness.calls.length;
+
+    harness.component.saveCapabilities();
+
+    expect(harness.calls.length).toBe(before);
+  });
+
+  it('reads a response that omits the capability fields as off', () => {
+    /** An older Management answers without them. Absent must read as *off* and the cheap
+     *  lifetime — the same rule as the gateway's, one plane over: absence of information is not
+     *  permission. */
+    const harness = setup({ update: of({ slug: 'demo-uc', name: 'Demo' } as UseCase) });
+    harness.fixture.detectChanges();
+    harness.component.promptCaching.set(true);
+    harness.component.cacheTtl.set('1h');
+
+    harness.component.saveCapabilities();
+    harness.fixture.detectChanges();
+
+    expect(harness.component.promptCaching()).toBe(false);
+    expect(harness.component.cacheTtl()).toBe('5m');
+    expect(harness.component.toolsEnabled()).toBe(false);
   });
 
   it('says what the longer lifetime costs, not just that it is longer', () => {

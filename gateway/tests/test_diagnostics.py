@@ -13,6 +13,7 @@ that refuses the configuration the predecessor ships.
 from __future__ import annotations
 
 import asyncio
+import socket
 from typing import Any
 
 import pytest
@@ -198,14 +199,33 @@ async def test_an_adapter_with_no_probe_is_reported_as_unprobed_not_as_healthy()
 
 async def test_an_unreachable_upstream_degrades_rather_than_failing_readiness() -> None:
     """A gateway that still refuses over-budget requests, still enforces limits and still serves
-    reporting is **not down**. Evicting it from the load balancer helps nobody."""
-    app = create_app(GatewaySettings(auth_required=False))
-    app.state.providers = ProviderRegistry([_Broken("x")])
-    app.state.upstream_probe = _probe(_Broken("x"))
-    await app.state.upstream_probe.probe_once()
+    reporting is **not down**. Evicting it from the load balancer helps nobody.
 
-    with TestClient(app) as client:
-        response = client.get("/readyz")
+    Postgres and Kafka are pointed at a socket **this test opens**, because `/readyz` checks them
+    for real and that is not what is under test here. They used to be the defaults, so this passed
+    on any machine with the Compose stack running and failed in CI — a unit test whose green was
+    about the developer's laptop. Stubbing `check_tcp` was the other option and the worse one: the
+    probe stays real, and only the dependency this test is *not* about is held up by construction.
+    """
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(8)
+        host, port = listener.getsockname()
+
+        app = create_app(
+            GatewaySettings(
+                auth_required=False,
+                postgres_host=host,
+                postgres_port=port,
+                kafka_bootstrap_servers=f"{host}:{port}",
+            )
+        )
+        app.state.providers = ProviderRegistry([_Broken("x")])
+        app.state.upstream_probe = _probe(_Broken("x"))
+        await app.state.upstream_probe.probe_once()
+
+        with TestClient(app) as client:
+            response = client.get("/readyz")
 
     assert response.status_code == 200, "an upstream outage must not evict a serving instance"
     body = response.json()

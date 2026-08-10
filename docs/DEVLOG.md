@@ -211,6 +211,37 @@ corporate network may block used to produce a bare non-zero exit, after which co
 
 Re-run from the same empty state: ten served, one refused by the injection filter.
 
+**CI failed on two tests that pass everywhere this project has ever been written**, and both were
+the same defect wearing different clothes: _a unit test that reads the developer's machine is a
+test whose green is about that machine._
+
+`BaseAiraSettings` loads `.env` from the working directory, which is right for `make run-gateway`
+and wrong for the hermetic suite — so the tests read whatever `.env` a developer happened to have.
+With a Google key in it the provider registry carries a Gemini upstream, and
+`test_a_declaration_reaches_the_model_list` had _other_ models to assert were undeclared; without
+one the mock serves exactly one model and the assertion had nothing to stand on. And
+`test_an_unreachable_upstream_degrades_rather_than_failing_readiness` calls `/readyz`, which makes
+**real TCP checks** against Postgres and Kafka: it passed on any machine with the stack running.
+
+A root `conftest.py` disables the dotenv and clears `AIRA_*`/`VAULT_*` for the session. The two
+tests then say what they need themselves: one registers a second mock provider so there _is_ an
+undeclared model, the other opens a socket and points Postgres and Kafka at it — the probe stays
+real, and only the dependency the test is not about is held up by construction. Stubbing
+`check_tcp` was the other option and the worse one. Reproduced locally by stopping the stack, which
+is the whole point: the suite reports on the code now.
+
+**The showcase advertised a console it had never waited for.** It waited on the gateway alone and
+then printed `SPA http://localhost:4200` — so on a machine where the frontend needed a few seconds
+longer, the one URL the walkthrough starts at answered nothing. Two ideas of "ready" in one
+repository, and this used the weaker one; it calls `wait-healthy` now, which checks the console,
+both APIs and Keycloak, and is what CI uses. The output also says which of the four ports have a
+user interface and which do not — somebody looking for the console had found Django's 404 on 8002.
+
+Frontend branch coverage was one branch under its gate, all of it in the new `saveCapabilities`:
+switching caching **off** now asserts that the banner does not claim a saving, the lifetime is
+named in words rather than as `5m`, an unchanged form sends nothing, and a response that omits the
+fields reads as off — absence of information is not permission, one plane over.
+
 **The two build systems ran at different levels, and that was not cosmetic.** Both Python images
 build from the repository root; the frontend built from `management/frontend`. **Docker reads
 `.dockerignore` only from the context root**, so the repository's own ignore file — which excludes

@@ -51,11 +51,11 @@ up-full: env ## Start EVERYTHING in containers (infra + gateway, management, con
 showcase: env ## Start the full demo: stack, local model, seeded roles/budgets, and real traffic
 	@echo "==> starting the stack (this pulls a model on the first run and takes a few minutes)"
 	$(COMPOSE_FULL) --profile demo up -d --build
-	@echo "==> waiting for the gateway to be ready"
-	@for i in $$(seq 1 60); do \
-		curl -fsS http://localhost:8001/readyz >/dev/null 2>&1 && break; \
-		sleep 2; \
-	done
+	# `wait-healthy`, not a second loop of its own. This waited on the **gateway** alone and then
+	# printed "SPA http://localhost:4200" — so on a machine where the frontend took a few seconds
+	# longer, the one URL the walkthrough starts at answered nothing. Two ideas of "ready", and the
+	# weaker one was the one this target used.
+	@$(MAKE) --no-print-directory wait-healthy
 	@echo "==> giving the read model a moment to catch up with the seeded config"
 	@sleep 6
 	@echo "==> clearing what earlier runs consumed, so this run tells its own story"
@@ -66,8 +66,13 @@ showcase: env ## Start the full demo: stack, local model, seeded roles/budgets, 
 	# printed the login table over a demo with nothing in it.
 	uv run python tools/demo_traffic.py
 	@echo ""
-	@echo "  SPA          http://localhost:4200"
-	@echo "  Keycloak     http://localhost:8080  (realm: aira)"
+	@echo "  Start here:"
+	@echo "    Console     http://localhost:4200   the SPA — everything below is reached from it"
+	@echo "    Keycloak    http://localhost:8080   realm 'aira', where the group memberships live"
+	@echo ""
+	@echo "  Serving, with no user interface of their own:"
+	@echo "    Gateway     http://localhost:8001   the API that models are called through"
+	@echo "    Management  http://localhost:8002   the control-plane API (/api/v1/...)"
 	@echo ""
 	@echo "  Log in as any of these — password 'demo-password' — to see the same system"
 	@echo "  from a different seat:"

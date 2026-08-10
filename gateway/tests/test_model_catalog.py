@@ -303,8 +303,19 @@ async def test_a_payload_that_carries_a_null_clears_the_declaration() -> None:
 
 async def test_a_declaration_reaches_the_model_list() -> None:
     """FR-8's payoff: a client can discover what a model may be asked to do, and see when nobody
-    has said."""
+    has said.
+
+    The undeclared model is **put there by this test**. It used to be whatever else the registry
+    happened to serve, which on a developer's machine meant a Gemini upstream conjured out of a
+    `.env` nobody had read — so the assertion held everywhere the project was written and had
+    nothing to stand on in CI, where the mock serves exactly one model. A test that needs two
+    models says so.
+    """
+    from aira_gateway.upstreams.base import ProviderRegistry
+    from aira_gateway.upstreams.mock import MockProvider
+
     app = _app()
+    app.state.providers = ProviderRegistry([MockProvider(), MockProvider("mock-undeclared")])
     with TestClient(app) as client:
         await _declare(app, "mock-1", capabilities=["generate", "thinking"], max_output_tokens=4096)
         listed = {
@@ -320,4 +331,5 @@ async def test_a_declaration_reaches_the_model_list() -> None:
     # Every other model the registry serves is undeclared, and says so — surfaced the same way
     # an unpriced one is, because an undeclared model quietly does less than the list suggests.
     others = [m for name, m in listed.items() if name != "mock-1"]
-    assert others and all(m["airaDeclared"] is False for m in others)
+    assert others, "the registry serves nothing but the declared model, so nothing is proved"
+    assert all(m["airaDeclared"] is False for m in others)

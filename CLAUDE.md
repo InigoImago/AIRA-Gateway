@@ -1254,6 +1254,18 @@ decimal strings. The target reported success over it because the traffic script 
 5xx — **nothing served is a failure now**, and the Makefile no longer swallows its exit code. The
 model pull gained three attempts and an explanation (a single failed download used to surface as
 compose blaming `management-seed`, a service that never ran).
+**CI then failed on two tests that pass everywhere this project has been written**, one defect in
+two costumes: **a unit test that reads the developer's machine is a test whose green is about that
+machine.** `BaseAiraSettings` loads `.env` from the working directory — right for `make
+run-gateway`, wrong for the hermetic suite — so a Google key in it put a Gemini upstream in the
+registry and gave one test the *other* models it asserted were undeclared; and `/readyz` makes
+**real TCP checks**, so a readiness test passed on any machine with the stack running. A root
+`conftest.py` disables the dotenv and clears `AIRA_*`/`VAULT_*`; the two tests then say what they
+need — one registers a second mock provider, the other opens a socket and points Postgres and Kafka
+at it (the probe stays real; stubbing `check_tcp` was the worse option). **Reproduced by stopping
+the stack.** Also: the showcase **advertised a console it had never waited for** (it waited on the
+gateway alone, then printed `SPA http://localhost:4200`) — it calls `wait-healthy` now, the same
+check CI uses, and its output says which ports have a user interface and which do not.
 **The two build systems also ran at different levels, and that was not cosmetic**: both Python
 images build from the repository root, the frontend built from `management/frontend`, and
 **Docker reads `.dockerignore` only from the context root** — so the repo's ignore file never

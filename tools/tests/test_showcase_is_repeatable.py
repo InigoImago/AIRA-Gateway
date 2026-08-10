@@ -131,3 +131,32 @@ def test_the_reset_names_the_use_cases_it_may_clear() -> None:
     assert "DEMO_SLUGS" in source
     assert "DELETE FROM budget_usage WHERE " in source
     assert "ANY(:slugs)" in source, "the delete is not bounded by the named use cases"
+
+
+def test_the_showcase_waits_for_everything_it_then_points_at() -> None:
+    """It printed `SPA http://localhost:4200` after waiting for the **gateway** alone.
+
+    On a machine where the frontend needed a few seconds longer, the one URL the whole walkthrough
+    starts at answered nothing — and the target had already declared itself finished. Two ideas of
+    "ready" in one repository, and this used the weaker one; `wait-healthy` checks the console, both
+    APIs and Keycloak, and is what CI uses.
+    """
+    body = MAKEFILE.read_text()
+    showcase = body[body.index("\nshowcase:") : body.index("\nshowcase-traffic:")]
+
+    assert "wait-healthy" in showcase, (
+        "the showcase waits for something narrower than what it goes on to advertise"
+    )
+    assert "curl -fsS http://localhost:8001/readyz" not in showcase, (
+        "a second, weaker readiness loop is back"
+    )
+
+
+def test_wait_healthy_covers_the_console_and_not_only_the_apis() -> None:
+    """The console is the only one of the four with a user interface, so it is the one whose
+    absence a reader notices — and the easiest to leave out of a check written from the API side."""
+    body = MAKEFILE.read_text()
+    target = body[body.index("\nwait-healthy:") : body.index("\ntest-e2e:")]
+
+    for port in ("4200", "8001", "8002", "8080"):
+        assert port in target, f"nothing waits for the service on {port}"
