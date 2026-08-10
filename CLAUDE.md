@@ -1220,7 +1220,24 @@ is likeliest to believe it. **And `make showcase` then tried to *pull* `aira-gat
 on a machine that had never built them** — everywhere else the tag was already in the local store —
 so it worked for everyone who had run the stack and broke for exactly the person the target is for.
 Every service names its build now, and a test parses both compose files and refuses one that names
-a locally-built image without saying how to build it.
+a locally-built image without saying how to build it. **Running the target to the end then found
+two more of the same family** — *it works on a machine that has already done the thing by hand*.
+The dev Vault runs `server -dev` and forgets on every restart, so after a `down` the path
+`secret/aira` is gone, `load_secrets()` fails closed (correctly) and **every container refuses to
+boot** — the showcase silently required somebody to have run `make vault-init` *after* the current
+Vault container started, which is a trap laid by our own documentation. Provisioned by a `vault-init`
+service in the demo profile now, with the migrations waiting on it, because ordering belongs in the
+file that owns ordering rather than in one of four entry points; two mistakes while writing it are
+the keepers — writing all three known secrets unconditionally made the **empty string win over the
+environment** (Vault ranks above it: *absent and empty are different answers*, `no password
+supplied`), and writing none failed with `Must supply data`, because **an empty write is not a
+write** and the path still did not exist. And the demo **spent its own budgets**: they are
+calibrated so a handful of requests fills each bar, so a second run answered 429 to six of ten
+requests — including the injection case whose point is a *pipeline* refusal. `make showcase` now
+clears what earlier runs **consumed** (Postgres *and* the shared Redis counters — clearing one
+leaves the other refusing for a period nobody can see) and nothing the demo **is**; `make
+showcase-traffic` deliberately does not, since filling the bars until a limit is reached is what
+that target is for. Two consecutive runs now produce the same thing: ten served, one refused.
 
 Next candidates: **`FRD-114`** (model metadata — now also carries publisher + default output cap,
 prerequisite for 110–113 and 119), **`FRD-110`** (documents/images — the widest gap),

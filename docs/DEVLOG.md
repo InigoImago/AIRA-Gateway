@@ -156,7 +156,34 @@ Prompt caching stays **off** on that use case and the description says why: this
 cached tokens, so switching it on would show a control doing nothing — in the one place a reader is
 most likely to believe it.
 
-**And then `make showcase` tried to _pull_ `aira-gateway` and `aira-management`.** Four services
+**Then `make showcase` was run end to end, from a pruned build cache and a stopped stack, and
+failed twice more.** Both failures had the same shape as the pull below: _it works on a machine
+that has already done the thing by hand._
+
+The dev Vault runs `server -dev` and keeps everything in memory, so `docker compose down` loses
+`secret/aira`. `load_secrets()` fails closed — correctly — and every application container refuses
+to boot. So the showcase depended on somebody having run `make vault-init` **after the current
+Vault container started**: follow our own documentation, bring the stack down, and the one command
+that must always work stops working. A `vault-init` service in the demo profile provisions it now,
+with the migrations waiting on it, because ordering belongs in the file that owns ordering rather
+than in one of four entry points. Two mistakes while writing it, both worth keeping: it wrote all
+three known secrets unconditionally, and **Vault ranks above the environment**, so the empty string
+won and the stack came up with `no password supplied` — _absent and empty are different answers_;
+then, writing nothing, `vault kv put` failed with `Must supply data`, because an empty write is not
+a write and the path still did not exist.
+
+And the demo had spent its own budgets. They are calibrated so a handful of requests moves each bar
+into the middle of its range, so the second run of a day answered **429 to six of ten requests** —
+including the prompt-injection case, whose whole point is to be refused by the _pipeline_. Still
+true, and about yesterday. `make showcase` now clears what earlier runs **consumed** (Postgres and
+the shared Redis counters, both — clearing one leaves the other refusing for a period nobody can
+see) and nothing the demo **is**: configuration, keys and the request log stay, since a spend report
+reading zero after every run is the opposite defect. `make showcase-traffic` deliberately does not
+reset — filling the bars until a limit is reached is what that target is for. Two consecutive runs
+now produce the same thing: ten served, one refused by the filter.
+
+**And before either of those, `make showcase` tried to _pull_ `aira-gateway` and
+`aira-management`.** Four services
 carried `image:` with no `build:`, because they run a second process out of an image a sibling
 builds — the consumer, the relay, the retention job, the seed. Compose pulls anything it is not
 told how to build, and those images exist on no registry. It failed in the way that is hardest to

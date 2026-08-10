@@ -26,13 +26,19 @@ COPY pyproject.toml uv.lock ./
 COPY libs/pyproject.toml libs/
 COPY gateway/pyproject.toml gateway/
 COPY management/backend/pyproject.toml management/backend/
-RUN --mount=type=cache,target=/root/.cache/uv \
+# `sharing=locked`: **a cache mount is shared by default**, and compose builds this image once per
+# service that names it — four, since every service running a second process out of it now declares
+# its build. Four `uv sync` processes writing one cache directory at the same time race, and the
+# failure is a bare "process did not complete successfully" on a machine whose cache is cold enough
+# for there to be real writing to race over. Locked serialises them; the wait is a few seconds and
+# only on a cold cache.
+RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     uv sync --frozen --no-dev --no-install-workspace --package aira-management
 
 COPY libs/ libs/
 COPY management/backend/ management/backend/
 
-RUN --mount=type=cache,target=/root/.cache/uv \
+RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     uv sync --frozen --no-dev --no-editable --package aira-management
 
 # ---- runtime -------------------------------------------------------------------------------

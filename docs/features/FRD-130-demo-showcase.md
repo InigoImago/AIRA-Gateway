@@ -115,6 +115,38 @@ outside Django — so the salt exists twice, and a test compares the derived key
 **hash**. A drifted copy would produce a config that looks right, an assistant that starts, and a
 401 the reader blames on the gateway.
 
+## 4b. Two things that made it work only the first time (2026-08-10)
+
+Both found by running `make showcase` after a `docker compose down`, which is what a colleague
+does, and neither visible by reading the target.
+
+**The dev Vault forgets.** It runs `server -dev`, which keeps everything in memory, so recreating
+the container loses `secret/aira`. `load_secrets()` then fails closed — correctly (`FRD-116`: a
+store that answers "no such path" is a permission problem, not an outage to shrug off) — and every
+application container refuses to boot. The showcase therefore depended on somebody having run
+`make vault-init` _after_ the current Vault container started: **follow our own documentation, then
+bring the stack down, and the one command that must always work stops working.** It is a `vault-init`
+service in the demo profile now, with the two migration jobs waiting on it, because ordering belongs
+in the file that owns ordering rather than in one of four entry points.
+
+Two mistakes while building it, both instructive. It first wrote all three known secrets
+unconditionally — and Vault **ranks above the environment**, so an empty value does not mean
+"nothing here", it means "the value is the empty string" and it silently wins. The stack came up
+with `no password supplied`. _Absent and empty are different answers_, the same rule as "unpriced is
+not free". Then, with nothing set to write, `vault kv put` failed with `Must supply data`: an empty
+write is not a write, so the path still did not exist. A stack with no secrets configured now gets a
+note on the path saying exactly that, in the one place somebody looking at an empty Vault would go.
+
+**The demo spent its own budgets.** They are calibrated so a handful of requests moves each bar
+into the middle of its range, so the second run of a day found them spent: **six of ten requests
+answered 429**, including the prompt-injection case, whose entire point is to be refused by the
+_pipeline_. Still true, and about yesterday. `make showcase` now clears what earlier runs
+**consumed** — `budget_usage` in Postgres and the shared Redis counters, both, since clearing one
+leaves the other refusing for a period nobody can see — and nothing that the demo **is**:
+configuration, keys and the request log are untouched, because a spend report reading zero after
+every showcase run is the opposite defect. `make showcase-traffic` deliberately does _not_ reset:
+filling the bars until a limit is reached is exactly what that target is for.
+
 ## 5. Testing
 
 `management/backend/tests/test_showcase_seed.py`: idempotence (a second run creates nothing new),

@@ -58,6 +58,8 @@ showcase: env ## Start the full demo: stack, local model, seeded roles/budgets, 
 	done
 	@echo "==> giving the read model a moment to catch up with the seeded config"
 	@sleep 6
+	@echo "==> clearing what earlier runs consumed, so this run tells its own story"
+	@-uv run python tools/demo_reset_usage.py
 	@echo "==> driving real traffic so the reports are not empty"
 	-uv run python tools/demo_traffic.py
 	@echo ""
@@ -77,6 +79,8 @@ showcase: env ## Start the full demo: stack, local model, seeded roles/budgets, 
 	@uv run python tools/showcase_agent.py
 	@echo ""
 
+# Deliberately no reset here: this is the target for watching the bars fill and a limit be
+# reached, which is the thing `showcase` resets so that *its* run is the one you see.
 showcase-traffic: ## Drive more demo traffic (moves the budget bars)
 	uv run python tools/demo_traffic.py
 

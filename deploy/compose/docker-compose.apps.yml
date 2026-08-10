@@ -12,6 +12,76 @@
 services:
   # ---- one-shot setup ----------------------------------------------------------------------
 
+  # Provision the dev Vault, every start (`FRD-116`).
+  #
+  # The stack's Vault runs `server -dev`, which keeps everything **in memory**: recreate the
+  # container and `secret/aira` is gone. `load_secrets()` then fails closed — correctly, since a
+  # secret store that answers "no such path" is not an outage to shrug off — and every application
+  # container refuses to boot with a message about a Vault path.
+  #
+  # That made `make showcase` depend on somebody having run `make vault-init` *after* the current
+  # Vault container started, which is a trap laid by our own documentation: run the documented
+  # command, then `docker compose down`, and the one command that must always work stops working.
+  # Ordering belongs in the file that owns the ordering, so it is a service with a condition on it
+  # rather than a step in a Makefile target that three other entry points do not run.
+  #
+  # **Demo profile only.** A real Vault is provisioned by whoever owns it, with a policy and an
+  # AppRole; this repairs a development server that forgets by design. It writes only the
+  # `AIRA_*` values this compose file already has, and writing none of them is fine — the path is
+  # what the readers need to exist.
+  vault-init:
+    image: hashicorp/vault:1.18
+    container_name: aira-vault-init
+    profiles: ["demo"]
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        if [ -z "$$VAULT_ADDR" ]; then
+          echo "no VAULT_ADDR — secrets come from the environment, nothing to provision"
+          exit 0
+        fi
+        # **Only variables that are actually set.** Vault ranks *above* the environment
+        # (`FRD-116`), so writing a key with an empty value does not mean "nothing here" — it
+        # means "the value is the empty string", and it silently wins over the real one. The
+        # first version of this service wrote all three unconditionally and took the stack down
+        # with `no password supplied`, which is the same mistake as `unpriced is not free`, one
+        # layer down: absent and empty are different answers.
+        set --
+        for name in AIRA_GOOGLE_API_KEY AIRA_POSTGRES_PASSWORD AIRA_SECRET_KEY \
+                    AIRA_VERTEX_SERVICE_ACCOUNT_JSON AIRA_AZURE_API_KEY AIRA_OPENAI_API_KEY; do
+          value=$$(eval echo \$$$$name)
+          [ -n "$$value" ] && set -- "$$@" "$$name=$$value"
+        done
+        # `vault kv put` with no pairs is an error, not an empty write — so a stack with no
+        # secrets configured still needs *something* on the path, because what the readers require
+        # is the path's existence. The note says why it is otherwise empty, in the one place
+        # somebody looking at an empty Vault would go.
+        if [ "$$#" -eq 0 ]; then
+          set -- "note=provisioned by compose; no AIRA_* secret is set in this stack's .env"
+        fi
+        # kv-v2 is already mounted at secret/ by the dev server, so only the path is written.
+        vault kv put "$${VAULT_MOUNT:-secret}/$${VAULT_PATH:-aira}" "$$@" >/dev/null
+        echo "provisioned $${VAULT_MOUNT:-secret}/$${VAULT_PATH:-aira}"
+    environment:
+      # The CLI talks to the server; the app containers use the same address from their own env.
+      VAULT_ADDR: ${VAULT_ADDR:-}
+      VAULT_TOKEN: ${VAULT_TOKEN:-${VAULT_DEV_ROOT_TOKEN_ID:-root}}
+      VAULT_MOUNT: ${VAULT_MOUNT:-secret}
+      VAULT_PATH: ${VAULT_PATH:-aira}
+      AIRA_GOOGLE_API_KEY: ${AIRA_GOOGLE_API_KEY:-}
+      AIRA_POSTGRES_PASSWORD: ${AIRA_POSTGRES_PASSWORD:-}
+      AIRA_SECRET_KEY: ${AIRA_SECRET_KEY:-}
+      AIRA_VERTEX_SERVICE_ACCOUNT_JSON: ${AIRA_VERTEX_SERVICE_ACCOUNT_JSON:-}
+      AIRA_AZURE_API_KEY: ${AIRA_AZURE_API_KEY:-}
+      AIRA_OPENAI_API_KEY: ${AIRA_OPENAI_API_KEY:-}
+    depends_on:
+      vault:
+        condition: service_healthy
+    networks: [aira]
+    restart: "no"
+
+
   gateway-migrate:
     image: aira-gateway:${AIRA_IMAGE_TAG:-dev}
     # **Every service that names this image declares how to build it**, including the ones that
@@ -109,6 +179,8 @@ services:
       AIRA_OTEL_ENDPOINT: http://otel-collector:4318
       AIRA_LOG_JSON: "true"
     depends_on:
+      vault-init:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
     networks: [aira]
@@ -169,6 +241,8 @@ services:
       AIRA_OTEL_ENDPOINT: http://otel-collector:4318
       AIRA_LOG_JSON: "true"
     depends_on:
+      vault-init:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
     networks: [aira]
