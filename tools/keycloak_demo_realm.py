@@ -134,7 +134,37 @@ def _missing(token: str, realm: dict) -> list[str]:
     )
 
 
+def report() -> int:
+    """Say what is actually in the realm, in the showcase's own output.
+
+    Written because somebody opened the Keycloak admin console, saw **one** user called `admin`
+    and **no** groups, and concluded the seeding had not worked. It had: the console signs you in
+    to the `master` realm, whose only account is the bootstrap admin Keycloak itself labels
+    *temporary*, and the demo lives in the `aira` realm one realm-switcher away.
+
+    Two accounts named `admin` in two realms, and the showcase named neither. So it prints both,
+    and prints the counts it just read rather than asserting that seeding worked — a demo that
+    says "5 accounts created" and shows you an empty console has taught you to distrust it.
+    """
+    realm = json.loads(open(REALM_FILE).read())["realm"]  # noqa: SIM115, PTH123
+    token = _token()
+    users = _request("GET", f"/admin/realms/{realm}/users?max=200", token) or []
+    groups = _request("GET", f"/admin/realms/{realm}/groups", token) or []
+    names = sorted(u["username"] for u in users)  # type: ignore[index]
+    print(f"    Realm '{realm}': {len(names)} accounts ({', '.join(names)})")
+    print(f"    Group trees: {', '.join(sorted(g['path'] for g in groups))}")  # type: ignore[index]
+    # The console *always* authenticates against `master` — that is where the Keycloak admin
+    # lives — and the realm being managed is a fragment in the URL. Landing on master and finding
+    # one account and no groups reads as "nothing was seeded", which is why the link above goes
+    # straight to this realm rather than to the console's front door.
+    print("    The admin console always signs in to 'master'; the realm it manages is the #/... in")
+    print("    the URL above. Landing on master shows one account and no groups — by design.")
+    return 0
+
+
 def main() -> int:
+    if "--report" in sys.argv:
+        return report()
     if ENVIRONMENT not in DEMO_ENVIRONMENTS:
         print(f"environment '{ENVIRONMENT}' — this realm is somebody else's to manage")
         return 0

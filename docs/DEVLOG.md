@@ -244,6 +244,25 @@ Three defects while building it, and the third is the one worth carrying:
    deleting a user, letting the service repair the realm, and logging in through the real code
    flow with nothing cleaned up in between.
 
+**And the demo pointed at Keycloak without saying which realm.** The admin console _always_
+authenticates against `master` — that is where the Keycloak admin lives — and the realm it manages
+is a fragment in the URL. So somebody opened it, saw **one** account called `admin` and **no**
+groups, and concluded the seeding had failed. It had not: `aira` had six accounts and three group
+trees one realm-switcher away, and two different accounts are called `admin` in two different
+realms. The showcase now links straight to `#/aira/users`, names both accounts, and **prints what
+it just read from the running realm** rather than asserting that seeding worked — a demo that says
+"5 accounts created" over an empty console has taught you to distrust it.
+
+Two things the same output was quietly getting wrong: the login table still said `ucadmin`
+administers "two of the three use cases" after a fourth was added, and that `ucuser` is in
+`kundenservice` when it is now also in `coding-assistant`. Nothing fails when that drifts — the
+reader finds the console disagreeing with the instructions and believes the instructions. A test
+compares the printed table against the seed's memberships in both directions. And the Makefile
+comments explaining all of this were **being printed to the user**: a recipe line starting with `#`
+is still a recipe line, and eleven of them had landed in the middle of the demo's own output.
+
+Measured while there: `make showcase` takes **66 seconds** on a warm machine.
+
 **CI failed on two tests that pass everywhere this project has ever been written**, and both were
 the same defect wearing different clothes: _a unit test that reads the developer's machine is a
 test whose green is about that machine._

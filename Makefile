@@ -51,37 +51,44 @@ up-full: env ## Start EVERYTHING in containers (infra + gateway, management, con
 showcase: env ## Start the full demo: stack, local model, seeded roles/budgets, and real traffic
 	@echo "==> starting the stack (this pulls a model on the first run and takes a few minutes)"
 	$(COMPOSE_FULL) --profile demo up -d --build
-	# `wait-healthy`, not a second loop of its own. This waited on the **gateway** alone and then
-	# printed "SPA http://localhost:4200" — so on a machine where the frontend took a few seconds
-	# longer, the one URL the walkthrough starts at answered nothing. Two ideas of "ready", and the
-	# weaker one was the one this target used.
+	@# `wait-healthy`, not a second loop of its own. This waited on the **gateway** alone and then
+	@# printed "SPA http://localhost:4200" — so on a machine where the frontend took a few seconds
+	@# longer, the one URL the walkthrough starts at answered nothing. Two ideas of "ready", and the
+	@# weaker one was the one this target used.
 	@$(MAKE) --no-print-directory wait-healthy
 	@echo "==> giving the read model a moment to catch up with the seeded config"
 	@sleep 6
 	@echo "==> clearing what earlier runs consumed, so this run tells its own story"
 	@-uv run python tools/demo_reset_usage.py
 	@echo "==> driving real traffic so the reports are not empty"
-	# No leading `-`: the traffic decides whether this showcase is worth showing. It swallowed a
-	# run in which all ten requests were refused and the target still reported success, then
-	# printed the login table over a demo with nothing in it.
+	@# No leading `-`: the traffic decides whether this showcase is worth showing. It swallowed a
+	@# run in which all ten requests were refused and the target still reported success, then
+	@# printed the login table over a demo with nothing in it.
 	uv run python tools/demo_traffic.py
 	@echo ""
 	@echo "  Start here:"
 	@echo "    Console     http://localhost:4200   the SPA — everything below is reached from it"
-	@echo "    Keycloak    http://localhost:8080   realm 'aira', where the group memberships live"
+	@echo "    Keycloak    http://localhost:8080/admin/master/console/#/aira/users   admin / admin"
+	@# Read from the running realm, not asserted. Somebody opened the admin console, saw one user
+	@# called `admin` and no groups, and concluded the seed had failed — it had not: that console
+	@# signs you in to the *master* realm and the demo lives in `aira`. Two accounts named `admin`
+	@# in two realms, and this block used to name neither.
+	@-KEYCLOAK_URL=http://localhost:$${AIRA_KEYCLOAK_PORT:-8080} \
+		KEYCLOAK_REALM_FILE=deploy/compose/keycloak/realms/aira-realm.json \
+		python3 tools/keycloak_demo_realm.py --report
 	@echo ""
 	@echo "  Serving, with no user interface of their own:"
 	@echo "    Gateway     http://localhost:8001   the API that models are called through"
 	@echo "    Management  http://localhost:8002   the control-plane API (/api/v1/...)"
 	@echo ""
-	@echo "  Log in as any of these — password 'demo-password' — to see the same system"
-	@echo "  from a different seat:"
+	@echo "  Log in **to the console** as any of these — password 'demo-password'. These are"
+	@echo "  accounts in the 'aira' realm, and are not the Keycloak admin above:"
 	@echo ""
 	@echo "    admin      global administrator   every use case, and the only role that may price a model"
 	@echo "    itgov      IT Steuerung           every use case and the whole spend report, read-only"
 	@echo "    itsec      IT Security            the governance view"
-	@echo "    ucadmin    use-case administrator two of the three use cases — 'personalwesen' is invisible"
-	@echo "    ucuser     use-case user          member of 'kundenservice', read-only"
+	@echo "    ucadmin    use-case administrator three of the four — 'personalwesen' is invisible"
+	@echo "    ucuser     use-case user          in 'kundenservice' and 'coding-assistant', read-only"
 	@echo ""
 	@echo "==> a coding assistant, governed end to end"
 	@uv run python tools/showcase_agent.py

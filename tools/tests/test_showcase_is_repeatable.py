@@ -160,3 +160,34 @@ def test_wait_healthy_covers_the_console_and_not_only_the_apis() -> None:
 
     for port in ("4200", "8001", "8002", "8080"):
         assert port in target, f"nothing waits for the service on {port}"
+
+
+def test_the_printed_walkthrough_names_the_accounts_the_seed_creates() -> None:
+    """The login table is the first thing anybody reads, and it goes stale silently.
+
+    It still said `ucadmin` administers "two of the three use cases" after a fourth was added, and
+    that `ucuser` is a member of `kundenservice` when it is now also in `coding-assistant`. Nothing
+    fails when that drifts — a reader simply finds the console disagreeing with the instructions
+    and trusts the instructions, which is the worse of the two.
+    """
+    from aira_management.apps.seed.contributions.showcase import MEMBERSHIPS, _use_cases
+
+    body = MAKEFILE.read_text()
+    block = body[body.index("\nshowcase:") : body.index("\nshowcase-traffic:")]
+
+    seeded = {slug for slug, _ in ((s, None) for s in (u["slug"] for u in _use_cases()))}
+    for username in {name for members in MEMBERSHIPS.values() for name, _ in members}:
+        assert username in block, f"the seed creates {username} and the walkthrough never says so"
+
+    # Whatever use cases the table names for `ucuser`, it must actually be in — and it must not
+    # leave one out. Both directions, because the drift went the second way.
+    named = {slug for slug in seeded if f"'{slug}'" in block}
+    belongs = {
+        slug for slug, members in MEMBERSHIPS.items() if any(n == "ucuser" for n, _ in members)
+    }
+    invisible = {
+        slug for slug, members in MEMBERSHIPS.items() if not any(n == "ucadmin" for n, _ in members)
+    }
+
+    assert belongs <= named, f"{sorted(belongs - named)}: ucuser is in it and the table omits it"
+    assert invisible <= named, f"{sorted(invisible - named)}: invisible to ucadmin and unmentioned"
