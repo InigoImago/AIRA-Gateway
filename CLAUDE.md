@@ -1242,6 +1242,18 @@ clears what earlier runs **consumed** (Postgres *and* the shared Redis counters 
 leaves the other refusing for a period nobody can see) and nothing the demo **is**; `make
 showcase-traffic` deliberately does not, since filling the bars until a limit is reached is what
 that target is for. Two consecutive runs now produce the same thing: ten served, one refused.
+**On a machine that had never run it** (`.env` deleted, DB and Kafka volumes removed) it **reported
+success while serving nothing** — ten requests, ten refusals, *"not in the model catalog"*: the seed
+**wrote the catalog and never announced it** (`local_models` created the rows and emitted no event;
+only the viewset emitted, so a console-declared model reached the gateway and a seeded one did not).
+Invisible until `FRD-307` made a catalogued, approved model the *only* servable kind — from then on
+an unannounced catalog refuses **everything**. Fourth instance of *two correct halves and no wire*,
+after `record_to_outbox`, the missing topics and `payload_size`; it emits the **viewset's**
+`_payload`, since a second hand-written payload is a second place to forget that prices travel as
+decimal strings. The target reported success over it because the traffic script failed only on a
+5xx — **nothing served is a failure now**, and the Makefile no longer swallows its exit code. The
+model pull gained three attempts and an explanation (a single failed download used to surface as
+compose blaming `management-seed`, a service that never ran).
 **The two build systems also ran at different levels, and that was not cosmetic**: both Python
 images build from the repository root, the frontend built from `management/frontend`, and
 **Docker reads `.dockerignore` only from the context root** — so the repo's ignore file never

@@ -117,7 +117,25 @@ async def main() -> int:
     print(f"\nserved {served}, refused {refused}, failed {failed}")
     if failed:
         print("a request failed with a 5xx — the demo data is incomplete", file=sys.stderr)
-    return 1 if failed else 0
+        return 1
+
+    # **Nothing served is a failure, even though every individual request behaved.** A fresh
+    # machine produced ten refusals and a report of success: the gateway answered each one
+    # correctly with "not in the model catalog" (`FRD-307`), and the walkthrough that follows had
+    # no figures in it at all. A demo whose screens all read zero demonstrates the screens and
+    # none of the governance — which is the sentence at the top of this file, so the check belongs
+    # here rather than in the reader's judgement.
+    if not served:
+        print(
+            "\nnothing was served, so every screen in the walkthrough will be empty.\n"
+            "The usual cause is an empty model catalog: the local model has to be pulled *and*\n"
+            "catalogued, and only a catalogued, approved model may be used. Check\n"
+            "  docker logs aira-ollama-pull      (was the model fetched?)\n"
+            "  docker logs aira-management-seed  (did local_models declare anything?)",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
 
 
 if __name__ == "__main__":

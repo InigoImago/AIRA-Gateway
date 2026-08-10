@@ -20,8 +20,12 @@ import os
 from decimal import Decimal
 from typing import Any
 
+from django.db import transaction
+
 from aira_management.apps.catalog.models import Model
+from aira_management.apps.catalog.views import _payload
 from aira_management.apps.seed.registry import SeedResult, register
+from aira_management.apps.usecases.events import emit
 
 #: The two models the `verify` profile pulls. Small on purpose — a 0.6b model answers badly, which
 #: is irrelevant when what is under test is the gateway, and its size is what keeps a CI job from
@@ -165,12 +169,29 @@ def seed_local_models(fresh: bool) -> SeedResult:
         return {"local_models": 0}
 
     if fresh:
-        Model.objects.filter(platform="ollama").delete()
+        for stale in Model.objects.filter(platform="ollama"):
+            name = stale.name
+            with transaction.atomic():
+                stale.delete()
+                emit("model.deleted", {"name": name})
 
     created = 0
     for declaration in _declarations():
-        _, was_created = Model.objects.update_or_create(
-            name=declaration["name"], defaults=declaration
-        )
+        with transaction.atomic():
+            model, was_created = Model.objects.update_or_create(
+                name=declaration["name"], defaults=declaration
+            )
+            # **Announced, not merely written.** This contribution wrote the rows and emitted
+            # nothing, so Management's catalog filled up and the gateway's read-model stayed
+            # empty — and since `FRD-307` only a catalogued, approved model may be served. On a
+            # machine that had never run the gateway-side seed by hand, `make showcase` therefore
+            # drove ten requests and had all ten refused with "not in the model catalog", while
+            # reporting success. Nothing failed anywhere: two correct halves and no wire between
+            # them, the fourth instance of that shape in this repository.
+            #
+            # `_payload` is the viewset's, deliberately. A second hand-written payload here is a
+            # second place to forget a field — and prices travel as decimal strings for a reason
+            # that only shows up as costs nobody can reconcile.
+            emit("model.upserted", _payload(model))
         created += int(was_created)
     return {"local_models": created}

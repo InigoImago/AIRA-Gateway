@@ -225,12 +225,38 @@ services:
     container_name: aira-ollama-pull
     profiles: ["verify", "demo"]
     entrypoint: ["/bin/sh", "-c"]
+    # Retried, and loud about what a final failure means.
+    #
+    # A model pull is a large download from a registry that a corporate network may not allow and
+    # that fails transiently on its own. One `ollama pull` with `set -e` turned any of that into a
+    # bare non-zero exit — and because the seed waits on this service, compose then reported
+    # `service "management-seed" didn't complete successfully`, naming a service that never ran
+    # and saying nothing about the download that actually failed.
+    #
+    # Failing is still right: `FRD-130` records why a model that was not pulled must not be
+    # catalogued — every request against it would fail, and a catalog entry is a promise. What
+    # changes is that the reason is legible and a flaky minute does not end the demo.
     command:
       - |
         set -e
         for m in ${AIRA_DEMO_CHAT_MODEL:-qwen3:0.6b} ${AIRA_DEMO_EMBED_MODEL:-all-minilm}; do
           echo "pulling $$m"
-          ollama pull "$$m"
+          n=0
+          until ollama pull "$$m"; do
+            n=$$((n + 1))
+            if [ "$$n" -ge 3 ]; then
+              echo ""
+              echo "could not pull '$$m' after 3 attempts."
+              echo "The demo needs a local model: without one there is nothing to serve, and a"
+              echo "catalogued model nobody can reach fails every request made against it."
+              echo "Most likely the registry is unreachable from here — check that"
+              echo "registry.ollama.ai is allowed, or pre-pull the model into the aira_ollama-models"
+              echo "volume and run 'make showcase' again."
+              exit 1
+            fi
+            echo "pull failed, retrying ($$n/3)…"
+            sleep 5
+          done
         done
     environment:
       OLLAMA_HOST: http://ollama:11434

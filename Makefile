@@ -61,7 +61,10 @@ showcase: env ## Start the full demo: stack, local model, seeded roles/budgets, 
 	@echo "==> clearing what earlier runs consumed, so this run tells its own story"
 	@-uv run python tools/demo_reset_usage.py
 	@echo "==> driving real traffic so the reports are not empty"
-	-uv run python tools/demo_traffic.py
+	# No leading `-`: the traffic decides whether this showcase is worth showing. It swallowed a
+	# run in which all ten requests were refused and the target still reported success, then
+	# printed the login table over a demo with nothing in it.
+	uv run python tools/demo_traffic.py
 	@echo ""
 	@echo "  SPA          http://localhost:4200"
 	@echo "  Keycloak     http://localhost:8080  (realm: aira)"

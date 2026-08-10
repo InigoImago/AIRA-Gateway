@@ -147,6 +147,35 @@ configuration, keys and the request log are untouched, because a spend report re
 every showcase run is the opposite defect. `make showcase-traffic` deliberately does _not_ reset:
 filling the bars until a limit is reached is exactly what that target is for.
 
+## 4c. On a machine that had never run it (2026-08-10)
+
+`.env` deleted, database and Kafka volumes removed, `make showcase`. It reported **success** and
+served **nothing**: ten requests, ten refusals, `400 … 'qwen3:0.6b' is not in the model catalog`.
+
+**The seed wrote the catalog and never announced it.** `local_models` created both `Model` rows and
+emitted no event, so Management's catalog filled up and the gateway's read-model stayed empty. Only
+the viewset emitted — a model declared through the console reached the gateway, a model declared by
+the seed did not. Invisible until `FRD-307`, which made a catalogued, approved model the _only_ kind
+that may be served: from then on an unannounced catalog refuses everything. The fourth instance in
+this repository of two correct halves and no wire between them, after `record_to_outbox`, the
+missing Kafka topics, and `payload_size`. It emits `_payload(model)` — **the viewset's**, because a
+second hand-written payload is a second place to forget that prices travel as decimal strings.
+
+**And `make showcase` reported success over it.** The traffic script only failed on a 5xx, and every
+one of those refusals was the gateway behaving correctly. So the target printed its login table over
+a demo whose every screen read zero. Nothing served is now a failure with a message naming the two
+logs worth reading, and the Makefile no longer swallows the traffic script's exit code — the traffic
+is what decides whether this showcase is worth showing.
+
+**The model pull deserved better than `set -e`.** A large download from a registry a corporate
+network may block, failing on one attempt, produced a bare non-zero exit — and because the seed
+waits on it, compose then blamed `management-seed`, a service that never ran. Three attempts now,
+and a final failure says what it means: no local model, nothing to serve, and a catalogued model
+nobody can reach fails every request made against it. Failing is still correct (§4 records why an
+unpulled model must not be catalogued); what changed is that the reason is legible.
+
+Re-run from the same empty state: **ten served, one refused by the injection filter.**
+
 ## 5. Testing
 
 `management/backend/tests/test_showcase_seed.py`: idempotence (a second run creates nothing new),

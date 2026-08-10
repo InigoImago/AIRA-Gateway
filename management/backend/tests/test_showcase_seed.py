@@ -299,3 +299,53 @@ def test_the_handover_offers_only_a_model_the_gateway_will_serve(seeded) -> None
 
     assert list(config["provider"]["aira"]["models"]) == ["qwen3:0.6b"]
     assert config["model"] == "aira/qwen3:0.6b"
+
+
+def test_a_seeded_model_is_announced_and_not_only_written() -> None:
+    """**The catalog has to reach the gateway, or nothing can be served at all.**
+
+    Found on a machine that had never run this stack before: `make showcase` drove ten requests,
+    all ten came back `400 … 'qwen3:0.6b' is not in the model catalog`, and the target reported
+    success. Management's catalog had both models; the gateway's read-model had none, because this
+    contribution wrote the rows and emitted nothing. Only the viewset emitted, so a model declared
+    through the console worked and a model declared by the seed did not.
+
+    `FRD-307` is what turned that from invisible into total: since only a catalogued, approved
+    model may be used, an unannounced catalog refuses every request. The fourth instance in this
+    repository of two correct halves with no wire between them.
+    """
+    import os
+
+    from aira_management.apps.seed.contributions.local_models import seed_local_models
+    from aira_management.apps.usecases import events
+
+    recorded: list[tuple[str, dict]] = []
+    subscriber = events.subscribe(
+        lambda event_type, payload: recorded.append((event_type, payload))
+    )
+    previous = os.environ.get("AIRA_OLLAMA_URL")
+    os.environ["AIRA_OLLAMA_URL"] = "http://ollama:11434"
+    try:
+        seed_local_models(fresh=False)
+    finally:
+        events.unsubscribe(subscriber)
+        if previous is None:
+            os.environ.pop("AIRA_OLLAMA_URL", None)
+        else:
+            os.environ["AIRA_OLLAMA_URL"] = previous
+
+    announced = {
+        payload["name"] for event_type, payload in recorded if event_type == "model.upserted"
+    }
+
+    assert announced, "the seed declared models and told the gateway about none of them"
+    # The payload is the viewset's, so a field added there travels from here too. Asserted on a
+    # field that only exists because somebody remembered it: a price that arrives as a float is a
+    # cost nobody can reconcile.
+    upserts = [payload for event_type, payload in recorded if event_type == "model.upserted"]
+    assert all("input_price_per_million" in payload for payload in upserts)
+    assert all(
+        payload["input_price_per_million"] is None
+        or isinstance(payload["input_price_per_million"], str)
+        for payload in upserts
+    )

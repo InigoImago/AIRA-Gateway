@@ -189,6 +189,28 @@ reading zero after every run is the opposite defect. `make showcase-traffic` del
 reset — filling the bars until a limit is reached is what that target is for. Two consecutive runs
 now produce the same thing: ten served, one refused by the filter.
 
+**Then it was run on a machine that had never seen this project** — `.env` deleted, database and
+Kafka volumes removed — and it **reported success while serving nothing**: ten requests, ten
+refusals, `400 … 'qwen3:0.6b' is not in the model catalog`.
+
+The seed wrote the catalog and never announced it. `local_models` created both `Model` rows and
+emitted no event, so Management's catalog filled up and the gateway's read-model stayed empty —
+only the viewset emitted, so a model declared through the console reached the gateway and a model
+declared by the seed did not. Invisible until `FRD-307` made a catalogued, approved model the only
+kind that may be served; from then on an unannounced catalog refuses **everything**. Fourth
+instance of two correct halves with no wire between them, after `record_to_outbox`, the missing
+Kafka topics and `payload_size`. It emits the **viewset's** `_payload`, because a second
+hand-written payload is a second place to forget that prices travel as decimal strings.
+
+And the target reported success over it, because the traffic script only failed on a 5xx and every
+one of those refusals was the gateway behaving correctly. Nothing served is a failure now, with a
+message naming the two logs worth reading, and the Makefile no longer swallows the script's exit
+code. The model pull got three attempts and an explanation: one failed download from a registry a
+corporate network may block used to produce a bare non-zero exit, after which compose blamed
+`management-seed` — a service that never ran.
+
+Re-run from the same empty state: ten served, one refused by the injection filter.
+
 **The two build systems ran at different levels, and that was not cosmetic.** Both Python images
 build from the repository root; the frontend built from `management/frontend`. **Docker reads
 `.dockerignore` only from the context root**, so the repository's own ignore file — which excludes
