@@ -49,6 +49,41 @@ THINKING_BY_MODEL: dict[str, dict[str, Any]] = {
 }
 
 
+#: Which models were **seen** to emit a real tool call, by sending one (`FRD-131`, measured
+#: 2026-08-08). Absent means the capability is not declared, so the dispatch chain refuses a tool
+#: request against that model **by name** — far better than prose a client tries to parse as a
+#: function call.
+#:
+#: The same table exists in `tools/seed_local_catalog.py`, and this one was **missing**, which is
+#: the defect this repository has now recorded twice in the same pair of files: a measurement fixed
+#: in one seed and left wrong in the other. The consequence here was quiet and complete — the
+#: showcase declared a model with no `tools`, so a coding assistant pointed at the demo was refused
+#: by name and the whole `FRD-131` capability was unreachable from `make showcase`.
+#:
+#: `qwen2.5-coder:7b` is deliberately absent: `ollama show` lists `tools` for it and it returns the
+#: JSON **as prose**. A vendor's capability flag is a claim; this catalog is supposed to hold
+#: evidence.
+TOOLS_BY_MODEL: frozenset[str] = frozenset(
+    {"qwen3:0.6b", "qwen3:4b", "qwen2.5:1.5b", "qwen2.5:3b", "qwen2.5:7b"}
+)
+
+
+def _chat_capabilities() -> list[str]:
+    """What the configured chat model is declared able to do, measured model by model.
+
+    `prompt_caching` is **not** here and that is deliberate: this runtime reports no cached tokens
+    at all, so declaring it would put a marker on the wire that nothing honours and a share in the
+    console that can only ever read 0 %. Absence of information is not permission (`FRD-114`
+    FR-7), and an invented capability is worse than a missing one.
+    """
+    capabilities = ["generate", "structured_output"]
+    if CHAT_MODEL in THINKING_BY_MODEL:
+        capabilities.append("thinking")
+    if CHAT_MODEL in TOOLS_BY_MODEL:
+        capabilities.append("tools")
+    return capabilities
+
+
 def _declarations() -> list[dict[str, Any]]:
     return [
         {
@@ -65,11 +100,7 @@ def _declarations() -> list[dict[str, Any]]:
             "output_price_per_million": Decimal("0.400000"),
             # `structured_output` is measured too: this dialect takes a named `json_schema`, and
             # the running model returns a document that satisfies one.
-            "capabilities": (
-                ["generate", "structured_output", "thinking"]
-                if CHAT_MODEL in THINKING_BY_MODEL
-                else ["generate", "structured_output"]
-            ),
+            "capabilities": _chat_capabilities(),
             "max_output_tokens": 4096,
             "default_max_output_tokens": 512,
             # **Measured, not guessed.** This block was deliberately empty until an integration

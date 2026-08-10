@@ -30,7 +30,7 @@ test.describe('Retention', () => {
 
     await page.goto(`/use-cases/${slug}`);
     await page.fill('#retention-days', '1');
-    await page.click('button:has-text("Save")');
+    await page.click('button:has-text("Save storage settings")');
 
     await expect(page.locator('[role="status"]')).toContainText('kept for 1 day');
     await page.reload();
@@ -72,7 +72,7 @@ test.describe('Payload storage', () => {
       'Nothing a caller sends or receives is written',
     );
 
-    await page.click('button:has-text("Save")');
+    await page.click('button:has-text("Save storage settings")');
     await expect(page.locator('[role="status"]')).toContainText('no longer stored');
 
     await page.reload();
@@ -87,13 +87,13 @@ test.describe('Payload storage', () => {
 
     await page.goto(`/use-cases/${slug}`);
     await page.uncheck('input[type="checkbox"][name="store_payloads"]');
-    await page.click('button:has-text("Save")');
+    await page.click('button:has-text("Save storage settings")');
     await expect(page.locator('[role="status"]')).toContainText('no longer stored');
 
     await page.check('input[type="checkbox"][name="store_payloads"]');
     await expect(page.locator('#retention-days')).toBeVisible();
     await page.fill('#retention-days', '3');
-    await page.click('button:has-text("Save")');
+    await page.click('button:has-text("Save storage settings")');
     await expect(page.locator('[role="status"]')).toContainText('kept for 3 day');
   });
 });

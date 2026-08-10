@@ -73,9 +73,15 @@ showcase: env ## Start the full demo: stack, local model, seeded roles/budgets, 
 	@echo "    ucadmin    use-case administrator two of the three use cases — 'personalwesen' is invisible"
 	@echo "    ucuser     use-case user          member of 'kundenservice', read-only"
 	@echo ""
+	@echo "==> a coding assistant, governed end to end"
+	@uv run python tools/showcase_agent.py
+	@echo ""
 
 showcase-traffic: ## Drive more demo traffic (moves the budget bars)
 	uv run python tools/demo_traffic.py
+
+showcase-agent: ## Write an OpenCode config for the showcase's coding-assistant use case
+	@uv run python tools/showcase_agent.py
 
 down-full: ## Stop the full containerised stack (keeps volumes)
 	$(COMPOSE_FULL) down

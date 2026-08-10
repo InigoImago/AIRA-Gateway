@@ -105,6 +105,59 @@ the guard bands rows at 40 px, and 12 crossed a boundary — worth knowing about
 
 ---
 
+## 2026-08-10 — A walkthrough of what was just built, and a demo that ends at a working assistant
+
+Four reports from the running console, three of them defects in the day's own work.
+
+**The explanations misbehaved as overlays.** Hovering a capability's "i" in the model editor made
+the window jiggle and some text ran outside its frame. Both measured before anything was changed,
+because "it looks wrong" is not a defect report a fix can be checked against:
+
+- The panel inherited `white-space: nowrap` from `.form-inline .field > label`, which every such
+  label carries so that the controls under them line up. A 372-character explanation was laid out
+  as **one 2210-pixel line inside a 478-pixel box**. The panel already resets `text-transform`,
+  `letter-spacing`, `font-weight` and `text-align` for exactly this reason; `white-space` was
+  simply missing from the list. **A panel that can be opened from anywhere owns its typography.**
+- It was `position: absolute`, which extends the scroll container: open one near the bottom, a
+  scrollbar appears, the page reflows narrower, the "i" slides out from under the pointer, the
+  panel closes, the scrollbar goes — a flicker loop that never settles. And centred on its button
+  it left the container: measured **58 pixels outside the dialog**, with a hand-written escape for
+  the last cell of a table, which is a defect noticed once and fixed in one place.
+
+Now `fixed`, placed from the button's rectangle and clamped into the viewport, flipping above the
+anchor when there is no room below. The hand-written table escape is gone: one rule for every edge.
+**And `fixed` is not always relative to the viewport** — any ancestor with a `transform` becomes
+the containing block, which the modal has, so the first attempt landed 201 pixels left of where it
+was asked to go. The origin is _read_ now: park the panel at (0, 0), see where that is, subtract.
+Reasoning about coordinate spaces is how that bug was written; measuring is how it was fixed.
+
+**Two switches were in the wrong panel, and the panel said so.** Function calling and prompt
+caching had been added to the nearest available form — data protection's — so they sat _between_
+"store prompts and responses" and "keep them for N days", the pair a reader treats as one setting.
+They are now their own section with their own save and their own sentence: turning caching on used
+to answer with a message about how long prompts are kept, which is a confident statement about the
+wrong thing. Asserted as _what may come between the two controls_, since "the order looks wrong" is
+not something a test can be told. The split then produced **two buttons reading "Save"** — three
+e2e tests reported it as an ambiguous selector, and a screen reader would announce one word twice.
+They say what they save now.
+
+**`make showcase` could not bring up a coding assistant**, while `tools/opencode/README.md` had
+pointed at a `coding-assistant` use case since `FRD-132` — an instruction with no destination.
+Four missing pieces, and the second is the one worth keeping: **the Management-side model seed did
+not declare `tools`** while the gateway-side one did, from the same measurement. Second time that
+pair of files has held one fact and two answers. The consequence was silent and total — the
+assistant was refused by name and every explanation pointed at the client. There is a
+`coding-assistant` use case now (the only one with function calling on), limits sized for an agent
+rather than a chatbot, and `tools/showcase_agent.py` writing an OpenCode config that `make
+showcase` prints. Verified live: a real tool call through the demo key, audited as
+`{"declared": 1, "called": ["read_file"]}` with the credential prefix and a price beside it.
+
+Prompt caching stays **off** on that use case and the description says why: this runtime reports no
+cached tokens, so switching it on would show a control doing nothing — in the one place a reader is
+most likely to believe it.
+
+---
+
 ## 2026-08-09 — A security read of the whole code (`ADR-0018`)
 
 The request path held up: 192-bit keys compared in constant time, JWTs with a pinned algorithm and

@@ -1186,6 +1186,36 @@ row control, and a hint sits **inside a `<label>`** one line above its field, so
 field read as a staircase; excluded by *where it is*, then a 6 px misalignment was injected to
 watch it fail — 12 px did **not**, because the guard bands rows at 40 px. `U1`–`U9`.
 
+**A walkthrough of the new controls (2026-08-10)** — four reports, three of them defects in the
+same day's work, and every one measured before it was touched. **The explanations misbehaved as
+overlays**: the panel inherited `white-space: nowrap` from `.form-inline .field > label` (a
+372-character sentence laid out as **one 2210 px line in a 478 px box**) — it already resets four
+other typographic properties for exactly that reason and this one was missing from the list, since
+**a panel openable from anywhere owns its typography**; and `position: absolute` **extends the
+scroll container**, so opening one summons a scrollbar, reflows the page narrower, slides the "i"
+out from under the pointer and flickers forever, while centring it on the button put it **58 px
+outside the dialog**. Now `fixed`, clamped into the viewport, flipping above the anchor when there
+is no room below, replacing a hand-written escape for the last table cell — one rule for every
+edge. **And `fixed` is not always viewport-relative**: any ancestor with a `transform` becomes the
+containing block, which the modal has, so the first attempt landed 201 px off; the origin is *read*
+now (park at 0,0, see where that is, subtract) — reasoning about coordinate spaces is how the bug
+was written. **Two switches were in the wrong panel**: function calling and prompt caching had
+landed in the nearest form, data protection's, *between* "store prompts" and "keep them for N
+days" — the pair a reader treats as one setting — and turning caching on answered with a sentence
+about retention, a confident statement about the wrong thing; own section, own save, own message,
+asserted as *what may come between the two controls*. And **`make showcase` could not bring up a
+coding assistant** although `tools/opencode/README.md` had named a `coding-assistant` use case
+since `FRD-132` — an instruction with no destination. The keeper among its four missing pieces:
+**the Management-side model seed did not declare `tools`** while the gateway-side one did, from the
+same measurement — second time that pair holds one fact and two answers (after `minimal`), and the
+consequence was silent and total, the assistant refused by name with every explanation pointing at
+the client. Now a `coding-assistant` use case (the only one with function calling on), limits sized
+for an agent rather than a chatbot, and `tools/showcase_agent.py` writing an OpenCode config that
+`make showcase` prints; verified live, a real tool call audited as `{"declared": 1, "called":
+["read_file"]}`. Caching stays **off** there and the description says why: this runtime reports no
+cached tokens, and a switch shown on while doing nothing is `FRD-125`'s badge in the place a reader
+is likeliest to believe it.
+
 Next candidates: **`FRD-114`** (model metadata — now also carries publisher + default output cap,
 prerequisite for 110–113 and 119), **`FRD-110`** (documents/images — the widest gap),
 **`FRD-115`/`FRD-119`** (Vertex EU + the Anthropic dialect — required), **`FRD-116`** (Vault),

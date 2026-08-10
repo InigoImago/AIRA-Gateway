@@ -476,10 +476,7 @@ export class UseCaseDetail implements OnInit {
     return (
       this.retentionDays() !== (this.useCase()?.retention_days ?? null) ||
       this.storePayloads() !== (this.useCase()?.store_payloads ?? true) ||
-      this.restrictMembers() !== (this.useCase()?.restrict_members_to_own_requests ?? false) ||
-      this.toolsEnabled() !== (this.useCase()?.tools_enabled ?? false) ||
-      this.promptCaching() !== (this.useCase()?.prompt_caching_enabled ?? false) ||
-      this.cacheTtl() !== (this.useCase()?.prompt_cache_ttl ?? '5m')
+      this.restrictMembers() !== (this.useCase()?.restrict_members_to_own_requests ?? false)
     );
   }
 
@@ -497,9 +494,6 @@ export class UseCaseDetail implements OnInit {
       this.service.update(this.slug, {
         store_payloads: store,
         restrict_members_to_own_requests: this.restrictMembers(),
-        tools_enabled: this.toolsEnabled(),
-        prompt_caching_enabled: this.promptCaching(),
-        prompt_cache_ttl: this.cacheTtl(),
         ...(store && days != null ? { retention_days: days } : {}),
       }),
       {
@@ -509,13 +503,61 @@ export class UseCaseDetail implements OnInit {
           this.retentionDays.set(useCase.retention_days ?? null);
           this.storePayloads.set(useCase.store_payloads ?? true);
           this.restrictMembers.set(useCase.restrict_members_to_own_requests ?? false);
-          this.toolsEnabled.set(useCase.tools_enabled ?? false);
-          this.promptCaching.set(useCase.prompt_caching_enabled ?? false);
-          this.cacheTtl.set(useCase.prompt_cache_ttl ?? '5m');
           this.feedback.succeed(
             store
               ? `Prompts and responses are now kept for ${days} day(s). Anything already past that is removed on the next run.`
               : 'Prompts and responses are no longer stored for this use case. Anything already stored is removed on the next run.',
+          );
+        },
+      },
+    );
+  }
+
+  /**
+   * What this use case may do — function calling and prompt caching, with the cache's lifetime.
+   *
+   * A save of its own, because it is a different question from data protection and used to share
+   * that panel's form: two capability switches sat between "store prompts and responses" and
+   * "keep them for N days", which a reader treats as one setting, and turning caching on then
+   * reported success in a sentence about retention.
+   */
+  protected capabilitiesChanged(): boolean {
+    return (
+      this.toolsEnabled() !== (this.useCase()?.tools_enabled ?? false) ||
+      this.promptCaching() !== (this.useCase()?.prompt_caching_enabled ?? false) ||
+      this.cacheTtl() !== (this.useCase()?.prompt_cache_ttl ?? '5m')
+    );
+  }
+
+  protected canSaveCapabilities(): boolean {
+    return this.capabilitiesChanged() && !this.feedback.busy();
+  }
+
+  protected saveCapabilities(): void {
+    if (!this.canSaveCapabilities()) {
+      return;
+    }
+    const caching = this.promptCaching();
+    const ttl = this.cacheTtl();
+    this.feedback.run(
+      this.service.update(this.slug, {
+        tools_enabled: this.toolsEnabled(),
+        prompt_caching_enabled: caching,
+        prompt_cache_ttl: ttl,
+      }),
+      {
+        failure: 'Could not change what this use case may do.',
+        success: (useCase: UseCase) => {
+          this.useCase.set(useCase);
+          this.toolsEnabled.set(useCase.tools_enabled ?? false);
+          this.promptCaching.set(useCase.prompt_caching_enabled ?? false);
+          this.cacheTtl.set(useCase.prompt_cache_ttl ?? '5m');
+          // Says what changed *and* where the consequence shows up: a saving nobody can see is a
+          // saving nobody believes (`FRD-133` FR-10).
+          this.feedback.succeed(
+            caching
+              ? `Caching is on, keeping the prefix for ${ttl === '1h' ? 'an hour' : 'five minutes'}. The Cached share on this page shows how much of the input it catches.`
+              : 'Saved. Prompt caching is off, so every request is charged in full.',
           );
         },
       },

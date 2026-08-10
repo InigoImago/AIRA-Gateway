@@ -28,7 +28,7 @@ test.describe('Prompt caching', () => {
     await page.click('label:has(#prompt-caching)');
     await expect(page.locator('#cache-ttl')).toBeVisible();
     await page.selectOption('#cache-ttl', '1h');
-    await page.click('form:has(#prompt-caching) button[type="submit"]');
+    await page.click('button:has-text("Save capabilities")');
     await expect(page.locator('[role="status"]')).toBeVisible();
 
     await page.reload();

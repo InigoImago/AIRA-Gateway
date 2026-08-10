@@ -92,6 +92,27 @@ def _use_cases() -> list[dict[str, Any]]:
             "retention_days": 30,
         },
         {
+            "slug": "coding-assistant",
+            "name": "Coding Assistant",
+            "description": (
+                "Agentische Coding-Unterstützung. **Function Calling ist eingeschaltet** — der "
+                "einzige Use Case im Demo, der es braucht, und der Grund, warum der Schalter "
+                "standardmäßig aus ist. Eine Anweisung eines Menschen wird hier zu vielen "
+                "Modellaufrufen, also sind Limit und Budget dafür bemessen und nicht für einen "
+                "Chatbot."
+            ),
+            "processing_notes": (
+                "Quellcode und Dateipfade sind Inhalt: sie stehen in gespeicherten Prompts. "
+                "Prompt-Caching ist bewusst **aus** — das lokale Modell meldet keine gecachten "
+                "Token, ein eingeschalteter Schalter ohne Wirkung wäre eine Anzeige, die nichts "
+                "anzeigt (FRD-125). Einschalten, sobald ein Modell dahintersteht, das cachen kann."
+            ),
+            "store_payloads": True,
+            "retention_days": 7,
+            # The whole point of this use case, and the one place in the demo where it is on.
+            "tools_enabled": True,
+        },
+        {
             "slug": "personalwesen",
             "name": "Personalwesen",
             "description": (
@@ -114,6 +135,10 @@ def _use_cases() -> list[dict[str, Any]]:
 MEMBERSHIPS: dict[str, list[tuple[str, str]]] = {
     "kundenservice": [("ucadmin", UseCaseMembership.ADMIN), ("ucuser", UseCaseMembership.USER)],
     "entwicklung": [("ucadmin", UseCaseMembership.ADMIN)],
+    # `ucuser` is a member, and the key is issued to whoever owns the use case — which is the
+    # `FRD-604` story the assistant use case exists to make concrete: a name beside an agent's
+    # traffic answers "who is accountable for this credential", not "who typed this request".
+    "coding-assistant": [("ucadmin", UseCaseMembership.ADMIN), ("ucuser", UseCaseMembership.USER)],
     # Deliberately **not** an oversight role. `itgov` administered this one, which let the demo
     # show a use case `ucadmin` cannot touch — at the cost of teaching the opposite of what the
     # role is: PRD §154 gives IT Steuerung every figure and no write anywhere, and a walkthrough
@@ -168,6 +193,16 @@ def _budgets() -> list[dict[str, Any]]:
             "limit_requests": 20,
         },
         {
+            # A request count for the assistant, because that is the figure an agent moves
+            # fastest and the one a runaway loop trips first. Generous enough that a real session
+            # works, small enough that somebody can reach it deliberately.
+            "use_case": "coding-assistant",
+            "scope": Budget.USE_CASE,
+            "subject": "",
+            "period": Budget.DAY,
+            "limit_requests": 500,
+        },
+        {
             "use_case": "personalwesen",
             "scope": Budget.USE_CASE,
             "subject": "",
@@ -192,6 +227,18 @@ def _rate_limits() -> list[dict[str, Any]]:
             "subject": "ucadmin",
             "limit_rpm": 20,
             "burst": 5,
+        },
+        {
+            # **Sized for an assistant, and that is the lesson.** One human instruction becomes
+            # many model calls — a measured OpenCode turn produced three gateway requests for a
+            # trivial ask — so a limit calibrated for a chatbot trips in the first minute and the
+            # reader concludes the gateway is broken rather than that the limit was wrong. The
+            # burst is large for the same reason: an agent arrives in bursts by nature.
+            "use_case": "coding-assistant",
+            "scope": RateLimit.USE_CASE,
+            "subject": "",
+            "limit_rpm": 240,
+            "burst": 60,
         },
     ]
 

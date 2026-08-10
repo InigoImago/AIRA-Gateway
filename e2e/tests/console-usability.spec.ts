@@ -438,3 +438,124 @@ test.describe("A use case's own anomaly rules", () => {
     await expect(page.locator('[data-testid="rule-add"]')).toHaveCount(0);
   });
 });
+
+test.describe('The explanations behave like overlays', () => {
+  /**
+   * Reported from the model editor: hovering a capability's "i" made the window jiggle up and
+   * down, and some explanations ran outside their frame. Both are properties of *where the panel
+   * is in the layout*, so both are invisible to every hermetic test — jsdom has no layout at all.
+   *
+   * The two causes, measured before anything was changed: an absolutely positioned panel extends
+   * its scroll container, so opening one can summon a scrollbar, reflow the page narrower, slide
+   * the "i" out from under the pointer and start a flicker loop that never settles; and a panel
+   * centred on its button leaves the container at an edge — the one in the model editor began 58
+   * pixels outside the dialog. The nowrap was a third: every label inside a `.form-inline`
+   * carries `white-space: nowrap` so that the controls under them line up, and the panel
+   * inherited it, laying a 372-character sentence out as a single 2210-pixel line in a 478-pixel
+   * box.
+   */
+  const openModelEditor = async (page: import('@playwright/test').Page) => {
+    await login(page, USERS.globalAdmin);
+    await page.goto('/models');
+    await page
+      .click('button:has-text("Declare a model"), button:has-text("Add model")')
+      .catch(() => {});
+    await expect(page.locator('[data-testid="info-cap-prompt_caching"]')).toBeVisible();
+  };
+
+  test('an explanation stays inside the window it was opened from', async ({ page }) => {
+    await openModelEditor(page);
+
+    for (const capability of ['generate', 'prompt_caching', 'attachments']) {
+      await page.hover(`[data-testid="info-cap-${capability}"]`);
+      const panel = page.locator(`[data-testid="help-cap-${capability}"]`);
+      await expect(panel).toBeVisible();
+
+      const geometry = await panel.evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        return {
+          left: rect.left,
+          right: rect.right,
+          top: rect.top,
+          bottom: rect.bottom,
+          // The text laid out wider than the box it is in is the "runs out of the frame" report.
+          overflows: element.scrollWidth > element.clientWidth + 1,
+          viewport: { width: window.innerWidth, height: window.innerHeight },
+        };
+      });
+
+      expect(geometry.overflows, `${capability}: the text is wider than its panel`).toBe(false);
+      expect(geometry.left, `${capability}: off the left edge`).toBeGreaterThanOrEqual(0);
+      expect(geometry.right, `${capability}: off the right edge`).toBeLessThanOrEqual(
+        geometry.viewport.width,
+      );
+      expect(geometry.top, `${capability}: off the top`).toBeGreaterThanOrEqual(0);
+      expect(geometry.bottom, `${capability}: off the bottom`).toBeLessThanOrEqual(
+        geometry.viewport.height,
+      );
+    }
+  });
+
+  test('opening one moves nothing on the page', async ({ page }) => {
+    /** The jiggle, measured the way `FRD-207` measured the last one: with the browser's own
+     *  layout-shift observer rather than by looking at it. Every shift counts here — unlike the
+     *  live control, this page has nothing arriving on its own to confuse the question. */
+    await openModelEditor(page);
+
+    const shifts = await page.evaluate(async () => {
+      const seen: number[] = [];
+      const observer = new PerformanceObserver((list) => {
+        for (const entry of list.getEntries() as unknown as { value: number }[]) {
+          seen.push(entry.value);
+        }
+      });
+      observer.observe({ type: 'layout-shift' });
+
+      const trigger = document.querySelector(
+        '[data-testid="info-cap-prompt_caching"]',
+      ) as HTMLElement;
+      const rect = trigger.getBoundingClientRect();
+      const at = (type: string) =>
+        trigger.dispatchEvent(
+          new MouseEvent(type, {
+            bubbles: true,
+            clientX: rect.left + rect.width / 2,
+            clientY: rect.top + rect.height / 2,
+          }),
+        );
+      for (let i = 0; i < 4; i += 1) {
+        at('mouseenter');
+        await new Promise((resolve) => setTimeout(resolve, 120));
+        at('mouseleave');
+        await new Promise((resolve) => setTimeout(resolve, 120));
+      }
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      observer.disconnect();
+      return seen;
+    });
+
+    expect(shifts, `the page moved ${shifts.length} time(s) while an explanation opened`).toEqual(
+      [],
+    );
+  });
+
+  test('an explanation near the bottom opens upwards rather than off the screen', async ({
+    page,
+  }) => {
+    /** The last row of a long form is exactly where somebody stops and asks what a field means. */
+    await page.setViewportSize({ width: 1280, height: 620 });
+    await openModelEditor(page);
+
+    const last = page.locator('[data-testid^="info-cap-"]').last();
+    await last.scrollIntoViewIfNeeded();
+    await last.hover();
+
+    const geometry = await page.locator('.info-hint__panel').evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      return { top: rect.top, bottom: rect.bottom, viewport: window.innerHeight };
+    });
+
+    expect(geometry.top).toBeGreaterThanOrEqual(0);
+    expect(geometry.bottom).toBeLessThanOrEqual(geometry.viewport);
+  });
+});

@@ -7,7 +7,7 @@
 ## 1. Summary
 
 `seed_demo` created the five roles and one user each. You could log in as every role — and look at
-five empty screens. The seed proved the *accounts* worked; it demonstrated nothing about the
+five empty screens. The seed proved the _accounts_ worked; it demonstrated nothing about the
 product.
 
 This adds a showcase contribution that gives each role something to see, and picks the content so
@@ -16,6 +16,7 @@ the **differences between the roles are visible rather than described**.
 ## 2. Goals & Non-Goals
 
 **Goals**
+
 - Every role can be signed into and shows a screen that is different from the other roles' screens.
 - The three use cases each make one governance decision concrete, rather than being three copies.
 - Traffic is **real** — driven through the gateway against the local model — so the figures are the
@@ -24,6 +25,7 @@ the **differences between the roles are visible rather than described**.
   anything outside it.
 
 **Non-Goals**
+
 - Not a load generator and not a fixture library for tests.
 - Not enabled outside `local`/`demo` (inherited from `FRD-002`; `seed_demo` refuses elsewhere).
 
@@ -39,11 +41,11 @@ instead of three is the fastest demonstration that the scoping is real rather th
 frontend.
 
 **FR-3** — Budgets across every axis the UI offers: cost, tokens and requests; use-case and member
-scope; day and month. Sized so the consumption bars show a *reading*, not 0.02%.
+scope; day and month. Sized so the consumption bars show a _reading_, not 0.02%.
 
 **FR-4** — One API key per use case, **re-derived deterministically** rather than regenerated. A
 demo that mints a new secret on every run is a demo whose printed examples stop working the second
-time. This is explicitly *not* how a real key is issued (`FRD-205`: shown once, never again), and
+time. This is explicitly _not_ how a real key is issued (`FRD-205`: shown once, never again), and
 the seed says so where it does it.
 
 **FR-5** — `tools/demo_traffic.py` drives real requests through the gateway, including one
@@ -61,7 +63,7 @@ consumption figures are invisible to exactly the people the demo asks you to log
 ## 4. Decisions worth keeping
 
 **Real traffic, not inserted rows.** Inserted rows would have been consistent. They would also have
-been a story *about* the product rather than the product: every figure in the demo is one the
+been a story _about_ the product rather than the product: every figure in the demo is one the
 gateway itself produced, through the same pre-dispatch gate, pricing and audit path as production
 traffic.
 
@@ -82,13 +84,47 @@ owns it instead; the point survives.
 deleting a use case revokes its keys **terminally** (`FRD-205`) — a reset is not a retirement. It
 now removes only the demo slugs.
 
+## 4a. A coding assistant, from `make showcase` (2026-08-10)
+
+The showcase seeded three chat-shaped use cases and no agent, while `tools/opencode/README.md` had
+pointed at a `coding-assistant` use case since `FRD-132` — an instruction with no destination,
+`FRD-208`'s finding in another file. Four things were missing and each failed differently:
+
+1. **No use case had `tools_enabled`.** Correct as a default (`FRD-131` FR-3), and it means the
+   demo could not reach the capability at all.
+2. **The Management-side model seed did not declare `tools`.** The gateway-side one
+   (`tools/seed_local_catalog.py`) has since `FRD-131`, and the two carry the _same measurement_ —
+   so a fact fixed in one file stayed wrong in the other, which is the failure this pair has now
+   produced twice (the first was `minimal`, corrected in Management on 2026-08-06 and left in
+   `tools/` until 2026-08-08). The consequence was total and silent: an assistant was refused by
+   name and every explanation pointed at the client.
+3. **Limits sized for a chatbot.** One human instruction becomes many model calls, so an assistant
+   trips a chatbot's limit in its first minute and reads as a broken gateway. The seed's limit and
+   budget for this use case are sized for what an agent actually does.
+4. **No hand-over.** `tools/showcase_agent.py` writes an OpenCode configuration naming the model
+   the demo actually serves, and `make showcase` prints it. A demo that ends one manual step short
+   of working is a demo that gets described rather than shown.
+
+**Prompt caching stays off on it, deliberately**, and the description says why: the local runtime
+reports no cached tokens, so a switch turned on here would show a control doing nothing —
+`FRD-125`'s absent control wearing a present one's badge, in the one place a reader is most likely
+to believe it.
+
+The demo key is **re-derived** by the hand-over rather than read from the database, because it runs
+outside Django — so the salt exists twice, and a test compares the derived key against the stored
+**hash**. A drifted copy would produce a config that looks right, an assistant that starts, and a
+401 the reader blames on the gateway.
+
 ## 5. Testing
 
 `management/backend/tests/test_showcase_seed.py`: idempotence (a second run creates nothing new),
 the membership asymmetry of FR-2, storage off for `personalwesen`, that `--fresh` leaves non-demo
 use cases alone, that a membership the declaration no longer names is removed **and its permission
 revoked with it** (shown to fail against the add-only version), and that no oversight role
-administers anything.
+administers anything. Since 2026-08-10 also: that **exactly one** use case may declare functions,
+that a model declaring `tools` exists for it to use — with the local endpoint _configured for the
+test_ rather than skipped over, because the condition that hides the defect is the condition that
+would hide the test — and that the hand-over derives the key the seed actually stored.
 
 ## 6. Open
 

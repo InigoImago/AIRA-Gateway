@@ -116,6 +116,7 @@ interface Detail {
   isMember: () => boolean;
   canSaveRetention: () => boolean;
   saveRetention: () => void;
+  saveCapabilities: () => void;
   useCase: () => UseCase | null;
   showAddMember: { set: (v: boolean) => void; (): boolean };
   showIssueKey: { set: (v: boolean) => void; (): boolean };
@@ -1173,9 +1174,45 @@ describe('UseCaseDetail — the two switches that had no way in', () => {
     caching!.checked = true;
     caching!.dispatchEvent(new Event('change'));
     harness.fixture.detectChanges();
-    harness.component.saveRetention();
+    harness.component.saveCapabilities();
 
     expect(harness.calls.some((c) => c.includes('"prompt_caching_enabled":true'))).toBe(true);
+  });
+
+  it('keeps the payload switch and the period it applies to next to each other', () => {
+    /** Reported from the running console. The two capability switches were added to the nearest
+     *  available form, which happened to be data protection's — so they landed *between* "store
+     *  prompts and responses" and "keep them for N days", the pair a reader treats as one
+     *  setting. Asserted on what sits between the two, because "the order looks wrong" is not
+     *  something a test can be told; "nothing else may come between these two" is. */
+    const harness = setup();
+    harness.component.storePayloads.set(true);
+    harness.fixture.detectChanges();
+
+    const form = harness.html().querySelector('form:has(#store-payloads)')!;
+    const controls = [...form.querySelectorAll('input, select, textarea')].map((c) => c.id);
+    const between = controls.slice(
+      controls.indexOf('store-payloads') + 1,
+      controls.indexOf('retention-days'),
+    );
+
+    expect(controls).toContain('retention-days');
+    expect(between, `${between.join(', ')} sits between the switch and its period`).toEqual([]);
+  });
+
+  it('does not report a retention change when what changed was a capability', () => {
+    /** One form saved both, so switching caching on answered with a sentence about how long
+     *  prompts are kept — a confident statement about the wrong thing, which is worse than none.
+     */
+    const harness = setup();
+    harness.fixture.detectChanges();
+    harness.component.promptCaching.set(true);
+
+    harness.component.saveCapabilities();
+
+    const sent = sentUpdate(harness.calls);
+    expect(sent).not.toHaveProperty('retention_days');
+    expect(sent).not.toHaveProperty('store_payloads');
   });
 
   it('explains what caching changes, and what it does not', () => {
@@ -1234,7 +1271,7 @@ describe('UseCaseDetail — tuning the cache (`FRD-133`)', () => {
     harness.component.promptCaching.set(true);
     harness.component.cacheTtl.set('1h');
 
-    harness.component.saveRetention();
+    harness.component.saveCapabilities();
 
     expect(sentUpdate(harness.calls)).toMatchObject({
       prompt_caching_enabled: true,

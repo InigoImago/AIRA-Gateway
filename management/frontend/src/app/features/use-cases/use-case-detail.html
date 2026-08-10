@@ -167,42 +167,28 @@
       -->
       <app-consumption-panel [slug]="slug" [consumption]="consumption()" />
 
+      <!--
+        Not data protection, and it was in that panel because that is where the form was — which
+        put two unrelated switches between "store prompts" and "keep them for N days", the pair a
+        reader treats as one setting. Its own section, its own save, its own sentence when it
+        succeeds: a message about retention shown after switching caching on is a message about
+        the wrong thing.
+      -->
       <div class="disclosure">
-        <h3 class="section-title" style="margin-bottom: 0.25rem">Data protection</h3>
+        <h3 class="section-title" style="margin-bottom: 0.25rem">What this use case may do</h3>
         <p class="muted" style="margin: 0 0 0.75rem">
-          Prompts and responses sent through this use case can be stored so incidents can be
-          investigated. Either way the metadata — who, when, which model, how many tokens, what it
-          cost — is kept for reporting.
+          Two capabilities, both off unless somebody turns them on. Neither changes what an answer
+          says — the first decides what a caller may ask for, the second only what it costs.
         </p>
         @if (!canManage()) {
-          <p data-testid="retention-readonly" style="margin: 0">
-            @if (useCase()?.store_payloads === false) {
-              Prompts and responses are <strong>not stored</strong> for this use case.
-            } @else {
-              Prompts and responses are kept for
-              <strong>{{ useCase()?.retention_days ?? '—' }} day(s)</strong>.
-            }
-            Only an administrator of this use case can change that.
+          <p data-testid="capabilities-readonly" style="margin: 0">
+            Function calling is
+            <strong>{{ useCase()?.tools_enabled ? 'on' : 'off' }}</strong> and prompt caching is
+            <strong>{{ useCase()?.prompt_caching_enabled ? 'on' : 'off' }}</strong
+            >. Only an administrator of this use case can change that.
           </p>
         } @else {
-          <form class="stack" (ngSubmit)="saveRetention()">
-            <!-- No `for`: the input is nested, so the label is already associated with it. Adding
-               `for` as well makes a real browser forward the click a second time — the box
-               toggles twice and the switch looks dead. jsdom does not reproduce it. -->
-            <label class="row" style="gap: 0.5rem">
-              <!-- Plain [checked]/(change) rather than ngModel: a one-way ngModel binding on a
-                 checkbox inside an NgForm writes the old value straight back, so the box springs
-                 back and the switch cannot be operated. -->
-              <input
-                type="checkbox"
-                id="store-payloads"
-                name="store_payloads"
-                [checked]="storePayloads()"
-                (change)="storePayloads.set($any($event.target).checked)"
-              />
-              Store prompts and responses
-            </label>
-
+          <form class="stack" (ngSubmit)="saveCapabilities()">
             <!--
               Two switches that lived only in the API until 2026-08-10. `FRD-206` recorded the
               defect where a console offers what the server refuses; this is its inverse — a
@@ -273,6 +259,50 @@
                 </select>
               </div>
             }
+            <div class="row">
+              <button type="submit" class="btn btn--primary" [disabled]="!canSaveCapabilities()">
+                {{ feedback.busy() ? 'Saving…' : 'Save capabilities' }}
+              </button>
+            </div>
+          </form>
+        }
+      </div>
+
+      <div class="disclosure">
+        <h3 class="section-title" style="margin-bottom: 0.25rem">Data protection</h3>
+        <p class="muted" style="margin: 0 0 0.75rem">
+          Prompts and responses sent through this use case can be stored so incidents can be
+          investigated. Either way the metadata — who, when, which model, how many tokens, what it
+          cost — is kept for reporting.
+        </p>
+        @if (!canManage()) {
+          <p data-testid="retention-readonly" style="margin: 0">
+            @if (useCase()?.store_payloads === false) {
+              Prompts and responses are <strong>not stored</strong> for this use case.
+            } @else {
+              Prompts and responses are kept for
+              <strong>{{ useCase()?.retention_days ?? '—' }} day(s)</strong>.
+            }
+            Only an administrator of this use case can change that.
+          </p>
+        } @else {
+          <form class="stack" (ngSubmit)="saveRetention()">
+            <!-- No `for`: the input is nested, so the label is already associated with it. Adding
+               `for` as well makes a real browser forward the click a second time — the box
+               toggles twice and the switch looks dead. jsdom does not reproduce it. -->
+            <label class="row" style="gap: 0.5rem">
+              <!-- Plain [checked]/(change) rather than ngModel: a one-way ngModel binding on a
+                 checkbox inside an NgForm writes the old value straight back, so the box springs
+                 back and the switch cannot be operated. -->
+              <input
+                type="checkbox"
+                id="store-payloads"
+                name="store_payloads"
+                [checked]="storePayloads()"
+                (change)="storePayloads.set($any($event.target).checked)"
+              />
+              Store prompts and responses
+            </label>
 
             @if (storePayloads()) {
               <div class="form-inline">
@@ -324,8 +354,12 @@
             </span>
 
             <div class="row">
+              <!-- Named, not just "Save": there are two forms on this page now, and two buttons
+                 reading "Save" is a pair a screen reader announces identically and a reader has to
+                 work out from position. It also made three e2e tests ambiguous, which is the same
+                 complaint from the machine. -->
               <button type="submit" class="btn btn--primary" [disabled]="!canSaveRetention()">
-                {{ feedback.busy() ? 'Saving…' : 'Save' }}
+                {{ feedback.busy() ? 'Saving…' : 'Save storage settings' }}
               </button>
               @if (retentionError(); as message) {
                 <span class="field__hint field__hint--error">{{ message }}</span>

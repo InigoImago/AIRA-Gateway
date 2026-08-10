@@ -925,14 +925,19 @@ fieldset.bare {
   background: var(--aira-brand);
   border-color: var(--aira-brand);
 }
-/* Absolutely positioned, so the row does not grow under the pointer and shove its neighbours —
- * the same jumpiness a hover is least forgiving of. */
+/* `fixed`, and placed from the button's rectangle by the component (see `info-hint.ts`).
+ *
+ * Two things an overlay needs that `absolute` cannot give it: it must contribute nothing to any
+ * ancestor's scroll extent — an absolutely positioned panel grows the scrollbar, the page reflows
+ * narrower, the "i" slides out from under the pointer, and the hover flickers forever — and it
+ * must be clipped by nothing, since the explanations most worth reading sit at the edges of
+ * dialogs and tables. Measured in the model editor before this was changed: the panel began 58px
+ * outside the dialog it belonged to. */
 .info-hint__panel {
-  position: absolute;
+  position: fixed;
   z-index: 30;
-  top: calc(100% + 0.4rem);
-  left: 50%;
-  transform: translateX(-50%);
+  /* Placed after one invisible frame; a panel positioned after it is seen visibly jumps. */
+  visibility: hidden;
   width: max-content;
   max-width: min(22rem, 70vw);
   padding: 0.55rem 0.7rem;
@@ -947,6 +952,12 @@ fieldset.bare {
   text-transform: none;
   text-align: left;
   color: var(--aira-text);
+  /* The panel's typography is its own, because it can be opened from anywhere. Inherited
+     `white-space: nowrap` — which every label in a `.form-inline` carries so that the controls
+     below them line up — turned a 372-character explanation into one 2210px line inside a 478px
+     box: the text left the frame, measured rather than guessed. The resets above exist for the
+     same reason; this one was simply missing from the list. */
+  white-space: normal;
   /* The pointer belongs to the button; a panel that swallowed clicks would make whatever is
    * underneath unselectable while it shows. */
   pointer-events: none;
@@ -954,14 +965,12 @@ fieldset.bare {
 .info-hint__panel--wide {
   max-width: min(30rem, 80vw);
 }
-/* Near the right edge a centred panel would leave the viewport; the last cells of a table are
- * exactly where the explanations are needed most. */
-th:last-child .info-hint__panel,
-td:last-child .info-hint__panel {
-  left: auto;
-  right: 0;
-  transform: none;
+.info-hint__panel.is-placed {
+  visibility: visible;
 }
+/* The hand-written escape for the last cell of a table is gone: clamping into the viewport is one
+ * rule for every edge, and a rule noticed once and fixed in one place is the shape of a defect
+ * waiting in the second place. */
 
 /* ---- searching and paging a table -------------------------------------------------- */
 

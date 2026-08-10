@@ -14,7 +14,7 @@ import pytest
 from aira_management.apps.budgets.models import Budget
 from aira_management.apps.ratelimits.models import RateLimit
 from aira_management.apps.seed.contributions.roles_and_users import seed_roles_and_users
-from aira_management.apps.seed.contributions.showcase import seed_showcase
+from aira_management.apps.seed.contributions.showcase import _use_cases, seed_showcase
 from aira_management.apps.usecases import events
 from aira_management.apps.usecases.models import UseCase
 from aira_management.apps.usecases.views import _grant
@@ -40,7 +40,49 @@ def test_it_creates_the_three_use_cases(seeded) -> None:
         "kundenservice",
         "entwicklung",
         "personalwesen",
+        "coding-assistant",
     }
+
+
+def test_the_assistant_is_the_only_use_case_allowed_to_declare_functions(seeded) -> None:
+    """`FRD-131` FR-3: off by default is least privilege, and a demo in which everything has it
+    teaches the opposite. It is also what makes `make showcase` end at a working assistant instead
+    of at a refusal — the README has pointed at a `coding-assistant` use case since `FRD-132` and
+    nothing created one.
+    """
+    enabled = set(UseCase.objects.filter(tools_enabled=True).values_list("slug", flat=True))
+
+    assert enabled == {"coding-assistant"}
+
+
+def test_the_assistant_has_a_model_that_can_actually_call_a_function(seeded) -> None:
+    """The other half, and the half that fails silently. A use case may declare functions and the
+    dispatch chain still refuses **by name** unless the model's catalog entry declares `tools` —
+    which the Management-side seed did not, while the gateway-side one did. Two seeds, one
+    measurement, one of them wrong.
+
+    The endpoint is *configured for the test* rather than skipped over. A skip here would report
+    green about nothing — the catalog is empty exactly when this contribution does not run, so the
+    condition that hides the defect is the condition that hides the test.
+    """
+    from aira_management.apps.catalog.models import Model
+    from aira_management.apps.seed.contributions.local_models import seed_local_models
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setenv("AIRA_OLLAMA_URL", "http://ollama:11434")
+    try:
+        seed_local_models(fresh=False)
+    finally:
+        monkeypatch.undo()
+
+    # In Python, not in the query: `__contains` on a JSON field is Postgres-only and the
+    # hermetic suite runs on SQLite — the same split `FRD-505` hit when it derived `flagged` in
+    # code rather than querying the decisions.
+    declared = [set(model.capabilities or []) for model in Model.objects.all()]
+
+    assert any("tools" in capabilities for capabilities in declared), (
+        "the assistant use case may declare functions and no declared model may receive them"
+    )
 
 
 def test_running_it_twice_changes_nothing(seeded) -> None:
@@ -147,8 +189,8 @@ def test_a_fresh_run_clears_the_leftovers_of_every_test_that_came_before(seeded)
 
     assert not UseCase.objects.filter(slug="burst-3i6g5l").exists()
     assert ("usecase.deleted", {"slug": "burst-3i6g5l"}) in recorded
-    # And the demo's own three are back.
-    assert UseCase.objects.count() == 3
+    # And the demo's own are back, all of them.
+    assert UseCase.objects.count() == len(_use_cases())
 
 
 def test_a_fresh_run_does_not_revoke_the_keys_it_is_about_to_reissue(seeded) -> None:
@@ -213,3 +255,47 @@ def test_an_oversight_role_administers_nothing_in_the_demo() -> None:
             continue
         for usecase in UseCase.objects.all():
             assert not may_manage(user, usecase), f"{username} administers {usecase.slug}"
+
+
+def test_the_handover_derives_the_key_the_seed_actually_stored(seeded) -> None:
+    """`tools/showcase_agent.py` re-derives the demo key rather than reading it, because it runs
+    outside Django — so it carries its own copy of the salt, and a copy is a thing that drifts.
+
+    The failure would be quiet in the worst way: a config file that looks right, an assistant that
+    starts, and a 401 the reader blames on the gateway. Compared against the stored **hash**, so
+    this asserts the key works rather than that two constants match.
+    """
+    import importlib.util
+    import pathlib
+
+    from aira_management.apps.apikeys.models import ApiKey
+
+    from aira_common.apikeys import hash_api_key
+
+    path = pathlib.Path(__file__).resolve().parents[3] / "tools" / "showcase_agent.py"
+    spec = importlib.util.spec_from_file_location("showcase_agent", path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+
+    key = ApiKey.objects.get(use_case__slug="coding-assistant")
+
+    assert hash_api_key(module.demo_key("coding-assistant")) == key.key_hash
+
+
+def test_the_handover_offers_only_a_model_the_gateway_will_serve(seeded) -> None:
+    """OpenCode lists whatever the config declares. A menu naming a model the gateway refuses is
+    `FRD-206`'s complaint in another client — an action offered that cannot be carried out."""
+    import importlib.util
+    import pathlib
+
+    path = pathlib.Path(__file__).resolve().parents[3] / "tools" / "showcase_agent.py"
+    spec = importlib.util.spec_from_file_location("showcase_agent", path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+
+    config = module.config("qwen3:0.6b", "aira_x_y")
+
+    assert list(config["provider"]["aira"]["models"]) == ["qwen3:0.6b"]
+    assert config["model"] == "aira/qwen3:0.6b"
