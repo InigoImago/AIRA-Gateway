@@ -1254,6 +1254,20 @@ decimal strings. The target reported success over it because the traffic script 
 5xx — **nothing served is a failure now**, and the Makefile no longer swallows its exit code. The
 model pull gained three attempts and an explanation (a single failed download used to surface as
 compose blaming `management-seed`, a service that never ran).
+**And then nobody could log in**: `make showcase` prints five accounts and Keycloak answered
+*invalid username or password*, because it imports a realm **only if it does not exist** — so every
+edit to the realm file reaches a fresh machine and no other, and the repository said so in a README
+(*a demo that works for whoever wrote it*). `keycloak-init` compares the running realm against the
+file and re-imports when something is missing; idle otherwise, gated to `local`/`demo`, and never
+aimed at a directory AIRA does not own. Three defects while building it: the check asked
+`GET /groups` (which since Keycloak 26 omits `subGroups`) and `GET /users` (which omits service
+accounts), so it **deleted a healthy realm** on the first run; a realm delete is finished
+*asynchronously*, so the create was overtaken and the script announced a realm that did not exist;
+and **the repair fixed the directory and corrupted what reads it** — a re-import minted new
+subjects, `ADR-0007` binds Django users to the `sub`, and `ucadmin` came back as
+`ucadmin-279b6b7b`, owning nothing. The answer is that **the demo's identities are fixtures and
+must not move**: every user and group in the realm file carries a stable id now, so a re-import
+keeps every binding — `FRD-130`'s deterministic-demo-key rule, one identity system over.
 **CI then failed on two tests that pass everywhere this project has been written**, one defect in
 two costumes: **a unit test that reads the developer's machine is a test whose green is about that
 machine.** `BaseAiraSettings` loads `.env` from the working directory — right for `make

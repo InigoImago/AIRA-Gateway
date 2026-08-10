@@ -1,8 +1,9 @@
-import { Page, expect, test } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import {
   USERS,
   createUseCase,
   expectNoHorizontalOverflow,
+  grantGroup,
   login,
   logout,
   uniqueSlug,
@@ -19,28 +20,12 @@ import {
 const DEPARTMENT = '/abteilungen/kundendienst';
 
 /** Grant a group through the API, so a test can start from a known state. */
-async function grantViaApi(page: Page, slug: string, path: string, role = 'user'): Promise<void> {
-  const status = await page.evaluate(
-    async ({ slug, path, role }) => {
-      const token = sessionStorage.getItem('access_token') ?? localStorage.getItem('access_token');
-      const response = await fetch(`/api/v1/use-cases/${slug}/groups/`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ group_path: path, role }),
-      });
-      return response.status;
-    },
-    { slug, path, role },
-  );
-  expect(status, 'the grant could not be created').toBeLessThan(300);
-}
-
 test.describe('Access by group', () => {
   test('a granted group is listed as a group, with how far it reaches', async ({ page }) => {
     await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('grant');
     await createUseCase(page, slug, 'Group grant probe');
-    await grantViaApi(page, slug, DEPARTMENT);
+    await grantGroup(page, slug, DEPARTMENT);
 
     await page.goto(`/use-cases/${slug}?tab=members`);
     const row = page.locator(`tr:has(code:text-is("${DEPARTMENT}"))`);
@@ -58,7 +43,7 @@ test.describe('Access by group', () => {
     await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('empty');
     await createUseCase(page, slug, 'Empty grant probe');
-    await grantViaApi(page, slug, '/abteilungen/nobody-is-in-this');
+    await grantGroup(page, slug, '/abteilungen/nobody-is-in-this');
 
     await page.goto(`/use-cases/${slug}?tab=members`);
     const row = page.locator('tr:has(code:text-is("/abteilungen/nobody-is-in-this"))');
@@ -78,7 +63,7 @@ test.describe('Access by group', () => {
     // and is exactly the "re-grant an existing group" case the fallback is meant to cover.
     const other = uniqueSlug('seed');
     await createUseCase(page, other, 'Seed for the directory');
-    await grantViaApi(page, other, DEPARTMENT);
+    await grantGroup(page, other, DEPARTMENT);
 
     await page.goto(`/use-cases/${slug}?tab=members`);
     await expect(page.locator('[data-testid="access-search"]')).toBeVisible({ timeout: 20_000 });
@@ -126,7 +111,7 @@ test.describe('Access by group', () => {
     await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('revoke');
     await createUseCase(page, slug, 'Revoke probe');
-    await grantViaApi(page, slug, DEPARTMENT);
+    await grantGroup(page, slug, DEPARTMENT);
 
     await page.goto(`/use-cases/${slug}?tab=members`);
     const row = page.locator(`tr:has(code:text-is("${DEPARTMENT}"))`);

@@ -9,59 +9,73 @@
       "subGroups": [
         {
           "name": "global-admins",
-          "path": "/aira/global-admins"
+          "path": "/aira/global-admins",
+          "id": "09236185-abaf-5957-9bc4-50524124f87a"
         },
         {
           "name": "it-security",
-          "path": "/aira/it-security"
+          "path": "/aira/it-security",
+          "id": "9e9b3b15-81bd-58bb-b0b5-65eec4b503d4"
         },
         {
           "name": "it-steuerung",
-          "path": "/aira/it-steuerung"
+          "path": "/aira/it-steuerung",
+          "id": "1d085884-5742-5221-8f92-9c26d252a81a"
         }
-      ]
+      ],
+      "id": "6790d573-5ca0-5a7b-96e8-05403a017f1b"
     },
     {
       "name": "use-cases",
       "subGroups": [
         {
-          "name": "kundenservice"
+          "name": "kundenservice",
+          "id": "0909f533-dab8-5014-9048-33570b930672"
         },
         {
-          "name": "entwicklung"
+          "name": "entwicklung",
+          "id": "a794a4a4-e024-545d-ade9-fc1058fc2c7f"
         },
         {
-          "name": "personalwesen"
+          "name": "personalwesen",
+          "id": "3e706afc-4621-55f5-be4b-d605fd73925d"
         },
         {
-          "name": "demo-uc"
+          "name": "demo-uc",
+          "id": "60ad9489-950a-54d1-8d87-05d225c58fa9"
         },
         {
-          "name": "other-uc"
+          "name": "other-uc",
+          "id": "31716272-f0b7-51de-a802-93789dd812d9"
         },
         {
           "name": "smoke-test",
-          "path": "/use-cases/smoke-test"
+          "path": "/use-cases/smoke-test",
+          "id": "b0c81389-4ce2-5cd4-8292-d1ea2d631c4a"
         }
-      ]
+      ],
+      "id": "190868a1-2761-5e9e-8087-53d7f05f9e58"
     },
     {
       "name": "abteilungen",
       "subGroups": [
         {
-          "name": "kundendienst"
+          "name": "kundendienst",
+          "id": "2f401d24-b186-5ba3-ad09-8272a4cb813d"
         },
         {
-          "name": "entwicklung"
+          "name": "entwicklung",
+          "id": "7b431218-0c76-5d3c-ae70-569f283f3ec8"
         }
-      ]
+      ],
+      "id": "3abfa322-ae29-5cdf-aab2-12147181c6a5"
     }
   ],
   "clients": [
     {
       "clientId": "aira-gateway",
       "name": "AIRA Gateway (dev)",
-      "description": "Public SPA client (dev). Redirect URIs and web origins are pinned on purpose — a wildcard on a public client lets an attacker capture the authorization code. See ADR-0007.",
+      "description": "Public SPA client (dev). Redirect URIs and web origins are pinned on purpose \u2014 a wildcard on a public client lets an attacker capture the authorization code. See ADR-0007.",
       "enabled": true,
       "publicClient": true,
       "directAccessGrantsEnabled": false,
@@ -223,7 +237,8 @@
       "groups": [
         "/use-cases/smoke-test",
         "/aira/global-admins"
-      ]
+      ],
+      "id": "89c50878-2be6-5126-9b96-004b13bba3ee"
     },
     {
       "username": "itsec",
@@ -243,7 +258,8 @@
       "groups": [
         "/use-cases/smoke-test",
         "/aira/it-security"
-      ]
+      ],
+      "id": "351d572d-f0fc-5f4e-8cda-2b442ab3dcfb"
     },
     {
       "username": "itgov",
@@ -262,7 +278,8 @@
       "realmRoles": [],
       "groups": [
         "/aira/it-steuerung"
-      ]
+      ],
+      "id": "46a04dca-f9a6-54f4-b18f-85f5da1411a3"
     },
     {
       "username": "ucadmin",
@@ -284,7 +301,8 @@
         "/use-cases/entwicklung",
         "/use-cases/demo-uc",
         "/use-cases/smoke-test"
-      ]
+      ],
+      "id": "dca4ff6f-f85e-51c8-9dfc-9f5dd0893850"
     },
     {
       "username": "ucuser",
@@ -305,7 +323,8 @@
         "/use-cases/kundenservice",
         "/use-cases/demo-uc",
         "/abteilungen/kundendienst"
-      ]
+      ],
+      "id": "5f17b99d-43bd-5df9-a8e0-88e538babcbb"
     },
     {
       "username": "demo-user",
@@ -324,7 +343,8 @@
       "realmRoles": [],
       "groups": [
         "/use-cases/demo-uc"
-      ]
+      ],
+      "id": "be00d953-e554-5f09-bb6c-b4e34b4382cb"
     },
     {
       "username": "service-account-aira-integration-tests",
@@ -333,7 +353,8 @@
       "realmRoles": [],
       "groups": [
         "/aira/it-steuerung"
-      ]
+      ],
+      "id": "cfbf3f91-4211-50f3-bd5c-582bbd30cc67"
     },
     {
       "username": "service-account-aira-integration-tests-member",
@@ -342,7 +363,8 @@
       "realmRoles": [],
       "groups": [
         "/abteilungen/kundendienst"
-      ]
+      ],
+      "id": "1361bd47-388d-554e-a6b4-93efdf9a6605"
     },
     {
       "username": "service-account-aira-integration-tests-security",
@@ -351,7 +373,8 @@
       "realmRoles": [],
       "groups": [
         "/aira/it-security"
-      ]
+      ],
+      "id": "00b1191e-9ecb-5376-9b78-c277e2ee5d55"
     },
     {
       "username": "service-account-aira-integration-tests-admin",
@@ -360,30 +383,31 @@
       "realmRoles": [],
       "groups": [
         "/aira/global-admins"
-      ]
+      ],
+      "id": "2fc398cc-717d-5350-a1db-c0d48a2bb4e1"
     }
   ],
   "roles": {
     "realm": [
       {
         "name": "global-admin",
-        "description": "Global Administrator — full administration"
+        "description": "Global Administrator \u2014 full administration"
       },
       {
         "name": "it-security",
-        "description": "IT Security — anomaly/incident oversight"
+        "description": "IT Security \u2014 anomaly/incident oversight"
       },
       {
         "name": "it-steuerung",
-        "description": "Governance — organisation-wide read visibility"
+        "description": "Governance \u2014 organisation-wide read visibility"
       },
       {
         "name": "use-case-admin",
-        "description": "Use Case Administrator — may create use cases"
+        "description": "Use Case Administrator \u2014 may create use cases"
       },
       {
         "name": "use-case-user",
-        "description": "Use Case User — may consume a use case"
+        "description": "Use Case User \u2014 may consume a use case"
       }
     ]
   }

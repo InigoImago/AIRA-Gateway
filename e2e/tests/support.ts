@@ -100,6 +100,31 @@ export async function createUseCase(page: Page, slug: string, name: string) {
   return slug;
 }
 
+/**
+ * Grant a Keycloak group path on a use case, through the API.
+ *
+ * Shared because a fixture is not a walkthrough: a test whose *subject* is the picker drives the
+ * picker, and a test that merely needs somebody to administer something says so in one line. It
+ * lived inside the access spec until a fresh database showed why the others needed it — several
+ * tests assumed `demo-uc` existed and that `ucadmin` administered it, which was true only because
+ * an earlier run had left it behind.
+ */
+export async function grantGroup(page: Page, slug: string, path: string, role = 'user') {
+  const status = await page.evaluate(
+    async ({ slug, path, role }) => {
+      const token = sessionStorage.getItem('access_token') ?? localStorage.getItem('access_token');
+      const response = await fetch(`/api/v1/use-cases/${slug}/groups/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ group_path: path, role }),
+      });
+      return response.status;
+    },
+    { slug, path, role },
+  );
+  expect(status, `could not grant ${path} on ${slug}`).toBeLessThan(300);
+}
+
 /** A slug that is unique per run so reruns do not collide on the unique constraint. */
 export function uniqueSlug(prefix: string) {
   return `${prefix}-${Math.random().toString(36).slice(2, 8)}`;

@@ -6,15 +6,15 @@ demo mode. It is driven from the repo root via the `Makefile` (preferred), or di
 
 ## Services & ports
 
-| Service | Image | Host port(s) | Purpose |
-|---------|-------|--------------|---------|
-| postgres | `postgres:17-alpine` | 5432 | System of record. Creates `aira_gateway`, `aira_mgmt`, `keycloak` DBs |
-| keycloak | `quay.io/keycloak/keycloak:26.1` | 8080, 9000 | SSO / OIDC (admin console on 8080, health on 9000) |
-| kafka | `apache/kafka:3.9.0` (KRaft) | 29092 | Event bus. In-network: `kafka:9092`; from host: `localhost:29092` |
-| schema-registry | `confluentinc/cp-schema-registry:7.8.0` | 8081 | Event schema registry |
-| vault | `hashicorp/vault:1.18` (dev) | 8200 | Secrets (dev root token `root`) — **not read by any code yet** |
-| otel-collector | `otel/opentelemetry-collector-contrib` | 4317, 4318 | OTLP ingest (profile `observability`) |
-| otel-lgtm | `grafana/otel-lgtm` | 3000 | Grafana + Tempo + Prometheus + Loki (profile `observability`) |
+| Service         | Image                                   | Host port(s) | Purpose                                                               |
+| --------------- | --------------------------------------- | ------------ | --------------------------------------------------------------------- |
+| postgres        | `postgres:17-alpine`                    | 5432         | System of record. Creates `aira_gateway`, `aira_mgmt`, `keycloak` DBs |
+| keycloak        | `quay.io/keycloak/keycloak:26.1`        | 8080, 9000   | SSO / OIDC (admin console on 8080, health on 9000)                    |
+| kafka           | `apache/kafka:3.9.0` (KRaft)            | 29092        | Event bus. In-network: `kafka:9092`; from host: `localhost:29092`     |
+| schema-registry | `confluentinc/cp-schema-registry:7.8.0` | 8081         | Event schema registry                                                 |
+| vault           | `hashicorp/vault:1.18` (dev)            | 8200         | Secrets (dev root token `root`) — **not read by any code yet**        |
+| otel-collector  | `otel/opentelemetry-collector-contrib`  | 4317, 4318   | OTLP ingest (profile `observability`)                                 |
+| otel-lgtm       | `grafana/otel-lgtm`                     | 3000         | Grafana + Tempo + Prometheus + Loki (profile `observability`)         |
 
 > Image tags are pinned per `ADR-0003`. Observability is Grafana `otel-lgtm` per **ADR-0004**,
 > which supersedes the SigNoz choice in ADR-0002. `make up` includes the `observability` profile;
@@ -58,12 +58,12 @@ docker compose ps
 ```
 
 ## Notes
+
 - `.env` is git-ignored and holds **local-only** dev credentials. Real secrets belong in a secret
   store — note that the Vault integration is not implemented yet (see above).
 - Keycloak imports the `aira` realm from `keycloak/realms/` on first startup — see below.
 - Kafka runs in single-node KRaft mode (no ZooKeeper). Topic auto-creation is **off**, so
   `make kafka-topics` is required; it creates all five compacted config topics.
-
 
 ## Test clients in the dev realm
 
@@ -75,38 +75,39 @@ no hermetic test can produce and no browser test can hand to a non-browser calle
 Two of them on purpose: a visibility test with a single caller can only show that somebody sees
 something, never that anybody is excluded.
 
-They use the client-credentials grant, deliberately *not* the password grant, which ADR-0007
+They use the client-credentials grant, deliberately _not_ the password grant, which ADR-0007
 disabled and which is not worth re-enabling for a convenience a machine-to-machine grant already
 provides. Their secrets are in the realm file: **dev only**, never a template for a real realm.
 
 A stack whose realm predates these clients will not have them — the import runs only when the
-realm does not exist. The tests say so when their token request fails; recreate the realm as
-below.
+realm does not exist. The `keycloak-init` service notices and re-imports the realm; see below.
 
 ## Changing the Keycloak realm
 
 `--import-realm` uses the `IGNORE_EXISTING` strategy: the realm under
-`keycloak/realms/aira-realm.json` is imported **only when it does not exist yet**. Editing the
-file has no effect on a stack that has already run — recreate the realm first:
+`keycloak/realms/aira-realm.json` is imported **only when it does not exist yet**. Editing the file
+therefore has no effect on a stack that has already run — which is why a colleague could pull a
+change, run `make showcase`, and be told _invalid username or password_ by a realm from before it.
 
-```bash
-make destroy && make up          # drops all volumes, cleanest
-# or: delete the realm in the admin console (or via the admin API) and restart the container
-```
+The `keycloak-init` service (`tools/keycloak_demo_realm.py`) closes that. On every start it
+compares the running realm against the file and, when something the file names is missing,
+**deletes and re-imports it**. Idle otherwise, gated to `local`/`demo` environments, and never
+aimed at a directory AIRA does not own — the product does not write to one (`FRD-209`); this is the
+demo stack provisioning its own.
 
-> **A recreated realm issues new subject ids, and Management binds users to them.**
-> Every Keycloak user gets a fresh `sub`, and `OidcIdentity` binds a Django user to the old one
-> (`ADR-0007`). The next sign-in therefore **provisions a second user** — `admin` becomes
-> `admin-ec05a3db` — which owns nothing: no API keys, no memberships, no object permissions. The
-> console shows the suffixed name and the original account looks abandoned.
+> **The ids are pinned in the file, and that is what makes re-importing safe.**
+> Keycloak's `sub` _is_ the user id, and Management binds a Django user to that `sub` rather than
+> to a username (`ADR-0007`) — deliberately, so a renamed Keycloak account cannot take over an
+> existing one. A realm re-imported **without** pinned ids mints new subjects, so every returning
+> user is provisioned again: `admin` becomes `admin-8ebe2b11`, owning nothing — no keys, no
+> memberships, no object permissions — while the original account looks abandoned. That is exactly
+> what happened when this service was first written, and it is why every user and group in the
+> realm file carries a stable `id`. `tools/tests/test_demo_realm_is_stable.py` keeps them there.
 >
-> Do **not** delete the duplicates and let the originals re-provision: `ApiKey.owner` cascades, so
-> that destroys every key those users issued. **Rebind instead** — point each original
-> `api_oidcidentity.subject` at the user's new Keycloak id (including the service accounts, whose
-> ids change too), then remove the duplicates. Keys, grants and guardian permissions survive.
->
-> The same applies to a real change of identity provider, which is why it is written here rather
-> than left as a local-stack curiosity.
+> A **real** change of identity provider still moves the subjects, and there the answer is to
+> rebind rather than to loosen the binding: point each `api_oidcidentity.subject` at the user's new
+> id and remove the duplicates. Do not delete the originals and let them re-provision —
+> `ApiKey.owner` cascades, and that destroys every key those users issued.
 
 Two things to watch when editing it:
 
@@ -116,12 +117,6 @@ Two things to watch when editing it:
   Django seed (`admin`, `itsec`, `itgov`, `ucadmin`, `ucuser`, all with `demo-password`).
   Keycloak is the source of truth for roles (FRD-201), so a role missing here means the user has
   it nowhere.
-- **Recreating the realm orphans the Management users.** Management binds a Django user to the
-  token's `sub`, not to its username (ADR-0007) — deliberately, so a renamed Keycloak account
-  cannot take over an existing one. A new realm mints new `sub`s, the old rows keep the plain
-  usernames, and the returning users are provisioned as `ucadmin-dedf235d` and the like. The
-  symptom is an e2e login failing on a username it has never seen, or a demo user suddenly
-  seeing none of their use cases. The fix is to drop the stale rows, never to loosen the
-  binding — with the Management DB kept, delete the users whose `OidcIdentity.subject` is no
-  longer in the realm and rename the suffixed survivors back; or simply `make destroy && make up`
-  and reseed, which is what the demo data is for.
+- **Every user and group needs an `id`.** Without one, recreating the realm orphans the
+  Management users — see the note above. A new entry added without an id is a trap that only
+  springs on the next person to recreate their realm, so the test suite refuses it.

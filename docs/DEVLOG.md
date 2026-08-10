@@ -211,6 +211,39 @@ corporate network may block used to produce a bare non-zero exit, after which co
 
 Re-run from the same empty state: ten served, one refused by the injection filter.
 
+**And then nobody could log in.** `make showcase` prints five accounts and Keycloak answered
+_invalid username or password_ — on a machine whose realm predated the change that mattered.
+Keycloak imports a realm **only if it does not exist** (`Realm 'aira' already exists. Import
+skipped`), so every edit to the realm file reaches a fresh machine and no other: new groups from
+`ADR-0017`, the group mapper from `FRD-209`, a password. The repository already knew and said so —
+in a README, which is a demo that works for whoever wrote it. Same argument as `vault-init` one
+service over: **state the one-command demo depends on belongs in the stack, not in somebody's
+memory.**
+
+`keycloak-init` compares the running realm against the file and re-imports it when something the
+file names is absent. Idle otherwise, gated to `local`/`demo`, and never aimed at a directory AIRA
+does not own — the product does not write to one (`FRD-209`); this is the demo stack provisioning
+its own.
+
+Three defects while building it, and the third is the one worth carrying:
+
+1. The check asked `GET /groups`, which since Keycloak 26 returns the top level without filling in
+   `subGroups`, and `GET /users`, which omits service accounts. Every realm looked broken, so the
+   first run **deleted a healthy realm** — the tool punishing use that its own docstring warns
+   against. It asks `group-by-path` one path at a time now, and ignores users a client creates.
+2. Keycloak answers a realm delete immediately and finishes it afterwards, so the create posted
+   straight after was overtaken: the script printed `re-imported`, the API said 201, and the realm
+   was gone. It waits for the delete to land and reads the realm back before claiming anything.
+3. **The repair fixed the directory and corrupted what reads it.** A re-imported realm minted new
+   subjects, and `ADR-0007` binds a Django user to the `sub` — so logging in as `ucadmin` showed
+   `ucadmin-279b6b7b` in the console, a second account owning nothing. The README documented that
+   trap and a manual rebind procedure. The better answer is that **the demo's identities are
+   fixtures and must not move**: every user and group in the realm file now carries a stable id,
+   derived from its name, so a re-import produces the same subjects and every binding survives.
+   The same rule as `FRD-130`'s deterministic demo keys, one identity system over. Verified by
+   deleting a user, letting the service repair the realm, and logging in through the real code
+   flow with nothing cleaned up in between.
+
 **CI failed on two tests that pass everywhere this project has ever been written**, and both were
 the same defect wearing different clothes: _a unit test that reads the developer's machine is a
 test whose green is about that machine._

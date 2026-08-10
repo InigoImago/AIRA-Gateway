@@ -35,6 +35,34 @@ services:
   # So it is always defined and decides for itself, the environment-shaped gating `ADR-0015`
   # settled: no address means nothing to do, and anything but a local or demo environment means
   # somebody else owns this Vault.
+  # Keep the development realm matching the file that defines it (see `tools/keycloak_demo_realm.py`).
+  #
+  # Keycloak imports a realm **only if it does not exist**, so every edit to the realm file reaches
+  # a fresh machine and no other. A colleague whose realm predates `ADR-0017` keeps a realm from
+  # before it, and `make showcase` then prints five accounts that Keycloak answers `invalid
+  # username or password` to. The repository already told people to recreate the realm by hand, in
+  # a README — which is a demo that works for whoever wrote it.
+  #
+  # Idle when the realm matches, environment-gated, and it never touches a real directory: AIRA
+  # does not write to one (`FRD-209`). This is the demo stack provisioning its own.
+  keycloak-init:
+    image: python:3.14-slim
+    container_name: aira-keycloak-init
+    command: ["python", "/tools/keycloak_demo_realm.py"]
+    environment:
+      KEYCLOAK_URL: http://keycloak:8080
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      AIRA_ENVIRONMENT: ${AIRA_ENVIRONMENT:-local}
+    volumes:
+      - ../../tools/keycloak_demo_realm.py:/tools/keycloak_demo_realm.py:ro
+      - ./keycloak/realms:/realm:ro
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    networks: [aira]
+    restart: "no"
+
   vault-init:
     image: hashicorp/vault:1.18
     container_name: aira-vault-init

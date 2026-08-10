@@ -1,5 +1,13 @@
 import { expect, test } from '@playwright/test';
-import { USERS, createUseCase, ensureUseCase, login, logout, uniqueSlug } from './support';
+import {
+  USERS,
+  createUseCase,
+  ensureUseCase,
+  grantGroup,
+  login,
+  logout,
+  uniqueSlug,
+} from './support';
 
 /**
  * The SPA talking to the *gateway* (not just the control plane).
@@ -70,8 +78,20 @@ test.describe('Gateway integration', () => {
     // The gateway authorizes the data plane by Keycloak group membership (FRD-102), and the
     // usage endpoint follows the same rule (ADR-0007). `demo-uc` is the slug the demo realm
     // puts ucadmin into, so this is the path where the numbers are visible.
-    await login(page, USERS.useCaseAdmin);
+    // Created as the **global administrator**, because since `FRD-605` creating a use case is
+    // that role's act — and then read as `ucadmin`, which is what this test is about. It used to
+    // create it as `ucadmin` and passed only because some earlier run had left `demo-uc` behind:
+    // a fresh database turned it into a 45-second timeout on a button that role never gets. A
+    // fixture a test needs is a fixture the test makes.
+    await login(page, USERS.globalAdmin);
     await ensureUseCase(page, 'demo-uc', 'Demo use case');
+    // And the grant, which is the half that was never anybody's to create. `ucadmin` is in the
+    // Keycloak group `/use-cases/demo-uc`; administering the use case is that group's *grant on
+    // it* (`FRD-209`), and nothing in the seed or the realm makes one. The test passed because an
+    // earlier run had, which is a fixture nobody owns.
+    await grantGroup(page, 'demo-uc', '/use-cases/demo-uc', 'admin');
+    await logout(page);
+    await login(page, USERS.useCaseAdmin);
 
     await page.goto('/use-cases/demo-uc?tab=budgets');
     if ((await page.locator('[role="progressbar"]').count()) === 0) {
