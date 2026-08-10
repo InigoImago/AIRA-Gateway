@@ -12,6 +12,7 @@ import {
   GroupGrant,
   RateLimit,
   CatalogModel,
+  ServedModel,
   DryRunResult,
   IssuedApiKey,
   Membership,
@@ -210,6 +211,30 @@ export class UseCaseService {
 
   saveModel(model: CatalogModel): Observable<CatalogModel> {
     return this.http.post<CatalogModel>('/api/v1/models/', model);
+  }
+
+  /**
+   * What the **gateway** actually serves, with the provenance its adapters were configured with
+   * (`FRD-507`).
+   *
+   * Asked of the gateway rather than of Management, because which models are reachable is a
+   * property of the gateway's configuration and nothing else knows it. The same `/gw` proxy the
+   * dry-run, usage and reporting views already use, so the browser's token carries through.
+   */
+  servedModels(): Observable<ServedModel[]> {
+    return this.http.get<{ models: ServedModel[] }>('/gw/v1beta/models').pipe(
+      map((body) =>
+        (body.models ?? []).map((model) => ({
+          ...model,
+          // **The `models/` prefix is Google's resource form, not a model name.** The gateway
+          // serves that listing in Gemini's shape, and carrying the prefix across this boundary
+          // would have catalogued `models/mock-1` — an entry no request can ever match, and one
+          // that looks right in the table. Stripped here, at the edge where the wire shape stops
+          // and the console's vocabulary starts.
+          name: model.name.replace(/^models\//, ''),
+        })),
+      ),
+    );
   }
 
   removeModel(name: string): Observable<void> {

@@ -25,6 +25,81 @@
         do, and what it costs. Open a row below to see everything on file for a model, and to
         correct or remove it.
       </p>
+
+      <!--
+        Discovery (`FRD-507`). The gateway knows which models its adapters reach; the catalog knows
+        which of them anybody released. Retyping a name from one into the other is work a machine
+        can do — deciding is not, which is why this fills in *where a model lives* and leaves the
+        price, the capabilities and the release checkbox exactly as an empty form has them.
+
+        Asked for, not loaded: a list of everything an endpoint offers, sitting beside an "Add"
+        button on every visit, reads as a to-do list. One API key here answered with 50 models.
+      -->
+      <div class="row" style="margin-top: 0.75rem; align-items: center; gap: 0.75rem">
+        <button
+          type="button"
+          class="btn btn--sm"
+          (click)="discover()"
+          [disabled]="discovering()"
+          data-testid="discover-models"
+        >
+          {{ discovering() ? 'Asking the gateway…' : 'Which models does the gateway serve?' }}
+        </button>
+        @if (served(); as list) {
+          <span class="muted" style="font-size: 0.85rem" data-testid="discover-summary">
+            {{ list.length }} served · {{ alreadyCatalogued() }} already catalogued ·
+            {{ notCatalogued().length }} not yet
+          </span>
+        }
+      </div>
+
+      @if (served() && notCatalogued().length === 0) {
+        <p class="empty" style="margin-top: 0.5rem" data-testid="discover-none">
+          Every model the gateway serves is in the catalog. A model it does <em>not</em> serve
+          cannot be added here — configure its adapter first, then ask again.
+        </p>
+      }
+      @if (notCatalogued().length) {
+        <div class="table-wrap" style="margin-top: 0.5rem">
+          <table class="table">
+            <thead>
+              <tr>
+                <th scope="col">Served, not catalogued</th>
+                <th scope="col">Reached through</th>
+                <th scope="col">Region</th>
+                <th scope="col"><span class="sr-only">Actions</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (model of notCatalogued(); track model.name) {
+                <tr>
+                  <td>
+                    <code>{{ model.name }}</code>
+                  </td>
+                  <td>{{ model.airaProvider || '—' }} / {{ model.airaPublisher || '—' }}</td>
+                  <td>{{ model.airaRegion || '—' }}</td>
+                  <td class="table__actions">
+                    <button
+                      type="button"
+                      class="btn btn--sm"
+                      (click)="importServed(model)"
+                      [attr.data-testid]="'import-' + model.name"
+                    >
+                      Catalogue…
+                    </button>
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+        <p class="muted" style="margin: 0.5rem 0 0; font-size: 0.85rem">
+          Offered by an endpoint, not ready to use: the price and what the model can actually do are
+          still yours to enter, and nothing is servable until you release it. An endpoint listing a
+          model is not a promise that it answers — one listed here returned
+          <em>no longer available to new users</em> on its first request.
+        </p>
+      }
     </div>
   }
 

@@ -374,6 +374,43 @@ image without saying how to build it — shown to fail by deleting one.
 
 ---
 
+## 2026-08-10 — Google AI Studio works, and importing what it serves (`FRD-507`)
+
+A real key, tested end to end: through AIRA, governed, audited and priced —
+`gemini-flash-latest`, provider `generative-language`, region `global`, 16 + 55 tokens, 142 300
+nanos, outcome `served`. Three findings on the way, and the third was mine.
+
+**`gemini-2.5-flash` is listed and unusable.** Google's own listing offers it; the first request
+answers `404: this model is no longer available to new users`. Listed is not usable — which is why
+`FRD-506` splits declared, served and reachable into three facts rather than one green tick.
+
+**`AIRA_GEMINI_MODELS` and `AIRA_GEMINI_BASE_URL` were never passed through by compose.** An
+operator could set either and nothing happened: the third instance of that defect in this file
+after the three timeouts of 2026-08-08. A knob that is not wired is worse than an absent one.
+
+**And wiring them broke the adapter within the minute.** `${AIRA_GEMINI_BASE_URL:-}` passes an
+_empty string_, which overrode the default and produced `UnsupportedProtocol` — an error message
+about an upstream, describing our own configuration. Same rule as the Vault provisioning earlier
+the same day: **absent and empty are different answers**, and `_empty_means_unset` deliberately
+leaves `str` fields alone because for most of them empty is a real answer. A base URL is not one of
+those, and now says so.
+
+The stale default went with it: `gemini-2.0-flash,gemini-1.5-flash` — two models a key issued today
+cannot use. A default naming something unusable produces a 404 that reads as our fault.
+
+**`FRD-507` — importing what the adapters already serve.** Asked whether creating models in the
+console makes sense at all. The _decision_ does and the _transcription_ does not: one key listed
+**50 models**, 36 able to generate, none of them approved by anybody. So the catalog screen asks
+the gateway what it serves, marks what is already catalogued, and offers the rest as a **draft** —
+filled in with **provenance only**. Price, capabilities and the release checkbox stay untouched,
+because a vendor's flag is a claim (`FRD-131` found a model that lists `tools` and answers in prose)
+and a price nobody set is not zero (`FRD-403`). Nothing is created until somebody saves, and
+`approved` still defaults to false.
+
+The browser found what the component tests could not: the listing returns Google's resource form,
+so the import would have catalogued **`models/mock-1`** — an entry no request can ever match, and
+one that looks right in the table. Stripped at the boundary where the wire shape stops.
+
 ## 2026-08-10 — The one upstream nobody was measuring (Google AI Studio and residency)
 
 Asked whether AI Studio could be supported, or whether the Vertex work had closed that door. It is

@@ -42,6 +42,11 @@ _METHODS = (
 )
 
 
+#: Where Google AI Studio lives. Repeated from the settings default on purpose: this is the value
+#: an empty configuration falls back to, and the fallback has to exist somewhere the adapter can
+#: reach without importing the settings class's own default.
+DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
+
 #: What the Google AI Studio endpoint is, in the residency vocabulary.
 #:
 #: `generativelanguage.googleapis.com` names no region and gives no regional guarantee — which is
@@ -146,5 +151,13 @@ def build_gemini_upstream(settings: GatewaySettings) -> GeminiUpstream | None:
     allowed = parse_allowed(settings.allowed_regions)
     check_region(GENERATIVE_LANGUAGE_REGION, allowed)
     models = [name.strip() for name in settings.gemini_models.split(",") if name.strip()]
-    client = httpx.AsyncClient(base_url=settings.gemini_base_url, timeout=60.0)
+    # **Empty means "use the default", for this field only.** Compose passes optional variables as
+    # `${VAR:-}`, which expands to an empty string, and `_empty_means_unset` deliberately leaves
+    # `str` fields alone — there an empty value is often a real answer (`AIRA_CORS_ORIGINS=` means
+    # none). A base URL is not one of those: the empty string is not an endpoint, it is the absence
+    # of one, and passing it produced `UnsupportedProtocol` from httpx — an upstream error message
+    # about our own configuration. Same rule as the Vault provisioning found earlier the same day:
+    # absent and empty are different answers, and here only one of them can be meant.
+    base_url = settings.gemini_base_url or DEFAULT_GEMINI_BASE_URL
+    client = httpx.AsyncClient(base_url=base_url, timeout=60.0)
     return GeminiUpstream(settings.google_api_key, models, client)

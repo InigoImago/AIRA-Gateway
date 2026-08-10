@@ -266,4 +266,11 @@ def upstream_model_to_gemini(model: UpstreamModel) -> schemas.GeminiModel:
         version=model.version,
         displayName=model.name,
         supportedGenerationMethods=list(model.supported_methods),
+        # Provenance from the adapter, not from the catalog (`FRD-507` FR-1). These three describe
+        # *where* the model is reached, which is a fact the adapter was configured with and which
+        # already lands on every audit row. Blank stays blank: an adapter that names no region has
+        # not made a claim about one.
+        airaProvider=model.provider or None,
+        airaPublisher=model.publisher or None,
+        airaRegion=model.region or None,
     )

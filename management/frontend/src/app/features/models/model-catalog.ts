@@ -10,7 +10,14 @@ import {
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { errorMessage } from '../../core/api/error-message';
-import { CAPABILITIES, Capability, CatalogModel, Me, ModelCheck } from '../../core/api/models';
+import {
+  CAPABILITIES,
+  Capability,
+  CatalogModel,
+  Me,
+  ModelCheck,
+  ServedModel,
+} from '../../core/api/models';
 import { MeService } from '../../core/api/me.service';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { InfoHint } from '../../core/ui/info-hint';
@@ -406,6 +413,59 @@ export class ModelCatalog implements OnInit {
       { key: 'deprecated', label: 'Deprecated', value: model.deprecated ? 'yes' : 'no' },
       { key: 'updated_at', label: 'Last changed', value: dash(model.updated_at) },
     ];
+  }
+
+  /**
+   * What the gateway serves, and which of it the catalog does not know (`FRD-507`).
+   *
+   * `null` until asked. A list that loads itself would put 36 models next to an "Add" button on
+   * every visit, which reads as a to-do list and invites exactly the bulk approval `FRD-307` is
+   * there to prevent.
+   */
+  protected readonly served = signal<ServedModel[] | null>(null);
+  protected readonly discovering = signal(false);
+
+  //: Served by the gateway and **not in the catalog** — which is a different question from the
+  //: existing `undeclared`, meaning catalogued with no capabilities declared. Two absences that
+  //: read alike and are fixed differently: one needs a catalog entry, the other a measurement.
+  protected readonly notCatalogued = computed(() =>
+    (this.served() ?? []).filter((model) => model.airaDeclared === false),
+  );
+  protected readonly alreadyCatalogued = computed(
+    () => (this.served() ?? []).length - this.notCatalogued().length,
+  );
+
+  protected discover(): void {
+    this.discovering.set(true);
+    this.service.servedModels().subscribe({
+      next: (models) => {
+        this.discovering.set(false);
+        this.served.set(models);
+      },
+      error: (error: unknown) => {
+        this.discovering.set(false);
+        this.error.set(errorMessage(error, 'Could not ask the gateway which models it serves.'));
+      },
+    });
+  }
+
+  /**
+   * Start a catalog entry from a served model.
+   *
+   * **Provenance only.** Name, provider, publisher and region are facts the adapter was configured
+   * with and already put on every audit row. Price, capabilities and the release checkbox are left
+   * exactly as the empty form has them, and that is the design rather than an omission: a vendor's
+   * capability flag is a claim and not evidence (`FRD-131` found a model that lists `tools` and
+   * answers in prose), and a price nobody set is not zero (`FRD-403`). The editor still asks.
+   */
+  protected importServed(model: ServedModel): void {
+    this.reset();
+    this.name.set(model.name);
+    this.provider.set(model.airaProvider ?? '');
+    this.publisher.set(model.airaPublisher ?? '');
+    this.platform.set(model.airaProvider ?? '');
+    this.editing.set('');
+    this.showAdd.set(true);
   }
 
   protected edit(model: CatalogModel): void {

@@ -152,9 +152,17 @@ class GatewaySettings(BaseAiraSettings):
     max_embedding_batch: int = 256
     max_embedding_chars: int = 1_000_000
 
-    # Real Google Gemini upstream (FRD-304). Registered only when an API key is present.
+    # Google AI Studio (FRD-304). Registered only when an API key is present, and only in a
+    # deployment whose `allowed_regions` include `global` — that endpoint names no region and
+    # guarantees none, which is the whole difference from Vertex (FRD-115).
     google_api_key: str = ""
-    gemini_models: str = "gemini-2.0-flash,gemini-1.5-flash"
+    #: Which models to offer. **Empty by default, deliberately since 2026-08-10.** It used to name
+    #: `gemini-2.0-flash,gemini-1.5-flash`, and a key issued today cannot use either: the endpoint
+    #: still lists them and answers `no longer available to new users` on the first request. A
+    #: default that names something unusable is worse than none — it produces a 404 that reads as
+    #: our fault. Ask the endpoint instead: the catalog screen's discovery (FRD-507) lists what a
+    #: key actually serves.
+    gemini_models: str = ""
     gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
 
     #: Where requests may be processed — **one list for every cloud** (`ADR-0012` §6). Google says

@@ -1300,6 +1300,26 @@ binaries — which is a generator of "it builds for me" and nothing else, with t
 above it doing nothing. One context root now, named copies instead of `COPY . .`, context **1.5 MB
 instead of 302 MB**, and a test requires every image to share the root.
 
+**Google AI Studio, verified, and importing what it serves (`FRD-507`, 2026-08-10)** — a real key
+end to end through AIRA: `gemini-flash-latest`, provider `generative-language`, region `global`,
+priced at 142 300 nanos, outcome `served`. Three findings on the way. **`gemini-2.5-flash` is
+listed and unusable** (`no longer available to new users` on the first request) — *listed is not
+usable*, which is why `FRD-506` keeps declared/served/reachable apart. **`AIRA_GEMINI_MODELS` and
+`AIRA_GEMINI_BASE_URL` were never passed through by compose** (third instance in that file after
+the 2026-08-08 timeouts: a knob that is not wired is worse than an absent one) — and **wiring them
+broke the adapter within the minute**, because `${VAR:-}` passes an *empty string* that overrode
+the default and produced `UnsupportedProtocol`, an upstream error describing our own configuration:
+*absent and empty are different answers*, twice in one day. The stale default
+(`gemini-2.0-flash,gemini-1.5-flash`, both dead for new keys) is gone.
+**`FRD-507`**: asked whether creating models in the console makes sense — the **decision** does and
+the **transcription** does not, since one key listed **50 models** nobody approved. The catalog now
+asks the gateway what it serves and offers the uncatalogued as a draft filled with **provenance
+only**; price, capabilities and the release checkbox stay untouched (a vendor's flag is a claim,
+`FRD-131`; a price nobody set is not zero, `FRD-403`), and `approved` still defaults to false. The
+browser found what the component tests could not: the listing returns Google's resource form, so an
+import would have catalogued **`models/mock-1`** — an entry no request can match, and one that looks
+right in the table.
+
 **The one upstream nobody was measuring (2026-08-10)** — asked whether **Google AI Studio** could
 be supported: it is, and always was (`FRD-304` built it first — `generativelanguage.googleapis.com`
 is that product). Answering found the hole: **three of four adapter families check their region

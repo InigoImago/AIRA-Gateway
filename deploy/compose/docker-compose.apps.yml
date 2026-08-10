@@ -220,6 +220,13 @@ services:
       AIRA_GOOGLE_API_KEY: ${AIRA_GOOGLE_API_KEY:-}
       # Servers speaking the OpenAI dialect (FRD-123). Empty registers none. The in-network name
       # is `ollama`, not `localhost` — the same split as the JWKS URI above, and the same reason.
+      # Google AI Studio (`FRD-304`). The key registers the adapter; the model list and base URL
+      # were **not passed through** until 2026-08-10, so an operator could set either and nothing
+      # happened — the third time this file has had that defect, after the three timeouts found on
+      # 2026-08-08. A knob that is not wired is worse than an absent one: somebody turns it and
+      # believes the result.
+      AIRA_GEMINI_MODELS: ${AIRA_GEMINI_MODELS:-}
+      AIRA_GEMINI_BASE_URL: ${AIRA_GEMINI_BASE_URL:-}
       AIRA_OPENAI_SERVERS: ${AIRA_OPENAI_SERVERS:-}
       AIRA_OLLAMA_URL: ${AIRA_OLLAMA_URL:-}
       AIRA_OLLAMA_MODELS: ${AIRA_OLLAMA_MODELS:-}

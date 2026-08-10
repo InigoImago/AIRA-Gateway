@@ -163,7 +163,7 @@ def test_naming_global_is_all_it_takes_to_use_it() -> None:
     """The point is a decision, not a prohibition. AI Studio stays entirely usable — the operator
     says `global` out loud, and every audit row then carries that region."""
     upstream = build_gemini_upstream(
-        GatewaySettings(google_api_key="k", allowed_regions="eu,global")
+        GatewaySettings(google_api_key="k", allowed_regions="eu,global", gemini_models="m")
     )
 
     assert upstream is not None
@@ -243,3 +243,19 @@ async def test_a_single_text_keeps_using_the_lower_latency_endpoint() -> None:
 
     request = CanonicalEmbeddingRequest(model="gemini-2.0-flash", texts=["only"], dimensions=768)
     assert await _upstream(handler).embed(request) == [[0.5]]
+
+
+def test_an_empty_base_url_falls_back_to_the_real_endpoint() -> None:
+    """Compose passes optional variables as `${VAR:-}`, which is an **empty string**, and
+    `_empty_means_unset` deliberately leaves `str` fields alone — for most of them an empty value
+    is a real answer. A base URL is not one of those: it produced `UnsupportedProtocol` from httpx,
+    which reads as an upstream fault and is our own configuration. Absent and empty are different
+    answers, and here only one of them can be meant."""
+    from aira_gateway.upstreams.gemini import DEFAULT_GEMINI_BASE_URL
+
+    upstream = build_gemini_upstream(
+        GatewaySettings(google_api_key="k", gemini_base_url="", allowed_regions="global")
+    )
+
+    assert upstream is not None
+    assert str(upstream._client.base_url).rstrip("/") == DEFAULT_GEMINI_BASE_URL

@@ -31,6 +31,13 @@ const DECLARED: CatalogModel = {
 
 interface Catalog {
   add: () => void;
+  discover: () => void;
+  discovering: () => boolean;
+  served: () => unknown[] | null;
+  notCatalogued: () => { name: string }[];
+  alreadyCatalogued: () => number;
+  importServed: (model: unknown) => void;
+  provider: { set: (v: string) => void; (): string };
   approved: { set: (v: boolean) => void; (): boolean };
   models: () => CatalogModel[];
   loading: () => boolean;
@@ -69,6 +76,7 @@ const CHECK: ModelCheck = {
 function setup(
   options: {
     models?: Observable<CatalogModel[]>;
+    served?: Observable<unknown[]>;
     save?: Observable<CatalogModel>;
     roles?: string[];
     confirm?: boolean;
@@ -101,6 +109,18 @@ function setup(
             return options.check ? options.check : of(CHECK);
           },
           models: () => options.models ?? of([FLASH, UNPRICED]),
+          servedModels: () =>
+            options.served ??
+            of([
+              { name: 'flash', airaDeclared: true },
+              {
+                name: 'gemini-3.1-flash-lite',
+                airaDeclared: false,
+                airaProvider: 'generative-language',
+                airaPublisher: 'google',
+                airaRegion: 'global',
+              },
+            ]),
           saveModel: (model: CatalogModel) => {
             saved.push(model);
             return options.save ?? of(model);
@@ -801,5 +821,88 @@ describe('ModelCatalog — finding one among many', () => {
     expect(panel.querySelector('[data-testid="detail-capabilities"]')).not.toBeNull();
     expect(panel.querySelector('[data-testid="detail-thinking"]')).not.toBeNull();
     expect(panel.querySelector('[data-testid="detail-numeric_id"]')).not.toBeNull();
+  });
+});
+
+describe('ModelCatalog — importing what the gateway serves (`FRD-507`)', () => {
+  it('asks only when asked, and separates catalogued from not', () => {
+    /** A list of everything an endpoint offers, loaded on every visit and sitting beside an "Add"
+     *  button, reads as a to-do list — one key here answered with 50 models. It is an action. */
+    const { component } = setup();
+    expect(component.served()).toBeNull();
+
+    component.discover();
+
+    expect(component.served()?.length).toBe(2);
+    expect(component.alreadyCatalogued()).toBe(1);
+    expect(component.notCatalogued().map((m) => m.name)).toEqual(['gemini-3.1-flash-lite']);
+  });
+
+  it('copies where a model lives and nothing else', () => {
+    /** **The property an eager implementation breaks.** Provenance is a fact the adapter was
+     *  configured with. A capability is a claim (`FRD-131` found a model that lists `tools` and
+     *  answers in prose) and a price nobody set is not zero (`FRD-403`) — so the editor still asks,
+     *  and an administrator who does not know the price has not declared the model free. */
+    const { component } = setup();
+    component.discover();
+
+    component.importServed(component.notCatalogued()[0]);
+
+    // The bare name, never Google's `models/…` resource form — that would catalogue an entry no
+    // request can match, and it looks right in the table. The service strips it at the edge; this
+    // asserts the value that reaches the form.
+    expect(component.name()).toBe('gemini-3.1-flash-lite');
+    expect(component.name()).not.toContain('models/');
+    expect(component.provider()).toBe('generative-language');
+    expect(component.publisher()).toBe('google');
+    expect(component.inputPrice()).toBe('');
+    expect(component.capabilities()).toEqual([]);
+    expect(component.approved()).toBe(false);
+  });
+
+  it('says so when the catalog already has everything the gateway serves', () => {
+    /** "Nothing to import" and "the gateway serves nothing" are different facts, and only one of
+     *  them is good news. The empty state names which. */
+    const { component, text, fixture } = setup({
+      served: of([{ name: 'flash', airaDeclared: true }]),
+    });
+
+    component.discover();
+    fixture.detectChanges();
+    expect(component.notCatalogued()).toEqual([]);
+    expect(text()).toContain('Every model the gateway serves is in the catalog');
+  });
+});
+
+describe('ModelCatalog — discovery when things are missing', () => {
+  it('reports a gateway that cannot be asked, instead of an empty list', () => {
+    /** An empty list and an unreachable gateway look identical and are fixed differently — the
+     *  same distinction `FRD-603` drew between "nothing happened" and "not yours to see". */
+    const { component } = setup({ served: throwError(() => ({ status: 503 })) });
+
+    component.discover();
+
+    expect(component.served()).toBeNull();
+    expect(component.error()).toBeTruthy();
+    expect(component.discovering()).toBe(false);
+  });
+
+  it('shows an em dash where an adapter has declared no provenance', () => {
+    /** A self-hosted server may name no region, and the mock names nothing at all. Blank stays
+     *  blank: an adapter that declared nothing has not made a claim, and rendering an empty string
+     *  as a value would turn silence into an assertion. */
+    const { component, text, fixture } = setup({
+      served: of([{ name: 'mock-1', airaDeclared: false }]),
+    });
+
+    component.discover();
+    fixture.detectChanges();
+
+    expect(component.notCatalogued().map((m) => m.name)).toEqual(['mock-1']);
+    expect(text()).toContain('—');
+
+    component.importServed(component.notCatalogued()[0]);
+    expect(component.name()).toBe('mock-1');
+    expect(component.provider()).toBe('');
   });
 });

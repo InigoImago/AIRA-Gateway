@@ -376,6 +376,14 @@ class GeminiModel(BaseModel):
     airaMaxOutputTokens: int | None = None
     airaDeprecated: bool | None = None
     airaDeclared: bool | None = None
+    # Provenance (`FRD-507` FR-1). Where the model lives is a fact the adapter has — it built this
+    # entry from its own configuration, and these three already reach every audit row from there.
+    # They are here so the console can offer to catalogue what the gateway serves without anybody
+    # retyping it. Capabilities and prices are deliberately *not* importable: a vendor's flag is a
+    # claim (`FRD-131`) and an invented price is worse than an absent one (`FRD-403`).
+    airaProvider: str | None = None
+    airaPublisher: str | None = None
+    airaRegion: str | None = None
 
 
 class ListModelsResponse(BaseModel):

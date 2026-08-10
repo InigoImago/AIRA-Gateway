@@ -614,3 +614,19 @@ export interface AnomalyRule {
   throttle_rpm: number | null;
   enabled: boolean;
 }
+
+/**
+ * A model the **gateway** serves, as its own listing reports it (`FRD-507`).
+ *
+ * Not a catalog entry and deliberately not shaped like one: it carries where the model is reached
+ * and whether the catalog already knows it, and nothing about price or capability. Those are a
+ * decision and a measurement — a vendor's flag is a claim (`FRD-131`) and an invented price is
+ * worse than an absent one (`FRD-403`).
+ */
+export interface ServedModel {
+  name: string;
+  airaDeclared?: boolean;
+  airaProvider?: string | null;
+  airaPublisher?: string | null;
+  airaRegion?: string | null;
+}
