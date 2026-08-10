@@ -202,6 +202,28 @@ fixes it. It is what turned "the console is empty" into "the seed never ran", in
 deliberately **not** part of `make showcase`: a demo that runs a diagnostic every time is a demo
 that has given up on working.
 
+## 4e. A revoked demo key cannot be reissued, and that is correct (2026-08-10)
+
+The next run came back **401** on every request, and the diagnosis printed for it blamed the model
+catalog — which is an _authentication_ failure and has nothing to do with the catalog. A diagnosis
+confidently about the wrong thing sends somebody looking in the wrong place, so the traffic script
+reads the status codes now and says what each one means.
+
+The cause is a rule working as designed. Deleting a use case revokes its API keys, and revocation
+is **terminal** in the gateway's read-model: no `api_key.created` may resurrect one (`ADR-0007`).
+The demo's keys are deterministic, so re-running the seed re-announces the _same prefix_ and
+changes nothing — the stack looks perfect and every request is refused for ever.
+
+`make showcase-reset-keys` removes those four rows so the announcement lands again, waits for it by
+**polling** rather than by guessing an interval, and reports through the doctor. It is deliberately
+its own command: deleting rows from the read-model authorization is drawn from is not a habit to
+encode into a target that runs every time.
+
+Found while proving it: the traffic tally counted the embedding call only when it _succeeded_, so a
+refused one appeared in no column and eleven requests reported as "9 served, 1 refused". The same
+shape as the refusals `FRD-122` found leaving no audit row, in a script whose only job is to report
+what happened.
+
 ## 5. Testing
 
 `management/backend/tests/test_showcase_seed.py`: idempotence (a second run creates nothing new),

@@ -263,6 +263,19 @@ is still a recipe line, and eleven of them had landed in the middle of the demo'
 
 Measured while there: `make showcase` takes **66 seconds** on a warm machine.
 
+**Then every request came back 401, and the diagnosis printed for it blamed the model catalog** —
+an authentication failure, described as a cataloguing one. A diagnosis confidently about the wrong
+thing sends somebody looking in the wrong place, so the traffic script reads the status codes and
+says what each means. The cause was a rule working as designed: deleting a use case revokes its
+keys, revocation is **terminal** in the read-model (`ADR-0007`), and the demo's keys are
+deterministic — so re-running the seed re-announces the same prefix and changes nothing. The stack
+looks perfect and every request is refused for ever. `make showcase-reset-keys` removes those rows,
+**polls** for the announcement to land rather than guessing an interval, and reports through the
+doctor; deliberately its own command, because deleting rows from the read-model authorization is
+drawn from is not a habit to encode into something that runs every time. Found while proving it:
+the tally counted the embedding call only when it succeeded, so eleven requests reported as "9
+served, 1 refused" and the missing one appeared nowhere.
+
 **And the two reports were one event.** "The ollama pull blows up" and "the console is empty"
 looked unrelated to the person seeing them: `management-seed` waited for `ollama-pull` to complete
 **successfully**, so one failed download meant the seed never ran at all — no accounts, no use

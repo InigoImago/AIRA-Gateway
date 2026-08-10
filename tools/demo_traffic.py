@@ -95,10 +95,12 @@ async def _embed(client: httpx.AsyncClient, slug: str) -> int:
 
 async def main() -> int:
     served = refused = failed = 0
+    codes: set[int] = set()
     async with httpx.AsyncClient(timeout=300.0) as client:
         for slug, prompts in CONVERSATIONS.items():
             for prompt in prompts:
                 code = await _ask(client, slug, prompt)
+                codes.add(code)
                 served += code == 200
                 refused += 400 <= code < 500
                 failed += code >= 500
@@ -107,11 +109,19 @@ async def main() -> int:
         # The blocked one. `kundenservice` runs the heuristic injection filter, so this is refused
         # by a control rather than by an error — which is what the audit trail should show.
         code = await _ask(client, "kundenservice", INJECTION)
+        codes.add(code)
         refused += 400 <= code < 500
         print(f"  {'kundenservice':<14} {code}  <prompt-injection attempt, expected to be blocked>")
 
         code = await _embed(client, "entwicklung")
+        codes.add(code)
+        # Counted in every column, like every other call. It used to add only to `served`, so a
+        # refused embedding left the tally reading "9 served, 1 refused" out of eleven requests
+        # and the missing one appeared nowhere — the same shape as the refusals `FRD-122` found
+        # leaving no audit row, in a script whose whole job is to report what happened.
         served += code == 200
+        refused += 400 <= code < 500
+        failed += code >= 500
         print(f"  {'entwicklung':<14} {code}  <embedding batch of four>")
 
     print(f"\nserved {served}, refused {refused}, failed {failed}")
@@ -126,14 +136,37 @@ async def main() -> int:
     # none of the governance — which is the sentence at the top of this file, so the check belongs
     # here rather than in the reader's judgement.
     if not served:
+        # **Say what the status codes meant.** The first version blamed the model catalog for
+        # everything, and the next run came back all `401` — an authentication failure, which has
+        # nothing to do with the catalog. A diagnosis that is confidently about the wrong thing
+        # sends somebody looking in the wrong place, which is worse than saying nothing.
         print(
-            "\nnothing was served, so every screen in the walkthrough will be empty.\n"
-            "The usual cause is an empty model catalog: the local model has to be pulled *and*\n"
-            "catalogued, and only a catalogued, approved model may be used. Check\n"
-            "  docker logs aira-ollama-pull      (was the model fetched?)\n"
-            "  docker logs aira-management-seed  (did local_models declare anything?)",
+            "\nnothing was served, so every screen in the walkthrough will be empty.",
             file=sys.stderr,
         )
+        if 401 in codes:
+            print(
+                "Every request was refused with 401: the gateway does not accept these keys.\n"
+                "They are announced over Kafka, and a key belonging to a use case that was once\n"
+                "deleted stays revoked for ever — deliberately, so no event can resurrect one.\n"
+                "  make showcase-doctor              (says which it is)\n"
+                "  docker logs aira-management-relay (are the events leaving Management?)",
+                file=sys.stderr,
+            )
+        elif 400 in codes:
+            print(
+                "The requests were refused with 400, which here is usually an empty model\n"
+                "catalog: a model has to be pulled *and* catalogued, and only a catalogued,\n"
+                "approved model may be used.\n"
+                "  docker logs aira-ollama-pull      (was the model fetched?)\n"
+                "  docker logs aira-management-seed  (did local_models declare anything?)",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                "  make showcase-doctor              (checks the chain link by link)",
+                file=sys.stderr,
+            )
         return 1
     return 0
 

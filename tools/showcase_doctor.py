@@ -178,6 +178,39 @@ def check_gateway() -> None:
 
     say(int(use_cases) > 0, "use cases received over Kafka", use_cases)
     say(int(models) > 0, "models received over Kafka", models)
+
+    # The demo's keys, by name. A key belonging to a use case that was once deleted stays revoked
+    # **for ever** — deliberately, so that no `api_key.created` can resurrect one (`ADR-0007`) —
+    # and because the demo's keys are deterministic, re-running the seed re-announces the same
+    # prefix and changes nothing. The result is every request answered `401` with a stack that
+    # otherwise looks perfect, which is why this is checked by name rather than counted.
+    keys = psql(
+        "aira_gateway",
+        "select use_case || ' ' || case when is_active then 'active' else 'REVOKED' end "
+        f"from api_keys where use_case in ({', '.join(repr(s) for s in DEMO_USE_CASES)})",
+    )
+    state = dict(line.split(" ") for line in keys)
+    missing_keys = [slug for slug in DEMO_USE_CASES if slug not in state]
+    revoked = [slug for slug, value in state.items() if value == "REVOKED"]
+    say(
+        not missing_keys and not revoked,
+        "demo API keys",
+        f"{len(state)} known, revoked: {revoked or '—'}",
+    )
+    if missing_keys:
+        blame(
+            f"The gateway has no key for {missing_keys}, so those requests are refused with 401.",
+            "The seed announces them over Kafka; check `docker logs aira-management-relay` and "
+            "`docker logs aira-gateway-consumer`, then re-run the seed.",
+        )
+    if revoked:
+        blame(
+            f"The demo keys for {revoked} are revoked, and revocation is terminal by design — "
+            "re-running the seed re-announces the same prefix and cannot bring them back.",
+            "`make showcase-reset-keys` — demo only, and deliberately its own command: deleting "
+            "rows from the read-model that authorization is drawn from is not a habit to encode "
+            "into a target that runs every time.",
+        )
     if int(models) == 0:
         blame(
             "The gateway knows no models, so every request is refused as 'not in the model "

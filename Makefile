@@ -99,6 +99,25 @@ showcase: env ## Start the full demo: stack, local model, seeded roles/budgets, 
 showcase-traffic: ## Drive more demo traffic (moves the budget bars)
 	uv run python tools/demo_traffic.py
 
+showcase-reset-keys: ## Let the demo's API keys be reissued after their use case was deleted
+	@echo "Removing the demo keys from the gateway's read-model so the seed can announce them again."
+	@echo "Demo only. Revocation is terminal in the product, and deliberately so: no event may"
+	@echo "resurrect a revoked credential. This deletes the rows instead, for four known slugs."
+	$(COMPOSE_CORE) exec -T postgres psql -U aira -d aira_gateway -c \
+		"delete from api_keys where use_case in ('kundenservice','entwicklung','personalwesen','coding-assistant')"
+	$(COMPOSE_FULL) run --rm management-seed
+	@echo "waiting for the announcements to reach the gateway…"
+	@# Polled, not slept. A fixed wait is a guess about the relay's poll interval plus the
+	@# consumer's, and when the guess is short the command reports the state it just created as
+	@# broken — which is exactly the confusion this whole target exists to end.
+	@for i in $$(seq 1 40); do \
+		n=$$($(COMPOSE_CORE) exec -T postgres psql -U aira -d aira_gateway -tAc \
+			"select count(*) from api_keys where use_case in ('kundenservice','entwicklung','personalwesen','coding-assistant')" 2>/dev/null | tr -d ' '); \
+		[ "$$n" = "4" ] && break; \
+		sleep 2; \
+	done
+	@python3 tools/showcase_doctor.py
+
 showcase-doctor: ## Report which link of the demo is broken (reads only, changes nothing)
 	@python3 tools/showcase_doctor.py
 
