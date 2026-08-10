@@ -95,7 +95,28 @@ class ProviderRegistry:
     def __init__(self, providers: list[Upstream]) -> None:
         self._by_model: dict[str, Upstream] = {}
         self._models: dict[str, UpstreamModel] = {}
+        #: Which adapter owns a **provider name**, so a model the catalog knows can be served
+        #: without having been named in configuration as well (`FRD-507`).
+        #:
+        #: The configured list was the only way in, and it made the catalog a second place to type
+        #: the same name: you declared a model in `AIRA_GEMINI_MODELS` so the adapter would offer
+        #: it, then declared it again in the catalog so `FRD-307` would permit it. The catalog is
+        #: already the authority on *what may be served* — a model in it names its provider, and
+        #: that is enough to know who serves it.
+        #:
+        #: Configured models keep working unchanged; this is the fallback for one the catalog knows
+        #: and the configuration does not.
+        self._by_provider: dict[str, Upstream] = {}
         for provider in providers:
+            claimed = getattr(provider, "serves_provider", "")
+            if claimed:
+                if claimed in self._by_provider:
+                    raise AmbiguousModel(
+                        f"Two adapters both claim provider '{claimed}'. A model catalogued under "
+                        "it could be served by either, which decides its region and credential by "
+                        "registration order — the same silent choice `ADR-0011` refuses."
+                    )
+                self._by_provider[claimed] = provider
             for model in provider.models():
                 if model.name in self._by_model:
                     raise AmbiguousModel(
@@ -106,8 +127,39 @@ class ProviderRegistry:
                 self._by_model[model.name] = provider
                 self._models[model.name] = model
 
-    def provider_for(self, model: str) -> Upstream | None:
-        return self._by_model.get(model)
+    def provenance_for(self, provider: str) -> tuple[str, str, str] | None:
+        """Where an adapter that owns a provider name reaches its models (`FRD-507`).
+
+        A model resolved through the **catalog** has no entry in `_models`, so the provenance the
+        audit row needs cannot be read from there — and leaving it blank would be worse than the
+        second list this feature removes: `FRD-115`'s point is that "the configuration says EU" is
+        a claim and "this request went to `eu`" is evidence, and an empty column is neither.
+
+        Read from one of the adapter's own models, because that is where the adapter put it. An
+        adapter that owns a namespace and serves no configured model has nothing to answer with,
+        and says so rather than guessing.
+        """
+        upstream = self._by_provider.get(provider)
+        if upstream is None:
+            return None
+        for model in upstream.models():
+            if model.provider:
+                return (model.provider, model.publisher, model.region)
+        declared = getattr(upstream, "provenance", None)
+        return declared if isinstance(declared, tuple) else None
+
+    def provider_for(self, model: str, provider: str = "") -> Upstream | None:
+        """Which adapter serves this model.
+
+        The configured name first, and a **catalogued** model's provider second. `provider` is what
+        the catalog says (`ModelDeclaration.provider`); passing it is what lets a model become
+        servable by being catalogued, without a second entry in configuration and without a
+        restart. Callers that have no declaration to hand pass nothing and get the old behaviour.
+        """
+        direct = self._by_model.get(model)
+        if direct is not None:
+            return direct
+        return self._by_provider.get(provider) if provider else None
 
     def models(self) -> list[UpstreamModel]:
         return list(self._models.values())

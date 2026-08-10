@@ -44,6 +44,7 @@ from aira_gateway.api.serving import (
     accounting,
     catalog_of,
     check_structured_result,
+    declared_provider,
     elapsed_ms,
     prepare_for_dispatch,
     provenance,
@@ -298,7 +299,7 @@ async def _record(
         requested_model=trail.requested_model,
         model_selection=trail.selection,
         pipeline_decisions=decision_summary(trail.decisions),
-        provenance=provenance(request, trail.served_model),
+        provenance=await provenance(request, trail.served_model),
         api="kira",
     )
 
@@ -328,6 +329,7 @@ async def chat(request: Request, principal: Principal = Depends(require_principa
                 canonical,
                 fallbacks,
                 permits=requirements_for(request, canonical),
+                provider_of=await declared_provider(request),
             )
             trail.served_by(dispatched.response.model, dispatched.candidate_index)
             trail.passed_over(dispatched.skipped)
@@ -380,6 +382,7 @@ async def streaming_chat(
                     canonical,
                     fallbacks,
                     permits=requirements_for(request, canonical),
+                    provider_of=await declared_provider(request),
                 )
                 # Inside the same `try`, deliberately. This surface's "stream" delivers one
                 # terminal event carrying the whole answer, so an incomplete document would arrive

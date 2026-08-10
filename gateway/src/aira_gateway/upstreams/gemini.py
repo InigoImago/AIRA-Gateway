@@ -57,6 +57,18 @@ GENERATIVE_LANGUAGE_REGION = "global"
 
 
 class GeminiUpstream:
+    #: The provider name this adapter owns (`FRD-507`). A model catalogued under it is served here
+    #: even when nobody named it in `AIRA_GEMINI_MODELS` — the endpoint takes the model name in the
+    #: URL and needs no list of its own, so the configured list was only ever a second place to
+    #: type what the catalog already says.
+    serves_provider = "generative-language"
+
+    #: Where this adapter reaches its models, for a catalogued model that names no configured one
+    #: (`FRD-507`). The same three values every `UpstreamModel` here carries — stated once so the
+    #: audit row is complete even when the configured list is empty, which is the whole point of
+    #: cataloguing being enough.
+    provenance = (serves_provider, "google", GENERATIVE_LANGUAGE_REGION)
+
     def __init__(self, api_key: str, models: list[str], client: httpx.AsyncClient) -> None:
         self._api_key = api_key
         self._client = client

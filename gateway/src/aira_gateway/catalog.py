@@ -69,6 +69,10 @@ class ModelDeclaration:
     thinking: dict[str, Any] | None = None
     embedding: dict[str, Any] | None = None
     attachments: dict[str, Any] = field(default_factory=dict)
+    #: Which adapter serves it (`FRD-507`). The catalog is already the authority on *what may be
+    #: served*; carrying the provider makes it the authority on *who serves it* too, so a model
+    #: becomes usable by being catalogued rather than by also being named in configuration.
+    provider: str = ""
     publisher: str = ""
     platform: str = ""
     hosting: str = ""
@@ -270,6 +274,7 @@ def _from_record(model: str, record: ModelRead) -> ModelDeclaration:
         thinking=record.thinking if isinstance(record.thinking, dict) else None,
         embedding=record.embedding if isinstance(record.embedding, dict) else None,
         attachments=record.attachments if isinstance(record.attachments, dict) else {},
+        provider=record.provider or "",
         publisher=record.publisher or "",
         platform=record.platform or "",
         hosting=record.hosting or "",

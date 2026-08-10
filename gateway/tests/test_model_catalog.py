@@ -333,3 +333,92 @@ async def test_a_declaration_reaches_the_model_list() -> None:
     others = [m for name, m in listed.items() if name != "mock-1"]
     assert others, "the registry serves nothing but the declared model, so nothing is proved"
     assert all(m["airaDeclared"] is False for m in others)
+
+
+async def test_a_catalogued_model_is_served_without_being_configured_too() -> None:
+    """**The second list, removed** (`FRD-507`).
+
+    A model had to be named twice: in the adapter's configuration so it would be offered, and in
+    the catalog so `FRD-307` would permit it. The catalog is already the authority on what may be
+    served — a row names its provider, and that is enough to know who serves it. So an
+    administrator catalogues a model and it works, rather than catalogues it and then edits an
+    environment variable and restarts.
+
+    Asserted through the registry, which is where the two lists met.
+    """
+    from aira_gateway.upstreams.base import ProviderRegistry
+    from aira_gateway.upstreams.mock import MockProvider
+
+    class _Namespaced(MockProvider):
+        serves_provider = "make-believe"
+
+    registry = ProviderRegistry([_Namespaced("configured-1")])
+
+    # Named nowhere in configuration…
+    assert registry.provider_for("never-configured") is None
+    # …but catalogued under a provider this adapter owns.
+    assert registry.provider_for("never-configured", "make-believe") is not None
+    # And an unrelated provider still resolves to nothing, rather than to whoever is first.
+    assert registry.provider_for("never-configured", "somebody-else") is None
+
+
+def test_two_adapters_cannot_claim_one_provider() -> None:
+    """`ADR-0011`'s rule one level down: an ambiguous routing table refuses to boot. Two adapters
+    owning the same provider name would decide a catalogued model's region and credential by
+    registration order — silently, and differently after a restart."""
+    from aira_gateway.upstreams.base import AmbiguousModel, ProviderRegistry
+    from aira_gateway.upstreams.mock import MockProvider
+
+    class _One(MockProvider):
+        serves_provider = "contested"
+
+    class _Two(MockProvider):
+        serves_provider = "contested"
+
+    with pytest.raises(AmbiguousModel, match="contested"):
+        ProviderRegistry([_One("a"), _Two("b")])
+
+
+def test_a_catalogued_model_still_records_where_it_ran() -> None:
+    """**The regression that sent this feature back once.**
+
+    Provenance is read from the registry, and a model resolved through the catalog has no entry
+    there — so the first working version wrote `provider` and `region` **empty** onto the audit
+    row. That is worse than the second list the feature removes: `FRD-115`'s point is that "the
+    configuration says EU" is a claim and "this request went to `eu`" is evidence, and a blank
+    column is neither. The adapter that owns the provider answers instead.
+    """
+    from aira_gateway.upstreams.base import ProviderRegistry, UpstreamModel
+    from aira_gateway.upstreams.mock import MockProvider
+
+    class _Somewhere(MockProvider):
+        serves_provider = "elsewhere"
+
+        def models(self) -> list[UpstreamModel]:
+            return [
+                UpstreamModel(
+                    "configured", "configured", ("generateContent",), "elsewhere", "acme", "eu-west"
+                )
+            ]
+
+    registry = ProviderRegistry([_Somewhere()])
+
+    assert registry.provenance_for("elsewhere") == ("elsewhere", "acme", "eu-west")
+    assert registry.provenance_for("nobody") is None
+
+
+def test_an_adapter_that_serves_no_configured_model_still_states_where_it_is() -> None:
+    """With an empty configured list there is no `UpstreamModel` to read provenance from, and that
+    is exactly the arrangement this feature makes ordinary. An adapter says it once, as a property
+    of itself."""
+    from aira_gateway.upstreams.base import ProviderRegistry, UpstreamModel
+    from aira_gateway.upstreams.mock import MockProvider
+
+    class _Empty(MockProvider):
+        serves_provider = "bare"
+        provenance = ("bare", "acme", "global")
+
+        def models(self) -> list[UpstreamModel]:
+            return []
+
+    assert ProviderRegistry([_Empty()]).provenance_for("bare") == ("bare", "acme", "global")

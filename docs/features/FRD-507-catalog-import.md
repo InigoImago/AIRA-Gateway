@@ -8,8 +8,8 @@ A model has to be named twice: once in the gateway's configuration, so an adapte
 once in the catalog, so `FRD-307` permits it. The second is a **decision** and belongs in the
 console. The first is a **fact** the gateway already knows and the administrator was retyping.
 
-Asked directly: *"macht es denn überhaupt sinn, wenn die Modelle in der Oberfläche angelegt
-werden?"* — and the answer is that the decision does and the transcription does not.
+Asked directly: _"macht es denn überhaupt sinn, wenn die Modelle in der Oberfläche angelegt
+werden?"_ — and the answer is that the decision does and the transcription does not.
 
 The evidence sits in the same session. A key issued for Google AI Studio listed **50 models**, 36 of
 them able to generate. Nobody had approved any of them, and one that the listing offered —
@@ -19,7 +19,7 @@ them able to generate. Nobody had approved any of them, and one that the listing
 - an administrator typing names by hand gets a typo in one of two places, and the two refusals that
   follow (`not in the model catalog`, `has not been approved`) are correct and unhelpful about which
   string was wrong;
-- and *listed* does not mean *usable*, which is exactly what `FRD-506` already split into three
+- and _listed_ does not mean _usable_, which is exactly what `FRD-506` already split into three
   facts: **declared · served · reachable**.
 
 ## 2. Goals & Non-Goals
@@ -60,7 +60,7 @@ them able to generate. Nobody had approved any of them, and one that the listing
 ### 4.1 The gateway is the only thing that knows
 
 Management holds the catalog; the gateway holds the adapters. Which models are reachable is a
-property of *configuration the gateway was given*, so the console asks the gateway through the same
+property of _configuration the gateway was given_, so the console asks the gateway through the same
 `/gw` proxy that the dry-run, usage and traces views already use. No new endpoint: `/v1beta/models`
 answers this question and only lacked the provenance fields.
 
@@ -75,7 +75,7 @@ for, and the two rules that say so were both paid for:
 - `FRD-403`: a price nobody set is not zero, and the report says so.
 
 So an import fills in the first and leaves the second blank — which also means the editor still
-*asks*, and an administrator who does not know the price has not accidentally declared it free.
+_asks_, and an administrator who does not know the price has not accidentally declared it free.
 
 ### 4.3 Listed is not usable
 
@@ -83,6 +83,27 @@ So an import fills in the first and leaves the second blank — which also means
 gateway **serves** — it does not claim the model works. That is `FRD-506`'s third fact, and the
 `:check` action on a catalogued model is where it is answered, deliberately by a listing rather
 than a generation so that a health question cannot wake a scaled-to-zero model or cost money.
+
+## 4.4 The second list, removed (stage B)
+
+A model had to be named **twice**: in the adapter's configuration so it would be offered, and in the
+catalog so `FRD-307` would permit it. Which makes the first version of this FRD circular — you type
+a name into configuration, and "discovery" reads it back to you. That is an echo, not an import.
+
+The catalog is already the authority on _what may be served_. A row names its **provider**, and
+that is enough to know _who_ serves it: an adapter owns a provider name (`serves_provider`), and
+`ProviderRegistry.provider_for(model, provider)` falls back to it. Configured models resolve
+exactly as before; a catalogued one now resolves too, with no configuration entry and no restart.
+
+Two adapters claiming one provider **refuse to boot** — `ADR-0011`'s ambiguous routing table one
+level down, since registration order would otherwise decide a model's region and credential.
+
+**This was built, reverted, and rebuilt on the same day.** The working version wrote `provider` and
+`region` **empty** onto the audit row: provenance is read from the registry, and a catalogue-
+resolved model has no entry there. An empty residency column is worse than the second list this
+removes — `FRD-115`'s point is that "the configuration says EU" is a claim and "this request went
+to `eu`" is evidence, and blank is neither. The adapter that owns the provider answers instead, and
+states its provenance once so an empty configured list still produces a complete row.
 
 ## 5. Testing
 

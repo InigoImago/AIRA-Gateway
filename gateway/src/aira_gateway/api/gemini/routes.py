@@ -32,6 +32,7 @@ from aira_gateway.api.serving import (
     accounting,
     catalog_of,
     check_structured_result,
+    declared_provider,
     deprecation_headers,
     elapsed_ms,
     prepare_for_dispatch,
@@ -233,7 +234,7 @@ async def _write_refusal(
         requested_model=trail.requested_model,
         model_selection=trail.selection,
         pipeline_decisions=decision_summary(trail.decisions),
-        provenance=provenance(request, trail.served_model),
+        provenance=await provenance(request, trail.served_model),
     )
 
 
@@ -244,7 +245,13 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
             400, f"Missing method in '{resource}' (expected model:method).", "INVALID_ARGUMENT"
         )
 
-    provider = registry_of(request).provider_for(model)
+    # The catalog decides who serves it, not just the configured list (`FRD-507`). Asking the
+    # registry alone answered `404 not found` for a model an administrator had just catalogued and
+    # released — which reads as a typo in the model name and is a second list nobody was told to
+    # keep. `check_declaration` further in still refuses an uncatalogued or unreleased model, by
+    # name and with the two reasons kept apart.
+    declared = await catalog_of(request).declaration(model)
+    provider = registry_of(request).provider_for(model, declared.provider)
     if provider is None:
         raise GeminiHTTPError(404, f"Model '{model}' not found.", "NOT_FOUND")
 
@@ -319,6 +326,7 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
                     canonical,
                     fallbacks,
                     permits=requirements_for(request, canonical),
+                    provider_of=await declared_provider(request),
                 )
                 canonical_response = dispatched.response
                 trail.served_by(canonical_response.model, dispatched.candidate_index)

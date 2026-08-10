@@ -68,13 +68,18 @@ async def dispatch_with_fallback(
     fallback_models: tuple[str, ...],
     *,
     permits: Permits | None = None,
+    provider_of: Callable[[str], Awaitable[str]] | None = None,
 ) -> Dispatched:
     candidates = [request.model, *[m for m in fallback_models if m != request.model]]
     skipped: list[Skipped] = []
     last_error: UpstreamError | None = None
 
     for index, model in enumerate(candidates):
-        provider = registry.provider_for(model)
+        # The catalog names who serves a model, so one that was catalogued rather than configured
+        # resolves too (`FRD-507`). Asked per candidate, because a fallback chain may cross
+        # providers — that is what a chain is for.
+        declared = await provider_of(model) if provider_of is not None else ""
+        provider = registry.provider_for(model, declared)
         if provider is None:
             # Previously a silent `continue`. A model nobody serves is a configuration mistake,
             # and it should be visible in the failure rather than inferred from its absence.

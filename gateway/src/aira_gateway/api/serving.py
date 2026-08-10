@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
@@ -344,17 +344,26 @@ def check_structured_result(canonical: CanonicalRequest, response: CanonicalResp
     )
 
 
-def provenance(request: Request, model: str) -> tuple[str, str, str] | None:
+async def provenance(request: Request, model: str) -> tuple[str, str, str] | None:
     """Where the request was processed, from the adapter that serves the model.
 
-    Read from the registry rather than the catalog: the catalog says where a model is *configured*
-    to run, the registry says which adapter actually holds it. Under a residency requirement the
-    second is the one worth recording.
+    The registry first: the catalog says where a model is *configured* to run, the registry says
+    which adapter actually holds it, and under a residency requirement the second is the one worth
+    recording.
+
+    A model resolved through the **catalog** rather than through configuration (`FRD-507`) has no
+    registry entry, so the adapter that owns its provider answers instead. Without that step the
+    row went out with an empty provider and region — worse than the second list the feature
+    removes, because `FRD-115`'s whole point is that a blank column is neither a claim nor
+    evidence.
     """
-    described = registry_of(request).get_model(model)
-    if described is None or not described.provider:
-        return None
-    return (described.provider, described.publisher, described.region)
+    registry = registry_of(request)
+    described = registry.get_model(model)
+    if described is not None and described.provider:
+        return (described.provider, described.publisher, described.region)
+
+    declared = await catalog_of(request).declaration(model)
+    return registry.provenance_for(declared.provider) if declared.provider else None
 
 
 def catalog_of(request: Request) -> ModelCatalog:
@@ -451,6 +460,22 @@ async def cache_ttl_for(request: Request) -> str:
         record = await session.get(UseCaseRead, slug)
     chosen = getattr(record, "prompt_cache_ttl", "5m") if record is not None else "5m"
     return "1h" if chosen == "1h" else "5m"
+
+
+async def declared_provider(request: Request) -> Callable[[str], Awaitable[str]]:
+    """Who the catalog says serves a model (`FRD-507`).
+
+    Handed to the dispatch chain so a candidate that was **catalogued** rather than configured
+    resolves to its adapter. One function, both surfaces — the third time a step written twice
+    drifted on one of them (`FRD-126`), and this one decides where a request goes.
+    """
+
+    catalog = catalog_of(request)
+
+    async def lookup(model: str) -> str:
+        return (await catalog.declaration(model)).provider
+
+    return lookup
 
 
 async def check_declaration(
@@ -621,7 +646,12 @@ async def prepare_for_dispatch(
     fallbacks: tuple[str, ...] = ()
     if canonical is not None:
         canonical, fallbacks = await run_pipeline(request, canonical, trail)
-        if registry_of(request).provider_for(canonical.model) is None:
+        # The catalog's provider too (`FRD-507`): a model catalogued for an adapter is served by
+        # it even when nobody also named it in configuration. Asking the registry alone would have
+        # reported "not found" for a model an administrator had just released, which reads as a
+        # typo and is a second list nobody was told to keep.
+        routed = await catalog_of(request).declaration(canonical.model)
+        if registry_of(request).provider_for(canonical.model, routed.provider) is None:
             # Routing sent it somewhere nobody serves. Raised as the shared error so each surface
             # renders it in its own envelope rather than each checking for itself.
             raise GeminiHTTPError(404, f"Model '{canonical.model}' not found.", "NOT_FOUND")
@@ -836,7 +866,7 @@ async def _settle_and_record(
         # Both exits pass through here (`FRD-126`), which is the only reason the streamed path
         # gets this for free — it did not, for an afternoon, and the row read `{"text": ""}`.
         tool_calls=tool_summary(trail),
-        provenance=provenance(request, model),
+        provenance=await provenance(request, model),
         api=api,
     )
 
@@ -880,7 +910,7 @@ async def record_pipeline_calls(request: Request, trail: AuditTrail) -> None:
                 cost_nanos=cost,
                 outcome=Outcome.SERVED,
                 requested_model=call.model,
-                provenance=provenance(request, call.model),
+                provenance=await provenance(request, call.model),
             )
             await request.app.state.budgets.book_side_call(
                 getattr(attribution, "use_case", None),
