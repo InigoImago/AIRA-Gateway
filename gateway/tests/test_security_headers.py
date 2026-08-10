@@ -15,8 +15,13 @@ from aira_gateway.config import GatewaySettings
 
 
 @pytest.fixture
-def client() -> TestClient:
-    return TestClient(create_app(GatewaySettings(auth_required=False, test_database=True)))
+def client():  # noqa: ANN201
+    # Entered as a context manager, so the lifespan runs and the schema exists. It did not, and
+    # nothing noticed while every case here asked for `/healthz` or an unserved model — the first
+    # request that reached the catalog failed with `no such table`. A fixture that skips the
+    # application's own startup is testing a different application.
+    with TestClient(create_app(GatewaySettings(auth_required=False, test_database=True))) as client:
+        yield client
 
 
 @pytest.mark.parametrize(
