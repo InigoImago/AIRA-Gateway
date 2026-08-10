@@ -113,6 +113,7 @@ interface Detail {
   toolsEnabled: { set: (v: boolean) => void; (): boolean };
   promptCaching: { set: (v: boolean) => void; (): boolean };
   cacheTtl: { set: (v: string) => void; (): string };
+  keyOwner: { set: (v: string) => void; (): string };
   canManage: () => boolean;
   isMember: () => boolean;
   canSaveRetention: () => boolean;
@@ -197,8 +198,15 @@ function setup(overrides: Overrides = {}, confirmAnswer = true, queryTab: string
     // method the component uses is the third stand-in today to fail for that reason.
     models: () =>
       overrides.models ?? of([{ name: 'qwen2.5:3b', capabilities: ['generate', 'tools'] }]),
-    issueApiKey: (_s: string, label: string, expiresInDays?: number | null) => {
-      calls.push(`issueApiKey:${label}:${expiresInDays ?? 'never'}`);
+    issueApiKey: (
+      _s: string,
+      label: string,
+      expiresInDays?: number | null,
+      owner?: string | null,
+    ) => {
+      // The owner is appended only when one was named, so the existing assertions on this string
+      // keep meaning what they meant — and a key issued for somebody else is visibly different.
+      calls.push(`issueApiKey:${label}:${expiresInDays ?? 'never'}${owner ? `:for:${owner}` : ''}`);
       return (
         overrides.issueApiKey ??
         of({ api_key: 'aira_ab_cd', prefix: 'ab', label, use_case: 'demo-uc' })
@@ -1337,6 +1345,46 @@ describe('UseCaseDetail — tuning the cache (`FRD-133`)', () => {
     expect(harness.component.promptCaching()).toBe(false);
     expect(harness.component.cacheTtl()).toBe('5m');
     expect(harness.component.toolsEnabled()).toBe(false);
+  });
+
+  it('shows who created a key when that is not who owns it', () => {
+    /** The arrangement a shared credential needs (`FRD-604` FR-5): the owner answers for it, the
+     *  issuer made it, and both are on the row. Signing in *as* the technical account would keep
+     *  the first and destroy the second. */
+    const harness = setup({
+      apiKeys: of([
+        {
+          prefix: 'aa',
+          label: 'chatbot',
+          owner: 'svc-chatbot',
+          issued_by: 'vadim',
+          is_active: true,
+        },
+        { prefix: 'bb', label: 'mine', owner: 'vadim', is_active: true },
+      ]) as never,
+    });
+    harness.component.selectTab('keys');
+    harness.fixture.detectChanges();
+
+    const rows = [...harness.html().querySelectorAll('tbody tr')].map((r) => r.textContent ?? '');
+    expect(rows[0]).toContain('svc-chatbot');
+    expect(rows[0]).toContain('issued by vadim');
+    // And an ordinary key says nothing extra — a distinction on every row is one nobody reads.
+    expect(rows[1]).not.toContain('issued by');
+  });
+
+  it('sends the owner only when one was named', () => {
+    const harness = setup();
+    harness.component.selectTab('keys');
+    harness.fixture.detectChanges();
+
+    harness.component.issueKey();
+    expect(harness.calls.some((c) => c.includes('issueApiKey'))).toBe(true);
+    expect(harness.calls.join('|')).not.toContain('svc-');
+
+    harness.component.keyOwner.set('svc-chatbot');
+    harness.component.issueKey();
+    expect(harness.calls.some((c) => c.includes('svc-chatbot'))).toBe(true);
   });
 
   it('says what the longer lifetime costs, not just that it is longer', () => {

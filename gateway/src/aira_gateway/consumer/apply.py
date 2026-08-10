@@ -239,6 +239,7 @@ async def _upsert_api_key(session: AsyncSession, payload: dict[str, Any]) -> Non
                 prefix=payload["prefix"],
                 key_hash=payload["key_hash"],
                 subject=payload.get("subject", ""),
+                issued_by=payload.get("issued_by") or None,
                 use_case=payload.get("use_case"),
                 label=payload.get("label"),
                 is_active=True,
@@ -248,6 +249,7 @@ async def _upsert_api_key(session: AsyncSession, payload: dict[str, Any]) -> Non
     else:
         record.key_hash = payload["key_hash"]
         record.subject = payload.get("subject", "")
+        record.issued_by = payload.get("issued_by") or None
         record.use_case = payload.get("use_case")
         record.label = payload.get("label")
         record.expires_at = _moment(payload.get("expires_at"))

@@ -215,6 +215,47 @@ class UseCaseViewSet(viewsets.ModelViewSet[UseCase]):
     def _is_member(self, usecase: UseCase) -> bool:
         return is_member(self.request.user, usecase)
 
+    def _resolve_owner(self, usecase: UseCase, requested: str) -> tuple[Any, str]:
+        """Who answers for the key, and who created it (`FRD-604` FR-5).
+
+        Ordinarily the same person, and then `issued_by` stays blank — a distinction nobody asked
+        for should not appear on every row. Naming somebody else splits the two questions a shared
+        credential otherwise collapses: the owner is a technical account whose name the audit trail
+        carries, and the issuer is the human, which is the fact that signing in *as* the technical
+        user destroys.
+
+        Two refusals, and both matter more than the feature:
+
+        - an unknown name is refused rather than created, because a credential attached to a
+          username nobody has is an accountability chain ending in a string;
+        - somebody with no access to this use case is refused, or the owner column becomes a place
+          to put a colleague's name — which is `FRD-604`'s own defect with the sign reversed.
+        """
+        caller: Any = self.request.user
+        if not requested or requested == caller.get_username():
+            return caller, ""
+
+        owner = get_user_model().objects.filter(username=requested).first()
+        if owner is None:
+            raise ValidationError(
+                {
+                    "owner": [
+                        f"There is no user '{requested}'. A key is owned by an identity the "
+                        "directory knows, so that somebody can be asked about it."
+                    ]
+                }
+            )
+        if not is_member(owner, usecase):
+            raise ValidationError(
+                {
+                    "owner": [
+                        f"'{requested}' has no access to this use case, so a key cannot be owned "
+                        "by them. Give them access first — a credential names who answers for it."
+                    ]
+                }
+            )
+        return owner, caller.get_username()
+
     @action(detail=True, methods=["get", "post"])
     def members(self, request: Request, slug: str | None = None) -> Response:
         usecase = self.get_object()
@@ -335,16 +376,17 @@ class UseCaseViewSet(viewsets.ModelViewSet[UseCase]):
         payload = IssueApiKeySerializer(data=request.data)
         payload.is_valid(raise_exception=True)
         label = payload.validated_data["label"]
+        owner, issued_by = self._resolve_owner(usecase, payload.validated_data["owner"])
         # Always a date: the serializer fills in the configured default when none was asked for,
         # and refuses anything past the configured maximum. There is no branch here for "never".
         days = payload.validated_data["expires_in_days"]
         expires_at = timezone.now() + timedelta(days=days)
-        user: Any = request.user
         full, prefix, key_hash = generate_api_key()
         with transaction.atomic():
             ApiKey.objects.create(
                 use_case=usecase,
-                owner=user,
+                owner=owner,
+                issued_by=issued_by,
                 prefix=prefix,
                 key_hash=key_hash,
                 label=label,
@@ -355,7 +397,11 @@ class UseCaseViewSet(viewsets.ModelViewSet[UseCase]):
                 {
                     "prefix": prefix,
                     "key_hash": key_hash,
-                    "subject": user.get_username(),
+                    # The **owner**: who answers for this credential, and the name every audit row
+                    # will carry. Not the issuer — a row describes what called, not who authorised
+                    # the credential months earlier (`FRD-604` §5.3).
+                    "subject": owner.get_username(),
+                    "issued_by": issued_by,
                     "use_case": usecase.slug,
                     "label": label,
                     "status": "active",
@@ -370,6 +416,8 @@ class UseCaseViewSet(viewsets.ModelViewSet[UseCase]):
                 "api_key": full,
                 "prefix": prefix,
                 "label": label,
+                "owner": owner.get_username(),
+                "issued_by": issued_by,
                 "use_case": usecase.slug,
                 "expires_at": expires_at.isoformat(),
             },

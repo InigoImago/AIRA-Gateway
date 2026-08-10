@@ -79,6 +79,32 @@ test.describe('Use-case management', () => {
     await expect(page.locator('[role="status"]')).toContainText('revoked');
   });
 
+  test('a key owned by somebody without access is refused by name', async ({ page }) => {
+    /**
+     * `FRD-604` FR-5's guard rail, which matters more than the feature it guards: being able to
+     * attach a credential to a colleague who has nothing to do with the use case would put their
+     * name beside an agent's traffic deliberately — Stage A's defect with the sign reversed.
+     *
+     * In a browser because the refusal has to *arrive somewhere a reader sees*, and no component
+     * test can tell a surfaced error from a swallowed one.
+     */
+    await login(page, USERS.globalAdmin);
+    const slug = uniqueSlug('shared');
+    await createUseCase(page, slug, 'Shared credential');
+
+    await page.goto(`/use-cases/${slug}?tab=keys`);
+    await page.click('button:has-text("Issue key")');
+    await page.fill('#key-label', 'chatbot');
+    await page.fill('#key-owner', 'nobody-at-all');
+    await page.click('form button[type="submit"]');
+
+    await expect(page.locator('[role="alert"], .callout--danger').first()).toContainText(
+      /nobody-at-all/,
+      { timeout: 20_000 },
+    );
+    await expect(page.locator('.secret')).toHaveCount(0);
+  });
+
   test('the plaintext key is never returned again', async ({ page }) => {
     await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('once');

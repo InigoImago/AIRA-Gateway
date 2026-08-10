@@ -1080,9 +1080,19 @@ that it means *who answers for the credential*, not *who wrote the request*: an 
 colleague's name next to a rogue agent and concludes a human typed it. Worse than an absent figure —
 confident, and about a person. Stage A is four sentences and a badge (`via API key` on the row; an
 OIDC caller is deliberately **unmarked**, because there the name *is* the person and marking both
-makes the distinction useless), worded to hold for a shared key too. **Stage B specified, not
-built**: `issued_by` beside `owner`, because signing in *as* a technical user needs shared
-credentials for a governance console and destroys the one fact worth keeping. Test lesson, second
+makes the distinction useless), worded to hold for a shared key too. **Stage B done (2026-08-10)**:
+`issued_by` beside `owner`, because signing in *as* a technical user needs shared credentials for a
+governance console and destroys the one fact worth keeping. Two questions, kept apart — the owner
+answers for the credential and is what every audit row carries (*a row describes what called*), the
+issuer is the human who made it. A **string**, like `granted_by` and a suspension's author: who did
+something is a fact about the past, so deleting the person must neither delete the record nor be
+prevented by it; blank when they are the same person, since a distinction on every row is one
+nobody reads. **The two refusals matter more than the feature**: an owner the directory does not
+know, and an owner with **no access to this use case** — attaching a credential to an uninvolved
+colleague would put their name beside an agent's traffic *deliberately*, which is this FRD's own
+defect with the sign reversed. Typed, not picked from a directory, and written back into the FRD as
+a deviation: the rule is *access to this use case*, and a picker over the membership list is
+narrower than the rule, because a group-granted service account belongs to no membership row. Test lesson, second
 instance after `N50`: three properties went red when broken and the fourth **could not** — a test
 asserting an **absence** is defended by the mutation that *adds*, never by the one that removes.
 

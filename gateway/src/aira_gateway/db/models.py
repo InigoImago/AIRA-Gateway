@@ -38,6 +38,14 @@ class ApiKey(Base):
     # break-glass keys leave it null (usable only with an explicit /uc selector).
     use_case: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    #: The human who created this credential, when that is not its owner (`FRD-604` FR-5).
+    #:
+    #: `subject` above is the **owner** — who answers for the key and whose name every audit row
+    #: carries. This is who made it. They are the same person for an ordinary key and this stays
+    #: empty; they differ for a team's shared credential, and then this is the only place the
+    #: second fact exists. Carried here rather than left in Management so that an incident can be
+    #: worked entirely from the data the gateway holds.
+    issued_by: Mapped[str | None] = mapped_column(String(150), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

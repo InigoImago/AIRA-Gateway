@@ -18,6 +18,18 @@ class ApiKey(models.Model):
     owner = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="api_keys"
     )
+    #: Who created it, when that is not the owner (`FRD-604` FR-5).
+    #:
+    #: **Two different questions.** `owner` is who *answers for* the credential — a technical
+    #: account for a team's shared key — and it is the name every audit row carries, correctly: a
+    #: row describes what called, not who authorised the credential months earlier. `issued_by` is
+    #: the human who created it, and it is the fact that a shared credential otherwise destroys.
+    #:
+    #: A **string**, not a foreign key, and for the same reason as `UseCaseGroupGrant.granted_by`
+    #: and a suspension's `author`: this is a fact about the past. Deleting the person must not
+    #: delete the record of what they did, and must not be prevented by it either. Blank means the
+    #: owner issued it themselves, which is every key from before this column existed.
+    issued_by = models.CharField(max_length=150, blank=True)
     prefix = models.CharField(max_length=32, unique=True, db_index=True)
     key_hash = models.CharField(max_length=64)
     label = models.CharField(max_length=255, blank=True)

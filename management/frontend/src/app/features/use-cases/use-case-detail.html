@@ -463,6 +463,30 @@
               longest this installation allows is {{ maxKeyDays() }} days.
             </span>
           </div>
+          <div class="field">
+            <label for="key-owner">
+              Owned by (optional)
+              <app-info-hint label="Key owner" testid="key-owner" [wide]="true">
+                Leave this empty and the key is yours: your name appears beside every request made
+                with it, and you answer for how it is used. Name somebody else — a technical account
+                for a team or a service — and <strong>they</strong> answer for it, while the console
+                records that <strong>you</strong> created it. Both facts are kept, which is what
+                signing in as the technical account would destroy. The account has to have access to
+                this use case already.
+              </app-info-hint>
+            </label>
+            <input
+              id="key-owner"
+              name="owner"
+              [ngModel]="keyOwner()"
+              (ngModelChange)="keyOwner.set($event)"
+              placeholder="you"
+              autocomplete="off"
+            />
+            <span class="field__hint">
+              A username that already has access here. Anything else is refused by name.
+            </span>
+          </div>
           <button type="submit" class="btn btn--primary" [disabled]="feedback.busy()">
             {{ feedback.busy() ? 'Issuing…' : 'Issue' }}
           </button>
@@ -544,7 +568,18 @@
                   <code>aira_{{ key.prefix }}_…</code>
                 </td>
                 <td>{{ key.label || '—' }}</td>
-                <td>{{ key.owner }}</td>
+                <td>
+                  {{ key.owner }}
+                  <!-- Only when they differ. An ordinary key is owned by the person who made it,
+                     and saying "issued by" on every row would turn a distinction that matters into
+                     noise that nobody reads — which is how the one row where it matters gets
+                     skipped. -->
+                  @if (key.issued_by) {
+                    <span class="muted" style="display: block; font-size: 0.78rem">
+                      issued by {{ key.issued_by }}
+                    </span>
+                  }
+                </td>
                 <td>
                   @if (key.is_active) {
                     <span class="badge badge--success">active</span>

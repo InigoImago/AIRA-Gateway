@@ -104,7 +104,13 @@ export interface Membership {
 export interface ApiKey {
   prefix: string;
   label: string;
+  /** Who **answers for** the credential. The name every audit row carries — a row describes what
+   *  called, not who authorised the credential months earlier (`FRD-604`). */
   owner: string;
+  /** The human who created it, when that is not the owner. Empty for an ordinary key, where they
+   *  are the same person; set for a team's shared credential, and then it is the only place the
+   *  second fact exists. */
+  issued_by?: string;
   is_active: boolean;
   created_at?: string;
   revoked_at?: string | null;
@@ -121,6 +127,8 @@ export interface IssuedApiKey {
   label: string;
   use_case: string;
   expires_at?: string | null;
+  owner?: string;
+  issued_by?: string;
 }
 
 export type StepType = 'injection_filter' | 'allow_check' | 'model_route';

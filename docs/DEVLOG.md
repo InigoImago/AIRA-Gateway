@@ -374,6 +374,42 @@ image without saying how to build it — shown to fail by deleting one.
 
 ---
 
+## 2026-08-10 — Who answers for a credential, and who made it (`FRD-604` Stage B)
+
+Stage A was four sentences and a badge: the console had recorded the issuer all along and never
+said what the name meant, so an investigator read a colleague's name beside a rogue agent and
+concluded a human had typed it. Stage B is the arrangement that makes a **shared** credential
+honest.
+
+`owner` and `issued_by` are two different questions. The owner answers for the credential — a
+technical account for a team — and is the name every audit row carries, correctly: a row describes
+what called, not who authorised the credential months earlier. The issuer is the human who created
+it, and that is the fact the obvious alternative destroys: signing in _as_ the technical account
+needs shared credentials for a **governance** console and records "svc-kundenservice issued a key",
+which nobody can act on.
+
+A **string**, not a foreign key, like `UseCaseGroupGrant.granted_by` and a suspension's author:
+who did something is a fact about the past, so deleting the person must neither delete the record
+nor be prevented by it. Blank when they are the same person — a distinction nobody asked for must
+not appear on every row, or the one row where it matters gets skipped.
+
+**The two refusals matter more than the feature.** An owner the directory does not know is refused,
+because an accountability chain ending in a string is not one; and an owner with **no access to
+this use case** is refused, because attaching a credential to an uninvolved colleague would put
+their name beside an agent's traffic _deliberately_ — this FRD's own defect with the sign reversed.
+
+One deliberate deviation from the FRD, written back into it: the owner is **typed, not picked from
+a directory**. The constraint is not "a real identity" but "an identity with access to this use
+case", the server checks exactly that, and a picker over the membership list would have been
+narrower than the rule — access can come from a group grant, and a service account granted that way
+belongs to no membership row, which is exactly the chatbot case.
+
+Each refusal shown to fail first. The "ordinary key records no issuer" test needed the **inverse**
+mutation, as `N50` and `FRD-604` §10 already say: a test asserting an absence cannot go red when
+the code that fills the column is deleted, only when something starts filling it always.
+
+---
+
 ## 2026-08-09 — A security read of the whole code (`ADR-0018`)
 
 The request path held up: 192-bit keys compared in constant time, JWTs with a pinned algorithm and

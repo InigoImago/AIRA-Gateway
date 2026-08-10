@@ -21,6 +21,7 @@ class ApiKeySerializer(serializers.ModelSerializer[ApiKey]):
             "prefix",
             "label",
             "owner",
+            "issued_by",
             "is_active",
             "created_at",
             "revoked_at",
@@ -43,6 +44,18 @@ class IssueApiKeySerializer(serializers.Serializer[Any]):
     #: does **not** run for a field the caller omitted — which is exactly the case that has to end
     #: with a date.
     expires_in_days = serializers.IntegerField(required=False, allow_null=True, default=None)
+    #: Issue it **on behalf of** somebody else — a technical account for a shared credential
+    #: (`FRD-604` FR-5).
+    #:
+    #: Optional, and omitting it is the ordinary case: the caller owns what they create. Naming
+    #: one splits the two questions a shared key otherwise collapses — who answers for the
+    #: credential, and which human made it — and the second is the one that gets destroyed by
+    #: signing in as the technical user, which is the alternative this exists to replace.
+    #:
+    #: A username, checked against the directory *and* against access to this use case by the
+    #: view: a credential must not be attached to somebody who has nothing to do with the use
+    #: case, or the owner column becomes a place to put a colleague's name.
+    owner = serializers.CharField(required=False, allow_blank=True, default="")
 
     def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
         settings = get_settings()

@@ -124,6 +124,92 @@ def test_member_with_user_role_may_issue() -> None:
     assert ApiKey.objects.get(prefix=resp.json()["prefix"]).owner == member
 
 
+# ---- owner and issuer are different questions (FRD-604 FR-5) ----------------------------
+
+
+def test_a_key_issued_for_somebody_else_records_both() -> None:
+    """The arrangement a shared credential needs.
+
+    `owner` is who answers for the key — a technical account for a team — and it is the name every
+    audit row carries, because a row describes what called. `issued_by` is the human who made it,
+    which is the fact that signing in *as* the technical user destroys: the console would then
+    record "svc-kundenservice issued a key" and nobody knows who that was.
+    """
+    admin = _user("admin1", "global-admin")
+    _make_uc(admin, "demo-uc")
+    _user("svc-chatbot")
+    _client(admin).post(
+        f"{BASE}demo-uc/members/", {"username": "svc-chatbot", "role": "user"}, format="json"
+    )
+
+    resp = _client(admin).post(f"{BASE}demo-uc/api-keys/", {"owner": "svc-chatbot"}, format="json")
+
+    assert resp.status_code == 201, resp.content
+    key = ApiKey.objects.get(prefix=resp.json()["prefix"])
+    assert key.owner.get_username() == "svc-chatbot"
+    assert key.issued_by == "admin1"
+    assert resp.json()["owner"] == "svc-chatbot"
+    assert resp.json()["issued_by"] == "admin1"
+
+
+def test_an_ordinary_key_records_no_issuer() -> None:
+    """They are the same person, and a distinction nobody asked for must not appear on every row.
+
+    Defended by the **inverse** mutation — this cannot go red when the code that fills the column
+    is deleted, only when something starts filling it always (`N50`'s lesson, `FRD-604` §10).
+    """
+    admin = _user("admin1", "global-admin")
+    _make_uc(admin, "demo-uc")
+
+    resp = _client(admin).post(f"{BASE}demo-uc/api-keys/", {}, format="json")
+
+    assert ApiKey.objects.get(prefix=resp.json()["prefix"]).issued_by == ""
+
+
+def test_the_owner_travels_as_the_subject_and_the_issuer_beside_it(captured_events) -> None:
+    """The gateway writes `subject` onto every audit row. That has to be the **owner**: a request
+    made months later says what called, not who authorised the credential."""
+    admin = _user("admin1", "global-admin")
+    _make_uc(admin, "demo-uc")
+    _user("svc-chatbot")
+    _client(admin).post(
+        f"{BASE}demo-uc/members/", {"username": "svc-chatbot", "role": "user"}, format="json"
+    )
+
+    _client(admin).post(f"{BASE}demo-uc/api-keys/", {"owner": "svc-chatbot"}, format="json")
+
+    created = [payload for name, payload in captured_events if name == "api_key.created"]
+    assert created[-1]["subject"] == "svc-chatbot"
+    assert created[-1]["issued_by"] == "admin1"
+
+
+def test_a_key_cannot_be_owned_by_somebody_the_directory_does_not_know() -> None:
+    """An accountability chain that ends in a string is not one. Refused by name."""
+    admin = _user("admin1", "global-admin")
+    _make_uc(admin, "demo-uc")
+
+    resp = _client(admin).post(f"{BASE}demo-uc/api-keys/", {"owner": "nobody-here"}, format="json")
+
+    assert resp.status_code == 400
+    assert "no user 'nobody-here'" in str(resp.json())
+    assert not ApiKey.objects.exists()
+
+
+def test_a_key_cannot_be_owned_by_somebody_with_no_access_to_the_use_case() -> None:
+    """**`FRD-604`'s own defect with the sign reversed.** Stage A exists because a colleague's name
+    beside an agent's traffic reads as authorship; being able to *attach* a credential to a
+    colleague who has nothing to do with the use case would put it there deliberately."""
+    admin = _user("admin1", "global-admin")
+    _make_uc(admin, "demo-uc")
+    _user("carol")
+
+    resp = _client(admin).post(f"{BASE}demo-uc/api-keys/", {"owner": "carol"}, format="json")
+
+    assert resp.status_code == 400
+    assert "no access to this use case" in str(resp.json())
+    assert not ApiKey.objects.exists()
+
+
 def test_issue_forbidden_for_non_member() -> None:
     admin = _user("admin1", "global-admin")
     _make_uc(admin, "demo-uc")
@@ -146,10 +232,14 @@ def test_list_keys_is_masked() -> None:
     assert resp.status_code == 200
     rows = resp.json()
     assert len(rows) == 1
+    # The exact set, so a field added to this view is a decision rather than a side effect.
+    # `issued_by` joined it deliberately (`FRD-604` FR-5): who created a credential is readable by
+    # the people who can already see who owns it, and it is the second half of the same question.
     assert set(rows[0]) == {
         "prefix",
         "label",
         "owner",
+        "issued_by",
         "is_active",
         "created_at",
         "revoked_at",

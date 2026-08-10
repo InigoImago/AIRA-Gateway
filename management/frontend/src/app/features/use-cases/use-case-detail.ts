@@ -146,6 +146,17 @@ export class UseCaseDetail implements OnInit {
   protected readonly memberRole = signal('user');
   protected readonly keyLabel = signal('');
   /**
+   * Issue the key **on behalf of** somebody else (`FRD-604` FR-5).
+   *
+   * Empty is the ordinary case and means "me". Typed rather than picked from a directory, which
+   * is a deliberate deviation from the FRD: the constraint is not "a real identity" but "an
+   * identity with access to *this* use case", the server checks exactly that, and a wrong name is
+   * refused by name. A picker of the membership list would have been narrower than the rule —
+   * access can come from a group grant, and a service account granted that way belongs to no
+   * membership row.
+   */
+  protected readonly keyOwner = signal('');
+  /**
    * Days until the new key stops working. Empty means **never**, which is what every key issued
    * before this existed carries — offering the choice rather than imposing a default, because a
    * default lifetime would break existing integrations at whatever mark it picked.
@@ -344,11 +355,17 @@ export class UseCaseDetail implements OnInit {
     }
     const days = Number(this.keyExpiresInDays());
     this.feedback.run(
-      this.service.issueApiKey(this.slug, this.keyLabel(), days > 0 ? days : null),
+      this.service.issueApiKey(
+        this.slug,
+        this.keyLabel(),
+        days > 0 ? days : null,
+        this.keyOwner().trim() || null,
+      ),
       {
         failure: 'Could not issue the key.',
         success: (issued: IssuedApiKey) => {
           this.keyLabel.set('');
+          this.keyOwner.set('');
           this.keyExpiresInDays.set('');
           this.copied.set(false);
           this.copyFailed.set(false);

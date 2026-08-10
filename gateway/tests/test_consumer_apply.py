@@ -231,6 +231,36 @@ async def test_api_key_created_then_verify_carries_use_case(make_session) -> Non
     assert principal.use_cases == ("demo-uc",)
 
 
+async def test_the_issuer_travels_beside_the_owner(make_session) -> None:
+    """`FRD-604` FR-5. `subject` is who *answers for* the credential and is what lands on every
+    audit row; `issued_by` is the human who created it, which for a team's shared key is the fact
+    that would otherwise exist only in Management. Carried so an incident can be worked entirely
+    from what the gateway holds."""
+    _, prefix, key_hash = keys.generate_api_key()
+    async with make_session() as session:
+        await apply_event(
+            session,
+            "api_key.created",
+            _created_event(prefix, key_hash, subject="svc-chatbot", issued_by="vadim"),
+        )
+
+    rows = await _all(make_session, ApiKey)
+    assert rows[0].subject == "svc-chatbot"
+    assert rows[0].issued_by == "vadim"
+
+
+async def test_an_event_without_an_issuer_leaves_the_column_empty(make_session) -> None:
+    """An older Management sends no such field, and an ordinary key has no second person. Absent
+    must stay absent rather than become the owner's name, which would make every key look as
+    though somebody issued it for somebody else."""
+    _, prefix, key_hash = keys.generate_api_key()
+    async with make_session() as session:
+        await apply_event(session, "api_key.created", _created_event(prefix, key_hash))
+
+    rows = await _all(make_session, ApiKey)
+    assert rows[0].issued_by is None
+
+
 async def test_api_key_created_is_idempotent_and_updates(make_session) -> None:
     full, prefix, key_hash = keys.generate_api_key()
     async with make_session() as session:

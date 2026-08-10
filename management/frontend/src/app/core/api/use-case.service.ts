@@ -136,10 +136,16 @@ export class UseCaseService {
     slug: string,
     label: string,
     expiresInDays?: number | null,
+    owner?: string | null,
   ): Observable<IssuedApiKey> {
-    const body: { label: string; expires_in_days?: number } = { label };
+    const body: { label: string; expires_in_days?: number; owner?: string } = { label };
     if (expiresInDays) {
       body.expires_in_days = expiresInDays;
+    }
+    // Omitted when absent, like the lifetime: the ordinary case is that you own what you create,
+    // and sending your own name would put a distinction on every key that nobody asked for.
+    if (owner) {
+      body.owner = owner;
     }
     return this.http.post<IssuedApiKey>(`${this.base}${seg(slug)}/api-keys/`, body);
   }
