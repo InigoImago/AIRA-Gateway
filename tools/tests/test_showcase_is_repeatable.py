@@ -191,3 +191,34 @@ def test_the_printed_walkthrough_names_the_accounts_the_seed_creates() -> None:
 
     assert belongs <= named, f"{sorted(belongs - named)}: ucuser is in it and the table omits it"
     assert invisible <= named, f"{sorted(invisible - named)}: invisible to ucadmin and unmentioned"
+
+
+def test_nothing_a_real_deployment_runs_can_be_stopped_by_the_demo_helpers() -> None:
+    """The two provisioning services must not be able to hold a deployment hostage.
+
+    They were added to make the demo repeatable, and both were briefly able to stop a stack that
+    does not use what they provision: `vault-init` waited for a **healthy** Vault before it could
+    exit, and the migrations wait for `vault-init`. A deployment that sets no `VAULT_ADDR` and
+    never touches Vault was therefore behind Vault's health check.
+
+    Two properties keep that from coming back: they decide by **environment**, and they wait on
+    their dependency loosely enough that its absence is a message rather than a deadlock.
+    """
+    services = _services()
+
+    for name in ("vault-init", "keycloak-init"):
+        assert name in services, f"{name} is gone; the demo cannot repair itself"
+        # Asked in the *environment*, because one of the two decides inside a shell command and
+        # the other inside a Python script — the property is that the question is available to be
+        # asked, not where the answer is read.
+        assert "AIRA_ENVIRONMENT" in services[name].get("environment", {}), (
+            f"{name} cannot tell where it is running, and it deletes things"
+        )
+
+    vault_init = services["vault-init"]
+    assert vault_init["depends_on"]["vault"]["condition"] == "service_started", (
+        "the migrations wait for vault-init, so waiting here for a *healthy* Vault puts the whole "
+        "stack behind a component a deployment may not even use"
+    )
+    # And it must not be able to fail: `exit 0` on the path where Vault never answers.
+    assert "did not answer" in " ".join(vault_init["command"])

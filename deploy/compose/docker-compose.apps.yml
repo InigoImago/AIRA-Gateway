@@ -12,29 +12,6 @@
 services:
   # ---- one-shot setup ----------------------------------------------------------------------
 
-  # Provision the dev Vault, every start (`FRD-116`).
-  #
-  # The stack's Vault runs `server -dev`, which keeps everything **in memory**: recreate the
-  # container and `secret/aira` is gone. `load_secrets()` then fails closed — correctly, since a
-  # secret store that answers "no such path" is not an outage to shrug off — and every application
-  # container refuses to boot with a message about a Vault path.
-  #
-  # That made `make showcase` depend on somebody having run `make vault-init` *after* the current
-  # Vault container started, which is a trap laid by our own documentation: run the documented
-  # command, then `docker compose down`, and the one command that must always work stops working.
-  # Ordering belongs in the file that owns the ordering, so it is a service with a condition on it
-  # rather than a step in a Makefile target that three other entry points do not run.
-  #
-  # **Guarded by the environment, not by a profile.** A real Vault is provisioned by whoever owns
-  # it, with a policy and an AppRole; this repairs a development server that forgets by design, so
-  # it must never write to a real one. The first version expressed that as `profiles: ["demo"]` —
-  # and a service two non-profiled services depend on cannot itself be behind a profile: without
-  # `--profile demo` compose refuses the whole project as invalid, which took `make up-full`'s
-  # log-dumping fallback in CI with it, at exactly the moment somebody needs the logs.
-  #
-  # So it is always defined and decides for itself, the environment-shaped gating `ADR-0015`
-  # settled: no address means nothing to do, and anything but a local or demo environment means
-  # somebody else owns this Vault.
   # Keep the development realm matching the file that defines it (see `tools/keycloak_demo_realm.py`).
   #
   # Keycloak imports a realm **only if it does not exist**, so every edit to the realm file reaches
@@ -63,6 +40,29 @@ services:
     networks: [aira]
     restart: "no"
 
+  # Provision the dev Vault, every start (`FRD-116`).
+  #
+  # The stack's Vault runs `server -dev`, which keeps everything **in memory**: recreate the
+  # container and `secret/aira` is gone. `load_secrets()` then fails closed — correctly, since a
+  # secret store that answers "no such path" is not an outage to shrug off — and every application
+  # container refuses to boot with a message about a Vault path.
+  #
+  # That made `make showcase` depend on somebody having run `make vault-init` *after* the current
+  # Vault container started, which is a trap laid by our own documentation: run the documented
+  # command, then `docker compose down`, and the one command that must always work stops working.
+  # Ordering belongs in the file that owns the ordering, so it is a service with a condition on it
+  # rather than a step in a Makefile target that three other entry points do not run.
+  #
+  # **Guarded by the environment, not by a profile.** A real Vault is provisioned by whoever owns
+  # it, with a policy and an AppRole; this repairs a development server that forgets by design, so
+  # it must never write to a real one. The first version expressed that as `profiles: ["demo"]` —
+  # and a service two non-profiled services depend on cannot itself be behind a profile: without
+  # `--profile demo` compose refuses the whole project as invalid, which took `make up-full`'s
+  # log-dumping fallback in CI with it, at exactly the moment somebody needs the logs.
+  #
+  # So it is always defined and decides for itself, the environment-shaped gating `ADR-0015`
+  # settled: no address means nothing to do, and anything but a local or demo environment means
+  # somebody else owns this Vault.
   vault-init:
     image: hashicorp/vault:1.18
     container_name: aira-vault-init
@@ -81,6 +81,21 @@ services:
             exit 0
             ;;
         esac
+        # **Never a reason the stack cannot start.** The migrations wait for this service, so a
+        # non-zero exit here stops everything — and provisioning a *development* Vault is not
+        # worth that. If Vault never answers, say so and get out of the way: a deployment that
+        # really needs it then fails in the container that reads the secret, with the message
+        # naming the path, which is the accurate error rather than an ordering one.
+        n=0
+        until vault status >/dev/null 2>&1; do
+          n=$$((n + 1))
+          if [ "$$n" -ge 30 ]; then
+            echo "Vault at $$VAULT_ADDR did not answer; leaving it alone."
+            echo "Nothing provisioned. A service that needs a secret will say which one."
+            exit 0
+          fi
+          sleep 2
+        done
         # **Only variables that are actually set.** Vault ranks *above* the environment
         # (`FRD-116`), so writing a key with an empty value does not mean "nothing here" — it
         # means "the value is the empty string", and it silently wins over the real one. The
@@ -117,8 +132,12 @@ services:
       AIRA_AZURE_API_KEY: ${AIRA_AZURE_API_KEY:-}
       AIRA_OPENAI_API_KEY: ${AIRA_OPENAI_API_KEY:-}
     depends_on:
+      # `service_started`, not `service_healthy`. The migrations wait for *this* service, so
+      # making it wait for a **healthy** Vault put the whole stack behind Vault's health check —
+      # including a deployment that sets no `VAULT_ADDR` and never touches Vault at all. The
+      # script waits for Vault itself, briefly, and gets out of the way if it never answers.
       vault:
-        condition: service_healthy
+        condition: service_started
     networks: [aira]
     restart: "no"
 

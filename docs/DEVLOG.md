@@ -263,6 +263,20 @@ is still a recipe line, and eleven of them had landed in the middle of the demo'
 
 Measured while there: `make showcase` takes **66 seconds** on a warm machine.
 
+**A deployment review of the day's changes** found one regression, and it was in the safety net
+rather than in the product. `vault-init` waited for a **healthy** Vault before it could exit, and
+the migrations wait for `vault-init` — so a deployment that sets no `VAULT_ADDR` and never touches
+Vault was nonetheless behind Vault's health check. It waits for Vault itself now, briefly, and
+**gets out of the way** if it never answers: provisioning a development secret store is not worth
+stopping a stack for, and a deployment that really needs a secret then fails in the container that
+reads it, naming the path. Both helpers were confirmed inert outside `local`/`demo` by running
+them as `production`, the compose project is valid under every profile combination, and the test
+suite's `conftest.py` — which disables the dotenv — was confirmed absent from both images.
+
+Everything else the day touched is either build-time, demo-only, or `FRD-133`, whose migrations are
+additive and whose consumer reads the new fields with `.get(...)`: an older Management's event
+leaves cache prices `None` (billed at the ordinary input rate) and caching off.
+
 **Then every request came back 401, and the diagnosis printed for it blamed the model catalog** —
 an authentication failure, described as a cataloguing one. A diagnosis confidently about the wrong
 thing sends somebody looking in the wrong place, so the traffic script reads the status codes and
