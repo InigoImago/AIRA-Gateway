@@ -1214,7 +1214,13 @@ for an agent rather than a chatbot, and `tools/showcase_agent.py` writing an Ope
 `make showcase` prints; verified live, a real tool call audited as `{"declared": 1, "called":
 ["read_file"]}`. Caching stays **off** there and the description says why: this runtime reports no
 cached tokens, and a switch shown on while doing nothing is `FRD-125`'s badge in the place a reader
-is likeliest to believe it.
+is likeliest to believe it. **And `make showcase` then tried to *pull* `aira-gateway` and
+`aira-management`**: four services ran a second process out of a sibling's image and carried
+`image:` with no `build:`, and compose pulls whatever it is not told how to build. It failed **only
+on a machine that had never built them** — everywhere else the tag was already in the local store —
+so it worked for everyone who had run the stack and broke for exactly the person the target is for.
+Every service names its build now, and a test parses both compose files and refuses one that names
+a locally-built image without saying how to build it.
 
 Next candidates: **`FRD-114`** (model metadata — now also carries publisher + default output cap,
 prerequisite for 110–113 and 119), **`FRD-110`** (documents/images — the widest gap),

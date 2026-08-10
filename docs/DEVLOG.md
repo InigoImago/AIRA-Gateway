@@ -156,6 +156,16 @@ Prompt caching stays **off** on that use case and the description says why: this
 cached tokens, so switching it on would show a control doing nothing — in the one place a reader is
 most likely to believe it.
 
+**And then `make showcase` tried to _pull_ `aira-gateway` and `aira-management`.** Four services
+carried `image:` with no `build:`, because they run a second process out of an image a sibling
+builds — the consumer, the relay, the retention job, the seed. Compose pulls anything it is not
+told how to build, and those images exist on no registry. It failed in the way that is hardest to
+notice: **only on a machine that had never built them**, because everywhere else the tag was
+already lying around in the local store. So it worked for everyone who had run the stack and broke
+for exactly the person the target exists for. Every service names its build now, through two
+anchors, and a test parses both compose files and refuses a service that names a locally-built
+image without saying how to build it — shown to fail by deleting one.
+
 ---
 
 ## 2026-08-09 — A security read of the whole code (`ADR-0018`)

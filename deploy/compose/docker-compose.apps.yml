@@ -14,7 +14,13 @@ services:
 
   gateway-migrate:
     image: aira-gateway:${AIRA_IMAGE_TAG:-dev}
-    build:
+    # **Every service that names this image declares how to build it**, including the ones that
+    # only run a second process out of it. A service with `image:` and no `build:` is one compose
+    # *pulls* — and `aira-gateway` exists on no registry, so on a machine without the tag already
+    # in its local store, `make showcase` tried to fetch four images that cannot be fetched. It
+    # worked everywhere the image happened to be lying around, which is every machine that had
+    # run it before, and failed on exactly the first run this target exists for.
+    build: &gateway-build
       context: ../..
       dockerfile: gateway/Dockerfile
     container_name: aira-gateway-migrate
@@ -110,7 +116,7 @@ services:
 
   management-migrate:
     image: aira-management:${AIRA_IMAGE_TAG:-dev}
-    build:
+    build: &management-build
       context: ../..
       dockerfile: management/backend/Dockerfile
     container_name: aira-management-migrate
@@ -173,6 +179,7 @@ services:
   # (ADR-0007), so a real deployment simply omits this profile.
   management-seed:
     image: aira-management:${AIRA_IMAGE_TAG:-dev}
+    build: *management-build
     container_name: aira-management-seed
     profiles: ["demo"]
     command: ["python", "manage.py", "seed_demo"]
@@ -219,9 +226,7 @@ services:
 
   gateway:
     image: aira-gateway:${AIRA_IMAGE_TAG:-dev}
-    build:
-      context: ../..
-      dockerfile: gateway/Dockerfile
+    build: *gateway-build
     container_name: aira-gateway
     environment: *gateway-env
     ports:
@@ -242,6 +247,7 @@ services:
   # Same image, second process: applies the config events into the gateway's read-model.
   gateway-consumer:
     image: aira-gateway:${AIRA_IMAGE_TAG:-dev}
+    build: *gateway-build
     container_name: aira-gateway-consumer
     command: ["python", "-m", "aira_gateway.consumer.worker"]
     # A worker, not a server — the image's HTTP healthcheck would never pass.
@@ -258,9 +264,7 @@ services:
 
   management:
     image: aira-management:${AIRA_IMAGE_TAG:-dev}
-    build:
-      context: ../..
-      dockerfile: management/backend/Dockerfile
+    build: *management-build
     container_name: aira-management
     environment: *management-env
     ports:
@@ -278,6 +282,7 @@ services:
   # timer or a Kubernetes CronJob (docs/DEPLOYMENT.md §6).
   management-relay:
     image: aira-management:${AIRA_IMAGE_TAG:-dev}
+    build: *management-build
     container_name: aira-management-relay
     command:
       - /bin/sh
@@ -299,6 +304,7 @@ services:
   # CronJob, the same as the relay (docs/DEPLOYMENT.md §6).
   gateway-retention:
     image: aira-gateway:${AIRA_IMAGE_TAG:-dev}
+    build: *gateway-build
     container_name: aira-gateway-retention
     command:
       - /bin/sh
