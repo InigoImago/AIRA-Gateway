@@ -176,6 +176,32 @@ unpulled model must not be catalogued); what changed is that the reason is legib
 
 Re-run from the same empty state: **ten served, one refused by the injection filter.**
 
+## 4d. One failed download cost the entire demo (2026-08-10)
+
+Reported as two unrelated things — "the ollama pull blows up" and, later, "the console is empty" —
+and they were the same event. `management-seed` waited for `ollama-pull` to complete **successfully**,
+so a blocked registry or one flaky minute meant the seed never ran at all: no demo accounts, no use
+cases, no budgets, no keys. The console then came up, listed nothing, and said _"No use cases yet"_.
+
+`FRD-130`'s rule is the one that matters — a model nobody pulled must not be catalogued, because
+every request against it fails with `model_not_found` — and it is enforced by **evidence** now
+rather than by ordering: the seed runs regardless, asks the endpoint which models it actually
+serves (`/v1/models`, the dialect this catalog is written against), and declares only those. An
+endpoint that cannot be asked declares **nothing**: unreachable is not "serves nothing" and is
+certainly not "serves everything", the same rule as `FRD-114` FR-7 one layer out.
+
+That check introduced a regression of its own, caught by running it: the catalog says `all-minilm`,
+the endpoint answers `all-minilm:latest`, and comparing them as plain strings dropped the embedding
+model. An absent tag means `:latest` — the same family as the colon that once split `qwen3:0.6b`
+into a model nobody served.
+
+**`make showcase-doctor`** exists because of this class of failure. It reports the chain link by
+link — Keycloak accounts and groups, Management's use cases and the Django groups each account
+resolved to, the gateway's read-model — and names the first broken link with the command that
+fixes it. It is what turned "the console is empty" into "the seed never ran", in one line. It is
+deliberately **not** part of `make showcase`: a demo that runs a diagnostic every time is a demo
+that has given up on working.
+
 ## 5. Testing
 
 `management/backend/tests/test_showcase_seed.py`: idempotence (a second run creates nothing new),

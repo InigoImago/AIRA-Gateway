@@ -66,14 +66,9 @@ def test_the_assistant_has_a_model_that_can_actually_call_a_function(seeded) -> 
     condition that hides the defect is the condition that hides the test.
     """
     from aira_management.apps.catalog.models import Model
-    from aira_management.apps.seed.contributions.local_models import seed_local_models
+    from aira_management.apps.seed.contributions import local_models
 
-    monkeypatch = pytest.MonkeyPatch()
-    monkeypatch.setenv("AIRA_OLLAMA_URL", "http://ollama:11434")
-    try:
-        seed_local_models(fresh=False)
-    finally:
-        monkeypatch.undo()
+    _seed_local_models_against_a_serving_endpoint(local_models)
 
     # In Python, not in the query: `__contains` on a JSON field is Postgres-only and the
     # hermetic suite runs on SQLite — the same split `FRD-505` hit when it derived `flagged` in
@@ -314,25 +309,17 @@ def test_a_seeded_model_is_announced_and_not_only_written() -> None:
     model may be used, an unannounced catalog refuses every request. The fourth instance in this
     repository of two correct halves with no wire between them.
     """
-    import os
-
-    from aira_management.apps.seed.contributions.local_models import seed_local_models
+    from aira_management.apps.seed.contributions import local_models
     from aira_management.apps.usecases import events
 
     recorded: list[tuple[str, dict]] = []
     subscriber = events.subscribe(
         lambda event_type, payload: recorded.append((event_type, payload))
     )
-    previous = os.environ.get("AIRA_OLLAMA_URL")
-    os.environ["AIRA_OLLAMA_URL"] = "http://ollama:11434"
     try:
-        seed_local_models(fresh=False)
+        _seed_local_models_against_a_serving_endpoint(local_models)
     finally:
         events.unsubscribe(subscriber)
-        if previous is None:
-            os.environ.pop("AIRA_OLLAMA_URL", None)
-        else:
-            os.environ["AIRA_OLLAMA_URL"] = previous
 
     announced = {
         payload["name"] for event_type, payload in recorded if event_type == "model.upserted"
@@ -349,3 +336,91 @@ def test_a_seeded_model_is_announced_and_not_only_written() -> None:
         or isinstance(payload["input_price_per_million"], str)
         for payload in upserts
     )
+
+
+def _seed_local_models_against_a_serving_endpoint(module) -> None:  # noqa: ANN001
+    """Run the local-model seed as if the endpoint were up and serving everything it declares.
+
+    Reachability is a *separate* property with its own test below. Stubbing it here keeps these
+    two about what they are named after — that a declaration is announced, and that a tools-capable
+    model exists for the assistant use case.
+    """
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setenv("AIRA_OLLAMA_URL", "http://ollama:11434")
+    monkeypatch.setattr(
+        module, "_served_models", lambda: {d["name"] for d in module._declarations()}
+    )
+    try:
+        module.seed_local_models(fresh=False)
+    finally:
+        monkeypatch.undo()
+
+
+def test_a_model_the_endpoint_does_not_serve_is_never_catalogued() -> None:
+    """`FRD-130`'s rule, enforced by evidence instead of by ordering.
+
+    The seed container used to wait for the model **pull** to succeed, so one failed download meant
+    the seed never ran at all — no accounts, no use cases, no budgets, and a console that came up
+    empty with nothing connecting the two. It runs regardless now, and the models are declared from
+    what the endpoint answers: a model nobody pulled is still never catalogued, because every
+    request against it would fail with `model_not_found`.
+    """
+    from aira_management.apps.catalog.models import Model
+    from aira_management.apps.seed.contributions import local_models
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setenv("AIRA_OLLAMA_URL", "http://ollama:11434")
+    monkeypatch.setattr(local_models, "_served_models", lambda: {"something-else"})
+    try:
+        local_models.seed_local_models(fresh=False)
+    finally:
+        monkeypatch.undo()
+
+    assert not Model.objects.filter(platform="ollama").exists()
+
+
+def test_an_endpoint_that_cannot_be_asked_declares_nothing() -> None:
+    """Unreachable is not "serves nothing" and it is certainly not "serves everything". Absence of
+    information is not permission — the same rule as `FRD-114` FR-7, one layer out."""
+    from aira_management.apps.catalog.models import Model
+    from aira_management.apps.seed.contributions import local_models
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setenv("AIRA_OLLAMA_URL", "http://ollama:11434")
+    monkeypatch.setattr(local_models, "_served_models", lambda: None)
+    try:
+        local_models.seed_local_models(fresh=False)
+    finally:
+        monkeypatch.undo()
+
+    assert not Model.objects.filter(platform="ollama").exists()
+
+
+def test_a_model_whose_tag_is_implicit_is_recognised() -> None:
+    """An absent tag means `:latest`, and the endpoint answers with the explicit form.
+
+    The catalog says `all-minilm`, the listing says `all-minilm:latest`. Comparing them as plain
+    strings quietly dropped the embedding model — a regression introduced by the reachability check
+    itself and caught by running it, not by reading it. Same family as the colon that once split
+    `qwen3:0.6b` into a model nobody served.
+    """
+    from aira_management.apps.catalog.models import Model
+    from aira_management.apps.seed.contributions import local_models
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setenv("AIRA_OLLAMA_URL", "http://ollama:11434")
+    monkeypatch.setattr(
+        local_models,
+        "_served_models",
+        lambda: {
+            f"{d['name']}:latest" if ":" not in str(d["name"]) else d["name"]
+            for d in local_models._declarations()
+        },
+    )
+    try:
+        local_models.seed_local_models(fresh=False)
+    finally:
+        monkeypatch.undo()
+
+    declared = set(Model.objects.filter(platform="ollama").values_list("name", flat=True))
+    assert {d["name"] for d in local_models._declarations()} <= declared

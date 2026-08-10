@@ -310,10 +310,18 @@ services:
     depends_on:
       management-migrate:
         condition: service_completed_successfully
-      # The showcase declares the local models, and declaring one that has not been pulled would
-      # put a model in the catalog that every request against it fails on (`FRD-130`).
+      # **Started, not completed.** This used to wait for the pull to *succeed*, so one failed
+      # download — a blocked registry, a flaky minute — meant the seed never ran at all: no demo
+      # accounts, no use cases, no budgets, and a console that comes up empty with nothing saying
+      # why. Reported exactly that way, and the two halves looked unrelated to the person seeing
+      # them.
+      #
+      # `FRD-130`'s rule stands and is now enforced by evidence instead of by ordering: the
+      # `local_models` contribution asks the endpoint which models it actually serves and declares
+      # only those. A model nobody pulled is therefore still never catalogued — and everything
+      # that has nothing to do with models is seeded regardless.
       ollama-pull:
-        condition: service_completed_successfully
+        condition: service_started
     networks: [aira]
     restart: "no"
 

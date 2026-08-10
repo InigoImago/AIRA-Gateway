@@ -16,7 +16,9 @@ endpoint is configured: a catalog full of models nobody serves is a list of thin
 
 from __future__ import annotations
 
+import json
 import os
+import urllib.request
 from decimal import Decimal
 from typing import Any
 
@@ -157,9 +159,63 @@ def _declarations() -> list[dict[str, Any]]:
     ]
 
 
+def _served_models(timeout: float = 5.0) -> set[str] | None:
+    """Which models the local endpoint actually serves right now.
+
+    `None` when it cannot be asked, which is different from "serves nothing" and is treated as
+    such: an unreachable endpoint means *do not declare*, not *declare everything*.
+
+    This replaces an ordering constraint with evidence. The seed container used to wait for the
+    model pull to **succeed**, so one failed download — a blocked registry, a flaky minute — meant
+    the seed never ran at all: no demo accounts, no use cases, no budgets, and a console that came
+    up empty with nothing anywhere connecting the two. `FRD-130`'s rule is the one that matters
+    (a model nobody pulled must not be catalogued, because every request against it fails), and
+    asking the endpoint keeps it while letting everything unrelated to models be seeded.
+
+    Uses the OpenAI-compatible listing, because that is the dialect this catalog is written
+    against (`FRD-123`) — not Ollama's native API, which would tie the check to one runtime.
+    """
+    endpoint = _local_endpoint()
+    if not endpoint:
+        return None
+    try:
+        with urllib.request.urlopen(  # noqa: S310 - scheme comes from our own configuration
+            f"{endpoint.rstrip('/')}/v1/models", timeout=timeout
+        ) as response:
+            payload = json.loads(response.read())
+    except Exception:  # noqa: BLE001 - unreachable is an answer, and it is "do not declare"
+        return None
+    return {_tagged(entry["id"]) for entry in payload.get("data", []) if entry.get("id")}
+
+
+def _tagged(model: str) -> str:
+    """A model name with its tag made explicit.
+
+    An absent tag means `:latest`, and the endpoint answers with the explicit form: the catalog
+    says `all-minilm`, the listing says `all-minilm:latest`, and comparing them as strings quietly
+    dropped the embedding model from the catalog. Found by running the check rather than by
+    reading it — the same family as the colon that once split `qwen3:0.6b` into a model nobody
+    served.
+    """
+    return model if ":" in model else f"{model}:latest"
+
+
+def _local_endpoint() -> str | None:
+    """The first URL in whichever of the two configuration forms is set (`FRD-123`)."""
+    single = os.environ.get("AIRA_OLLAMA_URL")
+    if single:
+        return single
+    servers = os.environ.get("AIRA_OPENAI_SERVERS", "")
+    for server in servers.split(";"):
+        parts = server.split("=", 1)
+        if len(parts) == 2 and parts[1]:
+            return parts[1].split("|")[0]
+    return None
+
+
 @register(name="local_models", order=40)
 def seed_local_models(fresh: bool) -> SeedResult:
-    """Declare the local models, if a local endpoint is configured."""
+    """Declare the local models the endpoint actually serves, if one is configured."""
     # Either configuration form counts. `AIRA_OLLAMA_URL` is the single-endpoint setting this
     # contribution was written against; `AIRA_OPENAI_SERVERS` is the named-server form `FRD-123`
     # moved to when a self-hosted fleet turned out to be several machines. Checking only the first
@@ -175,8 +231,19 @@ def seed_local_models(fresh: bool) -> SeedResult:
                 stale.delete()
                 emit("model.deleted", {"name": name})
 
+    served = _served_models()
+    if served is None:
+        print("[seed] local_models: the local endpoint did not answer; declaring nothing")
+        return {"local_models": 0}
+
     created = 0
     for declaration in _declarations():
+        if _tagged(str(declaration["name"])) not in served:
+            # Said out loud. A model missing from the catalog is the difference between a demo
+            # that works and one whose every request is refused as "not in the model catalog",
+            # and the seed is the only place that knows why.
+            print(f"[seed] local_models: '{declaration['name']}' is not served here; skipping")
+            continue
         with transaction.atomic():
             model, was_created = Model.objects.update_or_create(
                 name=declaration["name"], defaults=declaration

@@ -263,6 +263,17 @@ is still a recipe line, and eleven of them had landed in the middle of the demo'
 
 Measured while there: `make showcase` takes **66 seconds** on a warm machine.
 
+**And the two reports were one event.** "The ollama pull blows up" and "the console is empty"
+looked unrelated to the person seeing them: `management-seed` waited for `ollama-pull` to complete
+**successfully**, so one failed download meant the seed never ran at all — no accounts, no use
+cases, no budgets, no keys. The doctor said it in one line: _1 use case, missing all four demo
+ones; 0 models_. `FRD-130`'s rule (a model nobody pulled must not be catalogued) is enforced by
+**evidence** now instead of by ordering — the seed runs regardless and asks the endpoint which
+models it actually serves. An endpoint that cannot be asked declares **nothing**, because
+unreachable is not "serves nothing". That check then dropped the embedding model, because the
+catalog says `all-minilm` and the endpoint answers `all-minilm:latest`: an absent tag means
+`:latest`, the same family as the colon that once split `qwen3:0.6b`.
+
 **And then the console came up empty.** The data was there — 6 accounts, 4 demo use cases, both
 read-models populated — and the list said _"No use cases yet"_, which is a confident statement
 about the wrong thing. Roles come from the token's **groups** (`ADR-0017`) and are worked out at
