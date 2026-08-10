@@ -37,6 +37,27 @@ class UseCase(models.Model):
             "smallest set that needs tool calling is the right set to have it."
         ),
     )
+    prompt_caching_enabled = models.BooleanField(
+        default=False,
+        help_text=(
+            "Let the gateway mark this use case's stable prefix — tool declarations and system "
+            "instruction — as cacheable at the provider (FRD-133). Off by default: on Vertex the "
+            "cache scope is the whole organisation, so a use case whose system prompt is itself "
+            "confidential should not be opted in by somebody else's cost decision."
+        ),
+    )
+    PROMPT_CACHE_TTLS = [("5m", "5 minutes"), ("1h", "1 hour")]
+    prompt_cache_ttl = models.CharField(
+        max_length=4,
+        choices=PROMPT_CACHE_TTLS,
+        default="5m",
+        help_text=(
+            "How long the provider should keep this use case's cached prefix (FRD-133). The "
+            "trade-off is real and only measurement settles it: an hour costs about twice the "
+            "ordinary input price to write against roughly a quarter extra for five minutes, and "
+            "pays for itself only if the gap between turns regularly exceeds five minutes."
+        ),
+    )
     restrict_members_to_own_requests = models.BooleanField(
         default=False,
         help_text=(

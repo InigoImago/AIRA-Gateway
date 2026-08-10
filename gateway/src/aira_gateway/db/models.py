@@ -115,6 +115,11 @@ class RequestLog(Base):
     #: Which controls were running on a fallback while this request was handled (FRD-405).
     degraded: Mapped[Any | None] = mapped_column(JSON(none_as_null=True), nullable=True)
     prompt_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: **Of which** came from a provider-side cache, and **of which** populated one (`FRD-133`).
+    #: Subsets of `prompt_tokens`, so every figure built on that column keeps its meaning; apart
+    #: because their prices are apart by up to a factor of ten.
+    cached_input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cache_write_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     completion_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     total_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -271,6 +276,15 @@ class UseCaseRead(Base):
     #: false**, and the default is the feature: least privilege is not a setting somebody remembers
     #: to switch off, it is the state a use case starts in.
     tools_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    #: Mark this use case's stable prefix as cacheable (`FRD-133`). Off by default, and the reason
+    #: is not only least privilege: on Vertex the cache scope is the **whole organisation**, so a
+    #: use case whose system prompt is itself confidential should not be opted in by somebody
+    #: else's cost decision.
+    prompt_caching_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    #: `5m` or `1h` (`FRD-133`). Defaults to the cheap one — an hour costs 2x base input to write
+    #: against 1.25x, and only pays for itself when turns are regularly further apart than five
+    #: minutes, which is a question about somebody's traffic rather than a preference.
+    prompt_cache_ttl: Mapped[str] = mapped_column(String(4), default="5m")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -428,6 +442,15 @@ class ModelRead(Base):
     provider: Mapped[str] = mapped_column(String(64), default="")
     input_price_per_million_nanos: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     output_price_per_million_nanos: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    #: What a cache read and a cache write cost on this model (`FRD-133`). Absent means "charge the
+    #: ordinary input rate", which never under-bills — the conservative direction, and the same
+    #: behaviour as before these columns existed.
+    cached_input_price_per_million_nanos: Mapped[int | None] = mapped_column(
+        BigInteger, nullable=True
+    )
+    cache_write_price_per_million_nanos: Mapped[int | None] = mapped_column(
+        BigInteger, nullable=True
+    )
 
     # -- what it can do, and how it is reached (FRD-114) -----------------------------------
     capabilities: Mapped[Any | None] = mapped_column(JSON(none_as_null=True), nullable=True)

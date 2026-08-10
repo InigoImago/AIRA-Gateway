@@ -265,9 +265,18 @@ def _response_format(schema: ResponseSchema) -> dict[str, Any]:
 
 def _usage_of(payload: Any) -> CanonicalUsage:
     usage = payload if isinstance(payload, dict) else {}
+    # Prefix caching on this dialect is **automatic**: nothing is sent, and the only trace is this
+    # field (`FRD-133` §4a). Azure engages it from 1024 tokens and then in 128-token steps; a
+    # self-hosted runtime reports nothing at all and the zero below is the honest answer for it.
+    details = usage.get("prompt_tokens_details")
+    cached = int((details or {}).get("cached_tokens", 0) or 0) if isinstance(details, dict) else 0
     return CanonicalUsage(
         prompt_tokens=int(usage.get("prompt_tokens", 0) or 0),
         completion_tokens=int(usage.get("completion_tokens", 0) or 0),
+        # No write figure exists on this dialect: a first request simply pays the ordinary rate
+        # and populates the cache. Reporting a write of zero is therefore correct rather than
+        # missing — see `FRD-133` §4a, where only Anthropic separates the two.
+        cached_input_tokens=cached,
     )
 
 

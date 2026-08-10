@@ -121,6 +121,13 @@ export async function expectFormControlsAligned(page: Page, context: string) {
       form.querySelectorAll('input:not([type=checkbox]), select, button').forEach((element) => {
         const rect = element.getBoundingClientRect();
         if (rect.width === 0) return;
+        // An info hint's trigger lives *inside a `<label>`* and therefore sits at label height by
+        // construction, one line above the control it explains. Counting it as a row control
+        // reports a staircase for every labelled field that carries an explanation — which is not
+        // the defect this guard was written for (`FRD-207`: a bare checkbox centred against a
+        // labelled field, so a pair of controls landed on two lines). Excluded by *where it is*,
+        // not by what it is called, so a real button placed in a row is still compared.
+        if (element.tagName === 'BUTTON' && element.closest('label')) return;
         // Group by the row band the control sits in; the forms wrap on purpose.
         const band = String(Math.round(rect.top / 40));
         const id = (element as HTMLElement).id || element.tagName.toLowerCase();

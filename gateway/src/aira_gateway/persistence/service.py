@@ -69,6 +69,11 @@ class RequestLogService:
             publisher=publisher,
             region=region,
             prompt_tokens=usage.prompt_tokens if usage else None,
+            # Recorded even when zero: on a provider that caches, zero is the fact that this turn
+            # missed, which is what makes a cache that has silently stopped working visible
+            # (`FRD-133` FR-5). NULL is reserved for "no usage at all" — a refused request.
+            cached_input_tokens=usage.cached_input_tokens if usage else None,
+            cache_write_tokens=usage.cache_write_tokens if usage else None,
             completion_tokens=usage.completion_tokens if usage else None,
             total_tokens=usage.total_tokens if usage else None,
             latency_ms=latency_ms,

@@ -204,6 +204,23 @@ class CanonicalRequest(BaseModel):
     #: **never executed** (`ADR-0013`). Empty is the ordinary case and stays free of any cost: a
     #: request that declares nothing behaves exactly as it did before this field existed.
     tools: tuple[ToolDeclaration, ...] = ()
+    #: Mark the stable prefix — the tool declarations and the system instruction — as cacheable
+    #: (`FRD-133`). Set by the layer, from the use case's configuration, never by the caller: an
+    #: assistant does not know AIRA exists, and the two regions this covers are boundaries the
+    #: provider's own API defines rather than a judgement about somebody's prompt.
+    #:
+    #: Measured before it was chosen: on real assistant traffic the tool declarations are **69 %**
+    #: of a turn and the system instruction **31 %**, while the conversation is 0.1–5 %. Marking
+    #: these two captures 99.1 % — and it is exactly Anthropic's cache hierarchy, which runs
+    #: `tools` → `system` → `messages`.
+    #:
+    #: False changes nothing on any dialect, so a request that does not opt in is byte-identical
+    #: to what it was before this field existed.
+    cache_prefix: bool = False
+    #: How long the provider should keep it: `5m` or `1h` (`FRD-133`). Only read when
+    #: `cache_prefix` is set, and defaulting to the cheap one — an hour costs 2x base input to
+    #: write against 1.25x, so the expensive choice has to be made rather than inherited.
+    cache_ttl: str = "5m"
 
     def last_user_text(self) -> str:
         for message in reversed(self.messages):
@@ -281,6 +298,31 @@ class CanonicalEmbeddingRequest(BaseModel):
 class CanonicalUsage(BaseModel):
     prompt_tokens: int
     completion_tokens: int
+
+    #: **Of which** was served from a provider-side prompt cache, and **of which** was written
+    #: into one (`FRD-133`). Subsets of `prompt_tokens`, never additions to it: the total input a
+    #: request consumed is one number, and keeping it whole is what lets every existing budget,
+    #: report and index carry on meaning the same thing.
+    #:
+    #: They are apart because their **prices** are apart, by an order of magnitude in one direction
+    #: and 25–100 % in the other: a read costs 0.1× base input on Anthropic, a five-minute write
+    #: 1.25× and an hour-long one 2×. Folding them together — which is what the Anthropic mapping
+    #: did until 2026-08-10 — under-bills a write and over-bills a read, and a cost-control feature
+    #: that is wrong in the expensive direction is worse than one that is absent.
+    #:
+    #: Zero means "no cache was involved", which on a provider that reports nothing (a self-hosted
+    #: runtime) is also what "we cannot tell" looks like. `FRD-133` §4a keeps those apart at the
+    #: catalog: a model that does not declare `prompt_caching` is not expected to report any.
+    cached_input_tokens: int = 0
+    cache_write_tokens: int = 0
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def uncached_input_tokens(self) -> int:
+        """Input billed at the ordinary rate. Never negative: a provider that reported more cache
+        tokens than input tokens has contradicted itself, and clamping keeps one bad response from
+        producing a negative charge."""
+        return max(0, self.prompt_tokens - self.cached_input_tokens - self.cache_write_tokens)
 
     @computed_field  # type: ignore[prop-decorator]
     @property

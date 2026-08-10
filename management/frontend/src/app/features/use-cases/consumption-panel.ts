@@ -63,7 +63,17 @@ export class ConsumptionPanel {
     tokens: `Prompt and completion tokens together. A token differs in price by more than ten times
       between models and output is billed several times higher than input, so this is a volume
       figure and not a cost one.`,
+    cached: `How much of the input the provider served from its prompt cache instead of reading
+      again — the share is what makes caching measurable. 0 % with caching switched on means the
+      prefix is changing between turns, the gap between them is longer than the cache lifetime, or
+      the model does not cache at all. A provider that reports nothing (a self-hosted one) also
+      shows 0 %, and there it costs nothing either way.`,
   };
+
+  private share(row: ReportRow): string {
+    if (!row.prompt_tokens) return '—';
+    return `${Math.round((100 * (row.cached_input_tokens ?? 0)) / row.prompt_tokens)}%`;
+  }
 
   private statsFor(row: ReportRow | null): Stat[] {
     return [
@@ -82,6 +92,14 @@ export class ConsumptionPanel {
         label: 'Tokens',
         value: row ? `${row.total_tokens}` : '—',
         help: this.explain.tokens,
+      },
+      {
+        key: 'cached',
+        label: 'Cached',
+        // A share, not a count: "12,000 cached" says nothing without the total beside it, and the
+        // question anybody asks of a cache is what fraction it caught.
+        value: row ? this.share(row) : '—',
+        help: this.explain.cached,
       },
     ];
   }

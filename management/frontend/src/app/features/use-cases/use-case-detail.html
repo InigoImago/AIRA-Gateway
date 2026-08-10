@@ -203,6 +203,77 @@
               Store prompts and responses
             </label>
 
+            <!--
+              Two switches that lived only in the API until 2026-08-10. `FRD-206` recorded the
+              defect where a console offers what the server refuses; this is its inverse — a
+              capability with no way in, which does not announce itself because nothing ever fails.
+            -->
+            <label class="row" style="gap: 0.5rem">
+              <input
+                type="checkbox"
+                id="tools-enabled"
+                name="tools_enabled"
+                [checked]="toolsEnabled()"
+                (change)="toolsEnabled.set($any($event.target).checked)"
+              />
+              Let this use case declare functions for the model to call
+              <app-info-hint label="Function calling" testid="tools-enabled" [wide]="true">
+                Lets a caller send tool definitions and lets the model answer with a call to one.
+                The gateway carries them and <strong>never executes anything</strong> — running the
+                function is the caller's job, and the arguments a model asks for are never treated
+                as an instruction here. Off unless the use case needs it: a use case that summarises
+                documents has no business declaring functions, and an assistant that calls tools
+                makes many model requests per human instruction, so limits set for a chatbot will
+                trip at once.
+              </app-info-hint>
+            </label>
+
+            <label class="row" style="gap: 0.5rem">
+              <input
+                type="checkbox"
+                id="prompt-caching"
+                name="prompt_caching_enabled"
+                [checked]="promptCaching()"
+                (change)="promptCaching.set($any($event.target).checked)"
+              />
+              Cache the stable part of each request at the provider
+              <app-info-hint label="Prompt caching" testid="prompt-caching" [wide]="true">
+                Marks the tool declarations and the system instruction — measured at 99 % of an
+                assistant's request — so the provider charges a fraction for them on a repeat within
+                five minutes. It changes the price, never the answer, and a model that cannot do it
+                is served normally rather than skipped. Off by default: on Google Cloud the cache is
+                shared across the whole organisation, so a use case whose system prompt is itself
+                confidential should decide for itself.
+              </app-info-hint>
+            </label>
+
+            @if (promptCaching()) {
+              <div class="field">
+                <label for="cache-ttl">
+                  Keep the cached prefix for
+                  <app-info-hint label="Cache lifetime" testid="cache-ttl" [wide]="true">
+                    The one setting with a real trade-off, and only your own traffic settles it.
+                    Writing the cache costs <strong>more</strong> than an ordinary request — about a
+                    quarter extra for five minutes, about double for an hour — and reading it back
+                    costs a fraction. Five minutes pays off when turns follow each other closely; an
+                    hour only pays off if the gap between them regularly exceeds five minutes,
+                    because otherwise you paid double for a cache that had already expired. Change
+                    it, send traffic, then watch the <em>Cached</em> share on this use case's
+                    overview — that is the measurement, and nothing else settles it.
+                  </app-info-hint>
+                </label>
+                <select
+                  id="cache-ttl"
+                  name="prompt_cache_ttl"
+                  [ngModel]="cacheTtl()"
+                  (ngModelChange)="cacheTtl.set($event)"
+                >
+                  <option value="5m">5 minutes — cheaper to write</option>
+                  <option value="1h">1 hour — survives longer pauses, costs about double</option>
+                </select>
+              </div>
+            }
+
             @if (storePayloads()) {
               <div class="form-inline">
                 <div class="field">

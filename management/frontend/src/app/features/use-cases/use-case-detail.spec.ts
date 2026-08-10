@@ -16,6 +16,19 @@ import { UseCaseService } from '../../core/api/use-case.service';
 import { ConfirmService } from '../../core/ui/confirm.service';
 import { UseCaseDetail } from './use-case-detail';
 
+/**
+ * The fields an `update:` call carried, as an object.
+ *
+ * These assertions used to pin the **exact serialised payload**, which broke twice in one session
+ * for a reason that was not a defect: a new setting was added and every one of them had to be
+ * retyped. What they are about is that the right values are sent — so they say that, and a field
+ * they do not mention no longer makes them fail.
+ */
+function sentUpdate(calls: string[]): Record<string, unknown> {
+  const call = calls.find((entry) => entry.startsWith('update:'));
+  return call ? JSON.parse(call.slice('update:'.length)) : {};
+}
+
 function reportRow(over: Partial<ReportRow> = {}): ReportRow {
   return {
     key: 'demo-uc',
@@ -25,6 +38,7 @@ function reportRow(over: Partial<ReportRow> = {}): ReportRow {
     total_tokens: 0,
     cost_nanos: 0,
     cost: '0.00',
+    cached_input_tokens: 0,
     unpriced_requests: 0,
     failed_requests: 0,
     avg_latency_ms: null,
@@ -96,6 +110,8 @@ interface Detail {
   retentionError: () => string | null;
   retentionChanged: () => boolean;
   restrictMembers: { set: (v: boolean) => void; (): boolean };
+  promptCaching: { set: (v: boolean) => void; (): boolean };
+  cacheTtl: { set: (v: string) => void; (): string };
   canManage: () => boolean;
   isMember: () => boolean;
   canSaveRetention: () => boolean;
@@ -542,9 +558,7 @@ describe('UseCaseDetail retention', () => {
     expect(component.canSaveRetention()).toBe(true);
 
     component.saveRetention();
-    expect(calls).toContain(
-      'update:{"store_payloads":true,"restrict_members_to_own_requests":false,"retention_days":1}',
-    );
+    expect(sentUpdate(calls)).toMatchObject({ store_payloads: true, retention_days: 1 });
     expect(component.feedback.notice()).toContain('kept for 1 day(s)');
     expect(component.useCase()?.retention_days).toBe(1);
   });
@@ -573,9 +587,7 @@ describe('UseCaseDetail retention', () => {
     forms[forms.length - 1].dispatchEvent(new Event('submit'));
     harness.fixture.detectChanges();
 
-    expect(harness.calls).toContain(
-      'update:{"store_payloads":true,"restrict_members_to_own_requests":false,"retention_days":14}',
-    );
+    expect(sentUpdate(harness.calls)).toMatchObject({ store_payloads: true, retention_days: 14 });
   });
 });
 
@@ -638,9 +650,10 @@ describe('UseCaseDetail payload storage', () => {
     expect(component.retentionChanged()).toBe(true);
 
     component.saveRetention();
-    expect(calls).toContain(
-      'update:{"store_payloads":false,"restrict_members_to_own_requests":false}',
-    );
+    const sent = sentUpdate(calls);
+    expect(sent).toMatchObject({ store_payloads: false });
+    // With storage off there is no period to send — the one thing this case is really about.
+    expect(sent).not.toHaveProperty('retention_days');
     expect(component.feedback.notice()).toContain('no longer stored');
     expect(component.feedback.notice()).toContain('removed on the next run');
   });
@@ -1137,5 +1150,110 @@ describe('UseCaseDetail — accountability for a key', () => {
 
     const notice = harness.html().querySelector('[data-testid="key-issued-responsibility"]');
     expect(notice?.textContent).toContain('attributed to your name');
+  });
+});
+
+describe('UseCaseDetail — the two switches that had no way in', () => {
+  /**
+   * `tools_enabled` (`FRD-131`) and `prompt_caching_enabled` (`FRD-133`) both existed only in the
+   * API. That is `FRD-206`'s defect inverted: not a control that refuses when used — which at
+   * least produces a complaint — but a capability with **no way in**, which nobody ever notices
+   * because nothing fails. An administrator could not turn either on without curl.
+   */
+  it('offers both switches to an administrator and sends them', () => {
+    const harness = setup();
+    harness.fixture.detectChanges();
+
+    const dom = harness.html();
+    const caching = dom.querySelector<HTMLInputElement>('#prompt-caching');
+    const tools = dom.querySelector<HTMLInputElement>('#tools-enabled');
+    expect(caching, 'no way to turn prompt caching on').not.toBeNull();
+    expect(tools, 'no way to turn tool calling on').not.toBeNull();
+
+    caching!.checked = true;
+    caching!.dispatchEvent(new Event('change'));
+    harness.fixture.detectChanges();
+    harness.component.saveRetention();
+
+    expect(harness.calls.some((c) => c.includes('"prompt_caching_enabled":true'))).toBe(true);
+  });
+
+  it('explains what caching changes, and what it does not', () => {
+    /** It changes the **price**, never the answer — which is why a model that cannot do it is
+     *  served normally rather than skipped, and the one capability in the vocabulary that is not
+     *  a dispatch condition. A reader deciding whether to enable it needs that sentence. */
+    const harness = setup();
+    harness.fixture.detectChanges();
+
+    (harness.html().querySelector('[data-testid="info-prompt-caching"]') as HTMLElement).click();
+    harness.fixture.detectChanges();
+
+    const help = harness.html().querySelector('[data-testid="help-prompt-caching"]');
+    expect(help?.textContent).toContain('never the answer');
+    expect(help?.textContent).toContain('whole organisation');
+  });
+
+  it('says that a declared function is carried and never run', () => {
+    /** The sentence somebody deciding on this switch actually needs. "Let the model call
+     *  functions" reads like the gateway will run them, and an administrator who believes that
+     *  is either refusing a harmless capability or expecting a sandbox that does not exist
+     *  (`ADR-0013`). */
+    const harness = setup();
+    harness.fixture.detectChanges();
+
+    (harness.html().querySelector('[data-testid="info-tools-enabled"]') as HTMLElement).click();
+    harness.fixture.detectChanges();
+
+    const help = harness.html().querySelector('[data-testid="help-tools-enabled"]');
+    expect(help?.textContent).toContain('never executes');
+  });
+});
+
+describe('UseCaseDetail — tuning the cache (`FRD-133`)', () => {
+  /**
+   * The lifetime is the one parameter with a genuine trade-off, and only somebody's own traffic
+   * settles it: a write costs about a quarter extra for five minutes and about double for an
+   * hour, so the long one pays off only where turns are regularly further apart than five
+   * minutes. It is therefore a setting, and it is only worth showing once caching is on.
+   */
+  it('offers the lifetime only when caching is switched on', () => {
+    const harness = setup();
+    harness.fixture.detectChanges();
+
+    expect(harness.html().querySelector('#cache-ttl'), 'offered before caching is on').toBeNull();
+
+    harness.component.promptCaching.set(true);
+    harness.fixture.detectChanges();
+
+    expect(harness.html().querySelector('#cache-ttl')).not.toBeNull();
+  });
+
+  it('sends the chosen lifetime', () => {
+    const harness = setup();
+    harness.fixture.detectChanges();
+    harness.component.promptCaching.set(true);
+    harness.component.cacheTtl.set('1h');
+
+    harness.component.saveRetention();
+
+    expect(sentUpdate(harness.calls)).toMatchObject({
+      prompt_caching_enabled: true,
+      prompt_cache_ttl: '1h',
+    });
+  });
+
+  it('says what the longer lifetime costs, not just that it is longer', () => {
+    /** A selector offering "5 minutes" and "1 hour" with no price attached invites the wrong
+     *  choice: longer sounds strictly better, and it is not. */
+    const harness = setup();
+    harness.component.promptCaching.set(true);
+    harness.fixture.detectChanges();
+
+    (harness.html().querySelector('[data-testid="info-cache-ttl"]') as HTMLElement).click();
+    harness.fixture.detectChanges();
+
+    const help = harness.html().querySelector('[data-testid="help-cache-ttl"]');
+    expect(help?.textContent).toContain('about double');
+    expect(harness.html().querySelector('#cache-ttl')?.textContent).toContain('costs about double');
   });
 });

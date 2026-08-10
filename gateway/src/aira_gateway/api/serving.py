@@ -410,6 +410,49 @@ async def check_tools_permitted(request: Request, canonical: CanonicalRequest) -
         )
 
 
+async def cache_prefix_wanted(request: Request, declaration: ModelDeclaration) -> bool:
+    """Whether this request's stable prefix should be marked cacheable (`FRD-133`).
+
+    Two conditions, and the second one is deliberately **not** a dispatch condition: the use case
+    has to have opted in, and the model it landed on has to be able to honour it. A model that
+    cannot is served **uncached** — never skipped.
+
+    That is the one place in this codebase where a missing capability does not skip a candidate,
+    and the reason has to sit here or somebody will make it consistent with the others. Every
+    other flag guards the **answer**: a model that cannot read the attachment would answer about a
+    document it never saw, so the chain moves on. A model that cannot cache answers exactly the
+    right thing and merely costs more. Refusing a request over a price is the opposite of what a
+    fallback chain is for.
+
+    Resolved **after** routing, because routing is what decides which model the request lands on —
+    the same reason attachments, thinking and schemas are checked per hop.
+    """
+    if Capability.PROMPT_CACHING not in declaration.capabilities:
+        return False
+    use_case = getattr(request.state, "attribution", None)
+    slug = getattr(use_case, "use_case", None)
+    if not slug:
+        return False
+    sessionmaker = request.app.state.db_sessionmaker
+    async with sessionmaker() as session:
+        record = await session.get(UseCaseRead, slug)
+    return bool(record is not None and record.prompt_caching_enabled)
+
+
+async def cache_ttl_for(request: Request) -> str:
+    """The lifetime this use case chose. Anything unrecognised reads as the cheap default: a typo
+    must not be able to double a bill."""
+    use_case = getattr(request.state, "attribution", None)
+    slug = getattr(use_case, "use_case", None)
+    if not slug:
+        return "5m"
+    sessionmaker = request.app.state.db_sessionmaker
+    async with sessionmaker() as session:
+        record = await session.get(UseCaseRead, slug)
+    chosen = getattr(record, "prompt_cache_ttl", "5m") if record is not None else "5m"
+    return "1h" if chosen == "1h" else "5m"
+
+
 async def check_declaration(
     request: Request, *, model: str, method: str, requested: int | None
 ) -> ModelDeclaration:
@@ -590,7 +633,11 @@ async def prepare_for_dispatch(
 
     if canonical is not None:
         canonical = canonical.model_copy(
-            update={"thinking": resolve_thinking(canonical.thinking, declaration)}
+            update={
+                "thinking": resolve_thinking(canonical.thinking, declaration),
+                "cache_prefix": await cache_prefix_wanted(request, declaration),
+                "cache_ttl": await cache_ttl_for(request),
+            }
         )
     if embed is not None:
         embed = validate_embedding(

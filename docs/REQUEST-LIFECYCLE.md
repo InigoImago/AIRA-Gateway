@@ -50,11 +50,11 @@ sequenceDiagram
 
 Three things run outside the application, in this order (outermost first):
 
-| Middleware | Does | If it refuses |
-|---|---|---|
-| `TraceIdMiddleware` | puts `x-trace-id` on **every** response | — |
-| `UseCasePathMiddleware` | reads `/uc/<slug>` from the path | 400 on an invalid slug |
-| body-size ceiling | counts bytes, enforces `AIRA_MAX_REQUEST_BYTES` | **413**, and records a row |
+| Middleware              | Does                                            | If it refuses              |
+| ----------------------- | ----------------------------------------------- | -------------------------- |
+| `TraceIdMiddleware`     | puts `x-trace-id` on **every** response         | —                          |
+| `UseCasePathMiddleware` | reads `/uc/<slug>` from the path                | 400 on an invalid slug     |
+| body-size ceiling       | counts bytes, enforces `AIRA_MAX_REQUEST_BYTES` | **413**, and records a row |
 
 The last one has two exits — a declared `Content-Length` that is too large, and a body that lies and
 is cut off mid-read — and **both record an audit row** under the outcome `request_too_large`. That
@@ -133,7 +133,7 @@ graph TB
 `guard_before_work` checks, in order: **suspensions** (is this caller stopped?), **rate limits**
 (token bucket, all-or-nothing across use-case and member scopes), and **already over budget**.
 
-It is called once, *before the verb branch*. Putting it inside the pipeline would have been tidier
+It is called once, _before the verb branch_. Putting it inside the pipeline would have been tidier
 and would have left `:embedContent` unlimited — embeddings have no pipeline. That verb is the reason
 this project writes controls on the path every branch takes rather than inside one of them
 ([`FRD-405` B3](features/FRD-405-rate-limiting.md)).
@@ -147,11 +147,11 @@ Per use case, config-driven, authored in the SPA's graph builder
 ([`FRD-300`](features/FRD-300-pipeline-engine.md),
 [`FRD-303`](features/FRD-303-pipeline-builder-ui.md)):
 
-| Step | Does | Notes |
-|---|---|---|
-| `injection_filter` | heuristic patterns, or an LLM classifier | verdict is **three-valued**; `undetermined` **blocks** by default |
-| `allow_check` | model allow-list for the use case | |
-| `model_route` | an LLM classifier picks a category → model | |
+| Step               | Does                                       | Notes                                                             |
+| ------------------ | ------------------------------------------ | ----------------------------------------------------------------- |
+| `injection_filter` | heuristic patterns, or an LLM classifier   | verdict is **three-valued**; `undetermined` **blocks** by default |
+| `allow_check`      | model allow-list for the use case          |                                                                   |
+| `model_route`      | an LLM classifier picks a category → model |                                                                   |
 
 Then a `fallback_models` chain. **A pipeline model call is a first-class request**: it leaves its own
 audit row named `pipeline:<step>`, priced, booked against the budget with `requests=0` — the caller
@@ -170,6 +170,14 @@ information is not permission.
 
 Checked **after routing and at every hop of the fallback chain**, because a chain that quietly
 answers with less than was asked for returns a 200.
+
+**One capability is deliberately not a condition**: `prompt_caching`
+([`FRD-133`](features/FRD-133-prompt-caching.md)). Every other flag guards the _answer_ — a
+candidate that cannot read the attachment would answer about a document it never saw, so the chain
+moves on. A candidate that cannot cache answers exactly the right thing and merely costs more, so
+it is served **uncached** rather than skipped: refusing a request over a price is the opposite of
+what a fallback chain is for. Resolved here all the same, because whether the request carries a
+cache marker depends on the model it landed on and on the use case's own switch and lifetime.
 
 ### 7 — the reservation
 
@@ -199,7 +207,7 @@ excluded" is fixable by an operator, an outage is not.
 
 Five conditions share this mechanism rather than each inventing one: **residency**
 (one policy for every cloud), **media types**, the **schema** capability, **thinking**, and
-**sampling expressibility** — the last is a property of the *dialect*, since no catalog entry can
+**sampling expressibility** — the last is a property of the _dialect_, since no catalog entry can
 say whether `top_k` exists.
 
 **The rule that matters:** a model that cannot read the attachment is refused **by name**, never
@@ -231,7 +239,7 @@ model was chosen, provider/publisher/**region**, status and outcome, pipeline de
 latency, cost in nano-units, request bytes, trace id, and which controls were degraded at the time.
 
 **A request that reached this point is recorded however it ended.** Four of six paths once lost the
-row when a caller went away mid-answer; a dropped socket *cancels* the response task, so the settle
+row when a caller went away mid-answer; a dropped socket _cancels_ the response task, so the settle
 and the write are `asyncio.shield`ed.
 
 **Refusals are recorded at the route's exception boundary** — one site, because a fact repeated at
@@ -256,7 +264,7 @@ graph LR
 Detection is **asynchronous**, enforcement is **synchronous**, and they meet at a written decision
 ([`ADR-0014`](adr/ADR-0014-detection-is-asynchronous-enforcement-is-not.md)). The evaluator reads
 the same rows the report reads — so it also sees refusals, which is where much of the signal is: a
-thousand rate-limited requests *is* the anomaly.
+thousand rate-limited requests _is_ the anomaly.
 
 Also afterwards: the **retention worker** deletes stored prompts and responses once the use case's
 period has passed (default 7 days). It must be scheduled or nothing is deleted.
@@ -265,36 +273,36 @@ period has passed (default 7 days). It must be scheduled or nothing is deleted.
 
 ## 8. What the caller sees when something refuses
 
-| Situation | Status | Outcome recorded |
-|---|---|---|
-| Body over the ceiling | 413 | `request_too_large` |
-| No credential | 401 | *(none — a security event)* |
-| Not a member of the use case | 403 | `invalid_request` |
-| Stopped by a rule or an operator | **429** + `Retry-After` | `suspended` |
-| Over the rate limit | 429 + `Retry-After` | `rate_limited` |
-| Over budget | 429 | `budget_exceeded` |
-| Blocked by the pipeline | 403 | `blocked_by_pipeline` |
-| No candidate could serve it | 400 `FAILED_PRECONDITION` | `no_capable_model` |
-| Unknown model | 404 | `model_not_found` |
-| Field this gateway does not serve | 400, **naming the field** | `invalid_request` |
-| Upstream said 400 | 400 `FAILED_PRECONDITION`, carrying its reason | `upstream_error` |
-| Upstream 401/403 | 502, **masked** | `upstream_error` |
-| Caller hung up | — | `client_gone` |
+| Situation                         | Status                                         | Outcome recorded            |
+| --------------------------------- | ---------------------------------------------- | --------------------------- |
+| Body over the ceiling             | 413                                            | `request_too_large`         |
+| No credential                     | 401                                            | _(none — a security event)_ |
+| Not a member of the use case      | 403                                            | `invalid_request`           |
+| Stopped by a rule or an operator  | **429** + `Retry-After`                        | `suspended`                 |
+| Over the rate limit               | 429 + `Retry-After`                            | `rate_limited`              |
+| Over budget                       | 429                                            | `budget_exceeded`           |
+| Blocked by the pipeline           | 403                                            | `blocked_by_pipeline`       |
+| No candidate could serve it       | 400 `FAILED_PRECONDITION`                      | `no_capable_model`          |
+| Unknown model                     | 404                                            | `model_not_found`           |
+| Field this gateway does not serve | 400, **naming the field**                      | `invalid_request`           |
+| Upstream said 400                 | 400 `FAILED_PRECONDITION`, carrying its reason | `upstream_error`            |
+| Upstream 401/403                  | 502, **masked**                                | `upstream_error`            |
+| Caller hung up                    | —                                              | `client_gone`               |
 
 Two rules behind that table. **Nothing a request asks for is silently dropped**: a field this
-gateway cannot honour is refused *by name* with the reason, or the candidate is skipped — never
-accepted and ignored. And an upstream's **credential** failures stay masked, because they are *our*
+gateway cannot honour is refused _by name_ with the reason, or the candidate is skipped — never
+accepted and ignored. And an upstream's **credential** failures stay masked, because they are _our_
 credentials, the caller cannot act on them, and the message may name one.
 
 ---
 
 ## 9. Where to look when something is wrong
 
-| Question | Where |
-|---|---|
+| Question                       | Where                                                                |
+| ------------------------------ | -------------------------------------------------------------------- |
 | What happened to this request? | `request_logs`, by `trace_id` (also on the response as `x-trace-id`) |
-| Why was it refused? | the `outcome` column, and `pipeline_decisions` |
-| Was a control degraded? | the `degraded` column on that row |
-| Is anything stopped right now? | `GET /v1beta/suspensions` (incident role) |
-| What has the detector found? | `GET /v1beta/anomalies` |
-| Is the gateway healthy? | `/healthz` (liveness), `/readyz` (readiness + upstream probes) |
+| Why was it refused?            | the `outcome` column, and `pipeline_decisions`                       |
+| Was a control degraded?        | the `degraded` column on that row                                    |
+| Is anything stopped right now? | `GET /v1beta/suspensions` (incident role)                            |
+| What has the detector found?   | `GET /v1beta/anomalies`                                              |
+| Is the gateway healthy?        | `/healthz` (liveness), `/readyz` (readiness + upstream probes)       |

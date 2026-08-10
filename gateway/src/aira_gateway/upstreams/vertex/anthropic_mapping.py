@@ -114,7 +114,15 @@ def canonical_to_anthropic(request: CanonicalRequest, *, max_tokens: int) -> dic
         "max_tokens": max_tokens,
     }
     if system_parts:
-        body["system"] = "\n\n".join(system_parts)
+        joined = "\n\n".join(system_parts)
+        # A plain string unless caching is asked for. `cache_control` only exists on the block
+        # form, and switching shape unconditionally would change a wire body for every request in
+        # order to serve the few that opted in.
+        body["system"] = (
+            [{"type": "text", "text": joined, "cache_control": _cache_control(request)}]
+            if request.cache_prefix
+            else joined
+        )
     if request.temperature is not None:
         body["temperature"] = request.temperature
     _add_sampling(body, request)
@@ -148,6 +156,12 @@ def canonical_to_anthropic(request: CanonicalRequest, *, max_tokens: int) -> dic
             }
             for tool in request.tools
         ]
+        if request.cache_prefix:
+            # **On the last tool, not on each.** A breakpoint marks "everything up to here", and
+            # Anthropic allows four in a request; one per tool would exhaust them on the fourth
+            # function and cache almost nothing. Together with the system block this is two, which
+            # is what the measurement says covers 99.1 % of an assistant turn.
+            body["tools"][-1]["cache_control"] = _cache_control(request)
         # No `tool_choice`: the model decides. `AUTO` is what the surface accepts and the other
         # modes are refused there, so pinning anything here would invent an instruction nobody gave.
     if request.response_schema is not None:
@@ -237,6 +251,22 @@ def answer_text(content: Any) -> str:
     )
 
 
+#: The five-minute lifetime, which is the default and the cheap one: a write costs 1.25x base
+#: input against 2x for an hour. The measured gap between assistant turns is 41 seconds with 13 of
+#: 14 inside five minutes, so the longer window would pay double to buy almost nothing.
+_EPHEMERAL = {"type": "ephemeral"}
+
+
+def _cache_control(request: CanonicalRequest) -> dict[str, str]:
+    """The marker, with a lifetime only when the long one was asked for.
+
+    An absent `ttl` is Anthropic's five-minute default, so the short case sends exactly what it
+    sent before this parameter existed — the expensive option is the one that has to appear on the
+    wire, never the cheap one.
+    """
+    return {**_EPHEMERAL, "ttl": "1h"} if request.cache_ttl == "1h" else dict(_EPHEMERAL)
+
+
 def usage_of(payload: Any) -> CanonicalUsage:
     """Token usage. Cache tokens are folded into the input count where the provider reports them
     separately — they *were* input, and leaving them out would understate what the request cost.
@@ -245,7 +275,12 @@ def usage_of(payload: Any) -> CanonicalUsage:
     cached = int(usage.get("cache_read_input_tokens", 0) or 0)
     created = int(usage.get("cache_creation_input_tokens", 0) or 0)
     return CanonicalUsage(
+        # The total stays whole; the parts ride along beside it (`FRD-133`). Anthropic's own
+        # arithmetic is the same: `input_tokens` counts only what fell *after* the last cache
+        # breakpoint, so the three add up to everything the request was charged input for.
         prompt_tokens=int(usage.get("input_tokens", 0) or 0) + cached + created,
+        cached_input_tokens=cached,
+        cache_write_tokens=created,
         completion_tokens=int(usage.get("output_tokens", 0) or 0),
     )
 

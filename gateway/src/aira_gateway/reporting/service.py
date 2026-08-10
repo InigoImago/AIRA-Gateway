@@ -44,6 +44,10 @@ class Figures:
     requests: int
     prompt_tokens: int
     completion_tokens: int
+    #: Of the prompt tokens, how many came from a provider's cache (`FRD-133` FR-5). Reported
+    #: because a cache that has silently stopped working looks exactly like an expensive month —
+    #: the spend rises, nothing errors, and no figure says why.
+    cached_input_tokens: int
     total_tokens: int
     cost_nanos: int
     unpriced_requests: int
@@ -57,6 +61,7 @@ class Figures:
             "requests": self.requests,
             "prompt_tokens": self.prompt_tokens,
             "completion_tokens": self.completion_tokens,
+            "cached_input_tokens": self.cached_input_tokens,
             "total_tokens": self.total_tokens,
             # Both forms, the same pair FRD-403 established: the string is what a human reads,
             # the integer is what a bar divides without a float touching a monetary figure.
@@ -69,7 +74,7 @@ class Figures:
         }
 
 
-_EMPTY = Figures("", 0, 0, 0, 0, 0, 0, 0, None, None)
+_EMPTY = Figures("", 0, 0, 0, 0, 0, 0, 0, 0, None, None)
 
 
 def _measures() -> list[Any]:
@@ -78,6 +83,7 @@ def _measures() -> list[Any]:
         func.count().label("requests"),
         func.coalesce(func.sum(RequestLog.prompt_tokens), 0).label("prompt_tokens"),
         func.coalesce(func.sum(RequestLog.completion_tokens), 0).label("completion_tokens"),
+        func.coalesce(func.sum(RequestLog.cached_input_tokens), 0).label("cached_input_tokens"),
         func.coalesce(func.sum(RequestLog.total_tokens), 0).label("total_tokens"),
         func.coalesce(func.sum(RequestLog.cost_nanos), 0).label("cost_nanos"),
         # A request whose model had no price. Counted, never summed as zero.
@@ -121,6 +127,7 @@ def _figures(key: str, row: Any) -> Figures:
         requests=int(row.requests or 0),
         prompt_tokens=int(row.prompt_tokens or 0),
         completion_tokens=int(row.completion_tokens or 0),
+        cached_input_tokens=int(row.cached_input_tokens or 0),
         total_tokens=int(row.total_tokens or 0),
         cost_nanos=int(row.cost_nanos or 0),
         unpriced_requests=int(row.unpriced_requests or 0),

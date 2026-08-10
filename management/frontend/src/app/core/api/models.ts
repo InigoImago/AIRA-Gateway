@@ -47,6 +47,12 @@ export interface UseCase {
   processing_notes: string;
   /** Whether prompts and responses are stored at all (FRD-404). */
   store_payloads?: boolean;
+  /** Let this use case declare functions for the model to call (FRD-131). */
+  tools_enabled?: boolean;
+  /** Mark this use case's stable prefix as cacheable at the provider (FRD-133). */
+  prompt_caching_enabled?: boolean;
+  /** How long the provider keeps it: `5m` or `1h`. */
+  prompt_cache_ttl?: string;
   /** Show each use-case *user* only their own requests. An administrator still sees all of them. */
   restrict_members_to_own_requests?: boolean;
   /** How long stored prompts and responses are kept, in days (FRD-404). */
@@ -213,8 +219,21 @@ export interface BudgetUsage {
 // Python one grew: `tools` was added there (`FRD-131`) and the console could not name it. The
 // mismatch surfaced as a compile error rather than as silence, which is the only reason it is a
 // footnote — a value the console cannot express is a value it cannot show a reader.
+/**
+ * The closed capability vocabulary (`ADR-0012`), restated here because a checkbox list has to come
+ * from somewhere. `libs/tests/test_capability_vocabulary.py` compares it against the Python enum
+ * **in both directions** — it was missing `tools` and `prompt_caching` for two days and three
+ * days respectively, and neither absence failed anywhere: a capability with no way in looks
+ * exactly like a design decision.
+ */
 export type Capability =
-  'generate' | 'embed' | 'structured_output' | 'thinking' | 'attachments' | 'tools';
+  | 'generate'
+  | 'embed'
+  | 'structured_output'
+  | 'thinking'
+  | 'attachments'
+  | 'tools'
+  | 'prompt_caching';
 
 export const CAPABILITIES: readonly Capability[] = [
   'generate',
@@ -222,6 +241,8 @@ export const CAPABILITIES: readonly Capability[] = [
   'structured_output',
   'thinking',
   'attachments',
+  'tools',
+  'prompt_caching',
 ];
 
 /** A model in the catalog: what it costs, what it can do, how it is reached (FRD-403, FRD-114). */
@@ -233,6 +254,10 @@ export interface CatalogModel {
   approved?: boolean;
   provider?: string;
   input_price_per_million?: string | null;
+  /** What a cache read and a cache write cost on this model (FRD-133). Absent means "charge the
+   *  ordinary input rate" — never "free", so an undeclared rate can only over-state a bill. */
+  cached_input_price_per_million?: string | null;
+  cache_write_price_per_million?: string | null;
   output_price_per_million?: string | null;
   is_priced?: boolean;
   updated_at?: string;
@@ -386,6 +411,10 @@ export interface ReportRow {
   cost_nanos: number;
   /** The same amount as an exact decimal string, which is what a human reads. */
   cost: string;
+  /** Of the prompt tokens, how many the provider served from its cache (FRD-133). The share is
+   *  what makes a cache measurable: a cache that has silently stopped working looks exactly like
+   *  an expensive month otherwise. */
+  cached_input_tokens: number;
   /** Requests on a model with no price. Their cost is unknown, not zero. */
   unpriced_requests: number;
   failed_requests: number;

@@ -23,6 +23,8 @@ class ModelSerializer(serializers.ModelSerializer[Model]):
             "provider",
             "input_price_per_million",
             "output_price_per_million",
+            "cached_input_price_per_million",
+            "cache_write_price_per_million",
             "is_priced",
             # FRD-114
             "capabilities",

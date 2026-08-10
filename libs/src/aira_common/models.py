@@ -26,6 +26,15 @@ class Capability(StrEnum):
     #: unsupported, like every other flag here — a model whose catalog entry is silent is not
     #: assumed capable, it is skipped by name.
     TOOLS = "tools"
+    #: The provider will honour a cache marker on this model's stable prefix (`FRD-133`).
+    #:
+    #: **Undeclared means unsupported, and unsupported does not mean skipped** — the one place in
+    #: this vocabulary where a missing capability is not a dispatch condition. A model that cannot
+    #: cache still answers the question correctly; it just costs more. Skipping it would refuse a
+    #: request over a *price*, which is the opposite of what a fallback chain is for. Every other
+    #: flag here guards the **answer**, and that difference is why this comment exists: somebody
+    #: will otherwise "fix" the inconsistency.
+    PROMPT_CACHING = "prompt_caching"
 
 
 class ThinkingMode(StrEnum):

@@ -11,6 +11,7 @@ function row(over: Partial<ReportRow> = {}): ReportRow {
     total_tokens: 300,
     cost_nanos: 1_000_000_000,
     cost: '1.00',
+    cached_input_tokens: 0,
     unpriced_requests: 0,
     failed_requests: 0,
     avg_latency_ms: 40,

@@ -43,7 +43,7 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
   inevitably do when both were written from the same mental model — and line coverage cannot see
   a *missing requirement*: on 2026-08-05 a review found seven real defects behind a green suite at
   99% coverage. So: **prove a test can fail.** Break the property, watch it go red, restore.
-  `make mutants` (`tools/mutation_check.py`) does this for **337 properties** across auth, budgets,
+  `make mutants` (`tools/mutation_check.py`) does this for **346 properties** across auth, budgets,
   pipeline, retention, the management control plane and the gateway's counters; when
   you fix a bug, add the mutation that reintroduces it. Two traps that cost real defects here:
   a stand-in that is more permissive than the thing it replaces (reuse the real method where you
@@ -1131,6 +1131,60 @@ context — a guard reading only `route.dependant` reports the *protected* route
 "fixed" by exempting them. Test-quality pass: assertion-free tests were legitimate "does not raise"
 cases; the real gap was the catalog validator's thirteen untested refusal branches (83% → 99%).
 `W1`–`W4`. **Nothing the platform does changed.**
+
+**Prompt caching, measured before it was designed (`FRD-133`, 2026-08-10)** — §5 named three
+numbers that had to come out of `request_logs` first and left open that they might say *don't*.
+They said build, and they **corrected the premise**: it is not the conversation that repeats. On 26
+real OpenCode turns, `tools` is **69 %** of a request and `systemInstruction` **31 %**, while
+`contents` is 0.1–5 %; 99.1 % of a large turn is repeated, the median gap between turns is 41 s
+(13/14 inside five minutes) and 93.3 % of that use case's tokens are input. That is exactly
+Anthropic's `tools → system → messages` hierarchy, so **two** breakpoints catch it — and it reverses
+this FRD's own non-goal on automatic placement, because those boundaries are drawn by the API, not
+guessed from a prompt. **The first measurement was wrong and pointed the other way**: comparing the
+common *string prefix* of stored payloads gave 0.5 %, because the serialisation puts `contents`
+before `systemInstruction` — it measured JSON key order, and the plausible number was the wrong one.
+**What was already broken:** Anthropic cache tokens were folded into `prompt_tokens` and priced at
+1.0× when a read is **0.1×** and a write **1.25×/2×** — wrong both ways, *under*-stating the
+expensive one, so even a working cache was invisible and partly mis-billed. Built as accounting
+first (three of four providers already report; only Anthropic takes a marker) then the marker,
+because the other order produces a saving AIRA cannot show. Vendor facts from the vendors, including
+§6's open question: **on Vertex the cache is isolated per organisation, not per workspace**, and
+AIRA holds one credential per platform — hence per use case, default off. One rule is deliberately
+unlike the rest: **a model that cannot cache is served uncached, never skipped** — every other
+capability guards the *answer*, this one guards the *price*, and refusing a request over a price is
+the opposite of what a fallback chain is for. `tools_enabled` had also existed only in the API since
+`FRD-131`; both switches are in the console now.
+**Stage C asked which parameters are worth offering, and the answer is one**: the **lifetime**
+(`5m`/`1h`). Everything else is fixed by the vendor or settled by the measurement, and a control
+with one correct answer is `FRD-206`'s complaint in another key. The lifetime is the exception
+because **only the caller's own traffic settles it** — an hour costs about double to write and pays
+only where the gap between turns regularly exceeds five minutes, the opposite of OpenCode's 41 s
+and plausibly true of a chatbot a human reads between. Every control says what it **costs**, not
+what it does; the two catalog price fields say which *direction* they go, because that is the
+surprising part (cached input a tenth, a write 1.25×/2×) and a field labelled only "cached input
+price" invites the ordinary rate — already the fallback, and then the wrong figure looks
+deliberate. **Tuning is empirical only if the effect sits beside the setting**, so the consumption
+panel gained a **Cached** share whose hint names the four different reasons for 0 %. And the part
+no earlier test could see: the mapping tests prove the marker is *built* right and say nothing
+about whether the configuration *arrives* — four hops where a dropped setting yields a served
+request indistinguishable from one nobody asked to cache (`FRD-124`'s lesson). The mock now **says
+what it was asked**, as it already does for thinking and attachments, and reports **no cache hit on
+purpose**: fabricating one would make every "caching saves money" assertion true by construction.
+The harness reported `U5` **STALE** rather than green — its anchor was the constant that became a
+function — which is `N2`'s lesson working as built.
+**And the console could not declare the capability it had just been given price fields for**: the
+SPA restates the closed capability vocabulary as a TypeScript array and was missing **`tools`**
+(since `FRD-131`) and **`prompt_caching`** — five checkboxes where there should be seven, which
+announces itself through nothing, because an absent checkbox reads as a design decision. Fourth
+instance of the same answer: **compare the hand-written list against the constant in both
+directions** (after `aira.rate-limits`, `aira.anomaly-rules`, `use_case_group.granted`) — the other
+direction matters too, since a box the gateway ignores is a declaration somebody believes they
+made. Each capability now says what ticking it commits to, in a `Record<Capability, string>` so
+the **compiler** refuses an undocumented one, shown to fail by deleting an entry. One e2e guard was
+narrowed and proved sharp first: `expectFormControlsAligned` counted an info hint's trigger as a
+row control, and a hint sits **inside a `<label>`** one line above its field, so every explained
+field read as a staircase; excluded by *where it is*, then a 6 px misalignment was injected to
+watch it fail — 12 px did **not**, because the guard bands rows at 40 px. `U1`–`U9`.
 
 Next candidates: **`FRD-114`** (model metadata — now also carries publisher + default output cap,
 prerequisite for 110–113 and 119), **`FRD-110`** (documents/images — the widest gap),

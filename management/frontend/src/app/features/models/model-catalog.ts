@@ -13,6 +13,7 @@ import { errorMessage } from '../../core/api/error-message';
 import { CAPABILITIES, Capability, CatalogModel, Me, ModelCheck } from '../../core/api/models';
 import { MeService } from '../../core/api/me.service';
 import { UseCaseService } from '../../core/api/use-case.service';
+import { InfoHint } from '../../core/ui/info-hint';
 import { ConfirmService } from '../../core/ui/confirm.service';
 import { TablePager } from '../../core/ui/table-pager';
 import { TableView } from '../../core/ui/table-view';
@@ -22,7 +23,7 @@ const AMOUNT = /^\d+([.,]\d{1,6})?$/;
 
 @Component({
   selector: 'app-model-catalog',
-  imports: [FormsModule, TablePager],
+  imports: [InfoHint, FormsModule, TablePager],
   templateUrl: './model-catalog.html',
   // Escape closes the editor. A window with no way out but the mouse is a window somebody gets
   // stuck in.
@@ -72,6 +73,11 @@ export class ModelCatalog implements OnInit {
   protected readonly provider = signal('');
   protected readonly inputPrice = signal('');
   protected readonly outputPrice = signal('');
+  /** The two cache rates (`FRD-133`). Optional on purpose: a model whose provider does not cache
+   *  has none, and one whose provider does but whose rates nobody has entered is charged the
+   *  ordinary input rate — over-stating, never under-stating. */
+  protected readonly cachedPrice = signal('');
+  protected readonly cacheWritePrice = signal('');
 
   // FRD-114. Zoneless: every piece of form state is a signal, or changing it from code renders
   // nothing.
@@ -90,6 +96,47 @@ export class ModelCatalog implements OnInit {
   /** Models nobody has described. The gateway serves them at the baseline and refuses everything
    * beyond it (FRD-114 FR-7), so an undeclared model quietly does less than the list suggests. */
   protected readonly undeclared = computed(() => this.models().filter((m) => !m.is_declared));
+
+  /**
+   * What ticking each box actually commits the platform to.
+   *
+   * The vocabulary is closed and every entry means *whether*, never *how* (`ADR-0012`) — but a
+   * checkbox reading `structured_output` tells a Global Administrator nothing about the
+   * consequence, and the consequences differ sharply: most of these **exclude a model from a
+   * fallback chain** when they are absent, while `prompt_caching` only changes the price. A
+   * declaration made without knowing that is a guess, and `FRD-114`'s rule is that a capability
+   * is a measurement.
+   */
+  private readonly capabilityHelp: Record<Capability, string> = {
+    generate: `The model answers prompts. Almost every model has this; a model without it is an
+      embedding model, and the gateway refuses generation requests for it by name.`,
+    embed: `The model turns text into vectors. Separate from generation because most models do one
+      or the other, and a request to the wrong kind is refused rather than approximated.`,
+    structured_output: `The model can be asked to answer as a document matching a schema. Three
+      vendors do this by three unrelated mechanisms and the catalog never learns which — this says
+      only that it works. A model without it is skipped when a caller submits a schema, because
+      prose where a document was expected is a wrong answer that looks like a right one.`,
+    thinking: `The model can reason before answering. Declare the modes and budgets it really
+      supports, measured — a mode filled in from the list rather than from a test produces requests
+      the provider refuses by name. Leave it off if you have not checked: no thinking is the safe
+      declaration.`,
+    attachments: `The model reads documents and images, not only text. The one capability where
+      being wrong is worst: a model that cannot read the attachment is skipped, never sent the
+      prompt without it — a dropped attachment produces a confident wrong answer with a 200, and
+      the caller blames the model.`,
+    tools: `The model can be given function definitions and answer by asking for one. The gateway
+      carries the call and never runs it. A model without this is skipped when a caller declares
+      functions, because a model that answers in prose instead breaks an assistant silently.`,
+    prompt_caching: `The provider will honour a cache marker on this model's stable prefix, so a
+      repeated tool declaration and system prompt cost a fraction on the next request. The one
+      capability here that changes the **price** and not the answer — so a model without it is
+      served normally rather than skipped. Needs the two cache prices above to show up in
+      reporting.`,
+  };
+
+  protected explain(capability: Capability): string {
+    return this.capabilityHelp[capability];
+  }
 
   protected toggleCapability(capability: Capability, on: boolean): void {
     const current = this.capabilities().filter((value) => value !== capability);
@@ -129,8 +176,20 @@ export class ModelCatalog implements OnInit {
     if (!this.name().trim()) return 'A model id is required.';
     const input = this.inputPrice().trim();
     const output = this.outputPrice().trim();
-    if ((input && !AMOUNT.test(input)) || (output && !AMOUNT.test(output))) {
+    const cached = this.cachedPrice().trim();
+    const cacheWrite = this.cacheWritePrice().trim();
+    if (
+      (input && !AMOUNT.test(input)) ||
+      (output && !AMOUNT.test(output)) ||
+      (cached && !AMOUNT.test(cached)) ||
+      (cacheWrite && !AMOUNT.test(cacheWrite))
+    ) {
       return 'Prices are amounts per 1,000,000 tokens, e.g. 0.075.';
+    }
+    if ((cached || cacheWrite) && !input) {
+      // A cache rate without a base rate prices part of a request and not the rest, which is the
+      // "looks complete and is not" failure the pair rule below already exists for.
+      return 'A cache price needs an input price to sit beside.';
     }
     if (!!input !== !!output) {
       // Half a price produces a cost figure that looks complete and is not.
@@ -185,6 +244,8 @@ export class ModelCatalog implements OnInit {
         provider: this.provider().trim(),
         input_price_per_million: amount(this.inputPrice()),
         output_price_per_million: amount(this.outputPrice()),
+        cached_input_price_per_million: amount(this.cachedPrice()),
+        cache_write_price_per_million: amount(this.cacheWritePrice()),
         capabilities: this.capabilities(),
         publisher: this.publisher().trim(),
         platform: this.platform().trim(),
@@ -216,6 +277,8 @@ export class ModelCatalog implements OnInit {
     this.provider.set('');
     this.inputPrice.set('');
     this.outputPrice.set('');
+    this.cachedPrice.set('');
+    this.cacheWritePrice.set('');
     this.capabilities.set([]);
     this.publisher.set('');
     this.platform.set('');
@@ -353,6 +416,8 @@ export class ModelCatalog implements OnInit {
     this.provider.set(model.provider ?? '');
     this.inputPrice.set(model.input_price_per_million ?? '');
     this.outputPrice.set(model.output_price_per_million ?? '');
+    this.cachedPrice.set(model.cached_input_price_per_million ?? '');
+    this.cacheWritePrice.set(model.cache_write_price_per_million ?? '');
     this.capabilities.set([...(model.capabilities ?? [])]);
     this.publisher.set(model.publisher ?? '');
     this.platform.set(model.platform ?? '');

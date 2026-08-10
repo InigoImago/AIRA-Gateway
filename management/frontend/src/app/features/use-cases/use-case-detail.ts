@@ -172,6 +172,12 @@ export class UseCaseDetail implements OnInit {
   protected readonly storePayloads = signal(true);
   /** Whether members of this use case see only their own requests (`FRD-505` FR-4). */
   protected readonly restrictMembers = signal(false);
+  /** Two switches that existed only in the API until 2026-08-10 (`FRD-131`, `FRD-133`). A
+   * capability with no way in does not announce itself — unlike a control that refuses when used,
+   * which at least produces a complaint (`FRD-206`, inverted). */
+  protected readonly toolsEnabled = signal(false);
+  protected readonly promptCaching = signal(false);
+  protected readonly cacheTtl = signal('5m');
 
   ngOnInit(): void {
     this.slug = this.route.snapshot.paramMap.get('slug') ?? '';
@@ -220,6 +226,9 @@ export class UseCaseDetail implements OnInit {
         this.retentionDays.set(useCase.retention_days ?? null);
         this.storePayloads.set(useCase.store_payloads ?? true);
         this.restrictMembers.set(useCase.restrict_members_to_own_requests ?? false);
+        this.toolsEnabled.set(useCase.tools_enabled ?? false);
+        this.promptCaching.set(useCase.prompt_caching_enabled ?? false);
+        this.cacheTtl.set(useCase.prompt_cache_ttl ?? '5m');
         this.loading.set(false);
       },
       error: (response: unknown) => {
@@ -467,7 +476,10 @@ export class UseCaseDetail implements OnInit {
     return (
       this.retentionDays() !== (this.useCase()?.retention_days ?? null) ||
       this.storePayloads() !== (this.useCase()?.store_payloads ?? true) ||
-      this.restrictMembers() !== (this.useCase()?.restrict_members_to_own_requests ?? false)
+      this.restrictMembers() !== (this.useCase()?.restrict_members_to_own_requests ?? false) ||
+      this.toolsEnabled() !== (this.useCase()?.tools_enabled ?? false) ||
+      this.promptCaching() !== (this.useCase()?.prompt_caching_enabled ?? false) ||
+      this.cacheTtl() !== (this.useCase()?.prompt_cache_ttl ?? '5m')
     );
   }
 
@@ -485,6 +497,9 @@ export class UseCaseDetail implements OnInit {
       this.service.update(this.slug, {
         store_payloads: store,
         restrict_members_to_own_requests: this.restrictMembers(),
+        tools_enabled: this.toolsEnabled(),
+        prompt_caching_enabled: this.promptCaching(),
+        prompt_cache_ttl: this.cacheTtl(),
         ...(store && days != null ? { retention_days: days } : {}),
       }),
       {
@@ -494,6 +509,9 @@ export class UseCaseDetail implements OnInit {
           this.retentionDays.set(useCase.retention_days ?? null);
           this.storePayloads.set(useCase.store_payloads ?? true);
           this.restrictMembers.set(useCase.restrict_members_to_own_requests ?? false);
+          this.toolsEnabled.set(useCase.tools_enabled ?? false);
+          this.promptCaching.set(useCase.prompt_caching_enabled ?? false);
+          this.cacheTtl.set(useCase.prompt_cache_ttl ?? '5m');
           this.feedback.succeed(
             store
               ? `Prompts and responses are now kept for ${days} day(s). Anything already past that is removed on the next run.`

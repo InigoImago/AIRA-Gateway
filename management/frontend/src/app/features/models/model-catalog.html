@@ -333,6 +333,50 @@
           />
         </div>
         <div class="field">
+          <label for="model-cached">
+            Cached input / 1M
+            <app-info-hint label="Cached input price" testid="cached-price" [wide]="true">
+              What this provider charges for input it served from its prompt cache instead of
+              reading again. Usually a fraction of the ordinary input price — Anthropic charges a
+              tenth. Leave it empty if the provider does not cache, or if you have not looked it up:
+              cached tokens are then billed at the ordinary input rate, which can only over-state
+              the bill, never under-state it. It also means the saving will not show up in
+              reporting, because as far as AIRA knows there was none.
+            </app-info-hint>
+          </label>
+          <input
+            id="model-cached"
+            name="cached_price"
+            inputmode="decimal"
+            [ngModel]="cachedPrice()"
+            (ngModelChange)="cachedPrice.set($event)"
+            placeholder="0.0075"
+            autocomplete="off"
+          />
+        </div>
+        <div class="field">
+          <label for="model-cache-write">
+            Cache write / 1M
+            <app-info-hint label="Cache write price" testid="cache-write-price" [wide]="true">
+              What the <em>first</em> request costs — the one that puts the prefix into the cache.
+              It is <strong>more</strong> than ordinary input, not less: Anthropic charges 1.25× for
+              a five-minute lifetime and 2× for an hour. This is the number that decides whether
+              caching pays at all, because a prefix that is written and never read again costs you a
+              quarter extra. Leave it empty where the provider does not charge for writes (Azure
+              before GPT-5.6, and Gemini's implicit cache).
+            </app-info-hint>
+          </label>
+          <input
+            id="model-cache-write"
+            name="cache_write_price"
+            inputmode="decimal"
+            [ngModel]="cacheWritePrice()"
+            (ngModelChange)="cacheWritePrice.set($event)"
+            placeholder="0.09375"
+            autocomplete="off"
+          />
+        </div>
+        <div class="field">
           <label for="model-publisher">Publisher</label>
           <input
             id="model-publisher"
@@ -408,6 +452,9 @@
                 (ngModelChange)="toggleCapability(capability, $event)"
               />
               {{ capability }}
+              <app-info-hint [label]="capability" [testid]="'cap-' + capability" [wide]="true">
+                {{ explain(capability) }}
+              </app-info-hint>
             </label>
           }
           <span class="field__hint">

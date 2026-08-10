@@ -126,9 +126,11 @@ async def test_a_caller_does_not_see_a_use_case_it_has_nothing_to_do_with(
                 text(
                     "INSERT INTO usecases_usecase"
                     " (slug, name, description, processing_notes, store_payloads,"
-                    "  tools_enabled, restrict_members_to_own_requests,"
+                    "  tools_enabled, prompt_caching_enabled, prompt_cache_ttl,"
+                    "  restrict_members_to_own_requests,"
                     "  retention_days, created_at, updated_at)"
-                    " VALUES (:slug, :slug, '', '', true, false, false, 7, now(), now())"
+                    " VALUES (:slug, :slug, '', '', true, false, false, '5m', false, 7,"
+                    "         now(), now())"
                 ),
                 {"slug": slug},
             )

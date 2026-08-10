@@ -5,6 +5,106 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-10 — Prompt caching, measured first (`FRD-133`)
+
+The ask: agents are expensive because the whole conversation goes over on every turn. The FRD had
+been written in advance and deliberately not built, with §5 naming three numbers that had to come
+out of `request_logs` before anything was designed — and leaving open that they might say _don't_.
+
+**They said build, and they corrected the premise.** From 26 served OpenCode turns: 99.1 % of a
+large turn is repeated content, the median gap between turns is 41 seconds with 13 of 14 inside
+five minutes, and 93.3 % of that use case's tokens are input. But it is **not the conversation**:
+
+```
+tools              ~21.5 KB   69 %
+systemInstruction   ~9.7 KB   31 %
+contents           47–1633 B  0.1–5 %
+```
+
+The tool declarations and the system prompt are the bill; the conversation is the smallest part.
+That is exactly Anthropic's cache hierarchy (`tools` → `system` → `messages`), so **two**
+breakpoints catch the 99 % — and it reverses this FRD's own non-goal about automatic placement,
+because those two boundaries are drawn by the API rather than guessed from somebody's prompt.
+
+**The first measurement was wrong and pointed the other way.** Comparing the common _string prefix_
+of consecutive stored payloads gave **0.5 %**, which would have killed the feature. The
+serialisation puts `contents` before `systemInstruction`, so it measured JSON key order. The
+plausible number was the wrong one.
+
+**What was already broken.** Anthropic cache tokens were read and folded into `prompt_tokens`
+(`input + cached + created`) and priced at 1.0x. A read is **0.1x** and a write **1.25x** or **2x**
+— wrong in both directions, and _under_-stating the expensive one. Even a working cache would have
+been invisible in reporting, which by §7's own acceptance criterion means unverifiable.
+
+Built in two stages for that reason: the accounting first (provider-independent; three of the four
+providers already report the numbers and only Anthropic takes a marker), then the marker. Doing it
+the other way round produces a real saving at the provider that AIRA cannot show.
+
+Vendor facts came from the vendors, not from memory — including the answer to §6's open question:
+on **Vertex the cache is isolated per organisation, not per workspace**, and AIRA holds one
+credential per platform for many use cases. Hence per-use-case and default off: a use case whose
+system prompt is itself confidential should not be opted in by somebody else's cost decision.
+
+One rule is deliberately unlike all the others and says so in three places: **a model that cannot
+cache is served uncached, never skipped.** Every other capability guards the _answer_ — an
+incapable candidate would answer about a document it never saw. This one guards the _price_, and
+refusing a request over a price is the opposite of what a fallback chain is for.
+
+Also: `tools_enabled` had existed only in the API since `FRD-131`. Both switches are in the console
+now — `FRD-206` inverted, a capability with no way in, which nobody notices because nothing fails.
+
+**Stage C — the console, and which parameters are worth offering.** One: the **lifetime** (`5m` or
+`1h`). Everything else about caching is fixed by the vendor or already settled by §5's measurement,
+and a control with one correct answer is `FRD-206`'s complaint in a different key. The lifetime is
+the exception because **only the caller's own traffic settles it** — an hour costs about double to
+write and pays only where the gap between turns regularly exceeds five minutes, which is the
+opposite of OpenCode's 41 seconds and might well be true of a chatbot a human reads between. Each
+control says what it _costs_, not what it does, and the two catalog price fields say which
+direction they go, because that is the surprising part: cached input is a tenth, a cache write is
+1.25x or 2x. A field labelled only "cached input price" invites the ordinary rate — which is
+already the fallback, and then the wrong figure looks deliberate.
+
+Tuning is empirical only if the effect is visible **beside the setting**, so the consumption panel
+(`FRD-603`) grew a **Cached** share next to spend, requests and tokens; its hint names the four
+different reasons for 0 %, which have four different fixes.
+
+**The wiring is what the tests could not see.** The mapping tests prove the marker is built right
+and say nothing about whether the configuration ever reaches it — four hops (checkbox → event →
+read-model row → post-routing lookup) where a dropped setting produces a served request that looks
+exactly like one nobody asked to cache. `FRD-124`'s lesson, so the mock now **says what it was
+asked** the way it already does for thinking and attachments, and three tests drive the whole path
+through the route. It reports no cache _hit_, deliberately: fabricating one would make every
+"caching saves money" assertion true by construction, and whether a prefix is really hit is the one
+thing only a provider can tell us.
+
+The harness reported `U5` **STALE** rather than passing — its anchor was the constant that became a
+function when the lifetime arrived. That is the `N2` lesson working as built: a mutation whose
+anchor has moved defends nothing and used to report green about it.
+
+**And then the console could not declare the capability it had just been given prices for.** The
+SPA restates the closed capability vocabulary as a TypeScript array, and it was missing **`tools`**
+(since `FRD-131`, two days) and **`prompt_caching`** (since this morning). Nothing failed: a Global
+Administrator sees five checkboxes and has no reason to think there should be seven, and an absent
+checkbox looks exactly like a design decision — `FRD-206` inverted, the same shape as the anomaly
+rule nobody could author. The fix is the one this repository has now reached four times
+(`aira.rate-limits`, `aira.anomaly-rules`, `use_case_group.granted`): compare the hand-written list
+against the constant **in both directions**, since a value the console offers and the gateway does
+not know is a declaration somebody believes they made. Each checkbox now also carries what ticking
+it commits the platform to, because the consequences differ sharply — most absences **skip a model
+from a fallback chain**, `prompt_caching` only changes the price. That map is a
+`Record<Capability, string>`, so the compiler refuses an undocumented capability; shown to fail by
+deleting an entry, since a guard nobody has broken is a guard nobody has tested.
+
+One e2e guard had to be narrowed and was proved still sharp first: `expectFormControlsAligned`
+counted an info hint's trigger as a row control, and a hint lives **inside a `<label>`**, one line
+above the field — so every explained field read as a staircase. Excluded by _where it is_ rather
+than by what it is, and then a 6-pixel misalignment was injected to watch it fail (12 px did not:
+the guard bands rows at 40 px, and 12 crossed a boundary — worth knowing about it).
+
+`U1`–`U9`.
+
+---
+
 ## 2026-08-09 — A security read of the whole code (`ADR-0018`)
 
 The request path held up: 192-bit keys compared in constant time, JWTs with a pinned algorithm and
@@ -20,7 +120,7 @@ the config topics straight into the read-model the gateway's authorization comes
 to reach the broker could publish `api_key.created` with a hash of their choosing, or
 `use_case_group.granted` naming a group they are in, and hold administrator access to any use case
 — no credential, and **no audit row**, because from the gateway's side nothing unusual happened:
-configuration arrived, as configuration does. Applying events without question is right *if* the
+configuration arrived, as configuration does. Applying events without question is right _if_ the
 bus is authenticated; there was simply no setting that could make it true. Both planes take a
 broker identity now and refuse `PLAINTEXT` outside `local`.
 
@@ -31,7 +131,7 @@ Same for Vault, whose address carries the AppRole login. One rule
 terminating TLS on `127.0.0.1` is normal, and a rule that gets worked around by setting
 `AIRA_ENVIRONMENT=local` switches every other check off with it.
 
-**`X-Forwarded-For` was read from the left**, under a docstring assuming a proxy that *overwrites*.
+**`X-Forwarded-For` was read from the left**, under a docstring assuming a proxy that _overwrites_.
 The nginx this repository ships **appends**, as every default configuration does — so the left end
 was the caller's to write, and it lands on every audit row, drives `FRD-505`'s incident filter, and
 keys the failed-authentication bound. Rotating one header therefore made the brute-force bound
@@ -42,13 +142,13 @@ the sharpest example in this round of a test agreeing with the code instead of t
 
 **And a comment that claimed a protection the code did not provide.** The Vertex transport built
 its model segment with `httpx.URL(path=f"/{model}").path` beside a comment saying "the model
-segment is encoded". It leaves `/` and `..` untouched and *decodes* `%2f`, so `..%2f..%2fx` came
+segment is encoded". It leaves `/` and `..` untouched and _decodes_ `%2f`, so `..%2f..%2fx` came
 out as `../../x` — worse than the input. `AzureRoutes` had solved the identical problem correctly
 one directory away with `quote(..., safe="")`.
 
 **Two structural guards, because both holes were invisible rather than wrong.**
 `test_every_route_is_guarded.py` walks the app and requires every route to authenticate or be on a
-written list — the Gemini surface's *entire* protection is one `dependencies=[...]` argument at
+written list — the Gemini surface's _entire_ protection is one `dependencies=[...]` argument at
 mount time, and nothing said so. Building it taught its own lesson: this FastAPI keeps routers
 nested behind `_IncludedRouter` and applies those dependencies from the include context, so a
 guard reading only `route.dependant` reports the correctly protected routes as holes and gets
@@ -62,7 +162,7 @@ work. 83% → 99%, 24 cases, one per wrong shape rather than one with everything
 validator that stops at the first problem passes the second kind and leaves an operator fixing one
 field per attempt.
 
-`W1`–`W4` guard the four fixes. Nothing about what the platform *does* changed.
+`W1`–`W4` guard the four fixes. Nothing about what the platform _does_ changed.
 
 **And the live suite caught what the default gate could not.** `tests/integration/` is excluded
 from the default run (`-m 'not integration'`), so `ADR-0017`'s migration passed it over even though
@@ -81,7 +181,7 @@ this" — realm roles for the five roles, groups for use-case access — which i
 one level up, and `FRD-209` was written to remove exactly that shape.
 
 Two ways to get there with Keycloak, and the difference is the whole decision. **Mapping the realm
-role onto a group** costs no code and leaves the single point of truth a *convention*: nothing stops
+role onto a group** costs no code and leaves the single point of truth a _convention_: nothing stops
 an administrator also assigning the role to a person, and a screen that reports it is a witness, not
 a rule. **AIRA mapping group → role** makes a direct assignment structurally inert. The requirement
 was the guarantee, so: `AIRA_ROLE_GROUPS=global-admin=/aira/global-admins;…`, and
@@ -89,21 +189,21 @@ was the guarantee, so: `AIRA_ROLE_GROUPS=global-admin=/aira/global-admins;…`, 
 
 **The other two roles cease to exist.** `use-case-admin` and `use-case-user` were never
 organisation-wide facts about a person — administering a use case is a group's relationship to
-*that* use case, and `UseCaseGroupGrant` has held it since `FRD-209`. Evidence that they had been
+_that_ use case, and `UseCaseGroupGrant` has held it since `FRD-209`. Evidence that they had been
 redundant for months: `may_admin`, `may_manage`, `is_member` and `scope_queryset` needed **no
 change**, and `IsUseCaseUser` turned out to be defined, exported and used by nothing.
 
 **Smaller than expected in the data plane, sharper than expected in the tests.** The gateway's
 whole role vocabulary is oversight/governance/incident, all three organisation-wide — so its diff is
 **one call**. Management needed `sync_user_roles` and three predicates, each re-derived from what it
-*meant*: creating a use case is a Global Administrator's act (a narrowing — the old role let anybody
+_meant_: creating a use case is a Global Administrator's act (a narrowing — the old role let anybody
 administering one use case create another); the directory picker is "administers **any** use case",
 because taking it from the people who add members is `FRD-206`'s defect inverted; running a model
-test is `FRD-504`'s own sentence, *whoever may call a model may test one*.
+test is `FRD-504`'s own sentence, _whoever may call a model may test one_.
 
 The migration of thirteen test files **was** the audit. The shared helper refuses the two dead roles
 **by name** instead of granting nothing, so every call site had to be looked at — and a blanket
-rewrite to `global-admin` made the *boundary* tests pass for the wrong reason, because a Global
+rewrite to `global-admin` made the _boundary_ tests pass for the wrong reason, because a Global
 Administrator is refused by nothing. They use a caller with no organisation-wide role now, which is
 what a use-case administrator is at that level. Same trap in the frontend harness, whose default
 role was `use-case-admin`: **a default nobody can hold is a harness testing a different product.**
@@ -136,32 +236,32 @@ provider does exactly the same thing.
 ## 2026-08-09 — Who answers for a credential (`FRD-604`, Stage A)
 
 Owner's context, and it decides the shape: an **agentic coding** project where people issue their
-**own** keys and hand them to an assistant — IT Security's question when one goes wrong is *whose
-agent was that* — beside a **RAG chatbot** with no agentic capability and one credential for the
+**own** keys and hand them to an assistant — IT Security's question when one goes wrong is _whose
+agent was that_ — beside a **RAG chatbot** with no agentic capability and one credential for the
 whole service. One console, two opposite credential shapes.
 
 **The chain already existed and nobody was told.** `ApiKey.owner` is a foreign key to a person, the
 issue event carries `subject = user.get_username()`, the gateway writes it onto **every** audit row
 beside the key's prefix, and the requests view filters by key. Nothing was missing in the data. What
 was missing is that the console recorded the issuer and never said so at the moment of issuing — and
-then printed that person's username beside an agent's traffic with no sign that it names *who
-answers for the credential* rather than *who wrote the request*. An investigator reads a colleague's
+then printed that person's username beside an agent's traffic with no sign that it names _who
+answers for the credential_ rather than _who wrote the request_. An investigator reads a colleague's
 name next to a rogue agent and draws the obvious wrong conclusion. Worse than an absent figure,
 because it is a confident one and it is about a person.
 
 Four sentences and a badge: the notice before the button, the same fact beside the plaintext (the
 last moment anybody reads that panel), an "i" on the `Owner` column, and **`via API key` on the
-row** — an OIDC caller is deliberately unmarked, because there the name *is* the person and marking
+row** — an OIDC caller is deliberately unmarked, because there the name _is_ the person and marking
 both makes the distinction useless. The wording is true of a shared key as well: it claims
 responsibility for the **credential**, never that its owner typed the prompt.
 
 **Stage B is specified and not built**: `issued_by` beside `owner`, so a team credential names a
-technical account while the console still records which human created it. Logging in *as* the
+technical account while the console still records which human created it. Logging in _as_ the
 technical user was the obvious alternative and is wrong — shared credentials for a governance
 console, and it destroys the one fact worth keeping.
 
 Test note worth carrying: three of the four properties went red when broken, and the fourth —
-*an interactive caller is not marked* — **could not**, because deleting the marker satisfies it.
+_an interactive caller is not marked_ — **could not**, because deleting the marker satisfies it.
 It needed the **inverse** mutation (mark everything). Second recorded instance after `N50`: a test
 that asserts an absence is defended by the mutation that adds, never by the one that removes.
 
@@ -169,14 +269,14 @@ that asserts an absence is defended by the mutation that adds, never by the one 
 
 ## 2026-08-09 — What a use case consumed, with or without a budget (`FRD-603`)
 
-Owner's question, looking at the smoke-test use case: *"da sehe ich aber, dass da nicht die
+Owner's question, looking at the smoke-test use case: _"da sehe ich aber, dass da nicht die
 verbrauchte Anzahl an Tokens und kein Geld steht — wird dann, wenn kein Budget gesetzt wurde,
-nichts kalkuliert?"*
+nichts kalkuliert?"_
 
 Nearly, and the near-miss is the whole of it. **Everything was calculated.** Measured against the
 running stack before touching anything: `smoke-test` had **59 requests, 10,664 tokens and 3,674,900
 nanos** in `request_logs`, priced, with no unpriced rows. What it had in `budget_usage` was **no row
-at all**, because it has no budget — and consumption was only ever *displayed* as a fraction of a
+at all**, because it has no budget — and consumption was only ever _displayed_ as a fraction of a
 limit. `BudgetService.usage()` iterates the use case's **budget rows**; the tab renders every figure
 **inside a budget card**. No limit, no denominator, no number — not even the numerator, which
 existed. A use case deliberately left unlimited showed a page on which nothing appeared to be
@@ -233,8 +333,8 @@ twice teaches the reader to skip the third.
 
 ## 2026-08-09 — One use case for all model testing (`FRD-504`)
 
-Owner's decision, after the attribution defect: *"es soll dann einfach als Standard ein Use Case
-immer angelegt werden, wer smoke test heißt und auf dem wird dann alles abgerechnet."*
+Owner's decision, after the attribution defect: _"es soll dann einfach als Standard ein Use Case
+immer angelegt werden, wer smoke test heißt und auf dem wird dann alles abgerechnet."_
 
 It settles the question rather than fixing it again. A run is ordinary traffic and has to be priced
 somewhere; booking it against whichever use case the tester happens to belong to spends **somebody
@@ -259,8 +359,8 @@ must create — now in `INTEGRATIONS.md` rather than discovered.
 
 **And the seed reproduced the bug it exists to prevent.** It wrote the use case with
 `UseCase.objects.update_or_create` and emitted nothing, so the row existed in Management, the relay
-reported *"no pending events"*, and the gateway had never heard of it. The showcase seed states the
-rule in its own docstring — *"everything goes through the same events the API emits"* — and this one
+reported _"no pending events"_, and the gateway had never heard of it. The showcase seed states the
+rule in its own docstring — _"everything goes through the same events the API emits"_ — and this one
 walked straight past it. Fourth recorded instance of **two correct halves and no wire**, and the
 second found by looking at a live stack rather than at code. `Q6`.
 
@@ -283,10 +383,10 @@ hundred requests.
 
 Three questions live next to each other and only the third is right for attributing traffic:
 
-| Question | Answered by | A global admin |
-|---|---|---|
-| What may I **see**? | `scope_queryset` | everything |
-| What may I **administer here**? | `is_member` | everything |
+| Question                          | Answered by                                        | A global admin                  |
+| --------------------------------- | -------------------------------------------------- | ------------------------------- |
+| What may I **see**?               | `scope_queryset`                                   | everything                      |
+| What may I **administer here**?   | `is_member`                                        | everything                      |
 | What will the **gateway accept**? | `may_call_queryset` → `aira_common.access.resolve` | nothing, unless a group says so |
 
 `?may_call=true` now answers the third, using the **same `resolve`** the gateway's own grant
@@ -307,17 +407,17 @@ Worth writing out, because each layer failed differently and none of them failed
 1. **Unit (frontend)** — the fake service returned one membership and the component picked it. It
    tested my assumption, faithfully.
 2. **Unit (backend)** — the test I had just written asserted that `?mine=true` **agrees with
-   `is_member`**. That is the wrong reference: it did not miss the defect, it *encoded* it. A test
+   `is_member`**. That is the wrong reference: it did not miss the defect, it _encoded_ it. A test
    written from the same idea as the code will agree with the code.
 3. **Mutation** — `Q5` broke the filter and the test noticed. It was guarding the wrong property
    competently.
-4. **End-to-end** — asserted that *a name was displayed*. Never that the name worked. And the one
+4. **End-to-end** — asserted that _a name was displayed_. Never that the name worked. And the one
    test that would have caught it — an actual run against a real model — is the one I had left
    skipped, with a justification I wrote myself.
 
 The layer that finds a defect is the one pointed at the **outcome** rather than at the mechanism.
-`FRD-206`'s agreement test got this right a year of lessons ago: *for each answer, attempt the
-request and require the status to match*. The new e2e case does that — a global admin is offered
+`FRD-206`'s agreement test got this right a year of lessons ago: _for each answer, attempt the
+request and require the status to match_. The new e2e case does that — a global admin is offered
 nothing, and a use-case administrator's stated attribution is one their token actually reaches —
 and a live probe run produced a **served** audit row (508 tokens, `demo-uc`, `qwen3:0.6b`), which is
 the assertion that was missing all along.
@@ -327,9 +427,9 @@ the assertion that was missing all along.
 `aira_common.access.resolve` takes a `direct` argument for grants naming a **person** — and no
 caller supplies it. The gateway resolves OIDC membership from groups and group grants only, so a
 membership added in the console (a `UseCaseMembership` row, distributed to `use_case_members` since
-`FRD-204`) grants **nothing at the gateway**. `FRD-209` said a grant binds "a group *or* a person";
-the person half never reached the request path. Fourth recorded instance of *two correct halves and
-no wire*.
+`FRD-204`) grants **nothing at the gateway**. `FRD-209` said a grant binds "a group _or_ a person";
+the person half never reached the request path. Fourth recorded instance of _two correct halves and
+no wire_.
 
 Not fixed here because it **widens** who may call the gateway, which is a decision rather than a
 repair. It is also why the demo works at all: `ucadmin` and `ucuser` hold `/use-cases/*` groups in
@@ -337,23 +437,23 @@ the dev realm, and `admin`, `itsec` and `itgov` hold none.
 
 ## 2026-08-09 — Attribution is stated, not asked (`FRD-504`)
 
-*"Attributed to hat endlose Menge der Column. Dieser Punkt ist überhaupt nicht notwendig."* Two
+_"Attributed to hat endlose Menge der Column. Dieser Punkt ist überhaupt nicht notwendig."_ Two
 defects wearing one control.
 
 The picker listed **page one** of a paged list, so on an installation with hundreds of use cases it
 was an endless dropdown that frequently did not hold the one somebody actually works in — the
 defect recorded and parked two commits ago. And it asked a question the person running a model test
-has no opinion about: a run has to be attributed *somewhere*, because it is ordinary traffic and is
+has no opinion about: a run has to be attributed _somewhere_, because it is ordinary traffic and is
 priced, budgeted, rate-limited and audited like any other request, but **which** one is not the
 tester's decision to make.
 
-So the screen resolves it and says which: *"Attributed to Kundenservice."* Not a control, a
+So the screen resolves it and says which: _"Attributed to Kundenservice."_ Not a control, a
 statement — the spend stays traceable and nobody is asked to choose.
 
 The resolution is a new server-side question, `GET /use-cases/?mine=true`, because **visibility is
 not membership** (`ADR-0007`) and filtering the visible list in the browser gets it wrong in both
 directions: an oversight role sees every use case and may call none, and a paged list only ever
-answers "the ones I am a member of *among the first 25*". `access.member_queryset` is the set form
+answers "the ones I am a member of _among the first 25_". `access.member_queryset` is the set form
 of `is_member` and sits beside it, so a list answering "which may I act in" cannot drift from the
 per-row permission the same screen renders — a test asserts the two agree, which is the only reason
 either can be trusted. `Q5`, shown to fail first.
@@ -367,8 +467,8 @@ model. That is minutes, and it does not belong in a suite everything else waits 
 The smoke-test screen was built as one page that summed every run a model had ever had. Two
 corrections from the owner, and the second was the interesting one.
 
-**First: a standing catalogue, not an ad-hoc run.** *"Ich will im Laufe der Zeit standardisierten
-Fragenkatalog für die Bewertung von Modellen definieren und nach dem Standard Modelle bewerten"* —
+**First: a standing catalogue, not an ad-hoc run.** _"Ich will im Laufe der Zeit standardisierten
+Fragenkatalog für die Bewertung von Modellen definieren und nach dem Standard Modelle bewerten"_ —
 so three sub-tabs: the **questions** (written once, grown slowly), a **run** that puts them to a
 model, and **latest results** saying where each model stands. And the standing is the **newest run
 per model**, never a total: summing is wrong twice over, because an old since-corrected result
@@ -377,7 +477,7 @@ unrelated. Older runs are history and stay readable — how a model behaved befo
 changed is the question anybody upgrading one actually has, and only the history answers it.
 
 **Second: no grouping at all.** The first version of that sorted the hundred questions into eight
-named batteries. *"Ich meine keine Kategorisierung, einfach nur die Liste an Fragen."* Removing it
+named batteries. _"Ich meine keine Kategorisierung, einfach nur die Liste an Fragen."_ Removing it
 turned out to be a correctness fix rather than a simplification: with several batteries, "how does
 this model do" has as many answers as there are groups, and **none of them compares to a model that
 was asked a different group**. The whole value of a fixed catalogue is that every model is asked
@@ -394,15 +494,14 @@ Four findings, three about the harness rather than the feature:
   `ruff` had since wrapped across two lines, so the edit matched nothing, the suite stayed green,
   and the run looked like a passing verification. Break-and-restore has to assert the break landed.
 - **The duplicate-id check existed only in a commit message.** 2026-08-07 recorded that 38 mutation
-  ids named more than one property, that they were renamed, and that *"the harness now refuses
-  them"*. It never did: the next addition collided with `S1`/`S2`, and `--only=S1,S2` ran four
+  ids named more than one property, that they were renamed, and that _"the harness now refuses
+  them"_. It never did: the next addition collided with `S1`/`S2`, and `--only=S1,S2` ran four
   properties and reported four confident results for the two that were asked for. Written now, and
   shown to fire. The summary line also called a **stale anchor** "a property no test would notice
   losing", which sends the reader hunting for a test that is right there — stale and survived are
   now reported apart.
 - **A rename against a name key is a create.** The seed keyed questions on `topic`, so renaming
-  three left the old wording in place with its answers attached, and the catalogue silently grew to
-  102. Keyed on position now; superseded questions are **retired, not deleted**, because somebody
+  three left the old wording in place with its answers attached, and the catalogue silently grew to 102. Keyed on position now; superseded questions are **retired, not deleted**, because somebody
   judged their answers against the wording as it then stood and those verdicts are the only
   evidence that anything has changed. `FRD-208` recorded this for anomaly rules; this is the second
   place.
@@ -430,7 +529,7 @@ whatever path the realm actually uses — `/abteilungen/vertrieb/nord` — with 
 provider's answer, which is the entire point.
 
 The mechanism is the part worth keeping: **`django-guardian` assigns object permissions to a user
-*or a Django group*.** So a group grant assigns them to a Django group mirroring the Keycloak path,
+_or a Django group_.** So a group grant assigns them to a Django group mirroring the Keycloak path,
 and every authenticated request syncs the caller's group paths onto their Django groups — exactly as
 `FRD-201` already does for roles. `scope_queryset`, `may_admin` and `may_manage` then needed **no
 change at all**. A second permission path beside guardian's would have been a second chance to
@@ -440,7 +539,7 @@ Two rules written into `aira_common.access` so neither plane can restate them di
 routes are a **union** (being a member twice over is being a member) and where roles differ **the
 stronger wins** — an access decision that depended on which row was read first is not a decision
 anybody can review. And degradation refuses: if the read-model cannot be read, the naming convention
-still resolves from the token alone, and somebody who was a member *only* by grant is refused.
+still resolves from the token alone, and somebody who was a member _only_ by grant is refused.
 
 The console gets **one** picker for both kinds, because the question is "who should get this", not
 "am I about to name a group or a person". Without an admin client it falls back to what Management
@@ -451,7 +550,7 @@ already knows and **says so** — "no results" from a directory nobody could rea
 carrying it to the other side.**
 
 1. **An event with no topic — the third instance of this shape here.** The first grant was written,
-   listed and shown in the console, and reached the gateway *never*. `record_to_outbox` matches
+   listed and shown in the console, and reached the gateway _never_. `record_to_outbox` matches
    against a hand-written map and **returns silently** for anything unknown — deliberate, so an
    older Management does not crash on a newer event, and precisely what made the missing entry
    invisible. `aira.rate-limits` and `aira.anomaly-rules` were both previously topics created by
@@ -493,7 +592,7 @@ made and for the same reason: an append-only log, so a detector firing while som
 pushes rows across the boundary and they see one twice and miss another, invisibly.
 
 **The catalog stays client-side, and that is now written into the viewset.** It is bounded by how
-many models an organisation contracts, and two of the console's warnings count over the *whole*
+many models an organisation contracts, and two of the console's warnings count over the _whole_
 catalog — paging would turn "N models have no price" into "N on this page", a figure that means
 nothing. Report breakdowns likewise: one aggregate response, already computed.
 
@@ -504,7 +603,7 @@ it asks for page 4 of a two-page result and gets nothing, which reads as "no mat
 answer never overwrites a newer one (a slow "a" must not land after a fast "abc").
 
 **The bigger finding: the console pointed at a screen that did not exist.** `FRD-207` had the
-security console say a use-case rule *"is changed on that use case"* — and there was no such
+security console say a use-case rule _"is changed on that use case"_ — and there was no such
 screen. That is the `FRD-206` defect one level of indirection further out: not a button that
 answers 403, but an instruction with no destination. The server had allowed it all along
 (`AnomalyRuleViewSet._guard`, `upsert_use_case_rule`); only the screen was missing. There is now a
@@ -514,7 +613,7 @@ from it: they are not that use case's to change.
 
 **One form, two screens.** `rule-form.ts` is thirteen fields with a per-kind validation contract; a
 second copy is how one screen quietly loses the field the other gained. It refuses to edit a rule's
-**kind** (the kind decides what the threshold *means* — 50 is half the requests under one and half a
+**kind** (the kind decides what the threshold _means_ — 50 is half the requests under one and half a
 multiple under another) and its **name** (the server upserts by name, so a rename would create a
 second rule and leave the first watching).
 
@@ -531,13 +630,13 @@ would have "proved" the thing it was correcting.
 ## 2026-08-08 — the console holds still, and says what its controls do (`FRD-207`)
 
 `FRD-206` made the console stop promising what the server refuses. A walkthrough of the running
-console asked the next question — *can I actually read this?* — and produced twelve findings. Two
+console asked the next question — _can I actually read this?_ — and produced twelve findings. Two
 of them turned out to be defects rather than polish, and both are the same shape.
 
 **The jiggle was one element, and it was measurable.** A `PerformanceObserver` on `layout-shift`
 reported **five shifts in forty seconds on the security console, every one of them the Refresh
 button**: the stamp beside it changes width — "updating…" against "updated 12s ago", "9s" against
-"10s" — twice a tick. That is why it was hard to name: a few pixels, nothing appears to *happen*,
+"10s" — twice a tick. That is why it was hard to name: a few pixels, nothing appears to _happen_,
 and the reader is left with an impression rather than an observation. The stamp now reserves its
 widest form with tabular figures, and "refreshing" is a dot that fades in space it already
 occupies. The observer reports nothing at all now.
@@ -566,12 +665,12 @@ saying in words that the block was asked for, not applied, and the traffic conti
 
 Rules can now be **edited** — threshold, window, sample, action and its duration or rate, and
 whether it watches at all. **Not the kind and not the name**: a kind decides what a threshold
-*means*, so changing it in place would silently reinterpret a number somebody chose deliberately.
+_means_, so changing it in place would silently reinterpret a number somebody chose deliberately.
 Authority follows `FRD-206`: a global rule to an incident role, and a use-case rule named as
 belonging to its use case rather than guessed at, because object-level permission is not in the
 token. The kill switch explains its reach on hover — one caller, one key, one use case, and
-**no switch for the installation**, which is a deliberate absence. And the line reading *kept,
-because "blocked for two hours last Tuesday" is what a review asks* — a note to the author sitting
+**no switch for the installation**, which is a deliberate absence. And the line reading _kept,
+because "blocked for two hours last Tuesday" is what a review asks_ — a note to the author sitting
 where a sentence for the reader belongs — was rewritten.
 
 **Reporting shows one table at a time.** Four stacked breakdowns made the page long enough that its
@@ -579,7 +678,7 @@ own export control scrolled out of sight, and left two ideas of "which table": o
 and one for the file. The selector governs both now. `by_outcome` is shown and not exported, and
 says so — the CSV renderer takes three breakdowns (`FRD-602`), and a button that looks ready and
 answers 400 is the defect `FRD-206` was about. The token, spend and latency columns carry their
-definitions, including *why* prompt and completion are shown apart: they are priced apart.
+definitions, including _why_ prompt and completion are shown apart: they are priced apart.
 
 **Search and paging** on the breakdowns, the catalog and the use-case overview, extracted into
 `core/ui/table-view`. A live round found **801** use cases in one installation, which made the
@@ -594,8 +693,8 @@ panels are overlays and two open cover each other.
 
 One test lesson: the first e2e for the rule editor **skipped itself** when the installation had no
 rules — so the part of this pass with the most behaviour in it would have been exercised in a
-browser exactly never. It creates its own rule now. *A test that skips when the data is
-inconvenient reports green about nothing.*
+browser exactly never. It creates its own rule now. _A test that skips when the data is
+inconvenient reports green about nothing._
 
 Also noted, not fixed: `/api/v1/use-cases/` computes object-level permissions per row, so hundreds
 of use cases take many seconds to answer. Search and paging make that survivable, not fast.
@@ -612,7 +711,7 @@ console shows it nothing. Two screens close it.
 stopped right now, and the rules that produced them, all three in one place because a finding read
 without its rule is a number without a claim, and an empty findings list means nothing until the
 page says whether anything is being watched at all. It keeps **two permissions apart**, which is the
-mistake this project has already made once: *seeing* every use case is an oversight role, *stopping*
+mistake this project has already made once: _seeing_ every use case is an oversight role, _stopping_
 traffic is an incident role. `it-steuerung` gets the whole view and no kill switch, and the page
 names who does — an action nobody can carry out is worse than an absent one.
 
@@ -622,7 +721,7 @@ or the client ever reads. The tab leads with "this use case is stopped", because
 of 429s reads as a broken gateway.
 
 **Traces** — `GET /v1beta/traces`, and a tab per use case: every request, newest first, with who,
-which model, how it ended, what it cost. **Metadata only, never a payload** — and that is *not* the
+which model, how it ended, what it cost. **Metadata only, never a payload** — and that is _not_ the
 per-request browsing `ADR-0009` deferred: that reasoning is about showing stored prompts to
 non-members, and this shows neither prompts nor anything to a non-member. `FRD-406` still blocks
 what it always blocked. The field list is an **allow-list**, so a column added to `request_logs`
@@ -632,7 +731,7 @@ appear are exactly the ones a forgotten exclusion would leak.
 Three decisions worth keeping:
 
 - **Cursor paging, not offset.** Rows arrive while somebody reads; under an appending table an
-  offset page shows some rows twice and skips others, *invisibly* — the reader simply gets a wrong
+  offset page shows some rows twice and skips others, _invisibly_ — the reader simply gets a wrong
   list. The cursor is `(created_at, id)`, because two rows can share a millisecond and a timestamp
   alone would either repeat one or lose one. Written out rather than as a row comparison: SQLite has
   no tuple comparison, and paging exercised against only one of the two stores is paging tested on
@@ -666,7 +765,7 @@ Playwright cases; the frontend gate stays where it was.
 `@Injectable()` without `providedIn: 'root'` — deliberately, so a poll cannot outlive its screen —
 and **neither tab declared it**, so in production both panels failed to construct and rendered
 nothing at all while every unit test passed on a harness that provided it. And an empty tab was
-**stating the wrong reason**: the gateway reads use-case membership from Keycloak *groups*
+**stating the wrong reason**: the gateway reads use-case membership from Keycloak _groups_
 (`FRD-102`), which creating a use case in this console does not create, so its own administrator
 read "no requests match" about a use case with traffic in it. Both endpoints now return `in_scope`
 and both tabs name the group somebody has to be added to — `in_scope` describes the **caller's own
@@ -677,9 +776,9 @@ that is how a quiet use case comes to be told nothing crossed a threshold.
 
 **And a flake that had been there all along.** `make mutants` refused to run — red baseline on
 `test_log_writer.py`. `test_a_full_queue_writes_inline_instead_of_dropping` fails about one run in
-five with *"cannot operate on a closed database"*, which reads as a defect in the writer and is not
+five with _"cannot operate on a closed database"_, which reads as a defect in the writer and is not
 one: in-memory SQLite behind a `StaticPool` hands every session the **same** connection, and that
-test's whole subject is an inline write happening *while* the worker writes. The module docstring
+test's whole subject is an inline write happening _while_ the worker writes. The module docstring
 had warned about it in prose; the test then did it anyway. It now runs on a file-backed database,
 where each session gets its own connection as it does on Postgres, so the overlap the test is about
 is legal. Asserting the invariant without the overlap would have been testing something else and
@@ -690,7 +789,7 @@ calling it this.
 ## 2026-08-07 — documentation, and a licence
 
 A reader arriving at this repository had a 96-line README, a `DEPLOYMENT.md` and forty ADRs and
-FRDs. That is a lot of *why* and very little *what*. Six documents now sit between them, each with
+FRDs. That is a lot of _why_ and very little _what_. Six documents now sit between them, each with
 one job, linked from a README that is a hub rather than a wall:
 
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — C4 at three levels, in Mermaid. Context (who uses it, what
@@ -705,7 +804,7 @@ one job, linked from a README that is a hub rather than a wall:
   refuses to boot.
 - [`INTEGRATIONS.md`](INTEGRATIONS.md) — one section per connected system: what Postgres, Keycloak,
   Kafka, Redis, each model platform, the collector and the proxy must provide, which credentials,
-  which settings on *their* side, and a checklist each.
+  which settings on _their_ side, and a checklist each.
 - [`GAP-ANALYSIS.md`](GAP-ANALYSIS.md) — requirements against what is built. **Described, not
   fixed**, at the owner's request.
 
@@ -723,7 +822,7 @@ not true while `FRD-502` is missing; it now says so.
 
 **What the gap analysis found** is worth having in this log rather than only in that file. Against
 PRD §1.1: nine features built, six partial, two missing — and the partials are breadth rather than
-correctness. The two that matter most are both about *evidence being usable*: `FRD-406` (redaction)
+correctness. The two that matter most are both about _evidence being usable_: `FRD-406` (redaction)
 is the only open item that blocks two others — per-request browsing and the IT Security console's
 scoped payload view — and it is the only place the product currently makes a promise it does not
 keep, since payloads are stored and nothing masks anything inside them. `FRD-502` is the one that
@@ -740,7 +839,7 @@ planes talking over Kafka — found **five defects that none of those could see*
 predate this week.
 
 **Two planes, one question, two answers.** The gateway guarded its kill switch with `has_oversight`,
-which is a *visibility* predicate, so `it-steuerung` could stop traffic there while Management
+which is a _visibility_ predicate, so `it-steuerung` could stop traffic there while Management
 correctly refused it a global rule. PRD §154 gives that role every figure and **no write anywhere**.
 Reusing "may see every use case" for "may stop every use case" is `FRD-206`'s mistake one level
 down — and the way it surfaced is worth keeping: **asking both planes the same question and
@@ -749,15 +848,15 @@ comparing the answers**. `INCIDENT_ROLES` now lives in `aira_common.roles` and b
 **A whole rule kind measured a column nothing wrote.** `payload_size` compares against
 `request_bytes`; the middleware counted the bytes, the column existed, and nothing carried the
 number between them. It could never have fired on real traffic. The hermetic tests seeded the column
-directly and were green — the third time this repository has recorded *two correct halves and no
-wire*, and the second time coverage was blind to it.
+directly and were green — the third time this repository has recorded _two correct halves and no
+wire_, and the second time coverage was blind to it.
 
 **A refused request was counted as unpriced traffic.** The console reported **105** unpriced
 requests where **5** had run on an unpriced model. A refusal has a NULL cost for the opposite reason
-to an unpriced one — nothing was spent because nothing *ran* — and counting both made the "spend is
+to an unpriced one — nothing was spent because nothing _ran_ — and counting both made the "spend is
 a lower bound" caveat permanent, which by this project's own test (`a fully priced period carries no
 caveat`) is a warning nobody reads. The rule stated in the direction it was missing: **unknown is
-not zero, and zero is not unknown.** A NULL *outcome* still counts, because that is a row from
+not zero, and zero is not unknown.** A NULL _outcome_ still counts, because that is a row from
 before `FRD-122`, when only served requests were logged at all — fixing a present figure must not
 quietly change a historical one.
 
@@ -773,13 +872,13 @@ a topic nothing publishes to is caught as well.
 **Thirty-eight mutation ids named more than one property.** Found by reusing `N3`, which already
 existed. Every entry runs regardless, so the checking was sound — but "N3 survived" named two
 unrelated things, and a summary that sends somebody to the wrong line is worse than no summary. The
-*later* duplicate of each pair was renamed and the first kept, because `CLAUDE.md` and the DEVLOG
+_later_ duplicate of each pair was renamed and the first kept, because `CLAUDE.md` and the DEVLOG
 cite ids by name and renaming a cited one breaks the prose explaining why the property exists. The
 harness now refuses duplicates.
 
 Two test lessons from writing the round itself, both about **measuring from the wrong moment**: a
 suspension takes up to the cache TTL to reach the gateway, so "a blocked caller consumes no budget"
-and "a blocked caller pays for no classifier" both failed until they counted from *after* the block
+and "a blocked caller pays for no classifier" both failed until they counted from _after_ the block
 took effect rather than from zero — the requests served while the cache caught up were served
 perfectly correctly. And the round needed a third Keycloak service account (`it-security`), because
 neither existing one may act in an incident — which is the same distinction defect 1 was about,
@@ -801,12 +900,12 @@ hours last Tuesday" is exactly what an incident review asks.
 
 **An amendment to `ADR-0014`, from building it.** The ADR said the gate would read decisions from
 the shared counter store, seeded from Postgres — by analogy with `FRD-405`. The analogy is wrong. A
-counter is written on *every* request, which is what earns Redis its place; a suspension is written
+counter is written on _every_ request, which is what earns Redis its place; a suspension is written
 when something goes wrong and read on every request, which is a **cache** problem, not a
 shared-state one. A five-second cache over Postgres does it with one query per instance and no
-second system — and survives a Redis outage, which for a control that *stops* traffic is the
+second system — and survives a Redis outage, which for a control that _stops_ traffic is the
 direction that matters. The cost is stated: a lift takes up to the TTL to reach every instance, and
-being slightly late to *remove* a restriction is the harmless direction.
+being slightly late to _remove_ a restriction is the harmless direction.
 
 Three smaller decisions:
 
@@ -830,10 +929,10 @@ schema before anything ships.
 **Two things the existing suite caught, both worth more than the code they rejected.** The
 architecture assertion widened yesterday — "each endpoint in the reporting module resolves the
 visible scope exactly once" — went red on the new suspension endpoints, which resolve it **zero**
-times. Correctly: they are bounded by *role*, not by use case. Two different ways of being safe do
+times. Correctly: they are bounded by _role_, not by use case. Two different ways of being safe do
 not belong behind one heading, so they moved to `api/incidents.py`. And the mutation harness caught
 `N19` surviving: every endpoint test in the new file ran with authentication switched off, which
-takes the demo-principal path and returns *before* the role check — so the check itself was
+takes the demo-principal path and returns _before_ the role check — so the check itself was
 untested while five tests around it passed. It is now driven with a real principal.
 
 Also: three mutations came back stale because this change edited the lines they pointed at, and one
@@ -854,10 +953,10 @@ see anything the report cannot.
 
 The scheduling is the part with the engineering in it. Two obvious designs are both wrong:
 evaluating on every persisted row is N queries per request — off the hot path but not off the
-*machine* — and scanning every rule on a timer means a quiet installation with 200 use cases runs
+_machine_ — and scanning every rule on a timer means a quiet installation with 200 use cases runs
 200 pointless queries a minute forever. So the writer, which touches every row anyway, **marks
 which scopes saw traffic**, and the timer evaluates only those. A quiet installation does no work.
-The set is bounded and dropped on overflow: losing a *hint* delays a finding by one tick, and a
+The set is bounded and dropped on overflow: losing a _hint_ delays a finding by one tick, and a
 bounded loss beats unbounded memory in the component whose whole job is to still be running when
 something goes wrong.
 
@@ -867,8 +966,8 @@ times about the same fifteen minutes.
 **A gap in stage A, found by building the thing that consumes it.** `payload_size` is "the share of
 requests above a byte threshold" and the rule carried **one** threshold — the share. The byte figure
 had nowhere to live. Stage A's model, serializer, API, 18 tests and six mutations were all green,
-and every one of them was blind to it, because they tested that a rule *round-trips* and nothing had
-yet tried to *evaluate* one. **A configuration schema is only proved by the code that consumes it.**
+and every one of them was blind to it, because they tested that a rule _round-trips_ and nothing had
+yet tried to _evaluate_ one. **A configuration schema is only proved by the code that consumes it.**
 The fix is a nullable `parameter` — required where a kind needs it, refused everywhere else, so it
 cannot quietly become a second free-form field. And the byte count itself had nowhere to come from,
 so the body-size middleware now records what it was already counting to enforce the ceiling.
@@ -879,7 +978,7 @@ Three measurement decisions that are easy to get wrong and expensive to get wron
 - **Growth from nothing is not a spike.** Treating an empty previous window as infinite growth would
   make every use case's first hour an incident, and the alert that fires on arrival is the one
   people switch off before it ever says anything true.
-- **A request whose size is unknown is excluded from both sides of the share** — numerator *and*
+- **A request whose size is unknown is excluded from both sides of the share** — numerator _and_
   denominator. Counting an unknown as small would make old traffic look innocent.
 
 `refusal_rate` counts everything that is not `served`, straight from `Outcome` rather than from a
@@ -893,8 +992,8 @@ in those words on the row. A control displayed as active and doing nothing is th
 exists to prevent; saying so is the minimum honest interim.
 
 **An existing architecture assertion caught the new endpoint, and was right for the wrong reason.**
-`FRD-602` left a test asserting that `visible_scope` is resolved exactly once *in the reporting
-module* — meaning "the CSV path did not grow its own". The anomaly list is a second, legitimate
+`FRD-602` left a test asserting that `visible_scope` is resolved exactly once _in the reporting
+module_ — meaning "the CSV path did not grow its own". The anomaly list is a second, legitimate
 endpoint scoped by the very same function, so the count went to two and the test went red. It now
 says what it meant: **each endpoint** in that module resolves the scope exactly once — which is the
 stronger property, because it also catches an endpoint that resolves it **zero** times.
@@ -910,7 +1009,7 @@ re-anchored; a mutation whose anchor moved protects nothing.
 `ADR-0014` + `FRD-500`, stage A. The gateway has recorded everything since `FRD-122` and nobody was
 watching. Phase 5 carries three of the owner's central features (PRD §1.1) — anomaly detection,
 incident response, and blocking dangerous requests beyond the injection filter — and they are the
-*evidence* half of the product. The governance half is built.
+_evidence_ half of the product. The governance half is built.
 
 The design decision came first, because the two halves pull opposite ways. Detection worth having
 looks **across requests**: a caller whose refusal rate jumped, a use case whose spend tripled
@@ -922,7 +1021,7 @@ what already went out is a report rather than a control.
 decision.** Evaluation is fed by the request log — the same rows, so a detector cannot see anything
 the report cannot, and "the alert says X but the report says Y" is not a reachable state. It also
 means detection sees **refusals**, which is where much of the signal is: a thousand rate-limited
-requests *is* the anomaly, and a detector fed only served traffic would be blind to exactly the
+requests _is_ the anomaly, and a detector fed only served traffic would be blind to exactly the
 caller worth noticing. Actions are written decisions with an **author**, an **expiry** and a
 **record** — an automatic block with none of those is an outage with a good reason.
 
@@ -937,15 +1036,15 @@ Three decisions worth keeping:
 - **`alert` is the default, and that is a safety property.** A detection system whose first setting
   is `block` blocks the wrong thing once and is then switched off forever. A rule is a hypothesis
   about what abnormal looks like until somebody has watched it be right. Deliberately the opposite
-  default from `FRD-125`'s classifier, for a reason that generalises: *that* control had already
+  default from `FRD-125`'s classifier, for a reason that generalises: _that_ control had already
   been chosen, configured and displayed as active, so failing open made it a badge without a
   control.
 - **A ratio is not a threshold.** `spend_spike` compares against the preceding window rather than a
   fixed number, because a fixed number is a budget and there is already one. What it catches is a
-  change of *shape* — €4/day for a month then €40 today is worth a look under a €100 cap, and no cap
+  change of _shape_ — €4/day for a month then €40 today is worth a look under a €100 cap, and no cap
   expresses that without being lowered until it refuses normal traffic.
 - **A global rule is IT Security's to author.** Its effects land on use cases its author may not be
-  able to see, so the *API* says so rather than the UI (`FRD-206`'s rule, applied to a second
+  able to see, so the _API_ says so rather than the UI (`FRD-206`'s rule, applied to a second
   surface). A global rule is nonetheless **visible to everybody** — a rule that can block your
   traffic is a rule you are entitled to know about, whoever wrote it.
 
@@ -966,7 +1065,7 @@ rule that can block traffic is the wrong way to be forgiving about a malformed e
 cosmetic. Three were not, and they shared one shape: **the console was answering questions only the
 server can answer, and answering them generously.**
 
-A use-case *user* was shown "Add member" and "Remove" on every row; using either produced a `403`
+A use-case _user_ was shown "Add member" and "Remove" on every row; using either produced a `403`
 from the screen that had just invited the click. IT Security signed in to an empty console. Anyone
 who could open the pipeline builder could rearrange a graph they could never save.
 
@@ -989,7 +1088,7 @@ Three smaller decisions came out of it and generalise:
 - **An action nobody can carry out is worse than an absent one.** An absent action reads as a
   boundary; a present one that fails reads as a broken system — and the reader's next move is to
   distrust the figures on the same page. So every withheld action is replaced by one sentence
-  naming who performs it, and read-only stays *usable*: members, budgets, limits and the pipeline
+  naming who performs it, and read-only stays _usable_: members, budgets, limits and the pipeline
   are all still visible, and the dry-run panel still runs, because none of that changes anything.
 - **Read-only means inert, not un-saveable.** The builder's graph sits in a native
   `<fieldset disabled>`, so the add/remove buttons inside it cannot be used either. Hiding Save
@@ -1010,17 +1109,18 @@ tab. Both statements were correct — the gateway takes membership from the Keyc
 a group and not a table.
 
 The rest of the walkthrough, fixed in the same pass: the session now renews itself (`offline_access`
-+ silent refresh — an expired token was reporting "invalid credentials" on every screen, which reads
-as the data being untrustworthy rather than the session having ended); creating a use case is a
-button and a window that ends on the new use case's **settings**, since one with no members, no
-budget and no limits is not finished and the list is what makes it look finished; "slug" became
-**technical id**, filled in from the name and described by what makes it matter (it is permanent and
-appears in every API key; the name is not); the model editor became a window that names the model it
-is editing; the reporting cards got short headings plus an info button holding the sentence that
-says what each figure counts — "Refused by a control" was breaking the card row, and the answer to a
-heading that does not fit is not a smaller font; and the export row and the catalog's Edit/Remove
-pair got the spacing they never had, the latter because two buttons touching invite the wrong one
-and one of them is destructive.
+
+- silent refresh — an expired token was reporting "invalid credentials" on every screen, which reads
+  as the data being untrustworthy rather than the session having ended); creating a use case is a
+  button and a window that ends on the new use case's **settings**, since one with no members, no
+  budget and no limits is not finished and the list is what makes it look finished; "slug" became
+  **technical id**, filled in from the name and described by what makes it matter (it is permanent and
+  appears in every API key; the name is not); the model editor became a window that names the model it
+  is editing; the reporting cards got short headings plus an info button holding the sentence that
+  says what each figure counts — "Refused by a control" was breaking the card row, and the answer to a
+  heading that does not fit is not a smaller font; and the export row and the catalog's Edit/Remove
+  pair got the spacing they never had, the latter because two buttons touching invite the wrong one
+  and one of them is destructive.
 
 Also documented rather than left in the DEVLOG alone: `FRD-130` (the demo showcase), which the
 previous entry referenced without a document existing.
@@ -1054,7 +1154,7 @@ review at all.
 **The larger one: the console would not load at all.** The
 session-renewal fix (above) added `offline_access` to the requested scopes to get a refresh token.
 This realm does not permit offline tokens, so the code-to-token exchange came back
-`not_allowed` — and Keycloak answers *that* failure without CORS headers, so the browser reported
+`not_allowed` — and Keycloak answers _that_ failure without CORS headers, so the browser reported
 a CORS error naming neither the scope nor the realm setting. The page went blank after a
 successful login, which looks like a crash and is nothing of the kind.
 
@@ -1064,38 +1164,38 @@ one that outlives the SSO session — a credential a governance console has no b
 the reason it reached the running stack is that **I ran three of the four test layers and skipped
 the fourth**, on a change that lives only in the fourth: no unit test can perform an OIDC
 redirect, and `e2e/tests/auth.spec.ts` — which does — would have failed on the first run. The
-config is now pinned by a unit test that says *why*, but the layer rule is the real lesson: a
+config is now pinned by a unit test that says _why_, but the layer rule is the real lesson: a
 change to the login flow is an e2e change, whatever else it touches.
 
 That run also turned up sixteen e2e failures — every one of them a test driving a screen this
-pass deliberately changed, which is what an e2e suite is *supposed* to do when the UI moves. The
+pass deliberately changed, which is what an e2e suite is _supposed_ to do when the UI moves. The
 creation form became a button and a window, so the shared `createUseCase` helper drives that
 instead; "the inputs are cleared after a successful POST" became "the window is gone and the page
 moved on", which is the same zoneless property observed where it now lives. Two changed meaning
 rather than mechanics and were rewritten rather than repaired: the governance role no longer
-*clicks* Issue key and reads the refusal, because the console does not offer it any more; and the
+_clicks_ Issue key and reads the refusal, because the console does not offer it any more; and the
 three disabled navigation tabs are gone, so the property they encoded (the console follows the
 roles in the token) moved to a chip per role in the header, carrying `data-role` so it stays
 assertable without depending on the wording. Three more were the same story a level down: the
 model editor's Save moved into a window footer and reaches its form by `form=`, so the tests
 address it that way — which is also what proves the association still works; and the
 consumption-hidden message changed wording deliberately, so the assertion follows the new
-requirement (name the Keycloak group *and* say it is not the member list on the same page) rather
+requirement (name the Keycloak group _and_ say it is not the member list on the same page) rather
 than the old sentence.
 
-Two demo-seed defects fell out of asking the *running* stack who could manage what, rather than
+Two demo-seed defects fell out of asking the _running_ stack who could manage what, rather than
 reading the declaration: `itgov` was still administering `personalwesen` and `itsec` still belonged
 to `kundenservice`, both from declarations long since changed. **A membership left behind is not a
 stale row, it is live permission on a use case** — the seed now reconciles to what it declares and
 revokes what it removes. And `personalwesen` no longer belongs to an oversight role at all: it was
 there so the demo could show a use case `ucadmin` cannot touch, at the cost of teaching the opposite
-of what IT Steuerung *is*.
+of what IT Steuerung _is_.
 
 **Found while running the gates: `make ci` was already red**, and not because of anything in this
 change. `ruff` is declared as `>=0.9` and `uv.lock` had moved to 0.16.1, whose formatter targets
 `py314` and applies **PEP 758** — `except A, B:` without parentheses. Eight committed files were
 therefore unformatted against the very tool the gate runs. Reformatted, and `Z19`'s anchor moved
-with the line it points at. Worth knowing for next time: a lock refresh can redefine a *format*
+with the line it points at. Worth knowing for next time: a lock refresh can redefine a _format_
 gate across the whole tree without a single source line being edited, and nothing announces it
 except the gate itself.
 
@@ -1133,7 +1233,7 @@ nothing. Either form counts now.
 
 **801 use cases.** A demo database accumulates the fixtures of every test run that ever pointed at
 it, and a global administrator opening a list of `burst-3i6g5l` and `dryrun-xkroyc` learns only that
-the list is long. `--fresh` now means *every* use case, not just the ones the seed made.
+the list is long. `--fresh` now means _every_ use case, not just the ones the seed made.
 
 **And then `--fresh` killed the keys for ever.** Deleting a use case revokes its API keys, and
 revocation is **terminal** in the read model on purpose — `api_key.created` must never resurrect
@@ -1157,7 +1257,7 @@ bars sit between a third and two thirds, and two more runs reach a limit.
 the system the way somebody using it would: both surfaces, ordinary journeys, dropped connections
 on every path, and every figure checked **in the database** rather than in the response body.
 
-**47 live cases**, and the shape of them is the point. Nothing asserts on the *content* of an
+**47 live cases**, and the shape of them is the point. Nothing asserts on the _content_ of an
 answer — `qwen3:0.6b` is a real model and a poor one, and asserting its accuracy would be testing
 somebody else's work and flaking. What is asserted is what the gateway promises: that a request is
 recorded, weighed, priced and bounded, and that the **two surfaces leave the same facts behind** for
@@ -1179,17 +1279,17 @@ has now said so, and the seed carries the measured set. Declaring from the vocab
 from a measurement is the mirror image of the mistake `FRD-114` was written to prevent.
 
 **And the error it produced was worse than the error itself.** The caller received
-`502 UNAVAILABLE`, "Upstream returned 400." The provider had said, precisely, *invalid reasoning
-value: 'minimal'* — and that was discarded. An operator reading `UNAVAILABLE` checks a status page;
+`502 UNAVAILABLE`, "Upstream returned 400." The provider had said, precisely, _invalid reasoning
+value: 'minimal'_ — and that was discarded. An operator reading `UNAVAILABLE` checks a status page;
 the fault was in their own catalog.
 
 An upstream **400** now answers `400 FAILED_PRECONDITION` and carries the provider's reason. Same
 argument as `NoCapableModel`: "the provider refused the body we built" is operator-fixable, an
 outage is not. The test that encoded the old rule had a comment giving the reason to change it —
-*"a 400 from the upstream reflects our config"* — and it does, which is exactly why calling it an
+_"a 400 from the upstream reflects our config"_ — and it does, which is exactly why calling it an
 outage misleads.
 
-**Only 400**, though. The old test was right about the other half: a 401 or 403 is about *our*
+**Only 400**, though. The old test was right about the other half: a 401 or 403 is about _our_
 credentials, the caller cannot act on it, and the provider's message may name the credential. Those
 stay masked, and a test now pins that too.
 
@@ -1200,11 +1300,11 @@ Mutations `Z21`/`Z22`. **231 properties.**
 ## 2026-08-07 — the third surface was a thought experiment, and it is withdrawn
 
 `FRD-106` — an OpenAI-compatible surface exposed to callers — is **not wanted**. It was raised to
-push a question about generalisation, and it did its job: *if a third surface were added, would it
-write those six steps a third time?* Yes. That answer produced `FRD-126` and `FRD-128`.
+push a question about generalisation, and it did its job: _if a third surface were added, would it
+write those six steps a third time?_ Yes. That answer produced `FRD-126` and `FRD-128`.
 
 Worth separating two things that share a name. The OpenAI **wire dialect** stays and is untouched:
-Azure Foundry and the self-deployed fleet speak it, as an *upstream* (`ADR-0011`). What is
+Azure Foundry and the self-deployed fleet speak it, as an _upstream_ (`ADR-0011`). What is
 withdrawn is an OpenAI-shaped **API surface** pointed at callers. Only one of those was ever
 deferred rather than declined, and the ROADMAP now says which.
 
@@ -1223,7 +1323,7 @@ None of that needed a third surface to be real. The hypothetical was the lens, n
 ## 2026-08-07 — a request the caller abandoned is still a request that happened
 
 `FRD-128`, the second of the three steps, and it started with a question rather than a failure:
-*have all the paths been tested with a dropped connection?*
+_have all the paths been tested with a dropped connection?_
 
 No. Streaming had been — Gemini's by closing the iterator and by a live client walking away,
 KIRA's the day before (`FRD-127`). **Every non-streaming path had not, and all four lost the audit
@@ -1231,7 +1331,7 @@ row.** A caller who went away while the model was still answering made a request
 upstream, spent tokens and spent money vanish from the record.
 
 Six paths, each with its own copy of `hold → dispatch → check → price → settle → record`, and the
-guarantee is the *order*. Two of the six were right. `accounting()` owns it now, shielded, and the
+guarantee is the _order_. Two of the six were right. `accounting()` owns it now, shielded, and the
 surfaces went from **twelve** direct calls to **zero**.
 
 A caller who abandons a request is recorded with status **499** and outcome `client_gone` — nobody
@@ -1253,7 +1353,7 @@ invisible to a request limit.
 
 ### Two tests that were asserting the wrong thing
 
-Both were coupled to *where* something happens rather than to *whether* it happens, and both went
+Both were coupled to _where_ something happens rather than to _whether_ it happens, and both went
 quiet instead of failing when it moved. One monkeypatched `routes.record_request` and stopped
 intercepting the moment the write moved into the shared sequence. The other counted calls to
 `release` through a delegating stand-in — which `hold`'s internal `self.release(...)` never passes
@@ -1290,7 +1390,7 @@ the fix the first one earned.
 
 The window is different here, and the difference is why copying the Gemini test would have proved
 nothing. This surface's "stream" delivers **one terminal event carrying the whole answer**, so the
-accounting happens *before* anything is yielded — hanging up after the first chunk finds the work
+accounting happens _before_ anything is yielded — hanging up after the first chunk finds the work
 already done. What is exposed is the long await in the middle: a caller who goes away while the
 model is still thinking. The upstream was called; the request then vanished from the record.
 
@@ -1321,14 +1421,14 @@ a one-line edit now.
 
 ## 2026-08-07 — a surface parses; the layer decides
 
-`FRD-126`. Prompted by a question rather than a failure: *why are there two pipelines with six
-steps each — would emulating an OpenAI interface spawn another six?* It would have.
+`FRD-126`. Prompted by a question rather than a failure: _why are there two pipelines with six
+steps each — would emulating an OpenAI interface spawn another six?_ It would have.
 
 There were never two pipelines. There is one, and there were **two hand-written choreographies
 around it**. `api/serving.py` was extracted precisely so both surfaces could share everything below
 the wire format, and its docstring says a surface owns "parsing its own wire format, rendering its
-own error envelope, and its own routes". It shared the *steps*. Nobody noticed it had not shared
-the *order*:
+own error envelope, and its own routes". It shared the _steps_. Nobody noticed it had not shared
+the _order_:
 
     Gemini                          KIRA
     check_not_empty                 check_not_empty        ⎫
@@ -1341,7 +1441,7 @@ the *order*:
 That distinction is the whole story of the last two days. **Every guarantee this layer makes is a
 guarantee about the order** — rate limit before the pipeline or a refusal is paid for; declaration
 and thinking after routing or they are checked against a model that never serves the request;
-reservation last or it is made against the model the caller *named*. None of that can be expressed
+reservation last or it is made against the model the caller _named_. None of that can be expressed
 by a function that knows only its own step, which is why the same gap kept coming back wearing
 different names: `:embedContent` bypassing the gate, then the KIRA surface losing rate limiting
 entirely when one take moved one function over.
@@ -1349,7 +1449,7 @@ entirely when one take moved one function over.
 `prepare_for_dispatch` owns the order. The KIRA surface went from six of these calls to **zero**.
 And the rule is now a test — `test_surface_layering.py` parses each surface and fails on a direct
 call to any step, the same shape as the vendor assertion in `test_vertex.py`, for the same reason: a
-layering rule only a reviewer enforces is a rule the *next* surface breaks, and the next surface is
+layering rule only a reviewer enforces is a rule the _next_ surface breaks, and the next surface is
 the one nobody is watching yet.
 
 The evidence that this was a move and not a rewrite is that **no test changed**: 887 hermetic and
@@ -1358,20 +1458,20 @@ The evidence that this was a move and not a rewrite is that **no test changed**:
 **Four mutations came back `STALE`** — not "survived": the harness distinguishes "this property is
 undefended" from "this mutation no longer applies", and all four pointed at lines this change moved
 into the shared sequence. Re-anchored there. A fifth (`Z13`) was **removed**: it claimed "the
-compatibility surface takes the same early gate", which was a distinct property only *because* each
+compatibility surface takes the same early gate", which was a distinct property only _because_ each
 surface took the gate for itself. Now its anchor and `Z11`'s are the same line, and two mutations
 on one line measure one thing twice. What it really claimed is enforced structurally by
 `test_surface_layering.py` — the same call `X3` got, for the same reason.
 
 ### And the honest limit of this change
 
-Asked what a third surface would now cost, the answer turned out to be *half of it*. The
+Asked what a third surface would now cost, the answer turned out to be _half of it_. The
 pre-dispatch order is shared; the **post-dispatch** order — hold, dispatch, check, price, settle,
 record — is still written out **six times**, three verbs in each surface. Same shape, one step
 later.
 
 It has already cost a defect. Gemini's streaming path wraps its accounting in `finally` +
-`asyncio.shield`, with a comment explaining that a client dropping a real socket *cancels* the
+`asyncio.shield`, with a comment explaining that a client dropping a real socket _cancels_ the
 response task and a bare `await` loses the settle and the row — found as a 1-in-8 integration flake.
 **The KIRA streaming path has neither.** The surface written second never got the fix the first one
 earned, which is precisely what duplication does and precisely where it leaves it.
@@ -1397,14 +1497,14 @@ The same bug had silently disabled `model_route`, which returned "no category ma
 request — indistinguishable from a router whose categories genuinely never fit.
 
 **A verdict now has three values.** `undetermined` covers an upstream failure, an empty reply, a
-reply containing neither word, and a reply containing *both* — "SAFE, no injection attempt here"
+reply containing neither word, and a reply containing _both_ — "SAFE, no injection attempt here"
 was asked for one word and gave two, and picking a winner would be a precedence rule nobody could
 predict from outside (the argument `FRD-111` already makes about two `thinkingConfig` spellings).
 
 **And it blocks by default**, which reverses the old "fails open". That reversal deserves its
 sentence: the old behaviour was defended as "a classifier outage must not take down legitimate
 traffic", which is a real concern and the wrong answer — `FRD-405` settled the identical question
-for rate limits with *the moment a control stops working is the worst moment to stop applying it*. A
+for rate limits with _the moment a control stops working is the worst moment to stop applying it_. A
 filter that passes everything while the builder shows it as active is not a degraded control, it is
 an absent one wearing the badge of a present one. `on_undetermined: allow` restores the old
 behaviour for anyone who wants it, as a choice, on the audit row.
@@ -1424,7 +1524,7 @@ matches or does not — has no such failure mode.
 
 ### And a test lesson
 
-Two live assertions had to be rewritten because they were testing the *model*, not the gateway. A
+Two live assertions had to be rewritten because they were testing the _model_, not the gateway. A
 seed reproducibility check that failed one time in three (this server's first generation after a
 cold context differs — its prompt cache, not our seed), and a router check asserting that a 0.6B
 model picks the right category. Both replaced by the property that is actually ours: the classifier
@@ -1435,18 +1535,18 @@ that ever stops being true the test says so rather than passing for a new reason
 
 Counting model calls rather than reading code again. One caller request with an LLM step makes
 **two** model calls and left **one** audit row. The classifier's tokens were invisible three ways at
-once: `FRD-601` reported a spend they were not part of, `FRD-403`'s *"unpriced traffic is counted
-apart, never as zero"* was broken by counting them as **nothing at all** — the one thing that rule
+once: `FRD-601` reported a spend they were not part of, `FRD-403`'s _"unpriced traffic is counted
+apart, never as zero"_ was broken by counting them as **nothing at all** — the one thing that rule
 exists to forbid — and `ADR-0013`'s auditable model access had a model call in it that nothing
 recorded.
 
 Each pipeline call now leaves its own row, named `pipeline:<step>` so reporting can separate what a
-use case *asked* from what *governing it* cost, and is booked against the budget with
+use case _asked_ from what _governing it_ cost, and is booked against the budget with
 **`requests=0`**: the caller made one request, and counting the classifier as a second would inflate
 every request figure and could trip a request limit for traffic nobody sent.
 
 The hook lives in `run_pipeline`, in a `finally`, and the collector is **passed in** exactly as
-`decisions` already is — so a step that *blocked* still reports what deciding to block cost, and
+`decisions` already is — so a step that _blocked_ still reports what deciding to block cost, and
 both surfaces get it because both call that function. A hook per surface boundary is the shape that
 let `:embedContent` slip past the pre-dispatch gate.
 
@@ -1456,15 +1556,15 @@ its actual spend.
 
 ### The refusal that was billed for
 
-Follow-up question from the owner — *do the filter costs count against the budget?* — and then a
+Follow-up question from the owner — _do the filter costs count against the budget?_ — and then a
 measurement of what "over budget" actually did. The pipeline ran **before** the budget guard, so a
 use case one request past its limit kept running its LLM injection filter on every subsequent
 request: all refused with a 429, all billed for the classifier. A 20 000 cost limit, one served
 request, seven refused, **72 400 spent and still climbing**. A client with a retry loop spends
 without bound. That is a denial-of-wallet wearing a budget's name.
 
-`guard_before_work` runs the two controls that need no model — the rate limit, and *is this use case
-already over* — before the pipeline. The reservation stays where it was, because it is made against
+`guard_before_work` runs the two controls that need no model — the rate limit, and _is this use case
+already over_ — before the pipeline. The reservation stays where it was, because it is made against
 the model routing chooses. Same probe now: spend stops at **25 600** and does not move across six
 further refusals.
 
@@ -1474,7 +1574,7 @@ security step running. What was never acceptable was the unbounded one.
 Two drafts died on old lessons. The gate belongs **before the verb branch**, not inside
 `run_pipeline` — embeddings have no pipeline, so the tidier placement would have left
 `:embedContent` unlimited, the same verb and the same way as `FRD-405` B3. And `units` has to be
-computed before the gate: the first draft took one unit early and *commented* that the batch weight
+computed before the gate: the first draft took one unit early and _commented_ that the batch weight
 was taken again later. It was not. A batch of 500 metered as one request, by a comment asserting a
 rule the code did not have — caught by a test that already existed, which is the only reason this
 paragraph is about a draft rather than about production.
@@ -1486,7 +1586,7 @@ exactly when it bites.
 
 ### Recording it is not enforcing it
 
-Asked afterwards: *do the filter costs actually count against the budget?* They were being written
+Asked afterwards: _do the filter costs actually count against the budget?_ They were being written
 to Postgres — the system of record — so reporting was right. `FRD-405`'s guard reads the **shared
 counter**, and a Postgres-only write reaches it only when the counter expires and rebuilds, up to
 `COUNTER_TTL_SECONDS` later. A small cost cap and four requests: the counter read 41 000 against a
@@ -1495,7 +1595,7 @@ limit of 40 000 and the next request was served.
 Both stores now. The live re-run refuses the third request at 40 200, naming the cost budget.
 
 The test written for this **passed against the broken code** on the first attempt, and the reason is
-worth more than the fix: on a *cold* counter the guard seeds from Postgres, so a Postgres-only write
+worth more than the fix: on a _cold_ counter the guard seeds from Postgres, so a Postgres-only write
 is visible anyway. The test never reached the path it was named after — the exact trap `CLAUDE.md`
 §3 already lists — and it now warms the counter before it measures anything.
 
@@ -1515,18 +1615,18 @@ is a check nobody has.
 
 The harness reported two properties undefended on the first full run, and both were my own doing.
 
-`Z8` — *a pipeline call is booked against the budget* — survived because every accounting test
+`Z8` — _a pipeline call is booked against the budget_ — survived because every accounting test
 asserted the **audit row**, and the app under test had no budget configured. Booking zero tokens
 changed nothing anybody was looking at. The fix is a test that configures a budget and counts;
 without it, an unbudgeted classifier is not a rounding error, because measured against a real model
 it costs about as much as the answer it guards, so a use case at its limit would keep spending past
 it.
 
-`Z2` — *an upstream failure is undetermined, never clean* — survived because **its anchor had
+`Z2` — _an upstream failure is undetermined, never clean_ — survived because **its anchor had
 moved**: part (b) lifted that `return` out of `verdict` and into `classify_text`, and a mutation
 whose anchor no longer matches cannot break the property it names. This project already knew that
 rule; what is new is that the harness now demonstrates it rather than asserting it, because it
-reported the property as *undefended* instead of quietly passing. Re-anchored.
+reported the property as _undefended_ instead of quietly passing. Re-anchored.
 
 Chasing `Z2` also turned up a second copy of the router's logic — `classify` had been left
 re-implementing what `classify_text` does, and its `except UpstreamError` branch was already the one
@@ -1584,7 +1684,7 @@ look like a partial failure, it looks like the model had one thing to say.
 The project has a rule for this and has had it since `ADR-0012`: **a chain must not be able to
 degrade a request silently.** A model that cannot read the PDF is skipped, never sent the prompt
 without it, because a dropped attachment produces a fluent wrong answer with a 200 and the caller
-blames the model. That rule was pointed at the *model*. It was never pointed at the *surface* — and
+blames the model. That rule was pointed at the _model_. It was never pointed at the _surface_ — and
 a field the surface drops is the same defect one step earlier.
 
 ### The one that started it
@@ -1592,7 +1692,7 @@ a field the surface drops is the same defect one step earlier.
 `thinkingConfig: {mode: "disabled"}`. The dialect mapped `disabled` to an **absent**
 `reasoning_effort`, with a comment saying "there is no 'off' value; the absence of the parameter is
 off, as with Anthropic." Measured against a real reasoning model: sent no `reasoning_effort` it
-thinks anyway — absence selects the *model's* default, not off — and it spent the whole 600-token
+thinks anyway — absence selects the _model's_ default, not off — and it spent the whole 600-token
 allowance doing it. Empty answer, `MAX_TOKENS`, 200. The reasoning is stripped from the response by
 design, so the caller sees a model that failed to answer, not a setting that was ignored. The same
 server sent `"none"` answers in twelve tokens.
@@ -1648,16 +1748,17 @@ survived a suite that appeared to test it.
 ---
 
 ## 2026-08-06 — the usage export, and the same dependency lesson twice
+
 `FRD-602`. CSV is a **renderer on the existing reporting endpoint**, chosen by `Accept` — never its
 own endpoint, because `FRD-601`'s visibility rule is one function and a second entry point is a
 second chance to forget it. That is how an export comes to return more than the screen: a
-governance failure delivered as a *file*, forwarded, saved, impossible to recall. The test asserts
+governance failure delivered as a _file_, forwarded, saved, impossible to recall. The test asserts
 on the file's bytes, and a second one checks by source inspection that `visible_scope` is resolved
 exactly once.
 
 The format details are small and none of them are obscure: a BOM so Excel reads `süd` as a name,
 CRLF because RFC 4180 says so, quoted keys because a use case called `vertrieb, süd` would
-otherwise shift every figure on its row one column left — a spreadsheet that is *wrong* rather than
+otherwise shift every figure on its row one column left — a spreadsheet that is _wrong_ rather than
 broken. Commas rather than semicolons, and the download panel says Excel may ask about the
 separator, which is the honest alternative to picking the other surprise.
 
@@ -1665,7 +1766,7 @@ separator, which is the honest alternative to picking the other surprise.
 
 `aira_common.secrets` imports `httpx`. Every hermetic test passed, a live Vault read worked, and
 the **management migration container died on `ModuleNotFoundError`** — because `httpx` was a
-*gateway* dependency and a workspace `uv sync` installs everything into one environment.
+_gateway_ dependency and a workspace `uv sync` installs everything into one environment.
 
 The line directly above it in `libs/pyproject.toml` is a comment explaining that `pyjwt` was added
 for exactly this reason, after exactly this failure. **A shared library's dependencies cannot be
@@ -1679,6 +1780,7 @@ costs milliseconds and replaces a failure that costs a deploy.
 ---
 
 ## 2026-08-06 — diagnostics, and a probe that would have proved nothing
+
 `FRD-117` FR-1 to FR-6. The design centre is one sentence from §5.2: **a health check must not be
 able to take down a healthy service.** The predecessor's `/health` probes every registered model on
 every call, which makes readiness as slow as the slowest upstream — so one degraded provider evicts
@@ -1690,12 +1792,12 @@ probing loaded anything — because "the probe never generates" is exactly the k
 decays into a convenient call somebody added later.
 
 **The first draft would have proved nothing.** It probed by calling `provider.models()`, which is
-*local configuration* evaluated once when the registry is built: it cannot fail later and says
+_local configuration_ evaluated once when the registry is built: it cannot fail later and says
 nothing about the network. Every verdict would have been a confident green describing nothing —
 worse than no probe, because a green board gets acted on. It surfaced while writing a test with a
 provider that raises, discovering such a provider cannot be registered at all, and following that
 back. Adapters now implement an optional `ping()`, a GET of a listing; one without it is reported
-`probed: false, "not checked"`, because *we did not look* and *it is fine* are different answers.
+`probed: false, "not checked"`, because _we did not look_ and _it is fine_ are different answers.
 
 The case that mattered most could only be staged live: stop the model container and watch. `/readyz`
 stayed **200 `ready`** with `degraded: true`, and cleared when it came back. A load balancer keeps
@@ -1718,6 +1820,7 @@ rather than quietly skipped.
 ---
 
 ## 2026-08-06 — Vault, finally reading from the thing that was already running
+
 `CLAUDE.md` §2 has said "secrets only in HashiCorp Vault" since Phase 0, and Vault has been in the
 Compose stack for as long — with **no code reading from it**. Every credential this system holds
 was an environment variable, which is exactly the state the policy exists to prevent.
@@ -1729,7 +1832,7 @@ are readable from `/proc`, inherited by every subprocess, and reach any library 
 environment on a crash.
 
 Fail closed is the whole design. A configured Vault that cannot be reached stops the process,
-because the alternative turns a broken secret store into a *silent downgrade* — the environment in
+because the alternative turns a broken secret store into a _silent downgrade_ — the environment in
 that scenario usually holds a stale or development value, so the service starts, looks healthy, and
 is wrong. `ADR-0007` established the principle for `SECRET_KEY`; this extends it to every
 credential. "Vault is down" and "nobody wrote that key" are **different exceptions**, because they
@@ -1750,9 +1853,9 @@ through `structlog.testing.capture_logs` now, and the same trap is worth remembe
 this project asserts on log output.
 
 One mutation survived and it was **my test's fault, not the code's**: `V5` says a secret-id file
-that cannot be read is *named* rather than fallen through, and the assertion matched only on the
+that cannot be read is _named_ rather than fallen through, and the assertion matched only on the
 variable's name — which the "no secret-id anywhere" message also contains. It passed against a
-version that silently gave up. Matching on what *distinguishes* the two messages catches it, and
+version that silently gave up. Matching on what _distinguishes_ the two messages catches it, and
 the harness earned its keep again by pointing at an assertion rather than at a line of code.
 
 Rotation is a restart, and that is written down as a decision rather than left as a gap: live
@@ -1762,6 +1865,7 @@ back exactly the availability dependency FR-5 removes.
 ---
 
 ## 2026-08-06 — Foundry, and the claim ADR-0011 was making
+
 The third platform, and it cost a routing axis. `FoundryTransport` (endpoint, credential,
 api-version) × the **unchanged** OpenAI dialect × `AzureRoutes`. The dialect gained nothing; the
 mappers gained nothing.
@@ -1769,7 +1873,7 @@ mappers gained nothing.
 `ADR-0011` claims transport × dialect × model identity is enough structure for a third vendor.
 **The diff does not leave `upstreams/`**, so the claim survives its first real test — and the
 architecture assertion caught the first draft, in which `AzureRoutes` had been written into the
-*dialect's* package. A dialect that names a platform is one the next platform cannot reuse, so it
+_dialect's_ package. A dialect that names a platform is one the next platform cannot reuse, so it
 moved to `upstreams/foundry/`. The assertion now refuses "azure" above the platform packages, with
 one stated exemption: `residency.py` names every cloud's regions on purpose, because a list that
 could not name Azure's would be the per-cloud list `ADR-0012` §6 rejected.
@@ -1777,7 +1881,7 @@ could not name Azure's would be the per-cloud list `ADR-0012` §6 rejected.
 The addressing is the part with money in it. Azure puts a **deployment** in the path — a name
 chosen by whoever created the resource, saying nothing reliable about the model. If that name were
 allowed to be the model name, every use case's pipeline config would embed Azure resource naming,
-and pricing would break *quietly*: `FRD-403` prices by model, a deployment called `production` has
+and pricing would break _quietly_: `FRD-403` prices by model, a deployment called `production` has
 no price, and unpriced traffic is counted apart rather than as zero. Nothing would fail; the spend
 figure would simply stop being complete. So the response is attributed to the model the caller
 named, and `F1` is the mutation that says so.
@@ -1795,10 +1899,11 @@ Not verified against a real subscription — there is none here, and saying so i
 ---
 
 ## 2026-08-06 — 174 edge cases against the running API, and four defects
+
 A sweep of everything a caller can get wrong: malformed bodies, unusual text, every shape of bad
 credential, impossible options, attachments that are not what they claim, both surfaces' error
 vocabularies, wrong HTTP methods, a burst of fifty bad requests at once. Each case asserts three
-things rather than one — **never a 500**, a status a caller can act on, and a message that *names*
+things rather than one — **never a 500**, a status a caller can act on, and a message that _names_
 the problem. The third is the half most suites skip, and it is what "understandable" means in
 practice: "validation failed" is a correct answer and a useless one.
 
@@ -1806,22 +1911,22 @@ Four defects, all reaching a deployed gateway, none visible to a suite that only
 already believes in.
 
 **A malformed body became a 500 on the KIRA surface.** Its `details` array is pydantic's
-`errors()`, and whenever a *custom* validator raised — ours does, for "a part carries either text
+`errors()`, and whenever a _custom_ validator raised — ours does, for "a part carries either text
 or data" — that list carried the original `ValueError` **object** in `ctx`. Not JSON serialisable,
 so rendering the refusal raised, and the framework turned the caller's mistake into our error, on
-the one surface whose contract *is* its error shape.
+the one surface whose contract _is_ its error shape.
 
 **The same surface could not render a shared control's refusal at all.** `api/serving` is
 deliberately surface-agnostic and raises its own error type; the KIRA renderer had no branch for
 it, so every one of those refusals fell through the catch-all and became a 500. A control that
-works but cannot be *reported* on one of the surfaces it protects.
+works but cannot be _reported_ on one of the surfaces it protects.
 
 **A non-positive output cap was accepted.** `maxOutputTokens: -1` returned 200 — and `words[:limit]`
 with a negative limit does not mean "no limit", it drops the end of the answer. A truncated
 response, a 200, and no explanation.
 
 **A request that asks nothing was served and billed.** `parts: []` → 200. `FRD-113` FR-7 already
-refuses an empty *embedding* input and names the reason — it prevents a class of accidental no-op
+refuses an empty _embedding_ input and names the reason — it prevents a class of accidental no-op
 billing — and the argument had simply never been applied to generation.
 
 Plus a consistency finding: an unroutable path answered with the framework's own
@@ -1832,7 +1937,7 @@ envelope.
 ### And one thing the harness would not let me claim
 
 `X3` — "a validation detail carries nothing unserialisable" — was written as a mutation and never
-went red. The reason is that the fix is **doubly enforced**: a flag on `errors()` *and* a
+went red. The reason is that the fix is **doubly enforced**: a flag on `errors()` _and_ a
 comprehension that copies two named fields, either sufficient alone. No single-line edit reproduces
 the 500. So it was removed rather than kept, and the harness's notes gained the rule: a property
 guarded twice cannot be expressed as a mutation, and that is not a reason to weaken the guard.
@@ -1848,6 +1953,7 @@ innermost one that can hold it.
 ---
 
 ## 2026-08-06 — fallback, limits, retention and KIRA, against the running thing
+
 Eleven more live cases (`tests/integration/test_controls_live.py`), and the fixture for the first
 group is worth stating: **two named servers against one endpoint**, `gpu-a` offering a model that
 is not pulled and `gpu-b` offering one that is. `gpu-a` therefore returns a real 404 over a real
@@ -1868,13 +1974,13 @@ runs and nothing about the run says so.
 The KIRA surface reaches the same real model through an integer id, in the predecessor's shape,
 with `Deprecation` on the response — and `test_both_surfaces_record_the_same_request_the_same_way`
 sends one request through each and compares what the audit kept. Same outcome, model, provider,
-tokens, use case, credential. That is the only way to know the shared controls were *run* rather
+tokens, use case, credential. That is the only way to know the shared controls were _run_ rather
 than merely present. A KIRA caller meets the same budget and gets the 429 in the predecessor's
 vocabulary (`EXTERNAL_KI_API_TOO_MANY_REQUEST`), which is exactly what a compatibility surface
 should do: same control, its own words.
 
 **Two mistakes of mine, each made more than once, worth recording because they are the failure
-modes of this *kind* of test rather than of this system.**
+modes of this _kind_ of test rather than of this system.**
 
 A helper asked `/v1beta/models` without a credential, got a 401, read it as "nothing is
 registered", and skipped the suite — silently. A skip that fires for the wrong reason is worse than
@@ -1890,7 +1996,7 @@ in either direction.
 
 A third, smaller one: a test asserted `provider == "ollama"`. It went red the moment the servers
 were renamed for the fallback fixture, because it was asserting somebody's `.env` rather than the
-system's behaviour. What matters is *that* a machine is identified.
+system's behaviour. What matters is _that_ a machine is identified.
 
 **A fourth test mistake, and the most instructive.** The full integration run — which finishes
 long after a file run does — failed on the streaming case that passed in isolation. The helper
@@ -1898,7 +2004,7 @@ looked up its audit row by **model** and not by use case, which seemed sufficien
 has its own use case and cleans up after itself.
 
 It is not sufficient, for a reason that is the system working correctly. The audit writer runs
-beside the request path, so it can flush a row *after* the fixture teardown has deleted rows. The
+beside the request path, so it can flush a row _after_ the fixture teardown has deleted rows. The
 row survives as an orphan — 493 of them in this database — and the next test reads it as its own.
 Those orphans are **right**: an audit row must not vanish because somebody deleted a use case, and
 that is `ADR-0013`'s whole point. The test had assumed the opposite of a deliberate property.
@@ -1910,7 +2016,7 @@ test's own use case also cut the suite from 11 minutes to 94 seconds — the old
 time waiting for rows that were never going to be its own.
 
 **173 mutations, all defended.** The nine added this round (`O1`–`O8`, `B8`) were caught on their
-first run — and one *older* entry surfaced as undefended: `B3`, "unknown cost is counted apart, not
+first run — and one _older_ entry surfaced as undefended: `B3`, "unknown cost is counted apart, not
 summed as zero", whose anchor had been absorbed into the new upsert. Repointed at the line that now
 carries the rule and shown to fail before being accepted, because an entry that has never been red
 claims a protection it has not demonstrated. That is the second time this session an anchor moved
@@ -1920,6 +2026,7 @@ than skipping.
 ---
 
 ## 2026-08-06 — the first real requests, and three defects
+
 Ollama attached as **systems, plural** — `AIRA_OPENAI_SERVERS` takes a list of named servers, each
 with its own URL, models and region, because a self-hosted fleet is several machines and "which box
 served this request" is exactly what an audit exists to answer. Every server's name reaches the
@@ -1930,7 +2037,7 @@ case, real HTTP through the deployed gateway, and the database read afterwards. 
 served-and-stored, payloads-off, budgets, budget exhaustion, refusals recorded, the tenant
 boundary, revocation, and concurrency. It found three things.
 
-**1. A model name may contain a colon.** `model:method` was split at the *first* one, which was
+**1. A model name may contain a colon.** `model:method` was split at the _first_ one, which was
 correct for as long as Google was the only vendor. A self-hosted model is called `qwen3:0.6b`, so
 the split produced the model `qwen3` and the method `0.6b:generateContent`, and the answer was
 **"Model 'qwen3' not found"** — a message naming a model nobody asked for, pointing at the catalog
@@ -1938,8 +2045,8 @@ instead of at the parser. The verb never contains a colon and the model may, so 
 right.
 
 **2. A comment claimed a rule the system did not have.** `build_openai_upstreams` said a locally
-declared region was "recorded, not checked" — and the first real request came back *"runs in
-'on-premises', and this request may only be processed in [...]"*, because `RegionAllowed` quite
+declared region was "recorded, not checked" — and the first real request came back _"runs in
+'on-premises', and this request may only be processed in [...]"_, because `RegionAllowed` quite
 correctly checks every model that declares one. The comment described an intention; the code had a
 rule; the rule was right. So a server now declares **no** region unless the operator names one —
 no claim, nothing to enforce, a laptop keeps working — and naming one opts in to both the evidence
@@ -1947,12 +2054,12 @@ and the check, which happens **at startup** rather than as a 400 on every reques
 
 **3. The budget counter was racy in two ways, and one of them was silent.** Twenty concurrent
 requests against a fresh budget produced two **500s**: `record` read the counter, inserted it when
-absent, and committed, so two requests arriving as the *first* of a period both inserted and one
+absent, and committed, so two requests arriving as the _first_ of a period both inserted and one
 lost on the primary key — a 500 for a request that had already been served and charged for.
 
 The quieter half has no error at all. `record.tokens += n` reads the loaded value and writes an
 **absolute** one, so two overlapping writes discard an increment. The counter that is supposed to
-be the system of record drifts *below* the truth, in the direction that spends money, under exactly
+be the system of record drifts _below_ the truth, in the direction that spends money, under exactly
 the load that makes a budget matter. Both are closed by moving the arithmetic into an upsert, where
 the row is locked for the statement — dialect-dispatched, because `ON CONFLICT` is spelled the same
 by Postgres and SQLite and by nobody else.
@@ -1969,22 +2076,23 @@ upstream call is now exercised end to end.
 ---
 
 ## 2026-08-06 — a real model in the stack (FRD-123)
+
 The mock agrees with us by construction: it reports the token counts we tell it to, truncates when
 we say so, and produces documents matching the schema because the same person wrote both sides. A
-green suite against it proves the gateway is *self-consistent* — which is the failure the mutation
+green suite against it proves the gateway is _self-consistent_ — which is the failure the mutation
 harness exists to warn about, one level up.
 
 So Ollama joins the stack behind a `verify` Compose profile. **Built as the OpenAI dialect, not
 against Ollama's native API**, and that is the whole reason it was worth doing now: `ADR-0011`
 already said the OpenAI wire format arrives regardless of `FRD-106`, because `FRD-120` (Azure
 OpenAI) needs it. Building against the native API would have been a fourth dialect serving only us.
-This way `FRD-120` shrinks to a transport, and the deferred OpenAI *surface* gets cheaper too.
+This way `FRD-120` shrinks to a transport, and the deferred OpenAI _surface_ gets cheaper too.
 
 The dialect turned out to have its own version of a trap the other two already taught us. Anthropic
 splits usage across two events, so a last-event-wins mapper reported zero input tokens for every
 stream. Here, **usage arrives in a final chunk with an empty `choices` array** — a mapper indexing
-`choices[0]` loses it — and the vendor reports no usage on a stream *at all* unless
-`stream_options.include_usage` is sent. A stream that reports no usage is *released* rather than
+`choices[0]` loses it — and the vendor reports no usage on a stream _at all_ unless
+`stream_options.include_usage` is sent. A stream that reports no usage is _released_ rather than
 settled (`FRD-405`), so forgetting that one field would have made every streamed request silently
 free. Both are pinned.
 
@@ -2001,7 +2109,7 @@ one is that the translation was never Anthropic-specific — it is canonical →
 the three dialects want it, and it now lives in `core/schema.py`. A dialect importing from another
 dialect is exactly how "the canonical core is provider-agnostic" quietly stops being true.
 
-### What is *not* verified yet, and why that is written here
+### What is _not_ verified yet, and why that is written here
 
 The container runs; the model registry (`registry.ollama.ai`) is denied by this sandbox's default
 network policy, and so is the Hugging Face fallback. So the adapter is complete and hermetically
@@ -2024,35 +2132,36 @@ comment.
 ---
 
 ## 2026-08-06 — Stufe 5+6: thinking, structured output, embedding options
+
 `FRD-111`, `FRD-112`, `FRD-113` — and, in the same change, `FRD-107` **Stage B**, because building
 a capability and then continuing to refuse it at the compatibility surface helps nobody. The KIRA
 wire format did not move; the fields Stage A refused by name are simply served.
 
 **Thinking** is the one with money in it. Budgets reach 32 768 tokens, billed as output, which is
 an order of magnitude more than a typical answer — so the resolution and the reservation have to
-produce the *same number*, and they do: resolved after routing against the model that will serve
+produce the _same number_, and they do: resolved after routing against the model that will serve
 the request, then handed to `enforce_pre_dispatch` as `extra_tokens`. `None` and `disabled` stayed
 distinct on purpose: the first means the model was never going to think, the second means it
-*would have* and this request is switching it off, and collapsing them lets a declared default
+_would have_ and this request is switching it off, and collapsing them lets a declared default
 quietly win over a caller who asked for none.
 
 **Structured output** turned out to be the clearest case of `ADR-0011` rule 3. One flag,
 `structured_output`, over three unrelated mechanisms: Gemini has a schema parameter, Anthropic has
 none and needs a forced tool call read back out of a `tool_use` block, Azure has a third. The flag
-says *whether*; the dialect owns *how*. The schema itself is parsed rather than passed through, so
+says _whether_; the dialect owns _how_. The schema itself is parsed rather than passed through, so
 an unknown field is an error **naming the field** — and then forwarded, never executed, because
 re-validating would mean running caller-supplied regexes over provider output on the hot path,
 which is the exposure `ADR-0007` already refused by a different door.
 
 §5.3 is the part that justifies the design and it is the test that had to be written to fail first:
-with a fallback chain, checking the capability against the model the *caller named* protects
+with a fallback chain, checking the capability against the model the _caller named_ protects
 nothing. The primary declares it, the primary fails, the fallback answers in prose, and a caller
 calls `JSON.parse` on it — surfacing days later as a bug in somebody else's code.
 
 **Embedding** carried a control bypass. `FRD-405`'s bucket took one token per request, so a batch
 of 500 admitted as one request would have turned a limit of 10 per minute into 5 000 texts per
 minute: intact on paper, gone in practice. The bucket now takes a `cost`, in the same all-or-
-nothing Lua pass, and the budget books n requests. A batch too large for the bucket's *capacity* is
+nothing Lua pass, and the budget books n requests. A batch too large for the bucket's _capacity_ is
 refused with a message naming which of the two said no, rather than a `Retry-After` that would
 still be wrong an hour later.
 
@@ -2061,11 +2170,11 @@ still be wrong an hour later.
 The suite caught a **regression in my own design**: the plan had the predecessor's default task
 type filled in by the mapper, which meant every embedding against a model nobody had declared task
 types for was refused as though the caller had asked for something impossible. The default is a
-*surface's*, applied only where the model declares it — and an explicit undeclared type is still
+_surface's_, applied only where the model declares it — and an explicit undeclared type is still
 refused. Naming a type we cannot verify is a request; naming none is not.
 
 `check_declaration` compared `method == "embedContent"`, so the new batch verb demanded the
-*generation* capability — refusing every batch against an embedding-only model and accepting one
+_generation_ capability — refusing every batch against an embedding-only model and accepting one
 against a model that cannot embed at all. The same shape as the `:embedContent` bypass, one verb
 later, and now a `frozenset` for exactly that reason.
 
@@ -2088,7 +2197,7 @@ a cost.
 Two were real, and both are worth stating:
 
 **`C4` survived because the rule was enforced twice.** "A model that declares no embedding refuses
-one before dispatch" lived in `check_declaration` *and* in `embedding.validate`, so removing either
+one before dispatch" lived in `check_declaration` _and_ in `embedding.validate`, so removing either
 changed nothing observable. That is what redundancy looks like from the outside, and it is a defect
 in the making — two places deciding one rule drift, and the one that drifts is whichever is not
 under test. The duplicate is gone; `validate` owns it.
@@ -2107,6 +2216,7 @@ knowable hermetically, and the recorded cost is understated if we guessed.
 ---
 
 ## 2026-08-06 — Stufe 4: the predecessor's contract, served by AIRA
+
 `FRD-107` Stage A. `/kira/api/external` with `chat`, `streaming-chat`, `embed`, `models`, `health`,
 `version-info` and `ki-usage`; the predecessor's error envelope and codes; integer model ids;
 attribution; deprecation headers on every response including the refusals.
@@ -2114,7 +2224,7 @@ attribution; deprecation headers on every response including the refusals.
 **Stage A carries documents.** The plan had attachments in Stage B, `FRD-110` landed first, and
 refusing a capability we have would be silly. Only `thinking` and `responseSchema` are refused —
 plus one case the FRD singled out that turned out to matter: **a model whose catalog declares a
-non-`disabled` default thinking mode is refused**, because the predecessor *applies* that default.
+non-`disabled` default thinking mode is refused**, because the predecessor _applies_ that default.
 Serving such a model with no thinking at all would answer differently for a reason nobody could
 see, which is the same failure as a dropped attachment one level up. A model with no thinking
 declaration, or one whose default is `disabled`, is unaffected — sending nothing is what it asked
@@ -2132,12 +2242,12 @@ instead of on the path every branch takes, except the branch is now a whole API.
 
 What holds that is one test: send a request through each surface, compare the audit rows. Same
 outcome, same model, same tokens, same latency recorded, same degradation snapshot. It is the only
-way to be sure no step was *skipped* rather than merely present.
+way to be sure no step was _skipped_ rather than merely present.
 
 Seven existing mutation anchors followed their functions into the new module and were repaired.
 A mutation whose anchor has moved protects nothing, which is exactly why the harness reports a
 missing anchor instead of skipping it — one of them (`M23`, "every verb passes the pre-dispatch
-controls") also had to have its *text* corrected, and it briefly survived until it did.
+controls") also had to have its _text_ corrected, and it briefly survived until it did.
 
 Not in Stage A, and said rather than approximated: `ki-usage` reports per **user** with a model id
 of `0`. The predecessor keys usage by (user, model); `FRD-601` aggregates the two separately, and
@@ -2148,19 +2258,20 @@ inventing a cross-tabulation would be a fabricated figure.
 ---
 
 ## 2026-08-06 — Stufe 3: documents, and the rule that a refusal beats a fluent wrong answer
+
 `FRD-110`. `CanonicalMessage` carries ordered parts; the Gemini surface takes `inlineData`; both
 dialects map it; the mock sees it; the reservation counts it; the audit row keeps a description.
 
 The owner stated the requirement in one sentence and it is the one everything here serves:
 **if the model cannot read the document, throw an error — do not try anyway, or the model
 hallucinates and the user thinks something else is broken.** That is exactly right, and it is worth
-spelling out why it is not merely tidy: a dropped attachment produces *no error*. It produces a
+spelling out why it is not merely tidy: a dropped attachment produces _no error_. It produces a
 fluent, confident answer about a document the model never saw, returned with a 200, and the caller
 reports that "the model is hallucinating" and looks for the fault everywhere except where it is.
 
 So a model that cannot read what was sent is refused **by name**, with the types it lacks, and the
-message distinguishes *undeclared* (a catalog gap somebody closes in a minute) from *declares no
-attachment support* (a fact about the model). Checked after routing at every hop, on the mechanism
+message distinguishes _undeclared_ (a catalog gap somebody closes in a minute) from _declares no
+attachment support_ (a fact about the model). Checked after routing at every hop, on the mechanism
 built for exactly this last commit.
 
 Four decisions worth keeping visible:
@@ -2200,8 +2311,9 @@ and the integration test carries the explanation so nobody re-runs the flake awa
 ---
 
 ## 2026-08-06 — The fallback chain learns to say no
-A question from the owner — *is the region set for the whole gateway, or can it be bound to a use
-case?* — turned into a smaller and more urgent finding than the one it asked about.
+
+A question from the owner — _is the region set for the whole gateway, or can it be bound to a use
+case?_ — turned into a smaller and more urgent finding than the one it asked about.
 
 **The honest answer to the question:** deployment-wide. The allow-list is global and the region is
 a property of the model; a use case can only influence it indirectly, through `allow_check`, which
@@ -2231,16 +2343,16 @@ Two present-day defects fell out of it:
 
 Residency is the first condition. It cannot refuse anything a correctly configured gateway offers
 today, since every model was already checked against the allow-list at startup — and it is built
-anyway, because the *per-hop* check is the part that would otherwise be got wrong when residency
+anyway, because the _per-hop_ check is the part that would otherwise be got wrong when residency
 becomes a per-use-case property. Media types (`FRD-110`) and the schema capability (`FRD-112`) plug
 into the same mechanism.
 
 One existing test had to change, and the change is the point: it asserted that an exhausted chain
 raises `UpstreamError` — it encoded the misleading behaviour. It now pins both halves: a chain with
-nothing to offer is not an outage, and an upstream that *was* tried and failed still is.
+nothing to offer is not an outage, and an upstream that _was_ tried and failed still is.
 
-**A follow-up question found the real version of the same mistake.** *"Wird es auch für Azure
-`westeurope` funktionieren?"* — and the honest answer was: the mechanism yes, the configuration no.
+**A follow-up question found the real version of the same mistake.** _"Wird es auch für Azure
+`westeurope` funktionieren?"_ — and the honest answer was: the mechanism yes, the configuration no.
 `RegionAllowed` was always generic (it reads whatever the adapter declares), but the allow-list sat
 behind a **`vertex_`-named setting with Google-only defaults**. The first Azure model would have
 failed a check named after Google, and an operator widening `AIRA_VERTEX_ALLOWED_REGIONS` to admit
@@ -2260,10 +2372,11 @@ not collide, and an operator thinks in "which EU regions may we use", not in a m
 ---
 
 ## 2026-08-06 — Stufe 2: the EU, and the first vendor that does not speak Google
+
 `FRD-115` and `FRD-119`. One `VertexTransport` — URL, OAuth, region, error mapping — with two
 dialects above it: Gemini bodies unchanged from `FRD-304`, and the Anthropic Messages API.
 
-**Residency is enforced rather than intended.** A configuration that *can* express a non-EU region
+**Residency is enforced rather than intended.** A configuration that _can_ express a non-EU region
 is a configuration in which somebody eventually adds one, because that is where a preview model
 launched, and nothing objects. So the allowed regions are a list, a model outside it makes the
 gateway **refuse to start**, and provider/publisher/region land on every audit row. "The
@@ -2283,7 +2396,7 @@ getting it wrong on the second one.
 
 Anthropic's differences are each a mapping: `max_tokens` **required** (always sent, from the
 catalog's per-model default), the system prompt as a top-level parameter with several messages
-concatenated rather than reduced to the last, cache tokens counted as input because they *were*
+concatenated rather than reduced to the last, cache tokens counted as input because they _were_
 input, streamed usage **accumulated** across `message_start` and `message_delta` where Gemini puts
 everything in the last chunk — and **thinking blocks dropped**, which with Gemini was free (we
 simply never ask) and here is an active obligation.
@@ -2298,12 +2411,12 @@ request went — which are platform requirements, not the dialect leaking.
 
 **One mutation survived, and it is the one worth writing down.** `V4` guards "the model's reasoning
 never reaches the caller". The test put the reasoning in the vendor's own `thinking` field — so
-removing the block-type filter changed nothing, because the *field name* differed too. It passed
+removing the block-type filter changed nothing, because the _field name_ differed too. It passed
 for a reason that had nothing to do with the property it was named after. Rewritten to put the
 reasoning in a `text` field, which is what actually holds the selection to being by **block type**;
 a second test pins that an unknown future block type is dropped too.
 
-The integration layer also caught a race it had always had: the test asserted that *its own* relay
+The integration layer also caught a race it had always had: the test asserted that _its own_ relay
 published the event, and on a full stack the `management-relay` container usually wins. It now
 asserts the outcome — the row reaches the gateway — rather than who delivered it.
 
@@ -2315,7 +2428,8 @@ field that does not exist is a guess.
 ---
 
 ## 2026-08-06 — Stufe 1: the model catalog becomes a runtime authority
-`FRD-114`. The catalog held prices; it now holds what a model may be *asked to do*, and the gateway
+
+`FRD-114`. The catalog held prices; it now holds what a model may be _asked to do_, and the gateway
 decides from it. One shared vocabulary in `aira_common.models` — two copies of "which capabilities
 exist" would drift, and the drift would surface in whichever plane was not tested.
 
@@ -2338,7 +2452,7 @@ header. Deprecation **warns**; revocation blocks. Conflating the two removes the
 announce a retirement before performing one.
 
 **`model_prices` is now `model_catalog`.** A table that decides whether a thinking budget is
-accepted must not be called *prices*. That cost four raw-SQL integration tests an update, which is
+accepted must not be called _prices_. That cost four raw-SQL integration tests an update, which is
 what a rename costs — and it turned up something that had nothing to do with this FRD:
 
 > During the rolling rebuild, the **consumer** container was still on the old image, and its
@@ -2363,6 +2477,7 @@ assertions had become positional: it picked "the first warning badge", and there
 ---
 
 ## 2026-08-06 — Stufe 0: the audit trail now records what was refused
+
 First stage of the delivery order, and the one that makes every later stage testable. `FRD-122`
 implemented: `aira_gateway/audit.py` (closed `Outcome` vocabulary + the `AuditTrail` a route fills
 in as it goes), migration `0012` (six nullable columns, indexed on `outcome` and `credential`), and
@@ -2380,7 +2495,7 @@ Two things the work found that the plan did not have:
   to pass; it failed. The audit write was propagating out of the refusal path, so a client that hit
   a rate limit got a server error — and would have retried straight into the limit it had just hit.
   Guarded now, and deliberately **only** on the refusal path: on the success path a failed write
-  means a *served* request went unrecorded, and failing loudly is the defensible answer to that.
+  means a _served_ request went unrecorded, and failing loudly is the defensible answer to that.
 - **A refusal was naming the model the caller typed, not the one attempted.** A request routed
   elsewhere by the pipeline and then refused blamed a model that was never called. Found by a
   mutation surviving (`T3`), which is the harness doing precisely what it exists for: the property
@@ -2405,8 +2520,9 @@ grinding against its budget wall is a figure rather than a log search.
 ---
 
 ## 2026-08-06 — A delivery order, and the one place the priorities fight the dependencies
+
 The owner set the priority: **KIRA compatibility first, then the Google and Microsoft model
-connections (*easily extensible*), then document handling, then the review findings** — with the
+connections (_easily extensible_), then document handling, then the review findings** — with the
 instruction to record my findings as features so they are not forgotten. PRD gains §1.2 (seven
 additional features from the code review) and §1.3 (the priority).
 
@@ -2421,7 +2537,7 @@ vocabulary, any request carrying a field it cannot yet honour. **Stage B** moves
 refused to served with no change to the contract, because refusing was always the correct behaviour
 for a field we could not serve. Every consumer sending plain text — the majority — migrates months
 before the ones sending PDFs, and nobody is misled in between. The one thing Stage A must not do is
-*approximate*: KIRA applies a model's default thinking when the caller sends none, so Stage A either
+_approximate_: KIRA applies a model's default thinking when the caller sends none, so Stage A either
 applies the real default or refuses; quietly sending no thinking at all would make answers differ
 for reasons nobody can see.
 
@@ -2447,18 +2563,19 @@ it sits after the first two vendors rather than being deferred indefinitely.
 ---
 
 ## 2026-08-06 — The feature list, and what it makes visible
-The owner restated what AIRA Gateway *is*, as seventeen features. It now sits in **PRD §1.1** with an
+
+The owner restated what AIRA Gateway _is_, as seventeen features. It now sits in **PRD §1.1** with an
 honest status column, because a list like that is only useful if the gaps are in it too.
 
 Three things the table makes visible that prose was hiding:
 
 **The governance features are largely built; the evidence features are not.** Budgets, limits,
 routing, fallback, self-service pipelines, roles — done. Auditability, incident response, anomaly
-detection, model smoke tests — missing. Those four are what make a governed system *defensible after
-the fact*, which is the half you need on the day something goes wrong.
+detection, model smoke tests — missing. Those four are what make a governed system _defensible after
+the fact_, which is the half you need on the day something goes wrong.
 
-**Feature 5 is more specific than "store requests and responses".** *"Welches System wann was womit
-aufgerufen hat"* — and checked against the code, the **system** is exactly the part we cannot
+**Feature 5 is more specific than "store requests and responses".** _"Welches System wann was womit
+aufgerufen hat"_ — and checked against the code, the **system** is exactly the part we cannot
 answer. An API key has a `prefix` (its identity) and a `subject` (the person who issued it); the
 audit row records the subject and never the prefix. Five keys issued for one use case by one
 administrator are one identity in the log. The consequence lands precisely where it hurts most: a
@@ -2466,7 +2583,7 @@ leaked key can be revoked, but the blast radius cannot be assessed — which req
 what they asked, over what period, none of it separable from its siblings' traffic. Added to
 `FRD-122` as FR-5.
 
-**Feature 3 settles `ADR-0010`.** Naming KIRA-API compatibility as a *central feature* is the
+**Feature 3 settles `ADR-0010`.** Naming KIRA-API compatibility as a _central feature_ is the
 decision that ADR was waiting for. Accepted as Option C — the compatibility surface is built, with a
 sunset date and its usage visible in reporting, because that is the half that keeps a compatibility
 layer from becoming permanent. `FRD-107` is unblocked.
@@ -2476,14 +2593,14 @@ this request allowed" but "does the model we approved for the whole organisation
 it should". Two design points I want to keep visible:
 
 - **A rate, not a verdict.** Models are sampled: the same jailbreak prompt can be refused nine times
-  and answered on the tenth, and *that is the finding*. A single-run boolean would show green nine
-  times out of ten and the tenth would look like a flake to re-run away. So each case runs *n* times
+  and answered on the tenth, and _that is the finding_. A single-run boolean would show green nine
+  times out of ten and the tenth would look like a flake to re-run away. So each case runs _n_ times
   and the result is "3 of 20", never "failed".
 - **Two modes, because the pipeline would block the test.** `FRD-300`'s injection filter exists to
   block exactly the prompts a jailbreak battery sends — run through it, most cases never reach a
-  model and the run says nothing about the model. So: *through the pipeline* (does our filter catch
-  it — the first honest measurement of whether that filter earns its place) and *direct to the
-  model* (does the model resist it), reported side by side. The interesting cell is the one where
+  model and the run says nothing about the model. So: _through the pipeline_ (does our filter catch
+  it — the first honest measurement of whether that filter earns its place) and _direct to the
+  model_ (does the model resist it), reported side by side. The interesting cell is the one where
   the filter misses **and** the model answers.
 
 Runs go through the gateway's own path under a dedicated internal use case, so their spend is
@@ -2494,11 +2611,12 @@ reads as complete when it is not causes worse decisions than an absent one.
 ---
 
 ## 2026-08-06 — "Auditierbares Hirn": a scope sentence, and four places we do not earn it yet
+
 Direct model access confirmed — the Vertex publisher and endpoint APIs, not the platform's agent
 surface. That closes the last open question in `FRD-115` §11 and `FRD-119` §11.
 
-What came with it is worth more than the answer: *the gateway's job is to provide **auditable
-brains** for AI use cases.* That is a scope sentence, and it settles questions that had not been
+What came with it is worth more than the answer: _the gateway's job is to provide **auditable
+brains** for AI use cases._ That is a scope sentence, and it settles questions that had not been
 asked yet. `ADR-0013` records it with a test for future requests — **does this make model access
 better governed and better evidenced, or does it make the gateway think for the use case?** The
 second kind always arrives disguised as the first ("just let the gateway keep conversation history,
@@ -2524,10 +2642,10 @@ not small:
    (`ADR-0012`) a request asking for Gemini can be answered by Claude and nothing durable says a
    substitution happened. "Why did the Anthropic spend triple" has no answer in the data.
 3. **Pipeline decisions live on a span, not on the row.** `aira.pipeline.model` is a span
-   attribute — and spans are **sampled**. So *why* a model was chosen, for the one component that
+   attribute — and spans are **sampled**. So _why_ a model was chosen, for the one component that
    makes a judgement about a caller's prompt, is durably recorded nowhere.
-4. **Degradation is global, not per-request.** `DegradationLog` says what is broken *now*; an audit
-   needs what was broken *then*. A request budgeted on the racy Postgres fallback is
+4. **Degradation is global, not per-request.** `DegradationLog` says what is broken _now_; an audit
+   needs what was broken _then_. A request budgeted on the racy Postgres fallback is
    indistinguishable from one with the atomic guarantee.
 
 `FRD-122` closes all four: one recording site at the route's exception boundary (not one per
@@ -2537,7 +2655,7 @@ but **never the classifier's reasoning text**, which is model output about a cal
 inherits every question the prompt has; and the degraded set frozen onto the row.
 
 One thing decided rather than deferred: recording refusals means a caller in a retry loop writes a
-row per attempt. That is the right increase — a retry storm is *precisely* the event the audit
+row per attempt. That is the right increase — a retry storm is _precisely_ the event the audit
 trail should show. If a deployment finds it excessive, the answer is a shorter retention for
 refusal rows, not recording nothing.
 
@@ -2547,6 +2665,7 @@ in the DEVLOG rather than only in an FRD.
 ---
 
 ## 2026-08-06 — Four model families, and the one thing that does not generalise
+
 Bringing Gemini Enterprise / Model Garden and Microsoft Foundry together over Gemini, Claude, GPT and
 Nemotron. Two findings while thinking it through, and the second is the one that matters.
 
@@ -2554,7 +2673,7 @@ Nemotron. Two findings while thinking it through, and the second is the one that
 name: publisher-managed models (Gemini, Claude) addressed as `publishers/{vendor}/models/{model}`,
 and **self-deployed** models — NIM containers such as Nemotron — running on our own capacity,
 addressed by a **numeric endpoint id** and speaking an **OpenAI-compatible** API. So the OpenAI
-dialect is needed on the *Vertex* transport, not only on Foundry. `ADR-0011`'s separation starts
+dialect is needed on the _Vertex_ transport, not only on Foundry. `ADR-0011`'s separation starts
 paying for itself before the third platform is built, and `ADR-0011` rule 2 (the caller names a
 model, the catalog holds the addressing) turns out to have been necessary rather than prudent — a
 fourth addressing mode arrived within a day.
@@ -2585,7 +2704,7 @@ fallback already exists without any conversion at all.
 `ADR-0012` also fixes the governing principle for all of this, which was implicit until now:
 **hide the plumbing, declare the semantics.** Clouds, credentials, URL shapes, streaming vocabularies
 and structured-output mechanisms are plumbing and belong behind the canonical core. Anything that
-changes *what comes back* — an attachment a model cannot see, a thinking mode it cannot honour, a
+changes _what comes back_ — an attachment a model cannot see, a thinking mode it cannot honour, a
 schema it cannot enforce — is declared, visible in the builder, and enforced after routing.
 
 `FRD-121` specifies the opt-in conversion path (extract text or render pages) for the cases where
@@ -2601,13 +2720,14 @@ first**; ship the gating, run with it, and let a concrete blocked use case justi
 ---
 
 ## 2026-08-06 — A third platform decides the shape of the second
+
 Microsoft Foundry is wanted for the future: Azure OpenAI models and Microsoft's own. Not urgent —
 and precisely because it is not urgent, it is the right moment to let it settle the upstream
 architecture, since it is the third vendor and the third is where the abstraction is decided. With
 two you can always absorb the difference in a conditional.
 
 Foundry brings three things Vertex did not: the **OpenAI Chat Completions** wire format, **Entra ID**
-authentication, and a different notion of what a model *is* — Azure addresses a customer-named
+authentication, and a different notion of what a model _is_ — Azure addresses a customer-named
 **deployment** in a resource in a region, and the same deployment name in two resources can be two
 different models.
 
@@ -2628,7 +2748,7 @@ accident:
 - **A caller names a model; the platform's addressing is catalog configuration.** No use case's
   pipeline config may contain an Azure deployment name. The failure mode if we got this wrong is
   the interesting part: `FRD-403` prices by model name, a deployment called `production` has no
-  price, and unpriced traffic is *counted apart rather than as zero* — so the spend figures would
+  price, and unpriced traffic is _counted apart rather than as zero_ — so the spend figures would
   not break, they would quietly stop being complete.
 - **Capability flags say whether, never how.** Three vendors, three unrelated structured-output
   mechanisms (a schema parameter, a forced tool call, a `json_schema` response format) and two
@@ -2636,13 +2756,13 @@ accident:
   the dialect.
 
 Two pleasant confirmations. `FRD-111`'s canonical thinking model — `mode` + optional `tokens`, taken
-from the *predecessor's* vocabulary — turns out to cover Azure's `reasoning_effort` levels, a vendor
+from the _predecessor's_ vocabulary — turns out to cover Azure's `reasoning_effort` levels, a vendor
 it was not written for. And Azure reports reasoning tokens separately, which finally answers
 `FRD-111` FR-6's open verification for at least one vendor.
 
 One planning consequence: the **OpenAI wire format now arrives as an upstream whether or not
 `FRD-106` is ever built.** Once canonical ⇄ OpenAI exists in one direction, the deferred OpenAI
-*inbound* surface is largely that mapping reversed plus a router. The decision to defer it stands;
+_inbound_ surface is largely that mapping reversed plus a router. The decision to defer it stands;
 the estimate behind that decision does not, and should be revisited when it next comes up.
 
 `ADR-0011` and `FRD-120` written; `FRD-114` (model identity and addressing), `FRD-115` (shared
@@ -2651,16 +2771,17 @@ token source, region allow-list generalised), `FRD-111` and `FRD-112` (the third
 ---
 
 ## 2026-08-06 — Model Garden answers one question and opens another
+
 Two facts landed after the parity FRDs were written, and both change them.
 
 **EU residency applies.** `FRD-115` moves from "worth doing" to required: our current adapter calls
 a global endpoint and cannot make a residency statement, so it is not a production candidate no
-matter how complete the rest becomes. The FRD now also *enforces* it — an allowed-region list, a
+matter how complete the rest becomes. The FRD now also _enforces_ it — an allowed-region list, a
 model configured outside it refuses to start, and provider, publisher and region recorded on every
 audit row. Configuration alone would not hold: someone adds a model in `us-central1` because that
 is where a preview launched, and nothing objects.
 
-**Access is through the Gemini Enterprise platform's Model Garden — Gemini *and* Anthropic**, one
+**Access is through the Gemini Enterprise platform's Model Garden — Gemini _and_ Anthropic**, one
 project, one credential. That is a governance win and a technical complication, because the two
 vendors do not share a wire format. Anthropic models on Vertex are called through `:rawPredict` and
 speak the Anthropic Messages API:
@@ -2673,7 +2794,7 @@ speak the Anthropic Messages API:
   was cheap: we simply do not ask. With Anthropic it becomes an active obligation — the adapter
   must drop them, and they must reach no response, log, span or audit row. A mapper that
   concatenates all content blocks is the obvious implementation and the wrong one, so it gets its
-  own test. Their token *count* still reaches usage, because they were billed.
+  own test. Their token _count_ still reaches usage, because they were billed.
 - Anthropic's thinking budget is drawn from `max_tokens`, so `budget < max_tokens` becomes a
   validation rule and the catalog must refuse to hold a combination that cannot work.
 - **There is no `responseSchema`.** Structured output is a forced tool call — one tool whose
@@ -2684,7 +2805,7 @@ speak the Anthropic Messages API:
 - **No embeddings at all**, so `FRD-113` is Gemini-only and the capability declaration is what
   enforces it — before dispatch, not by an adapter raising deep in the stack.
 
-New `FRD-119` for the dialect; `FRD-115` rewritten as the *platform* (transport, OAuth, region,
+New `FRD-119` for the dialect; `FRD-115` rewritten as the _platform_ (transport, OAuth, region,
 registry) with the two dialects above it. The seam matters: put authentication in the adapters and
 it is written twice, put body mapping in the transport and a third vendor rewrites it. `FRD-110`'s
 media-type allow-list becomes an intersection of what AIRA accepts and what the target model
@@ -2696,7 +2817,7 @@ carries an architecture assertion for it: if the diff reaches outside `upstreams
 Gemini-shaped and we should fix the core rather than smuggle a vendor field through it.
 
 One question deliberately left open in `FRD-115` §11: whether "Gemini Enterprise" here means Model
-Garden *raw model access* (assumed throughout) or the agent platform's own API, which is not a
+Garden _raw model access_ (assumed throughout) or the agent platform's own API, which is not a
 model API and would model grounding and server-side conversation state that our canonical core does
 not have. One authenticated `curl` against the project's `publishers/anthropic` endpoint settles
 it, and getting it wrong is a rewrite rather than a correction.
@@ -2704,6 +2825,7 @@ it, and getting it wrong is a rewrite rather than a correction.
 ---
 
 ## 2026-08-06 — KIRA parity: the programme, and where the gap actually is
+
 The predecessor's requirements (`kira_api.md`, KIA-KIRA-API v0.1.2) arrived with the instruction
 that AIRA must carry all of them. Reviewed against the code rather than against our own
 documentation, the result was not what the phase history would suggest.
@@ -2728,16 +2850,16 @@ Two findings I had not expected to matter as much as they do:
   `FRD-115`, and it may be the most schedule-critical item in the programme.
 - **Vault is in the stack and nothing reads from it.** `CLAUDE.md` §2 has said "secrets only in
   Vault" since Phase 0; every secret actually comes from an environment variable. `FRD-116`. This
-  becomes pressing rather than untidy the moment a service-account *private key* is involved.
+  becomes pressing rather than untidy the moment a service-account _private key_ is involved.
 
 Eleven documents written: `ADR-0010` plus `FRD-107`, `FRD-110`–`FRD-118`, `FRD-602`.
 
-**The one open decision** is in `ADR-0010`: does AIRA also serve the predecessor's *wire contract*,
+**The one open decision** is in `ADR-0010`: does AIRA also serve the predecessor's _wire contract_,
 so clients migrate by changing a URL, or do the clients move to the Gemini surface? My
 recommendation is the compatibility surface **with a stated sunset date and its usage visible in
 reporting**, because the alternative couples our decommissioning date to the slowest consuming
 team, and until they migrate their traffic is ungoverned — which is the whole thing the budgets and
-limits exist for. Recorded as *Proposed*; `FRD-107` stays blocked until it is decided. Everything
+limits exist for. Recorded as _Proposed_; `FRD-107` stays blocked until it is decided. Everything
 else is contract-independent and can start immediately.
 
 Three places where the FRDs deliberately **do not** copy the predecessor, each written down so the
@@ -2755,7 +2877,7 @@ to be got wrong quietly:
   reservation would estimate a 20 000-token PDF request as a sentence, reopening under documents
   precisely the race `FRD-405` closed for text.
 - **A batch must not be a way around a rate limit** (`FRD-113` §5.3). One token per request means a
-  caller limited to 10 requests a minute can embed 5 000 texts a minute. A batch of *n* takes *n*.
+  caller limited to 10 requests a minute can embed 5 000 texts a minute. A batch of _n_ takes _n_.
 - **The structured-output capability must be checked after routing** (`FRD-112` §5.3). With a
   fallback chain, the model that answers is not the model that was asked for, and returning prose
   to a caller that will `JSON.parse` it is a failure that surfaces days later in someone else's
@@ -2767,6 +2889,7 @@ second new contract.
 ---
 
 ## 2026-08-06 — Reporting: the data has been collected since Phase 1, and is finally readable
+
 Every dispatched request has been recorded since `FRD-103` and priced since `FRD-403`. Nothing
 showed any of it. The only figures anywhere were the consumption bars beside a budget — one use
 case, the current period, three numbers — so "what did last month cost, and which use case is
@@ -2818,6 +2941,7 @@ the binding. Noted in `deploy/compose/README.md` next to the realm-import caveat
 ---
 
 ## 2026-08-05 — The browser layer finally ran, and immediately earned its keep
+
 The Playwright download had been blocked by network policy since the e2e suite was written, so
 36 browser tests had never executed here. Allowed at last: **38 passed, 4 failed**, all four in
 `gateway.spec.ts` — everything that needs the browser's own session token to reach the gateway.
@@ -2840,7 +2964,7 @@ container took its old one) and `/gw` kept answering 200 with nginx untouched �
 
 Two guards added to the integration suite: that the SPA reaches both services through its own
 origin, and that the rendered config still passes its upstreams through variables. The second
-asserts the *shape* of the config, because the behaviour it protects only appears after a
+asserts the _shape_ of the config, because the behaviour it protects only appears after a
 container has actually moved. Verified to fail against the old form.
 
 Also, and worth saying plainly: the six rate-limit e2e specs written earlier without ever being
@@ -2850,6 +2974,7 @@ practice to repeat.
 ---
 
 ## 2026-08-05 — The older phases under the same standard (74 properties)
+
 The mutation check covered FRD-405 and the tombstone work; auth, budgets, the pipeline, retention
 and the management control plane had never faced it. Two samples in older code had already turned
 up one real defect each, so the odds of the rest being clean were not good.
@@ -2874,7 +2999,7 @@ ADR-0006/0007 produced ~50 candidate properties; 45 became mutations, for 74 in 
 
 One prediction was wrong in a useful way. I expected `JSON(none_as_null=True)` to survive, on the
 grounds that SQLite cannot distinguish SQL NULL from the JSON literal — it is caught, by the
-retention *idempotence* test, because the SQL-level `is_not(None)` still sees the difference. The
+retention _idempotence_ test, because the SQL-level `is_not(None)` still sees the difference. The
 mechanism was not what I assumed, and checking which test failed is what showed that.
 
 Deliberately excluded: the constant-time hash comparison. It is a timing property, and no
@@ -2884,6 +3009,7 @@ self-deception this exercise is against, so it is recorded as knowingly undefend
 ---
 
 ## 2026-08-05 — Deleting a use case did not withdraw access
+
 Found while looking for the next piece of work, and verified against the running stack before
 being believed: **24 active API keys were bound to use cases that no longer existed**, and a
 request with such a key answered **HTTP 200**.
@@ -2905,27 +3031,28 @@ Migration `0011` clears what earlier deletions already left behind, since those 
 `usecase.deleted` event. Applied to the running database: 24 orphaned active keys → 0, orphaned
 budgets and pipelines gone, all 73 request-log rows untouched.
 
-One thing deliberately *not* done: refusing a key at authentication time because its use case is
+One thing deliberately _not_ done: refusing a key at authentication time because its use case is
 unknown. It looks like cheap defence in depth and is not — keys and use cases arrive on different
 Kafka topics with no ordering between them, so a freshly issued key can legitimately reach the
 gateway before the use case it belongs to, and the check would refuse it.
 
 Proved end to end over the real event path: the key answers 200, the tombstone is applied, the
 same key answers 401. Three mutations added (`make mutants` is now 29), including one asserting
-that the request log is *not* deleted — with a local import inside the mutation, so it fails on a
+that the request log is _not_ deleted — with a local import inside the mutation, so it fails on a
 test rather than on a NameError, which would have counted as caught for the wrong reason.
 
 ---
 
 ## 2026-08-05 — Proving the tests can fail (`make mutants`)
+
 Prompted by the obvious question after the review: the suite was green, coverage was 99%, and
 seven real defects were in there anyway. How?
 
 Three different mechanisms, not one.
 
 1. **The tests were written from the code, not the requirement.** A test named "both scopes apply
-   and the stricter wins" asserted *alice is refused* — which is what the code did. The
-   requirement said more: *and it must cost the use case nothing*. Test and code came from the
+   and the stricter wins" asserted _alice is refused_ — which is what the code did. The
+   requirement said more: _and it must cost the use case nothing_. Test and code came from the
    same mental model, so they agreed. Agreement is not evidence.
 2. **Coverage measures lines, not properties.** `embedContent` was neither rate limited nor
    budgeted while its lines were fully covered — by the happy-path test. A missing requirement is
@@ -2951,6 +3078,7 @@ After the four gaps were closed: **all 26 properties are defended**. The convent
 ---
 
 ## 2026-08-05 — Review of FRD-405: seven defects found and fixed
+
 A structured review of the freshly written FRD-405 code and its documentation, run as four
 parallel audits (docs-vs-code, correctness, extensibility/readability, test quality) with every
 serious finding re-verified by hand before being acted on. It found real defects in work that had
@@ -2958,7 +3086,7 @@ been reported as verified the same day — the verification had covered the path
 not the edges.
 
 **The worst one was the opposite of a promised property.** `FR-4` says a member's own burst may
-not consume the whole use case. The code took a token from the wide use-case bucket *first* and
+not consume the whole use case. The code took a token from the wide use-case bucket _first_ and
 only then tested the narrow member bucket, keeping the token when the member was refused.
 Measured: use case 5/burst, alice 1/burst — after alice's one allowance and four refusals, bob
 got **0** of the remaining 4. One throttled member starved everyone else, which is a denial of
@@ -2996,19 +3124,20 @@ cannot publish, and a setting appears saved while doing nothing.
 Test quality mattered as much as the code. Three integration tests caught `except Exception`
 around the guards, which would have counted a database error as "correctly refused". The
 config-cache test only exercised manual invalidation, which production never calls. And the
-disconnect test I wrote first passed against the *old* structure — going through `TestClient`
+disconnect test I wrote first passed against the _old_ structure — going through `TestClient`
 buffers the whole body, so it never reached the path it was named after. Each fix was proved by
 restoring the defect and watching the test fail.
 
 ---
 
 ## 2026-08-05 — Rate limiting, atomic budget reservations, and the audit write off the hot path
+
 `FRD-405`, decided in `ADR-0008`. Three defects with one cause: the gateway acted on state it had
 already stopped being sure about.
 
 **Nothing limited how fast a caller could consume.** Measured on the running stack, one request
 opened six to seven separate database sessions — so a client in a retry loop exhausted the
-connection pool, and the first casualties were the *other* use cases. A budget states how much
+connection pool, and the first casualties were the _other_ use cases. A budget states how much
 may be spent, never how fast.
 
 **A budget could be exceeded by a multiple.** `guard` read the period's usage, dispatch ran, then
@@ -3017,7 +3146,7 @@ requests all passed a limit with room for one. Since `FRD-403` that limit is a s
 made it an accounting defect rather than a cosmetic one.
 
 **The audit write blocked the answer.** `record_request` was awaited before the response
-returned, contradicting `CLAUDE.md` line 55 — *persistence must not block the request path*.
+returned, contradicting `CLAUDE.md` line 55 — _persistence must not block the request path_.
 
 Added **Redis** as the shared counter store. The argument was the access pattern, not raw speed:
 these counters are high-frequency, tiny, contended and worthless once their window closes, which
@@ -3041,7 +3170,7 @@ Postgres would have loaded the component that is already the throughput ceiling.
 
 **Degradation is decided, not accidental** — a new dependency on the request path must not turn a
 cache outage into a product outage. Rate limiting falls back to a per-instance bucket,
-deliberately *not* to allowing everything: Redis being down is when infrastructure is already
+deliberately _not_ to allowing everything: Redis being down is when infrastructure is already
 strained, the worst moment to stop bounding a runaway caller. Budgets fall back to the old
 Postgres path — enforcing but racy — because refusing traffic would be an outage and skipping
 enforcement would be free money. `/readyz` reports `degraded: true` and still returns 200.
@@ -3065,6 +3194,7 @@ download is blocked by network policy in this environment.
 ---
 
 ## 2026-08-05 — Inline forms were a staircase
+
 Reported from looking at the running app: the hint under the slug field ("Used in the gateway URL
 and in API keys.") pushed that input upwards, so the controls in the row no longer lined up.
 
@@ -3088,6 +3218,7 @@ see this — jsdom has no layout at all.
 ---
 
 ## 2026-08-05 — Payload storage can be switched off per use case
+
 Follow-on to FRD-404. Retention answers "how long"; this answers "at all". Until now the only
 control was the installation-wide `AIRA_STORE_PAYLOADS` env var — not per use case, not in the
 database, not in the UI.
@@ -3107,7 +3238,7 @@ number returned 200, its tokens and cost were recorded — and the number appear
 
 **Two UI bugs the browser tests found, neither visible in jsdom.**
 
-1. A `<label for="x">` that also *wraps* its input makes a real browser forward the click twice:
+1. A `<label for="x">` that also _wraps_ its input makes a real browser forward the click twice:
    the box toggled back instantly and the switch looked dead. jsdom does not reproduce label
    forwarding, so the unit test was green.
 2. Then the same race as the pipeline builder: the settings form was interactive while the GET was
@@ -3122,6 +3253,7 @@ the switch uses plain `[checked]`/`(change)` instead.
 ---
 
 ## 2026-08-05 — FRD-404: stored prompts now expire, per use case, a week by default
+
 The least defensible property this product had: FRD-103 stored every request and response body,
 `store_payloads` is on by default, the redaction hook is a no-op — and **nothing ever deleted
 them**. Prompts routinely contain personal data.
@@ -3136,7 +3268,7 @@ them**. Prompts routinely contain personal data.
   nobody claimed them.
 
 **Two clocks, deliberately.** Payload retention (per use case, 7 days) removes the request and
-response bodies; the row and its metadata stay. A seven-day *row* retention was the obvious first
+response bodies; the row and its metadata stay. A seven-day _row_ retention was the obvious first
 design and is wrong: `request_logs` is where per-request cost lives (FRD-403), so it would leave
 the spend reporting able to see one week and no further. Whole-row deletion is a separate,
 installation-wide switch (`AIRA_LOG_RETENTION_DAYS`), **off by default** because the reporting
@@ -3152,14 +3284,15 @@ adds the `(use_case, created_at)` index the scan needs.
 the older payload gone, the fresher kept, both rows retaining tokens and cost; a second run
 cleared nothing; lowering the period to 1 day then removed the second payload too.
 
-**Still open, and stated in the FRD**: content redaction. Retention decides *when* a payload
-goes; nothing yet masks sensitive values *inside* one while it is kept.
+**Still open, and stated in the FRD**: content redaction. Retention decides _when_ a payload
+goes; nothing yet masks sensitive values _inside_ one while it is kept.
 
 **Gates**: 448 unit + 14 integration + 31 e2e + 171 frontend tests green.
 
 ---
 
 ## 2026-08-05 — CI: the gates are enforced, not merely available
+
 `.github/workflows/ci.yml`. Until now every quality gate — three test layers, two coverage
 thresholds, ruff, mypy, Prettier — only ran when somebody remembered, while `CLAUDE.md` claimed
 CI enforced them. It does now.
@@ -3183,13 +3316,14 @@ fail is theatre.
 Also fixed on the way: **Node was never pinned**, although ADR-0003 requires it — added
 `.nvmrc` (26) and an `engines` block, which CI now reads instead of hardcoding a version.
 
-**Caveat**: the workflow runs on push, but a green run only *blocks* a merge if branch protection
+**Caveat**: the workflow runs on push, but a green run only _blocks_ a merge if branch protection
 requires it, and this repository has no remote configured yet — the workflow starts working the
 moment it is pushed to GitHub.
 
 ---
 
 ## 2026-08-05 — FRD-403: budgets in money, not tokens
+
 Driven by the observation that budgeting in tokens is not cost control. A token differs in price
 by more than an order of magnitude between models, and every provider bills **output** tokens
 several times higher than input — so even a known price cannot be applied to a single
@@ -3200,26 +3334,26 @@ several times higher than input — so even a known price cannot be applied to a
   contract, not a use case. Distributed over the new compacted topic `aira.models`.
 - **`Budget.limit_cost`** alongside the existing token/request caps, enforced pre-dispatch with
   the same `429 RESOURCE_EXHAUSTED`.
-- **Per-request cost in `request_logs`**, so spend can be *reported*, not only capped.
+- **Per-request cost in `request_logs`**, so spend can be _reported_, not only capped.
 - **UI**: the budget tab leads with a spend limit and a spend bar; a new **Models & prices**
   screen (read-only unless global-admin).
 
 **Two decisions worth recording.**
 
-*Money is an integer, never a float.* Amounts are nano-units (10⁻⁹ of the currency) in `BIGINT`,
+_Money is an integer, never a float._ Amounts are nano-units (10⁻⁹ of the currency) in `BIGINT`,
 via the new `aira_common.money`. Floating point cannot represent 0.1 exactly and a spend figure
 is the sum of millions of small charges; `NUMERIC` would be exact on Postgres but SQLite — which
 the tests run on — stores it as a float, so the tests would not exercise production behaviour.
 Amounts therefore also cross API boundaries as decimal **strings**, never JSON numbers.
 
-*Unknown is not zero.* A request on an unpriced model did cost money; AIRA just cannot say how
+_Unknown is not zero._ A request on an unpriced model did cost money; AIRA just cannot say how
 much. Booking it as `0` would make the spend figure silently too low — the worst failure mode for
 a number somebody is accountable for. It is counted under `unpriced_requests`, excluded from the
 cost total, does not consume the cost budget, and is named in the UI. In the same spirit, the
 display never renders a non-zero amount as `0.00`; it widens its precision until it is truthful.
 
 Also fixed along the way: adding a positional `cost_nanos` to `BudgetService.record` made the
-existing callers pass their *timestamp* as an amount. Both extra arguments are keyword-only now —
+existing callers pass their _timestamp_ as an amount. Both extra arguments are keyword-only now —
 an amount of money and a timestamp side by side as positionals is exactly how a wrong figure gets
 booked with nothing failing.
 
@@ -3233,6 +3367,7 @@ coverage gates unchanged.
 ---
 
 ## 2026-08-05 — Containerised: `make up-full` brings the whole system up
+
 Three images (`gateway/Dockerfile`, `management/backend/Dockerfile`,
 `management/frontend/Dockerfile`) and a compose overlay
 (`deploy/compose/docker-compose.apps.yml`). A cold start — volumes removed — reaches a working
@@ -3257,7 +3392,7 @@ demo in **42 seconds**, with all 23 e2e tests green against it.
    everything looked right locally. Fixed by disabling `inlineCritical`; a new e2e test asserts
    no stylesheet is left deferred and that `.card` actually paints.
 2. **`aira_common` did not declare PyJWT.** `aira_common.oidc` imports `jwt`, but the dependency
-   was declared on *aira-gateway*. The shared dev virtualenv hid it; the isolated management
+   was declared on _aira-gateway_. The shared dev virtualenv hid it; the isolated management
    image failed to import at startup. Declared where the import is.
 3. **`up-full` produced an empty demo.** The Keycloak realm has the five accounts, but their
    Django counterparts only appear on first login, so "add member ucuser" had nobody to add.
@@ -3273,6 +3408,7 @@ the gaps table, README and the compose README updated.
 ---
 
 ## 2026-08-05 — Deployment documentation (`docs/DEPLOYMENT.md`)
+
 Written from the code, not from intent — every variable and command in it was read out of the
 settings classes and the Makefile, and the setup sequence was re-run against the live stack.
 
@@ -3299,10 +3435,12 @@ retention; there is still no CI.
 ---
 
 ## 2026-08-05 — Verified against the live stack: e2e (Playwright) + integration tests
+
 Point 1 of the plan: stop trusting the hermetic suites and actually run the thing. Three defects
 surfaced that no unit test could have caught — two of them in the security pass itself.
 
 **What the run found**
+
 - **The hardened Keycloak realm broke Keycloak's boot.** The client `description` added in
   ADR-0007 was 259 characters; the `CLIENT.DESCRIPTION` column is `varchar(255)`, so the import
   aborted and the container refused to start. Also: `--import-realm` skips existing realms, so a
@@ -3325,6 +3463,7 @@ the data plane authorizes); the UI now distinguishes "refused" from "unreachable
 missing group. Proper fix recorded as a follow-up in the ADR addendum.
 
 **New test layers**
+
 - `e2e/` — Playwright, **22 tests**, real Chrome: the Keycloak code flow incl. PKCE, role-aware
   nav, layout at 360/768/1280/1920 px (measured as `scrollWidth <= clientWidth`, which jsdom
   structurally cannot do), the sticky-inspector reachability fix, key issue/reveal-once/revoke
@@ -3342,10 +3481,11 @@ and the coverage gates unchanged.
 ---
 
 ## 2026-08-05 — Management UI: usability, layout, and a frontend coverage gate
+
 No new screens — a pass over the existing SPA for the things that made it feel unfinished.
 
 - **Two silent-failure bugs (zoneless).** The app runs without zone.js, so a plain component
-  property changed from *code* schedules no re-render. Clearing the create-use-case form and the
+  property changed from _code_ schedules no re-render. Clearing the create-use-case form and the
   member/key/budget forms from their success callbacks therefore left the submitted text sitting
   in the inputs, and switching a budget to member scope did not reveal the username field. All
   form state moved to **signals** with explicit `[ngModel]`/`(ngModelChange)` binding; regression
@@ -3353,7 +3493,7 @@ No new screens — a pass over the existing SPA for the things that made it feel
 - **Nothing failed silently any more.** Every load and every mutation now reports its outcome:
   a new `errorMessage()` helper unwraps the shared `{"error": {...}}` envelope (including DRF's
   per-field `details`) so the server's own wording is shown. This mattered most right after the
-  ADR-0007 pass: a use-case viewer clicking "Issue key" got a 403 and *no feedback at all* — the
+  ADR-0007 pass: a use-case viewer clicking "Issue key" got a 403 and _no feedback at all_ — the
   button looked broken. Loading states replace the misleading "No use cases yet." shown while the
   request was still open, and forms stay open (keeping input) when the server rejects them.
 - **Width overflow.** Wide tables now scroll inside their card (`.table-wrap`) instead of dragging
@@ -3377,6 +3517,7 @@ No new screens — a pass over the existing SPA for the things that made it feel
 ---
 
 ## 2026-08-04 — ADR-0007: security hardening pass (gateway, management, frontend)
+
 Full-codebase security review with no new features — see **ADR-0007** for the findings, the
 options weighed, and the trade-offs.
 
@@ -3413,6 +3554,7 @@ options weighed, and the trade-offs.
 ---
 
 ## 2026-08-04 — FRD-402: budget UI (closes Phase 4)
+
 - Gateway `BudgetService.usage()` + unauthenticated `GET /v1beta/usage/{use_case}` return
   current-period consumption per budget (used tokens/requests).
 - Angular use-case detail gains a **Budgets tab**: set use-case / per-member budgets (scope, period,
@@ -3424,6 +3566,7 @@ options weighed, and the trade-offs.
 ---
 
 ## 2026-08-04 — FRD-401: budget enforcement + usage accounting
+
 - Gateway `BudgetService`: **pre-dispatch `guard`** loads the budgets applicable to the request's
   use case + subject, checks the current period's usage, and **rejects with `429 RESOURCE_EXHAUSTED`**
   when a limit is met; **post-dispatch `record`** increments the counters (generate + streaming).
@@ -3437,6 +3580,7 @@ options weighed, and the trade-offs.
 ---
 
 ## 2026-08-04 — FRD-400: budget model + distribution (Phase 4 start)
+
 - New Management `budgets` app: `Budget` per use case — `scope` (use_case | member), `period`
   (day | month), `limit_tokens` and/or `limit_requests`, `enabled`; unique on
   (use_case, scope, subject, period). Nested endpoints `GET/POST /use-cases/{slug}/budgets` (POST
@@ -3450,6 +3594,7 @@ options weighed, and the trade-offs.
 ---
 
 ## 2026-08-04 — FRD-306: pipeline rework — LLM routing, explainable filter, dry-run
+
 - Reworked the pipeline after feedback that routing was length-only and the builder was opaque.
 - **Routing** is now an **LLM classifier**: it reads system + user text, picks one of the configured
   `categories` (`{name, description, model}`) and routes to that model (`default_model` fallback).
@@ -3466,6 +3611,7 @@ options weighed, and the trade-offs.
 ---
 
 ## 2026-08-04 — UI usability: tabbed use-case detail
+
 - The use-case detail page was overloaded with stacked lists (members + keys + forms). Split into
   **tabs** (Overview / Members / API keys) so one section shows at a time; add/issue forms moved
   behind **disclosure** toggles; Overview shows quick **stat tiles**. Added `.tabs`/`.tile`/
@@ -3474,6 +3620,7 @@ options weighed, and the trade-offs.
 ---
 
 ## 2026-08-04 — FRD-300/303: pre-dispatch pipeline (filter · routing · fallback) + graph builder
+
 - **Gateway engine** (`aira_gateway/pipeline/`): per-use-case, config-driven pipeline runs before
   dispatch on the canonical request. Steps: `injection_filter` (heuristic **or LLM-backed**, fails
   open; action block|flag), `allow_check` (model allow-list), `model_route` (rule-based incl.
@@ -3492,6 +3639,7 @@ options weighed, and the trade-offs.
 ---
 
 ## 2026-08-04 — FRD-205: self-service API-key issuance + UI redesign (closes Phase 2)
+
 - **Backend (Management → Gateway)**: Management is now the source of truth for API keys
   (ADR-0006). New `apikeys` app (model + serializers) with nested endpoints on the use-case
   viewset: `POST/GET/DELETE /api/v1/use-cases/{slug}/api-keys[/{prefix}]`. A member issues a key
@@ -3513,9 +3661,10 @@ options weighed, and the trade-offs.
 ---
 
 ## 2026-08-04 — Upstream status passthrough (gateway hardening)
+
 - `UpstreamError` now carries the upstream HTTP `status_code` (`None` for transport failures).
 - Gemini routes map it: **429 → `429 RESOURCE_EXHAUSTED`**, **503 → `503 UNAVAILABLE`**,
-  **504 → `504 DEADLINE_EXCEEDED`**; everything else (upstream 4xx from *our* key/config, upstream
+  **504 → `504 DEADLINE_EXCEEDED`**; everything else (upstream 4xx from _our_ key/config, upstream
   5xx, transport errors) is masked as a generic **502 UNAVAILABLE** so a broken upstream is never
   mistaken for a client error. Streaming still logs + terminates cleanly (status already sent),
   now including the upstream status.
@@ -3526,6 +3675,7 @@ options weighed, and the trade-offs.
 ---
 
 ## 2026-08-04 — FRD-304: real Google Gemini upstream adapter (Phase 3)
+
 - **Async provider protocol**: `Upstream` (`upstreams/base.py`) is now `async` (`generate`/`embed`
   coroutines, `stream_generate` async-iterator); added `UpstreamError` for upstream failures.
   `MockProvider` updated accordingly.
@@ -3547,6 +3697,7 @@ options weighed, and the trade-offs.
 ---
 
 ## 2026-08-04 — FRD-203: Angular management shell
+
 - **Auth** (`core/auth`): `angular-oauth2-oidc` code-flow+PKCE against the `aira` realm; `AuthService`
   facade; functional `authInterceptor` (bearer on `/api` calls) + `authGuard` (redirect to login);
   `provideAppInitializer` runs OIDC discovery on startup.
@@ -3564,6 +3715,7 @@ options weighed, and the trade-offs.
 ---
 
 ## 2026-08-04 — FRD-204: config distribution over Kafka (Management → Gateway read-model)
+
 - **Transactional outbox** (management `outbox` app): use-case/membership change events are written to
   an `OutboxEvent` row **inside the same transaction** as the change (mutations wrapped in
   `transaction.atomic`; subscriber wired via `events.subscribe` in app-ready). A `relay` command
@@ -3572,18 +3724,19 @@ options weighed, and the trade-offs.
   `AiokafkaProducer` (real; `# pragma: no cover` I/O); topics `aira.usecases`/`aira.memberships`;
   W3C trace context on headers.
 - **Gateway consumer**: `apply_event` (idempotent upsert/delete) into read-model tables `use_cases`
-  + `use_case_members` (Alembic 0002); `worker` (aiokafka) + `decode_event_type`. `make kafka-topics`
-  creates compacted topics; `make relay` / `make consume`.
+  - `use_case_members` (Alembic 0002); `worker` (aiokafka) + `decode_event_type`. `make kafka-topics`
+    creates compacted topics; `make relay` / `make consume`.
 - **Gates green**: 202 tests, **100% coverage** (pure logic; Kafka I/O pragma-excluded, integration-
   tested); ruff + mypy --strict clean (aiokafka untyped import ignored).
 - **End-to-end verified**: created `kafka-uc` in management → outbox rows → `relay` published to Kafka
   → gateway consumer applied → read-model shows `use_cases: kafka-uc` and `use_case_members:
-  kafka-uc/demo-user/admin`. Failed publish (missing topic) left rows pending (nothing lost).
+kafka-uc/demo-user/admin`. Failed publish (missing topic) left rows pending (nothing lost).
 - **Next: FRD-205** (self-service API-key issuance, distributed via this backbone) or **FRD-203** (UI).
 
 ---
 
 ## 2026-08-04 — FRD-202: use-case CRUD + membership
+
 - **`usecases` app**: `UseCase` (slug/name/description/processing_notes) + `UseCaseMembership`
   (unique per user). CRUD at `/api/v1/use-cases/` (DRF ModelViewSet); slug validated to the gateway
   selector charset (`[a-z0-9-]`).
@@ -3602,6 +3755,7 @@ options weighed, and the trade-offs.
 ---
 
 ## 2026-08-04 — FRD-201: RBAC (roles + object-level use-case perms)
+
 - **`aira_management.rbac`**: `sync_user_roles` maps a token's realm roles onto Django groups (the
   five AIRA roles) on every auth — Keycloak is the source of truth. DRF permission classes
   (`IsGlobalAdmin`, `IsITSecurity`, `IsITSteuerung`, `IsUseCaseAdmin`, `IsUseCaseUser`; global-admin
@@ -3618,6 +3772,7 @@ options weighed, and the trade-offs.
 ---
 
 ## 2026-08-04 — Phase 2 begins · FRD-200: management DRF API + OIDC
+
 - **Shared OIDC** (`aira_common.oidc.JwtVerifier` + `build_jwks_client`): extracted JWT/JWKS
   verification so the gateway **and** management use one implementation. Gateway `OidcValidator`
   refactored to wrap it (behaviour unchanged, tests green).
@@ -3634,8 +3789,9 @@ options weighed, and the trade-offs.
 ---
 
 ## 2026-08-04 — Quality: error-safety + test-tier separation (Jenkins-ready)
+
 - **Confirmed the pytest suite is hermetic**: 154→156 tests pass with the **entire Compose stack
-  stopped** (in-memory SQLite, fake JWKS, mock provider). The earlier curl checks were *manual*, not
+  stopped** (in-memory SQLite, fake JWKS, mock provider). The earlier curl checks were _manual_, not
   part of the suite.
 - **Two test tiers** for CI: unit tests run by default; stack-dependent tests are marked
   `@pytest.mark.integration` and **excluded** (`-m 'not integration'`). Added `make test-integration`
@@ -3654,6 +3810,7 @@ options weighed, and the trade-offs.
 ---
 
 ## 2026-08-04 — FRD-104 + FRD-105 — **Phase 1 (Gateway MVP) complete**
+
 - **FRD-104 (mock fidelity + streaming)**: `:streamGenerateContent?alt=sse` now returns
   `text/event-stream` (`data: {json}\n\n`, the google-genai SDK path); the default returns a streamed
   **JSON array** (Gemini REST form). Mock honours `generationConfig.maxOutputTokens` → truncates and
@@ -3672,6 +3829,7 @@ options weighed, and the trade-offs.
 ---
 
 ## 2026-08-04 — FRD-103: request/response persistence + Alembic
+
 - **`request_logs`** table + `RequestLogService`: persist each dispatched request/response with
   attribution (subject, auth_method, use_case), source IP, model, operation, token usage, status,
   latency, and **trace_id** (correlates to Grafana). Wired into generate/embed/stream routes via
@@ -3690,7 +3848,8 @@ options weighed, and the trade-offs.
 ---
 
 ## 2026-08-04 — FRD-102: attribution & use-case selection (OIDC)
-- **Problem addressed**: an OIDC token authenticates the *identity*, not *which use case* — a user
+
+- **Problem addressed**: an OIDC token authenticates the _identity_, not _which use case_ — a user
   can be in several. Solution: explicit per-request use-case **selector** + membership authorization
   from Keycloak **groups** (no Management DB/Kafka needed yet).
 - **Selector**: `/uc/<use-case>/v1beta/...` path (via `UseCasePathMiddleware`) **or**
@@ -3710,6 +3869,7 @@ options weighed, and the trade-offs.
 ---
 
 ## 2026-08-04 — Decision: API-key issuance belongs in Management (ADR-0006)
+
 - Clarified the control-plane/data-plane split for API keys: **issuance/lifecycle/show-once** →
   **Management** (self-service UI, bound to use case); **validation** → **Gateway** against a local
   **read-model** fed by **Kafka** (`api_key.*` events; never plaintext). Rejected sync-call and
@@ -3722,6 +3882,7 @@ options weighed, and the trade-offs.
 ---
 
 ## 2026-08-04 — FRD-101 Slice B: OIDC bearer validation — **auth complete**
+
 - **OIDC validation** (`gateway/auth/oidc.py`): `OidcValidator` verifies a Keycloak JWT via the
   issuer's **JWKS** (`PyJWT` + `cryptography`), checking signature, issuer, expiry, and (optional)
   audience; resolves to a `Principal(method="oidc")`. JWKS client is injectable → unit-testable
@@ -3740,6 +3901,7 @@ options weighed, and the trade-offs.
 ---
 
 ## 2026-08-04 — FRD-101 Slice A: API-key authentication + gateway DB layer
+
 - **Gateway DB layer** (`gateway/db/`): SQLAlchemy 2.0 async via **psycopg3** (Postgres) /
   **aiosqlite** (tests); `Base`, engine/sessionmaker builders, `create_all` (Alembic deferred to
   FRD-103), and the `api_keys` table. App builds the engine + runs `create_all` in a lifespan.
@@ -3760,6 +3922,7 @@ options weighed, and the trade-offs.
 ---
 
 ## 2026-08-04 — FRD-100: Gemini-compatible unified API (Phase 1 begins)
+
 - **Decision**: ship the **Gemini** wire format first (existing projects run on it); OpenAI later →
   `ADR-0005`. Updated PRD/ROADMAP/README; added detailed `FRD-100`.
 - **Canonical core** (`gateway/core/canonical.py`): provider-agnostic request/response/usage/chunk —
@@ -3777,6 +3940,7 @@ options weighed, and the trade-offs.
 ---
 
 ## 2026-08-04 — FRD-002: seed & demo mode — **Phase 0 fully complete**
+
 - **Seed framework** (Django, `aira_management.apps.seed`): an extensible registry — each phase
   registers idempotent `SeedContribution`s (run in `(order, name)`); a `seed_demo` management command
   runs them, supports `--fresh` (reset) and refuses production without `--force`.
@@ -3796,6 +3960,7 @@ options weighed, and the trade-offs.
 ---
 
 ## 2026-08-04 — FRD-001: observability baseline (backend switched to Grafana otel-lgtm)
+
 - **Decision change**: SigNoz deprecated its Docker Compose manifests (Foundry-only), so it can't be
   embedded cleanly. Switched the local OTLP backend to **Grafana `otel-lgtm`** → `ADR-0004`
   (supersedes `ADR-0002`). Updated PRD/ROADMAP/CLAUDE.md/FRD-001.
@@ -3815,6 +3980,7 @@ options weighed, and the trade-offs.
 ---
 
 ## 2026-08-04 — Phase 0 / Slice 3b: Angular frontend shell — **Phase 0 complete**
+
 - Scaffolded **`management/frontend`** with **Angular 22** (latest; note: Node is 26, Angular is 22).
   Uses the new `@angular/build:unit-test` builder → **Vitest + jsdom** (no browser needed — CI-friendly).
 - Replaced the default welcome page with a minimal **AIRA shell** (title/subtitle header, nav
@@ -3832,6 +3998,7 @@ options weighed, and the trade-offs.
 ---
 
 ## 2026-08-04 — Phase 0 / Slice 3a: management backend (Django + DRF)
+
 - Added **`management/backend`** as a third uv workspace member: **Django 6.0 + DRF 3.17 +
   psycopg 3.3** on Python 3.14 (src layout, package `aira_management`).
 - Structure: `config` (settings driven by a typed `ManagementSettings`, `runtime.get_settings()`,
@@ -3848,6 +4015,7 @@ options weighed, and the trade-offs.
 ---
 
 ## 2026-08-04 — Phase 0 / Slice 2: gateway skeleton + shared libs
+
 - **uv workspace** at repo root (`pyproject.toml`) with members `gateway` + `libs`; shared tooling
   config (ruff, mypy strict, pytest, coverage gate `--cov-fail-under=90`). Python 3.14 venv via uv.
 - **`aira-common`** shared lib: `config` (pydantic-settings base), `logging` (structlog JSON),
@@ -3866,6 +4034,7 @@ options weighed, and the trade-offs.
 ---
 
 ## 2026-08-04 — Phase 0 / Slice 1: infra stack + toolchain
+
 - **Toolchain** (ADR-0003): confirmed Python 3.14.4 + uv 0.9.26 present. Installed **Node 26.6.0**
   via nvm; worked around `NPM_CONFIG_PREFIX` (unset in persistent env) and symlinked node/npm/npx
   into `~/.local/bin` (first on PATH); installed system lib `libatomic1` (Node 26 dependency).
@@ -3887,6 +4056,7 @@ options weighed, and the trade-offs.
 ---
 
 ## 2026-08-04 — Git init + Phase 0 FRDs
+
 - Initialized the Git repository (branch `main`) and added a `.gitignore` (Python, Node/Angular,
   secrets/`.env`, Docker data volumes).
 - Wrote the three **Phase 0 FRDs**:
@@ -3901,6 +4071,7 @@ options weighed, and the trade-offs.
 ---
 
 ## 2026-08-04 — Project kickoff & planning foundation
+
 - Established project vision and scope; created **`docs/PRD.md`** (Project Requirements Document v0.1).
 - Created **`docs/ROADMAP.md`** — phased delivery plan (Phase 0–7).
 - Added **`docs/features/FRD-TEMPLATE.md`** and **`README.md`**.
@@ -3928,7 +4099,7 @@ case's budget and written into its audit trail. The Gemini surface refused the i
 in both of its selector forms. Proven live; `request_logs` showed the row, attributed to the
 victim. Cause: the rule existed correctly in one place and was **restated by hand** on the second
 surface — the same shape as `FRD-126`'s pre-dispatch order, `FRD-206`'s permission predicates and
-`FRD-602`'s export scope. It now lives in `use_case_refusal`, returns a *reason* rather than
+`FRD-602`'s export scope. It now lives in `use_case_refusal`, returns a _reason_ rather than
 raising, and each surface wraps it in its own envelope, which is the only thing that should
 differ. The deliberate exception survives inside it: an **unbound** API key stays unrestricted,
 because break-glass exists for the moment the control plane is gone.
@@ -3945,7 +4116,7 @@ Six more, each with the same character — a rule that was right in one place an
 
 - **A credential was redacted in the trace backend and written verbatim to the access log.**
   `?key=` has been kept out of exported spans since `ADR-0007`; the web server's own request line
-  went to stdout intact, which is the *more* widely readable of the two. A logging filter now
+  went to stdout intact, which is the _more_ widely readable of the two. A logging filter now
   rewrites the arguments (not the formatted message — uvicorn formats after filters run), and
   deliberately redacts any string argument carrying a query rather than the one positional index
   uvicorn happens to use today.
@@ -3958,12 +4129,12 @@ Six more, each with the same character — a rule that was right in one place an
   the database host, Kafka host, every upstream and the current fallbacks now needs an
   authenticated caller. Locally, everything is shown.
 - **A control that needs a verified identity cannot bound a caller who has none.** Every limit
-  `FRD-405` built is keyed by use case or member. Authentication *failures* are now bounded per
+  `FRD-405` built is keyed by use case or member. Authentication _failures_ are now bounded per
   source address — **counting refusals only**, so a working credential never touches the bucket
   and the bound can be low enough to be worth having. Behind an untrusted proxy the whole
-  deployment shares one bucket, and that is tolerable *because* of the refusals-only rule: the
+  deployment shares one bucket, and that is tolerable _because_ of the refusals-only rule: the
   worst case is somebody else's typo answered 429 instead of 401.
-- **A key with no end date has to be inventoried.** First shipped as an *optional* expiry, on the
+- **A key with no end date has to be inventoried.** First shipped as an _optional_ expiry, on the
   argument that "an expiry which cannot be omitted is one somebody sets to the year 3000" — and
   that argument is about the **maximum**, not the default. Corrected the same day: every key is
   bounded, `AIRA_API_KEY_DEFAULT_DAYS` (30) applies when nobody names one and
@@ -3979,7 +4150,7 @@ Six more, each with the same character — a rule that was right in one place an
 **`FRD-406` finally does something.** The `Redactor` hook has existed since Phase 1 and was a
 no-op, so a stored prompt was a verbatim copy of whatever a caller sent. The redaction is
 deliberately **narrow**: credential shapes only (AIRA keys, `AIza…`, `sk-…`, `Authorization:`,
-JWTs, PEM private key blocks), because names, customer numbers and prose are *the work* — a
+JWTs, PEM private key blocks), because names, customer numbers and prose are _the work_ — a
 redactor that mangles them produces payloads nobody uses, and the deployment then switches storage
 off entirely, which is strictly worse than storing them. An unusable pattern **stops the gateway**
 rather than silently matching nothing, which is the `FRD-125` failure exactly: an absent control
@@ -3990,12 +4161,12 @@ Two test notes. The redaction requirement is proved twice on purpose — once ag
 once by posting a prompt at the route and reading the stored row back, because `FRD-124` and the
 CSV export both recorded on one day that a requirement exercised only against the class leaves the
 wiring undefended and coverage cannot see the difference. And the authentication-bound tests run
-with `redis_url=""`: the first version failed at the *first* request because a Redis left running
+with `redis_url=""`: the first version failed at the _first_ request because a Redis left running
 on the machine still held the bucket from a previous run — a bound that is a property of the
 process must be tested as one.
 
 Mutations `H1`–`H20` (the `S` prefix was taken; the harness refuses a duplicate id, which is how
-that was caught). Two self-inflicted findings worth recording, both about *where* a thing was
+that was caught). Two self-inflicted findings worth recording, both about _where_ a thing was
 written: the new mutation block was inserted into `survivors = [...]` in `main()` instead of into
 `MUTATIONS`, so all seventeen were reported "undefended" **by construction** and none had ever
 run; and a `validate_<field>` method does not execute for a field the caller **omitted**, which is
@@ -4015,18 +4186,18 @@ three already work and the third does not work at all.
 - **RAG chat**: covered for the generation half — documents (`FRD-110`), structured output,
   streaming, `systemInstruction`. Retrieval is the caller's.
 - **Coding assistants**: blocked on one field. `tools` and `toolConfig` are refused with a **400**,
-  and an assistant's entire loop *is* tool calling — it asks which file to read, gets a function
+  and an assistant's entire loop _is_ tool calling — it asks which file to read, gets a function
   call rather than prose, executes it itself, and sends the result back as the next turn.
 
 **The refusal is right and its stated reason is wrong**, which is the finding worth keeping.
 `api/gemini/schemas.py` cites `ADR-0013` — but that ADR says, in the same words it has always had:
-*"The gateway may pass a tool definition through … but never executes anything."* Passthrough is
+_"The gateway may pass a tool definition through … but never executes anything."_ Passthrough is
 explicitly in scope; execution is not. The message conflates them, so a reader arriving at that
 error concludes the whole area is closed by decision. The real reason is different and was written
 down nowhere: **`CanonicalRequest` has no field a tool declaration could travel in.** That is a
 capability gap, and a capability gap gets built; a boundary does not. `ADR-0013` now says so
-explicitly, and the same clarification was needed for caching: a cache *handle* (Google's
-`cachedContent`) is provider-side state and stays refused, while a cache *marker* on content the
+explicitly, and the same clarification was needed for caching: a cache _handle_ (Google's
+`cachedContent`) is provider-side state and stays refused, while a cache _marker_ on content the
 caller sends in full every time leaves the request self-contained and is a price, not a boundary.
 
 Three FRDs, in an order the owner set:
@@ -4036,7 +4207,7 @@ Three FRDs, in an order the owner set:
   smallest set that needs it is the right set to have it. Catalog capability, checked **per hop** so
   a fallback skips an incapable candidate rather than answering without tools — a 200 that a client
   will then parse as a function call. Two traps written down before they are hit: on Anthropic,
-  structured output is *already implemented as a forced tool call* (`FRD-119` §5.5), so tools plus a
+  structured output is _already implemented as a forced tool call_ (`FRD-119` §5.5), so tools plus a
   response schema is refused by name rather than silently losing one; and in the OpenAI dialect a
   tool call's arguments arrive **fragmented across chunks**, so a naive mapper emits several half
   calls.
@@ -4060,7 +4231,7 @@ command.
 **Five stale tests, each stale for a different reason, and each found by a layer above the one
 that could have prevented it.**
 
-*A shared database accumulates other people's global rules.* Three anomaly tests asserted on
+_A shared database accumulates other people's global rules._ Three anomaly tests asserted on
 `events[0]` after a tick. A tick evaluates every rule that applies to the scope — and a **global**
 rule (`use_case IS NULL`) applies to every scope there is. Sixteen `alert` rules left behind by
 earlier e2e runs meant `events[0]` was somebody else's finding, so the assertions read `alert`
@@ -4069,17 +4240,17 @@ exactly the right thing. They now select **their own** `rule_id`. Latent since t
 written, visible only once enough junk had piled up — the worst kind of test to leave standing,
 because it fails long after the change that exposed it.
 
-*A test I wrote hours earlier and never ran.* The e2e case for key expiry asserted that leaving the
+_A test I wrote hours earlier and never ran._ The e2e case for key expiry asserted that leaving the
 lifetime empty produces a key showing "never" — true when I wrote it, false the moment the bound
 landed, and I updated the unit and API tests without touching it. It now asserts the opposite,
 plus that the form states the policy the server enforces. **A test that has never been executed is
 not a test**, and this one was written, committed to a file, and left unrun until the suite was
 finally invoked.
 
-*A one-line CSS rule whose effect nobody had measured.* The e2e layout suite failed on the
+_A one-line CSS rule whose effect nobody had measured._ The e2e layout suite failed on the
 API-keys tab at phone width: **428px of document in a 360px viewport**. The offender turned out to
 be `.sr-only` — the visually-hidden "Actions" column header. It is `position: absolute` with **no
-positioned ancestor**, so it keeps its *static* position relative to the **document** rather than
+positioned ancestor**, so it keeps its _static_ position relative to the **document** rather than
 to the card that scrolls it. In a six-column table that sat at x≈427, and the whole page grew a
 horizontal scrollbar. My new "Expires" column is what pushed it over the edge; the rule had been
 wrong since it was written, and the rate-limits tab was quietly 8px over as well — never seen,
@@ -4088,15 +4259,15 @@ because the loop failed on the keys tab first and stopped.
 Fixed with `left: 0` on `.sr-only`, which removes the static position from the equation for every
 present and future use. **Not** by making `.table-wrap` a containing block: that would also clip
 the info-hint popups, which are absolutely positioned inside table headers on purpose and are
-*meant* to escape. Nothing moves visually — `clip-path: inset(50%)` hides the element wherever it
+_meant_ to escape. Nothing moves visually — `clip-path: inset(50%)` hides the element wherever it
 sits. Every detail tab now measures exactly 360.
 
-*And a test that was measuring more than it claimed.* `a live view refreshes without moving
+_And a test that was measuring more than it claimed._ `a live view refreshes without moving
 anything` observed layout shifts with `buffered: true`, so it counted the **initial render** as
 well as the refresh ticks it was written for. With 1919 findings in the database that render
 reflows once — 0.0207 at t=101ms, a card arriving after the shell, which is ordinary for a
 data-driven page and is not a control moving under the reader's cursor. Measured, then narrowed to
-what the name promises: shifts *after* the page has settled, still required to be exactly zero.
+what the name promises: shifts _after_ the page has settled, still required to be exactly zero.
 
 **Also fixed:** `test_management_api.py` scanned the use-case list as a plain array and failed after
 the rebuild — server paging (`FRD-208`) had changed the body to `{count, …, results}` the same week,
@@ -4128,15 +4299,15 @@ multiple, and "requests" on the reporting screen counts a different thing here.
 not think"; it means "do not emit a separate reasoning channel", and those are the same thing only
 on some models. Measured on one Ollama, one prompt, within a minute of each other:
 
-| | `qwen3:0.6b` | `qwen3:4b` |
-|---|---|---|
-| field omitted | 115 tokens, content `"OK"` | 132 tokens, content `"OK"` |
-| `"none"` | **3 tokens**, content `"OK."` | **103 tokens, content = 480 chars of raw chain-of-thought** |
-| `"minimal"` | — | **400** `invalid reasoning value` |
+|               | `qwen3:0.6b`                  | `qwen3:4b`                                                  |
+| ------------- | ----------------------------- | ----------------------------------------------------------- |
+| field omitted | 115 tokens, content `"OK"`    | 132 tokens, content `"OK"`                                  |
+| `"none"`      | **3 tokens**, content `"OK."` | **103 tokens, content = 480 chars of raw chain-of-thought** |
+| `"minimal"`   | —                             | **400** `invalid reasoning value`                           |
 
 The dialect maps `disabled` → `"none"` on a measurement recorded in the code — against the 0.6B
 model, where it is correct. On the 4B model of the **same family, same server, same minute**, the
-same mapping returns somebody's thinking *as the answer*, billed, with a 200. And the seed declared
+same mapping returns somebody's thinking _as the answer_, billed, with a 200. And the seed declared
 `disabled` as the **default** for whatever model was configured, so this was the ordinary path, not
 an edge case. A coding assistant against it would have received "Hmm, the user just asked me…" as
 every answer.
@@ -4145,7 +4316,7 @@ Fixed as **data, not code**: both seeds now key the thinking declaration by mode
 measurement, and a model nobody has measured gets no thinking declaration at all (`FRD-114` FR-7 —
 absence of information is not permission). `qwen3:4b` no longer offers `disabled`, so `FRD-111`
 refuses a request asking for it **by name**, which beats a 200 carrying reasoning. `minimal` is
-gone from the `tools/` seed as well: the identical correction had been made in the *Management*
+gone from the `tools/` seed as well: the identical correction had been made in the _Management_
 seed on 2026-08-06 and the second copy was never updated — one definition, two files, one of them
 fixed.
 
@@ -4171,11 +4342,11 @@ would have been refused as a no-op.
 
 **Stage 2, the Gemini surface.** `functionCall` and `functionResponse` left the refused-parts list
 and `tools` left the refused-fields list. Five existing tests failed, all of them asserting the
-*old decision* rather than a property — they moved with it, and the docstrings say why. Google
+_old decision_ rather than a property — they moved with it, and the docstrings say why. Google
 sends no call id and the other two dialects require one, so an id is generated where absent.
 
 **Stage 3, the OpenAI dialect** — the path to Ollama. Declarations become `tools`, a tool result
-becomes a message of its own with `role: "tool"`, arguments travel as a JSON *string*. The trap the
+becomes a message of its own with `role: "tool"`, arguments travel as a JSON _string_. The trap the
 FRD named before anything was built is real and is now handled: **a streamed tool call arrives in
 pieces**, name once and arguments as fragments across deltas, so `StreamedToolCalls` accumulates by
 index and emits whole calls on the chunk that ends the message. Unparseable arguments keep the name
@@ -4201,7 +4372,7 @@ never one dialect's to own.
 **And a measurement corrected a rule I had asserted.** `toolConfig` was refused outright, on the
 argument that its modes "hold on one vendor and silently do not on another". Then OpenCode was
 pointed at the gateway and sent `{"functionCallingConfig": {"mode": "AUTO"}}` on **every** request —
-and `AUTO` *is* the default: it asks for exactly what happens when nothing is sent. The blanket
+and `AUTO` _is_ the default: it asks for exactly what happens when nothing is sent. The blanket
 refusal blocked the whole use case in the name of a fidelity problem that mode does not have. Now
 `AUTO` is carried and `ANY`/`NONE` are refused **by name, because they are not built** — which is
 an honest reason, unlike a claim about vendors nobody had measured. Same shape as the `tools`
@@ -4230,13 +4401,13 @@ Stages 1–4 were called done, and a live OpenCode run said otherwise. The audit
 assistant turn read `{"text": ""}` and nothing else.
 
 **The cause is worth keeping.** The streaming path builds its stored response by accumulating
-`text_delta`. A tool call has **no text delta** — the answer *is* the call — so the row was
+`text_delta`. A tool call has **no text delta** — the answer _is_ the call — so the row was
 literally correct and completely useless: tokens and cost recorded, and no trace of what the model
 asked to have run. The buffered path stored it in full, because the whole response object went into
 the payload. One feature, two exits, one of them blind: `FRD-126`'s lesson arriving through a door
 it had not been pointed at.
 
-For a coding assistant this is not a detail. Every such client streams, so *every* tool call in
+For a coding assistant this is not a detail. Every such client streams, so _every_ tool call in
 real traffic was unrecorded — and "which functions did the model ask to run" is exactly the
 question `ADR-0013` promises the gateway can answer. A platform whose point is auditable model
 access had the least auditable part be the one that matters most.
@@ -4253,7 +4424,7 @@ a metadata column no clock covers. Migration `0021`.
 that declares nothing stores NULL — a column that is never NULL stops being evidence of anything.
 
 **And the client was not receiving them either.** The chunk mapper carried only `text_delta`, so a
-streamed tool call reached nobody: the audit was blind *and* the answer was lost. Both fixed
+streamed tool call reached nobody: the audit was blind _and_ the answer was lost. Both fixed
 together, which is the honest framing — recording something is not the same as delivering it.
 
 The mock now emits a tool call on the final chunk, exactly as a real dialect does. Without that the
@@ -4277,7 +4448,7 @@ once and was then used to argue that the family can do it at any size; asked aga
 prose, then called with invented arguments, once naming a parameter that is not in the schema.
 
 Which produced the rule the seed now states: **a vendor's capability flag is a claim, not
-evidence, and one successful call is not a capability.** `TOOLS_BY_MODEL` holds what was *seen*, is
+evidence, and one successful call is not a capability.** `TOOLS_BY_MODEL` holds what was _seen_, is
 appended to only after a run, and a model absent from it declares no tool calling — so the dispatch
 chain refuses it by name rather than letting prose reach a client that will parse it as a call.
 That entry was written for `qwen2.5:7b` while it was still downloading and taken out again before
@@ -4290,7 +4461,7 @@ part union widened; the catalog capability kept a tool request away from them, s
 broken — the feature simply only existed on one of three wire formats.
 
 Two dialect facts worth keeping. **Google sends no call id** and matches a result to a call by
-*name*, so an id is generated deterministically — otherwise a conversation begun there could not be
+_name_, so an id is generated deterministically — otherwise a conversation begun there could not be
 continued on the two dialects that require one. And **`functionResponse.response` is an object**,
 not a string, so a result is parsed back and a non-JSON one wrapped; the canonical model keeps text
 because two of three want it. Google also sends a function call **whole in one chunk**: no
@@ -4306,7 +4477,7 @@ output` is itself a `tool_use` block, filtered out of the reported calls: return
 the caller a function they never declared.
 
 The **tools-plus-schema conflict is a dispatch decision, not a mapping error**: structured output
-on that dialect *is* a forced tool call, so one field would have to serve two purposes and one of
+on that dialect _is_ a forced tool call, so one field would have to serve two purposes and one of
 them would silently lose. `ToolsAndSchemaTogether` skips the candidate by name, exactly as
 `SamplingExpressible` does for `top_k`, and each adapter declares `tools_with_schema` — absent
 means "cannot".
@@ -4314,8 +4485,8 @@ means "cannot".
 ### The matrix
 
 Asked whether the edge cases were covered, the honest answer was **no, not systematically** —
-individual cases existed, a matrix did not. `test_tool_calling_matrix.py` is organised by *where in
-the path* × *what is wrong with it*: the declaration, the replayed turn, the model's answer, the
+individual cases existed, a matrix did not. `test_tool_calling_matrix.py` is organised by _where in
+the path_ × _what is wrong with it_: the declaration, the replayed turn, the model's answer, the
 stream, governance, and the audit row seen as evidence. Writing it found three things the code had
 never decided:
 
@@ -4342,14 +4513,14 @@ an hour earlier so an agent loop would not reload its model between turns, had p
 (7.8 GB)** in a 15 GB box for half an hour, with `NUM_PARALLEL=2` making it two rather than one.
 
 Lowered to Ollama's own default of 5 minutes, and the models unloaded: 9 GB free, 502 frontend
-tests green. The lesson is the coupling itself — a *caching* setting starved a *test suite*, and
+tests green. The lesson is the coupling itself — a _caching_ setting starved a _test suite_, and
 nobody would look there. A knob that trades memory for latency needs a number that fits the machine
 it runs on, not the workload that motivated it.
 
 ## 2026-08-08 (night, last) — the console side of it: who may ask what, and a config that runs
 
 Three things the owner asked for before going to sleep: collect as much about AI usage as
-possible, show each role only what it may see (with a *"only my own requests"* toggle even for
+possible, show each role only what it may see (with a _"only my own requests"_ toggle even for
 those who see everything), let IT Security find a compromised client or system as fast as
 possible, and put a button on API-key issuance that produces an OpenCode configuration. Tool calls
 first, because that is where an assistant's behaviour actually shows.
@@ -4361,7 +4532,7 @@ first, because that is where an assistant's behaviour actually shows.
 So the role whose job is investigating an incident got the "you are in no use case" branch: an
 **empty** report and an **empty** trace list, on the screen built for it.
 
-It survived because every test asserting "an oversight role sees everything" used a *global admin*,
+It survived because every test asserting "an oversight role sees everything" used a _global admin_,
 which satisfies both predicates. It was found while writing a test for something else entirely,
 which is the third time this month that a defect has come out of a test aimed elsewhere. `N40`
 mutates the predicate back and both suites now catch it.
@@ -4370,7 +4541,7 @@ mutates the predicate back and both suites now catch it.
 
 `tool_calls` joins the row (`FRD-131` FR-7), and the list learned the filters an investigation
 actually opens with: **which system** (the API key's prefix), **whose identity**, **which
-machine**, plus *only my own requests* and *only the turns where the model asked for a function*.
+machine**, plus _only my own requests_ and _only the turns where the model asked for a function_.
 
 Two rules decided the shape:
 
@@ -4379,7 +4550,7 @@ Two rules decided the shape:
   without one is **refused with a 403, not ignored** — a filter that silently does nothing lets
   somebody conclude an address made no requests, which is the opposite of what the screen told
   them.
-- **A filter must not widen the scope.** Every one of them is applied *after* `visible_scope`, so
+- **A filter must not widen the scope.** Every one of them is applied _after_ `visible_scope`, so
   "only my own requests" narrows and can never reveal.
 
 The console offers the address field on the same condition, and the predicate is now **one
@@ -4414,13 +4585,13 @@ Frontend: 524 tests, branch coverage back above its gate by adding tests, not by
 31 live cases over the new surface, each asserting the three things `test_edge_cases.py` asserts:
 never a 500, a status the caller can act on, and a message that names the problem. Two shapes were
 worth walking twice — every combination of filters (contradictory, empty, absurd) must **narrow**,
-and a tool call's *arguments* must never reach the metadata column, because a file path or a
+and a tool call's _arguments_ must never reach the metadata column, because a file path or a
 customer number is content and this list is readable by every oversight role.
 
 One finding, from `limit=100000`: FastAPI answered **422** with its own `{"detail": [...]}` list.
 Every other error this API produces is `{"error": {code, message, status}}`, so a Google client
 handed the framework's shape reports "unknown error" and the caller never learns that `limit` has a
-maximum of 200. That is the *same* finding as the routing handler added on 2026-08-06 — a wrong
+maximum of 200. That is the _same_ finding as the routing handler added on 2026-08-06 — a wrong
 URL answered in the framework's shape — one layer in, and it had been there since the first typed
 query parameter.
 
@@ -4446,7 +4617,7 @@ Fixed at all three places it could have been stopped. The **resolver refuses** �
 under a model the caller never named, with nothing in the response looking wrong; `503`, because
 the installation is misconfigured and an administrator can fix it, with the two model names in the
 log rather than in the answer. The **seed releases the id** before taking it, since the number names
-a *role* and re-running for a different model must move it — fixed rather than derived, because a
+a _role_ and re-running for a different model must move it — fixed rather than derived, because a
 caller's configuration holds that number and changing it would break them silently. And the live
 catalog was cleaned.
 
@@ -4471,13 +4642,13 @@ NULL, and the badge fell through to its danger branch printing the status. A sta
 calls a success a problem is the one thing it must never do.
 
 **The control that opens a request was off screen.** It was the last column, and the table scrolls
-sideways now that it carries a use case and an address. Reported as *"the button was hidden behind
-the scroll, I did not even know it was there"* — which is the accurate description of an action
+sideways now that it carries a use case and an address. Reported as _"the button was hidden behind
+the scroll, I did not even know it was there"_ — which is the accurate description of an action
 that does not exist. First column now, and the whole row opens.
 
 **Three info hints that said nothing.** `InfoHint` takes its explanation as projected content; I
 wrote `text="…"`, which is not an input, and Angular ignores an unknown attribute on a component
-silently. The panels opened empty — *precisely* the defect the component was built to prevent,
+silently. The panels opened empty — _precisely_ the defect the component was built to prevent,
 since `FRD-206` shipped info buttons as `title` attributes that displayed nothing and this
 component was the fix.
 
@@ -4485,7 +4656,7 @@ component was the fix.
 
 Worth more than the fix. The first version was an Angular spec using `import.meta.glob` to read
 every template, and it **did not work**: those specs run in a browser, the glob is unavailable at
-runtime, and the file failed to *load* — Vitest reported "0 tests" for it while the run's total
+runtime, and the file failed to _load_ — Vitest reported "0 tests" for it while the run's total
 stayed green, and my grep for the pass count showed 535 and told me nothing.
 
 Found by breaking a template on purpose and watching nothing happen. It lives in the Python suite
@@ -4493,18 +4664,18 @@ now, which has a filesystem, and it was shown to fire.
 
 **A guard that cannot fail is the thing it guards against, one level up.** Third time in this
 repository that a new test had to be broken before it could be believed — and the first time the
-test in question *was* the safety net.
+test in question _was_ the safety net.
 
 ### And the deferral that could never be discharged as written
 
 `ADR-0009` deferred per-request browsing until `FRD-406` made it safe. `FRD-406` then shipped its
 credential half and **declined its PII half on purpose**, because names and customer numbers are
-what a payload is stored *for* and a redactor that mangles them ends with storage switched off.
+what a payload is stored _for_ and a redactor that mangles them ends with storage switched off.
 
 So the redactor was never going to discharge that deferral: the sensitive content and the useful
 content are the same content. `ADR-0016` grants the view on a different condition — a named set of
 roles, and **every read writes a record** naming who read what, when and on what authority, written
-*before* the content is returned. The boundary is still crossed. It is now crossed visibly.
+_before_ the content is returned. The boundary is still crossed. It is now crossed visibly.
 
 IT Steuerung reads none of it: every figure about every use case, no content. Visibility and
 content are different answers, which is the same split `FRD-206` had to make between seeing a use
@@ -4539,8 +4710,8 @@ about a text field.
 
 ### Typing two characters threw the reader out of the field
 
-> *"in Suchfeldern wenn ich 2 character reinschreibe, dann fängt er an zu suchen und ich fliege aus
-> dem Feld raus und muss es nochmal anclicken"*
+> _"in Suchfeldern wenn ich 2 character reinschreibe, dann fängt er an zu suchen und ich fliege aus
+> dem Feld raus und muss es nochmal anclicken"_
 
 The use-case list had its search input inside the `@else` of `@if (loading())`. So the first
 keystroke that reached the debounce started a query, the query set `loading`, Angular tore down the
@@ -4554,7 +4725,7 @@ and "busy" is a word beside it rather than a screen that replaces it.
 
 The shape is the defect, not the occurrence, so the guard scans every template for a search input
 inside a block its own query toggles. Its first version found nothing — because `@else` carries no
-condition, so `} @else {` reads as innocent no matter what it is the alternative *to*. Teaching it
+condition, so `} @else {` reads as innocent no matter what it is the alternative _to_. Teaching it
 to inherit the `@if` it belongs to immediately turned up a second instance in the model catalog,
 which does not misbehave today only because that search is client-side.
 
@@ -4567,8 +4738,8 @@ is.
 
 ### Eleven columns down to four
 
-When, from where, what, how it ended. That is what somebody scans a list *by*; model, tokens, cost,
-latency, trace id, tools, credential and use case are details *about* a request, and they now belong
+When, from where, what, how it ended. That is what somebody scans a list _by_; model, tokens, cost,
+latency, trace id, tools, credential and use case are details _about_ a request, and they now belong
 to the request that was opened. The table had grown to eleven columns and scrolled sideways, which
 is precisely how the control that opens a row ended up off screen yesterday — so the fix for that
 and the fix for this are the same fix, and an assertion on the scroller's own width keeps it.
@@ -4595,7 +4766,7 @@ credential.
 reachable. `reachable: null` means nothing was contacted, which `FRD-117` already established is not
 the same as failing. Never a generation — a self-deployed model can be scaled to zero, and a
 "does this work" button must not be the thing that wakes it, bills for it and takes minutes to say
-so. The upstream's error *text* is never repeated back: a provider's message can carry the URL it
+so. The upstream's error _text_ is never repeated back: a provider's message can carry the URL it
 was called with, and that URL can carry the key.
 
 Verified against the live registry, which is the only place it means anything: the local model
@@ -4605,9 +4776,9 @@ serves it"** instead of looking fine.
 ### Declaring a model was at the bottom of the page
 
 Somebody who came to add a model had to scroll past the entire catalog to find out how. The thing a
-screen is *for* goes where a reader starts. A row now opens to **everything on file** — built as a
+screen is _for_ goes where a reader starts. A row now opens to **everything on file** — built as a
 list in the component so it is exhaustive by construction, with a test that populates every field
-and requires each on screen. A catalog entry is what the gateway *enforces*; a partial answer to
+and requires each on screen. A catalog entry is what the gateway _enforces_; a partial answer to
 "what does this row actually say" is worse than none.
 
 ### An audit of the audit
@@ -4617,12 +4788,12 @@ each branch of `payloads.py` was broken in turn and the parametrised rows that n
 recorded. Three findings.
 
 **`is_oversight` was undefended.** Removing it makes an oversight role fall through to
-`OUT_OF_SCOPE`, which is *also* a 403 — so a matrix checking only the status passed with the role
+`OUT_OF_SCOPE`, which is _also_ a 403 — so a matrix checking only the status passed with the role
 boundary gone. The distinction is the entire point of the message: "you see figures, not content"
 and "that use case is not yours" send the reader to two different people. The matrix asserts the
 sentence now.
 
-**Half an audit reports half a matrix as pointless.** Deleting a branch can only make code *more*
+**Half an audit reports half a matrix as pointless.** Deleting a branch can only make code _more_
 permissive, so a case guarding against over-restriction can never go red for a deletion. Running the
 inverse mutations — refuse too much — showed that four rows exist precisely to defend against that,
 and one of them is the only thing standing between a colleague's request being readable and not.
@@ -4646,7 +4817,7 @@ adjacent checkboxes is a governance mistake rather than a typo.
 `FRD-500` says a global rule is IT Security's to author, and the server has accepted one since the
 day it was written. The console never offered the button — so every global rule that existed
 anywhere had been written into the database by a seed, and the question came back exactly as one
-would expect: *"wie mache ich es über die Oberfläche?"*
+would expect: _"wie mache ich es über die Oberfläche?"_
 
 This is `FRD-206`'s defect **inverted**. That one was a control that refuses when used; this is a
 capability nobody could reach. Both are a console disagreeing with its server, and only the first
@@ -4654,10 +4825,10 @@ one announces itself.
 
 ### Three lists that only grow
 
-Rules, what is stopped now, and what was stopped before — the last of which is *kept* on purpose,
+Rules, what is stopped now, and what was stopped before — the last of which is _kept_ on purpose,
 because "blocked for two hours last Tuesday" is what a review asks. All three are paged and
 searchable now, and one box covers both suspension lists: "has this caller ever been stopped?" is
-answered by the live list *together with* the record, and a search over only the first would answer
+answered by the live list _together with_ the record, and a search over only the first would answer
 it wrongly while looking like it had answered it.
 
 Paging then broke two e2e tests, and correctly: they created a rule and looked for it on screen,
@@ -4668,7 +4839,7 @@ for it now — which is what a person would do, and what the tests should have b
 
 Four rules were seeded and three appeared. The fourth named a use case this seed does not create,
 and the loop's `continue` dropped it silently: the count looked plausible and the one that went
-missing was the only rule that *acts* rather than alerts.
+missing was the only rule that _acts_ rather than alerts.
 
 Found by running the seed rather than reading it. It raises now — the **third** instance in this
 repository of "returns silently for something unknown", after `record_to_outbox` and the missing
@@ -4676,8 +4847,8 @@ Kafka topics.
 
 ### And the design question that was asked directly
 
-> *"Warum machen wir check reachability nicht im Window, und wenn reachability false ist, dann kein
-> Anlegen?"*
+> _"Warum machen wir check reachability nicht im Window, und wenn reachability false ist, dann kein
+> Anlegen?"_
 
 In the window: yes, done. Blocking: **no**, and it is worth writing down why. Declaring a model
 before its credential exists is the ordinary order of work — you write the catalog, then configure
@@ -4691,16 +4862,16 @@ warns, revocation blocks. A reachability verdict is information, and it is shown
 ### "Test connection is still not in the window"
 
 It was — inside `@if (name())`. Opening "Add model" starts with an empty name, so there was **no
-button at all**, and the feature read as missing because from where the reader stood it *was*
+button at all**, and the feature read as missing because from where the reader stood it _was_
 missing. A control that appears only after you have done something else is a control nobody finds.
 
-The follow-up was sharper: *"und ich kann ein Modell ohne Testen anlegen"*. Yesterday I argued
+The follow-up was sharper: _"und ich kann ein Modell ohne Testen anlegen"_. Yesterday I argued
 against blocking on a failed verdict and that argument still holds — declaring a model before its
 credential arrives is the ordinary order of work, and an adapter exists only once the credential
 does, so refusing on `served: false` would make a fresh installation undeclarable.
 
 But that was an answer to a different question. **Refusing the verdict and refusing the ignorance
-are not the same refusal.** Save now needs a check to have been *answered* for the name in the
+are not the same refusal.** Save now needs a check to have been _answered_ for the name in the
 form — whatever it answered. It rules out the one outcome a single button can rule out: nobody adds
 a model without having found out. An erroring check counts as looked-at, because a diagnostic that
 cannot answer must not become a gate.
@@ -4711,7 +4882,7 @@ checking. That is the gate working, and updating them is the cheapest possible p
 ### Tabs that stop hiding themselves
 
 Below 60rem the strip is a vertical list. Scrolling was the old answer and it is the wrong one for
-*navigation*: a tab that has scrolled out of view is a section the reader does not know exists, and
+_navigation_: a tab that has scrolled out of view is a section the reader does not know exists, and
 the use-case detail has seven of them. The breakpoint is 60rem rather than a phone width because the
 pain starts on a laptop half-window, not at 360px.
 
@@ -4720,7 +4891,7 @@ CSS only — no template changed, so nothing that clicks a tab by role or text h
 ### And the mistake worth writing down
 
 Proving the layout test could fail, I cut the media query out of the stylesheet by searching for an
-end marker that appears *earlier* in the file than the block. The slice silently **duplicated**
+end marker that appears _earlier_ in the file than the block. The slice silently **duplicated**
 content instead of removing it, the rule stayed in effect, and the test stayed green — which I
 briefly read as "the test does not work".
 
@@ -4730,20 +4901,20 @@ experiment says something surprising, verify the experiment before believing the
 
 ## 2026-08-09 (night) — Only catalogued models, and what that cost to find out
 
-> *"Es dürfen nur die Modelle verwendet werden, die im Katalog stehen und explizit von einem
-> globalen Admin angelegt wurden."*
+> _"Es dürfen nur die Modelle verwendet werden, die im Katalog stehen und explizit von einem
+> globalen Admin angelegt wurden."_
 
-The morning's version approved *declared* models and left a model with **no catalog row** alone, on
+The morning's version approved _declared_ models and left a model with **no catalog row** alone, on
 `FRD-114` FR-7's reasoning that an undeclared model gets the baseline. That was the wrong side of
 the line, and for a reason better than tidiness: the rule could be defeated by **deleting** a
 declaration. Approval was removable by removing the thing that carried it.
 
 So the baseline for a model nobody catalogued is now nothing, and `FRD-114` FR-7 says so — "absence
-of information is not permission" now extends from *what a model may do* to *whether it may be used
-at all*.
+of information is not permission" now extends from _what a model may do_ to _whether it may be used
+at all_.
 
-Two refusals, deliberately not one: *"not in the model catalog"* needs somebody to **add** the
-model, *"has not been approved"* needs somebody to **release** it. A single message would send the
+Two refusals, deliberately not one: _"not in the model catalog"_ needs somebody to **add** the
+model, _"has not been approved"_ needs somebody to **release** it. A single message would send the
 reader to the wrong person.
 
 ### 58 tests, and the right way to read them
@@ -4766,8 +4937,8 @@ least the real one answers.
 It is now registered only in `local` or demo mode. `FRD-307` did not create that hole; it made it
 impossible to keep not noticing.
 
-Verified live, twice: removing `qwen3:0.6b` from the catalog produced *"is not in the model
-catalog"*, and un-approving it produced *"has not been approved for use"* — each naming the model
+Verified live, twice: removing `qwen3:0.6b` from the catalog produced _"is not in the model
+catalog"_, and un-approving it produced _"has not been approved for use"_ — each naming the model
 and the action.
 
 ## 2026-08-09 (night) — "Are they really leftover data?"
@@ -4799,14 +4970,14 @@ After deleting them, a tick writes **1** finding.
 
 ### Two fixes, and the second is the one that generalises
 
-The test was also genuinely wrong: it means to assert *scope*, so it now asks about its own use
+The test was also genuinely wrong: it means to assert _scope_, so it now asks about its own use
 case instead of fishing in a global list. Deterministic, and it tests the thing it is named after.
 
 And the e2e tests **delete the rules they create**. That is the rule worth stating: a test may leave
 rows behind — they are noise. A test that leaves a **policy** behind has changed the system's
 behaviour, permanently and invisibly, and this one had been doing it for weeks.
 
-Deleting a rule asks for confirmation, and Playwright auto-*dismisses* dialogs — so the first
+Deleting a rule asks for confirmation, and Playwright auto-_dismisses_ dialogs — so the first
 version of the cleanup clicked and did nothing, which is how the leftovers would have kept
 accumulating even after "adding cleanup".
 

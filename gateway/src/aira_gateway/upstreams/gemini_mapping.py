@@ -215,6 +215,10 @@ def _usage_of(data: dict[str, Any]) -> CanonicalUsage:
     return CanonicalUsage(
         prompt_tokens=int(meta.get("promptTokenCount", 0)),
         completion_tokens=int(meta.get("candidatesTokenCount", 0)),
+        # Implicit caching is on by default from Gemini 2.5 and needs nothing sent; this count is
+        # the only evidence it happened (`FRD-133` §4a). `promptTokenCount` already includes it,
+        # so this is a subset and not an addition — the same invariant every dialect keeps.
+        cached_input_tokens=int(meta.get("cachedContentTokenCount", 0) or 0),
     )
 
 

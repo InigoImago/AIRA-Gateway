@@ -88,6 +88,13 @@ async def _upsert_usecase(session: AsyncSession, payload: dict[str, Any]) -> Non
         # Absent means **off**, which matters for an event written by an older Management: a
         # missing field must not read as permission (`FRD-114` FR-7, one layer over).
         "tools_enabled": bool(payload.get("tools_enabled", False)),
+        # Same default-off reading as `tools_enabled`: an event from an older Management carries
+        # no such field, and inventing consent from its absence is the wrong direction for a
+        # setting whose cache scope is shared across the organisation (`FRD-133` §4b).
+        "prompt_caching_enabled": bool(payload.get("prompt_caching_enabled", False)),
+        # Absent means the cheap default, not the expensive one: an older Management sends no
+        # such field, and reading its silence as "one hour" would double every write price.
+        "prompt_cache_ttl": str(payload.get("prompt_cache_ttl") or "5m"),
         # Absent means **unrestricted**, unlike `tools_enabled` above — and the difference is
         # deliberate. A missing capability must not read as permission; a missing *restriction*
         # must not read as one either, or an event from an older Management would silently narrow
@@ -381,6 +388,12 @@ async def _upsert_model(session: AsyncSession, payload: dict[str, Any]) -> None:
         "display_name": payload.get("display_name", ""),
         "provider": payload.get("provider", ""),
         "input_price_per_million_nanos": _price_nanos(payload.get("input_price_per_million")),
+        "cached_input_price_per_million_nanos": _price_nanos(
+            payload.get("cached_input_price_per_million")
+        ),
+        "cache_write_price_per_million_nanos": _price_nanos(
+            payload.get("cache_write_price_per_million")
+        ),
         "output_price_per_million_nanos": _price_nanos(payload.get("output_price_per_million")),
     }
     for field, default in _DECLARATION_DEFAULTS.items():

@@ -63,6 +63,31 @@ class Model(models.Model):
         help_text="Price per 1,000,000 output tokens, in the installation currency",
     )
 
+    # What a prompt cache costs on this model (`FRD-133`). Two more rates rather than a multiplier,
+    # because the vendors do not agree on one: Anthropic publishes 0.1x for a read and 1.25x or 2x
+    # for a write depending on the lifetime, Azure publishes an absolute cached-input price, and a
+    # self-hosted runtime has neither. A rate is a fact you can copy off a price list; a multiplier
+    # is one somebody has to derive, and derive again per model.
+    #
+    # Null means "charge the ordinary input rate", which never under-bills — deliberately not
+    # "free". `FRD-403`'s rule about unpriced traffic, applied one field in.
+    cached_input_price_per_million = models.DecimalField(
+        max_digits=12,
+        decimal_places=6,
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(Decimal("0"))],
+        help_text="Price per 1,000,000 input tokens served from the provider's prompt cache",
+    )
+    cache_write_price_per_million = models.DecimalField(
+        max_digits=12,
+        decimal_places=6,
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(Decimal("0"))],
+        help_text="Price per 1,000,000 input tokens written into the provider's prompt cache",
+    )
+
     # -- what it can do, and within what bounds (FRD-114) ---------------------------------
 
     #: Declared capabilities (`aira_common.models.Capability`). Empty means undeclared, which the

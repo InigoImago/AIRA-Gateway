@@ -2490,6 +2490,95 @@ MUTATIONS = [
         "        _unused = (\n            PayloadAccess(",
         "gateway/tests/test_payload_access.py",
     ),
+    # ---- prompt-cache accounting (FRD-133 stage A) -------------------------------------------
+    #
+    # Measured first: 99.1 % of an assistant turn is repeated content and 93.3 % of that use case's
+    # tokens are input, so this is where its bill is. `C1` and `C2` are the two directions the
+    # pricing can be wrong in, and only one of them is safe — under-billing a write is the failure
+    # a cost control must not have. `C3` is the invariant everything else in the system rests on.
+    Mutation(
+        "U1",
+        "a cache read is charged at its own rate, not at full input price",
+        "gateway/src/aira_gateway/pricing.py",
+        "                usage.uncached_input_tokens,",
+        "                usage.prompt_tokens,",
+        "gateway/tests/test_prompt_cache_accounting.py",
+    ),
+    Mutation(
+        "U2",
+        "a cache write costs more than ordinary input, and is billed so",
+        "gateway/src/aira_gateway/pricing.py",
+        "            + cost_nanos(usage.cache_write_tokens, price.cache_write_rate)",
+        "            + 0",
+        "gateway/tests/test_prompt_cache_accounting.py",
+    ),
+    Mutation(
+        "U3",
+        "cached tokens are a subset of the input total, never an addition to it",
+        "gateway/src/aira_gateway/core/canonical.py",
+        "        return max(0, self.prompt_tokens - self.cached_input_tokens - self.cache_write_tokens)",
+        "        return self.prompt_tokens",
+        "gateway/tests/test_prompt_cache_accounting.py",
+    ),
+    Mutation(
+        "U4",
+        "the dialects read the cache counts their provider actually sends",
+        "gateway/src/aira_gateway/upstreams/openai/mapping.py",
+        'cached = int((details or {}).get("cached_tokens", 0) or 0) if isinstance(details, dict) else 0',
+        "cached = 0",
+        "gateway/tests/test_prompt_cache_accounting.py",
+    ),
+    # Re-anchored the day the lifetime became configurable: the marker stopped being a constant
+    # and became a function of the request. A mutation whose anchor has moved protects nothing —
+    # and this one was reported STALE by the harness rather than silently passing, which is the
+    # whole reason `N2`'s lesson was built into it.
+    Mutation(
+        "U5",
+        "the cache marker lands on the stable prefix when a use case asks for it",
+        "gateway/src/aira_gateway/upstreams/vertex/anthropic_mapping.py",
+        '            body["tools"][-1]["cache_control"] = _cache_control(request)',
+        "            pass",
+        "gateway/tests/test_prompt_cache_accounting.py",
+    ),
+    # ---- the console's two settings, and the journey they make (FRD-133 stage C) --------------
+    #
+    # The three below are all one property seen at three hops: a checkbox travels through an
+    # event, a read-model row and a post-routing lookup before it can change a single byte on the
+    # wire, and **nothing fails** when it is dropped — a request served uncached is
+    # indistinguishable from one that was never asked to cache. `FRD-124`'s lesson, which is that
+    # a requirement tested only where it is implemented leaves the wiring to it undefended.
+    Mutation(
+        "U7",
+        "the expensive lifetime is only ever sent when it was asked for",
+        "gateway/src/aira_gateway/upstreams/vertex/anthropic_mapping.py",
+        '    return {**_EPHEMERAL, "ttl": "1h"} if request.cache_ttl == "1h" else dict(_EPHEMERAL)',
+        '    return {**_EPHEMERAL, "ttl": "1h"}',
+        "gateway/tests/test_prompt_cache_accounting.py",
+    ),
+    Mutation(
+        "U8",
+        "the lifetime the console chose is the one that reaches the provider",
+        "gateway/src/aira_gateway/api/serving.py",
+        '    chosen = getattr(record, "prompt_cache_ttl", "5m") if record is not None else "5m"',
+        '    chosen = "5m"',
+        "gateway/tests/test_prompt_cache_accounting.py",
+    ),
+    Mutation(
+        "U9",
+        "a use case that did not opt in is never marked, however cheap it would be",
+        "gateway/src/aira_gateway/api/serving.py",
+        "    return bool(record is not None and record.prompt_caching_enabled)",
+        "    return True",
+        "gateway/tests/test_prompt_cache_accounting.py",
+    ),
+    Mutation(
+        "U6",
+        "a request that did not opt in is byte-identical to what it was before caching existed",
+        "gateway/src/aira_gateway/upstreams/vertex/anthropic_mapping.py",
+        "            if request.cache_prefix\n            else joined",
+        "            if True\n            else joined",
+        "gateway/tests/test_prompt_cache_accounting.py",
+    ),
     # ---- the security round (2026-08-09) -----------------------------------------------------
     #
     # Four properties from a full read of the code. Each is a *refusal* or a *parse*, which is the

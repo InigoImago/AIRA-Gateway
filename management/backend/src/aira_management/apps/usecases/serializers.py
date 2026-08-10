@@ -49,6 +49,8 @@ class UseCaseSerializer(serializers.ModelSerializer[UseCase]):
             "store_payloads",
             "restrict_members_to_own_requests",
             "tools_enabled",
+            "prompt_caching_enabled",
+            "prompt_cache_ttl",
             "retention_days",
             "created_at",
             "updated_at",

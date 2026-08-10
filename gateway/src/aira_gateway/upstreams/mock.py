@@ -73,7 +73,7 @@ class MockProvider:
         prompt = request.last_user_text().strip().replace("\n", " ")[:120]
         words = (
             f"[mock:{request.model}] response to: {prompt}"
-            f"{_attachments(request)}{_thinking(request)}"
+            f"{_attachments(request)}{_thinking(request)}{_caching(request)}"
         ).split()
 
         finish_reason = "stop"
@@ -202,6 +202,22 @@ def _thinking(request: CanonicalRequest) -> str:
         return ""
     budget = f" budget={setting.tokens}" if setting.tokens is not None else ""
     return f" [thinking:{setting.mode}{budget}]"
+
+
+def _caching(request: CanonicalRequest) -> str:
+    """Say whether the stable prefix was marked cacheable, and for how long (`FRD-133`).
+
+    The marker and nothing else. A mock that also reported cached tokens would make every
+    "caching saves money" assertion true by construction, and whether a prefix is actually hit is
+    the one thing about this feature that only a real provider can tell us — the same reason
+    `FRD-123` went looking for a model that had never agreed to anything.
+
+    Worth saying at all because the setting travels a long way to get here: a checkbox in the
+    console, an event, a read-model row, a lookup after routing. Every hop is somewhere it can be
+    dropped without anything failing, and a request served uncached looks exactly like one that
+    was never asked to cache.
+    """
+    return f" [cache:{request.cache_ttl}]" if request.cache_prefix else ""
 
 
 def _thinking_tokens(request: CanonicalRequest) -> int:

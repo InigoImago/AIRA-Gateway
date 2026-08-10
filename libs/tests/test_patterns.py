@@ -57,6 +57,7 @@ def test_the_rule_is_the_same_object_both_planes_read() -> None:
     """Not a value test — an identity one. Two copies of this expression would agree until one of
     them was tightened, and the plane that kept the looser copy is the one on the request path."""
     from aira_management.apps.pipelines import serializers as management
+
     from aira_gateway.pipeline import classifiers as gateway
 
     assert management.is_catastrophic is is_catastrophic

@@ -12,6 +12,7 @@ function reportRow(over: Partial<ReportRow> = {}): ReportRow {
     total_tokens: 10664,
     cost_nanos: 3674900,
     cost: '0.003675',
+    cached_input_tokens: 0,
     unpriced_requests: 0,
     failed_requests: 0,
     avg_latency_ms: 120,
@@ -152,5 +153,30 @@ describe('ConsumptionPanel', () => {
     panel.fixture.detectChanges();
 
     expect(panel.at('help-consumption-cost')?.textContent).toContain('unknown is not zero');
+  });
+});
+
+describe('ConsumptionPanel — the cache share (`FRD-133`)', () => {
+  /**
+   * Without this figure "tune the caching empirically" is not possible: a cache that has silently
+   * stopped working looks exactly like an expensive month, and switching a parameter tells you
+   * nothing if no number moves.
+   */
+  it('shows what fraction of the input came from the cache', () => {
+    const panel = setup({
+      month: reportRow({ prompt_tokens: 20_000, cached_input_tokens: 18_000 }),
+      today: reportRow({ prompt_tokens: 1_000, cached_input_tokens: 0 }),
+    });
+
+    expect(panel.at('consumption-month-cached')?.textContent).toContain('90%');
+    expect(panel.at('consumption-today-cached')?.textContent).toContain('0%');
+  });
+
+  it('says nothing rather than 0% when there was no input at all', () => {
+    /** 0 % of nothing is not a cache miss. A use case with no traffic would otherwise read as a
+     *  cache that never works, and somebody would go looking for a fault. */
+    const panel = setup({ month: reportRow({ prompt_tokens: 0, cached_input_tokens: 0 }) });
+
+    expect(panel.at('consumption-month-cached')?.textContent?.trim()).toBe('—');
   });
 });

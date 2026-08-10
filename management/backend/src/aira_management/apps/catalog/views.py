@@ -40,6 +40,19 @@ def _payload(model: Model) -> dict[str, Any]:
             if model.output_price_per_million is not None
             else None
         ),
+        # `FRD-133`. Carried even when null, so an operator removing a cache price takes it off the
+        # gateway too — an event that omits a field the consumer would otherwise leave standing is
+        # how a deleted price keeps being charged.
+        "cached_input_price_per_million": (
+            str(model.cached_input_price_per_million)
+            if model.cached_input_price_per_million is not None
+            else None
+        ),
+        "cache_write_price_per_million": (
+            str(model.cache_write_price_per_million)
+            if model.cache_write_price_per_million is not None
+            else None
+        ),
         # FRD-114. The gateway reads its own read-model on the request path and never calls
         # Management (FR-8), so everything validation needs has to travel with the event.
         "capabilities": list(model.capabilities or []),
