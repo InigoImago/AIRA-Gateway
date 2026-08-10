@@ -1300,6 +1300,20 @@ binaries — which is a generator of "it builds for me" and nothing else, with t
 above it doing nothing. One context root now, named copies instead of `COPY . .`, context **1.5 MB
 instead of 302 MB**, and a test requires every image to share the root.
 
+**The one upstream nobody was measuring (2026-08-10)** — asked whether **Google AI Studio** could
+be supported: it is, and always was (`FRD-304` built it first — `generativelanguage.googleapis.com`
+is that product). Answering found the hole: **three of four adapter families check their region
+against `AIRA_ALLOWED_REGIONS` at startup** (Vertex, OpenAI servers, Foundry) and the AI Studio one
+did not. It declared `region="global"` honestly, so the value reached the audit row, and nothing
+compared it to the policy — under the EU default a deployment would serve through an endpoint that
+names no region and guarantees none, **while the evidence said it was compliant**. An enforced
+control that one path bypasses is worse than one missing everywhere (the `:embedContent` shape).
+`FRD-115`'s rule unchanged: a disallowed region is a **startup** failure. AI Studio stays fully
+usable by naming `global` out loud, which turns a thing somebody remembers into a configured line
+and a region on every row. The guard is **structural** — every `build_*_upstream(s)` must mention
+`check_region` — and its first run flagged `build_token_source`, which builds a *credential* and
+has no region; narrowed to the layer's two suffixes, then proved sharp again.
+
 **Two roles nobody could use, removed (2026-08-10)** — `ADR-0017` abolished `use-case-admin` and
 `use-case-user` a day earlier and they stayed in the `Role` enum, the realm file, the seed (which
 created a Django group for each and assigned it), the console's specs and two reader documents.

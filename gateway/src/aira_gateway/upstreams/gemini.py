@@ -20,6 +20,7 @@ from aira_gateway.core.canonical import (
     CanonicalRequest,
     CanonicalResponse,
 )
+from aira_gateway.residency import check_region, parse_allowed
 from aira_gateway.upstreams.base import UpstreamError, UpstreamModel
 from aira_gateway.upstreams.gemini_mapping import (
     SAMPLING as GEMINI_SAMPLING,
@@ -41,12 +42,23 @@ _METHODS = (
 )
 
 
+#: What the Google AI Studio endpoint is, in the residency vocabulary.
+#:
+#: `generativelanguage.googleapis.com` names no region and gives no regional guarantee — which is
+#: precisely the difference from Vertex, where the region is in the URL and the data stays in it.
+#: Calling that `global` is the honest answer, and it is a value an EU allow-list does not contain,
+#: so a deployment has to say `global` out loud to use it.
+GENERATIVE_LANGUAGE_REGION = "global"
+
+
 class GeminiUpstream:
     def __init__(self, api_key: str, models: list[str], client: httpx.AsyncClient) -> None:
         self._api_key = api_key
         self._client = client
         self._models = [
-            UpstreamModel(name, name, _METHODS, "generative-language", "google", "global")
+            UpstreamModel(
+                name, name, _METHODS, "generative-language", "google", GENERATIVE_LANGUAGE_REGION
+            )
             for name in models
         ]
 
@@ -109,9 +121,30 @@ class GeminiUpstream:
 
 
 def build_gemini_upstream(settings: GatewaySettings) -> GeminiUpstream | None:
-    """Build the Gemini provider from settings, or None when no API key is configured."""
+    """Build the Gemini provider from settings, or None when no API key is configured.
+
+    **Residency is checked here too, as of 2026-08-10.** It was not, and this was the one adapter
+    family of four that was not: Vertex, the OpenAI servers and Foundry all measure their region
+    against `AIRA_ALLOWED_REGIONS` at startup, and this one declared `global` on every model —
+    honestly, so it reached the audit row — while nothing compared it to the policy.
+
+    That is the shape this project keeps naming: an **enforced control that one path bypasses**,
+    the same as `:embedContent` skipping the pre-dispatch gate. The record was right and the
+    control was absent, which is worse than a control that is missing everywhere, because the
+    evidence says the deployment is compliant.
+
+    `FRD-115`'s rule applies unchanged: a model in a region this deployment does not permit is a
+    **startup** failure. A gateway that sometimes leaves the EU is not a smaller problem than one
+    that will not start — it is the same problem, discovered later and by somebody else.
+
+    AI Studio remains entirely usable, and deliberately: name `global` in `AIRA_ALLOWED_REGIONS`.
+    That turns "may we send data there" from something a person remembers into a line in the
+    configuration and a region on every audit row.
+    """
     if not settings.google_api_key:
         return None
+    allowed = parse_allowed(settings.allowed_regions)
+    check_region(GENERATIVE_LANGUAGE_REGION, allowed)
     models = [name.strip() for name in settings.gemini_models.split(",") if name.strip()]
     client = httpx.AsyncClient(base_url=settings.gemini_base_url, timeout=60.0)
     return GeminiUpstream(settings.google_api_key, models, client)

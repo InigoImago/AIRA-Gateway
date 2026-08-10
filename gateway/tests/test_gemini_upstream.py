@@ -122,9 +122,52 @@ def test_build_returns_none_without_key() -> None:
 
 
 def test_build_parses_model_list() -> None:
-    upstream = build_gemini_upstream(GatewaySettings(google_api_key="k", gemini_models="a, b ,"))
+    # `global` has to be permitted, because that is what this endpoint is: AI Studio names no
+    # region and gives no regional guarantee, which is the whole difference from Vertex.
+    upstream = build_gemini_upstream(
+        GatewaySettings(google_api_key="k", gemini_models="a, b ,", allowed_regions="global")
+    )
     assert upstream is not None
     assert [model.name for model in upstream.models()] == ["a", "b"]
+
+
+# == residency reaches this adapter too (FRD-115) ================================================
+
+
+def test_ai_studio_is_refused_under_an_eu_allow_list() -> None:
+    """The hole this closes, and it was the only one of four adapter families left open.
+
+    Vertex, the OpenAI servers and Foundry all measure their region against the policy at startup.
+    This one declared `global` on every model — honestly, so it reached the audit row — and nothing
+    compared it to anything. An **enforced control that one path bypasses** is worse than a missing
+    one, because the evidence then says the deployment is compliant.
+    """
+    from aira_gateway.residency import RegionNotAllowed
+
+    with pytest.raises(RegionNotAllowed) as excinfo:
+        build_gemini_upstream(GatewaySettings(google_api_key="k", allowed_regions="europe-west1"))
+
+    assert "global" in str(excinfo.value)
+
+
+def test_the_eu_default_alone_is_enough_to_refuse_it() -> None:
+    """Not just an explicit list: the shipped default is the EU regions, so a deployment that has
+    said nothing about residency still does not silently leave it."""
+    from aira_gateway.residency import RegionNotAllowed
+
+    with pytest.raises(RegionNotAllowed):
+        build_gemini_upstream(GatewaySettings(google_api_key="k"))
+
+
+def test_naming_global_is_all_it_takes_to_use_it() -> None:
+    """The point is a decision, not a prohibition. AI Studio stays entirely usable — the operator
+    says `global` out loud, and every audit row then carries that region."""
+    upstream = build_gemini_upstream(
+        GatewaySettings(google_api_key="k", allowed_regions="eu,global")
+    )
+
+    assert upstream is not None
+    assert {model.region for model in upstream.models()} == {"global"}
 
 
 # == the options on the wire (FRD-111, FRD-112, FRD-113) =========================================

@@ -374,6 +374,36 @@ image without saying how to build it — shown to fail by deleting one.
 
 ---
 
+## 2026-08-10 — The one upstream nobody was measuring (Google AI Studio and residency)
+
+Asked whether AI Studio could be supported, or whether the Vertex work had closed that door. It is
+not closed and never was: `FRD-304` built it first, and it is what
+`https://generativelanguage.googleapis.com/v1beta` is. One variable, an API key rather than a
+service account, and the same governed path as every other model.
+
+Answering the question found the hole. **Three of the four adapter families measure their region
+against `AIRA_ALLOWED_REGIONS` at startup** — Vertex, the OpenAI servers, Foundry. The AI Studio
+one did not. It declared `region="global"` on every model, honestly, so the value reached the audit
+row; nothing ever compared it to the policy. Under the shipped EU default a deployment would
+therefore serve traffic through an endpoint that names no region and guarantees none, and the
+evidence would say it was compliant.
+
+**An enforced control that one path bypasses is worse than one that is missing everywhere.** Same
+shape as `:embedContent` skipping the pre-dispatch gate, and as the KIRA surface's inverted
+membership check: a rule stated once and applied in all but one place.
+
+`FRD-115`'s rule applies unchanged — a region this deployment does not permit is a **startup**
+failure, because a gateway that sometimes leaves the EU is the same problem discovered later and by
+somebody else. AI Studio stays entirely usable: name `global` in `AIRA_ALLOWED_REGIONS`, and the
+question turns from something a person remembers into a line in the configuration and a region on
+every audit row.
+
+The case-by-case tests would not have caught the next one, so the guard is structural: every
+`build_*_upstream(s)` in the upstream layer must mention `check_region`. Its first run flagged
+`build_token_source`, which builds a **credential** and has no region — narrowed to the two
+suffixes the layer actually uses, then proved sharp again by removing the new call. A guard that
+fires on the wrong thing gets narrowed once and believed; one that gets switched off gets removed.
+
 ## 2026-08-10 — Two roles nobody could use, removed
 
 `ADR-0017` abolished `use-case-admin` and `use-case-user` on 2026-08-09: administering or belonging
