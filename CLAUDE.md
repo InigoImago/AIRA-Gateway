@@ -1300,6 +1300,19 @@ binaries — which is a generator of "it builds for me" and nothing else, with t
 above it doing nothing. One context root now, named copies instead of `COPY . .`, context **1.5 MB
 instead of 302 MB**, and a test requires every image to share the root.
 
+**Two roles nobody could use, removed (2026-08-10)** — `ADR-0017` abolished `use-case-admin` and
+`use-case-user` a day earlier and they stayed in the `Role` enum, the realm file, the seed (which
+created a Django group for each and assigned it), the console's specs and two reader documents.
+**A role somebody can be given that does nothing** is `FRD-206`'s complaint at its plainest: an
+absent capability reads as a boundary, a present one with no effect reads as a broken system.
+Realm and code are compared **in both directions** now — fifth instance of that answer. Three
+things fell out: the seed was **wiping the groups it does not own** (`groups.set` also removed the
+`kc:/…` groups synced from the token, so seeding silently un-granted every demo user until their
+next request); `parse_role_groups` carried a branch that **could no longer fire** (removed, its
+message folded into the unknown-name refusal, since those two names are exactly what somebody will
+type); and mutation `O1` added a role that no longer exists, so the mutated file would not import
+and an `AttributeError` would have counted as a caught property — re-anchored onto `IT_SECURITY`.
+
 Next candidates: **`FRD-114`** (model metadata — now also carries publisher + default output cap,
 prerequisite for 110–113 and 119), **`FRD-110`** (documents/images — the widest gap),
 **`FRD-115`/`FRD-119`** (Vertex EU + the Anthropic dialect — required), **`FRD-116`** (Vault),

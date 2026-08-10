@@ -791,7 +791,12 @@ MUTATIONS = [
         "oversight is global-admin and it-steuerung, and no other role",
         "libs/src/aira_common/roles.py",
         "GOVERNANCE_ROLES: frozenset[Role] = frozenset({Role.GLOBAL_ADMIN, Role.IT_STEUERUNG})",
-        "GOVERNANCE_ROLES: frozenset[Role] = frozenset({Role.GLOBAL_ADMIN, Role.IT_STEUERUNG, Role.USE_CASE_ADMIN})",
+        # **Re-anchored 2026-08-10.** It used to add `Role.USE_CASE_ADMIN`, which left the
+        # vocabulary with `ADR-0017`'s cleanup — the mutated file would not have imported, and an
+        # `AttributeError` is a mutation "caught" for the wrong reason. `IT_SECURITY` is the
+        # meaningful one anyway: it sees every use case and deliberately not every figure, which
+        # is the distinction the tests below exist for.
+        "GOVERNANCE_ROLES: frozenset[Role] = frozenset({Role.GLOBAL_ADMIN, Role.IT_STEUERUNG, Role.IT_SECURITY})",
         "libs/tests/test_roles.py management/backend/tests/test_rbac.py",
     ),
     Mutation(

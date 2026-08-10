@@ -788,7 +788,11 @@ describe('SmokeTests', () => {
       setup({ tab: 'catalogue', roles: ['it-security'] }).testid('catalogue-add'),
     ).not.toBeNull();
 
-    const member = setup({ tab: 'catalogue', roles: ['use-case-admin'] });
+    // Somebody with **no** organisation-wide role, which since `ADR-0017` is what a person who
+    // only works inside use cases actually looks like. It said `['use-case-admin']` until that
+    // role was removed from the vocabulary — a caller holding a role nobody can hold tests a
+    // fiction, and the harness would have kept passing while meaning nothing.
+    const member = setup({ tab: 'catalogue', roles: [] });
 
     expect(member.testid('catalogue-add')).toBeNull();
     expect(member.testid('catalogue-readonly')?.textContent).toContain('IT Security');

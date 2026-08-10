@@ -19,33 +19,33 @@ document says so rather than describing an intention.
 AIRA is five processes plus infrastructure. Only the first two serve traffic; the other three are
 workers and a static bundle.
 
-| # | Process | Command | Listens | Required |
-|---|---------|---------|---------|----------|
-| 1 | **Gateway API** (data plane) | `uvicorn aira_gateway.main:app` | HTTP :8001 | yes |
-| 2 | **Management API** (control plane) | ASGI `aira_management.config.asgi:application` | HTTP :8002 | yes |
-| 3 | **Config consumer** | `python -m aira_gateway.consumer.worker` | — | yes, if the SPA is used |
-| 4 | **Outbox relay** | `python manage.py relay` | — | yes, if the SPA is used |
-| 4b | **Retention pruner** | `python -m aira_gateway.retention` | — | **yes** — nothing deletes stored prompts otherwise |
-| 5 | **Management SPA** | static bundle from `ng build` | served by any web server | yes, for the UI |
+| #   | Process                            | Command                                        | Listens                  | Required                                           |
+| --- | ---------------------------------- | ---------------------------------------------- | ------------------------ | -------------------------------------------------- |
+| 1   | **Gateway API** (data plane)       | `uvicorn aira_gateway.main:app`                | HTTP :8001               | yes                                                |
+| 2   | **Management API** (control plane) | ASGI `aira_management.config.asgi:application` | HTTP :8002               | yes                                                |
+| 3   | **Config consumer**                | `python -m aira_gateway.consumer.worker`       | —                        | yes, if the SPA is used                            |
+| 4   | **Outbox relay**                   | `python manage.py relay`                       | —                        | yes, if the SPA is used                            |
+| 4b  | **Retention pruner**               | `python -m aira_gateway.retention`             | —                        | **yes** — nothing deletes stored prompts otherwise |
+| 5   | **Management SPA**                 | static bundle from `ng build`                  | served by any web server | yes, for the UI                                    |
 
 Infrastructure:
 
-| Component | Required | Used for |
-|-----------|----------|----------|
-| **PostgreSQL** | **yes** | two databases: `aira_gateway`, `aira_mgmt` |
-| **Keycloak** (or any OIDC provider) | **yes** in practice | user login, roles, use-case membership |
-| **Apache Kafka** | **yes**, if the SPA is used | config distribution control plane → data plane |
-| OpenTelemetry collector | optional | traces/metrics/logs (`AIRA_OTEL_ENABLED`) |
-| HashiCorp Vault | **not used by any code today** | see [Known gaps](#7-known-gaps) |
-| Schema Registry | **not used by any code today** | events are plain JSON with an `event_type` header |
+| Component                           | Required                       | Used for                                          |
+| ----------------------------------- | ------------------------------ | ------------------------------------------------- |
+| **PostgreSQL**                      | **yes**                        | two databases: `aira_gateway`, `aira_mgmt`        |
+| **Keycloak** (or any OIDC provider) | **yes** in practice            | user login, roles, use-case membership            |
+| **Apache Kafka**                    | **yes**, if the SPA is used    | config distribution control plane → data plane    |
+| OpenTelemetry collector             | optional                       | traces/metrics/logs (`AIRA_OTEL_ENABLED`)         |
+| HashiCorp Vault                     | **not used by any code today** | see [Known gaps](#7-known-gaps)                   |
+| Schema Registry                     | **not used by any code today** | events are plain JSON with an `event_type` header |
 
 All five run from **three images**, built from this repository:
 
-| Image | Dockerfile | Runs |
-|---|---|---|
-| `aira-gateway` | `gateway/Dockerfile` | the gateway, the config consumer, the retention pruner, and `alembic upgrade head` |
-| `aira-management` | `management/backend/Dockerfile` | the API, `manage.py migrate`, and the outbox relay |
-| `aira-frontend` | `management/frontend/Dockerfile` | the built SPA behind nginx, which also proxies `/api` and `/gw` |
+| Image             | Dockerfile                       | Runs                                                                               |
+| ----------------- | -------------------------------- | ---------------------------------------------------------------------------------- |
+| `aira-gateway`    | `gateway/Dockerfile`             | the gateway, the config consumer, the retention pruner, and `alembic upgrade head` |
+| `aira-management` | `management/backend/Dockerfile`  | the API, `manage.py migrate`, and the outbox relay                                 |
+| `aira-frontend`   | `management/frontend/Dockerfile` | the built SPA behind nginx, which also proxies `/api` and `/gw`                    |
 
 Both Python images are multi-stage (build with `uv`, ship only the resolved virtualenv), run as a
 non-root user (uid 10001) and carry a `HEALTHCHECK`.
@@ -136,7 +136,8 @@ make relay               # publishes pending outbox rows — one shot, not a dae
 Open <http://localhost:4200> and log in with `ucadmin` / `demo-password`.
 
 Demo accounts (all `demo-password`): `admin` (global-admin), `itsec` (it-security), `itgov`
-(it-steuerung), `ucadmin` (use-case-admin), `ucuser` (use-case-user).
+(it-steuerung), and `ucadmin` / `ucuser`, who hold **no** organisation-wide role — what they
+can do comes from grants on individual use cases (`ADR-0017`).
 
 ### Why `run-gateway-oidc` and not `run-gateway`
 
@@ -171,11 +172,11 @@ CREATE DATABASE aira_mgmt;
 Both services take the same connection variables but a different `AIRA_POSTGRES_DB` — so give
 each process its own environment:
 
-| Variable | Gateway | Management |
-|---|---|---|
-| `AIRA_POSTGRES_HOST` | your host | your host |
-| `AIRA_POSTGRES_PORT` | `5432` | `5432` |
-| `AIRA_POSTGRES_DB` | `aira_gateway` | `aira_mgmt` |
+| Variable                                        | Gateway          | Management       |
+| ----------------------------------------------- | ---------------- | ---------------- |
+| `AIRA_POSTGRES_HOST`                            | your host        | your host        |
+| `AIRA_POSTGRES_PORT`                            | `5432`           | `5432`           |
+| `AIRA_POSTGRES_DB`                              | `aira_gateway`   | `aira_mgmt`      |
 | `AIRA_POSTGRES_USER` / `AIRA_POSTGRES_PASSWORD` | a dedicated role | a dedicated role |
 
 Schema management differs per service — run both on every deployment:
@@ -191,7 +192,7 @@ There is no TLS or connection-pool setting exposed yet; the URL is assembled in
 ### 3.2 Keycloak / OIDC provider
 
 Any OIDC provider works in principle — the code verifies a JWT against the issuer's JWKS. What
-AIRA *requires from the token* is specific, see [§5](#5-preparing-keycloak).
+AIRA _requires from the token_ is specific, see [§5](#5-preparing-keycloak).
 
 ```bash
 AIRA_OIDC_ISSUER=https://sso.example.com/realms/aira
@@ -201,7 +202,7 @@ AIRA_OIDC_ENABLED=true              # gateway only; management is always OIDC
 ```
 
 > **Set the audience.** With `AIRA_OIDC_AUDIENCE` empty, audience verification is skipped and
-> *any* token the issuer minted — including one for an unrelated client — is accepted. The gateway
+> _any_ token the issuer minted — including one for an unrelated client — is accepted. The gateway
 > logs a warning (`oidc_audience_unset`) at startup when this is the case.
 
 The `AIRA_OIDC_JWKS_URI` override exists for providers that do not follow Keycloak's URL layout.
@@ -216,16 +217,16 @@ the gateway rebuilds its read-model by replaying them).
 the relay cannot publish, and the gateway simply never learns about that kind of configuration.
 The symptom is a setting that appears saved in the UI and does nothing.
 
-| Topic | Carries |
-|---|---|
-| `aira.usecases` | use-case create/update/delete |
-| `aira.memberships` | membership changes |
-| `aira.api-keys` | API-key issuance and revocation (hash only, never plaintext) |
-| `aira.pipelines` | pipeline configuration |
-| `aira.budgets` | budget definitions |
-| `aira.rate-limits` | request-rate limits (FRD-405) |
-| `aira.anomaly-rules` | anomaly rules (FRD-500) |
-| `aira.models` | model catalog and prices (FRD-403) |
+| Topic                | Carries                                                      |
+| -------------------- | ------------------------------------------------------------ |
+| `aira.usecases`      | use-case create/update/delete                                |
+| `aira.memberships`   | membership changes                                           |
+| `aira.api-keys`      | API-key issuance and revocation (hash only, never plaintext) |
+| `aira.pipelines`     | pipeline configuration                                       |
+| `aira.budgets`       | budget definitions                                           |
+| `aira.rate-limits`   | request-rate limits (FRD-405)                                |
+| `aira.anomaly-rules` | anomaly rules (FRD-500)                                      |
+| `aira.models`        | model catalog and prices (FRD-403)                           |
 
 ```bash
 kafka-topics.sh --create --topic aira.usecases --config cleanup.policy=compact ...
@@ -283,11 +284,11 @@ listens on **8080** and terminates no TLS — put your own proxy in front of it.
 
 If you serve the SPA yourself instead, route:
 
-| Path | To |
-|---|---|
-| `/` | the SPA's static bundle |
-| `/api/…` | Management API |
-| `/gw/…` | Gateway (strip the `/gw` prefix) |
+| Path     | To                               |
+| -------- | -------------------------------- |
+| `/`      | the SPA's static bundle          |
+| `/api/…` | Management API                   |
+| `/gw/…`  | Gateway (strip the `/gw` prefix) |
 
 The gateway's own API (`/v1beta/…`) is normally published separately for API clients — it is the
 data plane and does not need to sit behind the SPA's origin.
@@ -325,43 +326,43 @@ file in the **process working directory** (see `aira_common.config.BaseAiraSetti
 
 ### Common to both services
 
-| Variable | Default | Meaning |
-|---|---|---|
-| `AIRA_ENVIRONMENT` | `local` | `local` \| `staging` \| `production`. Anything but `local` activates the management safety checks and HSTS. |
-| `AIRA_LOG_LEVEL` | `INFO` | `DEBUG`/`INFO`/`WARNING`/`ERROR` |
-| `AIRA_LOG_JSON` | `true` | JSON lines (`true`) or human-readable console output |
-| `AIRA_DEMO_MODE` | `false` | Gateway: seeds a deterministic demo API key. Management: allows `seed_demo`. **Never in production.** |
-| `AIRA_CURRENCY` | `EUR` | Currency all model prices and cost budgets are expressed in (FRD-403). One per installation; no conversion happens, so it must match the prices you enter. |
-| `AIRA_OTEL_ENABLED` | `false` | Export OTLP |
-| `AIRA_OTEL_ENDPOINT` | `http://localhost:4318` | OTLP/HTTP endpoint |
-| `AIRA_OTEL_SAMPLE_RATIO` | `1.0` | Trace sampling ratio |
-| `AIRA_POSTGRES_HOST` / `_PORT` / `_DB` / `_USER` / `_PASSWORD` | `localhost` / `5432` / per service / `aira` / `aira-local` | Database connection |
-| `AIRA_KAFKA_BOOTSTRAP_SERVERS` | `localhost:29092` | Comma-separated broker list |
-| `AIRA_OIDC_ISSUER` | `''` | OIDC issuer URL |
-| `AIRA_OIDC_AUDIENCE` | `''` | Expected `aud`. **Empty disables audience verification.** |
-| `AIRA_OIDC_JWKS_URI` | `''` | Override; derived from the issuer when empty |
-| `AIRA_TEST_DATABASE` | `false` | In-memory SQLite. Test harness only. |
+| Variable                                                       | Default                                                    | Meaning                                                                                                                                                    |
+| -------------------------------------------------------------- | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AIRA_ENVIRONMENT`                                             | `local`                                                    | `local` \| `staging` \| `production`. Anything but `local` activates the management safety checks and HSTS.                                                |
+| `AIRA_LOG_LEVEL`                                               | `INFO`                                                     | `DEBUG`/`INFO`/`WARNING`/`ERROR`                                                                                                                           |
+| `AIRA_LOG_JSON`                                                | `true`                                                     | JSON lines (`true`) or human-readable console output                                                                                                       |
+| `AIRA_DEMO_MODE`                                               | `false`                                                    | Gateway: seeds a deterministic demo API key. Management: allows `seed_demo`. **Never in production.**                                                      |
+| `AIRA_CURRENCY`                                                | `EUR`                                                      | Currency all model prices and cost budgets are expressed in (FRD-403). One per installation; no conversion happens, so it must match the prices you enter. |
+| `AIRA_OTEL_ENABLED`                                            | `false`                                                    | Export OTLP                                                                                                                                                |
+| `AIRA_OTEL_ENDPOINT`                                           | `http://localhost:4318`                                    | OTLP/HTTP endpoint                                                                                                                                         |
+| `AIRA_OTEL_SAMPLE_RATIO`                                       | `1.0`                                                      | Trace sampling ratio                                                                                                                                       |
+| `AIRA_POSTGRES_HOST` / `_PORT` / `_DB` / `_USER` / `_PASSWORD` | `localhost` / `5432` / per service / `aira` / `aira-local` | Database connection                                                                                                                                        |
+| `AIRA_KAFKA_BOOTSTRAP_SERVERS`                                 | `localhost:29092`                                          | Comma-separated broker list                                                                                                                                |
+| `AIRA_OIDC_ISSUER`                                             | `''`                                                       | OIDC issuer URL                                                                                                                                            |
+| `AIRA_OIDC_AUDIENCE`                                           | `''`                                                       | Expected `aud`. **Empty disables audience verification.**                                                                                                  |
+| `AIRA_OIDC_JWKS_URI`                                           | `''`                                                       | Override; derived from the issuer when empty                                                                                                               |
+| `AIRA_TEST_DATABASE`                                           | `false`                                                    | In-memory SQLite. Test harness only.                                                                                                                       |
 
 ### Gateway only
 
-| Variable | Default | Meaning |
-|---|---|---|
-| `AIRA_OIDC_ENABLED` | `false` | Accept OIDC bearer tokens. **Required for the SPA's dry-run and consumption views.** Without it only API keys are accepted. |
-| `AIRA_AUTH_REQUIRED` | `true` | `false` opens all API routes with a synthetic `demo` principal. Demo only. |
-| `AIRA_REQUIRE_USE_CASE` | `false` | Reject authenticated requests that carry no use-case selector |
-| `AIRA_STORE_PAYLOADS` | `true` | Persist request/response bodies in `request_logs`. **Kill switch**: `false` here means no use case can store them, whatever its own setting says (FRD-404). |
-| `AIRA_DEFAULT_RETENTION_DAYS` | `7` | Payload retention for requests that carry **no** use case. Use-case traffic follows the period set on its use case (FRD-404). |
-| `AIRA_LOG_RETENTION_DAYS` | `0` | Delete whole `request_logs` rows older than this. `0` keeps them forever — the cost reporting reads them, so opt in deliberately. |
-| `AIRA_ENFORCE_BUDGETS` | `true` | Reject over-budget requests with 429 |
-| `AIRA_REDIS_URL` | `redis://localhost:6379/0` | Shared counter store for rate-limit buckets and budget reservations (ADR-0008). **Set this whenever more than one gateway instance runs**: without it each instance keeps its own counters, so N instances allow N × the configured rate and a budget can be overshot. Empty disables it — see the degradation table below. |
-| `AIRA_ENFORCE_RATE_LIMITS` | `true` | Enforce the per-use-case/per-member request rate. A use case with no configured limit stays unlimited either way. |
-| `AIRA_BUDGET_ESTIMATE_OUTPUT_TOKENS` | `1024` | Tokens assumed for a request whose output length the caller did not bound, used to reserve budget before the real usage is known. Corrected the moment the response arrives. |
-| `AIRA_LOG_QUEUE_SIZE` | `512` | Request-log rows buffered off the request path. A full queue writes inline rather than dropping. **`0` writes every row synchronously**, which is the pre-FRD-405 behaviour — choose it if a request must be durably logged before its response goes out. |
-| `AIRA_TRUST_FORWARDED_FOR` | `false` | Honour `X-Forwarded-For` for the recorded source IP |
-| `AIRA_MAX_REQUEST_BYTES` | `8388608` (8 MiB) | Hard ceiling on a request body; larger bodies get 413 before being buffered |
-| `AIRA_GOOGLE_API_KEY` | `''` | Registers the real Gemini provider when set |
-| `AIRA_GEMINI_MODELS` | `gemini-2.0-flash,gemini-1.5-flash` | Models exposed by that provider |
-| `AIRA_GEMINI_BASE_URL` | Google's v1beta endpoint | Upstream base URL |
+| Variable                             | Default                             | Meaning                                                                                                                                                                                                                                                                                                                     |
+| ------------------------------------ | ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AIRA_OIDC_ENABLED`                  | `false`                             | Accept OIDC bearer tokens. **Required for the SPA's dry-run and consumption views.** Without it only API keys are accepted.                                                                                                                                                                                                 |
+| `AIRA_AUTH_REQUIRED`                 | `true`                              | `false` opens all API routes with a synthetic `demo` principal. Demo only.                                                                                                                                                                                                                                                  |
+| `AIRA_REQUIRE_USE_CASE`              | `false`                             | Reject authenticated requests that carry no use-case selector                                                                                                                                                                                                                                                               |
+| `AIRA_STORE_PAYLOADS`                | `true`                              | Persist request/response bodies in `request_logs`. **Kill switch**: `false` here means no use case can store them, whatever its own setting says (FRD-404).                                                                                                                                                                 |
+| `AIRA_DEFAULT_RETENTION_DAYS`        | `7`                                 | Payload retention for requests that carry **no** use case. Use-case traffic follows the period set on its use case (FRD-404).                                                                                                                                                                                               |
+| `AIRA_LOG_RETENTION_DAYS`            | `0`                                 | Delete whole `request_logs` rows older than this. `0` keeps them forever — the cost reporting reads them, so opt in deliberately.                                                                                                                                                                                           |
+| `AIRA_ENFORCE_BUDGETS`               | `true`                              | Reject over-budget requests with 429                                                                                                                                                                                                                                                                                        |
+| `AIRA_REDIS_URL`                     | `redis://localhost:6379/0`          | Shared counter store for rate-limit buckets and budget reservations (ADR-0008). **Set this whenever more than one gateway instance runs**: without it each instance keeps its own counters, so N instances allow N × the configured rate and a budget can be overshot. Empty disables it — see the degradation table below. |
+| `AIRA_ENFORCE_RATE_LIMITS`           | `true`                              | Enforce the per-use-case/per-member request rate. A use case with no configured limit stays unlimited either way.                                                                                                                                                                                                           |
+| `AIRA_BUDGET_ESTIMATE_OUTPUT_TOKENS` | `1024`                              | Tokens assumed for a request whose output length the caller did not bound, used to reserve budget before the real usage is known. Corrected the moment the response arrives.                                                                                                                                                |
+| `AIRA_LOG_QUEUE_SIZE`                | `512`                               | Request-log rows buffered off the request path. A full queue writes inline rather than dropping. **`0` writes every row synchronously**, which is the pre-FRD-405 behaviour — choose it if a request must be durably logged before its response goes out.                                                                   |
+| `AIRA_TRUST_FORWARDED_FOR`           | `false`                             | Honour `X-Forwarded-For` for the recorded source IP                                                                                                                                                                                                                                                                         |
+| `AIRA_MAX_REQUEST_BYTES`             | `8388608` (8 MiB)                   | Hard ceiling on a request body; larger bodies get 413 before being buffered                                                                                                                                                                                                                                                 |
+| `AIRA_GOOGLE_API_KEY`                | `''`                                | Registers the real Gemini provider when set                                                                                                                                                                                                                                                                                 |
+| `AIRA_GEMINI_MODELS`                 | `gemini-2.0-flash,gemini-1.5-flash` | Models exposed by that provider                                                                                                                                                                                                                                                                                             |
+| `AIRA_GEMINI_BASE_URL`               | Google's v1beta endpoint            | Upstream base URL                                                                                                                                                                                                                                                                                                           |
 
 #### The SPA's reverse proxy must re-resolve its upstreams
 
@@ -383,10 +384,10 @@ resolver elsewhere (in Kubernetes, `kube-dns.kube-system.svc.cluster.local`).
 
 Deliberate, not accidental — a cache outage must not become a product outage (ADR-0008):
 
-| | Behaviour | Consequence for you |
-|---|---|---|
-| Rate limiting | falls back to a **per-instance** bucket | Still bounded, but N instances allow N × the limit until Redis returns. Not fail-open: Redis being down is exactly when a runaway caller does the most damage. |
-| Budget enforcement | falls back to the **Postgres** read-then-book path | Still enforced, but concurrent requests stop seeing each other's reservations, so a limit can be overshot by requests in flight. |
+|                    | Behaviour                                          | Consequence for you                                                                                                                                            |
+| ------------------ | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Rate limiting      | falls back to a **per-instance** bucket            | Still bounded, but N instances allow N × the limit until Redis returns. Not fail-open: Redis being down is exactly when a runaway caller does the most damage. |
+| Budget enforcement | falls back to the **Postgres** read-then-book path | Still enforced, but concurrent requests stop seeing each other's reservations, so a limit can be overshot by requests in flight.                               |
 
 Both log a warning. Postgres remains the system of record for budget usage in every case, so a
 Redis restart costs the in-flight reservations and never the period's accounting.
@@ -397,20 +398,20 @@ its own instance or database — the keys are namespaced (`rl:*`, `budget:*`) bu
 
 #### Response schemas and embedding batches (FRD-112, FRD-113)
 
-| Variable | Default | Meaning |
-|---|---|---|
-| `AIRA_MAX_RESPONSE_SCHEMA_BYTES` | `32768` | Largest `responseSchema` accepted, measured on the submitted document. |
-| `AIRA_MAX_RESPONSE_SCHEMA_DEPTH` | `8` | Deepest nesting accepted. |
-| `AIRA_MAX_RESPONSE_SCHEMA_PROPERTIES` | `256` | Total properties, counted across the whole tree. |
-| `AIRA_MAX_EMBEDDING_BATCH` | `256` | Most texts in one embedding call. |
-| `AIRA_MAX_EMBEDDING_CHARS` | `1000000` | Most characters across a batch. |
+| Variable                              | Default   | Meaning                                                                |
+| ------------------------------------- | --------- | ---------------------------------------------------------------------- |
+| `AIRA_MAX_RESPONSE_SCHEMA_BYTES`      | `32768`   | Largest `responseSchema` accepted, measured on the submitted document. |
+| `AIRA_MAX_RESPONSE_SCHEMA_DEPTH`      | `8`       | Deepest nesting accepted.                                              |
+| `AIRA_MAX_RESPONSE_SCHEMA_PROPERTIES` | `256`     | Total properties, counted across the whole tree.                       |
+| `AIRA_MAX_EMBEDDING_BATCH`            | `256`     | Most texts in one embedding call.                                      |
+| `AIRA_MAX_EMBEDDING_CHARS`            | `1000000` | Most characters across a batch.                                        |
 
 The schema bounds are the gateway's **entire** exposure to a caller-supplied schema: it is
 forwarded to the provider and never executed here, so there is no expression evaluation to attack
 and the defaults only need to be generous enough for real schemas.
 
 **The batch bound interacts with your rate limits, and they have to be chosen together.** A batch
-of *n* texts weighs *n* against a use case's bucket — otherwise a limit of 10 requests per minute
+of _n_ texts weighs _n_ against a use case's bucket — otherwise a limit of 10 requests per minute
 would allow 5 000 texts per minute, intact on paper and gone in practice. So a batch larger than a
 bucket's capacity can never be admitted, however long the caller waits: it is refused immediately
 with a message naming which of the two said no. If you set `AIRA_MAX_EMBEDDING_BATCH` above your
@@ -418,11 +419,11 @@ smallest configured per-minute limit, large batches will fail permanently by des
 
 ### Management only
 
-| Variable | Default | Meaning |
-|---|---|---|
-| `AIRA_SECRET_KEY` | dev value | Django signing key. **Must be unique and secret.** |
-| `AIRA_DEBUG` | `true` | Forced to `false` outside `local` regardless of this value |
-| `AIRA_ALLOWED_HOSTS` | `*` | Comma-separated hostnames |
+| Variable             | Default   | Meaning                                                    |
+| -------------------- | --------- | ---------------------------------------------------------- |
+| `AIRA_SECRET_KEY`    | dev value | Django signing key. **Must be unique and secret.**         |
+| `AIRA_DEBUG`         | `true`    | Forced to `false` outside `local` regardless of this value |
+| `AIRA_ALLOWED_HOSTS` | `*`       | Comma-separated hostnames                                  |
 
 **Outside `AIRA_ENVIRONMENT=local` the management service refuses to start** while `AIRA_SECRET_KEY`
 is the development default, `AIRA_ALLOWED_HOSTS` contains `*`, or `AIRA_DEBUG` is on. That is
@@ -490,12 +491,12 @@ Each model is `region/publisher/model` — the three things the URL and the dial
 fails every request looks like an upstream outage; one that starts and quietly serves a non-EU
 region is worse than one that will not start at all.
 
-| Refused at boot | Because |
-|---|---|
-| A model in a region outside `AIRA_ALLOWED_REGIONS` | residency is a configuration claim, and this is what makes it hold |
-| Credentials that are not a usable service-account key | a credential problem must not present as an upstream problem |
-| A model spec that is not `region/publisher/model` | a typo here would otherwise become a 404 per request |
-| The same model name on two adapters | otherwise the region and credential that served a request are a silent choice |
+| Refused at boot                                       | Because                                                                       |
+| ----------------------------------------------------- | ----------------------------------------------------------------------------- |
+| A model in a region outside `AIRA_ALLOWED_REGIONS`    | residency is a configuration claim, and this is what makes it hold            |
+| Credentials that are not a usable service-account key | a credential problem must not present as an upstream problem                  |
+| A model spec that is not `region/publisher/model`     | a typo here would otherwise become a 404 per request                          |
+| The same model name on two adapters                   | otherwise the region and credential that served a request are a silent choice |
 
 **`AIRA_ALLOWED_REGIONS` is not Vertex's list.** It is the deployment's residency policy and every
 transport is measured against it — Google's `europe-west1` and Azure's `westeurope` sit in the same
@@ -519,19 +520,20 @@ things in your own realm.
 
 ### 5.1 A public client for the SPA
 
-| Setting | Value | Why |
-|---|---|---|
-| Client ID | `aira-gateway` (or your own, then edit `auth.config.ts`) | |
-| Access type | **public** | it is a browser app |
-| Standard flow | **on** | authorization code |
-| Direct access grants | **off** | the password grant is a credential-phishing surface on a public client |
-| PKCE method | **S256** | without it, an intercepted code can be redeemed |
-| Valid redirect URIs | your SPA origin, e.g. `https://aira.example.com/*` | **never `*`** — a wildcard lets an attacker redirect the code to a site they control |
-| Web origins | your SPA origin | |
+| Setting              | Value                                                    | Why                                                                                  |
+| -------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| Client ID            | `aira-gateway` (or your own, then edit `auth.config.ts`) |                                                                                      |
+| Access type          | **public**                                               | it is a browser app                                                                  |
+| Standard flow        | **on**                                                   | authorization code                                                                   |
+| Direct access grants | **off**                                                  | the password grant is a credential-phishing surface on a public client               |
+| PKCE method          | **S256**                                                 | without it, an intercepted code can be redeemed                                      |
+| Valid redirect URIs  | your SPA origin, e.g. `https://aira.example.com/*`       | **never `*`** — a wildcard lets an attacker redirect the code to a site they control |
+| Web origins          | your SPA origin                                          |                                                                                      |
 
 ### 5.2 The five realm roles
 
-`global-admin`, `it-security`, `it-steuerung`, `use-case-admin`, `use-case-user`.
+`global-admin`, `it-security`, `it-steuerung`. There is no use-case role: administering or
+belonging to a use case is a grant on that use case (`ADR-0017`, `FRD-209`).
 
 Keycloak is the **source of truth** for roles (FRD-201): on every authenticated request the token's
 `realm_access.roles` are synced onto the user's Django groups. A role that exists only in Django is
@@ -541,12 +543,12 @@ removed at the next login.
 
 The gateway derives use-case membership from group paths, so the token must carry them:
 
-| Mapper setting | Value |
-|---|---|
-| Type | Group Membership |
-| Claim name | `groups` |
-| Full group path | **on** |
-| Add to access token | **on** |
+| Mapper setting      | Value            |
+| ------------------- | ---------------- |
+| Type                | Group Membership |
+| Claim name          | `groups`         |
+| Full group path     | **on**           |
+| Add to access token | **on**           |
 
 ### 5.4 Groups per use case
 
@@ -626,14 +628,14 @@ Operations:
 > does not call it at all, since it already waits for `alembic upgrade head`. The history below is
 > kept because the failure mode is worth recognising, not because it is still present.
 
-The gateway and its consumer *used to* call `create_all` at startup — a development convenience
+The gateway and its consumer _used to_ call `create_all` at startup — a development convenience
 that predates Alembic. It had one consequence that only showed up during an upgrade:
 
 > **A container running the previous image can recreate a table the new migration renamed or
 > dropped**, and will then fail every event against it.
 
 Observed on 2026-08-06, upgrading to `0013_model_capabilities`, which renames `model_prices` to
-`model_catalog`. The gateway and Management were rebuilt; the *consumer* was not, and its
+`model_catalog`. The gateway and Management were rebuilt; the _consumer_ was not, and its
 `create_all` recreated the empty `model_prices` — after which every model event failed against a
 table Alembic had already renamed. Nothing crashed: the consumer logged and the declarations simply
 never arrived, which presents as "the feature does not work".
@@ -652,14 +654,14 @@ practice regardless: a component running the old image reads the new schema eith
 
 Stated plainly, because a deployment guide that hides them wastes your time:
 
-| Gap | Consequence | Status |
-|---|---|---|
-| **No Kubernetes/Helm** | Compose only; no manifests or charts | Planned (see `docs/ROADMAP.md`) |
-| **Images are not published** | `make up-full` builds them locally; there is no registry push or tagging scheme beyond `AIRA_IMAGE_TAG` | — |
-| ~~**Vault is not used by any code**~~ | — | **Closed** by `FRD-116`: `aira_common.secrets` reads AppRole + KV-v2 and ranks Vault above the environment for both planes |
-| **Schema Registry is not used** | Events are plain JSON with an `event_type` header | Runs in the stack, unused |
-| ~~**SPA configuration is build-time**~~ | — | **Closed** on 2026-08-08: `public/runtime-config.js` ships with the bundle and sets the issuer and client id. Replace it per environment (volume mount, `ConfigMap`, or a `sed` in the entrypoint) — no rebuild |
-| **Kafka has no auth/TLS settings** | A broker requiring SASL/TLS needs a code change | `aira_common.kafka` takes bootstrap servers only |
-| **The relay is not a daemon** | Must be scheduled externally, or configuration never propagates | By design (transactional outbox), but unscheduled by default |
-| **Membership is split** between Management and Keycloak groups | Consumption views and data-plane access need the Keycloak group; the UI membership alone is not enough | ADR-0007 addendum, follow-up recorded |
-| **No content redaction** | Payloads are stored verbatim until their retention period expires; nothing masks sensitive values inside them | `NoOpRedactor`; retention itself is done (FRD-404) |
+| Gap                                                            | Consequence                                                                                                   | Status                                                                                                                                                                                                          |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **No Kubernetes/Helm**                                         | Compose only; no manifests or charts                                                                          | Planned (see `docs/ROADMAP.md`)                                                                                                                                                                                 |
+| **Images are not published**                                   | `make up-full` builds them locally; there is no registry push or tagging scheme beyond `AIRA_IMAGE_TAG`       | —                                                                                                                                                                                                               |
+| ~~**Vault is not used by any code**~~                          | —                                                                                                             | **Closed** by `FRD-116`: `aira_common.secrets` reads AppRole + KV-v2 and ranks Vault above the environment for both planes                                                                                      |
+| **Schema Registry is not used**                                | Events are plain JSON with an `event_type` header                                                             | Runs in the stack, unused                                                                                                                                                                                       |
+| ~~**SPA configuration is build-time**~~                        | —                                                                                                             | **Closed** on 2026-08-08: `public/runtime-config.js` ships with the bundle and sets the issuer and client id. Replace it per environment (volume mount, `ConfigMap`, or a `sed` in the entrypoint) — no rebuild |
+| **Kafka has no auth/TLS settings**                             | A broker requiring SASL/TLS needs a code change                                                               | `aira_common.kafka` takes bootstrap servers only                                                                                                                                                                |
+| **The relay is not a daemon**                                  | Must be scheduled externally, or configuration never propagates                                               | By design (transactional outbox), but unscheduled by default                                                                                                                                                    |
+| **Membership is split** between Management and Keycloak groups | Consumption views and data-plane access need the Keycloak group; the UI membership alone is not enough        | ADR-0007 addendum, follow-up recorded                                                                                                                                                                           |
+| **No content redaction**                                       | Payloads are stored verbatim until their retention period expires; nothing masks sensitive values inside them | `NoOpRedactor`; retention itself is done (FRD-404)                                                                                                                                                              |

@@ -22,11 +22,23 @@ from enum import StrEnum
 
 
 class Role(StrEnum):
+    """The organisation-wide roles, and **only** those.
+
+    `use-case-admin` and `use-case-user` were members here until 2026-08-10. `ADR-0017` abolished
+    them on 2026-08-09 — administering or belonging to a use case is a grant *on that use case*,
+    not a property of a person — and nothing has read them since. They stayed in the vocabulary
+    anyway, the seed kept creating a Django group for each and assigning it, and the console kept
+    offering them as an answer.
+
+    That is the shape of defect this project refuses by name: **a role somebody can be given that
+    does nothing.** An absent capability reads as a boundary; a present one that has no effect
+    reads as a broken system, and the reader then distrusts the permissions that *do* work
+    (`FRD-206`). Removing them is the whole fix — every predicate already asks the grant.
+    """
+
     GLOBAL_ADMIN = "global-admin"
     IT_SECURITY = "it-security"
     IT_STEUERUNG = "it-steuerung"
-    USE_CASE_ADMIN = "use-case-admin"
-    USE_CASE_USER = "use-case-user"
 
 
 ALL_ROLES: tuple[Role, ...] = tuple(Role)
@@ -93,12 +105,14 @@ def is_governance(roles: Iterable[str]) -> bool:
 # and `UseCaseGroupGrant` already holds it. What remains here are the three roles that really are
 # properties of somebody within the whole installation.
 
-#: The roles a group may confer. A closed set, and deliberately not `ALL_ROLES`: naming
-#: `use-case-admin` in the mapping would grant somebody every use case at once, which is exactly
-#: the blanket authority the object grants exist to avoid.
-CONFIGURABLE_ROLES: frozenset[Role] = frozenset(
-    {Role.GLOBAL_ADMIN, Role.IT_SECURITY, Role.IT_STEUERUNG}
-)
+#: The roles a group may confer — which, since the two use-case roles left the vocabulary
+#: (2026-08-10), is every role there is.
+#:
+#: Kept as its own name rather than collapsed into `ALL_ROLES`, because the two are different
+#: claims that merely happen to coincide: *what roles exist* and *what a group may confer*. A
+#: fourth role that is granted some other way would separate them again, and a reader of
+#: `AIRA_ROLE_GROUPS` should be looking at the second question.
+CONFIGURABLE_ROLES: frozenset[Role] = frozenset(ALL_ROLES)
 
 
 class RoleMappingError(ValueError):
@@ -128,14 +142,22 @@ def parse_role_groups(raw: str) -> dict[Role, tuple[str, ...]]:
             role = Role(name.strip())
         except ValueError as exc:
             allowed = ", ".join(sorted(str(r) for r in CONFIGURABLE_ROLES))
+            # The two abolished names get their own sentence, because they are the ones somebody
+            # will try: they were roles until `ADR-0017`, they appear in older `.env` files, and
+            # "is not an AIRA role" would leave a reader looking for a typo. There used to be a
+            # separate branch for them further down; it became unreachable when they left the
+            # vocabulary, and an unreachable guard is not a guard.
+            retired = {"use-case-admin", "use-case-user"}
+            if name.strip() in retired:
+                raise RoleMappingError(
+                    f"'{name.strip()}' is not a role any more. Administering or belonging to a "
+                    "use case is a grant **on that use case** (FRD-209), not a property of a "
+                    "person — mapping it to a group would confer every use case at once. Remove "
+                    "it from AIRA_ROLE_GROUPS and grant the group on the use case instead."
+                ) from exc
             raise RoleMappingError(
                 f"'{name.strip()}' is not an AIRA role. Expected: {allowed}."
             ) from exc
-        if role not in CONFIGURABLE_ROLES:
-            raise RoleMappingError(
-                f"'{role}' is not conferred by a group — it is granted on a single use case "
-                "(FRD-209). Remove it from AIRA_ROLE_GROUPS."
-            )
         cleaned = tuple(p.strip() for p in paths.split(",") if p.strip())
         for path in cleaned:
             if not path.startswith("/") or path == "/":

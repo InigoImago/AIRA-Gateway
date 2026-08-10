@@ -37,9 +37,31 @@ def test_seed_creates_groups_and_users() -> None:
     assert admin.is_superuser and admin.is_staff
     assert admin.groups.filter(name=str(Role.GLOBAL_ADMIN)).exists()
 
+    # `ucuser` and `ucadmin` hold **no organisation-wide role**, and that is the point of them.
+    # What they can do comes from a grant on a use case (`ADR-0017`, `FRD-209`) — so switching to
+    # `ucadmin` in a walkthrough demonstrates the grant rather than a badge. They carried
+    # `use-case-admin` and `use-case-user` until 2026-08-10, a day after those roles were
+    # abolished, which made the demo argue for the mechanism it had replaced.
     ucuser = user_model.objects.get(username="ucuser")
     assert not ucuser.is_superuser
-    assert ucuser.groups.filter(name=str(Role.USE_CASE_USER)).exists()
+    assert not ucuser.groups.exists()
+
+
+def test_the_seed_leaves_the_groups_it_does_not_own_alone() -> None:
+    """Use-case access is synced onto Django groups from the token at every request
+    (`FRD-209`). This contribution owns the *role* groups and nothing else — it used to
+    `groups.set([...])`, which removed the synced ones, so running the seed silently un-granted
+    every demo user until their next request repaired it."""
+    from django.contrib.auth.models import Group
+
+    seed_roles_and_users(fresh=False)
+    user = get_user_model().objects.get(username="ucadmin")
+    synced, _ = Group.objects.get_or_create(name="kc:/use-cases/kundenservice")
+    user.groups.add(synced)
+
+    seed_roles_and_users(fresh=False)
+
+    assert user.groups.filter(name="kc:/use-cases/kundenservice").exists()
 
 
 def test_seed_is_idempotent() -> None:
@@ -83,3 +105,22 @@ def test_command_refuses_production_without_force(monkeypatch) -> None:
     # --force allows it
     call_command("seed_demo", "--force", stdout=StringIO())
     assert get_user_model().objects.count() == len(DEMO_USERS)
+
+
+def test_the_seed_removes_the_groups_of_roles_that_no_longer_exist() -> None:
+    """`use-case-admin` and `use-case-user` were roles until `ADR-0017`. The seed created a Django
+    group for each, and those rows outlived the roles: assignable by hand, conferring nothing.
+
+    Named explicitly rather than "anything the seed does not recognise" — that rule would take the
+    `kc:/…` groups with it, which is where use-case access actually lives.
+    """
+    from django.contrib.auth.models import Group
+
+    Group.objects.get_or_create(name="use-case-admin")
+    Group.objects.get_or_create(name="use-case-user")
+    survivor, _ = Group.objects.get_or_create(name="kc:/use-cases/kundenservice")
+
+    seed_roles_and_users(fresh=False)
+
+    assert not Group.objects.filter(name__in=["use-case-admin", "use-case-user"]).exists()
+    assert Group.objects.filter(pk=survivor.pk).exists()

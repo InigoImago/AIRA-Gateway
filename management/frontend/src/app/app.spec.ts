@@ -67,7 +67,9 @@ describe('App', () => {
     // role in the header, carrying the slug so it stays assertable without depending on wording.
     expect(el.querySelector('.aira-user__role[data-role="it-security"]')).not.toBeNull();
     expect(el.querySelector('.aira-user__role[data-role="global-admin"]')).not.toBeNull();
-    expect(el.querySelector('[data-role="use-case-user"]')).toBeNull();
+    // A role the caller does **not** hold gets no chip. `it-steuerung` rather than the abolished
+    // `use-case-user`: a slug nobody can hold would make this assertion true for ever.
+    expect(el.querySelector('[data-role="it-steuerung"]')).toBeNull();
     expect(el.textContent).toContain('IT Security');
     expect(el.textContent).toContain('Global administrator');
   });

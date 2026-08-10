@@ -20,15 +20,17 @@ from aira_common.roles import (
 )
 
 
-def test_the_five_roles_are_the_ones_the_realm_defines() -> None:
+def test_the_three_roles_are_the_ones_the_realm_defines() -> None:
     """Pinned rather than assumed: these names exist in the Keycloak realm and in the seed, so a
-    rename here that is not made there silently stops matching anything."""
+    rename here that is not made there silently stops matching anything.
+
+    There were five until 2026-08-10. `use-case-admin` and `use-case-user` were abolished by
+    `ADR-0017` the day before and stayed in the vocabulary — a role somebody could be given that
+    did nothing, which reads as a broken system rather than as a boundary (`FRD-206`)."""
     assert {role.value for role in ALL_ROLES} == {
         "global-admin",
         "it-security",
         "it-steuerung",
-        "use-case-admin",
-        "use-case-user",
     }
 
 
@@ -128,12 +130,21 @@ def test_an_unknown_role_name_refuses_rather_than_granting_nothing_quietly() -> 
     assert "gloabl-admin" in str(excinfo.value)
 
 
-def test_a_use_case_role_cannot_be_conferred_by_a_group() -> None:
+def test_an_abolished_role_is_refused_with_the_reason_rather_than_as_a_typo() -> None:
     """Mapping `use-case-admin` to a group would grant every use case at once, which is the
-    blanket authority the object grants exist to avoid (`FRD-209`)."""
+    blanket authority the object grants exist to avoid (`FRD-209`).
+
+    It is refused as an *unknown name* now that the vocabulary no longer has it — so the message
+    has to carry what the removed branch used to say. These two names appear in older `.env` files
+    and are exactly what somebody will try; "is not an AIRA role" would send them hunting a typo.
+    """
     with pytest.raises(RoleMappingError) as excinfo:
         parse_role_groups("use-case-admin=/aira/uc-admins")
-    assert "single use case" in str(excinfo.value)
+    assert "grant" in str(excinfo.value)
+    assert "on that use case" in str(excinfo.value)
+
+    with pytest.raises(RoleMappingError):
+        parse_role_groups("use-case-user=/aira/uc-users")
 
 
 def test_a_relative_path_and_the_realm_root_are_refused() -> None:

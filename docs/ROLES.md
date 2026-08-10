@@ -9,7 +9,7 @@ from collapsing them:
 1. **Realm roles** — five of them, held in Keycloak. They say what somebody is in the organisation:
    a global administrator, IT Security, governance, a use-case administrator, a use-case user.
 2. **Grants on a use case** — `admin` or `user`, held per use case. They say what somebody may do
-   *inside* one, and they are given to a person or to a Keycloak group.
+   _inside_ one, and they are given to a person or to a Keycloak group.
 
 A realm role never grants access inside a use case, and a grant never confers an organisation-wide
 power. `ADR-0007` states the rule and `apps/usecases/access.py` implements it:
@@ -23,29 +23,33 @@ power. `ADR-0007` states the rule and `apps/usecases/access.py` implements it:
 Keycloak is the source of truth. Neither service stores a role decision of its own; both read the
 same `realm_access.roles` claim from the same token (`ADR-0009`, `libs/src/aira_common/roles.py`).
 
-| Role | Realm role name | In one sentence |
-|---|---|---|
-| Global Administrator | `global-admin` | Runs the installation. The only role that may catalogue and release models. |
-| IT Security | `it-security` | Investigates and stops. Sees every use case, may act in an incident, reads content. |
-| IT Steuerung (Governance) | `it-steuerung` | Oversees. Sees every use case and every figure, changes nothing, reads no content. |
-| Use Case Administrator | `use-case-admin` | May create use cases, and administers the ones granted to them. |
-| Use Case User | `use-case-user` | Works inside the use cases granted to them. |
+| Role                      | Realm role name | In one sentence                                                                     |
+| ------------------------- | --------------- | ----------------------------------------------------------------------------------- |
+| Global Administrator      | `global-admin`  | Runs the installation. The only role that may catalogue and release models.         |
+| IT Security               | `it-security`   | Investigates and stops. Sees every use case, may act in an incident, reads content. |
+| IT Steuerung (Governance) | `it-steuerung`  | Oversees. Sees every use case and every figure, changes nothing, reads no content.  |
+
+There is **no** use-case role. Administering or belonging to a use case is a **grant on that use
+case** (`ADR-0017`, `FRD-209`), held by a Keycloak group, not a badge a person carries. Two roles
+named `use-case-admin` and `use-case-user` existed until 2026-08-09 and were still listed here for
+a day after they stopped doing anything; a role somebody can be given that has no effect reads as a
+broken system rather than as a boundary (`FRD-206`).
 
 ### The three sets that decide almost everything
 
 These are the predicates the code actually asks. They overlap, and the differences are the point.
 
-| Set | Members | Answers |
-|---|---|---|
-| `GOVERNANCE_ROLES` | `global-admin`, `it-steuerung` | May see every **figure** across the installation |
-| `OVERSIGHT_ROLES` | the above **plus** `it-security` | May see every **use case** and its configuration |
-| `INCIDENT_ROLES` | `global-admin`, `it-security` | May **act** across use cases: stop a caller, author a rule that applies everywhere |
+| Set                | Members                          | Answers                                                                            |
+| ------------------ | -------------------------------- | ---------------------------------------------------------------------------------- |
+| `GOVERNANCE_ROLES` | `global-admin`, `it-steuerung`   | May see every **figure** across the installation                                   |
+| `OVERSIGHT_ROLES`  | the above **plus** `it-security` | May see every **use case** and its configuration                                   |
+| `INCIDENT_ROLES`   | `global-admin`, `it-security`    | May **act** across use cases: stop a caller, author a rule that applies everywhere |
 
 Each split was paid for by a defect:
 
-- **Oversight wider than governance.** IT Security was in neither set and got an *empty* console.
+- **Oversight wider than governance.** IT Security was in neither set and got an _empty_ console.
   A role that sees nothing is not a restricted view, it is an absent one.
-- **Incident narrower than oversight.** The gateway's kill switch was guarded by the *visibility*
+- **Incident narrower than oversight.** The gateway's kill switch was guarded by the _visibility_
   predicate, so IT Steuerung could stop traffic in one plane while Management correctly refused it a
   rule in the other. Two planes, one question, two answers.
 
@@ -57,29 +61,30 @@ Each split was paid for by a defect:
 
 ### Use cases
 
-| | Global Admin | IT Security | IT Steuerung | UC Admin | UC User |
-|---|:--:|:--:|:--:|:--:|:--:|
-| See that a use case exists, and its configuration | all | all | all | own | own |
-| Create a use case | yes | | | yes | |
-| Change or delete one | all | | | own | |
-| Grant and revoke access to one | all | | | own | |
-| Change its pipeline, budgets, rate limits, retention | all | | | own | |
-| Issue an API key for it | all | | | own | own, if a member |
+|                                                      | Global Admin | IT Security | IT Steuerung | UC Admin |     UC User      |
+| ---------------------------------------------------- | :----------: | :---------: | :----------: | :------: | :--------------: |
+| See that a use case exists, and its configuration    |     all      |     all     |     all      |   own    |       own        |
+| Create a use case                                    |     yes      |             |              |   yes    |                  |
+| Change or delete one                                 |     all      |             |              |   own    |                  |
+| Grant and revoke access to one                       |     all      |             |              |   own    |                  |
+| Change its pipeline, budgets, rate limits, retention |     all      |             |              |   own    |                  |
+| Issue an API key for it                              |     all      |             |              |   own    | own, if a member |
 
-Creating a use case needs `use-case-admin` or `global-admin` (`IsUseCaseAdmin`). Everything after
-that is decided per use case by `may_admin` / `may_manage`, which read `django-guardian` object
-permissions — **not** the token. That is why the console asks the server what a caller may do with
+Creating a use case needs `global-admin` — a **narrowing** made by `ADR-0017`, since the old
+`use-case-admin` role was organisation-wide and therefore let anyone administering one use case
+create another. Everything after that is decided per use case by `may_admin` / `may_manage`, which
+read `django-guardian` object permissions — **not** the token. That is why the console asks the server what a caller may do with
 each use case instead of deciding it from the role (`FRD-206`).
 
 ### Models
 
-| | Global Admin | IT Security | IT Steuerung | UC Admin | UC User |
-|---|:--:|:--:|:--:|:--:|:--:|
-| See the catalog | yes | yes | yes | yes | yes |
-| Add a model to the catalog | yes | | | | |
-| Change or remove a declaration or a price | yes | | | | |
-| **Approve a model for use** | yes | | | | |
-| Check whether a model is reachable | yes | yes | | | |
+|                                           | Global Admin | IT Security | IT Steuerung | UC Admin | UC User |
+| ----------------------------------------- | :----------: | :---------: | :----------: | :------: | :-----: |
+| See the catalog                           |     yes      |     yes     |     yes      |   yes    |   yes   |
+| Add a model to the catalog                |     yes      |             |              |          |         |
+| Change or remove a declaration or a price |     yes      |             |              |          |         |
+| **Approve a model for use**               |     yes      |             |              |          |         |
+| Check whether a model is reachable        |     yes      |     yes     |              |          |         |
 
 **Only a catalogued and approved model may be used at all** (`FRD-307`). A model an upstream offers
 but nobody catalogued is refused by name; so is a catalogued model nobody approved. The two refusals
@@ -87,14 +92,14 @@ are different sentences because they need different actions — add it, or relea
 
 ### Requests, figures and content
 
-| | Global Admin | IT Security | IT Steuerung | UC Admin | UC User |
-|---|:--:|:--:|:--:|:--:|:--:|
-| Spend and usage reporting | all | all | all | own | own |
-| Export the report as CSV | all | all | all | own | own |
-| The request list (traces) | all | all | all | own | own* |
-| Filter traces by source address | yes | yes | | | |
-| The cross-use-case **Requests** screen | yes | yes | | | |
-| **Read a stored prompt and response** | yes | yes | **no** | own | own* |
+|                                        | Global Admin | IT Security | IT Steuerung | UC Admin | UC User |
+| -------------------------------------- | :----------: | :---------: | :----------: | :------: | :-----: |
+| Spend and usage reporting              |     all      |     all     |     all      |   own    |   own   |
+| Export the report as CSV               |     all      |     all     |     all      |   own    |   own   |
+| The request list (traces)              |     all      |     all     |     all      |   own    |  own*   |
+| Filter traces by source address        |     yes      |     yes     |              |          |         |
+| The cross-use-case **Requests** screen |     yes      |     yes     |              |          |         |
+| **Read a stored prompt and response**  |     yes      |     yes     |    **no**    |   own    |  own*   |
 
 \* A use case may be set to show its **users** only the requests they made themselves
 (`restrict_members_to_own_requests`). Its administrators always see all of them.
@@ -112,24 +117,24 @@ answers, never one.
 
 ### Security and incidents
 
-| | Global Admin | IT Security | IT Steuerung | UC Admin | UC User |
-|---|:--:|:--:|:--:|:--:|:--:|
-| The security console | yes | yes | yes | | |
-| See findings | all | all | all | own | own |
-| Author a rule that applies **everywhere** | yes | yes | | | |
-| Author a rule for one use case | all | | | own | |
-| Stop a caller, a credential or a use case | yes | yes | | | |
-| Lift a suspension | yes | yes | | | |
+|                                           | Global Admin | IT Security | IT Steuerung | UC Admin | UC User |
+| ----------------------------------------- | :----------: | :---------: | :----------: | :------: | :-----: |
+| The security console                      |     yes      |     yes     |     yes      |          |         |
+| See findings                              |     all      |     all     |     all      |   own    |   own   |
+| Author a rule that applies **everywhere** |     yes      |     yes     |              |          |         |
+| Author a rule for one use case            |     all      |             |              |   own    |         |
+| Stop a caller, a credential or a use case |     yes      |     yes     |              |          |         |
+| Lift a suspension                         |     yes      |     yes     |              |          |         |
 
 A global rule's effects land on use cases its author cannot otherwise touch, which is why authoring
 one is an incident power and reading one is everybody's.
 
 ### Operations
 
-| | Global Admin | IT Security | IT Steuerung | UC Admin | UC User |
-|---|:--:|:--:|:--:|:--:|:--:|
-| `/healthz`, `/readyz` verdict | public | public | public | public | public |
-| `/readyz` **detail** (hosts, upstreams, fallbacks, secret source) | yes | yes | yes | yes | yes |
+|                                                                   | Global Admin | IT Security | IT Steuerung | UC Admin | UC User |
+| ----------------------------------------------------------------- | :----------: | :---------: | :----------: | :------: | :-----: |
+| `/healthz`, `/readyz` verdict                                     |    public    |   public    |    public    |  public  | public  |
+| `/readyz` **detail** (hosts, upstreams, fallbacks, secret source) |     yes      |     yes     |     yes      |   yes    |   yes   |
 
 The verdict is unauthenticated so a load balancer can probe it. The body that names hosts and
 upstreams needs a credential: it describes the deployment, and a probe is not a reader.
@@ -141,10 +146,10 @@ upstreams needs a credential: it describes the deployment, and a probe is not a 
 A grant binds a **principal** — a person or a Keycloak group — to a use case with a role
 (`FRD-209`, `libs/src/aira_common/access.py`).
 
-| Grant role | May |
-|---|---|
-| `user` | call the gateway attributed to this use case; see it, its figures and its requests |
-| `admin` | additionally change what happens inside it: access, keys, pipeline, budgets, limits, retention |
+| Grant role | May                                                                                            |
+| ---------- | ---------------------------------------------------------------------------------------------- |
+| `user`     | call the gateway attributed to this use case; see it, its figures and its requests             |
+| `admin`    | additionally change what happens inside it: access, keys, pipeline, budgets, limits, retention |
 
 Two rules the code enforces so that neither plane has to restate them:
 
@@ -163,10 +168,10 @@ be configured on every client that reaches AIRA, including service accounts.
 
 A caller reaches the gateway with one of two credentials, and the difference matters:
 
-| Credential | Carries a use case | Selector |
-|---|---|---|
-| **API key** (`aira_<prefix>_<secret>`) | yes, bound at issuance | none needed; a mismatched selector is refused |
-| **OIDC bearer token** | no | `/uc/<slug>` in the path, or the `X-AIRA-Use-Case` header |
+| Credential                             | Carries a use case     | Selector                                                  |
+| -------------------------------------- | ---------------------- | --------------------------------------------------------- |
+| **API key** (`aira_<prefix>_<secret>`) | yes, bound at issuance | none needed; a mismatched selector is refused             |
+| **OIDC bearer token**                  | no                     | `/uc/<slug>` in the path, or the `X-AIRA-Use-Case` header |
 
 For a bearer token, membership comes from the Keycloak group `/use-cases/<slug>` and from grants
 distributed to the gateway. A caller who names a use case they are not in is refused — **an empty

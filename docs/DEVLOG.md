@@ -374,6 +374,40 @@ image without saying how to build it — shown to fail by deleting one.
 
 ---
 
+## 2026-08-10 — Two roles nobody could use, removed
+
+`ADR-0017` abolished `use-case-admin` and `use-case-user` on 2026-08-09: administering or belonging
+to a use case is a **grant on that use case**, not a property of a person, and `may_admin`,
+`may_manage`, `is_member` and `scope_queryset` all needed no change to prove it. They stayed in the
+vocabulary anyway — in the `Role` enum, in the Keycloak realm file, in the seed (which created a
+Django group for each and assigned them), in the console's specs and in `ROLES.md` and
+`DEPLOYMENT.md` as if they still meant something.
+
+**A role somebody can be given that does nothing** is the plainest version of the defect `FRD-206`
+is about: an absent capability reads as a boundary, a present one with no effect reads as a broken
+system, and the reader then distrusts the permissions that do work. Removed everywhere, and the
+realm and the code are now compared **in both directions** by a test — a role in the code the realm
+cannot confer is unreachable, and a role in the realm the code does not know is a promise nothing
+keeps. Fifth instance of that answer, after the Kafka topics, the capability vocabulary, the emit
+map and the console's checkbox list.
+
+Three things fell out of doing it:
+
+- **The seed was wiping the groups it does not own.** `user.groups.set([role_group])` also removed
+  the `kc:/…` groups `sync_user_roles` writes from the token, so running the seed silently
+  un-granted every demo user's use-case access until their next request repaired it. It touches
+  the role groups and nothing else now.
+- **A branch that could no longer fire.** `parse_role_groups` refused a role that "is not conferred
+  by a group", which became unreachable once the only two such roles left the enum. Removed — an
+  unreachable guard is not a guard — with its _message_ folded into the unknown-name refusal,
+  because those two names appear in older `.env` files and are exactly what somebody will type.
+- **A mutation that would have passed for the wrong reason.** `O1` added `Role.USE_CASE_ADMIN` to
+  the oversight set; the mutated file would no longer import, and an `AttributeError` is not a
+  property being defended. Re-anchored onto `IT_SECURITY`, which is the meaningful one: it sees
+  every use case and deliberately not every figure.
+
+Also corrected: `FRD-133`'s status line said "both stages" after three were built.
+
 ## 2026-08-10 — Who answers for a credential, and who made it (`FRD-604` Stage B)
 
 Stage A was four sentences and a badge: the console had recorded the issuer all along and never

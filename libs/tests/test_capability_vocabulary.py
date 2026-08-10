@@ -65,3 +65,36 @@ def test_the_console_offers_nothing_the_gateway_does_not_know() -> None:
     unknown = _console_capabilities() - {member.value for member in Capability}
 
     assert not unknown, f"the console offers {sorted(unknown)}, which no model can be judged by"
+
+
+def test_the_realm_defines_exactly_the_roles_that_exist() -> None:
+    """The dev realm and the code must name the same roles.
+
+    `ADR-0017` abolished `use-case-admin` and `use-case-user`; they stayed in the `Role` enum, in
+    the seed, in the console's specs **and in the realm file** for a day afterwards. A realm role
+    nothing reads is a role somebody can be assigned in Keycloak with no effect anywhere — the
+    plainest version of a control that looks present and is absent.
+
+    Compared in both directions, the answer this repository keeps arriving at: a role in the code
+    that the realm cannot confer is unreachable, and a role in the realm that the code does not
+    know is a promise nothing keeps.
+    """
+    import json
+
+    from aira_common.roles import ALL_ROLES
+
+    realm_file = (
+        pathlib.Path(__file__).resolve().parents[2]
+        / "deploy"
+        / "compose"
+        / "keycloak"
+        / "realms"
+        / "aira-realm.json"
+    )
+    realm = json.loads(realm_file.read_text())
+    defined = {role["name"] for role in realm["roles"]["realm"]}
+    known = {role.value for role in ALL_ROLES}
+
+    assert defined == known, (
+        f"realm-only: {sorted(defined - known)}, code-only: {sorted(known - defined)}"
+    )
