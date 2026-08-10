@@ -103,6 +103,17 @@ export class UseCaseList implements OnInit {
    */
   protected readonly canCreate = computed(() => (this.me()?.roles ?? []).includes('global-admin'));
 
+  /**
+   * Whether this session carries no role at all.
+   *
+   * `FRD-206`'s rule — an empty list must say *which* empty it is — applied to the case that keeps
+   * being reported as "the showcase loaded nothing": there are use cases, and this session may see
+   * none of them. Roles come from the token's groups (`ADR-0017`) and are worked out at sign-in,
+   * so a session that predates a group change is roleless and looks exactly like an empty
+   * installation. "No use cases yet" is then a confident statement about the wrong thing.
+   */
+  protected readonly hasNoRole = computed(() => this.me() !== null && !this.me()?.roles?.length);
+
   /** Why the form cannot be submitted yet — shown inline instead of failing silently. */
   protected slugError(): string | null {
     if (!this.slug()) return null;

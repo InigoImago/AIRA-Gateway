@@ -44,12 +44,22 @@
         Loading use cases…
       </p>
     } @else if (isEmpty()) {
-      <p class="empty">
-        No use cases yet.
-        @if (canCreate()) {
-          Use <strong>New use case</strong> above to create the first one.
-        }
-      </p>
+      @if (hasNoRole()) {
+        <p class="callout callout--warning" data-testid="no-role">
+          <strong>Your session carries no role.</strong> There may well be use cases here — this
+          sign-in is not allowed to see any of them. Roles come from your Keycloak group membership
+          and are read when you sign in, so a session older than a change to those groups still has
+          the old answer. Sign out and in again; if it persists, ask for membership of the group
+          your role is mapped to.
+        </p>
+      } @else {
+        <p class="empty">
+          No use cases yet.
+          @if (canCreate()) {
+            Use <strong>New use case</strong> above to create the first one.
+          }
+        </p>
+      }
     } @else {
       @if (!view.total()) {
         <p class="empty" data-testid="use-case-no-match">

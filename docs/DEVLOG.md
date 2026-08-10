@@ -263,6 +263,22 @@ is still a recipe line, and eleven of them had landed in the middle of the demo'
 
 Measured while there: `make showcase` takes **66 seconds** on a warm machine.
 
+**And then the console came up empty.** The data was there — 6 accounts, 4 demo use cases, both
+read-models populated — and the list said _"No use cases yet"_, which is a confident statement
+about the wrong thing. Roles come from the token's **groups** (`ADR-0017`) and are worked out at
+**sign-in**, so a session older than a change to those groups carries no role and sees nothing.
+That is `FRD-206`'s rule again: an empty list must say _which_ empty it is. It now says the session
+carries no role, that there may well be use cases it is not allowed to see, and what to do about
+it.
+
+`make showcase-doctor` reports the chain link by link — Keycloak accounts and groups, Management's
+use cases and who may see them, the gateway's read-model — and names the first broken link with
+the command that fixes it. Every one of those links has been seen broken this week (a realm older
+than its file, a Vault that had forgotten its path, a catalog written and never announced, budgets
+an earlier run had spent), and every time the symptom was the same: a console that comes up and
+shows nothing, with nothing anywhere saying why. Deliberately **not** part of `make showcase`: a
+demo that runs a diagnostic every time is a demo that has given up on working.
+
 **CI failed on two tests that pass everywhere this project has ever been written**, and both were
 the same defect wearing different clothes: _a unit test that reads the developer's machine is a
 test whose green is about that machine._

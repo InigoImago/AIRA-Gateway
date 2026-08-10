@@ -149,6 +149,19 @@ describe('UseCaseList', () => {
     expect(text()).not.toContain('No use cases yet');
   });
 
+  it('says a roleless session cannot see rather than that there is nothing', () => {
+    /** The complaint this exists for, twice reported as "the showcase loaded nothing": there are
+     *  use cases, and this sign-in may see none of them. Roles come from the token's groups
+     *  (`ADR-0017`) and are read at sign-in, so a session older than a group change is roleless
+     *  and looks exactly like an empty installation. `FRD-206`'s rule — an empty list must say
+     *  *which* empty it is. */
+    const { text } = setup({ list: of([]), roles: [] });
+
+    expect(text()).toContain('carries no role');
+    expect(text()).toContain('Sign out and in again');
+    expect(text()).not.toContain('No use cases yet');
+  });
+
   it('distinguishes "nothing there" from "still loading"', () => {
     const { component, text } = setup({ list: of([]) });
     expect(component.loading()).toBe(false);

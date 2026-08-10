@@ -99,6 +99,9 @@ showcase: env ## Start the full demo: stack, local model, seeded roles/budgets, 
 showcase-traffic: ## Drive more demo traffic (moves the budget bars)
 	uv run python tools/demo_traffic.py
 
+showcase-doctor: ## Report which link of the demo is broken (reads only, changes nothing)
+	@python3 tools/showcase_doctor.py
+
 showcase-agent: ## Write an OpenCode config for the showcase's coding-assistant use case
 	@uv run python tools/showcase_agent.py
 
