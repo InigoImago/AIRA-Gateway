@@ -5,6 +5,40 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-11 — A staircase, and the three guards that could not see it
+
+Reported from the running console: on a use case's **Members** tab, "Grant access to" and "As" do
+not sit on one line. Measured before touching anything — the search input's top at **435**, the
+role select and the Grant button at **478**: a **43 px** staircase.
+
+The cause is `FRD-207`'s, exactly: the search field carries a hint under its input, so that field
+grew, and with `align-items: flex-end` its control was pushed up while its neighbour's stayed at
+the bottom. `.form-inline` had been fixed for this and carries the comment explaining it —
+*bottom alignment looks right only while every field is equally tall* — and `.filter-row`, a second
+container with the same job, was never brought along. Top alignment plus a fixed label height, the
+same treatment; the `padding-bottom` that kept a bare checkbox on the control line becomes a
+`margin-top`, because the direction of that correction flips with the alignment.
+
+**Three layers of guard failed to see it, each in a different way, and that is the finding.**
+
+1. `expectFormControlsAligned` only queried `form.form-inline`. The access panel's row is a
+   `div.filter-row`, so the case named **`'grant access'`** has been asserting alignment on a
+   container it never selected.
+2. It grouped controls into **40 px bands** to tolerate wrapping — and a staircase *taller than the
+   band* reads as two separate rows. That let 12 px through once before; 43 px sails past it. A
+   line is now a set of flex items whose boxes **overlap vertically**, which is what a flex line
+   actually is: items on one line always overlap however their inner controls are aligned.
+3. It ran straight after `goto` with nothing to wait for, so on a page that had not rendered yet it
+   compared nothing and passed. It now waits for a row and **insists it found something to
+   compare** — which immediately exposed that `'create use case'` was pointed at a list page with
+   no form on it at all, and that the create form is a `stack` anyway, one control per line, where
+   no staircase is possible. That assertion is gone rather than repaired.
+
+Each of the three was shown to fire before being trusted: the old CSS restored, the guard run, the
+failure read, the CSS put back.
+
+---
+
 ## 2026-08-11 — Every model call belongs to somebody
 
 Asked directly after the dry-run finding: _"stell sicher, dass jeder Modellaufruf einem Use Case

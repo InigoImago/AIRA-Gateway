@@ -195,39 +195,78 @@ export function uniqueSlug(prefix: string) {
  * has no layout at all. Controls are grouped by the row they landed in, since these forms wrap.
  */
 export async function expectFormControlsAligned(page: Page, context: string) {
+  // **Wait for something to check.** Called right after a `goto`, this used to run before the
+  // panel had rendered, find no rows, and pass — which is how a 43 px staircase on the access
+  // panel survived a case literally named `'grant access'`. A guard that reports green about an
+  // empty page is the thing it guards against, one level up.
+  await page.locator('form.form-inline, .filter-row').first().waitFor({ timeout: 20_000 });
+
   const rows = await page.evaluate(() => {
-    const out: { form: number; rows: Record<string, string[]> }[] = [];
-    document.querySelectorAll('form.form-inline').forEach((form, index) => {
-      const grouped: Record<string, string[]> = {};
-      form.querySelectorAll('input:not([type=checkbox]), select, button').forEach((element) => {
-        const rect = element.getBoundingClientRect();
-        if (rect.width === 0) return;
-        // An info hint's trigger lives *inside a `<label>`* and therefore sits at label height by
-        // construction, one line above the control it explains. Counting it as a row control
-        // reports a staircase for every labelled field that carries an explanation — which is not
-        // the defect this guard was written for (`FRD-207`: a bare checkbox centred against a
-        // labelled field, so a pair of controls landed on two lines). Excluded by *where it is*,
-        // not by what it is called, so a real button placed in a row is still compared.
-        if (element.tagName === 'BUTTON' && element.closest('label')) return;
-        // Group by the row band the control sits in; the forms wrap on purpose.
-        const band = String(Math.round(rect.top / 40));
-        const id = (element as HTMLElement).id || element.tagName.toLowerCase();
-        (grouped[band] ??= []).push(`${id}@${Math.round(rect.top)}`);
+    const out: { group: number; line: number; controls: string[] }[] = [];
+
+    document.querySelectorAll('form.form-inline, .filter-row').forEach((row, group) => {
+      // **A line is a set of flex items whose boxes overlap vertically**, not a band of pixels.
+      //
+      // This used to group controls by `round(top / 40)`, which is a guess at "same row" that
+      // fails in exactly the case the guard exists for: a staircase **taller than the band reads
+      // as two rows**. It let 12 px through once, and then 43 px on the access panel — a
+      // misalignment a person spotted immediately while the suite stayed green.
+      //
+      // The flex items themselves always overlap on a line, however their inner controls are
+      // aligned, so they are what says where the lines are; the controls are what is compared.
+      const items = Array.from(row.children) as HTMLElement[];
+      const lines: { top: number; bottom: number; items: HTMLElement[] }[] = [];
+      for (const item of items) {
+        const box = item.getBoundingClientRect();
+        if (!box.width && !box.height) continue;
+        const line = lines.find((l) => box.top < l.bottom && box.bottom > l.top);
+        if (line) {
+          line.top = Math.min(line.top, box.top);
+          line.bottom = Math.max(line.bottom, box.bottom);
+          line.items.push(item);
+        } else {
+          lines.push({ top: box.top, bottom: box.bottom, items: [item] });
+        }
+      }
+
+      lines.forEach((line, index) => {
+        const controls: string[] = [];
+        for (const item of line.items) {
+          const inside = item.matches('input, select, button')
+            ? [item]
+            : Array.from(
+                item.querySelectorAll<HTMLElement>('input:not([type=checkbox]), select, button'),
+              );
+          for (const element of inside) {
+            const rect = element.getBoundingClientRect();
+            if (rect.width === 0) continue;
+            // An info hint's trigger lives *inside a `<label>`* and therefore sits at label height
+            // by construction, one line above the control it explains. Counting it as a row
+            // control reports a staircase for every labelled field that carries an explanation —
+            // which is not the defect this guard was written for. Excluded by *where it is*, not
+            // by what it is called, so a real button placed in a row is still compared.
+            if (element.tagName === 'BUTTON' && element.closest('label')) continue;
+            controls.push(`${element.id || element.tagName.toLowerCase()}@${Math.round(rect.top)}`);
+          }
+        }
+        if (controls.length > 1) out.push({ group, line: index, controls });
       });
-      out.push({ form: index, rows: grouped });
     });
     return out;
   });
 
-  for (const { form, rows: bands } of rows) {
-    for (const [band, controls] of Object.entries(bands)) {
-      const tops = controls.map((c) => Number(c.split('@')[1]));
-      const spread = Math.max(...tops) - Math.min(...tops);
-      expect(
-        spread,
-        `${context}: form ${form}, row ${band} is a staircase — ${controls.join(', ')}`,
-      ).toBeLessThanOrEqual(2);
-    }
+  expect(
+    rows.length,
+    `${context}: nothing with two controls on a line was found to compare`,
+  ).toBeGreaterThan(0);
+
+  for (const { group, line, controls } of rows) {
+    const tops = controls.map((c) => Number(c.split('@')[1]));
+    const spread = Math.max(...tops) - Math.min(...tops);
+    expect(
+      spread,
+      `${context}: row group ${group}, line ${line} is a staircase — ${controls.join(', ')}`,
+    ).toBeLessThanOrEqual(2);
   }
 }
 

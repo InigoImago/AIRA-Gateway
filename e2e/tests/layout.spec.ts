@@ -165,8 +165,11 @@ test.describe('Form alignment', () => {
     await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('align');
 
-    await page.goto('/use-cases');
-    await expectFormControlsAligned(page, 'create use case');
+    // The create form is deliberately **not** checked: it is a `stack`, one control per line, and
+    // a stacked form has no row that could become a staircase. It was checked here — on the list
+    // page, before the window was even opened — so the assertion named `'create use case'`
+    // compared nothing and passed for as long as it existed. Found when the guard started
+    // insisting it had something to compare.
 
     await createUseCase(page, slug, 'Alignment probe');
 

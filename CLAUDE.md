@@ -1334,6 +1334,22 @@ and a region on every row. The guard is **structural** — every `build_*_upstre
 `check_region` — and its first run flagged `build_token_source`, which builds a *credential* and
 has no region; narrowed to the layer's two suffixes, then proved sharp again.
 
+**A staircase, and the three guards that could not see it (2026-08-11)** — reported from the
+console: on a use case's Members tab "Grant access to" and "As" are not on one line. Measured at
+**43 px** (435 vs 478). The cause is `FRD-207`'s exactly — a hint under an input makes that field
+taller, and under `align-items: flex-end` its control is pushed up — and `.form-inline` had been
+fixed for it while `.filter-row`, a second container with the same job, was never brought along.
+**Three layers of guard missed it, each differently, and that is the finding**: the alignment guard
+queried only `form.form-inline`, so the case literally named `'grant access'` was asserting on a
+container it never selected; it grouped controls into **40 px bands** to tolerate wrapping, so a
+staircase *taller than the band* reads as two rows (12 px escaped it once, 43 px sails past) — a
+line is now a set of flex items whose boxes **overlap vertically**, which is what a flex line is;
+and it ran straight after `goto` with nothing to wait for, so on an unrendered page it compared
+nothing and passed. It now waits and **insists it found something to compare**, which immediately
+exposed `'create use case'` pointed at a list page with no form on it — and the create form is a
+`stack` anyway, where no staircase is possible, so that assertion is gone rather than repaired.
+Each of the three was shown to fire before being trusted.
+
 **Every model call belongs to somebody (2026-08-11)** — the dry run now records and books what its
 steps spent (`pipeline:<step>`, `requests=0`, in a `finally`, because a filter that blocked still
 paid to decide that); `_injection_verdict` went with it, an unreachable helper being a rule the code

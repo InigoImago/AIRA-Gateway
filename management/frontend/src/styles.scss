@@ -283,6 +283,9 @@ input::placeholder {
 /* Height of one label line, so a row of fields can reserve exactly that much and line their
  * controls up regardless of what sits underneath them. */
 $field-label-height: 1.2rem;
+/* An input's outer height: two 0.5rem paddings, two 1px borders, one line of text. Named so a row
+   can line something that is *not* a control up against one. */
+$control-height: calc(1.5em + 1rem + 2px);
 $field-label-gap: 0.3rem;
 
 .form-inline {
@@ -877,12 +880,38 @@ fieldset.bare {
 .filter-row {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-end;
+  /* Aligned at the TOP, exactly as `.form-inline` is and for the same reason, which this row was
+   * left out of: bottom alignment looks right only while every field is equally tall. The access
+   * panel's search carries a hint under its input, so that field grew, its input was pushed up,
+   * and the row became a staircase — **43 px measured** between the search box and the role
+   * select beside it. `FRD-207`'s finding, in the one container its fix did not reach. */
+  align-items: flex-start;
   gap: 1.1rem 1.4rem;
 }
-/* A checkbox has no label above it of its own; this keeps its box on the controls' line. */
+
+/* Every label occupies the same single line, so the controls below them start at the same y. */
+.filter-row .field > label {
+  display: flex;
+  align-items: flex-end;
+  min-height: $field-label-height;
+}
+
+/* Children that are not fields — a button, a bare checkbox — belong on the control row, so they
+ * skip the label row explicitly rather than floating to the top. Was `padding-bottom` while this
+ * row was bottom-aligned; the direction of the correction flips with the alignment. */
+.filter-row > .btn,
 .filter-row .checkline {
-  padding-bottom: 0.55rem;
+  margin-top: calc(#{$field-label-height} + #{$field-label-gap});
+}
+
+/* And it is **centred against a control**, not merely dropped to the control row. A checkbox and
+ * the label beside it are one line of text; a select is two paddings taller. Skipping the label
+ * row alone leaves the pair 10 px out of centre — measured — which is `FRD-207`'s original finding
+ * with a smaller number, and the assertion in `console-usability.spec.ts` is what said so. */
+.filter-row .checkline {
+  display: inline-flex;
+  align-items: center;
+  min-height: $control-height;
 }
 /* A filter field is as wide as what it holds — a key prefix and an address are short. Sized so
    the row still fits on one line: an input at its default width pushed the outcome selector onto
