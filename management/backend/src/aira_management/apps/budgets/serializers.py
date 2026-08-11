@@ -31,7 +31,10 @@ class BudgetSerializer(serializers.ModelSerializer[Budget]):
         subject = (attrs.get("subject") or "").strip()
         if scope == Budget.MEMBER and not subject:
             raise serializers.ValidationError({"subject": "Required for member-scoped budgets."})
-        if scope == Budget.USE_CASE:
+        if scope in (Budget.USE_CASE, Budget.EACH_MEMBER):
+            # Neither names a person, so a subject sent with one is silently meaningless — cleared
+            # rather than stored, or the uniqueness constraint would let the same rule be created
+            # twice under two different empty-ish subjects.
             subject = ""
         attrs["subject"] = subject
         if (

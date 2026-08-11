@@ -55,8 +55,27 @@ export class ModelCatalog implements OnInit {
    * The name **and** the provider are searchable, because "what do we serve on Vertex" is as
    * common a question here as "what does gemini-2.0-flash cost".
    */
+  /**
+   * The catalog with **the released models first** (2026-08-11).
+   *
+   * A catalog only grows, and a reader arriving here is almost always asking about something that
+   * is in use — while an alphabetical list buries those among drafts, retired entries and the
+   * long tail of a vendor's listing. `approved` is the one property that says "this is live"
+   * (`FRD-307`), so it is the one that orders the table.
+   *
+   * The server keeps ordering by name; sorting here rather than there is deliberate, because two
+   * of this screen's warnings count over the **whole** catalog and it is fetched whole for exactly
+   * that reason (`FRD-208`).
+   */
+  private readonly ordered = computed(() =>
+    [...this.models()].sort((a, b) => {
+      const live = Number(b.approved !== false) - Number(a.approved !== false);
+      return live || a.name.localeCompare(b.name);
+    }),
+  );
+
   protected readonly view = new TableView<CatalogModel>(
-    this.models,
+    this.ordered,
     (model) => `${model.name} ${model.display_name ?? ''} ${model.provider ?? ''}`,
   );
   protected readonly loading = signal(true);
@@ -404,12 +423,12 @@ export class ModelCatalog implements OnInit {
       { key: 'attachments', label: 'Attachments', value: json(model.attachments) },
       {
         key: 'input_price',
-        label: 'Input / 1M',
+        label: 'Input $ / 1M',
         value: model.is_priced ? dash(model.input_price_per_million) : 'no price',
       },
       {
         key: 'output_price',
-        label: 'Output / 1M',
+        label: 'Output $ / 1M',
         value: model.is_priced ? dash(model.output_price_per_million) : 'no price',
       },
       { key: 'numeric_id', label: 'KIRA id', value: dash(model.numeric_id) },

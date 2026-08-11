@@ -1,7 +1,10 @@
 import { Component, computed, inject, input, output, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
+import { InfoHint } from '../../core/ui/info-hint';
+import { Modal } from '../../core/ui/modal';
 import { Budget, BudgetUsage } from '../../core/api/models';
+import { LimitScope } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { ConfirmService } from '../../core/ui/confirm.service';
 import { PageFeedback } from '../../core/ui/page-feedback';
@@ -26,7 +29,7 @@ const NO_USAGE: BudgetUsage = {
  */
 @Component({
   selector: 'app-budgets-tab',
-  imports: [FormsModule, RouterLink],
+  imports: [FormsModule, RouterLink, InfoHint, Modal],
   templateUrl: './budgets-tab.html',
 })
 export class BudgetsTab {
@@ -46,7 +49,7 @@ export class BudgetsTab {
   protected readonly feedback = inject(PageFeedback);
 
   protected readonly showForm = signal(false);
-  protected readonly budgetScope = signal<'use_case' | 'member'>('use_case');
+  protected readonly budgetScope = signal<LimitScope>('use_case');
   protected readonly budgetSubject = signal('');
   protected readonly budgetPeriod = signal<'day' | 'month'>('month');
   protected readonly budgetTokens = signal<number | null>(null);
@@ -116,12 +119,28 @@ export class BudgetsTab {
     return (budget.id != null ? this.usage()[budget.id] : undefined) ?? NO_USAGE;
   }
 
+  /**
+   * Whether the figures on this card describe the reader.
+   *
+   * A per-person budget is one configured row and one counter per head, so the gateway answers
+   * with the reader's own figure — and with nothing at all for somebody the row does not bind (an
+   * oversight role belongs to no use case). Drawing that as an empty bar would say the allowance
+   * is untouched, which is a different and confident claim.
+   *
+   * A row the gateway has never counted at all is a different case and stays at zero: nothing has
+   * been spent, and that *is* known.
+   */
+  protected measured(budget: Budget): boolean {
+    const entry = budget.id != null ? this.usage()[budget.id] : undefined;
+    return !entry || entry.used_cost_nanos != null;
+  }
+
   /** Percentage of a spend limit consumed. Compares in nano-units, so the division never
    * touches a decimal amount. */
   protected costPct(budget: Budget): number {
     const limit = budget.limit_cost ? Number(budget.limit_cost) * 1_000_000_000 : 0;
     return limit
-      ? Math.min(100, Math.round((this.usedFor(budget).used_cost_nanos / limit) * 100))
+      ? Math.min(100, Math.round(((this.usedFor(budget).used_cost_nanos ?? 0) / limit) * 100))
       : 0;
   }
 
@@ -130,11 +149,14 @@ export class BudgetsTab {
     Object.values(this.usage()).reduce((sum, entry) => sum + (entry.unpriced_requests ?? 0), 0),
   );
 
-  protected pct(used: number, limit: number | null | undefined): number {
-    return limit ? Math.min(100, Math.round((used / limit) * 100)) : 0;
+  protected pct(used: number | null, limit: number | null | undefined): number {
+    return limit ? Math.min(100, Math.round(((used ?? 0) / limit) * 100)) : 0;
   }
 
   protected labelFor(budget: Budget): string {
-    return budget.scope === 'member' ? budget.subject || 'member' : 'Whole use case';
+    if (budget.scope === 'member') {
+      return budget.subject || 'member';
+    }
+    return budget.scope === 'each_member' ? 'Each member, individually' : 'Whole use case';
   }
 }

@@ -5,10 +5,10 @@
       <button
         type="button"
         class="btn btn--sm btn--primary"
-        [attr.aria-expanded]="showForm()"
-        (click)="showForm.set(!showForm())"
+        (click)="showForm.set(true)"
+        data-testid="add-rate-limit"
       >
-        {{ showForm() ? 'Cancel' : '+ Add rate limit' }}
+        + Add rate limit
       </button>
     }
   </div>
@@ -24,67 +24,107 @@
     </p>
   }
 
-  @if (showForm() && canManage()) {
-    <form class="form-inline disclosure" (ngSubmit)="add()">
-      <div class="field">
-        <label for="rl-scope">Scope</label>
-        <select
-          id="rl-scope"
-          name="rl-scope"
-          [ngModel]="rlScope()"
-          (ngModelChange)="rlScope.set($event)"
-        >
-          <option value="use_case">Whole use case</option>
-          <option value="member">Member</option>
-        </select>
-      </div>
-      @if (rlScope() === 'member') {
+  <app-modal
+    [open]="showForm() && canManage()"
+    title="Add a rate limit"
+    testid="rate-limit-editor"
+    (closed)="showForm.set(false)"
+  >
+    <div modal-body>
+      <form id="rate-limit-form" class="form-inline" (ngSubmit)="add()">
         <div class="field">
-          <label for="rl-subject">Member username</label>
-          <input
-            id="rl-subject"
-            name="rl-subject"
-            [ngModel]="rlSubject()"
-            (ngModelChange)="rlSubject.set($event)"
-            placeholder="username"
-            autocomplete="off"
-          />
+          <label for="rl-scope">Applies to</label>
+          <select
+            id="rl-scope"
+            name="rl-scope"
+            [ngModel]="rlScope()"
+            (ngModelChange)="rlScope.set($event)"
+          >
+            <option value="use_case">The whole use case — one shared rate</option>
+            <option value="each_member">Each person — the same rate for everybody</option>
+            <option value="member">One named person</option>
+          </select>
+          <span class="field__hint">
+            @if (rlScope() === 'use_case') {
+              One rate for all of it: two busy callers share it, and either can use it up.
+            } @else if (rlScope() === 'each_member') {
+              Everybody gets this rate, separately — including people who join later. No names to
+              keep up to date.
+            } @else {
+              Just this one person. Where both apply, the stricter one wins.
+            }
+          </span>
         </div>
-      }
-      <div class="field">
-        <label for="rl-rpm">Requests per minute</label>
-        <input
-          id="rl-rpm"
-          type="number"
-          min="1"
-          name="rl-rpm"
-          [ngModel]="rlRpm()"
-          (ngModelChange)="rlRpm.set($event)"
-          placeholder="e.g. 60"
-        />
-        <span class="field__hint">The sustained rate this caller may keep up.</span>
-      </div>
-      <div class="field">
-        <label for="rl-burst">Burst</label>
-        <input
-          id="rl-burst"
-          type="number"
-          min="1"
-          name="rl-burst"
-          [ngModel]="rlBurst()"
-          (ngModelChange)="rlBurst.set($event)"
-          placeholder="—"
-        />
-        <span class="field__hint">
-          How many may arrive at once. Empty uses the per-minute figure.
-        </span>
-      </div>
-      <button type="submit" class="btn btn--primary" [disabled]="!canAdd()">Add</button>
+        @if (rlScope() === 'member') {
+          <div class="field">
+            <label for="rl-subject">Username</label>
+            <input
+              id="rl-subject"
+              name="rl-subject"
+              [ngModel]="rlSubject()"
+              (ngModelChange)="rlSubject.set($event)"
+              placeholder="username"
+              autocomplete="off"
+            />
+          </div>
+        }
+        <div class="field">
+          <label for="rl-rpm">Requests per minute</label>
+          <input
+            id="rl-rpm"
+            type="number"
+            min="1"
+            name="rl-rpm"
+            [ngModel]="rlRpm()"
+            (ngModelChange)="rlRpm.set($event)"
+            placeholder="e.g. 60"
+          />
+          <span class="field__hint">The sustained rate this caller may keep up.</span>
+        </div>
+        <div class="field">
+          <label for="rl-burst">
+            Burst
+            <app-info-hint label="Burst" testid="rl-burst" [wide]="true">
+              <strong>How many requests may arrive at once</strong>, before the per-minute rate
+              starts holding them back. <br /><br />
+              The limit is a bucket that refills steadily: at 60 per minute it gains one token a
+              second, and each request takes one. <strong>Burst is how big the bucket is</strong> —
+              how much unspent allowance can pile up while nobody is sending. With a burst of 10, a
+              caller that has been quiet can fire 10 requests instantly and is then held to one a
+              second. <br /><br />
+              Leave it empty and the bucket holds a whole minute's worth, which suits a person
+              clicking around. Set it <em>lower</em> than the rate to smooth traffic out — an agent
+              that opens 30 connections at once is the case this exists for. Setting it
+              <em>higher</em> lets a quiet caller save up a bigger opening volley; it does not raise
+              the sustained rate, which is always the per-minute figure.
+            </app-info-hint>
+          </label>
+          <input
+            id="rl-burst"
+            type="number"
+            min="1"
+            name="rl-burst"
+            [ngModel]="rlBurst()"
+            (ngModelChange)="rlBurst.set($event)"
+            placeholder="—"
+          />
+          <span class="field__hint">
+            How many may arrive at once. Empty means a whole minute's worth.
+          </span>
+        </div>
+      </form>
+    </div>
+
+    <div modal-foot>
       @if (validationError(); as message) {
-        <span class="field__hint field__hint--error">{{ message }}</span>
+        <span class="field__hint field__hint--error grow">{{ message }}</span>
       }
-    </form>
-  }
+      <button type="button" class="btn" (click)="showForm.set(false)">Cancel</button>
+      <button type="submit" form="rate-limit-form" class="btn btn--primary" [disabled]="!canAdd()">
+        Add
+      </button>
+    </div>
+  </app-modal>
 
   <div class="table-wrap" style="margin-top: 1rem">
     <table class="table">

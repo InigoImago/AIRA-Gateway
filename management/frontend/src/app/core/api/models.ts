@@ -192,9 +192,19 @@ export interface DryRunResult {
   trace: DryRunTraceEntry[];
 }
 
+/**
+ * Who a budget or a rate limit applies to.
+ *
+ * `each_member` is not a variant of `use_case`: that one is a **shared pot**, where the first
+ * caller to arrive can spend all of it, while this bounds every person the same way without
+ * naming any of them — and keeps applying to people who join later. `member` is the answer to
+ * "this person in particular".
+ */
+export type LimitScope = 'use_case' | 'each_member' | 'member';
+
 export interface Budget {
   id?: number;
-  scope: 'use_case' | 'member';
+  scope: LimitScope;
   subject?: string;
   period: 'day' | 'month';
   /** Spend limit for the period, as an exact decimal string (never a JS number). */
@@ -207,7 +217,7 @@ export interface Budget {
 /** A request-rate limit (FRD-405). A budget says how much; this says how fast. */
 export interface RateLimit {
   id?: number;
-  scope: 'use_case' | 'member';
+  scope: LimitScope;
   subject?: string;
   /** Sustained requests per minute. */
   limit_rpm: number;
@@ -218,14 +228,23 @@ export interface RateLimit {
 
 export interface BudgetUsage {
   id: number;
-  used_tokens: number;
-  used_requests: number;
+  /**
+   * Whose figures these are: `''` for a shared row, a username for a per-person one, and `null`
+   * when the row is per-person and binds nobody the reader could be told about.
+   */
+  measured_for?: string | null;
+  // Every figure below is nullable for one reason, and it is the whole reason `measured_for`
+  // exists: a per-person budget is one configured row and N counters, so there is no single
+  // number to report to a reader the row does not bind. Zero is not that answer — zero is also
+  // what a real, untouched allowance looks like (`FRD-603`: unknown is never rendered as zero).
+  used_tokens: number | null;
+  used_requests: number | null;
   /** Consumed spend in nano-units — integer, safe to divide for a progress bar. */
-  used_cost_nanos: number;
+  used_cost_nanos: number | null;
   /** The same amount rounded for display. */
-  used_cost: string;
+  used_cost: string | null;
   /** Requests served by a model with no price on file; their cost is unknown, not zero. */
-  unpriced_requests: number;
+  unpriced_requests: number | null;
 }
 
 /** What a model may be asked to do (FRD-114). Flags say *whether*, never *how*. */

@@ -22,7 +22,21 @@ from aira_management.apps.usecases.models import UseCase
 class Budget(models.Model):
     USE_CASE = "use_case"
     MEMBER = "member"
-    SCOPE_CHOICES = [(USE_CASE, "Use case"), (MEMBER, "Member")]
+    #: **Each member, individually** — one row, one counter per person (2026-08-11).
+    #:
+    #: `MEMBER` names somebody; this is the answer to "everybody, but separately", which is what an
+    #: administrator wants far more often — a fair share per head without listing the heads, and it
+    #: keeps applying to people who join afterwards.
+    #:
+    #: Not a variant of `USE_CASE`: that one is a **shared pot**, where the first caller to arrive
+    #: can spend all of it. Two different governance decisions, and neither substitutes for the
+    #: other.
+    EACH_MEMBER = "each_member"
+    SCOPE_CHOICES = [
+        (USE_CASE, "Use case"),
+        (EACH_MEMBER, "Each member"),
+        (MEMBER, "One member"),
+    ]
 
     DAY = "day"
     MONTH = "month"

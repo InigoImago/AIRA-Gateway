@@ -24,6 +24,18 @@ consumption** against them, with a threshold warning.
   stays hidden; the tab then names the missing group instead of implying the gateway is down.
 - Admin edits; members read.
 
+### 2.1 Added 2026-08-11 — a window, a currency, and a figure that may not exist
+- **Creation opens a window** (`core/ui/modal.ts`), not a form unfolding under the list. The same
+  three screens (budgets, rate limits, anomaly rules) each had their own; the fifth copy is where
+  the Escape handler and the focus move start to differ.
+- **Every monetary label names its currency.** The spend limit was a bare number; every provider
+  behind this gateway prices in dollars and the catalog is dollars per million tokens, so a budget
+  in anything else would be a conversion nobody performed — and the reader would assume otherwise.
+- **A per-person budget has no single figure.** `usage` answers with the *reader's own* and says so
+  (`measured_for`); to a reader the row does not bind it answers `null`, and the card draws **no
+  bar** and says why. Zero is what an untouched allowance looks like, so rendering the unknown as
+  zero would be a confident wrong statement rather than a missing one (`FRD-603`).
+
 ## 3. Testing & Acceptance
 - Vitest: service budget calls; component renders limits + consumption bars; threshold styling.
 - Acceptance: set a budget, make requests, watch the bar fill and warn near the limit; over the limit

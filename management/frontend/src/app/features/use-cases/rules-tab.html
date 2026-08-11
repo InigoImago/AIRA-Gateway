@@ -24,8 +24,14 @@
     </p>
   }
 
-  @if (editing() === 0) {
-    <div class="disclosure" style="margin-top: 0.75rem">
+  <app-modal
+    [open]="editing() === 0"
+    title="A rule for this use case"
+    testid="rule-editor"
+    [withFoot]="false"
+    (closed)="cancel()"
+  >
+    <div modal-body>
       <app-rule-form
         [rule]="draft()"
         [busy]="feedback.busy()"
@@ -34,7 +40,7 @@
         (cancelled)="cancel()"
       />
     </div>
-  }
+  </app-modal>
 
   @if (loading()) {
     <p class="loading" style="margin-top: 1rem">

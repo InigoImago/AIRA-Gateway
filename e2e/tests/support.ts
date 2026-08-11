@@ -182,6 +182,26 @@ export async function awaitGatewayMembership(page: Page, slug: string) {
 }
 
 /** A slug that is unique per run so reruns do not collide on the unique constraint. */
+/**
+ * The Save/Add button of whichever form is open.
+ *
+ * Written when budgets, rate limits and anomaly rules moved into windows. A window's action row is
+ * the dialog's, not the form's, so its submit sits **outside** the `<form>` and is tied back to it
+ * by `form="…"` — which is what an action row is for, and what makes `form button[type=submit]`
+ * stop finding it. Six specs would otherwise have failed for a reason that has nothing to do with
+ * what they are about.
+ */
+export async function submitOfOpenForm(page: Page) {
+  // The window wins when one is open, and it is asked for **first** rather than as one half of a
+  // comma-separated selector: those resolve in document order, so a page-level form rendered above
+  // the dialog would be submitted instead — and the assertion after it would still pass, because
+  // both buttons say "Add".
+  const inWindow = page.locator('.modal button[type="submit"]');
+  return (await inWindow.count())
+    ? inWindow.first()
+    : page.locator('form button[type="submit"]').first();
+}
+
 export function uniqueSlug(prefix: string) {
   return `${prefix}-${Math.random().toString(36).slice(2, 8)}`;
 }

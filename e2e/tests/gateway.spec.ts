@@ -9,6 +9,7 @@ import {
   logout,
   releaseAllModels,
   uniqueSlug,
+  submitOfOpenForm,
 } from './support';
 
 /**
@@ -119,7 +120,7 @@ test.describe('Gateway integration', () => {
     if ((await page.locator('[role="progressbar"]').count()) === 0) {
       await page.click('button:has-text("Add budget")');
       await page.fill('#budget-requests', '5');
-      await page.click('form button[type="submit"]');
+      await (await submitOfOpenForm(page)).click();
     }
 
     await expect(page.locator('[role="progressbar"]').first()).toBeVisible();
@@ -137,7 +138,7 @@ test.describe('Gateway integration', () => {
     await page.goto(`/use-cases/${slug}?tab=budgets`);
     await page.click('button:has-text("Add budget")');
     await page.fill('#budget-requests', '5');
-    await page.click('form button[type="submit"]');
+    await (await submitOfOpenForm(page)).click();
 
     // The reader has to be in exactly the state the message is about: **administers the use case
     // in Management, is not in the gateway's Keycloak group for it.** A Global Administrator sees

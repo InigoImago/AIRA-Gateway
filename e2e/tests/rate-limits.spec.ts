@@ -1,5 +1,12 @@
 import { expect, test } from '@playwright/test';
-import { USERS, createUseCase, expectNoHorizontalOverflow, login, uniqueSlug } from './support';
+import {
+  USERS,
+  createUseCase,
+  expectNoHorizontalOverflow,
+  login,
+  uniqueSlug,
+  submitOfOpenForm,
+} from './support';
 
 /**
  * Request-rate limits (FRD-405) through the real UI.
@@ -19,7 +26,7 @@ test.describe('Rate limits', () => {
 
     await page.click('button:has-text("Add rate limit")');
     await page.fill('#rl-rpm', '120');
-    await page.click('form button[type="submit"]');
+    await (await submitOfOpenForm(page)).click();
 
     const row = page.locator('table tbody tr').first();
     await expect(row).toContainText('Whole use case');
@@ -36,7 +43,7 @@ test.describe('Rate limits', () => {
     await page.goto(`/use-cases/${slug}?tab=rate-limits`);
     await page.click('button:has-text("Add rate limit")');
     await page.fill('#rl-rpm', '90');
-    await page.click('form button[type="submit"]');
+    await (await submitOfOpenForm(page)).click();
 
     const cells = page.locator('table tbody tr').first().locator('td');
     await expect(cells.nth(1)).toHaveText('90');
@@ -51,7 +58,7 @@ test.describe('Rate limits', () => {
     await page.goto(`/use-cases/${slug}?tab=rate-limits`);
     await page.click('button:has-text("Add rate limit")');
     await expect(page.locator('.field__hint--error')).toContainText('how many requests per minute');
-    await expect(page.locator('form button[type="submit"]')).toBeDisabled();
+    await expect(await submitOfOpenForm(page)).toBeDisabled();
 
     // Zero would switch the use case off rather than configure it.
     await page.fill('#rl-rpm', '0');
@@ -73,7 +80,7 @@ test.describe('Rate limits', () => {
     await page.fill('#rl-subject', 'ucuser');
     await page.fill('#rl-rpm', '30');
     await page.fill('#rl-burst', '5');
-    await page.click('form button[type="submit"]');
+    await (await submitOfOpenForm(page)).click();
 
     const row = page.locator('table tbody tr').first();
     await expect(row).toContainText('ucuser');
@@ -89,7 +96,7 @@ test.describe('Rate limits', () => {
     await page.goto(`/use-cases/${slug}?tab=rate-limits`);
     await page.click('button:has-text("Add rate limit")');
     await page.fill('#rl-rpm', '60');
-    await page.click('form button[type="submit"]');
+    await (await submitOfOpenForm(page)).click();
     await expect(page.locator('table tbody tr').first()).toContainText('60');
 
     page.once('dialog', (dialog) => dialog.accept());

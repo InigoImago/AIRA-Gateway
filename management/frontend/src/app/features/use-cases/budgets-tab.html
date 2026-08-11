@@ -5,10 +5,10 @@
       <button
         type="button"
         class="btn btn--sm btn--primary"
-        [attr.aria-expanded]="showForm()"
-        (click)="showForm.set(!showForm())"
+        (click)="showForm.set(true)"
+        data-testid="add-budget"
       >
-        {{ showForm() ? 'Cancel' : '+ Add budget' }}
+        + Add budget
       </button>
     }
   </div>
@@ -23,88 +23,120 @@
     </p>
   }
 
-  @if (showForm() && canManage()) {
-    <form class="form-inline disclosure" (ngSubmit)="add()">
-      <div class="field">
-        <label for="budget-scope">Scope</label>
-        <select
-          id="budget-scope"
-          name="scope"
-          [ngModel]="budgetScope()"
-          (ngModelChange)="budgetScope.set($event)"
-        >
-          <option value="use_case">Whole use case</option>
-          <option value="member">Member</option>
-        </select>
-      </div>
-      @if (budgetScope() === 'member') {
+  <app-modal
+    [open]="showForm() && canManage()"
+    title="Add a budget"
+    testid="budget-editor"
+    (closed)="showForm.set(false)"
+  >
+    <div modal-body>
+      <form id="budget-form" class="form-inline" (ngSubmit)="add()">
         <div class="field">
-          <label for="budget-subject">Member username</label>
+          <label for="budget-scope">Applies to</label>
+          <select
+            id="budget-scope"
+            name="scope"
+            [ngModel]="budgetScope()"
+            (ngModelChange)="budgetScope.set($event)"
+          >
+            <option value="use_case">The whole use case — one shared pot</option>
+            <option value="each_member">Each person — the same limit for everybody</option>
+            <option value="member">One named person</option>
+          </select>
+          <span class="field__hint">
+            @if (budgetScope() === 'use_case') {
+              One budget for all of it: the first caller to arrive can spend the lot.
+            } @else if (budgetScope() === 'each_member') {
+              Everybody gets this much, separately — including people who join later. No names to
+              keep up to date.
+            } @else {
+              Just this one person, on top of whatever the use case has.
+            }
+          </span>
+        </div>
+        @if (budgetScope() === 'member') {
+          <div class="field">
+            <label for="budget-subject">Username</label>
+            <input
+              id="budget-subject"
+              name="subject"
+              [ngModel]="budgetSubject()"
+              (ngModelChange)="budgetSubject.set($event)"
+              placeholder="username"
+              autocomplete="off"
+            />
+          </div>
+        }
+        <div class="field">
+          <label for="budget-period">Period</label>
+          <select
+            id="budget-period"
+            name="period"
+            [ngModel]="budgetPeriod()"
+            (ngModelChange)="budgetPeriod.set($event)"
+          >
+            <option value="day">Daily</option>
+            <option value="month">Monthly</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="budget-cost">
+            Spend limit (USD)
+            <app-info-hint label="Spend limit" testid="budget-cost" [wide]="true">
+              In <strong>US dollars</strong>, because that is what every provider on this gateway
+              prices in — the figures in the model catalog are dollars per million tokens, and a
+              budget in anything else would be a conversion nobody performed. It is the limit most
+              people mean: a token cap has to be re-derived every time a model's price changes,
+              while this one keeps meaning the same thing.
+            </app-info-hint>
+          </label>
           <input
-            id="budget-subject"
-            name="subject"
-            [ngModel]="budgetSubject()"
-            (ngModelChange)="budgetSubject.set($event)"
-            placeholder="username"
+            id="budget-cost"
+            name="cost"
+            inputmode="decimal"
+            [ngModel]="budgetCost()"
+            (ngModelChange)="budgetCost.set($event)"
+            placeholder="e.g. 250.00"
             autocomplete="off"
           />
         </div>
-      }
-      <div class="field">
-        <label for="budget-period">Period</label>
-        <select
-          id="budget-period"
-          name="period"
-          [ngModel]="budgetPeriod()"
-          (ngModelChange)="budgetPeriod.set($event)"
-        >
-          <option value="day">Daily</option>
-          <option value="month">Monthly</option>
-        </select>
-      </div>
-      <div class="field">
-        <label for="budget-cost">Spend limit</label>
-        <input
-          id="budget-cost"
-          name="cost"
-          inputmode="decimal"
-          [ngModel]="budgetCost()"
-          (ngModelChange)="budgetCost.set($event)"
-          placeholder="e.g. 250.00"
-          autocomplete="off"
-        />
-        <span class="field__hint">What this may cost per period — the limit most people mean.</span>
-      </div>
-      <div class="field">
-        <label for="budget-tokens">Token limit</label>
-        <input
-          id="budget-tokens"
-          type="number"
-          min="1"
-          name="tokens"
-          [ngModel]="budgetTokens()"
-          (ngModelChange)="budgetTokens.set($event)"
-          placeholder="—"
-        />
-      </div>
-      <div class="field">
-        <label for="budget-requests">Request limit</label>
-        <input
-          id="budget-requests"
-          type="number"
-          min="1"
-          name="requests"
-          [ngModel]="budgetRequests()"
-          (ngModelChange)="budgetRequests.set($event)"
-          placeholder="—"
-        />
-      </div>
-      <button type="submit" class="btn btn--primary" [disabled]="!canAdd()">Add</button>
+        <div class="field">
+          <label for="budget-tokens">Token limit</label>
+          <input
+            id="budget-tokens"
+            type="number"
+            min="1"
+            name="tokens"
+            [ngModel]="budgetTokens()"
+            (ngModelChange)="budgetTokens.set($event)"
+            placeholder="—"
+          />
+        </div>
+        <div class="field">
+          <label for="budget-requests">Request limit</label>
+          <input
+            id="budget-requests"
+            type="number"
+            min="1"
+            name="requests"
+            [ngModel]="budgetRequests()"
+            (ngModelChange)="budgetRequests.set($event)"
+            placeholder="—"
+          />
+        </div>
+      </form>
+    </div>
+
+    <div modal-foot>
       @if (validationError(); as message) {
-        <span class="field__hint field__hint--error">{{ message }}</span>
+        <span class="field__hint field__hint--error grow">{{ message }}</span>
       }
-    </form>
-  }
+      <button type="button" class="btn" (click)="showForm.set(false)">Cancel</button>
+      <button type="submit" form="budget-form" class="btn btn--primary" [disabled]="!canAdd()">
+        Add
+      </button>
+    </div>
+  </app-modal>
 
   @if (unpricedRequests() > 0) {
     <p class="callout callout--warning" style="margin-top: 1rem">
@@ -153,73 +185,95 @@
           }
         </div>
 
+        @if (!measured(budget)) {
+          <p class="muted" style="margin: 0.4rem 0 0; font-size: 0.82rem">
+            Counted per person, so the limits below apply to each member separately. You have no
+            consumption of your own here, so no figures are shown.
+          </p>
+        }
+
         @if (budget.limit_cost) {
           <div style="margin-top: 0.6rem">
             <div class="spread" style="font-size: 0.82rem">
-              <span class="muted">Spend</span>
-              <span>{{ usedFor(budget).used_cost }} / {{ budget.limit_cost }}</span>
+              <span class="muted">Spend ($)</span>
+              <span>
+                {{ measured(budget) ? usedFor(budget).used_cost : '—' }} /
+                {{ budget.limit_cost }}
+              </span>
             </div>
-            <div
-              class="progress"
-              role="progressbar"
-              [attr.aria-valuenow]="costPct(budget)"
-              aria-valuemin="0"
-              aria-valuemax="100"
-              [attr.aria-label]="'Spend budget for ' + labelFor(budget)"
-            >
+            @if (measured(budget)) {
               <div
-                class="progress__bar"
-                [class.is-warn]="costPct(budget) >= 80"
-                [class.is-full]="costPct(budget) >= 100"
-                [style.width.%]="costPct(budget)"
-              ></div>
-            </div>
+                class="progress"
+                role="progressbar"
+                [attr.aria-valuenow]="costPct(budget)"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                [attr.aria-label]="'Spend budget for ' + labelFor(budget)"
+              >
+                <div
+                  class="progress__bar"
+                  [class.is-warn]="costPct(budget) >= 80"
+                  [class.is-full]="costPct(budget) >= 100"
+                  [style.width.%]="costPct(budget)"
+                ></div>
+              </div>
+            }
           </div>
         }
         @if (budget.limit_requests != null) {
           <div style="margin-top: 0.6rem">
             <div class="spread" style="font-size: 0.82rem">
               <span class="muted">Requests</span>
-              <span>{{ usedFor(budget).used_requests }} / {{ budget.limit_requests }}</span>
+              <span>
+                {{ measured(budget) ? usedFor(budget).used_requests : '—' }} /
+                {{ budget.limit_requests }}
+              </span>
             </div>
-            <div
-              class="progress"
-              role="progressbar"
-              [attr.aria-valuenow]="pct(usedFor(budget).used_requests, budget.limit_requests)"
-              aria-valuemin="0"
-              aria-valuemax="100"
-              [attr.aria-label]="'Request budget for ' + labelFor(budget)"
-            >
+            @if (measured(budget)) {
               <div
-                class="progress__bar"
-                [class.is-warn]="pct(usedFor(budget).used_requests, budget.limit_requests) >= 80"
-                [class.is-full]="pct(usedFor(budget).used_requests, budget.limit_requests) >= 100"
-                [style.width.%]="pct(usedFor(budget).used_requests, budget.limit_requests)"
-              ></div>
-            </div>
+                class="progress"
+                role="progressbar"
+                [attr.aria-valuenow]="pct(usedFor(budget).used_requests, budget.limit_requests)"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                [attr.aria-label]="'Request budget for ' + labelFor(budget)"
+              >
+                <div
+                  class="progress__bar"
+                  [class.is-warn]="pct(usedFor(budget).used_requests, budget.limit_requests) >= 80"
+                  [class.is-full]="pct(usedFor(budget).used_requests, budget.limit_requests) >= 100"
+                  [style.width.%]="pct(usedFor(budget).used_requests, budget.limit_requests)"
+                ></div>
+              </div>
+            }
           </div>
         }
         @if (budget.limit_tokens != null) {
           <div style="margin-top: 0.6rem">
             <div class="spread" style="font-size: 0.82rem">
               <span class="muted">Tokens</span>
-              <span>{{ usedFor(budget).used_tokens }} / {{ budget.limit_tokens }}</span>
+              <span>
+                {{ measured(budget) ? usedFor(budget).used_tokens : '—' }} /
+                {{ budget.limit_tokens }}
+              </span>
             </div>
-            <div
-              class="progress"
-              role="progressbar"
-              [attr.aria-valuenow]="pct(usedFor(budget).used_tokens, budget.limit_tokens)"
-              aria-valuemin="0"
-              aria-valuemax="100"
-              [attr.aria-label]="'Token budget for ' + labelFor(budget)"
-            >
+            @if (measured(budget)) {
               <div
-                class="progress__bar"
-                [class.is-warn]="pct(usedFor(budget).used_tokens, budget.limit_tokens) >= 80"
-                [class.is-full]="pct(usedFor(budget).used_tokens, budget.limit_tokens) >= 100"
-                [style.width.%]="pct(usedFor(budget).used_tokens, budget.limit_tokens)"
-              ></div>
-            </div>
+                class="progress"
+                role="progressbar"
+                [attr.aria-valuenow]="pct(usedFor(budget).used_tokens, budget.limit_tokens)"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                [attr.aria-label]="'Token budget for ' + labelFor(budget)"
+              >
+                <div
+                  class="progress__bar"
+                  [class.is-warn]="pct(usedFor(budget).used_tokens, budget.limit_tokens) >= 80"
+                  [class.is-full]="pct(usedFor(budget).used_tokens, budget.limit_tokens) >= 100"
+                  [style.width.%]="pct(usedFor(budget).used_tokens, budget.limit_tokens)"
+                ></div>
+              </div>
+            }
           </div>
         }
       </div>

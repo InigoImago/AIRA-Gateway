@@ -242,6 +242,27 @@ async def test_a_member_limit_only_binds_that_member(sessionmaker) -> None:
     await service.check("uc", "bob")  # unaffected
 
 
+async def test_one_per_person_row_gives_every_caller_their_own_bucket(sessionmaker) -> None:
+    """The per-head limit: one configured row, one bucket per caller, and nobody named in it.
+
+    Contrast the row above it, which is the same rule aimed at one person, and the use-case row
+    two above, which is a shared allowance the first arrival can drain. This one needs no list of
+    members to keep up to date and keeps applying to whoever joins next.
+
+    Written even though the service needed no change for it — `_applicable` resolves the scope
+    against the caller on every request, so `each_member` binds where it stands. *Needed no change*
+    is a claim, and the reason it holds here and not for budgets (whose key was read off the row,
+    long after the caller was gone) is worth having a test say out loud.
+    """
+    await _limit(sessionmaker, scope="each_member", subject="", limit_rpm=60, burst=1)
+    service = RateLimitService(sessionmaker, InMemoryTokenBucket(FakeClock()))
+
+    await service.check("uc", "alice")
+    with pytest.raises(RateLimited):
+        await service.check("uc", "alice")
+    await service.check("uc", "bob")  # his own allowance, from that same single row
+
+
 async def test_a_throttled_member_does_not_drain_the_use_cases_allowance(sessionmaker) -> None:
     """The guarantee in FR-4, stated the other way round.
 

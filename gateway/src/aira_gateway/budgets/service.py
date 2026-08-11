@@ -42,7 +42,7 @@ from aira_common.money import format_display
 from aira_gateway.budgets.errors import BudgetExceeded
 from aira_gateway.budgets.ledger import Amounts, BudgetLedger, Limits
 from aira_gateway.db.models import BudgetRead, BudgetUsage
-from aira_gateway.scopes import Scope
+from aira_gateway.scopes import EACH_MEMBER, USE_CASE, Scope
 
 _log = get_logger("aira_gateway.budgets")
 
@@ -67,16 +67,37 @@ def _period_key(period: str, now: datetime) -> str:
     return now.strftime("%Y-%m-%d") if period == "day" else now.strftime("%Y-%m")
 
 
-def _scope_key(budget: BudgetRead) -> str:
+def _scope_label(budget: BudgetRead) -> str:
+    """How the exhausted budget is named to the caller.
+
+    The stored value is a configuration word; a refusal is read by somebody who did not write the
+    configuration. `each_member` in particular would be reported to a caller as the name of a
+    setting rather than as what happened to them, which is that their own allowance is gone.
+    """
+    return "use case" if budget.scope == USE_CASE else "member"
+
+
+def _scope_key(budget: BudgetRead, caller: str | None = None) -> str:
     """The key this budget's consumption is accounted under.
 
     The subject is passed as its own caller so a member budget resolves to itself: at this point
     applicability has already been decided by :meth:`_applicable`.
     """
     scope = Scope.applying(
-        scope=budget.scope, use_case=budget.use_case, subject=budget.subject, caller=budget.subject
+        scope=budget.scope,
+        use_case=budget.use_case,
+        subject=budget.subject,
+        # A row that names somebody is its own caller; `each_member` names nobody, so **the caller
+        # is the key** — one configured row, one counter per head. Reading the key off the row
+        # alone was right while every scope identified itself, and became a silent hole the moment
+        # one did not: the resolution would have failed the assertion below rather than mixing two
+        # people's counters, but only because it is asserted.
+        caller=caller or budget.subject,
     )
-    assert scope is not None  # _applicable only returns budgets that bind
+    assert scope is not None, (
+        f"budget {budget.id} ({budget.scope}) does not bind caller {caller!r} — it should never "
+        "have reached here, since _applicable resolves the same question"
+    )
     return scope.usage_key
 
 
@@ -94,6 +115,9 @@ class Reservation:
     """
 
     budgets: list[BudgetRead] = field(default_factory=list)
+    #: Who the request is from. Carried because a `each_member` budget's counter key **is** the
+    #: caller, and settle/release run long after the subject was resolved.
+    subject: str | None = None
     reserved: Amounts = Amounts()
     period_keys: dict[int, str] = field(default_factory=dict)
     atomic: bool = False
@@ -145,7 +169,9 @@ class BudgetService:
             if not budgets:
                 return Reservation()
             if self._ledger is not None:
-                partial = Reservation(budgets=budgets, reserved=amounts, atomic=True)
+                partial = Reservation(
+                    budgets=budgets, subject=subject, reserved=amounts, atomic=True
+                )
                 try:
                     reserved = await self._reserve(session, partial, now)
                     self._degradation.working(self.FEATURE)
@@ -163,8 +189,8 @@ class BudgetService:
                         self.FEATURE,
                         "Postgres read-then-book; concurrent requests can overshoot a limit",
                     )
-            await self._check_only(session, budgets, now)
-        return Reservation(budgets=budgets, atomic=False)
+            await self._check_only(session, budgets, now, subject)
+        return Reservation(budgets=budgets, subject=subject, atomic=False)
 
     async def _reserve(
         self, session: AsyncSession, reservation: Reservation, now: datetime
@@ -182,7 +208,7 @@ class BudgetService:
         assert self._ledger is not None
         amounts = reservation.reserved
         for budget in reservation.budgets:
-            scope_key = _scope_key(budget)
+            scope_key = _scope_key(budget, reservation.subject)
             period_key = _period_key(budget.period, now)
             seed = await self._usage(session, scope_key, period_key)
             breached = await self._ledger.reserve(
@@ -199,14 +225,20 @@ class BudgetService:
             if breached:
                 await self.release(reservation)
                 raise BudgetExceeded(
-                    _BREACH_MESSAGES[breached].format(scope=budget.scope, period=budget.period)
+                    _BREACH_MESSAGES[breached].format(
+                        scope=_scope_label(budget), period=budget.period
+                    )
                 )
             reservation.period_keys[budget.id] = period_key
         reservation.resolved = False  # reserved; the outcome is still open
         return reservation
 
     async def _check_only(
-        self, session: AsyncSession, budgets: list[BudgetRead], now: datetime
+        self,
+        session: AsyncSession,
+        budgets: list[BudgetRead],
+        now: datetime,
+        caller: str | None = None,
     ) -> None:
         """The pre-FRD-405 path: read the usage and refuse if a limit is already met.
 
@@ -215,7 +247,9 @@ class BudgetService:
         reservation path exists.
         """
         for budget in budgets:
-            usage = await self._usage(session, _scope_key(budget), _period_key(budget.period, now))
+            usage = await self._usage(
+                session, _scope_key(budget, caller), _period_key(budget.period, now)
+            )
             breached = None
             if budget.limit_cost_nanos is not None and usage.cost_nanos >= budget.limit_cost_nanos:
                 breached = "cost"
@@ -225,7 +259,9 @@ class BudgetService:
                 breached = "tokens"
             if breached:
                 raise BudgetExceeded(
-                    _BREACH_MESSAGES[breached].format(scope=budget.scope, period=budget.period)
+                    _BREACH_MESSAGES[breached].format(
+                        scope=_scope_label(budget), period=budget.period
+                    )
                 )
 
     @asynccontextmanager
@@ -273,7 +309,12 @@ class BudgetService:
             return
         now = now or datetime.now(UTC)
         await self.record(
-            reservation.budgets, tokens, cost_nanos=cost_nanos, now=now, requests=requests
+            reservation.budgets,
+            tokens,
+            cost_nanos=cost_nanos,
+            now=now,
+            requests=requests,
+            subject=reservation.subject,
         )
         if not reservation.atomic or self._ledger is None:
             return
@@ -303,7 +344,9 @@ class BudgetService:
             if period_key is None:
                 continue  # never reserved against this budget (the one that refused)
             try:
-                await self._ledger.adjust(_scope_key(budget), period_key, amounts=amounts)
+                await self._ledger.adjust(
+                    _scope_key(budget, reservation.subject), period_key, amounts=amounts
+                )
             except CountersUnavailable:
                 # The counter keeps this request's estimate for now. It cannot be repaired from
                 # here — the store holding the stale figure is the store that is unreachable —
@@ -319,6 +362,7 @@ class BudgetService:
         cost_nanos: int | None = None,
         now: datetime | None = None,
         requests: int = 1,
+        subject: str | None = None,
     ) -> None:
         """Book a request — or a batch counted as the many it is — against every budget.
 
@@ -329,6 +373,9 @@ class BudgetService:
         ``cost_nanos`` is ``None`` when the model has no price on file. Such a request is
         counted under ``unpriced_requests`` rather than as costing zero: a spend figure that
         silently omits traffic is worse than one that admits what it does not know.
+
+        ``subject`` is who the request was from. It is required by a **per-person** budget, whose
+        counter key *is* the caller; a shared row ignores it.
         """
         if not budgets:
             return
@@ -338,7 +385,7 @@ class BudgetService:
                 await session.execute(
                     _accumulate(
                         session,
-                        scope_key=_scope_key(budget),
+                        scope_key=_scope_key(budget, subject),
                         period_key=_period_key(budget.period, now),
                         tokens=tokens,
                         requests=requests,
@@ -370,7 +417,7 @@ class BudgetService:
         async with self._sessionmaker() as session:
             budgets = await self._applicable(session, use_case, subject)
             if budgets:
-                await self._check_only(session, budgets, now)
+                await self._check_only(session, budgets, now, subject)
 
     async def book_side_call(
         self,
@@ -407,14 +454,16 @@ class BudgetService:
         now = now or datetime.now(UTC)
         async with self._sessionmaker() as session:
             budgets = await self._applicable(session, use_case, subject)
-        await self.record(budgets, tokens, cost_nanos=cost_nanos, now=now, requests=0)
+        await self.record(
+            budgets, tokens, cost_nanos=cost_nanos, now=now, requests=0, subject=subject
+        )
         if self._ledger is None:
             return  # degraded to the Postgres path, which the line above already wrote
         amounts = Amounts(tokens=tokens, requests=0, cost_nanos=cost_nanos or 0)
         for budget in budgets:
             try:
                 await self._ledger.adjust(
-                    _scope_key(budget), _period_key(budget.period, now), amounts=amounts
+                    _scope_key(budget, subject), _period_key(budget.period, now), amounts=amounts
                 )
             except CountersUnavailable:
                 # Postgres has it, and the counter rebuilds from Postgres when it expires. The
@@ -422,12 +471,21 @@ class BudgetService:
                 # caller is under-charged rather than refused for spend that never happened.
                 _log.warning("budget_side_call_adjust_degraded", budget_id=budget.id)
 
-    async def usage(self, use_case: str, now: datetime | None = None) -> list[dict[str, Any]]:
+    async def usage(
+        self, use_case: str, now: datetime | None = None, *, subject: str | None = None
+    ) -> list[dict[str, Any]]:
         """Current-period usage per budget for a use case (for the UI consumption view, FRD-402).
 
         Cost is reported both as an exact decimal string and as raw nano-units: the string is
         what a human reads, the integer is what a progress bar can divide without a float
         creeping into a monetary figure.
+
+        A **per-person** budget has no single figure — one configured row is N counters — so the
+        answer depends on who is asking, and ``measured_for`` says whose figure this is. A reader
+        the row does not bind (an oversight role, who is a member of nothing) gets ``None`` for
+        every figure rather than a zero: `FRD-603`'s rule, that *unknown is never rendered as
+        zero*, applies with more force here than anywhere, because zero is also what a real,
+        untouched allowance looks like.
         """
         now = now or datetime.now(UTC)
         async with self._sessionmaker() as session:
@@ -436,19 +494,29 @@ class BudgetService:
             )
             out: list[dict[str, Any]] = []
             for budget in result.scalars():
+                measured_for = subject if budget.scope == EACH_MEMBER else budget.subject
+                row: dict[str, Any] = {"id": budget.id, "measured_for": measured_for}
+                if budget.scope == EACH_MEMBER and not subject:
+                    row.update(
+                        used_tokens=None,
+                        used_requests=None,
+                        used_cost_nanos=None,
+                        used_cost=None,
+                        unpriced_requests=None,
+                    )
+                    out.append(row)
+                    continue
                 usage = await self._usage(
-                    session, _scope_key(budget), _period_key(budget.period, now)
+                    session, _scope_key(budget, subject), _period_key(budget.period, now)
                 )
-                out.append(
-                    {
-                        "id": budget.id,
-                        "used_tokens": usage.tokens,
-                        "used_requests": usage.requests,
-                        "used_cost_nanos": usage.cost_nanos,
-                        "used_cost": format_display(usage.cost_nanos),
-                        "unpriced_requests": usage.unpriced_requests,
-                    }
+                row.update(
+                    used_tokens=usage.tokens,
+                    used_requests=usage.requests,
+                    used_cost_nanos=usage.cost_nanos,
+                    used_cost=format_display(usage.cost_nanos),
+                    unpriced_requests=usage.unpriced_requests,
                 )
+                out.append(row)
             return out
 
     async def _applicable(

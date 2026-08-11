@@ -91,6 +91,7 @@ interface Catalog {
   provider: { set: (v: string) => void; (): string };
   approved: { set: (v: boolean) => void; (): boolean };
   models: () => CatalogModel[];
+  view: { rows: () => CatalogModel[] };
   loading: () => boolean;
   error: () => string | null;
   notice: () => string | null;
@@ -1426,5 +1427,40 @@ describe('ModelCatalog — the browse window when things are half-there', () => 
     component.useOffered(OFFERED_FLASH);
 
     expect(component.mustCheck()).toBe(false);
+  });
+});
+
+describe('ModelCatalog — what a reader is looking for comes first', () => {
+  it('lists the released models above the rest', () => {
+    /** A catalog only grows, and somebody arriving here is almost always asking about a model that
+     *  is **in use** — which an alphabetical list buries among drafts, retirements and the long
+     *  tail of a vendor's listing. `approved` is the one property that says "this is live"
+     *  (`FRD-307`), so it is the one that orders the table. */
+    const { component } = setup({
+      models: of([
+        { name: 'aaa-draft', approved: false, is_priced: false },
+        { name: 'zzz-released', approved: true, is_priced: false },
+        { name: 'mmm-released', approved: true, is_priced: false },
+      ]),
+    });
+
+    expect(component.view.rows().map((m: CatalogModel) => m.name)).toEqual([
+      'mmm-released',
+      'zzz-released',
+      'aaa-draft',
+    ]);
+  });
+
+  it('counts its warnings over the whole catalog, not over what is on top', () => {
+    /** The reason the ordering is done here and not at the server: two of this screen's warnings
+     *  are counts over **everything** (`FRD-208`), so the list is fetched whole on purpose. */
+    const { component } = setup({
+      models: of([
+        { name: 'a', approved: true, is_priced: false },
+        { name: 'b', approved: false, is_priced: false },
+      ]),
+    });
+
+    expect(component.unpriced().length).toBe(2);
   });
 });

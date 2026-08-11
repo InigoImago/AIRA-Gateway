@@ -78,12 +78,22 @@ test.describe('Authentication', () => {
 
     const admin = await request.post(
       'http://localhost:8080/realms/master/protocol/openid-connect/token',
-      { form: { grant_type: 'password', client_id: 'admin-cli', username: 'admin', password: 'admin' } },
+      {
+        form: {
+          grant_type: 'password',
+          client_id: 'admin-cli',
+          username: 'admin',
+          password: 'admin',
+        },
+      },
     );
     const token = (await admin.json()).access_token as string;
-    const users = await request.get('http://localhost:8080/admin/realms/aira/users?username=ucadmin', {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const users = await request.get(
+      'http://localhost:8080/admin/realms/aira/users?username=ucadmin',
+      {
+        headers: { Authorization: `Bearer ${token}` },
+      },
+    );
     const userId = (await users.json())[0].id as string;
     await request.post(`http://localhost:8080/admin/realms/aira/users/${userId}/logout`, {
       headers: { Authorization: `Bearer ${token}` },

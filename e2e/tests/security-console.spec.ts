@@ -6,6 +6,7 @@ import {
   login,
   logout,
   uniqueSlug,
+  submitOfOpenForm,
 } from './support';
 
 /**
@@ -29,7 +30,7 @@ async function issueKey(page: Page, slug: string): Promise<string> {
   await page.goto(`/use-cases/${slug}?tab=keys`);
   await page.click('button:has-text("Issue key")');
   await page.fill('#key-label', 'security-e2e');
-  await page.click('form button[type="submit"]');
+  await (await submitOfOpenForm(page)).click();
   const secret = page.locator('.secret');
   await expect(secret).toBeVisible();
   return (await secret.textContent())?.trim() ?? '';
@@ -98,7 +99,7 @@ test.describe('IT Security console', () => {
     await page.selectOption('#stop-target', 'subject');
     await page.fill('#stop-value', target);
     await page.fill('#stop-reason', 'e2e walkthrough');
-    await page.click('form button[type="submit"]');
+    await (await submitOfOpenForm(page)).click();
 
     // The row carries author and reason, because "blocked for two hours last Tuesday, by whom,
     // and why" is what a review asks (ADR-0014).

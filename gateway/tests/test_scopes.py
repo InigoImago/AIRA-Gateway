@@ -63,3 +63,37 @@ def test_the_two_stores_do_not_share_a_key_space() -> None:
 def test_a_scope_names_itself_for_a_refusal() -> None:
     assert Scope("uc").label == "use case"
     assert Scope("uc", "alice").label == "member"
+
+
+# == each member, individually (2026-08-11) ======================================================
+
+
+def test_a_per_person_row_binds_whoever_turns_up() -> None:
+    """One configured row, one counter per head. `member` is the answer to "this person in
+    particular"; this is the answer to "everybody, but separately" — which is what an
+    administrator wants far more often, and it keeps applying to people who join afterwards.
+
+    Not a convenience for `use_case`: that one is a **shared pot**, where the first caller to
+    arrive can spend all of it. These are different governance decisions."""
+    from aira_gateway.scopes import EACH_MEMBER, Scope
+
+    for caller in ("alice", "bob"):
+        scope = Scope.applying(scope=EACH_MEMBER, use_case="uc", subject="", caller=caller)
+        assert scope is not None
+        assert scope.member == caller
+
+    # Its key is the one a row naming that person would have used, so narrowing an individual
+    # later does not move the counter and lose the period's history.
+    each = Scope.applying(scope=EACH_MEMBER, use_case="uc", subject="", caller="alice")
+    named = Scope.applying(scope="member", use_case="uc", subject="alice", caller="alice")
+    assert each.usage_key == named.usage_key
+    assert each.bucket_key == named.bucket_key
+
+
+def test_a_per_person_row_binds_nobody_when_the_request_has_no_subject() -> None:
+    """The same rule `member` follows: a request that carries no identity cannot be bounded per
+    identity, and pretending otherwise would put every anonymous caller in one bucket named after
+    nobody."""
+    from aira_gateway.scopes import EACH_MEMBER, Scope
+
+    assert Scope.applying(scope=EACH_MEMBER, use_case="uc", subject="", caller=None) is None

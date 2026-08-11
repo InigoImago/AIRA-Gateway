@@ -245,4 +245,45 @@ describe('MultiSelect', () => {
     expect(q('[data-testid="pick-search"]')).toBeNull();
     expect(q('[data-testid="pick-remove-gemini-2.5-flash"]')).toBeNull();
   });
+
+  it('changes nothing when a read-only picker is driven from code', () => {
+    /** The controls are gone from the DOM, which is the visible half. This is the other half: a
+     *  picker that is only *visually* read-only is one a stale reference, a keyboard event on a
+     *  chip that outlived its render, or a future template can still change — and `FRD-206`'s rule
+     *  is that read-only means inert. Asserted through the component because that is the only way
+     *  to reach a control the template no longer draws. */
+    const { host, fixture } = setup(['gemini-2.5-flash']);
+    host.disabled.set(true);
+    fixture.detectChanges();
+
+    const picker = fixture.debugElement.children[0].children[0].componentInstance as {
+      toggle: (v: string) => void;
+      remove: (v: string) => void;
+      show: () => void;
+      open: () => boolean;
+    };
+    picker.toggle('qwen3:0.6b');
+    picker.remove('gemini-2.5-flash');
+    picker.show();
+
+    expect(host.selected()).toEqual(['gemini-2.5-flash']);
+    expect(picker.open()).toBe(false);
+  });
+
+  it('closes again from the chevron, and moves nowhere in an empty list', () => {
+    /** Two small paths that only announce themselves by misbehaving: a chevron that only opens
+     *  leaves the reader clicking away to dismiss, and an arrow key in a list of nothing must not
+     *  land the highlight on an option that is not there. */
+    const { open, key, q, fixture, root } = setup([], []);
+
+    open();
+    expect(q('#pick-list')).not.toBeNull();
+
+    key('ArrowDown'); // no options — nothing to move onto
+    expect(root().querySelectorAll('[data-testid^="pick-option-"]').length).toBe(0);
+
+    q<HTMLButtonElement>('[data-testid="pick-toggle"]')!.click();
+    fixture.detectChanges();
+    expect(q('#pick-list')).toBeNull();
+  });
 });

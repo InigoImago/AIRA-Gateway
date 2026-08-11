@@ -37,4 +37,9 @@ async def usage(
     if not principal.is_governance:
         authorize_use_case(principal, use_case)
     service: BudgetService = request.app.state.budgets
-    return JSONResponse({"use_case": use_case, "usage": await service.usage(use_case)})
+    # A per-person budget has one figure per person, so the answer depends on who is asking. The
+    # reader's own subject is the only one they may be shown: reporting somebody else's here would
+    # make a consumption bar a way of watching a named colleague, which no role asked for and the
+    # requests view (`FRD-505`) grants deliberately and records.
+    figures = await service.usage(use_case, subject=principal.subject)
+    return JSONResponse({"use_case": use_case, "usage": figures})

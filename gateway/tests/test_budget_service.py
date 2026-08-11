@@ -132,6 +132,7 @@ async def test_usage_reports_current_period(sessionmaker) -> None:
     assert await service.usage("uc", NOW) == [
         {
             "id": 1,
+            "measured_for": "",
             "used_tokens": 30,
             "used_requests": 1,
             "used_cost_nanos": 0,
@@ -196,3 +197,47 @@ async def test_an_unpriced_request_is_still_counted_apart_by_the_upsert(sessionm
     async with sessionmaker() as session:
         usage = (await session.execute(select(BudgetUsage))).scalars().one()
     assert (usage.cost_nanos, usage.unpriced_requests) == (7, 1)
+
+
+async def test_one_per_person_row_gives_every_caller_their_own_counter(sessionmaker) -> None:
+    """The scope an administrator wants far more often than either of the others: a fair share per
+    head, without a list of heads to keep up to date, and it keeps applying to people who join
+    later.
+
+    Asserted as **two callers against one configured row**, which is the whole claim — and the
+    thing a `use_case` row cannot do: that one is a shared pot, where the first caller to arrive
+    can spend all of it.
+    """
+    await _add(sessionmaker, id=1, scope="each_member", subject="", limit_requests=1)
+    service = BudgetService(sessionmaker)
+
+    # Alice uses hers up…
+    await service.settle(await service.guard("uc", "alice", NOW), 10, now=NOW)
+    with pytest.raises(BudgetExceeded, match="Request budget"):
+        await service.guard("uc", "alice", NOW)
+
+    # …and Bob still has his, from that same single row.
+    assert (await service.guard("uc", "bob", NOW)).budgets
+
+
+async def test_a_per_person_budget_reports_no_figure_to_somebody_it_does_not_bind(
+    sessionmaker,
+) -> None:
+    """One configured row is N counters, so `usage` has to be asked *whose*.
+
+    An oversight reader is a member of nothing and has no figure here. Reporting zero would be
+    indistinguishable from a full, untouched allowance — `FRD-603`'s rule that unknown is never
+    rendered as zero, in the one place where zero is also a plausible real answer.
+    """
+    await _add(sessionmaker, id=1, scope="each_member", subject="", limit_requests=5)
+    service = BudgetService(sessionmaker)
+    await service.settle(await service.guard("uc", "alice", NOW), 7, now=NOW)
+
+    mine = (await service.usage("uc", NOW, subject="alice"))[0]
+    assert (mine["used_tokens"], mine["measured_for"]) == (7, "alice")
+
+    someone_elses = (await service.usage("uc", NOW, subject="bob"))[0]
+    assert someone_elses["used_tokens"] == 0, "counters must not be shared between people"
+
+    nobodys = (await service.usage("uc", NOW))[0]
+    assert nobodys["used_tokens"] is None and nobodys["measured_for"] is None

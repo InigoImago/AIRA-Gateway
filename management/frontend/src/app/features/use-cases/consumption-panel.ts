@@ -80,7 +80,7 @@ export class ConsumptionPanel {
       // Spend first: it is the figure anybody asking "what has this cost" came for, and the one a
       // token count cannot stand in for — the same model-to-model price spread that made
       // `FRD-403` reject token caps as a cost control.
-      { key: 'cost', label: 'Spend', value: row ? row.cost : '—', help: this.explain.cost },
+      { key: 'cost', label: 'Spend ($)', value: row ? row.cost : '—', help: this.explain.cost },
       {
         key: 'requests',
         label: 'Requests',

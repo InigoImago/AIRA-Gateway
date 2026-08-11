@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { USERS, createUseCase, login, logout, uniqueSlug } from './support';
+import { USERS, createUseCase, login, logout, uniqueSlug, submitOfOpenForm } from './support';
 
 test.describe('Use-case management', () => {
   test('creates a use case, lands on its settings, and adds a member', async ({ page }) => {
@@ -57,7 +57,7 @@ test.describe('Use-case management', () => {
     // not; a component test cannot tell a shipped template from a stale build.
     await expect(page.getByTestId('key-responsibility')).toContainText('your name');
     await page.fill('#key-label', 'e2e');
-    await page.click('form button[type="submit"]');
+    await (await submitOfOpenForm(page)).click();
 
     const secret = page.locator('.secret');
     await expect(secret).toBeVisible();
@@ -96,7 +96,7 @@ test.describe('Use-case management', () => {
     await page.click('button:has-text("Issue key")');
     await page.fill('#key-label', 'chatbot');
     await page.fill('#key-owner', 'nobody-at-all');
-    await page.click('form button[type="submit"]');
+    await (await submitOfOpenForm(page)).click();
 
     await expect(page.locator('[role="alert"], .callout--danger').first()).toContainText(
       /nobody-at-all/,
@@ -112,7 +112,7 @@ test.describe('Use-case management', () => {
 
     await page.goto(`/use-cases/${slug}?tab=keys`);
     await page.click('button:has-text("Issue key")');
-    await page.click('form button[type="submit"]');
+    await (await submitOfOpenForm(page)).click();
     await expect(page.locator('.secret')).toBeVisible();
 
     await page.reload();
@@ -147,7 +147,7 @@ test.describe('Use-case management', () => {
     await page.goto(`/use-cases/${slug}?tab=budgets`);
     await page.click('button:has-text("Add budget")');
     await page.fill('#budget-tokens', '1000');
-    await page.click('form button[type="submit"]');
+    await (await submitOfOpenForm(page)).click();
 
     await expect(page.locator('text=/0 \\/ 1000/')).toBeVisible();
     await expect(page.locator('[role="progressbar"]')).toHaveCount(1);

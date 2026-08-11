@@ -16,6 +16,17 @@ from dataclasses import dataclass
 
 USE_CASE = "use_case"
 MEMBER = "member"
+#: **Each member, individually** — one configured row, one counter per person.
+#:
+#: `MEMBER` names somebody: it is the answer to "this person in particular". `EACH_MEMBER` is the
+#: answer to "everybody, but separately", which is what an administrator wants far more often —
+#: a fair share per head, without listing the heads. Configured once, it applies to whoever turns
+#: up, including people who joined the use case afterwards.
+#:
+#: The distinction that makes it not merely a convenience: a `USE_CASE` budget is a **shared pot**
+#: — the first caller to arrive can spend all of it — while this one bounds every person the same
+#: way. Those are different governance decisions and neither substitutes for the other.
+EACH_MEMBER = "each_member"
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,6 +52,12 @@ class Scope:
         if scope == USE_CASE:
             return cls(use_case)
         if scope == MEMBER and caller and subject == caller:
+            return cls(use_case, caller)
+        if scope == EACH_MEMBER and caller:
+            # The row names nobody; the **caller** is the subject. So one configured row produces a
+            # counter per person, under exactly the key a row naming that person would have used —
+            # which is why an administrator can narrow one individual later without the shared
+            # history moving to a different key.
             return cls(use_case, caller)
         return None
 

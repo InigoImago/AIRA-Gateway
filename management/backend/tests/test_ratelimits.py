@@ -103,6 +103,30 @@ def test_a_use_case_scoped_limit_drops_any_subject_sent_with_it() -> None:
     assert RateLimit.objects.get(use_case__slug="demo-uc").subject == ""
 
 
+def test_a_per_person_limit_names_nobody(captured_events) -> None:
+    """One configured rate, one bucket per caller — the answer to "everybody, but separately",
+    which a use-case limit cannot give (there the first arrival can drain it) and a member limit
+    can only give one person at a time.
+
+    Like the use-case row above, a subject sent with it is dropped: it would key the uniqueness
+    constraint on a name the row does not honour, so a second edit would create a second limit.
+    """
+    admin = _user("admin1", "global-admin")
+    _make_uc(admin, "demo-uc")
+
+    resp = _client(admin).post(
+        f"{BASE}demo-uc/rate-limits/",
+        {"scope": "each_member", "subject": "alice", "limit_rpm": 60, "burst": 10},
+        format="json",
+    )
+
+    assert resp.status_code == 201
+    limit = RateLimit.objects.get(use_case__slug="demo-uc")
+    assert (limit.scope, limit.subject) == ("each_member", "")
+    published = [p for t, p in captured_events if t == "ratelimit.upserted"]
+    assert published[-1]["scope"] == "each_member"
+
+
 def test_a_limit_of_zero_is_refused() -> None:
     """Zero would mean "refuse everything", which is a use case being switched off by accident
     rather than a rate being configured."""

@@ -1,9 +1,11 @@
 <div class="stack">
   <h2 style="margin: 0">Models &amp; prices</h2>
   <p class="muted" style="margin: 0">
-    What each model costs per 1,000,000 tokens, priced separately for input and output because every
-    provider bills the two differently. Cost budgets are calculated from these figures; a model
-    without a price still works, but its consumption cannot be costed.
+    What each model costs per 1,000,000 tokens, in <strong>US dollars</strong> — every provider on
+    this gateway prices in dollars, so that is the one currency in which these figures need no
+    conversion nobody performed. Input and output are priced separately because every provider bills
+    the two differently. Cost budgets are calculated from these figures; a model without a price
+    still works, but its consumption cannot be costed.
   </p>
 
   <!--
@@ -183,8 +185,8 @@
                 <th scope="col">Model</th>
                 <th scope="col">Provider</th>
                 <th scope="col">Capabilities</th>
-                <th scope="col">Input / 1M</th>
-                <th scope="col">Output / 1M</th>
+                <th scope="col">Input $ / 1M</th>
+                <th scope="col">Output $ / 1M</th>
               </tr>
             </thead>
             <tbody>
@@ -472,7 +474,7 @@
           </p>
         }
         <div class="field">
-          <label for="model-input">Input price / 1M</label>
+          <label for="model-input">Input price $ / 1M</label>
           <input
             id="model-input"
             name="input_price"
@@ -484,7 +486,7 @@
           />
         </div>
         <div class="field">
-          <label for="model-output">Output price / 1M</label>
+          <label for="model-output">Output price $ / 1M</label>
           <input
             id="model-output"
             name="output_price"
@@ -497,7 +499,7 @@
         </div>
         <div class="field">
           <label for="model-cached">
-            Cached input / 1M
+            Cached input $ / 1M
             <app-info-hint label="Cached input price" testid="cached-price" [wide]="true">
               What this provider charges for input it served from its prompt cache instead of
               reading again. Usually a fraction of the ordinary input price — Anthropic charges a
@@ -519,7 +521,7 @@
         </div>
         <div class="field">
           <label for="model-cache-write">
-            Cache write / 1M
+            Cache write $ / 1M
             <app-info-hint label="Cache write price" testid="cache-write-price" [wide]="true">
               What the <em>first</em> request costs — the one that puts the prefix into the cache.
               It is <strong>more</strong> than ordinary input, not less: Anthropic charges 1.25× for

@@ -9,6 +9,7 @@ import { ConfirmService } from '../../core/ui/confirm.service';
 import { InfoHint } from '../../core/ui/info-hint';
 import { TablePager } from '../../core/ui/table-pager';
 import { Live, agoLabel } from '../../core/ui/live';
+import { Modal } from '../../core/ui/modal';
 import { PageFeedback } from '../../core/ui/page-feedback';
 import { TableView } from '../../core/ui/table-view';
 import { NEW_RULE, RuleForm } from './rule-form';
@@ -32,7 +33,7 @@ const REFRESH_SECONDS = 15;
  */
 @Component({
   selector: 'app-security-page',
-  imports: [DatePipe, FormsModule, InfoHint, TablePager, RouterLink, RuleForm],
+  imports: [DatePipe, FormsModule, InfoHint, TablePager, RouterLink, RuleForm, Modal],
   templateUrl: './security-page.html',
   providers: [PageFeedback, Live],
 })

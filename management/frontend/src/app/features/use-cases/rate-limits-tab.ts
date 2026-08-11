@@ -2,6 +2,9 @@ import { Component, inject, input, output } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { signal } from '@angular/core';
 import { RateLimit } from '../../core/api/models';
+import { LimitScope } from '../../core/api/models';
+import { InfoHint } from '../../core/ui/info-hint';
+import { Modal } from '../../core/ui/modal';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { ConfirmService } from '../../core/ui/confirm.service';
 import { PageFeedback } from '../../core/ui/page-feedback';
@@ -19,7 +22,7 @@ import { PageFeedback } from '../../core/ui/page-feedback';
  */
 @Component({
   selector: 'app-rate-limits-tab',
-  imports: [FormsModule],
+  imports: [FormsModule, InfoHint, Modal],
   templateUrl: './rate-limits-tab.html',
 })
 export class RateLimitsTab {
@@ -40,7 +43,7 @@ export class RateLimitsTab {
   // reset after a successful save, the field that appears when the scope changes — would
   // schedule no re-render at all (FRD-203 §4).
   protected readonly showForm = signal(false);
-  protected readonly rlScope = signal<'use_case' | 'member'>('use_case');
+  protected readonly rlScope = signal<LimitScope>('use_case');
   protected readonly rlSubject = signal('');
   protected readonly rlRpm = signal<number | null>(null);
   protected readonly rlBurst = signal<number | null>(null);
@@ -103,7 +106,12 @@ export class RateLimitsTab {
   }
 
   protected labelFor(limit: RateLimit): string {
-    return limit.scope === 'member' ? limit.subject || 'member' : 'Whole use case';
+    if (limit.scope === 'member') {
+      return limit.subject || 'member';
+    }
+    // Not "Whole use case" — a per-person row is the opposite of a shared one, and the row would
+    // read as a limit forty people share while it bounds each of them separately.
+    return limit.scope === 'each_member' ? 'Each member, individually' : 'Whole use case';
   }
 
   /** What the bucket actually allows at once — an unset burst means the per-minute figure. */

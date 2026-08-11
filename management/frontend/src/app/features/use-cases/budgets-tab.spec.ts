@@ -14,7 +14,7 @@ interface Overrides {
 
 interface Tab {
   showForm: { set: (v: boolean) => void; (): boolean };
-  budgetScope: { set: (v: 'use_case' | 'member') => void; (): string };
+  budgetScope: { set: (v: 'use_case' | 'each_member' | 'member') => void; (): string };
   budgetSubject: { set: (v: string) => void; (): string };
   budgetTokens: { set: (v: number | null) => void; (): number | null };
   budgetRequests: { set: (v: number | null) => void; (): number | null };
@@ -255,6 +255,65 @@ describe('BudgetsTab', () => {
       'alice',
     );
     expect(component.labelFor({ scope: 'member', period: 'month' })).toBe('member');
+    expect(component.labelFor({ scope: 'each_member', period: 'month' })).toBe(
+      'Each member, individually',
+    );
+  });
+
+  it('shows no figure for a per-person budget it cannot attribute to the reader', () => {
+    /** One configured row is N counters, so the gateway answers with the reader's own figure — and
+     *  with nothing at all for a reader the row does not bind. Drawn as an empty bar that would
+     *  read as a full, untouched allowance: a confident claim about the wrong thing, which is
+     *  `FRD-603`'s rule (unknown is never rendered as zero) in the one place where zero is also a
+     *  plausible real answer. */
+    const usage: Record<number, BudgetUsage> = {
+      1: {
+        id: 1,
+        measured_for: null,
+        used_tokens: null,
+        used_requests: null,
+        used_cost_nanos: null,
+        used_cost: null,
+        unpriced_requests: null,
+      },
+    };
+    const harness = setup({
+      usage,
+      budgets: [{ id: 1, scope: 'each_member', period: 'month', limit_cost: '10.00' }],
+    });
+
+    expect(harness.text()).toContain('no consumption of your own');
+    expect(harness.text()).toContain('— / 10.00');
+    expect(harness.fixture.nativeElement.querySelector('.progress')).toBeNull();
+  });
+
+  it('shows a per-person budget the reader does have a figure for', () => {
+    const usage: Record<number, BudgetUsage> = {
+      1: {
+        id: 1,
+        measured_for: 'alice',
+        used_tokens: 40,
+        used_requests: 2,
+        used_cost_nanos: 5_000_000_000,
+        used_cost: '5.00',
+        unpriced_requests: 0,
+      },
+    };
+    const harness = setup({
+      usage,
+      budgets: [{ id: 1, scope: 'each_member', period: 'month', limit_cost: '10.00' }],
+    });
+
+    expect(harness.text()).toContain('5.00 / 10.00');
+    expect(
+      harness.component.costPct({
+        id: 1,
+        scope: 'each_member',
+        period: 'month',
+        limit_cost: '10.00',
+      }),
+    ).toBe(50);
+    expect(harness.fixture.nativeElement.querySelector('.progress')).not.toBeNull();
   });
 
   it('says plainly when there are no budgets', () => {
@@ -367,8 +426,10 @@ describe('BudgetsTab rendering', () => {
     harness.fixture.detectChanges();
 
     expect(harness.text()).toContain('Set a spend limit, a token limit, or a request limit.');
+    // The window's action row, not inside the `<form>`: a modal keeps its actions in the foot and
+    // ties them back with `form="…"`, which is the same shape the model editor uses.
     const submit = (harness.fixture.nativeElement as HTMLElement).querySelector(
-      'form button[type="submit"]',
+      'button[type="submit"][form="budget-form"]',
     ) as HTMLButtonElement;
     expect(submit.disabled).toBe(true);
   });
@@ -422,5 +483,54 @@ describe('BudgetsTab — a reader', () => {
     expect(text()).not.toContain('+ Add budget');
     expect(html.querySelector('[aria-label^="Remove budget"]')).toBeNull();
     expect(html.querySelector('[data-testid="budgets-readonly"]')).not.toBeNull();
+  });
+});
+
+describe('BudgetsTab — a budget per person, and a window to make one in', () => {
+  it('offers a limit that applies to everybody separately, without naming anybody', () => {
+    /** The one an administrator wants far more often than either of the others: a fair share per
+     *  head, without a list of heads to keep up to date, and it keeps applying to people who join
+     *  later. Not a variant of "the whole use case" — that is a **shared pot**, where the first
+     *  caller to arrive can spend all of it. */
+    const harness = setup();
+    harness.component.showForm.set(true);
+    harness.fixture.detectChanges();
+
+    const scope = (harness.fixture.nativeElement as HTMLElement).querySelector<HTMLSelectElement>(
+      '#budget-scope',
+    )!;
+    expect([...scope.options].map((o) => o.value)).toEqual(['use_case', 'each_member', 'member']);
+
+    harness.component.budgetScope.set('each_member');
+    harness.fixture.detectChanges();
+    // No username to fill in — that is the whole point.
+    expect(harness.fixture.nativeElement.querySelector('#budget-subject')).toBeNull();
+    expect(harness.text()).toContain('including people who join later');
+  });
+
+  it('says which currency a spend limit is in', () => {
+    /** Reported: "Spend Limit ist nicht klar in welcher Währung das ist". Every provider on this
+     *  gateway prices in dollars and the catalog's figures are dollars per million tokens, so a
+     *  budget in anything else would be a conversion nobody performed. */
+    const harness = setup();
+    harness.component.showForm.set(true);
+    harness.fixture.detectChanges();
+
+    expect(harness.text()).toContain('Spend limit (USD)');
+  });
+
+  it('creates in a window rather than a form unfolding under the list', () => {
+    const harness = setup();
+    const html = harness.fixture.nativeElement as HTMLElement;
+    expect(html.querySelector('[data-testid="budget-editor"]')).toBeNull();
+
+    html.querySelector<HTMLButtonElement>('[data-testid="add-budget"]')!.click();
+    harness.fixture.detectChanges();
+
+    expect(html.querySelector('[data-testid="budget-editor"]')).not.toBeNull();
+    // One way out that is not the mouse.
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    harness.fixture.detectChanges();
+    expect(html.querySelector('[data-testid="budget-editor"]')).toBeNull();
   });
 });

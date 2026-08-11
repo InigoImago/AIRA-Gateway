@@ -5692,3 +5692,118 @@ accumulating even after "adding cleanup".
 The same round found two console tests looking for a freshly created row on page one of a paged
 list — the catalog and the rules. Both search now. Paging turns "it is on the screen" into "it is
 findable", and every test that was written before paging landed makes the old assumption.
+
+
+## 2026-08-11 — Windows, a scope per head, and a currency nobody could name
+
+A walkthrough of the settings screens by their owner, six reports. Four are the same complaint in
+four places — **a control that does not say what it does** — and one is a scope the vocabulary
+never had.
+
+### The creation forms became windows
+
+Budgets, rate limits and anomaly rules each unfolded a form under their list. `FRD-206` recorded
+what that costs with the model editor: the page scrolls to a control far from the row it is about,
+the list behind stays clickable, and nothing on screen says what is being edited. All three open a
+window now, and the window is **one shared control** (`core/ui/modal.ts`) rather than the fifth
+hand-rolled dialog — at which point the Escape handler, the focus move and the backdrop exist in
+five places and differ in four. It owns three promises, each the one a hand-rolled dialog forgets:
+Escape closes, the keyboard moves in, the backdrop closes. Tested where it lives, not through the
+five screens that open one.
+
+### "In welcher Währung ist das?"
+
+The spend limit was a number with no unit. Every provider on this gateway prices in dollars and the
+catalog's own figures are dollars per million tokens, so a budget in anything else would be a
+conversion nobody performed — and one a reader would assume had been. Every monetary label now says
+so: `Spend limit (USD)`, `Input $ / 1M`, `Spend ($)` on the consumption bars, the reporting cards
+and the export. The figures did not change; what they are finally does.
+
+### Burst, explained by somebody who had to look it up
+
+Reported by the owner about a field he had configured himself: *"sogar mir ist nicht ganz klar was
+damit gemeint ist"*. A control whose own author cannot say what it does is one that gets set by
+imitation. Burst is the **size of the bucket**, not a second rate — it decides how spiky a minute
+may be, not how much a caller may send in one. The hint says that, and says the part people get
+wrong: raising it does not raise the sustained rate.
+
+### A budget per **head**, which is the one people actually want
+
+`use_case` is a shared pot — the first caller to arrive can spend all of it. `member` bounds one
+named person, needs a row each, and goes stale as people join and leave. Neither is *a fair share
+per person*, which is what an administrator asks for first. `each_member` is one configured row and
+one counter per caller, applying to whoever turns up.
+
+`aira_gateway/scopes.py` exists precisely so a third scope is one branch and both consumers follow
+— and the interesting half is that **only one of them did**. The rate limiter needed no change:
+`_applicable` resolves each row against the caller on every request. The budget service was keyed
+off the row itself, long after the caller had gone — `_scope_key(budget)` passed `budget.subject`
+as its own caller, which is exactly right for the two scopes that name somebody and resolves to
+*nothing* for the one that does not. Threaded through now, with the subject carried on the
+`Reservation` beside `period_keys` for the same reason: settle and release run long after the
+request's identity was resolved. **The same rule, two implementations, one of them wrong** — which
+is the shape this repository keeps finding, and the reason the shared module was written in the
+first place. `S8`/`S9`, both shown to fail first.
+
+One consequence had to be answered rather than rendered: **a per-person budget has no single
+consumption figure**. `GET /v1beta/usage/{use_case}` reports the *reader's own* number, says whose
+it is (`measured_for`), and answers `null` — never zero — to a reader the row does not bind, such
+as an oversight role who is a member of nothing. Zero is also what an untouched allowance looks
+like, so this is the one place `FRD-603`'s rule (unknown is never rendered as zero) is not merely
+tidy. The console draws no bar there and says why.
+
+The route is asserted separately from the service, which is the `FRD-124` lesson: the service can
+resolve the caller perfectly and still be **asked for nobody**, and the answer to that looks
+exactly like a fresh allowance. The stand-in in `test_budget_routes.py` caught it by being
+*stricter* than the real service rather than more permissive — the trap `CLAUDE.md` names, for
+once falling the useful way.
+
+### Released models first
+
+In **Models & prices** the approved models now sort to the top. With fifty imported drafts from one
+key (`FRD-507`), the entries somebody actually released were scattered through a list ordered by
+nothing in particular.
+
+### And the staircase
+
+In a use case's Members tab, "Grant access to" and "As" sat on two lines. `expectFormControlsAligned`
+did not see it because it only looked inside `form.form-inline`, and this row is a `.filter-row`.
+Widening the guard found the real defect and then a second one it had also been blind to; a 43 px
+offset was injected to watch it fail first, because a guard that has never been broken is one that
+passes for reasons nobody has checked — **the third time in a week** that a new guard had to be
+proved sharp before it could be believed, and each time it was silently wrong in the same
+direction: passing.
+
+### Nine stale anchors, and two graves
+
+The harness reported nine `STALE` after the week's changes — an anchor pointing at code that has
+moved, which protects nothing while reading exactly like a property that is defended. Seven were
+re-anchored (`B11`, `P5`, `M15`, `V5`, `Z4`, `Z15`, `J16`) and shown to be caught again. **Two were
+removed**: `P3` guarded `allow_check`, which `FRD-308` replaced with the per-use-case release —
+defended at every hop of the dispatch chain by `J1`–`J4` — and `R23` guarded a rule about the two
+use-case roles `ADR-0017` abolished. A mutation defending deleted code is worse than none: it
+reports green about nothing, and the count it inflates is the number people quote.
+
+### A test written against a moving target
+
+The full browser round then failed one case that had passed an hour earlier without its own code
+changing: the prompt-caching hint hovered its "i" **immediately after the navigation resolved**.
+The overview finishes assembling afterwards — the consumption card arrives from the gateway and
+pushes the tiles down — so the pointer was left over whatever moved into that spot and the panel
+never opened. The two hint tests beside it settle the page by interacting with it first, which is
+why they never saw it. Fixed by waiting for the trigger, and worth naming as a class: **a hover is
+aimed at a coordinate, so a test that hovers before layout has settled is asserting about the
+pointer, not about the control.** Nothing in the product was wrong; the test had been passing on
+timing since the day it was written.
+
+### And one that counted instead of naming
+
+The same round failed a model-release case that had been green for days: it derived *what one
+keypress does* from *how many chips are on screen* (`before === 1 ? 0 : …`). That holds only when
+the highlight lands on a model already chosen — and **clicking the search field opens the list**,
+so the following ArrowDown *moves* rather than lands. It therefore passed for exactly as long as
+the demo use case had released nothing, and started failing the day it had released one. It
+searches for a model **by name** now, leaving one option, so the keypress has one possible meaning
+whatever the use case already allows — and the case is genuinely state-independent rather than
+state-independent-looking. Same family as the hover above: **an assertion aimed at a position is an
+assertion about the arrangement, not about the behaviour.**

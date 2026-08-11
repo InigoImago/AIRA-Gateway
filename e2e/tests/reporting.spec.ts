@@ -6,6 +6,7 @@ import {
   login,
   logout,
   uniqueSlug,
+  submitOfOpenForm,
 } from './support';
 
 /**
@@ -24,7 +25,7 @@ async function issueKey(page: Page, slug: string): Promise<string> {
   await page.goto(`/use-cases/${slug}?tab=keys`);
   await page.click('button:has-text("Issue key")');
   await page.fill('#key-label', 'reporting-e2e');
-  await page.click('form button[type="submit"]');
+  await (await submitOfOpenForm(page)).click();
   const secret = page.locator('.secret');
   await expect(secret).toBeVisible();
   return (await secret.textContent())?.trim() ?? '';

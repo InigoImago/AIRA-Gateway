@@ -6,6 +6,7 @@ import {
   expectNoHorizontalOverflow,
   login,
   uniqueSlug,
+  submitOfOpenForm,
 } from './support';
 
 /**
@@ -115,7 +116,7 @@ test.describe('Layout', () => {
     await page.goto(`/use-cases/${slug}?tab=keys`);
     await page.click('button:has-text("Issue key")');
     await page.fill('#key-label', 'a-deliberately-long-label-for-the-table');
-    await page.click('form button[type="submit"]');
+    await (await submitOfOpenForm(page)).click();
     await expect(page.locator('.secret')).toBeVisible();
 
     const wrap = page.locator('.table-wrap').last();

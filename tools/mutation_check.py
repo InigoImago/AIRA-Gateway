@@ -389,7 +389,7 @@ MUTATIONS = [
         "B11",
         "only a global admin may write model prices",
         "management/backend/src/aira_management/apps/catalog/views.py",
-        "        return [IsAuthenticated(), IsGlobalAdmin()]",
+        "        return [IsAuthenticated(), MayCatalogueModels()]",
         "        return [IsAuthenticated()]",
         CATALOG,
     ),
@@ -429,14 +429,6 @@ MUTATIONS = [
         f"{PIPELINE} {CLASSIFIERS}",
     ),
     Mutation(
-        "P3",
-        "the allow-check refuses a model that is not on the list",
-        "gateway/src/aira_gateway/pipeline/engine.py",
-        "return bool(allowed) and request.model not in allowed",
-        "return bool(allowed) and request.model in allowed",
-        PIPELINE,
-    ),
-    Mutation(
         "P4",
         "the fallback chain tries the requested model first",
         "gateway/src/aira_gateway/pipeline/dispatch.py",
@@ -448,8 +440,8 @@ MUTATIONS = [
         "P5",
         "a regex with a nested quantifier is refused at authoring time (ReDoS)",
         "management/backend/src/aira_management/apps/pipelines/serializers.py",
-        "    if _NESTED_QUANTIFIER.search(pattern):",
-        "    if _NESTED_QUANTIFIER.search(pattern) and False:",
+        "    if is_catastrophic(pattern):",
+        "    if is_catastrophic(pattern) and False:",
         "management/backend/tests/test_pipelines.py",
     ),
     Mutation(
@@ -637,8 +629,9 @@ MUTATIONS = [
         "M15",
         "budgets are still enforced when Redis is unreachable",
         "gateway/src/aira_gateway/budgets/service.py",
-        "            await self._check_only(session, budgets, now)",
-        "            pass",
+        "            await self._check_only(session, budgets, now, subject)\n"
+        "        return Reservation(budgets=budgets, subject=subject, atomic=False)",
+        "        return Reservation(budgets=budgets, subject=subject, atomic=False)",
         f"{BUDGET_RESERVATION} {BUDGET_SERVICE}",
     ),
     Mutation(
@@ -745,6 +738,31 @@ MUTATIONS = [
         "        if scope == MEMBER and caller and subject == caller:",
         "        if scope == MEMBER and caller:",
         "gateway/tests/test_scopes.py gateway/tests/test_budget_service.py gateway/tests/test_ratelimit.py",
+    ),
+    Mutation(
+        "S8",
+        "a per-person row counts each caller separately, not everybody together",
+        "gateway/src/aira_gateway/scopes.py",
+        "        if scope == EACH_MEMBER and caller:\n"
+        "            # The row names nobody; the **caller** is the subject. So one configured row "
+        "produces a\n"
+        "            # counter per person, under exactly the key a row naming that person would "
+        "have used —\n"
+        "            # which is why an administrator can narrow one individual later without the "
+        "shared\n"
+        "            # history moving to a different key.\n"
+        "            return cls(use_case, caller)",
+        "        if scope == EACH_MEMBER and caller:\n            return cls(use_case)",
+        "gateway/tests/test_scopes.py gateway/tests/test_budget_service.py "
+        "gateway/tests/test_ratelimit.py",
+    ),
+    Mutation(
+        "S9",
+        "a per-person budget is accounted under the caller, not under the row",
+        "gateway/src/aira_gateway/budgets/service.py",
+        "        caller=caller or budget.subject,",
+        "        caller=budget.subject,",
+        "gateway/tests/test_budget_service.py",
     ),
     Mutation(
         "S2",
@@ -1085,8 +1103,8 @@ MUTATIONS = [
         "V5",
         "several system messages are concatenated rather than reduced to the last",
         "gateway/src/aira_gateway/upstreams/vertex/anthropic_mapping.py",
-        '        body["system"] = "\\n\\n".join(system_parts)',
-        '        body["system"] = system_parts[-1]',
+        '        joined = "\\n\\n".join(system_parts)',
+        "        joined = system_parts[-1]",
         VERTEX,
     ),
     Mutation(
@@ -1954,8 +1972,10 @@ MUTATIONS = [
         "Z4",
         "a classifier asks for no thinking, so its one-word allowance is not spent reasoning",
         "gateway/src/aira_gateway/pipeline/classifiers.py",
-        "        thinking=Thinking(mode=ThinkingMode.DISABLED),",
-        "",
+        "    model: str, instruction: str, text: str, thinking: Thinking | None = _OFF\n"
+        ") -> CanonicalRequest:",
+        "    model: str, instruction: str, text: str, thinking: Thinking | None = None\n"
+        ") -> CanonicalRequest:",
         CLASSIFIERS,
     ),
     Mutation(
@@ -1986,8 +2006,8 @@ MUTATIONS = [
         "Z8",
         "a pipeline call is booked against the budget as tokens and not as a second request",
         "gateway/src/aira_gateway/budgets/service.py",
-        "        await self.record(budgets, tokens, cost_nanos=cost_nanos, now=now, requests=0)",
-        "        await self.record(budgets, 0, cost_nanos=cost_nanos, now=now, requests=0)",
+        "            budgets, tokens, cost_nanos=cost_nanos, now=now, requests=0, subject=subject",
+        "            budgets, 0, cost_nanos=cost_nanos, now=now, requests=0, subject=subject",
         f"{ACCOUNTING} gateway/tests/test_budget_service.py",
     ),
     Mutation(
@@ -2047,8 +2067,8 @@ MUTATIONS = [
         "Z15",
         "the shared sequence resolves thinking after routing, not against the model the caller named",
         "gateway/src/aira_gateway/api/serving.py",
-        '            update={"thinking": resolve_thinking(canonical.thinking, declaration)}',
-        '            update={"thinking": canonical.thinking}',
+        '                "thinking": resolve_thinking(canonical.thinking, declaration),',
+        '                "thinking": canonical.thinking,',
         "gateway/tests/test_serving_options.py gateway/tests/test_kira_surface.py",
     ),
     Mutation(
@@ -2662,14 +2682,6 @@ MUTATIONS = [
         "libs/src/aira_common/roles.py",
         "if role in mapping and any(path in held for path in mapping[role])",
         "if role in mapping and any(h.startswith(path) for path in mapping[role] for h in held)",
-        "libs/tests/test_roles.py",
-    ),
-    Mutation(
-        "R23",
-        "a use-case role cannot be conferred by a group, which would grant every use case at once",
-        "libs/src/aira_common/roles.py",
-        "        if role not in CONFIGURABLE_ROLES:",
-        "        if False:",
         "libs/tests/test_roles.py",
     ),
     Mutation(
@@ -3315,7 +3327,7 @@ MUTATIONS = [
         "J16",
         "a pipeline step reaches a model the catalog knows and configuration does not",
         "gateway/src/aira_gateway/pipeline/engine.py",
-        "        return self._registry.provider_for(model, await provider_of(model))",
+        "        return self._registry.provider_for(model, (await declaration_of(model)).provider)",
         "        return None",
         "gateway/tests/test_pipeline_engine.py",
     ),

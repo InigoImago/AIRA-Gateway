@@ -85,6 +85,30 @@ def test_member_budget_created_with_subject() -> None:
     assert Budget.objects.get(use_case__slug="demo-uc", subject="bob").limit_requests == 10
 
 
+def test_a_per_person_budget_names_nobody(captured_events) -> None:
+    """The scope an administrator wants more often than either of the others: a fair share per
+    head, with no list of heads to keep up to date.
+
+    A subject sent with it is **dropped**, not refused — the row would still apply to everybody, so
+    keeping the name would leave the configuration saying one thing and the enforcement doing
+    another, and the gateway keys the counter on the caller either way.
+    """
+    admin = _user("admin1", "global-admin")
+    _make_uc(admin, "demo-uc")
+    resp = _client(admin).post(
+        f"{BASE}demo-uc/budgets/",
+        {"scope": "each_member", "subject": "bob", "period": "day", "limit_requests": 10},
+        format="json",
+    )
+    assert resp.status_code == 201
+
+    budget = Budget.objects.get(use_case__slug="demo-uc")
+    assert (budget.scope, budget.subject) == ("each_member", "")
+    published = [payload for topic, payload in captured_events if "budget" in topic]
+    assert published[-1]["scope"] == "each_member"
+    assert published[-1]["subject"] == ""
+
+
 def test_budget_requires_a_limit() -> None:
     admin = _user("admin1", "global-admin")
     _make_uc(admin, "demo-uc")

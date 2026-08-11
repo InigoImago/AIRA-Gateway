@@ -130,7 +130,7 @@ interface Detail {
   configCopied: { set: (v: boolean) => void; (): boolean };
   openCodeConfig: (issued: unknown) => string;
   copyOpenCodeConfig: (issued: unknown) => void;
-  budgetScope: { set: (v: 'use_case' | 'member') => void; (): string };
+  budgetScope: { set: (v: 'use_case' | 'each_member' | 'member') => void; (): string };
   budgetSubject: { set: (v: string) => void; (): string };
   budgetTokens: { set: (v: number | null) => void; (): number | null };
   budgetCost: { set: (v: string) => void; (): string };

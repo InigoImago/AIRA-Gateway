@@ -13,7 +13,7 @@ interface Overrides {
 
 interface Tab {
   showForm: { set: (v: boolean) => void; (): boolean };
-  rlScope: { set: (v: 'use_case' | 'member') => void; (): string };
+  rlScope: { set: (v: 'use_case' | 'each_member' | 'member') => void; (): string };
   rlSubject: { set: (v: string) => void; (): string };
   rlRpm: { set: (v: number | null) => void; (): number | null };
   rlBurst: { set: (v: number | null) => void; (): number | null };
@@ -161,6 +161,11 @@ describe('RateLimitsTab', () => {
     expect(component.labelFor({ scope: 'use_case', limit_rpm: 60 })).toBe('Whole use case');
     expect(component.labelFor({ scope: 'member', subject: 'alice', limit_rpm: 60 })).toBe('alice');
     expect(component.labelFor({ scope: 'member', limit_rpm: 60 })).toBe('member');
+    // Not "Whole use case": a per-person row bounds each caller separately, and reading it as a
+    // shared allowance is the one wrong conclusion the table could lead somebody to.
+    expect(component.labelFor({ scope: 'each_member', limit_rpm: 60 })).toBe(
+      'Each member, individually',
+    );
   });
 
   it('renders the configured limits', () => {
@@ -209,5 +214,57 @@ describe('RateLimitsTab — a reader', () => {
     expect(text()).not.toContain('+ Add rate limit');
     expect(html.querySelector('[aria-label^="Remove the rate limit"]')).toBeNull();
     expect(html.querySelector('[data-testid="rate-limits-readonly"]')).not.toBeNull();
+  });
+});
+
+describe('RateLimitsTab — a rate per person, a window, and what Burst means', () => {
+  it('offers a rate that applies to everybody separately', () => {
+    const harness = setup();
+    harness.component.showForm.set(true);
+    harness.fixture.detectChanges();
+
+    const scope = (harness.fixture.nativeElement as HTMLElement).querySelector<HTMLSelectElement>(
+      '#rl-scope',
+    )!;
+    expect([...scope.options].map((o) => o.value)).toEqual(['use_case', 'each_member', 'member']);
+
+    harness.component.rlScope.set('each_member');
+    harness.fixture.detectChanges();
+    expect(harness.fixture.nativeElement.querySelector('#rl-subject')).toBeNull();
+  });
+
+  it('explains what a burst is, in terms of the bucket it actually is', () => {
+    /** Reported: "es ist notwendig die erklärung für Burst haben, sogar mir ist nicht ganz klar
+     *  was damit gemeint ist." A number whose meaning the person setting it cannot state is a
+     *  control that gets a plausible value and no thought — and this one changes whether an agent
+     *  opening 30 connections at once is smoothed out or waved through. */
+    const harness = setup();
+    harness.component.showForm.set(true);
+    harness.fixture.detectChanges();
+
+    // Opened first: a hint that renders nothing until it is asked for is still a hint, and the
+    // `FRD-505` failure was hints that rendered nothing **when** asked. So this asks.
+    const html = harness.fixture.nativeElement as HTMLElement;
+    html.querySelector<HTMLButtonElement>('[data-testid="info-rl-burst"]')!.click();
+    harness.fixture.detectChanges();
+
+    const help = html.querySelector('[data-testid="help-rl-burst"]');
+    expect(help).not.toBeNull();
+    const text = help!.textContent ?? '';
+    // The mechanism, not a restatement of the word.
+    expect(text).toContain('bucket');
+    expect(text).toContain('refills');
+    // And what setting it either way does, which is the part somebody is deciding.
+    expect(text).toContain('does not raise');
+  });
+
+  it('creates in a window', () => {
+    const harness = setup();
+    const html = harness.fixture.nativeElement as HTMLElement;
+
+    html.querySelector<HTMLButtonElement>('[data-testid="add-rate-limit"]')!.click();
+    harness.fixture.detectChanges();
+
+    expect(html.querySelector('[data-testid="rate-limit-editor"]')).not.toBeNull();
   });
 });

@@ -210,7 +210,7 @@ export class ReportingPage implements OnInit {
     return [
       {
         key: 'spend',
-        label: 'Spend',
+        label: 'Spend ($)',
         value: totals.cost,
         testid: 'total-cost',
         help: this.explain.spend,

@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { USERS, createUseCase, login, logout, uniqueSlug } from './support';
+import { USERS, createUseCase, login, logout, uniqueSlug, submitOfOpenForm } from './support';
 
 /**
  * Cost-based budgeting (FRD-403) through the real UI.
@@ -16,7 +16,7 @@ test.describe('Cost budgets', () => {
     await page.goto(`/use-cases/${slug}?tab=budgets`);
     await page.click('button:has-text("Add budget")');
     await page.fill('#budget-cost', '250.00');
-    await page.click('form button[type="submit"]');
+    await (await submitOfOpenForm(page)).click();
 
     await expect(page.locator('text=/\\/ 250.000000/')).toBeVisible();
     await expect(page.locator('[role="progressbar"]')).toHaveCount(1);
@@ -33,7 +33,7 @@ test.describe('Cost budgets', () => {
 
     await page.fill('#budget-cost', 'viel');
     await expect(page.locator('.field__hint--error')).toContainText('must be an amount');
-    await expect(page.locator('form button[type="submit"]')).toBeDisabled();
+    await expect(await submitOfOpenForm(page)).toBeDisabled();
   });
 
   test('the catalog lists prices and flags models that cannot be costed', async ({ page }) => {

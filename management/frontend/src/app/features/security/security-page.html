@@ -515,16 +515,23 @@
       }
 
       @if (draft(); as newRule) {
-        <div class="card" style="margin: 0 1rem 1rem">
-          <h4 class="section-title" style="margin: 0 0 0.75rem">A rule for every use case</h4>
-          <app-rule-form
-            [rule]="newRule"
-            [busy]="feedback.busy()"
-            formId="new-global-rule"
-            (saved)="createRule($event)"
-            (cancelled)="cancelCreate()"
-          />
-        </div>
+        <app-modal
+          [open]="true"
+          title="A rule for every use case"
+          testid="global-rule-editor"
+          [withFoot]="false"
+          (closed)="cancelCreate()"
+        >
+          <div modal-body>
+            <app-rule-form
+              [rule]="newRule"
+              [busy]="feedback.busy()"
+              formId="new-global-rule"
+              (saved)="createRule($event)"
+              (cancelled)="cancelCreate()"
+            />
+          </div>
+        </app-modal>
       }
 
       @if (!rules().length) {

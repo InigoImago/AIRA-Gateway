@@ -29,7 +29,10 @@ class RateLimitSerializer(serializers.ModelSerializer[RateLimit]):
         subject = (attrs.get("subject") or "").strip()
         if scope == RateLimit.MEMBER and not subject:
             raise serializers.ValidationError({"subject": "Required for member-scoped limits."})
-        if scope == RateLimit.USE_CASE:
+        if scope in (RateLimit.USE_CASE, RateLimit.EACH_MEMBER):
+            # Neither names a person, so a subject sent with one is silently meaningless — cleared
+            # rather than stored, or the uniqueness constraint would let the same rule be created
+            # twice under two different empty-ish subjects.
             subject = ""
         attrs["subject"] = subject
 

@@ -129,8 +129,12 @@ def test_stream_records_usage() -> None:
 
 
 class _UsageBudgets:
-    async def usage(self, use_case):  # noqa: ANN001, ANN201
-        return [{"id": 1, "used_tokens": 5, "used_requests": 2}]
+    def __init__(self) -> None:
+        self.asked_for: list[str | None] = []
+
+    async def usage(self, use_case, *, subject=None):  # noqa: ANN001, ANN201
+        self.asked_for.append(subject)
+        return [{"id": 1, "used_tokens": 5, "used_requests": 2, "measured_for": subject}]
 
 
 def test_usage_endpoint_reports_consumption() -> None:
@@ -142,6 +146,21 @@ def test_usage_endpoint_reports_consumption() -> None:
     body = resp.json()
     assert body["use_case"] == "demo-uc"
     assert body["usage"][0]["used_requests"] == 2
+
+
+def test_usage_is_asked_whose_figures_to_report() -> None:
+    """A per-person budget is one row and N counters, so the route has to say who is asking.
+
+    Asserted at the route rather than only on the service, because the two are the failure the
+    `FRD-124` lesson names: the service can resolve the caller perfectly and still be asked for
+    nobody, and the answer to that — no figures — looks exactly like a fresh allowance.
+    """
+    app = create_app(GatewaySettings(auth_required=False))
+    budgets = _UsageBudgets()
+    app.state.budgets = budgets
+    with TestClient(app) as client:
+        assert client.get("/v1beta/usage/demo-uc").status_code == 200
+    assert budgets.asked_for == ["demo"], "the route reported figures without saying whose"
 
 
 def test_usage_endpoint_requires_authentication() -> None:

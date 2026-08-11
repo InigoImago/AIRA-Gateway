@@ -55,9 +55,23 @@ than better: per-process counters mean N instances permit N times the configured
 - **FR-0 Every verb**: the controls apply to `generateContent`, `streamGenerateContent` **and**
   `embedContent`. They are enforced at one shared point rather than per method, because a control
   that applies to some verbs and not others is one a caller evades by picking another verb.
-- **FR-1 Definition**: a rate limit belongs to a use case, with `scope` = `use_case` | `member`
-  (mirroring budgets), `limit_rpm` (sustained requests per minute) and `burst` (how many may
-  arrive at once). Authored in Management, distributed over Kafka, read by the gateway.
+- **FR-1 Definition**: a rate limit belongs to a use case, with `scope` = `use_case` |
+  `each_member` | `member` (mirroring budgets — see `FRD-400` §2.1 for why three), `limit_rpm`
+  (sustained requests per minute) and `burst` (how many may arrive at once). Authored in
+  Management, distributed over Kafka, read by the gateway.
+
+  **`each_member` needed no change to the service** and that is worth stating rather than assuming:
+  `_applicable` resolves every configured row against the caller on each request, so a row that
+  names nobody binds whoever is asking, under exactly the bucket key a row naming them would use.
+  The budget path had to be repaired for the same scope, because there the key was read off the row
+  long after the caller was out of scope — the same rule, two implementations, one of them wrong.
+
+  **Burst says what it costs, in the console.** It is the size of the bucket, not a second rate: a
+  bucket of 20 refilling at `limit_rpm/60` per second lets twenty requests arrive together and then
+  admits them at the sustained rate. Raising it does **not** raise how much a caller may send per
+  minute; it decides how spiky that minute is allowed to be. Reported as unclear by the owner, who
+  had configured the field — a control whose own author cannot say what it does is one that gets
+  set by imitation.
 - **FR-2 Enforcement**: over the limit → **429 `RESOURCE_EXHAUSTED`** with a `Retry-After` header
   in seconds, so a well-behaved client backs off instead of retrying immediately.
 - **FR-3 Shared across instances**: two gateway processes behind a load balancer enforce **one**

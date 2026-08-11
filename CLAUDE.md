@@ -1490,6 +1490,43 @@ message folded into the unknown-name refusal, since those two names are exactly 
 type); and mutation `O1` added a role that no longer exists, so the mutated file would not import
 and an `AttributeError` would have counted as a caught property — re-anchored onto `IT_SECURITY`.
 
+**Windows, a scope per head, and a currency nobody could name (2026-08-11)** — six reports from a
+walkthrough of the settings screens, four of them the same complaint: **a control that does not say
+what it does**. Budgets, rate limits and anomaly rules create in a **window** now, and the window is
+one shared control (`core/ui/modal.ts`) rather than the fifth hand-rolled dialog — it owns the three
+promises each of those forgets one of (Escape closes, the keyboard moves in, the backdrop closes).
+The spend limit was a number with **no unit**: every provider here prices in dollars and the catalog
+is dollars per million tokens, so anything else would be a conversion nobody performed and a reader
+would assume had been — every monetary label says **USD** now. **Burst** was reported unclear by the
+person who had configured it, which is a control set by imitation: it is the **size of the bucket**,
+not a second rate, and raising it does not raise the sustained rate.
+**The scope people actually want**: `use_case` is a shared pot (first arrival can spend all of it)
+and `member` needs a row per person that goes stale as people join — neither is *a fair share per
+head*. `each_member` is one configured row and one counter per caller. `scopes.py` exists so a third
+scope is one branch and both consumers follow, and the interesting half is that **only one of them
+did**: the rate limiter resolves each row against the caller on every request and needed no change,
+while the budget service read the key **off the row** long after the caller was gone
+(`_scope_key(budget)` passing `budget.subject` as its own caller — right for the two scopes that
+name somebody, resolving to *nothing* for the one that does not). The subject is carried on the
+`Reservation` beside `period_keys`, because settle and release run long after identity was resolved.
+**The same rule, two implementations, one of them wrong** — the shape this repository keeps finding,
+and the reason the shared module exists. One consequence had to be answered rather than rendered: a
+per-person budget has **no single consumption figure**, so `usage` reports the *reader's own*, says
+whose (`measured_for`), and answers **`null` — never zero** — to a reader it does not bind; zero is
+also what an untouched allowance looks like, which makes this the one place `FRD-603`'s rule is not
+merely tidy. Asserted at the route as well as the service (`FRD-124`): the service can resolve the
+caller perfectly and still be **asked for nobody**, and that answer looks exactly like a fresh
+allowance. Also: approved models sort **first** in the catalog (fifty imported drafts from one key
+had buried the released ones), and the Members tab's two-line "Grant access to / As" staircase was
+found only after `expectFormControlsAligned` was widened past `form.form-inline` — then a 43 px
+offset was injected to watch it fail, the **third time in a week** a new guard had to be broken
+before it could be believed, each time silently wrong in the same direction: passing. `S8`, `S9`;
+seven anchors moved by this week's work were **re-anchored** and two were **removed**, because the
+rules they guarded are gone — `allow_check` (replaced by `FRD-308`'s release, defended at every hop
+by `J1`–`J4`) and the two abolished use-case roles (`ADR-0017`). A mutation kept alive against a
+deleted rule reports green about nothing, which is `N2`'s lesson with the anchor pointing at a
+grave rather than at moved code.
+
 Next candidates: **`FRD-114`** (model metadata — now also carries publisher + default output cap,
 prerequisite for 110–113 and 119), **`FRD-110`** (documents/images — the widest gap),
 **`FRD-115`/`FRD-119`** (Vertex EU + the Anthropic dialect — required), **`FRD-116`** (Vault),

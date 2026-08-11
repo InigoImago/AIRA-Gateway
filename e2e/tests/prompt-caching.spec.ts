@@ -62,7 +62,15 @@ test.describe('Prompt caching', () => {
     await createUseCase(page, slug, 'Caching reason probe');
 
     await page.goto(`/use-cases/${slug}`);
-    await page.hover('[data-testid="info-prompt-caching"]');
+    // **Wait before hovering.** The overview finishes assembling after the navigation resolves —
+    // the consumption card arrives from the gateway and pushes the tiles down — so a hover fired
+    // straight after `goto` lands on whatever moved into that spot, and the panel never opens.
+    // The two hint tests above settle the page by interacting with it first and never saw this;
+    // this one went from green to consistently red without its own code changing, which is what a
+    // test written against a moving target does eventually.
+    const trigger = page.locator('[data-testid="info-prompt-caching"]');
+    await expect(trigger).toBeVisible();
+    await trigger.hover();
     const help = page.locator('[data-testid="help-prompt-caching"]');
     await expect(help).toBeVisible();
     await expect(help).toContainText('whole organisation');

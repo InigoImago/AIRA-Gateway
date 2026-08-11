@@ -15,17 +15,46 @@ enforcement (FRD-401) and UI (FRD-402) follow.
 
 ## 2. Concept
 - A **budget** caps usage for a **scope** over a **period**.
-  - **Scope**: `use_case` (the whole use case) or `member` (a specific person in the use case).
+  - **Scope**: `use_case` (the whole use case), `each_member` (every person in it, counted
+    separately) or `member` (one named person).
   - **Period**: `day` or `month` (calendar; usage resets at the period boundary).
   - **Limits**: `limit_tokens` and/or `limit_requests` (either/both; null = unlimited on that axis).
 - Cost-based limits need per-model pricing (not yet available) → **tokens + request count first**;
   monetary budgets are a later extension.
 
+### 2.1 Why three scopes and not two (added 2026-08-11)
+`use_case` is a **shared pot**: the first caller to arrive can spend all of it, which is the right
+shape for a cap on what the organisation is willing to spend and the wrong one for fairness.
+`member` bounds one named person, which only answers the question after somebody has already caused
+a problem — and it needs a row per person, kept up to date as people join and leave.
+
+`each_member` is the scope an administrator asks for most: *a fair share per head*. One configured
+row, one counter per person, applying to whoever turns up including people who join afterwards.
+
+It is not a shorthand for the other two, and neither substitutes for it. A per-person cap of 100
+does not cap the use case at 100 — with forty members it caps it at 4 000 — so an installation that
+wants both sets both, and the gateway takes them **all-or-nothing** the way it already does for
+rate limits (`FRD-405` FR-4).
+
+Three consequences worth writing down:
+- **The row names nobody.** A `subject` sent with it is dropped rather than refused: keeping it
+  would key the uniqueness constraint on a name the row does not honour, so a second edit would
+  create a second budget instead of replacing the first (the defect already recorded for
+  `use_case`).
+- **The counter key is the caller.** It is exactly the key a `member` row naming that person would
+  have used, so narrowing one individual later does not move their accumulated history to a
+  different key mid-period.
+- **Consumption has no single figure.** `GET /v1beta/usage/{use_case}` therefore reports the
+  *reader's own* number and says so (`measured_for`), and answers `null` — never zero — to a reader
+  the row does not bind. Zero is what an untouched allowance looks like, and this is the one place
+  where the two would be indistinguishable (`FRD-603`).
+
 ## 3. Functional Requirements
 - **FR-1**: A use-case admin defines budgets for their use case: one `use_case`-scoped budget per
   period, and any number of `member`-scoped budgets (one per member per period).
 - **FR-2**: Validation — at least one limit set; positive integers; `member` scope requires a
-  `subject`; uniqueness on `(use_case, scope, subject, period)`.
+  `subject`; `use_case` and `each_member` **drop** any subject sent with them; uniqueness on
+  `(use_case, scope, subject, period)`.
 - **FR-3**: CRUD nested under the use case: `GET/POST /api/v1/use-cases/{slug}/budgets`,
   `DELETE …/budgets/{id}` (admins; members may read). RBAC via the existing object perms.
 - **FR-4 Distribution**: `budget.upserted` / `budget.deleted` via the transactional outbox → Kafka

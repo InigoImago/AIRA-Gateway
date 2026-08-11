@@ -3,6 +3,7 @@ import { AnomalyRule } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { ConfirmService } from '../../core/ui/confirm.service';
 import { InfoHint } from '../../core/ui/info-hint';
+import { Modal } from '../../core/ui/modal';
 import { PageFeedback } from '../../core/ui/page-feedback';
 import { describeRule, unitOf } from '../security/rule-language';
 import { NEW_RULE, RuleForm } from '../security/rule-form';
@@ -22,7 +23,7 @@ import { NEW_RULE, RuleForm } from '../security/rule-form';
  */
 @Component({
   selector: 'app-rules-tab',
-  imports: [InfoHint, RuleForm],
+  imports: [InfoHint, RuleForm, Modal],
   templateUrl: './rules-tab.html',
 })
 export class RulesTab implements OnInit {
