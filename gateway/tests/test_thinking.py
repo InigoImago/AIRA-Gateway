@@ -91,12 +91,20 @@ def test_a_token_count_on_a_mode_that_takes_none_is_refused() -> None:
     assert caught.value.code == UNEXPECTED_THINKING_TOKEN_COUNT
 
 
-def test_disabled_is_accepted_by_a_model_that_cannot_think() -> None:
-    """ "Do not think" asked of a model that cannot is already true. Refusing it would fail
-    requests asking for exactly what they are going to get."""
-    resolved = resolve(Thinking(mode=ThinkingMode.DISABLED), ModelDeclaration(name="m"))
-    assert resolved is not None
-    assert resolved.mode is ThinkingMode.DISABLED
+def test_disabled_asked_of_a_model_that_cannot_think_sends_nothing() -> None:
+    """ "Do not think" asked of a model that cannot is already true, so the request is accepted —
+    and **nothing is sent**, which is the correction of 2026-08-11.
+
+    It used to resolve to an explicit `Thinking(disabled, tokens=0)`, which the Gemini mapper turns
+    into `thinkingConfig: {thinkingBudget: 0}` — and Google answers **400** for every model that
+    cannot have thinking switched off. Measured against `gemini-flash-latest`: refused with a token
+    cap, refused with a large cap, refused alone; drop the parameter and the same model answers in
+    one output token.
+
+    `FRD-124`'s "off has to be said out loud" is about a model that **can** think, where silence
+    lets the default win. Here there is no default to beat, and asserting an off is a claim about
+    the provider's API rather than about the request."""
+    assert resolve(Thinking(mode=ThinkingMode.DISABLED), ModelDeclaration(name="m")) is None
 
 
 def test_disabled_with_a_count_is_still_refused() -> None:

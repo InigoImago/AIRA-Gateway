@@ -15,8 +15,10 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from aira_common.models import ThinkingMode
 from aira_gateway.audit import ModelCall
-from aira_gateway.core.canonical import CanonicalRequest, Role
+from aira_gateway.catalog import ModelDeclaration
+from aira_gateway.core.canonical import CanonicalRequest, Role, Thinking
 from aira_gateway.pipeline.classifiers import (
     Classification,
     HeuristicInjectionClassifier,
@@ -27,6 +29,7 @@ from aira_gateway.pipeline.classifiers import (
 )
 from aira_gateway.pipeline.config import Pipeline, StepType
 from aira_gateway.pipeline.errors import PipelineRejected
+from aira_gateway.thinking import for_a_classifier
 from aira_gateway.upstreams.base import ProviderRegistry
 
 #: What a filter does when its classifier could not reach a verdict (`FRD-125`).
@@ -99,7 +102,7 @@ class DryRunResult:
     model_calls: list[ModelCall] = field(default_factory=list)
 
 
-#: How a step finds the adapter for the model it wants to call.
+#: How a step learns what the **catalog** says about the model it wants to call.
 #:
 #: A plain `provider_for(model)` was enough while every servable model was named in configuration.
 #: Since `FRD-507` stage B a model can be reachable **because it is catalogued**, and the catalog
@@ -111,7 +114,13 @@ class DryRunResult:
 #: naming: **a control that stops working without saying so.** The resolver is handed in per
 #: request, exactly as `dispatch_with_fallback` takes `provider_of`, because only the request has
 #: the catalog.
-ProviderOf = Callable[[str], Awaitable[str]]
+#:
+#: It answers with the **declaration** rather than with a provider name, because the step needs two
+#: facts from the same place and asking twice is how they come to disagree: *who serves this model*
+#: and *may its thinking be switched off*. The second is what made the first useless — with the
+#: classifier finally reachable, it sent `thinkingBudget: 0` to a model that refuses it and got a
+#: 400 it then swallowed.
+DeclarationOf = Callable[[str], Awaitable[ModelDeclaration]]
 
 
 class PipelineEngine:
@@ -127,7 +136,7 @@ class PipelineEngine:
         *,
         decisions: list[dict[str, Any]] | None = None,
         model_calls: list[ModelCall] | None = None,
-        provider_of: ProviderOf | None = None,
+        declaration_of: DeclarationOf | None = None,
     ) -> PipelineOutcome:
         """Run the configured steps.
 
@@ -151,7 +160,7 @@ class PipelineEngine:
         )
         for step in pipeline.steps:
             if step.type is StepType.INJECTION_FILTER:
-                classification = await self._classify(step.config, outcome.request, provider_of)
+                classification = await self._classify(step.config, outcome.request, declaration_of)
                 if classification.call is not None:
                     outcome.model_calls.append(classification.call)
                 verdict = classification.verdict
@@ -172,7 +181,7 @@ class PipelineEngine:
                     raise PipelineRejected(_rejection(verdict))
             elif step.type is StepType.MODEL_ROUTE:
                 category, target, call = await self._route(
-                    step.config, outcome.request, provider_of
+                    step.config, outcome.request, declaration_of
                 )
                 if call is not None:
                     outcome.model_calls.append(call)
@@ -204,7 +213,7 @@ class PipelineEngine:
         request: CanonicalRequest,
         *,
         model_calls: list[ModelCall] | None = None,
-        provider_of: ProviderOf | None = None,
+        declaration_of: DeclarationOf | None = None,
     ) -> DryRunResult:
         """Evaluate the pipeline without dispatching the caller's own generation.
 
@@ -219,7 +228,7 @@ class PipelineEngine:
         reason: str | None = None
         for step in pipeline.steps:
             if step.type is StepType.INJECTION_FILTER:
-                classification = await self._classify(step.config, current, provider_of)
+                classification = await self._classify(step.config, current, declaration_of)
                 if classification.call is not None:
                     calls.append(classification.call)
                 verdict = classification.verdict
@@ -243,7 +252,7 @@ class PipelineEngine:
                     )
                 )
             elif step.type is StepType.MODEL_ROUTE:
-                category, target, call = await self._route(step.config, current, provider_of)
+                category, target, call = await self._route(step.config, current, declaration_of)
                 if call is not None:
                     calls.append(call)
                 elif step.config.get("categories"):
@@ -283,14 +292,14 @@ class PipelineEngine:
         self,
         config: dict[str, Any],
         request: CanonicalRequest,
-        provider_of: ProviderOf | None = None,
+        declaration_of: DeclarationOf | None = None,
     ) -> Classification:
         text = self._scanned_text(request, config.get("scope", "user"))
-        classifier = await self._injection_classifier(config, provider_of)
+        classifier = await self._injection_classifier(config, declaration_of)
         return await classifier.classify_text(text)
 
     async def _injection_classifier(
-        self, config: dict[str, Any], provider_of: ProviderOf | None = None
+        self, config: dict[str, Any], declaration_of: DeclarationOf | None = None
     ) -> InjectionClassifier:
         """The classifier this step is configured with.
 
@@ -306,13 +315,18 @@ class PipelineEngine:
         """
         if config.get("mode") == "llm":
             model = config.get("model") or self._default_model()
-            provider = await self._provider_for(model, provider_of)
+            provider = await self._provider_for(model, declaration_of)
             if provider is not None and model is not None:
-                return LlmInjectionClassifier(provider, model, config.get("instruction"))
+                return LlmInjectionClassifier(
+                    provider,
+                    model,
+                    config.get("instruction"),
+                    await self._thinking_for(model, declaration_of),
+                )
         extras = tuple(config.get("patterns", []))
         return HeuristicInjectionClassifier(extras, use_builtins=config.get("use_builtins", True))
 
-    async def _provider_for(self, model: str | None, provider_of: ProviderOf | None) -> Any:
+    async def _provider_for(self, model: str | None, declaration_of: DeclarationOf | None) -> Any:
         """The adapter serving ``model``, asking the catalog when configuration does not know it.
 
         `provider_for(name)` alone was the whole lookup until stage B made cataloguing enough to
@@ -322,15 +336,26 @@ class PipelineEngine:
         if not model:
             return None
         direct = self._registry.provider_for(model)
-        if direct is not None or provider_of is None:
+        if direct is not None or declaration_of is None:
             return direct
-        return self._registry.provider_for(model, await provider_of(model))
+        return self._registry.provider_for(model, (await declaration_of(model)).provider)
+
+    async def _thinking_for(self, model: str | None, declaration_of: DeclarationOf | None) -> Any:
+        """What to tell ``model`` about thinking, from the catalog rather than unconditionally.
+
+        With no resolver — a caller that has no catalog to hand — the classifier keeps its old
+        behaviour of asking for off, because `FRD-125`'s finding stands for every model that can
+        honour it: sent nothing, a reasoning model thinks and spends a four-token allowance on it.
+        """
+        if declaration_of is None or not model:
+            return Thinking(mode=ThinkingMode.DISABLED)
+        return for_a_classifier(await declaration_of(model))
 
     async def _route(
         self,
         config: dict[str, Any],
         request: CanonicalRequest,
-        provider_of: ProviderOf | None = None,
+        declaration_of: DeclarationOf | None = None,
     ) -> tuple[str | None, str | None, ModelCall | None]:
         """The category, the model to use, and what asking cost — the third is new (`FRD-125`).
 
@@ -342,12 +367,13 @@ class PipelineEngine:
         if not categories:
             return None, default_model, None
         model = config.get("model") or self._default_model()
-        provider = await self._provider_for(model, provider_of)
+        provider = await self._provider_for(model, declaration_of)
         if provider is None or model is None:
             return None, default_model, None
-        name, call = await LlmCategoryRouter(provider, model, categories).classify_text(
-            self._route_text(request)
+        router = LlmCategoryRouter(
+            provider, model, categories, await self._thinking_for(model, declaration_of)
         )
+        name, call = await router.classify_text(self._route_text(request))
         if name:
             for category in categories:
                 if category.get("name") == name:

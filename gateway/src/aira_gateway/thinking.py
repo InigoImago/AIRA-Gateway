@@ -56,6 +56,27 @@ def resolve(requested: Thinking | None, declaration: ModelDeclaration) -> Thinki
     return _validated(requested, declaration)
 
 
+def for_a_classifier(declaration: ModelDeclaration) -> Thinking | None:
+    """What a pipeline's LLM step should send, so it gets one word rather than a page of reasoning.
+
+    Off **where the model can be told to be off**, and nothing at all where it cannot — the two
+    cases the classifier used to collapse into one by sending `disabled` unconditionally,
+    bypassing the catalog entirely. Measured: that is a 400 from Google for any model whose
+    thinking cannot be switched off, which the classifier then swallowed as "no verdict".
+
+    `FRD-125`'s original finding is the other side of the same coin and is preserved: a reasoning
+    model sent no directive **thinks anyway** and spends a four-token allowance on it, so where the
+    catalog says the model can be quietened, it is told so explicitly.
+
+    This asks a different question from `resolve` — *what may we ask for* rather than *what did the
+    caller ask for* — so it answers rather than raising: a filter whose model declares thinking
+    without an off is a filter that still has to run.
+    """
+    if ThinkingMode.DISABLED not in declaration.thinking_modes:
+        return None
+    return resolve(Thinking(mode=ThinkingMode.DISABLED), declaration)
+
+
 def _default_for(declaration: ModelDeclaration) -> Thinking | None:
     default = declaration.thinking_default
     if default is None:
@@ -72,7 +93,7 @@ def _default_for(declaration: ModelDeclaration) -> Thinking | None:
     )
 
 
-def _validated(requested: Thinking, declaration: ModelDeclaration) -> Thinking:
+def _validated(requested: Thinking, declaration: ModelDeclaration) -> Thinking | None:
     mode = requested.mode
     declared = declaration.thinking_modes
 
@@ -85,7 +106,19 @@ def _validated(requested: Thinking, declaration: ModelDeclaration) -> Thinking:
                 UNEXPECTED_THINKING_TOKEN_COUNT,
                 "'tokens' applies only to the 'limited' thinking mode.",
             )
-        return Thinking(mode=ThinkingMode.DISABLED, tokens=0)
+        # **Nothing to send**, not an explicit off — corrected 2026-08-11 against a measurement.
+        # This used to return `Thinking(DISABLED, tokens=0)`, which the Gemini mapper turns into
+        # `thinkingConfig: {thinkingBudget: 0}`, and Google answers **400 for every model that
+        # cannot have thinking switched off**: `gemini-flash-latest` refuses it alone, with a
+        # token cap, with a large cap — in every combination. Drop the parameter and the same
+        # model answers in one output token.
+        #
+        # It also contradicted this module's own docstring, which says `None` means "the model was
+        # never going to think and no parameter is needed" — which is exactly the case this branch
+        # is about. Asserting an off for a model that declares no thinking is a claim about the
+        # provider's API, and `FRD-124`'s "off has to be said out loud" is about a model that
+        # **can** think: there, silence means the default wins. Here there is no default to beat.
+        return None
 
     if not declaration.can(Capability.THINKING) or mode not in declared:
         raise ThinkingRejected(

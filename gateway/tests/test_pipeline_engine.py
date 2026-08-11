@@ -353,12 +353,14 @@ async def test_an_llm_filter_reaches_a_model_the_catalog_knows_and_configuration
     assert outcome.model_calls == []
 
     # …and with it, the configured classifier is what actually runs.
-    async def declared(model: str) -> str:
-        return "vendor-x"
+    from aira_gateway.catalog import ModelDeclaration
+
+    async def declared(model: str) -> ModelDeclaration:
+        return ModelDeclaration(name=model, provider="vendor-x")
 
     with pytest.raises(PipelineRejected):
         await engine.run(
-            pipeline, _request("perfectly ordinary text", model="mock-1"), provider_of=declared
+            pipeline, _request("perfectly ordinary text", model="mock-1"), declaration_of=declared
         )
 
 

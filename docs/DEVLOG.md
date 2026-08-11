@@ -58,8 +58,33 @@ catalog's thinking resolution — `FRD-125`'s own unfinished half. And the failu
 `(None, None)`, no model call, no row, and a dry-run trace saying `unchanged`, **the same word a
 working router uses when nothing matched**. It says `not_asked` now, on the audit row and on the
 screen an operator uses to find out whether their pipeline works. The thinking mismatch itself is
-deliberately **not** fixed here: what a model accepts is a measurement, and the catalog is where
-measurements belong. `J16`, `J17`.
+then fixed on the same day, and the measurement moved the fix a layer down.
+
+What Google refuses is `thinkingBudget: 0` — with a 16-token cap, with a 512-token cap and alone,
+**400 every time**; drop the parameter and the same model answers in one output token. Two things
+produced it: the classifier sent an off unconditionally, bypassing the catalog, and `resolve()`
+produced one for **any** model declaring no thinking — contradicting its own docstring, which says
+`None` means *the model was never going to think and no parameter is needed*. Both corrected.
+`FRD-124`'s "off has to be said out loud" is about a model that **can** think, where silence lets
+the default win; where there is nothing to switch off, asserting an off is a claim about the
+provider's API. The engine's resolver became `declaration_of` rather than `provider_of`, because a
+step needs two facts from the same place and asking twice is how they come to disagree.
+
+Then the **allowance** turned out to be the other half of the same defect: a provider bills
+thinking *inside* `maxOutputTokens`, so a model that must think returns nothing in a cap sized for
+one word. Measured, routing one sentence: 16 → 13 thought tokens and no answer, 32 → 28 and no
+answer, **64 → `code`**, 128 and 256 likewise. Two numbers now, four times the floor — and a
+**ceiling is not a purchase**: a model that answers in a word is billed for a word, so being
+generous costs nothing while being tight makes every classification silently undetermined.
+
+Verified live: the router returned `category: "code"` and the filter `verdict: injection`, both
+with rows and prices. `gemini-flash-latest` stays **undeclared** for thinking deliberately — the
+measurement says it refuses an off, not which modes it offers, and `FRD-114` FR-7 is that an
+unmeasured model is declared with none.
+
+**A lesson about measuring, not about the code.** One repeat round showed every answer empty and
+looked like model non-determinism; it was `429 quota exceeded` bodies being read as empty text,
+because that script did not check the status code. The instrument was the finding. `J16`–`J22`.
 
 **And the browser suite caught the regression the change itself introduced.** `require_attribution`
 is mounted on the whole Gemini surface, so the new requirement reached `GET /v1beta/models` too and

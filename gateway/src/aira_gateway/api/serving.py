@@ -532,6 +532,23 @@ async def declared_provider(request: Request) -> Callable[[str], Awaitable[str]]
     return lookup
 
 
+async def declared_model(request: Request) -> Callable[[str], Awaitable[ModelDeclaration]]:
+    """The catalog's whole answer about a model, for a pipeline step.
+
+    The declaration rather than the provider name, because a step needs **two** facts from the same
+    place and asking twice is how they come to disagree: who serves this model, and may its
+    thinking be switched off. The second is what made the first useless — with the classifier
+    finally reachable, it sent an off to a model that refuses one and got a 400 it then swallowed.
+    """
+
+    catalog = catalog_of(request)
+
+    async def lookup(model: str) -> ModelDeclaration:
+        return await catalog.declaration(model)
+
+    return lookup
+
+
 async def check_declaration(
     request: Request, *, model: str, method: str, requested: int | None
 ) -> ModelDeclaration:
@@ -614,7 +631,7 @@ async def run_pipeline(
             # So a step can call a model the **catalog** knows and configuration does not
             # (`FRD-507` stage B). Without it an LLM filter fell back to the heuristic and a
             # router routed nowhere, both while the builder showed them active.
-            provider_of=await declared_provider(request),
+            declaration_of=await declared_model(request),
         )
     finally:
         # **One site**, and it is in the `finally` on purpose: a filter that blocked still spent

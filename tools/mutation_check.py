@@ -3335,6 +3335,39 @@ MUTATIONS = [
         "    if False:\n        # **A reading is not a model call.**",
         "gateway/tests/test_audit_completeness.py",
     ),
+    # ---- what a classifier tells a model about thinking (measured 2026-08-11) ----------------
+    Mutation(
+        "J19",
+        "a model that cannot be told not to think is sent no thinking directive at all",
+        "gateway/src/aira_gateway/thinking.py",
+        "    if ThinkingMode.DISABLED not in declaration.thinking_modes:\n        return None",
+        "    if False:\n        return None",
+        CLASSIFIERS,
+    ),
+    Mutation(
+        "J20",
+        "an explicit off is still sent where the model can honour it",
+        "gateway/src/aira_gateway/thinking.py",
+        "    return resolve(Thinking(mode=ThinkingMode.DISABLED), declaration)",
+        "    return None",
+        CLASSIFIERS,
+    ),
+    Mutation(
+        "J21",
+        "asserting an off to a model that declares no thinking is not a thing we do",
+        "gateway/src/aira_gateway/thinking.py",
+        '        # never going to think and no parameter is needed" — which is exactly the case this branch\n        # is about. Asserting an off for a model that declares no thinking is a claim about the\n        # provider\'s API, and `FRD-124`\'s "off has to be said out loud" is about a model that\n        # **can** think: there, silence means the default wins. Here there is no default to beat.\n        return None',
+        "        return Thinking(mode=ThinkingMode.DISABLED, tokens=0)",
+        "gateway/tests/test_thinking.py",
+    ),
+    Mutation(
+        "J22",
+        "a model that will think gets room for the thinking as well as the word",
+        "gateway/src/aira_gateway/pipeline/classifiers.py",
+        "            else THINKING_CLASSIFIER_OUTPUT_TOKENS",
+        "            else CLASSIFIER_OUTPUT_TOKENS",
+        CLASSIFIERS,
+    ),
 ]
 
 

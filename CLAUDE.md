@@ -43,7 +43,7 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
   inevitably do when both were written from the same mental model — and line coverage cannot see
   a *missing requirement*: on 2026-08-05 a review found seven real defects behind a green suite at
   99% coverage. So: **prove a test can fail.** Break the property, watch it go red, restore.
-  `make mutants` (`tools/mutation_check.py`) does this for **370 properties** across auth, budgets,
+  `make mutants` (`tools/mutation_check.py`) does this for **374 properties** across auth, budgets,
   pipeline, retention, the management control plane and the gateway's counters; when
   you fix a bug, add the mutation that reintroduces it. Two traps that cost real defects here:
   a stand-in that is more permissive than the thing it replaces (reuse the real method where you
@@ -1364,9 +1364,27 @@ reached, the provider answered **400** — `gemini-flash-latest` refuses `thinki
 the classifier sends unconditionally because it still bypasses the catalog's thinking resolution
 (`FRD-125`'s own unfinished half). That failure was swallowed: `(None, None)`, no call, no row, and
 a trace saying `unchanged` — **the same word a working router uses when nothing matched**. It says
-`not_asked` now, on the audit row and in the dry run. The thinking mismatch itself is a data
-question and is **not** fixed: what a model accepts is a measurement, and the catalog is where
-measurements go. `J16`, `J17`. **The browser suite then caught the regression the change itself
+`not_asked` now, on the audit row and in the dry run. **The thinking mismatch is fixed too, and the measurement moved the fix a layer down.** What
+Google refuses is `thinkingBudget: 0` — measured with a 16-token cap, a 512-token cap and alone,
+400 every time; drop the parameter and the same model answers in one output token. The classifier
+sent it unconditionally, bypassing the catalog, *and* `resolve()` produced it for any model
+declaring no thinking — contradicting its own docstring, which says `None` means "the model was
+never going to think and no parameter is needed". Both corrected: `resolve` sends **nothing** where
+there is nothing to switch off (`FRD-124`'s "off has to be said out loud" is about a model that
+**can** think, where silence lets the default win), and the classifier resolves through the catalog
+via `for_a_classifier`. The engine's resolver became `declaration_of` rather than `provider_of`,
+because a step needs two facts from the same place and asking twice is how they come to disagree.
+Then the **allowance** turned out to be the other half: a provider bills thinking *inside*
+`maxOutputTokens`, so a model that must think returns nothing in a cap sized for one word —
+measured at 16 → 13 thoughts and no answer, 32 → 28 and no answer, **64 → `code`**. Two numbers
+now, and a ceiling is not a purchase: a model that answers in a word is billed for a word, so being
+generous costs nothing and being tight makes every classification silently undetermined. Verified
+live: the router returned `category: "code"` and the filter `verdict: injection`, both billed.
+`gemini-flash-latest` stays **undeclared** for thinking on purpose — I measured that it refuses an
+off, not which modes it offers, and `FRD-114` FR-7 says an unmeasured model is declared with none.
+**A measuring lesson**: one repeat round read `429 quota exceeded` bodies as empty answers because
+the script did not check the status — the round that looked like model non-determinism was my own
+instrument. `J19`–`J22`. `J16`, `J17`. **The browser suite then caught the regression the change itself
 introduced**: `require_attribution` is mounted on the whole surface, so the requirement reached
 `GET /v1beta/models` and the console's "which models does the gateway serve" answered 400 to a
 Global Administrator, a member of nothing by design — the rule is about attributing **spend**, and

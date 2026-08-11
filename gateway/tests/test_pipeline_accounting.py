@@ -45,7 +45,11 @@ class _Guard:
 
     async def generate(self, request: CanonicalRequest) -> CanonicalResponse:
         self.calls += 1
-        classifying = request.max_output_tokens is not None and request.max_output_tokens <= 32
+        # By what the request **is**, not by how wide its allowance happens to be. The allowance
+        # became two numbers on 2026-08-11 — a model that cannot be told not to think needs room
+        # for the thinking as well as the word — and a fixture keyed on it started reading the
+        # classifier's call as the caller's.
+        classifying = any("INJECTION" in (message.text or "") for message in request.messages)
         return CanonicalResponse(
             model="guard",
             text=self._verdict if classifying else "4",

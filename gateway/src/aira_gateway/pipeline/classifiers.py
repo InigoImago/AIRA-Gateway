@@ -143,19 +143,54 @@ DEFAULT_INJECTION_INSTRUCTION = (
 #: rather than the normal case.
 CLASSIFIER_OUTPUT_TOKENS = 16
 
+#: The allowance when the model **cannot be told not to think**, because its thinking is billed
+#: inside this same cap and eats it first.
+#:
+#: Measured on 2026-08-11 against `gemini-flash-latest`, which refuses `thinkingBudget: 0`, asking
+#: it to route one sentence:
+#:
+#:     cap  16 → 13 thought tokens, **no answer**
+#:     cap  32 → 28 thought tokens, **no answer**
+#:     cap  64 → 40 thought tokens, "code"
+#:     cap 128 → 30 thought tokens, "code"
+#:     cap 256 → 26 thought tokens, "code"
+#:
+#: So 64 is the floor here and this is four times it — not caution for its own sake: the model
+#: expands its thinking towards the allowance and then stops, so a larger cap did not cost more in
+#: any sample, while a cap near the floor turns every classification into a coin toss. A model that
+#: thinks past this still yields no verdict, which the injection filter reads as **undetermined**
+#: and blocks on (`FRD-125`); it is a bounded failure, not a silent one.
+#:
+#: **A ceiling is not a purchase.** An undeclared model gets this allowance too — absence of
+#: information is not a claim that it will not think — and one that answers in a word is billed for
+#: a word. The cost of being generous here is nothing; the cost of being tight is every
+#: classification silently returning no verdict.
+THINKING_CLASSIFIER_OUTPUT_TOKENS = 256
+
+
+#: What to send when nobody resolved a setting against the catalog — see `classifier_request`.
+_OFF = Thinking(mode=ThinkingMode.DISABLED)
+
 
 class LlmInjectionClassifier:
     """Asks a provider to label the text, and says so when it did not get an answer."""
 
-    def __init__(self, provider: Upstream, model: str, instruction: str | None = None) -> None:
+    def __init__(
+        self,
+        provider: Upstream,
+        model: str,
+        instruction: str | None = None,
+        thinking: Thinking | None = _OFF,
+    ) -> None:
         self._provider = provider
         self._model = model
         self._instruction = instruction or DEFAULT_INJECTION_INSTRUCTION
+        self._thinking = thinking
 
     async def classify_text(self, text: str) -> Classification:
         try:
             response = await self._provider.generate(
-                classifier_request(self._model, self._instruction, text)
+                classifier_request(self._model, self._instruction, text, self._thinking)
             )
         except UpstreamError:
             # No call to report: nothing was served, so nothing was spent. A failed call that
@@ -192,17 +227,21 @@ _ROUTER_INSTRUCTION = (
 )
 
 
-def classifier_request(model: str, instruction: str, text: str) -> CanonicalRequest:
-    """The request every LLM step makes: one word out, and **no thinking**.
+def classifier_request(
+    model: str, instruction: str, text: str, thinking: Thinking | None = _OFF
+) -> CanonicalRequest:
+    """The request every LLM step makes: one word out, and as little thinking as the model allows.
 
-    Thinking is switched off explicitly rather than left unset. Unset means the *model's* default,
-    and a reasoning model's default is to think — which, inside an allowance sized for one word,
-    means it returns nothing. The serving path resolves this against the catalog; a classifier
-    dispatches straight to the provider and so skipped it entirely.
+    ``thinking`` is **resolved against the catalog** by the caller and passed in. It used to be
+    `Thinking(disabled)` unconditionally, and the sentence that justified it — *off is right here
+    regardless of the model* — was true about the intent and false about the wire: a model that
+    cannot have thinking switched off answers **400**, measured against `gemini-flash-latest` with
+    a token cap, with a large cap, and alone. The classifier swallowed that as "no verdict", so a
+    filter set to block silently became a heuristic one and a router routed nowhere.
 
-    Off is right here regardless of the model: the question is a labelling task with a fixed
-    two-word answer, and a model that needs to deliberate about it will not fit the answer in the
-    budget either way.
+    The default stays "off" for a caller with no catalog to hand, because `FRD-125`'s finding holds
+    for every model that can honour it: sent nothing, a reasoning model thinks and spends an
+    allowance sized for one word on the thinking.
     """
     return CanonicalRequest(
         model=model,
@@ -210,8 +249,14 @@ def classifier_request(model: str, instruction: str, text: str) -> CanonicalRequ
             CanonicalMessage(role=Role.SYSTEM, text=instruction),
             CanonicalMessage(role=Role.USER, text=text),
         ],
-        max_output_tokens=CLASSIFIER_OUTPUT_TOKENS,
-        thinking=Thinking(mode=ThinkingMode.DISABLED),
+        # The allowance follows the setting: a model that will think needs room for the thinking
+        # *and* the word, because the provider bills both against this one number.
+        max_output_tokens=(
+            CLASSIFIER_OUTPUT_TOKENS
+            if thinking is not None and thinking.mode is ThinkingMode.DISABLED
+            else THINKING_CLASSIFIER_OUTPUT_TOKENS
+        ),
+        thinking=thinking,
     )
 
 
@@ -224,10 +269,17 @@ class LlmCategoryRouter:
     every request against a reasoning model, for the same reason the filter was returning clean.
     """
 
-    def __init__(self, provider: Upstream, model: str, categories: list[dict[str, str]]) -> None:
+    def __init__(
+        self,
+        provider: Upstream,
+        model: str,
+        categories: list[dict[str, str]],
+        thinking: Thinking | None = _OFF,
+    ) -> None:
         self._provider = provider
         self._model = model
         self._categories = categories
+        self._thinking = thinking
 
     async def classify_text(self, text: str) -> tuple[str | None, ModelCall | None]:
         """The category and what asking for it cost."""
@@ -235,7 +287,10 @@ class LlmCategoryRouter:
             f"- {c.get('name', '')}: {c.get('description', '')}" for c in self._categories
         )
         request = classifier_request(
-            self._model, _ROUTER_INSTRUCTION.format(categories=listing), text
+            self._model,
+            _ROUTER_INSTRUCTION.format(categories=listing),
+            text,
+            self._thinking,
         )
         try:
             response = await self._provider.generate(request)

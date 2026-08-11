@@ -31,7 +31,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, ValidationError
 
 from aira_gateway.api.gemini.errors import gemini_error_response as _error
-from aira_gateway.api.serving import declared_provider, record_pipeline_calls, released_for
+from aira_gateway.api.serving import declared_model, record_pipeline_calls, released_for
 from aira_gateway.audit import AuditTrail
 from aira_gateway.auth.attribution import Attribution
 from aira_gateway.auth.dependencies import require_principal, use_case_refusal
@@ -188,7 +188,7 @@ async def dry_run(
             Pipeline.from_dict(payload.pipeline),
             canonical,
             model_calls=trail.model_calls,
-            provider_of=await declared_provider(request),
+            declaration_of=await declared_model(request),
         )
     finally:
         # In the `finally` for the same reason the served path puts it there: a filter that blocked
