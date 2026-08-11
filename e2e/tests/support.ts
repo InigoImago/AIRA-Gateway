@@ -151,6 +151,36 @@ export async function releaseAllModels(page: Page, slug: string) {
   expect(status, `could not release models on ${slug}`).toBeLessThan(300);
 }
 
+/**
+ * Wait until the **gateway** agrees the caller reaches this use case.
+ *
+ * A group grant travels to the gateway over Kafka and is then cached in-process for five seconds
+ * (`FRD-209`), so a grant made a moment ago is real in Management and not yet true in the data
+ * plane. Polled rather than slept: a fixed wait is either too short on a loaded machine or wasted
+ * on an idle one, and both read as flakiness.
+ *
+ * Asked with the cheapest thing that exercises the same rule — an empty dry run, which reaches the
+ * membership check and stops.
+ */
+export async function awaitGatewayMembership(page: Page, slug: string) {
+  await expect
+    .poll(
+      async () =>
+        page.evaluate(async (slug) => {
+          const token =
+            sessionStorage.getItem('access_token') ?? localStorage.getItem('access_token');
+          const response = await fetch('/gw/v1beta/pipeline:dryRun', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ use_case: slug, user: 'ping', pipeline: {} }),
+          });
+          return response.status;
+        }, slug),
+      { timeout: 30_000, intervals: [500] },
+    )
+    .not.toBe(403);
+}
+
 /** A slug that is unique per run so reruns do not collide on the unique constraint. */
 export function uniqueSlug(prefix: string) {
   return `${prefix}-${Math.random().toString(36).slice(2, 8)}`;

@@ -81,3 +81,90 @@ test.describe('Model release', () => {
     await expect(page.getByTestId('save-release')).toHaveCount(0);
   });
 });
+
+test.describe('The pipeline builder is bounded by the release', () => {
+  test('offers only released models, and says so when there are none', async ({ page }) => {
+    await login(page, USERS.globalAdmin);
+    await page.goto('/use-cases/kundenservice/pipeline');
+    await expect(page.locator('.node--step').first()).toBeVisible({ timeout: 20_000 });
+
+    await page.click('button:has-text("+ Model Routing (LLM)")');
+    // By what the node *is*, not by position: `.last()` picked whichever node the graph happened
+    // to render last, which is not the one just added.
+    await page.locator('.node--step').filter({ hasText: 'Model Routing' }).click();
+
+    // A `<select>`, not a text box: free text offered exactly what the server refuses, and here it
+    // also invited naming a model this use case has no right to (`FRD-308`).
+    const classifier = page.locator('#insp-route-model');
+    await expect(classifier).toBeVisible();
+    const options = await classifier.locator('option').allTextContents();
+    expect(options.length).toBeGreaterThan(1);
+    // Every option is something the use case may call — asserted against the release itself.
+    const released = await page.evaluate(async () => {
+      const token = sessionStorage.getItem('access_token') ?? localStorage.getItem('access_token');
+      const uc = await (
+        await fetch('/api/v1/use-cases/kundenservice/', {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+      ).json();
+      return uc.allowed_models as string[];
+    });
+    for (const option of options.slice(1)) expect(released).toContain(option);
+  });
+
+  test('a dry run follows the membership rule a request does', async ({ page }) => {
+    /**
+     * A Global Administrator is deliberately a member of nothing (`ADR-0007`), and a dry run calls
+     * a real model charged to the use case — so it gets the same answer a request would. Asserted
+     * because the console has to *say* this rather than sending somebody to check the gateway's
+     * OIDC configuration, which is working.
+     */
+    await login(page, USERS.globalAdmin);
+    const status = await page.evaluate(async () => {
+      const token = sessionStorage.getItem('access_token') ?? localStorage.getItem('access_token');
+      const response = await fetch('/gw/v1beta/pipeline:dryRun', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ use_case: 'kundenservice', user: 'hi', pipeline: {} }),
+      });
+      return { code: response.status, body: await response.text() };
+    });
+
+    expect(status.code).toBe(403);
+    expect(status.body).toContain('Not a member');
+  });
+
+  test('a dry run refuses a model the use case may not call', async ({ page }) => {
+    /**
+     * The escape this closed, driven through the browser: the dry run runs the real engine, so an
+     * LLM-backed step calls a real model — and it used to do that for any model named in the body,
+     * with no use case, no release check and no audit row.
+     */
+    // `ucadmin` administers `kundenservice`, so the membership rule passes and the *release* rule
+    // is what answers — which is the one under test.
+    await login(page, USERS.useCaseAdmin);
+    const status = await page.evaluate(async () => {
+      const token = sessionStorage.getItem('access_token') ?? localStorage.getItem('access_token');
+      const response = await fetch('/gw/v1beta/pipeline:dryRun', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          use_case: 'kundenservice',
+          user: 'hi',
+          pipeline: {
+            steps: [
+              {
+                type: 'model_route',
+                config: { model: 'definitely-not-released', categories: [] },
+              },
+            ],
+          },
+        }),
+      });
+      return { code: response.status, body: await response.text() };
+    });
+
+    expect(status.code).toBe(400);
+    expect(status.body).toContain('definitely-not-released');
+  });
+});

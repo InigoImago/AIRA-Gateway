@@ -190,6 +190,7 @@ def test_a_dry_run_still_honours_a_model_the_caller_named() -> None:
         response = client.post(
             "/v1beta/pipeline:dryRun",
             json={
+                "use_case": "uc",
                 "user": "hi",
                 "model": "named-by-the-caller",
                 "pipeline": {

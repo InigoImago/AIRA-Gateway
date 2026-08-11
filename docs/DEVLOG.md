@@ -67,6 +67,25 @@ list has rendered unstyled for as long as the screen has existed, the `routerLin
 again. Styling it fixed both screens; making the shared class `position: absolute` laid the access
 panel's results across the whole page, so appearance is shared and *where it floats* is not.
 
+**The builder was the other half, and it hid an escape.** Every model field in the pipeline editor
+was free text — the filter's classifier, the router's classifier, each category target, the default
+target, the fallback chain — so it offered exactly what the server refuses and invited naming a
+model the use case has no right to. All five are dropdowns over the release now, and both planes
+enforce it: Management refuses a pipeline naming a withheld model *by name*, while somebody can
+still fix it.
+
+The gateway's **dry run** was the real hole, and it was measured before it was closed: a caller
+posted a pipeline naming any model as its classifier and the gateway **called it** — no use case,
+no release check, no approval check, no budget, no rate limit and **no audit row**. 1000 tokens
+spent, nothing recorded, by anybody with a login. Its own docstring claimed the size bounds meant
+"a single call cannot be turned into a free LLM relay". A dry run now names a use case (required),
+is refused unless the caller may act on it, and may name only released models. Two consequences:
+a Global Administrator is a member of nothing (`ADR-0007`) so they must grant themselves the use
+case to test its pipeline — the console says that instead of blaming a gateway setting that works
+— and the model a dry run *infers* when a pipeline names none now comes from the release, because
+the first registered model became a guess that was guaranteed wrong. `J8`–`J11`, of which **`J9`
+survived its first run**: no gateway test checked the fallback chain.
+
 `allow_check` is gone from the vocabulary, the builder, the serializer and the read-model.
 `J1`–`J7` — of which **`J4` survived its first run**: nothing defended the consumer's reading of an
 absent field, which is precisely the property that decides whether a half-upgraded stack keeps

@@ -96,6 +96,28 @@ def _validate_step_config(step_type: str, config: dict[str, Any]) -> None:
                 _check_text(category, field)
 
 
+def _models_named_in(steps: list[Any], fallbacks: list[Any]) -> list[str]:
+    """Every model a pipeline could reach, wherever it is written.
+
+    Mirrored by `aira_gateway.api.pipeline.models_named_in`, which asks the same question of an
+    **unsaved** pipeline posted to the dry run. Two implementations for one question is a smell —
+    and the alternative is worse here: this list is a *validation* concern in Management's own
+    vocabulary, and the shared library would have to carry the pipeline schema to hold it. Both
+    are one screenful, both are tested, and the pair is named in each so neither is edited alone.
+    """
+    named: list[str] = []
+    for step in steps:
+        config = (step.get("config") or {}) if isinstance(step, dict) else {}
+        for key in ("model", "default_model"):
+            if config.get(key):
+                named.append(str(config[key]))
+        for category in config.get("categories") or []:
+            if isinstance(category, dict) and category.get("model"):
+                named.append(str(category["model"]))
+    named.extend(str(name) for name in fallbacks if name)
+    return list(dict.fromkeys(named))
+
+
 class PipelineConfigSerializer(serializers.ModelSerializer[PipelineConfig]):
     class Meta:
         model = PipelineConfig
@@ -117,6 +139,44 @@ class PipelineConfigSerializer(serializers.ModelSerializer[PipelineConfig]):
                 raise serializers.ValidationError("step.config must be an object.")
             _validate_step_config(str(step["type"]), config)
         return value
+
+    def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
+        """Every model this pipeline names must be **released to this use case** (`FRD-308`).
+
+        The gateway already refuses one at dispatch, so this cannot be the only check and is not
+        meant to be — it is the one that arrives while somebody can still fix it. Without it a
+        builder happily saves a routing rule pointing at a model the use case may not call, and
+        the failure surfaces later as refused traffic on a configuration that looks correct.
+
+        Collected from **everywhere a model can be written**: the classifier a filter runs, the
+        classifier a router runs, each category's target, the default target and the fallback
+        chain. A check that read one of those would refuse the obvious mistake and leave four.
+
+        A use case with **nothing released** can save a pipeline that names no model at all; the
+        moment it names one, this refuses — which is the honest order, because such a use case can
+        serve nothing either.
+        """
+        use_case = self.context.get("use_case")
+        if use_case is None:
+            return attrs
+        named = _models_named_in(
+            attrs.get("steps", []) or [], attrs.get("fallback_models", []) or []
+        )
+        if not named:
+            return attrs
+        released = set(use_case.allowed_models.values_list("name", flat=True))
+        withheld = sorted(name for name in named if name not in released)
+        if withheld:
+            raise serializers.ValidationError(
+                {
+                    "steps": [
+                        f"Not released to '{use_case.slug}': {', '.join(withheld)}. A pipeline may "
+                        "only name models the use case may call — release them on the use case "
+                        "first, or the gateway refuses them at dispatch."
+                    ]
+                }
+            )
+        return attrs
 
     def validate_fallback_models(self, value: Any) -> list[str]:
         if not isinstance(value, list) or not all(isinstance(item, str) for item in value):

@@ -19,6 +19,8 @@ interface Editor {
   error: () => string | null;
   config: () => PipelineConfig;
   select: (index: number | 'fallback') => void;
+  setFallbackModels: (models: string[]) => void;
+  released: () => string[];
   selectedIndex: () => number;
   summarize: (step: { type: string; config: Record<string, unknown> }) => string;
   actionClass: (action: string) => string;
@@ -43,11 +45,14 @@ interface Options {
   confirm?: boolean;
   canManage?: boolean;
   useCaseFails?: boolean;
+  /** What the use case has been released (`FRD-308`). */
+  released?: string[];
 }
 
 function setup(initial: PipelineConfig, options: Options = {}) {
   TestBed.resetTestingModule();
   let saved: PipelineConfig | null = null;
+  let dryRunPayload: { use_case: string } | null = null;
   TestBed.configureTestingModule({
     imports: [PipelineEditor],
     providers: [
@@ -73,21 +78,35 @@ function setup(initial: PipelineConfig, options: Options = {}) {
                     can_manage: options.canManage ?? true,
                     is_member: true,
                   },
+                  // What this use case may call (`FRD-308`). Every model field in the builder
+                  // chooses from it, so a harness that released nothing would be testing a
+                  // builder with five empty dropdowns — a different product.
+                  allowed_models: options.released ?? [
+                    'mock-1',
+                    'strong-1',
+                    'cheap-1',
+                    'router',
+                    'backup-1',
+                  ],
                 }),
           getPipeline: () => options.load ?? of(initial),
           savePipeline: (_slug: string, config: PipelineConfig) => {
             saved = config;
             return options.save ?? of(config);
           },
-          dryRunPipeline: () =>
-            options.dryRun ??
-            of({
-              blocked: false,
-              block_reason: null,
-              effective_model: 'mock-1',
-              fallback_models: [],
-              trace: [],
-            }),
+          dryRunPipeline: (payload: { use_case: string }) => {
+            dryRunPayload = payload;
+            return (
+              options.dryRun ??
+              of({
+                blocked: false,
+                block_reason: null,
+                effective_model: 'mock-1',
+                fallback_models: [],
+                trace: [],
+              })
+            );
+          },
         },
       },
     ],
@@ -96,6 +115,7 @@ function setup(initial: PipelineConfig, options: Options = {}) {
   fixture.detectChanges();
   return {
     fixture,
+    dryRunPayload: () => dryRunPayload,
     getSaved: () => saved,
     component: fixture.componentInstance as unknown as Editor,
     text: () => (fixture.nativeElement as HTMLElement).textContent ?? '',
@@ -420,13 +440,31 @@ describe('PipelineEditor inspector', () => {
     expect(html.querySelector<HTMLInputElement>('#insp-default-model')?.value).toBe('mock-1');
   });
 
-  it('renders the fallback editor when the fallback node is selected', async () => {
+  it('renders the fallback chain as a picker over the released models', async () => {
+    /** Was a comma-separated text box until 2026-08-11. A chain that named a model the use case
+     *  may not call would be skipped at every hop and the request would fail with nothing here
+     *  saying why (`FRD-308`) — so it chooses, and the current chain is on screen as chips. */
     const harness = setup({ steps: [], fallback_models: ['backup-1'] });
     harness.component.select('fallback');
     harness.fixture.detectChanges();
     await harness.fixture.whenStable();
-    expect(el(harness).querySelector<HTMLInputElement>('#insp-fallback')?.value).toBe('backup-1');
+
+    expect(
+      el(harness).querySelector('[data-testid="fallback-picker-chosen"]')?.textContent,
+    ).toContain('backup-1');
+    expect(el(harness).querySelector('#insp-fallback')?.tagName).not.toBe('INPUT');
     expect(harness.text()).toContain('Tried in order');
+  });
+
+  it('keeps the fallback chain in the order it was chosen', () => {
+    /** A chain is *tried* in order, so the picker appends rather than sorting — the one place in
+     *  the console where the order of a chosen set is the meaning rather than presentation. */
+    const harness = setup({ steps: [], fallback_models: [] });
+    harness.component.select('fallback');
+    harness.fixture.detectChanges();
+
+    harness.component.setFallbackModels(['cheap-1', 'strong-1']);
+    expect(harness.component.config().fallback_models).toEqual(['cheap-1', 'strong-1']);
   });
 
   it('disables the move buttons at the ends of the chain', () => {
@@ -658,5 +696,68 @@ describe('PipelineEditor — the permission request itself fails', () => {
 
     expect(html.querySelector<HTMLFieldSetElement>('fieldset.bare')?.disabled).toBe(true);
     expect(component.error()).toBeNull();
+  });
+});
+
+describe('PipelineEditor — only the models the use case may call (`FRD-308`)', () => {
+  function el(harness: { fixture: { nativeElement: unknown } }): HTMLElement {
+    return harness.fixture.nativeElement as HTMLElement;
+  }
+
+  it('offers the released models and nothing else, wherever a model is named', () => {
+    /** Free text offered exactly what the server refuses — `FRD-206`'s complaint — and here it
+     *  also invited naming a model this use case has no right to. Five places take a model: the
+     *  filter's classifier, the router's classifier, a category target, the default target and
+     *  the fallback chain. */
+    const harness = setup(
+      {
+        steps: [
+          { type: 'injection_filter', config: { mode: 'llm' } },
+          { type: 'model_route', config: { categories: [{ name: 'c', model: '' }] } },
+        ],
+        fallback_models: [],
+      },
+      { released: ['allowed-1', 'allowed-2'] },
+    );
+
+    harness.component.select(0);
+    harness.fixture.detectChanges();
+    const filterModel = el(harness).querySelector<HTMLSelectElement>('#insp-filter-model')!;
+    expect(filterModel.tagName).toBe('SELECT');
+    expect([...filterModel.options].map((o) => o.value)).toEqual(['', 'allowed-1', 'allowed-2']);
+
+    harness.component.select(1);
+    harness.fixture.detectChanges();
+    for (const id of ['#insp-route-model', '#insp-default-model']) {
+      const select = el(harness).querySelector<HTMLSelectElement>(id)!;
+      expect([...select.options].map((o) => o.value)).toEqual(['', 'allowed-1', 'allowed-2']);
+    }
+    const category = el(harness).querySelector<HTMLSelectElement>(
+      '[aria-label="Category 1 target model"]',
+    )!;
+    expect(category.tagName).toBe('SELECT');
+    expect([...category.options].map((o) => o.value)).toEqual(['', 'allowed-1', 'allowed-2']);
+  });
+
+  it('says once that nothing is released, rather than showing empty dropdowns', () => {
+    /** A use case with nothing released can serve nothing either, so a pipeline for it is a
+     *  configuration for traffic that will be refused before a step runs. Five empty dropdowns
+     *  would state that five times and explain it none. */
+    const harness = setup({ steps: [], fallback_models: [] }, { released: [] });
+    harness.fixture.detectChanges();
+
+    expect(
+      el(harness).querySelector('[data-testid="pipeline-nothing-released"]')?.textContent,
+    ).toContain('Release a model on the use case first');
+  });
+
+  it('sends the use case with a dry run', () => {
+    /** The gateway needs it: a dry run runs the real engine, so an LLM-backed step calls a real
+     *  model and spends real tokens — and until this it did so for any model named in the body. */
+    const harness = setup({ steps: [], fallback_models: [] });
+
+    harness.component.runDryRun();
+
+    expect(harness.dryRunPayload()?.use_case).toBe('demo-uc');
   });
 });

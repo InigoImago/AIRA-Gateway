@@ -1,6 +1,7 @@
 """Pipeline config read/edit + distribution (FRD-300/303)."""
 
 import pytest
+from aira_management.apps.catalog.models import Model
 from aira_management.apps.pipelines.models import PipelineConfig
 from aira_management.apps.usecases import events
 from aira_management.apps.usecases.models import UseCase
@@ -13,6 +14,10 @@ from .conftest import role_claims
 pytestmark = pytest.mark.django_db
 
 BASE = "/api/v1/use-cases/"
+
+#: What `_STEPS` names, and what a use case therefore has to have been released before it can be
+#: saved (`FRD-308`).
+_STEP_MODELS = ("router", "strong-1", "b", "backup-1")
 
 _STEPS = [
     {"type": "injection_filter", "config": {"mode": "llm", "action": "block"}},
@@ -38,9 +43,21 @@ def _client(user) -> APIClient:
     return client
 
 
-def _make_uc(admin, slug: str = "demo-uc") -> UseCase:
+def _make_uc(admin, slug: str = "demo-uc", releases: tuple[str, ...] = ()) -> UseCase:
+    """A use case, plus the models a pipeline is allowed to name (`FRD-308`).
+
+    Releasing is a **required step** now, not fixture noise: a pipeline may only name models the
+    use case may call, so a test that saves a routing rule has to have released its target. Stated
+    per test rather than hidden in the helper's default, because "release first" is the order an
+    administrator has to learn too.
+    """
     _client(admin).post(BASE, {"slug": slug, "name": "Demo"}, format="json")
-    return UseCase.objects.get(slug=slug)
+    usecase = UseCase.objects.get(slug=slug)
+    if releases:
+        usecase.allowed_models.set(
+            [Model.objects.create(name=name, approved=True) for name in releases]
+        )
+    return usecase
 
 
 @pytest.fixture
@@ -65,7 +82,7 @@ def test_get_returns_empty_default() -> None:
 
 def test_get_returns_saved_config() -> None:
     admin = _user("admin1", "global-admin")
-    _make_uc(admin, "demo-uc")
+    _make_uc(admin, "demo-uc", _STEP_MODELS)
     client = _client(admin)
     client.put(
         f"{BASE}demo-uc/pipeline/", {"steps": _STEPS, "fallback_models": ["b"]}, format="json"
@@ -78,7 +95,7 @@ def test_get_returns_saved_config() -> None:
 
 def test_put_saves_and_emits(captured_events) -> None:
     admin = _user("admin1", "global-admin")
-    _make_uc(admin, "demo-uc")
+    _make_uc(admin, "demo-uc", _STEP_MODELS)
 
     resp = _client(admin).put(
         f"{BASE}demo-uc/pipeline/",
@@ -96,7 +113,7 @@ def test_put_saves_and_emits(captured_events) -> None:
 
 def test_put_is_idempotent_update() -> None:
     admin = _user("admin1", "global-admin")
-    _make_uc(admin, "demo-uc")
+    _make_uc(admin, "demo-uc", (*_STEP_MODELS, "x"))
     client = _client(admin)
     client.put(f"{BASE}demo-uc/pipeline/", {"steps": _STEPS, "fallback_models": []}, format="json")
     client.put(f"{BASE}demo-uc/pipeline/", {"steps": [], "fallback_models": ["x"]}, format="json")
@@ -183,9 +200,9 @@ def test_str_representation() -> None:
 # ---- config bounds (ADR-0007) --------------------------------------------------------------
 
 
-def _save(steps=None, fallback_models=None):
+def _save(steps=None, fallback_models=None, releases=("strong-1", "cheap-1", "router-1", "m")):
     admin = _user("admin1", "global-admin")
-    _make_uc(admin, "demo-uc")
+    _make_uc(admin, "demo-uc", releases)
     return _client(admin).put(
         f"{BASE}demo-uc/pipeline/",
         {"steps": steps or [], "fallback_models": fallback_models or []},
@@ -311,3 +328,79 @@ def test_both_undetermined_policies_are_accepted() -> None:
             format="json",
         )
         assert resp.status_code == 200, policy
+
+
+# ---- a pipeline may only name models the use case may call (`FRD-308`) -------------------
+
+
+def test_a_routing_target_the_use_case_may_not_call_is_refused_by_name() -> None:
+    """The gateway refuses it at dispatch anyway, so this is not the only check and is not meant
+    to be — it is the one that arrives while somebody can still fix it. Without it a builder
+    happily saves a rule pointing at a model the use case may not call, and the failure surfaces
+    later as refused traffic on a configuration that looks correct."""
+    resp = _save(
+        [
+            {
+                "type": "model_route",
+                "config": {
+                    "model": "router-1",
+                    "categories": [{"name": "code", "model": "not-released-1"}],
+                },
+            }
+        ],
+        releases=("router-1",),
+    )
+
+    assert resp.status_code == 400
+    assert "not-released-1" in str(resp.data)
+    # And the one that *was* released is not blamed for it.
+    assert "router-1" not in str(resp.data)
+
+
+def test_every_place_a_model_can_be_written_is_checked() -> None:
+    """Five of them: the filter's classifier, the router's classifier, a category target, the
+    default target and the fallback chain. A check that read one would refuse the obvious mistake
+    and leave four."""
+    cases = [
+        ([{"type": "injection_filter", "config": {"mode": "llm", "model": "sneak-1"}}], []),
+        ([{"type": "model_route", "config": {"model": "sneak-1"}}], []),
+        (
+            [
+                {
+                    "type": "model_route",
+                    "config": {"categories": [{"name": "c", "model": "sneak-1"}]},
+                }
+            ],
+            [],
+        ),
+        ([{"type": "model_route", "config": {"default_model": "sneak-1"}}], []),
+        ([], ["sneak-1"]),
+    ]
+    admin = _user("many", "global-admin")
+    usecase = _make_uc(admin, "demo-uc", ("allowed-1",))
+    for steps, fallbacks in cases:
+        resp = _client(admin).put(
+            f"{BASE}{usecase.slug}/pipeline/",
+            {"steps": steps, "fallback_models": fallbacks},
+            format="json",
+        )
+        assert resp.status_code == 400, (steps, fallbacks)
+        assert "sneak-1" in str(resp.data), (steps, fallbacks)
+
+
+def test_a_use_case_with_nothing_released_may_still_save_a_pipeline_that_names_nothing() -> None:
+    """The honest order: such a use case can serve nothing either, so refusing an empty pipeline
+    would be refusing something harmless while the real refusal already happens at dispatch."""
+    resp = _save([{"type": "injection_filter", "config": {"mode": "heuristic"}}], releases=())
+
+    assert resp.status_code == 200
+
+
+def test_a_released_model_saves() -> None:
+    resp = _save(
+        [{"type": "model_route", "config": {"categories": [{"name": "c", "model": "cheap-1"}]}}],
+        ["cheap-1"],
+        releases=("cheap-1",),
+    )
+
+    assert resp.status_code == 200

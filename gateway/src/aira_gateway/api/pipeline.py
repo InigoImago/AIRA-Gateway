@@ -1,10 +1,25 @@
 """Pipeline dry-run endpoint (FRD-306).
 
-Evaluates a (possibly unsaved) pipeline against a sample system + user prompt and returns the
-full per-step decision trace — the builder's "test this pipeline" button. It never dispatches a
-generation and never touches stored data, but it *does* run the real engine, so LLM-backed steps
-reach the configured providers. It therefore requires an authenticated caller (ADR-0007) and
-bounds the sample text and step count so a single call cannot be turned into a free LLM relay.
+Evaluates a (possibly unsaved) pipeline against a sample system + user prompt and returns the full
+per-step decision trace — the builder's "test this pipeline" button. It never dispatches the
+caller's own generation, but it **does** run the real engine, so an LLM-backed step reaches a real
+provider and spends real tokens.
+
+That last sentence is why this module was rewritten on 2026-08-11. The docstring above it used to
+claim the bounds on sample size and step count meant "a single call cannot be turned into a free
+LLM relay", and it was measured: a caller posted a pipeline naming any model as its classifier and
+the gateway **called it** — no use case, no release check (`FRD-308`), no approval check
+(`FRD-307`), no budget, no rate limit, **and no audit row**. 1000 tokens spent, nothing recorded.
+A comment claiming a rule the system did not have, which is a pattern this project has now named
+several times.
+
+So the rule the rest of the request path has is the rule here:
+
+- the caller names a **use case** and must be allowed to act on it (`use_case_refusal` — the same
+  one function both surfaces use, so a selector still never grants access);
+- **every model the pipeline would touch** must be released to that use case, refused by name;
+- a use case with nothing released can dry-run nothing, which is the point: an endpoint that
+  bypassed the release would make the release advisory.
 """
 
 from __future__ import annotations
@@ -16,7 +31,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, ValidationError
 
 from aira_gateway.api.gemini.errors import gemini_error_response as _error
-from aira_gateway.auth.dependencies import require_principal
+from aira_gateway.api.serving import released_for
+from aira_gateway.auth.dependencies import require_principal, use_case_refusal
 from aira_gateway.auth.principal import Principal
 from aira_gateway.core.canonical import CanonicalMessage, CanonicalRequest, Role
 from aira_gateway.pipeline.config import Pipeline
@@ -30,13 +46,39 @@ MAX_SAMPLE_CHARS = 8_000
 
 
 class DryRunRequest(BaseModel):
+    #: **Required.** A dry run spends tokens, so it belongs to a use case exactly as a request
+    #: does — and without one there is nothing to check a model against.
+    use_case: str = Field(min_length=1, max_length=64)
     system: str = Field(default="", max_length=MAX_SAMPLE_CHARS)
     user: str = Field(default="", max_length=MAX_SAMPLE_CHARS)
     model: str = Field(default="", max_length=128)
     pipeline: dict[str, Any] = {}
 
 
-def _model_the_pipeline_is_about(pipeline: dict[str, Any], models: list[Any]) -> str:
+def models_named_in(pipeline: dict[str, Any]) -> list[str]:
+    """Every model this pipeline could reach, wherever it is written.
+
+    Collected in one place because the release check has to see **all** of them: the classifier a
+    filter runs, the classifier a router runs, each category's target, the default target, and the
+    fallback chain. A check that read one of those would refuse the obvious escape and leave four.
+    """
+    named: list[str] = []
+    for step in pipeline.get("steps") or []:
+        config = (step.get("config") or {}) if isinstance(step, dict) else {}
+        if config.get("model"):
+            named.append(str(config["model"]))
+        if config.get("default_model"):
+            named.append(str(config["default_model"]))
+        for category in config.get("categories") or []:
+            if isinstance(category, dict) and category.get("model"):
+                named.append(str(category["model"]))
+    named.extend(str(name) for name in pipeline.get("fallback_models") or [] if name)
+    return list(dict.fromkeys(named))
+
+
+def _model_the_pipeline_is_about(
+    pipeline: dict[str, Any], models: list[Any], released: list[str] | None = None
+) -> str:
     """Which model to simulate when the caller named none.
 
     The first *registered* model was the obvious choice and the wrong one: a builder testing a
@@ -62,12 +104,19 @@ def _model_the_pipeline_is_about(pipeline: dict[str, Any], models: list[Any]) ->
             return str(config["default_model"])
     for fallback in pipeline.get("fallback_models") or []:
         return str(fallback)
+    # Last resort: something this use case may actually call. The first *registered* model was the
+    # fallback until the release existed, and then a pipeline naming no model at all — an injection
+    # filter on its own, the commonest one — was answered with a refusal about `mock-1`, a model
+    # nobody chose and the use case had no right to. A guess that is guaranteed wrong is worse than
+    # the one it replaced.
+    if released:
+        return released[0]
     return models[0].name if models else "mock-1"
 
 
 @router.post("/v1beta/pipeline:dryRun")
 async def dry_run(
-    request: Request, _principal: Principal = Depends(require_principal)
+    request: Request, principal: Principal = Depends(require_principal)
 ) -> JSONResponse:
     try:
         body = await request.json()
@@ -76,13 +125,43 @@ async def dry_run(
     try:
         payload = DryRunRequest.model_validate(body)
     except ValidationError as exc:
-        return _error(400, str(exc.errors()[0].get("msg", "invalid")), "INVALID_ARGUMENT")
+        # **Named**, not merely reported. A bare "Field required" tells a caller that something is
+        # wrong and not what — the same correction this project made for query parameters, where
+        # the framework's own shape read to a Google client as "unknown error". Found live the
+        # minute `use_case` became required.
+        first = exc.errors()[0]
+        where = ".".join(str(part) for part in first.get("loc", ()))
+        detail = str(first.get("msg", "invalid"))
+        return _error(400, f"{where}: {detail}".strip(": "), "INVALID_ARGUMENT")
+
+    # **A selector never grants access.** Without this, naming somebody else's use case would
+    # borrow their release — the `FRD-206`/`ADR-0015` defect, on the one endpoint that spends
+    # tokens without dispatching a request.
+    refusal = use_case_refusal(principal, payload.use_case)
+    if refusal is not None:
+        return _error(403, refusal, "PERMISSION_DENIED")
 
     registry: ProviderRegistry = request.app.state.providers
     engine: PipelineEngine = request.app.state.pipeline_engine
 
     models = registry.models()
-    model = payload.model or _model_the_pipeline_is_about(payload.pipeline, models)
+    released = await released_for(request, payload.use_case)
+    model = payload.model or _model_the_pipeline_is_about(payload.pipeline, models, released)
+
+    if released is not None:
+        # `None` means no event has described this use case yet — the same third state the
+        # dispatch condition reads, and for the same reason (`FRD-308` §4.1).
+        wanted = [model, *models_named_in(payload.pipeline)]
+        withheld = sorted({name for name in wanted if name and name not in released})
+        if withheld:
+            return _error(
+                400,
+                f"Use case '{payload.use_case}' has not been released "
+                f"{', '.join(repr(name) for name in withheld)}. A dry run calls the models a "
+                "pipeline names, so it may only name models the use case may call. An "
+                "administrator of the use case releases them.",
+                "FAILED_PRECONDITION",
+            )
     messages: list[CanonicalMessage] = []
     if payload.system:
         messages.append(CanonicalMessage(role=Role.SYSTEM, text=payload.system))

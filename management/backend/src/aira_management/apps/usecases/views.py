@@ -466,7 +466,11 @@ class UseCaseViewSet(viewsets.ModelViewSet[UseCase]):
             raise PermissionDenied("You cannot edit the pipeline of this use case.")
         if config is None:
             config = PipelineConfig(use_case=usecase)
-        serializer = PipelineConfigSerializer(config, data=request.data)
+        # The use case travels in the context so the serializer can check every model the
+        # pipeline names against what has been released to it (`FRD-308`).
+        serializer = PipelineConfigSerializer(
+            config, data=request.data, context={"use_case": usecase}
+        )
         serializer.is_valid(raise_exception=True)
         with transaction.atomic():
             config = serializer.save()

@@ -438,8 +438,8 @@ def use_case_of(request: Request) -> str | None:
     return str(slug) if slug else None
 
 
-async def released_models(request: Request) -> list[str] | None:
-    """Which models this request's use case may call (`FRD-308`), or ``None`` for no answer.
+async def released_for(request: Request, slug: str | None) -> list[str] | None:
+    """Which models ``slug`` may call (`FRD-308`), or ``None`` for no answer.
 
     Three states, and each says something different:
 
@@ -450,11 +450,11 @@ async def released_models(request: Request) -> list[str] | None:
     - ``[]`` — somebody released nothing. That is an answer, and the answer is no.
     - a list — exactly those.
 
-    Read once per request. The requirement is then asked per candidate, so a five-model fallback
-    chain costs one query rather than five.
+    Takes the slug rather than reading it off the request, because the **dry run** needs the same
+    answer about a use case named in a body rather than resolved by attribution — and a second
+    lookup written there is a second place for the three states to be collapsed into two.
     """
-    slug = use_case_of(request)
-    if slug is None:
+    if not slug:
         return None
     sessionmaker = request.app.state.db_sessionmaker
     async with sessionmaker() as session:
@@ -465,6 +465,12 @@ async def released_models(request: Request) -> list[str] | None:
         return None
     released = record.allowed_models
     return None if released is None else [str(name) for name in released]
+
+
+async def released_models(request: Request) -> list[str] | None:
+    """The release for *this request's* use case. Read once per request; the requirement is then
+    asked per candidate, so a five-model fallback chain costs one query rather than five."""
+    return await released_for(request, use_case_of(request))
 
 
 async def cache_prefix_wanted(request: Request, declaration: ModelDeclaration) -> bool:

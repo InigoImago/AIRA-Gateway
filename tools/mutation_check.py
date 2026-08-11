@@ -115,6 +115,7 @@ SECRETS = "libs/tests/test_secrets.py"
 DIAGNOSTICS = "gateway/tests/test_diagnostics.py"
 PROVIDER_OFFERINGS = "gateway/tests/test_provider_offerings.py"
 RELEASE = "gateway/tests/test_use_case_model_release.py"
+DRYRUN = "gateway/tests/test_pipeline_dryrun.py"
 CSV_EXPORT = "gateway/tests/test_csv_export.py"
 THINKING = "gateway/tests/test_thinking.py gateway/tests/test_serving_options.py"
 RESPONSE_SCHEMA = "gateway/tests/test_response_schema.py gateway/tests/test_serving_options.py"
@@ -3240,6 +3241,42 @@ MUTATIONS = [
         "        usecase.allowed_models.add(*Model.objects.filter(name__in=set(names)))",
         "        pass",
         "management/backend/tests/test_release_migration.py",
+    ),
+    # ---- the pipeline may only name models the use case may call (2026-08-11) ----------------
+    #
+    # `J8` is the one with a measurement behind it: the dry run posted any model name in a body and
+    # the gateway **called it** — no use case, no release, no budget, no audit row.
+    Mutation(
+        "J8",
+        "a dry run cannot call a model the use case was never released",
+        "gateway/src/aira_gateway/api/pipeline.py",
+        "        if withheld:",
+        "        if False:",
+        DRYRUN,
+    ),
+    Mutation(
+        "J9",
+        "every place a pipeline can name a model is checked, not just the first",
+        "gateway/src/aira_gateway/api/pipeline.py",
+        '    named.extend(str(name) for name in pipeline.get("fallback_models") or [] if name)',
+        "    pass",
+        DRYRUN,
+    ),
+    Mutation(
+        "J10",
+        "naming somebody else's use case does not borrow their release",
+        "gateway/src/aira_gateway/api/pipeline.py",
+        "    if refusal is not None:",
+        "    if False:",
+        DRYRUN,
+    ),
+    Mutation(
+        "J11",
+        "a saved pipeline cannot name a model the use case may not call",
+        "management/backend/src/aira_management/apps/pipelines/serializers.py",
+        "        if withheld:",
+        "        if False:",
+        "management/backend/tests/test_pipelines.py",
     ),
 ]
 

@@ -17,6 +17,9 @@ the gateway (FRD-300/303 backend).
 - Inspector (right, sticky) per step type:
   - `injection_filter`: mode (heuristic|llm), on-detection (block|flag), optional classifier model.
   - `model_route`: ordered rules (`under chars` + target model), add/remove.
+  - **Every model field is a dropdown over the use case's released models** (`FRD-308`, 2026-08-11).
+    It was free text, which offered exactly what the server refuses and invited naming a model the
+    use case has no right to. The fallback chain is a multi-select, because it is several in order.
   - fallback node: fallback models (comma list, ordered).
 - Zoneless-safe: state in signals; edits are immutable `update()`s (`structuredClone` + `set`).
 - Entry point: “Edit pipeline →” from the use-case detail.

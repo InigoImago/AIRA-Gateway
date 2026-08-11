@@ -165,8 +165,16 @@ export class UseCaseService {
     return this.http.put<PipelineConfig>(`${this.base}${seg(slug)}/pipeline/`, config);
   }
 
-  /** Dry-run a (possibly unsaved) pipeline against a sample prompt via the gateway. */
+  /**
+   * Run a (possibly unsaved) pipeline against a sample prompt.
+   *
+   * `use_case` is **required by the gateway**, not decoration: a dry run runs the real engine, so
+   * an LLM-backed step calls a real model and spends real tokens. Until 2026-08-11 it did that for
+   * any model named in the body, with no use case, no release check and no audit row — so the
+   * endpoint now belongs to a use case exactly as a request does (`FRD-308`).
+   */
   dryRunPipeline(payload: {
+    use_case: string;
     system: string;
     user: string;
     model?: string;

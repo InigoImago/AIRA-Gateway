@@ -5,6 +5,7 @@ import { errorMessage } from '../../core/api/error-message';
 import { DryRunResult, PipelineConfig, PipelineStep, StepType } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { ConfirmService } from '../../core/ui/confirm.service';
+import { MultiSelect, MultiSelectOption } from '../../core/ui/multi-select';
 
 const STEP_LABELS: Record<StepType, string> = {
   injection_filter: 'Injection Filter',
@@ -78,7 +79,7 @@ interface PreviewRow {
 
 @Component({
   selector: 'app-pipeline-editor',
-  imports: [FormsModule, RouterLink],
+  imports: [FormsModule, RouterLink, MultiSelect],
   templateUrl: './pipeline-editor.html',
   styleUrl: './pipeline-editor.scss',
 })
@@ -184,10 +185,35 @@ export class PipelineEditor implements OnInit {
    */
   protected readonly canManage = signal(false);
 
+  /**
+   * The models this use case has been released (`FRD-308`).
+   *
+   * Every model field in the builder chooses from this rather than taking free text. Two reasons,
+   * and the second is the one that matters: a typo used to be discoverable only as refused traffic
+   * later, and a name the use case may **not** call could be saved, which the server now refuses —
+   * a control that invites a click and then answers 400 is `FRD-206`'s complaint exactly.
+   */
+  protected readonly released = signal<string[]>([]);
+
+  /** The released models as picker options. */
+  protected readonly modelChoices = computed<MultiSelectOption[]>(() =>
+    this.released().map((name) => ({ value: name, label: name })),
+  );
+
+  /** True when nothing is released, which is the state every new use case starts in. The builder
+   *  says so once, at the top, rather than showing five empty dropdowns with no explanation. */
+  protected readonly nothingReleased = computed(() => this.released().length === 0);
+
   ngOnInit(): void {
     this.slug = this.route.snapshot.paramMap.get('slug') ?? '';
     this.service.get(this.slug).subscribe({
-      next: (useCase) => this.canManage.set(useCase.permissions?.can_manage ?? false),
+      next: (useCase) => {
+        this.canManage.set(useCase.permissions?.can_manage ?? false);
+        // What this use case may call (`FRD-308`). Every model field below chooses from it: the
+        // fields were free text, which offered exactly what the server refuses — `FRD-206`'s
+        // complaint, and here it also invites naming a model the use case has no right to.
+        this.released.set([...(useCase.allowed_models ?? [])].sort());
+      },
       // A use case we cannot read leaves the safe answer in place rather than a second error
       // banner about a request the reader did not make.
       error: () => this.canManage.set(false),
@@ -276,6 +302,12 @@ export class PipelineEditor implements OnInit {
     this.update((c) => (c.fallback_models = this.parseList(csv)));
   }
 
+  /** The fallback chain, chosen rather than typed (`FRD-308`). **Order is preserved** — a chain is
+   *  tried in the order it is written, so the picker appends rather than sorting. */
+  protected setFallbackModels(models: string[]): void {
+    this.update((c) => (c.fallback_models = models));
+  }
+
   protected save(): void {
     this.saving.set(true);
     this.service.savePipeline(this.slug, this.config()).subscribe({
@@ -301,6 +333,9 @@ export class PipelineEditor implements OnInit {
     this.dryRunning.set(true);
     this.service
       .dryRunPipeline({
+        // A dry run spends real tokens, so the gateway wants to know whose they are and refuses a
+        // model this use case may not call (`FRD-308`).
+        use_case: this.slug,
         system: this.sampleSystem(),
         user: this.sampleUser(),
         pipeline: this.config(),
@@ -313,12 +348,19 @@ export class PipelineEditor implements OnInit {
         error: (response: { status?: number }) => {
           this.dryRunning.set(false);
           this.dryRunError.set(
-            response?.status === 401 || response?.status === 403
-              ? 'Dry-run rejected — the gateway did not accept your login. Enable OIDC on the gateway (AIRA_OIDC_ENABLED) so it can verify the same Keycloak token.'
-              : errorMessage(
-                  response,
-                  'Dry-run failed — is the gateway running and reachable on /gw?',
-                ),
+            // 401 and 403 were one message, and they are two different problems now. A dry run
+            // spends real tokens, so the gateway applies the **membership** rule a request gets
+            // (`ADR-0007`: oversight visibility never implies the right to act inside a use case)
+            // — and a Global Administrator is deliberately a member of nothing. Telling them to
+            // check `AIRA_OIDC_ENABLED` would send them to configuration that is working.
+            response?.status === 403
+              ? 'Dry-run refused — a dry run calls a real model and is charged to this use case, so it follows the same membership rule a request does. Grant yourself access to this use case to test its pipeline.'
+              : response?.status === 401
+                ? 'Dry-run rejected — the gateway did not accept your login. Enable OIDC on the gateway (AIRA_OIDC_ENABLED) so it can verify the same Keycloak token.'
+                : errorMessage(
+                    response,
+                    'Dry-run failed — is the gateway running and reachable on /gw?',
+                  ),
           );
         },
       });

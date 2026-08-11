@@ -85,7 +85,12 @@ describe('UseCaseService', () => {
 
   it('dry-runs a pipeline against the gateway', () => {
     service
-      .dryRunPipeline({ system: '', user: 'hi', pipeline: { steps: [], fallback_models: [] } })
+      .dryRunPipeline({
+        use_case: 'uc',
+        system: '',
+        user: 'hi',
+        pipeline: { steps: [], fallback_models: [] },
+      })
       .subscribe((result) => expect(result.blocked).toBe(false));
     const req = http.expectOne('/gw/v1beta/pipeline:dryRun');
     expect(req.request.method).toBe('POST');
@@ -184,7 +189,10 @@ describe('UseCaseService', () => {
   });
 
   it('dry-runs a pipeline against the gateway', () => {
+    // The use case travels with it: a dry run calls a real model, and the gateway refuses one
+    // this use case may not call (`FRD-308`).
     const payload = {
+      use_case: 'uc',
       system: 'sys',
       user: 'hi',
       pipeline: { steps: [], fallback_models: [] },

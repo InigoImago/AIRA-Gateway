@@ -156,6 +156,12 @@ There is no `allow_check` step: which models a use case may call is a property o
 ([`FRD-308`](features/FRD-308-use-case-model-release.md)), checked as a dispatch condition at every
 hop. As a step it ran once, before routing — so a route or a fallback went straight past it.
 
+Every model a pipeline names — the classifier a filter runs, the classifier a router runs, each
+category's target, the default target, the fallback chain — must be **released to the use case**.
+Refused when the pipeline is saved and again at dispatch, and the builder offers only those. The
+dry run follows the same rule and the membership rule with it: it calls a real model, so it belongs
+to a use case exactly as a request does.
+
 Then a `fallback_models` chain. **A pipeline model call is a first-class request**: it leaves its own
 audit row named `pipeline:<step>`, priced, booked against the budget with `requests=0` — the caller
 made one request. Measured against a real model, the classifier costs roughly as much as the answer

@@ -4,8 +4,10 @@ import {
   createUseCase,
   ensureUseCase,
   grantGroup,
+  awaitGatewayMembership,
   login,
   logout,
+  releaseAllModels,
   uniqueSlug,
 } from './support';
 
@@ -18,9 +20,22 @@ import {
  */
 test.describe('Gateway integration', () => {
   test('runs a dry-run through the gateway with the browser session token', async ({ page }) => {
+    // Longer than the default: this one waits for a group grant to cross Kafka and then a 5s cache
+    // in the gateway (`FRD-209`) *before* it makes a real model call. It fits comfortably on an
+    // idle machine and did not under a full-suite run — which is a fact about the propagation, not
+    // about the product, so it gets the room rather than a shorter poll that would flake honestly.
+    test.slow();
     await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('dryrun');
     await createUseCase(page, slug, 'Dry-run probe');
+
+    // Two steps a dry run now needs, and both are the rule rather than fixture noise (`FRD-308`):
+    // it calls a real model, so it is charged to the use case — which means the caller must be a
+    // **member** (a Global Administrator is deliberately a member of nothing, `ADR-0007`) and the
+    // model must be **released**.
+    await grantGroup(page, slug, '/aira/global-admins', 'admin');
+    await releaseAllModels(page, slug);
+    await awaitGatewayMembership(page, slug);
 
     await page.goto(`/use-cases/${slug}/pipeline`);
     await page.click('button:has-text("Injection Filter")');
@@ -39,9 +54,14 @@ test.describe('Gateway integration', () => {
   });
 
   test('a harmless prompt passes the dry-run', async ({ page }) => {
+    test.slow();
     await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('pass');
     await createUseCase(page, slug, 'Pass probe');
+
+    await grantGroup(page, slug, '/aira/global-admins', 'admin');
+    await releaseAllModels(page, slug);
+    await awaitGatewayMembership(page, slug);
 
     await page.goto(`/use-cases/${slug}/pipeline`);
     await page.click('button:has-text("Injection Filter")');

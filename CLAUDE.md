@@ -43,7 +43,7 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
   inevitably do when both were written from the same mental model — and line coverage cannot see
   a *missing requirement*: on 2026-08-05 a review found seven real defects behind a green suite at
   99% coverage. So: **prove a test can fail.** Break the property, watch it go red, restore.
-  `make mutants` (`tools/mutation_check.py`) does this for **359 properties** across auth, budgets,
+  `make mutants` (`tools/mutation_check.py`) does this for **363 properties** across auth, budgets,
   pipeline, retention, the management control plane and the gateway's counters; when
   you fix a bug, add the mutation that reintroduces it. Two traps that cost real defects here:
   a stand-in that is more permissive than the thing it replaces (reuse the real method where you
@@ -1366,7 +1366,8 @@ while showing, in a console built to record who released what, a release nobody 
 audit rule applied to configuration. `allow_check` is gone from the vocabulary, the builder, the
 serializer and the read-model. `J1`–`J7`, of which **`J4` survived its first run**: nothing
 defended the consumer's reading of an absent field, the one property that decides whether a
-half-upgraded stack keeps serving.
+half-upgraded stack keeps serving — and no gateway test checked that a dry run's **fallback chain**
+was bounded, only its two classifier fields.
 
 **Ask the vendor instead of typing it (`FRD-507` stage C, 2026-08-10)** — the console had two of
 the three lists that exist and asked an administrator to **type** the first: what a vendor *offers*

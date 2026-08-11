@@ -161,6 +161,39 @@ unstyled for as long as the screen has existed. Styling it fixes both; making it
 absolute` broke the access panel across the whole page, so the shared class carries appearance and
 the multi-select carries where it floats.
 
+### 4.6 The builder chooses, and the dry run was a hole
+
+The pipeline builder took **free text** for every model it names: the classifier a filter runs, the
+classifier a router runs, each category's target, the default target and the fallback chain. Free
+text offers exactly what the server refuses (`FRD-206`), and here it also invited naming a model the
+use case has no right to. All five are now dropdowns over the release; the fallback chain is the
+multi-select from §4.5, because it is several **in order**.
+
+Enforced in both planes, because a dropdown is a convenience and not a control:
+
+- **Management** refuses a pipeline naming a model the use case has not been released, by name.
+  The gateway would refuse it at dispatch anyway — this is the refusal that arrives while somebody
+  can still fix it, instead of surfacing later as refused traffic on a configuration that looks
+  correct.
+- **The gateway's dry run** does the same, and that one was a genuine escape hatch. It was
+  measured before it was fixed: a caller posted a pipeline naming any model as its classifier and
+  the gateway **called it** — no use case, no release check, no approval check, no budget, no rate
+  limit, **and no audit row**. 1000 tokens spent, nothing recorded, by anybody with a login. The
+  module's own docstring claimed its size bounds meant "a single call cannot be turned into a free
+  LLM relay"; it was a comment claiming a rule the system did not have.
+
+So a dry run now names a use case (**required**), is refused unless the caller may act on it
+(`use_case_refusal` — the same one function both surfaces use), and may name only released models.
+Two consequences worth stating:
+
+- **A Global Administrator is a member of nothing** (`ADR-0007`), so they cannot dry-run a pipeline
+  they can edit until they grant themselves the use case. That is the same rule a request gets, and
+  the console says so rather than sending them to check a gateway setting that is working.
+- The model the dry run **infers** when a pipeline names none — the commonest case, an injection
+  filter on its own — now comes from the release. It used to be the first *registered* model, which
+  after this rule meant a refusal about a model nobody chose: a guess that is guaranteed wrong is
+  worse than the one it replaced.
+
 ## 5. Testing
 
 - The two holes, as end-to-end requests: a routing rule that re-targets, and a fallback chain.

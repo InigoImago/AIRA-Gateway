@@ -25,6 +25,13 @@
   sample system+user prompt (runs real steps incl. LLM; no generation, no stored data).
   **Authenticated** since ADR-0007 (it reaches the configured providers with caller-supplied
   prompts) and bounded: 8 000 chars per sample field, 32 steps.
+- **Governed like a request since 2026-08-11** (`FRD-308`). Those bounds were described here as
+  meaning "a single call cannot be turned into a free LLM relay", and it was measured that they
+  did not: a caller posted a pipeline naming **any** model as its classifier and the gateway called
+  it — no use case, no release check, no budget, no rate limit and no audit row. It now takes a
+  **required** `use_case`, refuses a caller who may not act on it (`use_case_refusal`), and refuses
+  any model that use case has not been released. The model it *infers* when a pipeline names none
+  comes from the release too.
 
 **Builder (frontend)**
 - Inspector redesigned per step with **inline help**, visible built-in patterns + custom patterns,

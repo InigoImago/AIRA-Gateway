@@ -198,12 +198,19 @@
                 </div>
                 <div class="field">
                   <label for="insp-filter-model">Classifier model</label>
-                  <input
+                  <select
                     id="insp-filter-model"
                     [ngModel]="step.config.model || ''"
                     (ngModelChange)="setStepField(selectedIndex(), 'model', $event)"
-                    placeholder="defaults to first available model"
-                  />
+                  >
+                    <option value="">— first released model —</option>
+                    @for (model of released(); track model) {
+                      <option [value]="model">{{ model }}</option>
+                    }
+                  </select>
+                  <!-- A classifier call is a real model call, charged to this use case and
+                       audited under `pipeline:injection_filter` (`FRD-125b`). It may only name a
+                       model the use case may call, so this chooses rather than accepting text. -->
                 </div>
                 <div class="field">
                   <label for="insp-instruction">Instruction to the classifier (optional)</label>
@@ -251,12 +258,16 @@
             } @else if (step.type === 'model_route') {
               <div class="field">
                 <label for="insp-route-model">Classifier model</label>
-                <input
+                <select
                   id="insp-route-model"
                   [ngModel]="step.config.model || ''"
                   (ngModelChange)="setStepField(selectedIndex(), 'model', $event)"
-                  placeholder="defaults to first available model"
-                />
+                >
+                  <option value="">— first released model —</option>
+                  @for (model of released(); track model) {
+                    <option [value]="model">{{ model }}</option>
+                  }
+                </select>
               </div>
               <p class="muted">
                 The classifier reads system + user text and picks one category below.
@@ -272,13 +283,17 @@
                       placeholder="category, e.g. code"
                       [attr.aria-label]="'Category ' + ($index + 1) + ' name'"
                     />
-                    <input
+                    <select
                       class="grow"
                       [ngModel]="cat.model"
                       (ngModelChange)="setCategoryField(selectedIndex(), $index, 'model', $event)"
-                      placeholder="→ model, e.g. strong-1"
                       [attr.aria-label]="'Category ' + ($index + 1) + ' target model'"
-                    />
+                    >
+                      <option value="">→ choose a model</option>
+                      @for (model of released(); track model) {
+                        <option [value]="model">{{ model }}</option>
+                      }
+                    </select>
                     <button
                       type="button"
                       class="btn btn--sm btn--danger"
@@ -304,32 +319,56 @@
 
               <div class="field" style="margin-top: 0.75rem">
                 <label for="insp-default-model">Default model (when nothing matches)</label>
-                <input
+                <select
                   id="insp-default-model"
                   [ngModel]="step.config.default_model || ''"
                   (ngModelChange)="setStepField(selectedIndex(), 'default_model', $event)"
-                  placeholder="e.g. mock-1"
-                />
+                >
+                  <option value="">— the model the caller named —</option>
+                  @for (model of released(); track model) {
+                    <option [value]="model">{{ model }}</option>
+                  }
+                </select>
               </div>
             }
           } @else if (selected() === 'fallback') {
             <h3 class="section-title">Fallback chain</h3>
             <div class="field">
-              <label for="insp-fallback">Fallback models (comma-separated, in order)</label>
-              <input
-                id="insp-fallback"
-                [ngModel]="config().fallback_models.join(', ')"
-                (ngModelChange)="setFallback($event)"
-                placeholder="gemini-1.5-flash, mock-1"
+              <label id="insp-fallback">Fallback models, in the order they are tried</label>
+              <app-multi-select
+                label="Fallback models"
+                testid="fallback-picker"
+                placeholder="type part of a model name…"
+                emptyHint="No model is released to this use case yet."
+                [options]="modelChoices()"
+                [selected]="config().fallback_models"
+                (changed)="setFallbackModels($event)"
               />
             </div>
-            <p class="muted">Tried in order when the primary upstream fails (non-streaming).</p>
+            <p class="muted">
+              Tried in order when the primary upstream fails (non-streaming). Only models released
+              to this use case — a chain that named another would be skipped at every hop anyway,
+              and the request would fail with nothing here saying why.
+            </p>
           } @else {
             <p class="muted">Select a node in the graph to configure it.</p>
           }
         </div>
       </div>
     </fieldset>
+
+    @if (nothingReleased()) {
+      <!--
+        Said once, where a reader starts, rather than as five empty dropdowns. A use case with
+        nothing released can serve nothing either, so a pipeline for it is a configuration for
+        traffic that will be refused before it reaches a step.
+      -->
+      <p class="callout callout--warning" data-testid="pipeline-nothing-released">
+        No model is released to this use case, so there is nothing to route to and nothing to test
+        with — and every request it makes is refused before a step runs. Release a model on the use
+        case first.
+      </p>
+    }
 
     <!-- Test panel -->
     <div class="card stack">
