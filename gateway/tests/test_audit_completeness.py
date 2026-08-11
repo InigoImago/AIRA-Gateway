@@ -462,3 +462,75 @@ async def test_a_full_writer_queue_still_returns_the_refusal_and_not_a_500() -> 
         app.state.log_writer = _FullQueue()
         response = client.post("/v1beta/models/mock-1:generateContent", json=_BODY)
         assert response.status_code == 429, "a broken audit turned a correct refusal into an error"
+
+
+# == every model call belongs to somebody (2026-08-11) ===========================================
+
+
+async def test_an_authenticated_caller_who_belongs_to_nothing_is_refused() -> None:
+    """Measured before it was closed: **200, 200 tokens, `use_case = NULL`.**
+
+    The row existed, so this was never literally undocumented — it belonged to *nobody*. No budget
+    was charged, no use-case rate limit applied, and the model release (`FRD-308`) was not
+    consulted at all, because there was no use case to consult it for. `require_use_case` defaulted
+    to off, and both surfaces had the rule written and switched off behind that default — the KIRA
+    one even says so in its own message: *an unattributed request would bypass every budget and
+    limit*.
+    """
+    from aira_gateway.auth.dependencies import require_principal
+    from aira_gateway.auth.principal import Principal
+
+    app = _app()
+    app.dependency_overrides[require_principal] = lambda: Principal(subject="nobody", method="oidc")
+    with TestClient(app) as client:
+        response = client.post("/v1beta/models/mock-1:generateContent", json=_BODY)
+
+    assert response.status_code == 400
+    assert "use case" in response.json()["error"]["message"].lower()
+
+
+async def test_the_break_glass_key_may_still_go_unattributed() -> None:
+    """`ADR-0015`'s deliberate exception, and the reason it is not a hole: a credential that needs
+    a use case *from Management* is no use when Management is what is broken, and the row still
+    carries the key prefix and the subject — so the request belongs to something an operator
+    created by hand and can revoke.
+
+    One definition, both surfaces (`must_name_a_use_case`): the KIRA surface once read an empty
+    membership list as "anything goes" because the rule was restated there.
+    """
+    from aira_gateway.auth.dependencies import require_principal
+    from aira_gateway.auth.principal import Principal
+
+    app = _app()
+    app.dependency_overrides[require_principal] = lambda: Principal(
+        subject="operator", method="api_key", credential="ab12"
+    )
+    with TestClient(app) as client:
+        response = client.post("/v1beta/models/mock-1:generateContent", json=_BODY)
+        assert response.status_code == 200, response.text
+        rows = await _rows(app)
+
+    assert [(row.use_case, row.credential) for row in rows] == [(None, "ab12")]
+
+
+async def test_reading_the_model_list_needs_no_use_case() -> None:
+    """`require_attribution` is mounted on the whole surface, so the use-case requirement reached
+    `GET /v1beta/models` as well — and the console's "which models does the gateway serve" started
+    answering 400 for a Global Administrator, who is a member of nothing by design.
+
+    The requirement exists to attribute **spend**. A listing has nothing to attribute, and
+    demanding a use case for it would make reading the catalog need a membership nobody needs.
+    Caught by the browser suite, which is the only layer that drives that button.
+    """
+    from aira_gateway.auth.dependencies import require_principal
+    from aira_gateway.auth.principal import Principal
+
+    app = _app()
+    app.dependency_overrides[require_principal] = lambda: Principal(subject="root", method="oidc")
+    with TestClient(app) as client:
+        listing = client.get("/v1beta/models")
+        # …while the thing that *does* spend still needs one.
+        call = client.post("/v1beta/models/mock-1:generateContent", json=_BODY)
+
+    assert listing.status_code == 200
+    assert call.status_code == 400

@@ -44,6 +44,19 @@ def test_open_routes_refuse_to_start_in_production() -> None:
     assert any("AIRA_AUTH_REQUIRED" in problem for problem in problems)
 
 
+def test_unattributed_traffic_refuses_to_start_in_production() -> None:
+    """`AIRA_REQUIRE_USE_CASE` off means an authenticated caller who belongs to no use case can
+    name none and be served — charged to no budget, bounded by no use-case rate limit, outside the
+    model release (`FRD-308`), with an audit row naming nobody.
+
+    The default is safe now, so this is the other half `ADR-0015` asks for: a **convenience default
+    is a production default, one variable away**, and turning it back off is refused rather than
+    quietly honoured."""
+    problems = unsafe_settings(_production(require_use_case=False))
+
+    assert any("AIRA_REQUIRE_USE_CASE" in problem for problem in problems)
+
+
 def test_the_published_database_password_refuses_to_start() -> None:
     problems = unsafe_settings(_production(postgres_password=DEV_POSTGRES_PASSWORD))
 

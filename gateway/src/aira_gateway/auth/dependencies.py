@@ -122,6 +122,46 @@ def require_valid_use_case(use_case: str) -> str:
     return use_case
 
 
+#: Methods that cannot reach a model. A GET on these surfaces lists what is configured.
+SPENDS_NOTHING = frozenset({"GET", "HEAD", "OPTIONS"})
+
+
+def must_name_a_use_case(request: Request, principal: Principal) -> bool:
+    """Whether this caller has to name a use case, or may go unattributed (`FRD-102`, `ADR-0015`).
+
+    **One definition, both surfaces.** The rule decides whether a model call belongs to somebody,
+    and `FRD-126`'s lesson is that a rule restated on a second surface is a rule that differs on
+    one of them — which is exactly how the KIRA surface once read an empty membership list as
+    "anything goes".
+
+    Two exemptions, and neither is undocumented traffic:
+
+    - **demo**, where authentication is off and there is no identity to attribute to. Bounded by
+      `AIRA_DEMO_MODE`, which `security.py` refuses to leave on outside `local`.
+    - the **unbound break-glass key** (`ADR-0015`), minted by an operator with database access for
+      the moment the control plane is unavailable — a credential that needs a use case *from
+      Management* is no use when Management is what is broken. Its row still carries the key prefix
+      and the subject, so the request belongs to a credential somebody created and can revoke.
+
+    Everybody else names one. An OIDC caller who names none belongs to nothing here, and serving
+    them charges no budget, applies no use-case rate limit and consults no model release
+    (`FRD-308`) — measured before this was closed: 200, 200 tokens, `use_case = NULL`.
+    """
+    if not request.app.state.settings.require_use_case:
+        return False
+    if request.method in SPENDS_NOTHING:
+        # **A reading is not a model call.** `require_attribution` is mounted on the whole surface,
+        # so this rule reached `GET /v1beta/models` too — and the console's "which models does the
+        # gateway serve" started answering 400 for a Global Administrator, who is a member of
+        # nothing by design. The requirement exists to attribute **spend**; a listing has nothing
+        # to attribute, and demanding a use case for it would make reading the catalog need a
+        # membership nobody needs.
+        return False
+    if principal.method == "demo":
+        return False
+    return not (principal.method == "api_key" and not principal.use_cases)
+
+
 async def require_attribution(
     request: Request, principal: Principal = Depends(require_principal)
 ) -> Attribution:
@@ -136,7 +176,7 @@ async def require_attribution(
         use_case = principal.use_cases[0]
 
     if use_case is None:
-        if request.app.state.settings.require_use_case and principal.method != "demo":
+        if must_name_a_use_case(request, principal):
             raise GeminiHTTPError(
                 400,
                 "Missing use case (X-AIRA-Use-Case header or /uc/<use-case> path).",

@@ -31,7 +31,9 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, ValidationError
 
 from aira_gateway.api.gemini.errors import gemini_error_response as _error
-from aira_gateway.api.serving import released_for
+from aira_gateway.api.serving import declared_provider, record_pipeline_calls, released_for
+from aira_gateway.audit import AuditTrail
+from aira_gateway.auth.attribution import Attribution
 from aira_gateway.auth.dependencies import require_principal, use_case_refusal
 from aira_gateway.auth.principal import Principal
 from aira_gateway.core.canonical import CanonicalMessage, CanonicalRequest, Role
@@ -168,7 +170,31 @@ async def dry_run(
     messages.append(CanonicalMessage(role=Role.USER, text=payload.user))
 
     canonical = CanonicalRequest(model=model, messages=messages)
-    result = await engine.dry_run(Pipeline.from_dict(payload.pipeline), canonical)
+    # Attribution, so the rows this run writes are attached to the same use case, subject and
+    # credential every other row is. Set here rather than by the middleware because this endpoint
+    # takes its use case from the body — and `record_pipeline_calls` reads it from one place, so a
+    # second way of passing it would be a second way of forgetting it.
+    request.state.attribution = Attribution(
+        subject=principal.subject,
+        method=principal.method,
+        use_case=payload.use_case,
+        credential=principal.credential,
+    )
+    # The list is ours, so what the run spent survives whatever the run does — the same shape
+    # `run` uses, and the reason it takes a caller-supplied list at all.
+    trail = AuditTrail(operation="pipeline:dryRun")
+    try:
+        result = await engine.dry_run(
+            Pipeline.from_dict(payload.pipeline),
+            canonical,
+            model_calls=trail.model_calls,
+            provider_of=await declared_provider(request),
+        )
+    finally:
+        # In the `finally` for the same reason the served path puts it there: a filter that blocked
+        # still spent the tokens it took to decide that. There is no response row — a dry run
+        # dispatches nothing — only the calls its steps made.
+        await record_pipeline_calls(request, trail)
 
     return JSONResponse(
         {

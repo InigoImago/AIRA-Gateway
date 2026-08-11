@@ -26,7 +26,7 @@ from fastapi import Request
 
 from aira_gateway.api.kira import errors
 from aira_gateway.auth.attribution import USE_CASE_HEADER, Attribution, is_valid_use_case
-from aira_gateway.auth.dependencies import use_case_refusal
+from aira_gateway.auth.dependencies import must_name_a_use_case, use_case_refusal
 from aira_gateway.auth.principal import Principal
 
 
@@ -57,7 +57,7 @@ def resolve(request: Request, principal: Principal) -> Attribution:
             f"one. Send the '{USE_CASE_HEADER}' header naming one of: {sorted(memberships)}.",
         )
 
-    if selected is None and request.app.state.settings.require_use_case:
+    if selected is None and must_name_a_use_case(request, principal):
         raise errors.KiraError(
             403,
             errors.STANDARD_USER_PERMISSION_REQUIRED,

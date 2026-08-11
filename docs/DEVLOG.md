@@ -5,6 +5,70 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-11 — Every model call belongs to somebody
+
+Asked directly after the dry-run finding: _"stell sicher, dass jeder Modellaufruf einem Use Case
+oder einem Key von Use Case gehört. Es darf nicht nicht angerechnet werden und es darf keine
+undokumentierten Requests geben."_ Three things came out of it.
+
+**The dry run now records what it spent.** `ADR-0013`'s promise is that a model call is auditable,
+and the word "dry" describes the **dispatch** that does not happen — never the classifier that
+does. Its calls leave the same `pipeline:<step>` rows a served request's do, booked with
+`requests=0` (`FRD-125b`), written in a `finally` because a filter that blocked still spent the
+tokens it took to decide that. `_injection_verdict` went with it: once `dry_run` needed the
+`ModelCall`, the wrapper that threw it away had no callers, and an unreachable helper is a rule the
+code claims and does not have.
+
+**Then the inventory, and it found a second hole — measured, not read.** An authenticated caller
+who belongs to **no use case** and names none was served: **200, 200 tokens, `use_case = NULL`.**
+Charged to no budget, bounded by no use-case rate limit, and outside the model release entirely,
+because there was no use case to consult it for. The row existed, so this was never literally
+undocumented — it belonged to *nobody*. Both surfaces already had the rule written and switched off
+behind a default, the KIRA one in its own words: _an unattributed request would bypass every budget
+and limit._ `AIRA_REQUIRE_USE_CASE` now defaults to **true**, and turning it off outside
+`local`/demo refuses to start — `ADR-0015`'s shape, because a convenience default is a production
+default one variable away.
+
+The **unbound break-glass key** keeps its exemption and it is the only one: a credential that needs
+a use case *from Management* is no use when Management is what is broken, and its row still carries
+the key prefix and the subject. `must_name_a_use_case` is one function both surfaces read, because
+`FRD-126`'s lesson is that a rule restated on a second surface is a rule that differs on one of
+them — which is exactly how the KIRA surface once read an empty membership list as "anything goes".
+
+**And the artefact that makes the set complete rather than the answers correct.** The hole was not a
+wrong answer anywhere; it was a call site nobody had counted. So
+`test_every_model_call_is_accounted.py` parses the source, finds every call that can reach a
+provider, and requires each to be on a list with a written justification — the same argument
+`test_every_route_is_guarded` makes about authentication. Six sites, five entries. `ping` is
+deliberately outside the billable set and a test asserts no adapter's probe ever reaches a
+generating verb, because a readiness check that bills somebody is exactly the free unattributed
+call this file exists to rule out. Shown to fail by adding a call site. `J12`–`J15`.
+
+**Verifying that live found a third thing, silently wrong for longer than either.** Since `FRD-507`
+stage B a model can be reachable *because it is catalogued*, and the pipeline engine still looked
+its classifier up **by name alone** — so on such a deployment, which is the ordinary shape of a
+Google AI Studio setup, it found no provider and quietly did less: an LLM injection filter fell
+back to the heuristic, a router routed nowhere, both with the builder showing them active. That is
+`FRD-125`'s defect arriving through a different door. The resolver is passed in per request now,
+exactly as `dispatch_with_fallback` takes `provider_of`.
+
+With the classifier finally reached, the provider answered **400**: `gemini-flash-latest` refuses
+`thinkingBudget: 0`, which the classifier sends unconditionally because it still bypasses the
+catalog's thinking resolution — `FRD-125`'s own unfinished half. And the failure was swallowed:
+`(None, None)`, no model call, no row, and a dry-run trace saying `unchanged`, **the same word a
+working router uses when nothing matched**. It says `not_asked` now, on the audit row and on the
+screen an operator uses to find out whether their pipeline works. The thinking mismatch itself is
+deliberately **not** fixed here: what a model accepts is a measurement, and the catalog is where
+measurements belong. `J16`, `J17`.
+
+**And the browser suite caught the regression the change itself introduced.** `require_attribution`
+is mounted on the whole Gemini surface, so the new requirement reached `GET /v1beta/models` too and
+the console's "which models does the gateway serve" started answering 400 to a Global
+Administrator, who is a member of nothing by design. The requirement exists to attribute **spend**;
+a listing has nothing to attribute. Only the layer that drives that button could see it. `J18`.
+
+---
+
 ## 2026-08-11 — A use case reaches the models somebody gave it (`FRD-308`)
 
 The ask: _"wir beschränken Use Cases nicht auf die Modelle … entweder globale admin oder Use Case

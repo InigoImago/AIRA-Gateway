@@ -194,6 +194,35 @@ Two consequences worth stating:
   after this rule meant a refusal about a model nobody chose: a guess that is guaranteed wrong is
   worse than the one it replaced.
 
+### 4.7 Every model call belongs to somebody
+
+The dry-run finding raised the general question, and the general answer is an inventory rather than
+another fix. Six places outside the adapters can reach a provider:
+
+| where | attribution | recorded |
+| --- | --- | --- |
+| Gemini `:embedContent` | `require_attribution` | `Accounting` |
+| Gemini `:streamGenerateContent` | `require_attribution` | `Accounting`, settle shielded |
+| KIRA `/embed` | its own resolver (`FRD-107` §5.3) | `Accounting` |
+| the injection classifier | the caller's | `pipeline:<step>`, `requests=0` |
+| the routing classifier | the caller's | `pipeline:<step>`, `requests=0` |
+| the dispatch chain | `require_attribution` | `Accounting` |
+
+`test_every_model_call_is_accounted.py` parses the source and requires each on that list with a
+written justification. It is structural because the hole it guards was never a wrong answer — every
+behaviour test passed while the dry run was open — it was a call site nobody had counted.
+
+`ping` is deliberately outside the billable set, and a test asserts no adapter's probe reaches a
+generating verb: a readiness check that bills somebody for the question "are you there" is the free
+unattributed call this whole section exists to rule out (`FRD-117` §5.2).
+
+**And the second hole the inventory found.** An authenticated caller belonging to no use case and
+naming none was served — 200, 200 tokens, `use_case = NULL` — charged to no budget, bounded by no
+use-case rate limit, and outside this FRD's release, because there was no use case to consult it
+for. `AIRA_REQUIRE_USE_CASE` now defaults to true and cannot be turned off outside `local`/demo.
+The unbound break-glass key (`ADR-0015`) keeps its exemption and is the only one; the decision lives
+in `must_name_a_use_case`, one function both surfaces read.
+
 ## 5. Testing
 
 - The two holes, as end-to-end requests: a routing rule that re-targets, and a fallback chain.

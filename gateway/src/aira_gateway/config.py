@@ -33,7 +33,17 @@ class GatewaySettings(BaseAiraSettings):
     auth_required: bool = True
 
     # Require an explicit use case on authenticated (non-demo) requests (FRD-102).
-    require_use_case: bool = False
+    #
+    # **Default flipped to True on 2026-08-11.** Off, an authenticated caller belonging to no use
+    # case could name none and be served: charged to no budget, bounded by no use-case rate limit,
+    # outside the model release (`FRD-308`), with an audit row naming nobody. Measured before it
+    # was changed — 200, 200 tokens, `use_case = NULL`.
+    #
+    # A default is what most deployments run, so the safe answer belongs here; turning it off
+    # outside `local`/demo is refused at startup (`security.py`), which is `ADR-0015`'s shape:
+    # environment-shaped rather than merely stricter, so the demo still works and a production
+    # deployment cannot quietly opt out.
+    require_use_case: bool = True
 
     # Persist request/response payloads (FRD-103). When False, only metadata is stored.
     store_payloads: bool = True

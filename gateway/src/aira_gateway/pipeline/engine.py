@@ -11,6 +11,7 @@ without raising and returns a full per-step trace for the builder's preview/test
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -90,6 +91,27 @@ class DryRunResult:
     block_reason: str | None
     effective_model: str
     fallback_models: tuple[str, ...]
+    #: What the dry run **spent** (`FRD-125b`, extended to the dry run on 2026-08-11).
+    #:
+    #: A dry run runs the real steps, so an LLM-backed one calls a real model and costs real money
+    #: — and it recorded none of it. `ADR-0013`'s promise is that a model call is auditable; the
+    #: word "dry" describes the *dispatch* that does not happen, never the classifier that does.
+    model_calls: list[ModelCall] = field(default_factory=list)
+
+
+#: How a step finds the adapter for the model it wants to call.
+#:
+#: A plain `provider_for(model)` was enough while every servable model was named in configuration.
+#: Since `FRD-507` stage B a model can be reachable **because it is catalogued**, and the catalog
+#: is what says which provider serves it — so a step that looked the model up by name alone found
+#: nothing and did nothing at all: an LLM injection filter fell back to the heuristic and a router
+#: routed nowhere, both while the builder showed them active.
+#:
+#: That is `FRD-125`'s defect arriving through a different door, and the shape this project keeps
+#: naming: **a control that stops working without saying so.** The resolver is handed in per
+#: request, exactly as `dispatch_with_fallback` takes `provider_of`, because only the request has
+#: the catalog.
+ProviderOf = Callable[[str], Awaitable[str]]
 
 
 class PipelineEngine:
@@ -105,6 +127,7 @@ class PipelineEngine:
         *,
         decisions: list[dict[str, Any]] | None = None,
         model_calls: list[ModelCall] | None = None,
+        provider_of: ProviderOf | None = None,
     ) -> PipelineOutcome:
         """Run the configured steps.
 
@@ -116,6 +139,9 @@ class PipelineEngine:
         ``model_calls`` is the same idea for money rather than for reasons: a step that blocks
         still spent whatever it took to decide that, and a caller-supplied list means the spend
         survives the exception exactly as the decisions do (`FRD-125`).
+
+        ``provider_of`` is how a step reaches a model the **catalog** knows and configuration does
+        not (`FRD-507` stage B). Without it such a step finds no provider and quietly does less.
         """
         outcome = PipelineOutcome(
             request=request,
@@ -125,7 +151,7 @@ class PipelineEngine:
         )
         for step in pipeline.steps:
             if step.type is StepType.INJECTION_FILTER:
-                classification = await self._classify(step.config, outcome.request)
+                classification = await self._classify(step.config, outcome.request, provider_of)
                 if classification.call is not None:
                     outcome.model_calls.append(classification.call)
                 verdict = classification.verdict
@@ -145,9 +171,21 @@ class PipelineEngine:
                 if blocking:
                     raise PipelineRejected(_rejection(verdict))
             elif step.type is StepType.MODEL_ROUTE:
-                category, target, call = await self._route(step.config, outcome.request)
+                category, target, call = await self._route(
+                    step.config, outcome.request, provider_of
+                )
                 if call is not None:
                     outcome.model_calls.append(call)
+                elif step.config.get("categories"):
+                    # **A router that could not be asked says so.** It used to return quietly, and
+                    # after `FRD-125` closed the same hole for the injection filter this was the
+                    # one left: a configured router whose classifier is unreachable, or whose
+                    # provider refuses the request, routes nowhere and leaves nothing behind —
+                    # indistinguishable on the audit row from a router that ran and matched no
+                    # category. Measured live: a 400 from the provider produced exactly that.
+                    outcome.decisions.append(
+                        {"step": "model_route", "action": "not_asked", "why": "classifier_failed"}
+                    )
                 if target and target != outcome.request.model:
                     outcome.decisions.append(
                         {
@@ -160,14 +198,31 @@ class PipelineEngine:
                     outcome.request = outcome.request.model_copy(update={"model": target})
         return outcome
 
-    async def dry_run(self, pipeline: Pipeline, request: CanonicalRequest) -> DryRunResult:
+    async def dry_run(
+        self,
+        pipeline: Pipeline,
+        request: CanonicalRequest,
+        *,
+        model_calls: list[ModelCall] | None = None,
+        provider_of: ProviderOf | None = None,
+    ) -> DryRunResult:
+        """Evaluate the pipeline without dispatching the caller's own generation.
+
+        ``model_calls`` is the same caller-supplied list `run` takes, and for the same reason: a
+        step that blocks still spent whatever it took to decide that, and the spend has to survive
+        the exception rather than being read off a result that was never returned.
+        """
         trace: list[TraceEntry] = []
+        calls: list[ModelCall] = model_calls if model_calls is not None else []
         current = request
         blocked = False
         reason: str | None = None
         for step in pipeline.steps:
             if step.type is StepType.INJECTION_FILTER:
-                verdict = await self._injection_verdict(step.config, current)
+                classification = await self._classify(step.config, current, provider_of)
+                if classification.call is not None:
+                    calls.append(classification.call)
+                verdict = classification.verdict
                 action = step.config.get("action", "block")
                 detail = {
                     "mode": step.config.get("mode", "heuristic"),
@@ -188,7 +243,21 @@ class PipelineEngine:
                     )
                 )
             elif step.type is StepType.MODEL_ROUTE:
-                category, target, _ = await self._route(step.config, current)
+                category, target, call = await self._route(step.config, current, provider_of)
+                if call is not None:
+                    calls.append(call)
+                elif step.config.get("categories"):
+                    # The dry run is the screen somebody uses to find out whether their pipeline
+                    # works. "unchanged" for *could not be asked* is the wrong answer there twice
+                    # over: it is the same word a working router uses when nothing matched.
+                    trace.append(
+                        TraceEntry(
+                            "model_route",
+                            "not_asked",
+                            {"why": "the classifier could not be reached or refused the request"},
+                        )
+                    )
+                    continue
                 if target and target != current.model:
                     trace.append(
                         TraceEntry(
@@ -206,30 +275,62 @@ class PipelineEngine:
                             {"category": category, "model": current.model},
                         )
                     )
-        return DryRunResult(trace, blocked, reason, current.model, pipeline.fallback_models)
+        return DryRunResult(trace, blocked, reason, current.model, pipeline.fallback_models, calls)
 
     # -- step primitives (shared by run + dry_run) ----------------------------------------
 
-    async def _classify(self, config: dict[str, Any], request: CanonicalRequest) -> Classification:
+    async def _classify(
+        self,
+        config: dict[str, Any],
+        request: CanonicalRequest,
+        provider_of: ProviderOf | None = None,
+    ) -> Classification:
         text = self._scanned_text(request, config.get("scope", "user"))
-        return await self._injection_classifier(config).classify_text(text)
+        classifier = await self._injection_classifier(config, provider_of)
+        return await classifier.classify_text(text)
 
-    async def _injection_verdict(
-        self, config: dict[str, Any], request: CanonicalRequest
-    ) -> Verdict:
-        return (await self._classify(config, request)).verdict
+    async def _injection_classifier(
+        self, config: dict[str, Any], provider_of: ProviderOf | None = None
+    ) -> InjectionClassifier:
+        """The classifier this step is configured with.
 
-    def _injection_classifier(self, config: dict[str, Any]) -> InjectionClassifier:
+        **An `llm` step that cannot find its model falls back to the heuristic**, which is the one
+        line in this file worth arguing about. It is not a silent downgrade of the *verdict*: the
+        heuristic still refuses what it recognises and `FRD-125` made an undetermined verdict block
+        by default. It is a downgrade of the *method*, and it exists so a misconfigured model name
+        cannot take a use case's whole traffic down.
+
+        What made it dangerous was that the lookup ignored the catalog, so on a deployment where
+        models are reached **by being catalogued** (`FRD-507` stage B) it was not a fallback for a
+        typo — it was the ordinary path, every time, for every use case.
+        """
         if config.get("mode") == "llm":
             model = config.get("model") or self._default_model()
-            provider = self._registry.provider_for(model) if model else None
+            provider = await self._provider_for(model, provider_of)
             if provider is not None and model is not None:
                 return LlmInjectionClassifier(provider, model, config.get("instruction"))
         extras = tuple(config.get("patterns", []))
         return HeuristicInjectionClassifier(extras, use_builtins=config.get("use_builtins", True))
 
+    async def _provider_for(self, model: str | None, provider_of: ProviderOf | None) -> Any:
+        """The adapter serving ``model``, asking the catalog when configuration does not know it.
+
+        `provider_for(name)` alone was the whole lookup until stage B made cataloguing enough to
+        serve a model. Without the second argument a catalogued model resolves to nothing — and
+        every caller of this decided that "nothing" meant "quietly do less".
+        """
+        if not model:
+            return None
+        direct = self._registry.provider_for(model)
+        if direct is not None or provider_of is None:
+            return direct
+        return self._registry.provider_for(model, await provider_of(model))
+
     async def _route(
-        self, config: dict[str, Any], request: CanonicalRequest
+        self,
+        config: dict[str, Any],
+        request: CanonicalRequest,
+        provider_of: ProviderOf | None = None,
     ) -> tuple[str | None, str | None, ModelCall | None]:
         """The category, the model to use, and what asking cost — the third is new (`FRD-125`).
 
@@ -241,7 +342,7 @@ class PipelineEngine:
         if not categories:
             return None, default_model, None
         model = config.get("model") or self._default_model()
-        provider = self._registry.provider_for(model) if model else None
+        provider = await self._provider_for(model, provider_of)
         if provider is None or model is None:
             return None, default_model, None
         name, call = await LlmCategoryRouter(provider, model, categories).classify_text(

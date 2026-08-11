@@ -145,6 +145,11 @@ test.describe('Reading what was actually sent', () => {
      * in this area were invisible to every other layer: a button behind a horizontal scroll, an
      * info panel that opened empty, and a 200 rendered in red.
      */
+    // Longer than the default: this one creates a use case, releases models, issues a key, waits
+    // for it to cross Kafka and then makes a **real** model call against a local runtime. It fits
+    // on an idle machine and did not under a full-suite run — a fact about the work it does, not
+    // about the product.
+    test.slow();
     // Its own traffic, with its own key. A first version opened whichever row happened to be at
     // the top and failed against rows another suite had left there — no payload, dated 2031. A
     // test that depends on ambient data is flaky by construction, and worse, it is flaky in a way

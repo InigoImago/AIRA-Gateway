@@ -318,3 +318,104 @@ async def test_the_dry_run_shows_the_operator_the_case_they_did_not_think_of() -
 
     assert result.blocked
     assert result.trace[0].detail["verdict"] == "undetermined"
+
+
+# == a catalogued model is a model the pipeline can call (`FRD-507` stage B, fixed 2026-08-11) ====
+
+
+async def test_an_llm_filter_reaches_a_model_the_catalog_knows_and_configuration_does_not() -> None:
+    """Found live: on a deployment where models are reached **by being catalogued** — the ordinary
+    shape of a Google AI Studio setup since stage B — the engine looked its classifier up by name
+    alone, found nothing, and fell back to the heuristic. Every request. For every use case. With
+    the builder showing the LLM filter active.
+
+    `FRD-125`'s defect arriving through a different door: a control that stops working without
+    saying so.
+    """
+    from aira_gateway.pipeline.config import Pipeline, PipelineStep, StepType
+
+    class _Catalogued(_Guard):
+        """Serves nothing configured; owns a provider name, as the real adapters now do."""
+
+        serves_provider = "vendor-x"
+
+        def models(self):  # noqa: ANN202
+            return []
+
+    registry = ProviderRegistry([_Catalogued("guard", "INJECTION")])
+    engine = PipelineEngine(registry)
+    pipeline = Pipeline(
+        steps=(PipelineStep(StepType.INJECTION_FILTER, {"mode": "llm", "model": "guard"}),)
+    )
+
+    # Without the catalog the step cannot find its model and quietly degrades…
+    outcome = await engine.run(pipeline, _request("perfectly ordinary text", model="mock-1"))
+    assert outcome.model_calls == []
+
+    # …and with it, the configured classifier is what actually runs.
+    async def declared(model: str) -> str:
+        return "vendor-x"
+
+    with pytest.raises(PipelineRejected):
+        await engine.run(
+            pipeline, _request("perfectly ordinary text", model="mock-1"), provider_of=declared
+        )
+
+
+async def test_a_router_that_could_not_be_asked_says_so_on_the_row() -> None:
+    """It used to return quietly. After `FRD-125` closed the same hole for the injection filter,
+    this was the one left: a router whose classifier is unreachable — or whose provider refuses
+    the request — routes nowhere and leaves nothing behind, which on the audit row is
+    indistinguishable from a router that ran and matched no category.
+
+    Measured live: a provider answering **400** to the classifier produced exactly that silence.
+    """
+    from aira_gateway.pipeline.config import Pipeline, PipelineStep, StepType
+    from aira_gateway.upstreams.base import UpstreamError
+
+    class _Refuses(_Guard):
+        async def generate(self, request):  # noqa: ANN001, ANN201
+            raise UpstreamError("Gemini upstream returned 400.", 400)
+
+    engine = PipelineEngine(ProviderRegistry([_Refuses("router", "x")]))
+    pipeline = Pipeline(
+        steps=(
+            PipelineStep(
+                StepType.MODEL_ROUTE,
+                {"model": "router", "categories": [{"name": "cheap", "model": "cheap-1"}]},
+            ),
+        )
+    )
+
+    outcome = await engine.run(pipeline, _request("hi", model="mock-1"))
+
+    assert outcome.model_calls == []
+    assert outcome.decisions == [
+        {"step": "model_route", "action": "not_asked", "why": "classifier_failed"}
+    ]
+
+
+async def test_a_dry_run_says_the_router_could_not_be_asked() -> None:
+    """The dry run is the screen somebody uses to find out whether their pipeline works, so
+    "unchanged" for *could not be asked* is the wrong answer twice over: it is the same word a
+    working router uses when nothing matched."""
+    from aira_gateway.pipeline.config import Pipeline, PipelineStep, StepType
+    from aira_gateway.upstreams.base import UpstreamError
+
+    class _Refuses(_Guard):
+        async def generate(self, request):  # noqa: ANN001, ANN201
+            raise UpstreamError("Gemini upstream returned 400.", 400)
+
+    engine = PipelineEngine(ProviderRegistry([_Refuses("router", "x")]))
+    pipeline = Pipeline(
+        steps=(
+            PipelineStep(
+                StepType.MODEL_ROUTE,
+                {"model": "router", "categories": [{"name": "cheap", "model": "cheap-1"}]},
+            ),
+        )
+    )
+
+    result = await engine.dry_run(pipeline, _request("hi", model="mock-1"))
+
+    assert [(e.type, e.action) for e in result.trace] == [("model_route", "not_asked")]

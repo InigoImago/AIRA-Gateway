@@ -333,3 +333,82 @@ async def test_a_pipeline_naming_no_model_simulates_one_the_use_case_may_call() 
     assert resp.status_code == 200, resp.text
     assert resp.json()["effective_model"] == "allowed-1"
     assert resp.json()["blocked"] is True
+
+
+async def test_a_dry_run_records_and_bills_what_it_spent() -> None:
+    """`ADR-0013`'s promise is that a model call is auditable, and the word "dry" describes the
+    **dispatch** that does not happen — never the classifier that does.
+
+    Measured before this existed: 1000 tokens spent, zero rows. A model call nobody can see is the
+    one thing this system is for making impossible.
+    """
+    from sqlalchemy import select
+
+    from aira_gateway.db.models import RequestLog
+
+    app = _app(_Classifier("router", "cheap"), _Classifier("cheap-1", "x"))
+    with TestClient(app, headers={"x-goog-api-key": DEMO_API_KEY}) as client:
+        await _release(app, "uc", ["router", "cheap-1"])
+        resp = client.post(
+            _URL,
+            json={
+                "use_case": "uc",
+                "user": "hi",
+                "pipeline": {
+                    "steps": [
+                        {
+                            "type": "model_route",
+                            "config": {
+                                "model": "router",
+                                "categories": [{"name": "cheap", "model": "cheap-1"}],
+                            },
+                        }
+                    ]
+                },
+            },
+        )
+        assert resp.status_code == 200, resp.text
+
+        async with app.state.db_sessionmaker() as session:
+            rows = list((await session.execute(select(RequestLog))).scalars())
+
+    assert len(rows) == 1
+    row = rows[0]
+    # Named for the step, so reporting separates what governing a use case cost from what it asked
+    # — and attached to the use case that paid for it rather than to nobody.
+    assert row.operation == "pipeline:model_route"
+    assert row.model == "router"
+    assert row.use_case == "uc"
+    assert row.total_tokens > 0
+
+
+async def test_a_blocked_dry_run_still_records_what_deciding_cost() -> None:
+    """A filter that blocked still spent the tokens it took to decide that. The `finally` is the
+    whole point: reading the spend off a result that was never returned loses exactly the runs a
+    use case is most likely to be paying for."""
+    from sqlalchemy import select
+
+    from aira_gateway.db.models import RequestLog
+
+    app = _app(_Classifier("guard", "INJECTION"))
+    with TestClient(app, headers={"x-goog-api-key": DEMO_API_KEY}) as client:
+        await _release(app, "uc", ["guard"])
+        resp = client.post(
+            _URL,
+            json={
+                "use_case": "uc",
+                "model": "guard",
+                "user": "anything",
+                "pipeline": {
+                    "steps": [
+                        {"type": "injection_filter", "config": {"mode": "llm", "model": "guard"}}
+                    ]
+                },
+            },
+        )
+        assert resp.json()["blocked"] is True
+
+        async with app.state.db_sessionmaker() as session:
+            rows = list((await session.execute(select(RequestLog))).scalars())
+
+    assert [row.operation for row in rows] == ["pipeline:injection_filter"]

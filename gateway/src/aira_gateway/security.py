@@ -64,6 +64,14 @@ def unsafe_settings(settings: GatewaySettings) -> list[str]:
             "AIRA_OIDC_AUDIENCE is unset — any token this issuer minted would be accepted, "
             "including one issued to a different client. Name the audience this gateway answers to."
         )
+    if not settings.require_use_case:
+        problems.append(
+            "AIRA_REQUIRE_USE_CASE is off — an authenticated caller who belongs to no use case can "
+            "name none, and the gateway serves them: the request is charged to no budget, bounded "
+            "by no use-case rate limit, outside the model release (FRD-308) entirely, and its "
+            "audit row names nobody. Measured: 200, 200 tokens, `use_case = NULL`. Every model "
+            "call belongs to a use case or to a key issued for one."
+        )
     if settings.kafka_bootstrap_servers.strip() and settings.kafka_security().is_plaintext:
         problems.append(
             "AIRA_KAFKA_SECURITY_PROTOCOL is PLAINTEXT — the config topics are applied straight "

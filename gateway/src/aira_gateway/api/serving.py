@@ -607,7 +607,14 @@ async def run_pipeline(
     # refused it.
     try:
         outcome = await engine.run(
-            pipeline, canonical, decisions=trail.decisions, model_calls=trail.model_calls
+            pipeline,
+            canonical,
+            decisions=trail.decisions,
+            model_calls=trail.model_calls,
+            # So a step can call a model the **catalog** knows and configuration does not
+            # (`FRD-507` stage B). Without it an LLM filter fell back to the heuristic and a
+            # router routed nowhere, both while the builder showed them active.
+            provider_of=await declared_provider(request),
         )
     finally:
         # **One site**, and it is in the `finally` on purpose: a filter that blocked still spent

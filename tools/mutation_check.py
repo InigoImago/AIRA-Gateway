@@ -3278,6 +3278,63 @@ MUTATIONS = [
         "        if False:",
         "management/backend/tests/test_pipelines.py",
     ),
+    # ---- every model call belongs to somebody (2026-08-11) -----------------------------------
+    Mutation(
+        "J12",
+        "a dry run records and bills the model calls its steps made",
+        "gateway/src/aira_gateway/api/pipeline.py",
+        "        await record_pipeline_calls(request, trail)",
+        "        pass",
+        DRYRUN,
+    ),
+    Mutation(
+        "J13",
+        "an authenticated caller belonging to no use case is refused, not served unattributed",
+        "gateway/src/aira_gateway/auth/dependencies.py",
+        "    if not request.app.state.settings.require_use_case:\n        return False",
+        "    if True:\n        return False",
+        "gateway/tests/test_audit_completeness.py",
+    ),
+    Mutation(
+        "J14",
+        "the break-glass key keeps its exemption, so an outage is survivable",
+        "gateway/src/aira_gateway/auth/dependencies.py",
+        '    return not (principal.method == "api_key" and not principal.use_cases)',
+        "    return True",
+        "gateway/tests/test_audit_completeness.py",
+    ),
+    Mutation(
+        "J15",
+        "unattributed traffic cannot be switched back on outside local",
+        "gateway/src/aira_gateway/security.py",
+        "    if not settings.require_use_case:",
+        "    if False:",
+        DEPLOYMENT_SAFETY,
+    ),
+    Mutation(
+        "J16",
+        "a pipeline step reaches a model the catalog knows and configuration does not",
+        "gateway/src/aira_gateway/pipeline/engine.py",
+        "        return self._registry.provider_for(model, await provider_of(model))",
+        "        return None",
+        "gateway/tests/test_pipeline_engine.py",
+    ),
+    Mutation(
+        "J17",
+        "a router that could not be asked says so instead of reading as 'nothing matched'",
+        "gateway/src/aira_gateway/pipeline/engine.py",
+        '                        {"step": "model_route", "action": "not_asked", "why": "classifier_failed"}',
+        '                        {"step": "model_route", "action": "unchanged"}',
+        "gateway/tests/test_pipeline_engine.py",
+    ),
+    Mutation(
+        "J18",
+        "reading the model list needs no use case; only spending does",
+        "gateway/src/aira_gateway/auth/dependencies.py",
+        "    if request.method in SPENDS_NOTHING:\n        # **A reading is not a model call.**",
+        "    if False:\n        # **A reading is not a model call.**",
+        "gateway/tests/test_audit_completeness.py",
+    ),
 ]
 
 

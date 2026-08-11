@@ -43,7 +43,7 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
   inevitably do when both were written from the same mental model — and line coverage cannot see
   a *missing requirement*: on 2026-08-05 a review found seven real defects behind a green suite at
   99% coverage. So: **prove a test can fail.** Break the property, watch it go red, restore.
-  `make mutants` (`tools/mutation_check.py`) does this for **363 properties** across auth, budgets,
+  `make mutants` (`tools/mutation_check.py`) does this for **370 properties** across auth, budgets,
   pipeline, retention, the management control plane and the gateway's counters; when
   you fix a bug, add the mutation that reintroduces it. Two traps that cost real defects here:
   a stand-in that is more permissive than the thing it replaces (reuse the real method where you
@@ -1333,6 +1333,44 @@ usable by naming `global` out loud, which turns a thing somebody remembers into 
 and a region on every row. The guard is **structural** — every `build_*_upstream(s)` must mention
 `check_region` — and its first run flagged `build_token_source`, which builds a *credential* and
 has no region; narrowed to the layer's two suffixes, then proved sharp again.
+
+**Every model call belongs to somebody (2026-08-11)** — the dry run now records and books what its
+steps spent (`pipeline:<step>`, `requests=0`, in a `finally`, because a filter that blocked still
+paid to decide that); `_injection_verdict` went with it, an unreachable helper being a rule the code
+claims and does not have. **Then the inventory found a second hole, measured**: an authenticated
+caller belonging to **no use case** and naming none was served — **200, 200 tokens, `use_case =
+NULL`** — charged to no budget, bounded by no use-case rate limit, outside the model release
+because there was no use case to consult it for. Not undocumented; it belonged to *nobody*. Both
+surfaces already had the rule written and switched off behind a default, KIRA's in its own words
+(*an unattributed request would bypass every budget and limit*). `AIRA_REQUIRE_USE_CASE` defaults
+to **true** now, and turning it off outside `local`/demo refuses to start (`ADR-0015`: a
+convenience default is a production default one variable away). The **unbound break-glass key**
+keeps its exemption and is the only one — a credential needing a use case *from Management* is no
+use when Management is what is broken — via `must_name_a_use_case`, **one function both surfaces
+read**, because a rule restated on a second surface is how KIRA once read an empty membership list
+as "anything goes". The artefact that matters is structural: the hole was never a wrong answer, it
+was a **call site nobody had counted**, so `test_every_model_call_is_accounted.py` parses the
+source, finds every call that can reach a provider and requires each on a written list with its
+justification — six sites, five entries, `ping` deliberately outside the billable set with a test
+that no probe ever generates. Shown to fail by adding a call site. `J12`–`J15`.
+**Verifying it live then found a third thing, and it is the one that had been silently wrong the
+longest.** Since `FRD-507` stage B a model can be reachable *because it is catalogued* — and the
+pipeline engine still looked its classifier up **by name alone**, so on such a deployment (the
+ordinary shape of an AI Studio setup) it found no provider and quietly did less: an LLM injection
+filter fell back to the heuristic and a router routed nowhere, both while the builder showed them
+active. `FRD-125`'s defect arriving through a different door. The resolver is handed in per request
+now, exactly as `dispatch_with_fallback` takes `provider_of`. And with the classifier finally
+reached, the provider answered **400** — `gemini-flash-latest` refuses `thinkingBudget: 0`, which
+the classifier sends unconditionally because it still bypasses the catalog's thinking resolution
+(`FRD-125`'s own unfinished half). That failure was swallowed: `(None, None)`, no call, no row, and
+a trace saying `unchanged` — **the same word a working router uses when nothing matched**. It says
+`not_asked` now, on the audit row and in the dry run. The thinking mismatch itself is a data
+question and is **not** fixed: what a model accepts is a measurement, and the catalog is where
+measurements go. `J16`, `J17`. **The browser suite then caught the regression the change itself
+introduced**: `require_attribution` is mounted on the whole surface, so the requirement reached
+`GET /v1beta/models` and the console's "which models does the gateway serve" answered 400 to a
+Global Administrator, a member of nothing by design — the rule is about attributing **spend**, and
+a listing has nothing to attribute. Only the layer that drives that button could see it. `J18`.
 
 **A use case reaches the models somebody gave it (`FRD-308`, 2026-08-11)** — `FRD-307` answered
 *which models may be used here at all*; nothing answered *which of those a use case may call*, so
