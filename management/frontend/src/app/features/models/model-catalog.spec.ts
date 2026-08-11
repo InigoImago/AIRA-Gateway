@@ -1,7 +1,14 @@
 import { TestBed } from '@angular/core/testing';
-import { Observable, of, throwError } from 'rxjs';
+import { Observable, Subject, of, throwError } from 'rxjs';
 import { MeService } from '../../core/api/me.service';
-import { Capability, CatalogModel, Me, ModelCheck } from '../../core/api/models';
+import {
+  Capability,
+  CatalogModel,
+  GatewayProvider,
+  Me,
+  ModelCheck,
+  OfferedModel,
+} from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { ConfirmService } from '../../core/ui/confirm.service';
 import { ModelCatalog } from './model-catalog';
@@ -27,6 +34,50 @@ const DECLARED: CatalogModel = {
   max_output_tokens: 64000,
   default_max_output_tokens: 4096,
   deprecated: true,
+};
+
+/** A provider whose models a request may name directly (`FRD-507` stage B). */
+const STUDIO: GatewayProvider = {
+  name: 'generative-language',
+  label: 'Google AI Studio',
+  publisher: 'google',
+  region: 'global',
+  canEnumerate: true,
+  cataloguedIsEnough: true,
+  servedModels: 0,
+  adapters: 1,
+};
+/** Two adapters, one provider name, no listing that can answer for the platform. */
+const VERTEX: GatewayProvider = {
+  name: 'vertex',
+  label: 'Google Vertex AI',
+  publisher: 'google',
+  region: 'europe-west1',
+  canEnumerate: false,
+  cataloguedIsEnough: false,
+  servedModels: 4,
+  adapters: 2,
+};
+const OFFERED_FLASH: OfferedModel = {
+  name: 'gemini-flash-latest',
+  displayName: 'Gemini Flash Latest',
+  description: '',
+  maxOutputTokens: 65536,
+  canGenerate: true,
+  canEmbed: false,
+  canCachePrompts: true,
+  thinking: true,
+};
+/** The vendor answered nothing about this one beyond its name — an OpenAI-compatible listing. */
+const OFFERED_EMBED: OfferedModel = {
+  name: 'text-embedding-004',
+  displayName: '',
+  description: '',
+  maxOutputTokens: null,
+  canGenerate: null,
+  canEmbed: null,
+  canCachePrompts: null,
+  thinking: null,
 };
 
 interface Catalog {
@@ -63,6 +114,32 @@ interface Catalog {
   save: () => void;
   edit: (m: CatalogModel) => void;
   remove: (m: CatalogModel) => void;
+  providers: () => GatewayProvider[] | null;
+  providersError: () => string | null;
+  providerIsCustom: { set: (v: boolean) => void; (): boolean };
+  chooseProvider: (value: string) => void;
+  selectedProvider: () => GatewayProvider | null;
+  offerings: () => OfferedModel[] | null;
+  offeringsError: () => string | null;
+  useOffered: (model: OfferedModel) => void;
+  providerLabel: (provider: GatewayProvider) => string;
+  openBrowse: () => void;
+  closeBrowse: () => void;
+  showBrowse: () => boolean;
+  browseProvider: () => string;
+  browseSearch: { set: (v: string) => void; (): string };
+  browseMatches: () => OfferedModel[];
+  askable: () => GatewayProvider[];
+  catalogueOffered: (model: OfferedModel) => void;
+  chooseBrowseProvider: (name: string) => void;
+  editing: () => string;
+  vendorFilled: () => string[];
+  vendorSaid: () => string[];
+  displayName: { set: (v: string) => void; (): string };
+  platform: { set: (v: string) => void; (): string };
+  checkedName: () => string | null;
+  mustCheck: () => boolean;
+  OTHER: string;
 }
 
 const CHECK: ModelCheck = {
@@ -82,9 +159,14 @@ function setup(
     confirm?: boolean;
     /** What `:check` answers (`FRD-506`). */
     check?: Observable<ModelCheck>;
+    /** What the gateway is configured with (`FRD-507` stage C). */
+    providers?: Observable<GatewayProvider[]>;
+    /** What one provider answers when asked what it offers. */
+    offerings?: Observable<OfferedModel[]>;
   } = {},
 ) {
   const checked: string[] = [];
+  const asked: string[] = [];
   TestBed.resetTestingModule();
   const saved: CatalogModel[] = [];
   const removed: string[] = [];
@@ -109,6 +191,11 @@ function setup(
             return options.check ? options.check : of(CHECK);
           },
           models: () => options.models ?? of([FLASH, UNPRICED]),
+          providers: () => options.providers ?? of([STUDIO, VERTEX]),
+          providerOfferings: (name: string) => {
+            asked.push(name);
+            return options.offerings ?? of([OFFERED_FLASH, OFFERED_EMBED]);
+          },
           servedModels: () =>
             options.served ??
             of([
@@ -141,6 +228,7 @@ function setup(
     saved,
     removed,
     component: fixture.componentInstance as unknown as Catalog,
+    asked,
     text: () => (fixture.nativeElement as HTMLElement).textContent ?? '',
     checked,
     html: () => fixture.nativeElement as HTMLElement,
@@ -904,5 +992,439 @@ describe('ModelCatalog — discovery when things are missing', () => {
     component.importServed(component.notCatalogued()[0]);
     expect(component.name()).toBe('mock-1');
     expect(component.provider()).toBe('');
+  });
+});
+
+describe('ModelCatalog — the provider field in the editor (`FRD-507` stage C)', () => {
+  it('offers what the gateway is configured with, in the DOM, rather than a typed string', () => {
+    /** The field was a text box, so a model was declared under whatever somebody typed — and the
+     *  two refusals a typo produces (`not in the model catalog`, `has not been approved`) are both
+     *  correct and neither names the string that was wrong.
+     *
+     *  Asserted on the rendered `<option>`s: a component that held the list and rendered a text
+     *  input would pass every signal assertion in this file. */
+    const { component, fixture, html } = setup();
+
+    component.add();
+    fixture.detectChanges();
+
+    const select = html().querySelector<HTMLSelectElement>('[data-testid="provider-select"]');
+    expect(select).not.toBeNull();
+    const options = [...select!.options].map((o) => o.value);
+    expect(options).toContain('generative-language');
+    expect(options).toContain('vertex');
+    // The escape hatch is always there: declaring a model before its platform is configured is
+    // the ordinary order of work, and a closed list would forbid it.
+    expect(options).toContain(component.OTHER);
+  });
+
+  it('names the vendor and keeps the identifier visible', () => {
+    /** `generative-language` beside `local` names neither vendor — reported from the running
+     *  console. The label leads and the name stays in brackets, because the name is what gets
+     *  written into the catalog and onto every audit row. */
+    const { component } = setup();
+
+    expect(component.providerLabel(STUDIO)).toContain('Google AI Studio');
+    expect(component.providerLabel(STUDIO)).toContain('generative-language');
+    expect(component.providerLabel(VERTEX)).toContain('europe-west1');
+  });
+
+  it('says whether cataloguing the model will be enough to reach it', () => {
+    /** The field that decides whether an import produces a working model or a convincing
+     *  decoration. Where the model name is not the whole addressing, the model must also be named
+     *  in the gateway's configuration — and an administrator who is not told finds out from a
+     *  caller. */
+    const { component, fixture, text } = setup();
+
+    component.add();
+    component.chooseProvider('generative-language');
+    fixture.detectChanges();
+    expect(text()).toContain('is enough to reach it');
+
+    component.chooseProvider('vertex');
+    fixture.detectChanges();
+    expect(text()).toContain("named in the gateway's configuration");
+  });
+
+  it('falls back to a typed provider when the gateway cannot be asked, and still saves', () => {
+    /** Informs, never blocks. Declaring a model before its credential exists is the ordinary order
+     *  of work, so a gateway that cannot be reached degrades to the text box it replaced rather
+     *  than locking somebody out of their own catalog — `FRD-114`'s rule that deprecation warns
+     *  and revocation blocks, one screen over. */
+    const { component, fixture, html, text } = setup({
+      providers: throwError(() => ({ status: 503 })),
+    });
+
+    component.add();
+    fixture.detectChanges();
+
+    expect(component.providerIsCustom()).toBe(true);
+    expect(text()).toContain('Type the provider name instead');
+    expect(html().querySelector('[data-testid="provider-select"]')).toBeNull();
+    expect(html().querySelector('[data-testid="provider-typed"]')).not.toBeNull();
+  });
+
+  it('lets a provider be typed and taken back to the list', () => {
+    const { component, fixture, html } = setup();
+
+    component.add();
+    component.chooseProvider(component.OTHER);
+    fixture.detectChanges();
+    expect(component.provider()).toBe('');
+    expect(html().querySelector('[data-testid="provider-typed"]')).not.toBeNull();
+
+    html().querySelector<HTMLButtonElement>('[data-testid="provider-back-to-list"]')!.click();
+    fixture.detectChanges();
+    expect(html().querySelector('[data-testid="provider-select"]')).not.toBeNull();
+  });
+
+  it('keeps a publisher the administrator typed when the provider declares none', () => {
+    /** A provider that states no publisher has not said the field is empty. Overwriting a value
+     *  somebody entered with a blank is the import rule inverted: silence becoming a decision. */
+    const { component } = setup({
+      providers: of([{ ...STUDIO, publisher: '', region: '', label: '' }]),
+    });
+
+    component.add();
+    component.publisher.set('google');
+    component.chooseProvider('generative-language');
+
+    expect(component.publisher()).toBe('google');
+    // And a provider with neither label nor region is named by itself rather than trailed by a
+    // separator or wrapped in brackets around its own name.
+    expect(component.providerLabel(component.providers()![0])).toBe('generative-language');
+  });
+
+  it('shows a configured provider as chosen even when the list arrives after the form', async () => {
+    /** Opening the editor is what fetches the list, so a form carrying a provider is laid out
+     *  before the answer comes back. A one-way rule left a perfectly configured provider stuck in
+     *  the text box it was supposed to replace, for every model opened faster than the gateway
+     *  answered.
+     *
+     *  The **arrival has to be late**, or this proves nothing: a stubbed `of()` answers inside the
+     *  call that started it, so the editor's own guess is what the assertion would be reading and
+     *  the deferred rule would never run. Written first with `of()`, where it passed against the
+     *  broken code — the failure this project keeps recording as *a test that never reached the
+     *  path it was named after*. */
+    const late = new Subject<GatewayProvider[]>();
+    const { component, fixture, html } = setup({ providers: late });
+
+    component.edit({ ...FLASH, provider: 'vertex' });
+    fixture.detectChanges();
+    // Nothing is known yet, so the field is the text box it degrades to.
+    expect(component.providerIsCustom()).toBe(true);
+
+    late.next([STUDIO, VERTEX]);
+    late.complete();
+    fixture.detectChanges();
+    // `ngModel` writes the DOM value on a microtask: the select is a *form control*, not an
+    // interpolation.
+    await fixture.whenStable();
+
+    expect(component.providerIsCustom()).toBe(false);
+    expect(html().querySelector<HTMLSelectElement>('[data-testid="provider-select"]')!.value).toBe(
+      'vertex',
+    );
+  });
+
+  it('leaves the provider select alone for a model that has no provider at all', () => {
+    /** An older catalog row, or one added before this field meant anything. Blank is not a typed
+     *  value: the select simply shows nothing chosen. */
+    const { component } = setup();
+
+    component.edit({ ...UNPRICED });
+
+    expect(component.provider()).toBe('');
+    expect(component.providerIsCustom()).toBe(false);
+  });
+});
+
+describe('ModelCatalog — browsing what a provider offers (`FRD-507` stage C)', () => {
+  it('offers only the providers that can actually be asked', () => {
+    /** `canEnumerate` is stated rather than discovered by trying. A window listing every provider
+     *  and then showing an error for the ones without a listing would report a capability gap as a
+     *  fault — and those send a reader to two different systems. */
+    const { component, fixture, html } = setup();
+
+    html().querySelector<HTMLButtonElement>('[data-testid="browse-provider-models"]')!.click();
+    fixture.detectChanges();
+
+    const select = html().querySelector<HTMLSelectElement>('[data-testid="browse-provider"]')!;
+    const values = [...select.options].map((o) => o.value).filter(Boolean);
+    expect(values).toEqual(['generative-language']);
+    expect(select.textContent).toContain('Google AI Studio');
+  });
+
+  it('asks straight away when there is only one provider to ask', () => {
+    /** A select with a single option is a click that teaches nothing. Two or more and the reader
+     *  picks — asserted below by *not* preselecting. */
+    const one = setup();
+    one.component.openBrowse();
+    expect(one.asked).toEqual(['generative-language']);
+
+    const two = setup({ providers: of([STUDIO, { ...STUDIO, name: 'ollama', label: 'ollama' }]) });
+    two.component.openBrowse();
+    expect(two.asked).toEqual([]);
+  });
+
+  it('lists what the vendor offers, searchably, and marks what the catalog already has', () => {
+    const { component, fixture, html, text } = setup({
+      offerings: of([OFFERED_FLASH, OFFERED_EMBED, { ...OFFERED_FLASH, name: 'gemini-2.0-flash' }]),
+    });
+
+    component.openBrowse();
+    fixture.detectChanges();
+
+    expect(text()).toContain('gemini-flash-latest');
+    expect(text()).toContain('3 offered by this credential');
+    // Marked, never hidden: the reader would otherwise check each one against the table behind
+    // the window to find out which are new.
+    expect(text()).toContain('in the catalog');
+
+    component.browseSearch.set('embed');
+    fixture.detectChanges();
+    expect(component.browseMatches().map((m) => m.name)).toEqual(['text-embedding-004']);
+    expect(html().textContent).not.toContain('gemini-flash-latest');
+  });
+
+  it('says a provider answered with nothing rather than looking like it was never asked', () => {
+    /** An empty listing is a fact about the credential — a key with no models enabled lists none
+     *  — and a blank window is indistinguishable from a window that failed. */
+    const { component, fixture, text } = setup({ offerings: of([]) });
+
+    component.openBrowse();
+    fixture.detectChanges();
+
+    expect(text()).toContain('answered with no models at all');
+  });
+
+  it('reports a provider that would not answer, inside the window it was asked in', () => {
+    /** A red bar on the page behind an open modal is a report about nothing. */
+    const { component, fixture, text } = setup({ offerings: throwError(() => ({ status: 502 })) });
+
+    component.openBrowse();
+    fixture.detectChanges();
+
+    expect(component.offeringsError()).toBeTruthy();
+    expect(component.error()).toBeNull();
+    expect(text()).toContain('Could not ask this provider');
+  });
+
+  it('tells a missing credential apart from a platform that cannot be asked', () => {
+    /** Two different facts that were one message until somebody would have read the wrong one.
+     *  **No provider configured** is a missing credential — an adapter is registered only when its
+     *  credential is, so a gateway with no Google key and no self-hosted server has nobody to ask,
+     *  and the fix is in the gateway's environment. **None publishes a list** is a missing
+     *  capability, and it is not fixed at all: those models are named by hand.
+     *
+     *  An empty dropdown would have said neither, and sent somebody looking for a broken key that
+     *  does not exist. */
+    const none = setup({ providers: of([]) });
+    none.component.openBrowse();
+    none.fixture.detectChanges();
+    expect(none.text()).toContain('no upstream configured');
+
+    const mute = setup({ providers: of([VERTEX]) });
+    mute.component.openBrowse();
+    mute.fixture.detectChanges();
+    expect(mute.text()).toContain('none of them publishes a model list');
+  });
+
+  it('hands one model to the editor with what the vendor stated, and nothing else', () => {
+    /** The whole design in one assertion, and the property an eager implementation breaks.
+     *
+     *  Copied: the name, the display name, the output ceiling and the verbs — all facts, because
+     *  the API refuses a larger request and answers 404 for a method missing from its own list.
+     *  Not copied: the price (a price nobody set is not zero), and `thinking` — the vendor's flag
+     *  says a model reasons and `FRD-114` needs the modes and the budgets, which no listing
+     *  publishes. */
+    const { component, fixture, html, text } = setup();
+
+    component.openBrowse();
+    fixture.detectChanges();
+    html().querySelector<HTMLButtonElement>('[data-testid="offered-gemini-flash-latest"]')!.click();
+    fixture.detectChanges();
+
+    // One window at a time: the list is a choice, made once.
+    expect(component.showBrowse()).toBe(false);
+    expect(component.showAdd()).toBe(true);
+
+    expect(component.name()).toBe('gemini-flash-latest');
+    expect(component.displayName()).toBe('Gemini Flash Latest');
+    expect(component.maxOutput()).toBe(65536);
+    expect(component.provider()).toBe('generative-language');
+    expect(component.publisher()).toBe('google');
+    expect(component.platform()).toBe('generative-language');
+    expect(component.capabilities().sort()).toEqual(['generate', 'prompt_caching']);
+
+    expect(component.inputPrice()).toBe('');
+    expect(component.outputPrice()).toBe('');
+    expect(component.approved()).toBe(false);
+    expect(component.hasCapability('thinking')).toBe(false);
+    expect(component.hasCapability('tools')).toBe(false);
+
+    // And it says which half is which, because an import that silently fills six fields and
+    // silently leaves five is indistinguishable from one that failed at the other five.
+    expect(text()).toContain('Filled in from generative-language');
+    expect(text()).toContain('a price nobody set is not zero');
+    expect(component.vendorSaid().join(' ')).toContain('it reasons');
+  });
+
+  it('opens the existing declaration for a model the catalog already has', () => {
+    /** Corrected, never added a second time — and never as a blank form carrying the vendor's
+     *  answer, which would replace a measured capability or a price with a claim. */
+    const { component, fixture, html } = setup({
+      offerings: of([{ ...OFFERED_FLASH, name: 'gemini-2.0-flash' }]),
+    });
+
+    component.openBrowse();
+    fixture.detectChanges();
+    html().querySelector<HTMLButtonElement>('[data-testid="offered-gemini-2.0-flash"]')!.click();
+
+    expect(component.editing()).toBe('gemini-2.0-flash');
+    expect(component.inputPrice()).toBe('0.075');
+  });
+
+  it('turns a vendor saying nothing into no declaration at all', () => {
+    /** `null` is a third answer, not a missing one. An OpenAI-compatible listing publishes bare
+     *  ids, and `false` would be a *statement* that the model cannot generate — pre-filled into a
+     *  form somebody is about to save, it becomes their decision (`FRD-114` FR-7). */
+    const { component } = setup({ offerings: of([OFFERED_EMBED]) });
+
+    component.openBrowse();
+    component.catalogueOffered(component.offerings()![0]);
+
+    expect(component.name()).toBe('text-embedding-004');
+    expect(component.capabilities()).toEqual([]);
+    expect(component.maxOutput()).toBeNull();
+  });
+
+  it('adds capabilities and never removes one the administrator ticked', () => {
+    /** A vendor's silence must not untick a box somebody ticked from a measurement they made —
+     *  which is the direction that matters, since the catalog is where measurements are kept. */
+    const { component } = setup();
+
+    component.openBrowse();
+    component.capabilities.set(['tools']);
+    component.useOffered(OFFERED_FLASH);
+
+    expect(component.capabilities().sort()).toEqual(['generate', 'prompt_caching', 'tools']);
+  });
+
+  it('counts a live listing as having looked — but only where cataloguing is enough', () => {
+    /** `mustCheck` refuses the *ignorance*, not the verdict, and a listing the vendor answered a
+     *  second ago is a stronger answer than a ping. Where cataloguing is **not** enough the model
+     *  still needs a configuration entry, and the check is exactly what says so — so that case
+     *  keeps the gate. */
+    const enough = setup();
+    enough.component.openBrowse();
+    enough.component.catalogueOffered(OFFERED_FLASH);
+    expect(enough.component.mustCheck()).toBe(false);
+
+    const notEnough = setup({
+      providers: of([{ ...STUDIO, name: 'half-wired', cataloguedIsEnough: false }]),
+    });
+    notEnough.component.openBrowse();
+    notEnough.component.catalogueOffered(OFFERED_FLASH);
+    expect(notEnough.component.mustCheck()).toBe(true);
+  });
+
+  it('closes without touching the form behind it', () => {
+    /** The browse window has its own provider signal. Looking at a list must not edit a
+     *  half-finished declaration underneath — and the two would otherwise be one field. */
+    const { component, fixture } = setup();
+
+    component.add();
+    component.chooseProvider('vertex');
+    component.openBrowse();
+    fixture.detectChanges();
+    component.closeBrowse();
+
+    expect(component.provider()).toBe('vertex');
+    expect(component.offerings()).toBeNull();
+    expect(component.browseProvider()).toBe('');
+  });
+});
+
+describe('ModelCatalog — the browse window when things are half-there', () => {
+  it('going back to "choose a provider" clears the list instead of leaving a stale one', () => {
+    /** A list left standing under a provider that is no longer chosen is a wrong answer wearing a
+     *  right one's clothes — the same rule the reachability verdict follows when another row
+     *  opens. */
+    const { component, asked, fixture } = setup({ providers: of([STUDIO, VERTEX]) });
+
+    // One askable provider, so opening the window already asked it.
+    component.openBrowse();
+    fixture.detectChanges();
+    expect(component.offerings()?.length).toBe(2);
+
+    component.chooseBrowseProvider('');
+    fixture.detectChanges();
+    expect(component.offerings()).toBeNull();
+    expect(asked).toEqual(['generative-language']);
+  });
+
+  it('opens without a provider list yet, and asks for it once', () => {
+    /** The window can be opened before the gateway has answered — clicking twice must not queue a
+     *  second identical question. */
+    const late = new Subject<GatewayProvider[]>();
+    const { component, fixture } = setup({ providers: late });
+
+    component.openBrowse();
+    component.openBrowse();
+    fixture.detectChanges();
+    expect(component.askable()).toEqual([]);
+    expect(component.browseMatches()).toEqual([]);
+
+    late.next([STUDIO]);
+    late.complete();
+    fixture.detectChanges();
+    expect(component.askable().length).toBe(1);
+  });
+
+  it('catalogues a model even when nothing is known about the provider it came from', () => {
+    /** `catalogueOffered` reads the provider for the provenance it copies, and a window opened
+     *  against a list that never arrived has none. The model is still the model: the form opens
+     *  with the name and without a claim about where it lives. */
+    const { component } = setup({ providers: throwError(() => ({ status: 503 })) });
+
+    component.openBrowse();
+    component.catalogueOffered(OFFERED_FLASH);
+
+    expect(component.showAdd()).toBe(true);
+    expect(component.name()).toBe('gemini-flash-latest');
+    expect(component.provider()).toBe('');
+  });
+
+  it("carries an embedding verb and the vendor's own description", () => {
+    const { component, fixture, text } = setup({
+      offerings: of([
+        {
+          ...OFFERED_EMBED,
+          canEmbed: true,
+          description: 'Obtain a distributed representation of a text.',
+        },
+      ]),
+    });
+
+    component.openBrowse();
+    component.catalogueOffered(component.offerings()![0]);
+    fixture.detectChanges();
+
+    expect(component.capabilities()).toEqual(['embed']);
+    expect(text()).toContain('distributed representation');
+  });
+
+  it("reads the editor's own provider when a model is filled in outside the window", () => {
+    /** `useOffered` is reachable from the editor too, and "is cataloguing enough to reach this"
+     *  has to be answered about the provider on the *form* then — not about a window that is not
+     *  open. */
+    const { component } = setup();
+
+    component.add();
+    component.chooseProvider('generative-language');
+    component.useOffered(OFFERED_FLASH);
+
+    expect(component.mustCheck()).toBe(false);
   });
 });

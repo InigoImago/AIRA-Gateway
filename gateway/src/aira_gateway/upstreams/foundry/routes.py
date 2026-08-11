@@ -59,6 +59,18 @@ class AzureRoutes:
         # a resource with one cold deployment is not an unreachable resource.
         return f"/openai/models?api-version={self._api_version}"
 
+    def names_models(self) -> bool:
+        """No — and this is the platform the distinction was written for (`FRD-507` stage C).
+
+        That listing answers "which models could this resource run", not "which models can be
+        called". Each of them needs a **deployment** first, and the deployment name is what
+        `_deployments` above maps and what every request path carries. A model imported from here
+        would be catalogued, approved, priced — and answer 404 on its first request, with the
+        catalog saying it was ready. Cataloguing is enough to serve a model only where the model
+        name is the whole addressing (`FRD-507` stage B); here it is not.
+        """
+        return False
+
     def body_model(self, model: str) -> str | None:
         # The path already named the deployment. Azure ignores a body `model`, and sending one
         # would put a *caller-facing* name on the wire where a reader would take it for the

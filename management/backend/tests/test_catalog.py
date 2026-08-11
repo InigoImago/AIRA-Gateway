@@ -6,6 +6,7 @@ import pytest
 from aira_management.apps.catalog.models import Model
 from aira_management.apps.usecases import events
 from aira_management.rbac import sync_user_roles
+from aira_management.roles import Role
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
 
@@ -174,3 +175,28 @@ def test_a_model_priced_only_on_input_is_refused() -> None:
         format="json",
     )
     assert resp.status_code == 400
+
+
+def test_who_may_catalogue_is_one_definition_both_planes_read() -> None:
+    """The viewset's permission and the gateway's provider listing answer the same question, so
+    they must not answer it separately.
+
+    `FRD-503` is why this is a test rather than a convention: the gateway's kill switch was
+    guarded by a *visibility* predicate while Management correctly refused the same person, and
+    the two planes disagreed for as long as nobody thought to ask them together. Asking a vendor
+    what its credential offers is only useful to somebody who may act on the answer — which is
+    exactly this permission — and the gateway reads `CATALOG_ROLES` for it.
+    """
+    from aira_management.apps.catalog.views import ModelViewSet
+    from aira_management.rbac import MayCatalogueModels
+
+    from aira_common.roles import CATALOG_ROLES, may_catalogue
+
+    view = ModelViewSet()
+    view.action = "create"
+    assert any(isinstance(p, MayCatalogueModels) for p in view.get_permissions())
+    assert set(MayCatalogueModels.roles) == set(CATALOG_ROLES)
+    # And the shared predicate agrees with the set, in both directions — the check that catches a
+    # role added to one and not the other.
+    for role in Role:
+        assert may_catalogue([str(role)]) is (role in CATALOG_ROLES), role

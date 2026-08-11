@@ -315,7 +315,7 @@ async def test_a_declaration_reaches_the_model_list() -> None:
     from aira_gateway.upstreams.mock import MockProvider
 
     app = _app()
-    app.state.providers = ProviderRegistry([MockProvider(), MockProvider("mock-undeclared")])
+    app.state.providers = ProviderRegistry([MockProvider("mock-1", "mock-undeclared")])
     with TestClient(app) as client:
         await _declare(app, "mock-1", capabilities=["generate", "thinking"], max_output_tokens=4096)
         listed = {

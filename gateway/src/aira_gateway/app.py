@@ -35,6 +35,7 @@ from aira_gateway.api.kira.errors import kira_error_response
 from aira_gateway.api.kira.routes import BASE as KIRA_BASE
 from aira_gateway.api.kira.routes import router as kira_router
 from aira_gateway.api.pipeline import router as pipeline_router
+from aira_gateway.api.providers import router as providers_router
 from aira_gateway.api.reporting import router as reporting_router
 from aira_gateway.api.usage import router as usage_router
 from aira_gateway.auth.dependencies import require_attribution
@@ -234,6 +235,12 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
     app.include_router(usage_router)
     app.include_router(reporting_router)
     app.include_router(incidents_router)
+    # What a vendor offers this installation's credentials (`FRD-507` stage C). Mounted beside the
+    # incident routes rather than inside the Gemini surface on purpose: it is bounded by **role**
+    # and describes the installation, so attaching it to a surface that requires use-case
+    # attribution would demand a use case in order to ask a question that has nothing to do with
+    # one.
+    app.include_router(providers_router)
     # The KIRA surface resolves its own attribution (FRD-107 §5.3): the predecessor has no
     # use-case selector, so the rule is "one membership, or a header" rather than a dependency.
     app.include_router(kira_router)

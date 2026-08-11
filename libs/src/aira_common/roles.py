@@ -74,6 +74,26 @@ OVERSIGHT_ROLES: frozenset[Role] = GOVERNANCE_ROLES | frozenset({Role.IT_SECURIT
 INCIDENT_ROLES: frozenset[Role] = frozenset({Role.GLOBAL_ADMIN, Role.IT_SECURITY})
 
 
+# Roles that may write the model catalog — declare a model, price it, release it for use.
+#
+# A fourth set, and the narrowest. `FRD-307` is the owner's rule: only a model a Global
+# Administrator has catalogued and released may be used at all, so this is the vocabulary in which
+# "may be used here" is decided, and it is deliberately not any of the oversight sets. IT Security
+# investigates incidents across every use case and writes nothing; IT Steuerung sees every figure
+# and writes nothing anywhere (PRD §154).
+#
+# It lives here rather than as `IsGlobalAdmin` in Management because the gateway now answers the
+# same question: asking a vendor what its credential can reach is only useful to somebody who may
+# act on the answer. Two planes deciding that independently is how `FRD-503` found the kill switch
+# guarded by a *visibility* predicate on one side and correctly refused on the other.
+CATALOG_ROLES: frozenset[Role] = frozenset({Role.GLOBAL_ADMIN})
+
+
+def may_catalogue(roles: Iterable[str]) -> bool:
+    """True if any of ``roles`` may declare a model and release it for use."""
+    return any(role in CATALOG_ROLES for role in roles)
+
+
 def may_act_on_incidents(roles: Iterable[str]) -> bool:
     """True if any of ``roles`` may stop traffic or write a rule that applies everywhere."""
     return any(role in INCIDENT_ROLES for role in roles)

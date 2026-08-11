@@ -19,7 +19,7 @@ from rest_framework.response import Response
 from aira_management.apps.catalog.models import Model
 from aira_management.apps.catalog.serializers import ModelSerializer
 from aira_management.apps.usecases.events import emit
-from aira_management.rbac import IsGlobalAdmin
+from aira_management.rbac import MayCatalogueModels
 
 
 def _payload(model: Model) -> dict[str, Any]:
@@ -93,7 +93,7 @@ class ModelViewSet(viewsets.ModelViewSet[Model]):
     def get_permissions(self) -> list[Any]:
         if self.action in ("list", "retrieve"):
             return [IsAuthenticated()]
-        return [IsAuthenticated(), IsGlobalAdmin()]
+        return [IsAuthenticated(), MayCatalogueModels()]
 
     def perform_create(self, serializer: Any) -> None:
         with transaction.atomic():

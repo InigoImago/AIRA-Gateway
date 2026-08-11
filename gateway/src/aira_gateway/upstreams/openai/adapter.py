@@ -20,7 +20,7 @@ from aira_gateway.core.canonical import (
     CanonicalRequest,
     CanonicalResponse,
 )
-from aira_gateway.upstreams.base import UpstreamModel
+from aira_gateway.upstreams.base import OfferedModel, UpstreamModel
 from aira_gateway.upstreams.openai.mapping import (
     SAMPLING as OPENAI_SAMPLING,
 )
@@ -72,6 +72,78 @@ class OpenAIAdapter:
         self._region = region
         self._chat = list(models)
         self._embedding = list(embedding_models or [])
+
+    @property
+    def platform_label(self) -> str:
+        """What to call this upstream on a screen.
+
+        The configured name plus what it is, because the name alone is whatever an operator typed
+        — `local`, `gpu-2`, `ollama` — and a picker offering those beside "Google AI Studio" is
+        asking somebody to remember which is which. The label is derived rather than configured:
+        one more thing to fill in per server is one more thing to leave blank.
+        """
+        kind = "OpenAI-compatible endpoint" if self._routes.names_models() else "Microsoft Foundry"
+        return f"{self._provider} — {kind}"
+
+    @property
+    def serves_provider(self) -> str:
+        """The provider name this adapter owns, so cataloguing a model is enough to serve it.
+
+        Stage B gave the Generative Language adapter this and stopped there, which left the import
+        flow offering a local model that could be catalogued and then would not answer: the
+        configured list was still the only way in, so an imported entry was a declaration with
+        nothing behind it — `FRD-206`'s "an action nobody can carry out", reached by a longer road.
+
+        The name is the **configured server's**, not the class's: a self-hosted fleet is several
+        machines, each audited under its own name (`FRD-123`), and two adapters claiming one name
+        already refuse to boot.
+
+        **Claimed only where the model name is the whole addressing**, which is the same predicate
+        that decides whether the listing is worth asking for — so Foundry, which builds this very
+        class, claims nothing: a catalogued Azure model would resolve here and then fail on a
+        deployment nobody created, and the failure would arrive as a 404 that reads as "the model
+        is gone". Vertex declares no name either, for the other reason: two adapters serve that
+        platform and a name that identifies neither cannot route.
+        """
+        return self._provider if self._routes.names_models() else ""
+
+    @property
+    def provenance(self) -> tuple[str, str, str]:
+        """Stated once, so an empty configured list still produces a complete audit row.
+
+        The same correction stage B had to make for Google: provenance is read from the registry,
+        and a catalogue-resolved model has no entry there. An empty residency column is worse than
+        the second list this removes — "the configuration says on-premises" is a claim and "this
+        request went to on-premises" is evidence, and blank is neither.
+        """
+        return (self._provider, self._publisher, self._region)
+
+    @property
+    def enumerates(self) -> bool:
+        """Whether this *instance* can be asked for a model list worth importing.
+
+        An instance question, not a class one, which is why `Enumerable` carries the flag rather
+        than letting an ``isinstance`` decide: the same class serves a plain endpoint and Azure,
+        and only one of them lists names a caller can use.
+        """
+        return self._routes.names_models()
+
+    async def available_models(self) -> list[OfferedModel]:
+        """The endpoint's own listing, as names and nothing else.
+
+        Bare on purpose. This dialect's listing publishes an id, an owner and a timestamp — no
+        context window, no method list, no capabilities — so every capability stays ``None``:
+        *the vendor said nothing*. It would be one line to fill in `can_generate=True` on the
+        grounds that a chat server serves chat models, and that line would turn an assumption into
+        a declaration on a screen whose whole subject is that a declaration is a measurement.
+        """
+        listing = await self._transport.get(self._routes.listing())
+        entries = listing.get("data") or []
+        return [
+            OfferedModel(name=str(entry["id"]))
+            for entry in entries
+            if isinstance(entry, dict) and entry.get("id")
+        ]
 
     sampling_controls = OPENAI_SAMPLING
     #: `response_format` and `tools` are separate fields in this dialect.

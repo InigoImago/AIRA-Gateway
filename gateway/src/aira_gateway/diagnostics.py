@@ -126,12 +126,17 @@ class UpstreamProbe:
         return dict(self._verdicts)
 
     def _each_provider(self) -> list[object]:
-        seen: dict[int, object] = {}
-        for model in self.registry.models():
-            provider = self.registry.provider_for(model.name)
-            if provider is not None:
-                seen[id(provider)] = provider
-        return list(seen.values())
+        """Every registered adapter — including one that serves no *configured* model.
+
+        The second half was missing until 2026-08-10, and it stopped being a hypothetical the day
+        cataloguing a model became enough to serve it (`FRD-507` stage B). An adapter whose
+        configured list is empty — which a Google AI Studio deployment now normally has — appeared
+        in no model's provenance, so this walked past it and `/readyz` said **nothing at all**
+        about that upstream. Nothing is the wrong answer: `FRD-117`'s rule is that "we did not
+        look" and "it is fine" are different verdicts, and an upstream that is silently not probed
+        reads as the first while behaving like neither.
+        """
+        return list(self.registry.each())
 
     async def _ask(self, name: str, provider: object) -> Verdict:
         """One provider, one cheap remote question, one verdict."""

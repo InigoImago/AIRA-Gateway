@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import Protocol, TypeIs, runtime_checkable
 
 from aira_gateway.core.canonical import (
     CanonicalChunk,
@@ -48,6 +48,71 @@ class UpstreamModel:
     provider: str = ""
     publisher: str = ""
     region: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class OfferedModel:
+    """A model a **vendor** says this credential can reach (`FRD-507` stage C).
+
+    Not an `UpstreamModel`: that one describes a model this gateway is *wired for*, and every
+    field of it is something an operator configured. This one describes what the vendor answered
+    when asked, and the difference decides what a catalog import may copy.
+
+    Every capability here is **three-valued on purpose**. ``None`` means *the vendor said nothing*,
+    which is not the same answer as ``False`` — Google returns an exhaustive method list, so a verb
+    missing from it really is a "no"; an OpenAI-compatible listing returns bare ids and says
+    nothing at all. Collapsing the two would turn silence into a declaration, which is `FRD-114`
+    FR-7's mistake in a dataclass field, and the console would pre-fill an unticked box that reads
+    as a decision somebody made.
+
+    What is deliberately **absent**: a price. No listing publishes one in a usable form, and an
+    invented price is worse than none (`FRD-403`).
+    """
+
+    name: str
+    display_name: str = ""
+    description: str = ""
+    #: The vendor's own output ceiling, where it publishes one. An interface fact: the API refuses
+    #: a larger request, so this is measured rather than claimed.
+    max_output_tokens: int | None = None
+    can_generate: bool | None = None
+    can_embed: bool | None = None
+    can_cache_prompts: bool | None = None
+    #: Whether the vendor describes the model as reasoning. Information for whoever declares it,
+    #: never a declaration: `FRD-114` needs modes and budgets, and `FRD-132` measured two models of
+    #: one family answering differently. A catalog import shows this and fills in nothing.
+    thinking: bool | None = None
+
+
+@runtime_checkable
+class Enumerable(Protocol):
+    """An adapter that can be asked what its vendor offers this credential.
+
+    Two members rather than one, and the second is the point. Whether a listing exists is a
+    property of the **platform**, not of the dialect: the OpenAI adapter serves both a plain
+    endpoint — whose ids *are* model names — and Azure, whose listing names models that cannot be
+    reached until somebody creates a deployment for them. One class, two answers, so the answer
+    cannot be an ``isinstance`` check alone.
+    """
+
+    #: Whether asking this instance would produce names a caller could actually use.
+    enumerates: bool
+
+    async def available_models(self) -> list[OfferedModel]: ...
+
+
+def can_enumerate(upstream: object) -> TypeIs[Enumerable]:
+    """Whether ``upstream`` can be asked for a model list that means something.
+
+    One function because two callers need the same answer — the provider list, which *offers* the
+    question, and the offerings endpoint, which *answers* it. A picker that offered a provider the
+    endpoint then refuses is `FRD-206`'s complaint in miniature: an action nobody can carry out.
+
+    A ``TypeIs`` rather than a ``bool`` so the second caller does not have to restate the condition
+    to satisfy the type checker — a restated rule is the shape of defect this project has recorded
+    under `FRD-126`, `FRD-206` and `FRD-602`.
+    """
+    return isinstance(upstream, Enumerable) and bool(upstream.enumerates)
 
 
 @runtime_checkable
@@ -93,6 +158,11 @@ class ProviderRegistry:
     """Resolves model names to providers and lists available models."""
 
     def __init__(self, providers: list[Upstream]) -> None:
+        #: Every adapter, in registration order. Kept because "which upstreams does this
+        #: installation have" is a different question from "who serves this model name", and
+        #: answering the first by walking the second is what left an adapter with an empty
+        #: configured list invisible to the readiness probe (`FRD-507` stage C).
+        self._all: list[Upstream] = list(providers)
         self._by_model: dict[str, Upstream] = {}
         self._models: dict[str, UpstreamModel] = {}
         #: Which adapter owns a **provider name**, so a model the catalog knows can be served
@@ -126,6 +196,26 @@ class ProviderRegistry:
                     )
                 self._by_model[model.name] = provider
                 self._models[model.name] = model
+
+    def each(self) -> list[Upstream]:
+        """Every registered adapter, whatever it serves and however it is addressed."""
+        return list(self._all)
+
+    def by_name(self) -> dict[str, Upstream]:
+        """Every adapter that owns a **provider name**, keyed by it (`FRD-507` stage C).
+
+        Not derived from `models()`, and that is the whole reason this exists. Since cataloguing a
+        model became enough to serve it (stage B), a working deployment can have an adapter with an
+        **empty** configured list — Google AI Studio's is exactly that — and every consumer that
+        walked the model list therefore could not see it at all. The readiness probe was the first
+        casualty: it reported nothing whatsoever about that upstream, and *absent* reads as "no such
+        thing", which is the wrong half of `FRD-117`'s distinction between "we did not look" and
+        "it is fine".
+
+        An adapter that claims no provider name is not here, deliberately: a caller cannot address
+        it by name either, so there is nothing for a console to offer.
+        """
+        return dict(self._by_provider)
 
     def provenance_for(self, provider: str) -> tuple[str, str, str] | None:
         """Where an adapter that owns a provider name reaches its models (`FRD-507`).

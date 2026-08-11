@@ -16,9 +16,26 @@
     <div class="card">
       <div class="spread">
         <h3 class="section-title" style="margin: 0">Model declarations</h3>
-        <button type="button" class="btn btn--primary" (click)="add()" data-testid="add-model">
-          + Add model
-        </button>
+        <div class="row">
+          <!--
+            Beside "Add model", because it is the same act arrived at from the other end: one
+            starts from an empty form, the other from what a vendor says this installation's
+            credential can reach. Its own window rather than a picker inside the editor — one real
+            key answered with **50 models**, and a dropdown of fifty inside a form with eighteen
+            fields is a control somebody scrolls past.
+          -->
+          <button
+            type="button"
+            class="btn"
+            (click)="openBrowse()"
+            data-testid="browse-provider-models"
+          >
+            Add from a provider…
+          </button>
+          <button type="button" class="btn btn--primary" (click)="add()" data-testid="add-model">
+            + Add model
+          </button>
+        </div>
       </div>
       <p class="muted" style="margin: 0.5rem 0 0">
         A declaration is what the gateway enforces: the output cap, what the model can be asked to
@@ -372,17 +389,88 @@
             autocomplete="off"
           />
         </div>
+        <!--
+          Provider first, model second — the order somebody actually works in, and the order that
+          lets the second question be answered *by the gateway* instead of typed. It used to be a
+          text box: a model was declared under whatever string was entered, and the two refusals a
+          typo produces ("not in the model catalog", "has not been approved") are both correct and
+          neither names the string that was wrong.
+        -->
         <div class="field">
-          <label for="model-provider">Provider</label>
-          <input
-            id="model-provider"
-            name="provider"
-            [ngModel]="provider()"
-            (ngModelChange)="provider.set($event)"
-            placeholder="google"
-            autocomplete="off"
-          />
+          <label for="model-provider">
+            Provider
+            <app-info-hint label="Provider" testid="provider-hint" [wide]="true">
+              Which of this gateway's configured upstreams reaches the model. The list is what the
+              gateway actually has — not what the product supports — because a provider no
+              credential reaches is a choice that cannot work. A model may be declared before its
+              platform is configured: choose <em>Something else</em> and type the name.
+            </app-info-hint>
+          </label>
+          @if (providerIsCustom()) {
+            <input
+              id="model-provider"
+              name="provider"
+              [ngModel]="provider()"
+              (ngModelChange)="provider.set($event)"
+              placeholder="generative-language"
+              autocomplete="off"
+              data-testid="provider-typed"
+            />
+            @if (!providersError() && (providers() ?? []).length) {
+              <button
+                type="button"
+                class="btn btn--sm btn--ghost"
+                (click)="providerIsCustom.set(false)"
+                data-testid="provider-back-to-list"
+              >
+                Choose a configured one instead
+              </button>
+            }
+          } @else {
+            <select
+              id="model-provider"
+              name="provider"
+              [ngModel]="provider()"
+              (ngModelChange)="chooseProvider($event)"
+              data-testid="provider-select"
+            >
+              <option value="">{{ loadingProviders() ? 'Asking the gateway…' : '—' }}</option>
+              @for (upstream of providers() ?? []; track upstream.name) {
+                <option [value]="upstream.name">{{ providerLabel(upstream) }}</option>
+              }
+              <option [value]="OTHER">Something else — type it</option>
+            </select>
+          }
+          @if (providersError(); as message) {
+            <!-- Informs, never blocks. Declaring a model before its credential exists is the
+                 ordinary order of work, so a gateway that cannot be reached degrades to the text
+                 box it replaced rather than locking somebody out of their own catalog. -->
+            <span class="field__hint" data-testid="providers-unavailable">
+              {{ message }} Type the provider name instead.
+            </span>
+          } @else if (selectedProvider(); as upstream) {
+            <span class="field__hint" data-testid="provider-note">
+              @if (upstream.cataloguedIsEnough) {
+                Cataloguing a model here is enough to reach it — no configuration entry needed.
+              } @else {
+                This platform needs the model named in the gateway's configuration as well;
+                cataloguing it alone will not make it answer.
+              }
+            </span>
+          }
         </div>
+
+        @if (vendorFilled().length) {
+          <p class="callout grow" data-testid="vendor-filled" style="margin: 0">
+            Filled in from {{ provider() }}: {{ vendorFilled().join(', ') }}. Left for you: the
+            price, and what the model can actually do beyond the verbs its API publishes — a
+            vendor's capability flag is a claim, and a price nobody set is not zero. Nothing is
+            written until you save, and a model is not usable until you release it.
+            @for (note of vendorSaid(); track note) {
+              <span class="muted" style="display: block; margin-top: 0.35rem">{{ note }}</span>
+            }
+          </p>
+        }
         <div class="field">
           <label for="model-input">Input price / 1M</label>
           <input
@@ -619,6 +707,209 @@
       >
         {{ busy() ? 'Saving…' : 'Save' }}
       </button>
+    </div>
+  </div>
+}
+
+<!--
+  What a vendor offers this installation's credential (`FRD-507` stage C).
+
+  A window of its own, because the answer is long: one real key listed 50 models. It lists rather
+  than picks — every entry is visible, searchable and marked when the catalog already has it — and
+  it ends by handing exactly one model to the editor, where the price, the capabilities and the
+  release checkbox are still somebody's decision.
+-->
+@if (showBrowse()) {
+  <div class="modal-backdrop" (click)="closeBrowse()"></div>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="browse-title" tabindex="-1">
+    <div class="modal__head">
+      <h3 id="browse-title" style="margin: 0">Add a model from a provider</h3>
+      <button
+        type="button"
+        class="btn btn--sm btn--ghost"
+        aria-label="Close"
+        (click)="closeBrowse()"
+      >
+        ✕
+      </button>
+    </div>
+
+    <div class="modal__body">
+      <div class="form-inline">
+        <div class="field grow">
+          <label for="browse-provider">Provider</label>
+          <select
+            id="browse-provider"
+            name="browse_provider"
+            [ngModel]="browseProvider()"
+            (ngModelChange)="chooseBrowseProvider($event)"
+            data-testid="browse-provider"
+          >
+            <option value="">
+              {{ loadingProviders() ? 'Asking the gateway…' : 'Choose a provider…' }}
+            </option>
+            @for (upstream of askable(); track upstream.name) {
+              <option [value]="upstream.name">{{ providerLabel(upstream) }}</option>
+            }
+          </select>
+          <span class="field__hint">
+            Only the providers that can be <em>asked</em> for a list are here. A platform without
+            one is not broken — its models are named in the gateway's configuration or typed into
+            the catalog, which is what <strong>+ Add model</strong> is for.
+          </span>
+        </div>
+      </div>
+
+      @if (providersError(); as message) {
+        <p class="callout callout--danger" role="alert" data-testid="browse-providers-error">
+          {{ message }}
+        </p>
+      } @else if (!loadingProviders() && !(providers() ?? []).length) {
+        <!--
+          Two different facts, and they were one message until somebody would have read the wrong
+          one. "No provider is configured" is a missing **credential**; "none publishes a list" is
+          a missing **capability**. The first is fixed in the gateway's environment, the second is
+          not fixed at all.
+        -->
+        <p class="empty" data-testid="browse-no-providers">
+          This gateway has no upstream configured, so there is nobody to ask. An adapter is
+          registered only when its credential is — set one (a Google AI Studio key, a Vertex service
+          account, a self-hosted server) and restart the gateway. You can still declare a model here
+          in the meantime; it will not be servable until an adapter reaches it.
+        </p>
+      } @else if (!loadingProviders() && !askable().length) {
+        <p class="empty" data-testid="browse-none-askable">
+          This gateway's providers are configured, but none of them publishes a model list. That is
+          a property of the platform rather than a fault — name the models in the gateway's
+          configuration or add them by name with <strong>+ Add model</strong>, and use the
+          reachability check to see whether anything serves them.
+        </p>
+      }
+
+      @if (loadingOfferings()) {
+        <p class="loading" data-testid="offerings-loading">
+          <span class="spinner" aria-hidden="true"></span>
+          Asking {{ browseProvider() }} what it offers…
+        </p>
+      } @else if (offeringsError(); as message) {
+        <p class="callout callout--danger" role="alert" data-testid="offerings-error">
+          {{ message }}
+        </p>
+      } @else if (offerings(); as list) {
+        <div class="table-tools" style="padding: 0 0 0.6rem">
+          <label class="search">
+            <span>Find a model</span>
+            <input
+              type="search"
+              [value]="browseSearch()"
+              (input)="browseSearch.set($any($event.target).value)"
+              placeholder="part of a model name"
+              data-testid="offerings-search"
+              autocomplete="off"
+            />
+          </label>
+          <span class="muted" style="font-size: 0.85rem" data-testid="offerings-count">
+            {{ list.length }} offered by this credential
+          </span>
+        </div>
+
+        @if (!list.length) {
+          <p class="empty" data-testid="offerings-empty">
+            This provider answered with no models at all. That is a fact about the credential, not
+            about the provider — a key with no models enabled lists none.
+          </p>
+        } @else if (!browseMatches().length) {
+          <p class="empty" data-testid="offerings-no-match">
+            No model matches “{{ browseSearch() }}”. The provider offers {{ list.length }}.
+          </p>
+        } @else {
+          <!--
+            Scrollable, and bounded by the viewport rather than by a fixed height: fifty rows are
+            longer than any screen, and a window that grows past the bottom takes its own footer
+            with it.
+          -->
+          <div class="table-wrap" style="max-height: 45vh; overflow-y: auto">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th scope="col">Model</th>
+                  <th scope="col">The provider says</th>
+                  <th scope="col"><span class="sr-only">Actions</span></th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (model of browseMatches(); track model.name) {
+                  <tr>
+                    <td>
+                      <code>{{ model.name }}</code>
+                      @if (model.displayName && model.displayName !== model.name) {
+                        <div class="muted" style="font-size: 0.8rem">{{ model.displayName }}</div>
+                      }
+                    </td>
+                    <td>
+                      <!--
+                        What the vendor stated, and only that. A capability it said nothing about
+                        renders as nothing — an unticked box or a "no" here would be this feature's
+                        own defect on display: silence turned into a declaration.
+                      -->
+                      @if (model.canGenerate) {
+                        <span class="badge">generates</span>
+                      }
+                      @if (model.canEmbed) {
+                        <span class="badge">embeds</span>
+                      }
+                      @if (model.canCachePrompts) {
+                        <span class="badge">caches prompts</span>
+                      }
+                      @if (model.thinking) {
+                        <span class="badge badge--warning">reasons — measure it</span>
+                      }
+                      @if (model.maxOutputTokens) {
+                        <span class="muted" style="font-size: 0.8rem">
+                          up to {{ model.maxOutputTokens }} output tokens
+                        </span>
+                      }
+                    </td>
+                    <td class="table__actions">
+                      @if (isCatalogued(model)) {
+                        <span class="badge badge--success">in the catalog</span>
+                        <button
+                          type="button"
+                          class="btn btn--sm"
+                          (click)="catalogueOffered(model)"
+                          [attr.data-testid]="'offered-' + model.name"
+                        >
+                          Open it
+                        </button>
+                      } @else {
+                        <button
+                          type="button"
+                          class="btn btn--sm btn--primary"
+                          (click)="catalogueOffered(model)"
+                          [attr.data-testid]="'offered-' + model.name"
+                        >
+                          Catalogue…
+                        </button>
+                      }
+                    </td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+          <p class="muted" style="margin: 0.5rem 0 0; font-size: 0.85rem">
+            Offered by an endpoint, not ready to use. Choosing one opens the editor with the name
+            and where it is reached filled in; the price and what the model can actually do are
+            still yours to enter, and nothing is servable until you release it. An endpoint listing
+            a model is not a promise that it answers — one listed here returned
+            <em>no longer available to new users</em> on its first request.
+          </p>
+        }
+      }
+    </div>
+
+    <div class="modal__foot">
+      <button type="button" class="btn" (click)="closeBrowse()">Close</button>
     </div>
   </div>
 }

@@ -130,7 +130,7 @@ async def test_a_fallback_chain_skips_a_model_that_cannot_read_the_document() ->
     app = _app()
     # The catalog says what a model may do; the registry says which adapter holds it. Both are
     # needed, and they are separate authorities on purpose (FRD-114 §5.2).
-    app.state.providers = ProviderRegistry([MockProvider("mock-1"), MockProvider("mock-2")])
+    app.state.providers = ProviderRegistry([MockProvider("mock-1", "mock-2")])
     with TestClient(app) as client:
         await _declare(app, "mock-1", capabilities=["generate"])  # primary: text only
         await _declare(app, "mock-2", **_READS_PDF)  # fallback: reads PDFs
@@ -156,7 +156,7 @@ async def test_a_chain_where_nothing_can_read_it_fails_rather_than_answering() -
     from aira_gateway.pipeline.config import Pipeline
 
     app = _app()
-    app.state.providers = ProviderRegistry([MockProvider("mock-1"), MockProvider("mock-2")])
+    app.state.providers = ProviderRegistry([MockProvider("mock-1", "mock-2")])
     with TestClient(app) as client:
         await _declare(app, "mock-1", capabilities=["generate"])
         await _declare(app, "mock-2", capabilities=["generate"])

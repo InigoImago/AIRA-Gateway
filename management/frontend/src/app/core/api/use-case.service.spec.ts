@@ -111,6 +111,30 @@ describe('UseCaseService', () => {
     req.flush({ name: 'm-1' });
   });
 
+  it('asks the gateway which providers it is configured with', () => {
+    /** The gateway, not Management: which upstreams exist is a property of the gateway's
+     *  configuration and nothing else knows it. A hard-coded list here would be what the *product*
+     *  supports rather than what *this installation* has. */
+    service.providers().subscribe((providers) => expect(providers.length).toBe(1));
+    const req = http.expectOne('/gw/v1beta/providers');
+    expect(req.request.method).toBe('GET');
+    req.flush({ providers: [{ name: 'generative-language' }] });
+  });
+
+  it('reads an empty provider list as empty rather than as undefined', () => {
+    service.providers().subscribe((providers) => expect(providers).toEqual([]));
+    http.expectOne('/gw/v1beta/providers').flush({});
+  });
+
+  it('encodes the provider name when asking what it offers', () => {
+    /** A provider name comes from configuration somebody else wrote; an unencoded `/` would
+     *  silently retarget the request at a different endpoint (`ADR-0007`). */
+    service.providerOfferings('vendor/x').subscribe((models) => expect(models.length).toBe(1));
+    const req = http.expectOne('/gw/v1beta/providers/vendor%2Fx/offerings');
+    expect(req.request.method).toBe('GET');
+    req.flush({ models: [{ name: 'gemini-flash-latest' }] });
+  });
+
   it('encodes the model name when removing it', () => {
     service.removeModel('vendor/model:1').subscribe();
     const req = http.expectOne('/api/v1/models/vendor%2Fmodel%3A1/');
@@ -149,7 +173,7 @@ describe('UseCaseService', () => {
 
   it('saves the pipeline with PUT', () => {
     const config = {
-      steps: [{ type: 'allow_check' as const, config: {} }],
+      steps: [{ type: 'model_route' as const, config: {} }],
       fallback_models: ['b'],
     };
     service.savePipeline('uc', config).subscribe();

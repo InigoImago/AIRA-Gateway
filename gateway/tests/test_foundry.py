@@ -291,3 +291,23 @@ async def test_a_non_azure_endpoint_still_names_the_model_in_the_body() -> None:
 
     assert seen["path"] == "/v1/chat/completions"
     assert seen["body"]["model"] == "gpt-4o"
+
+
+def test_azure_owns_no_provider_name_and_offers_no_importable_listing() -> None:
+    """`FRD-507` stage C, and this platform is what the distinction was written for.
+
+    Cataloguing a model is enough to serve it exactly where the model name is the **whole**
+    addressing (stage B). Here it is not: `/openai/models` answers "which models could this
+    resource run", and each of them needs a deployment created first. An adapter that claimed its
+    provider name would let a catalogued Azure model resolve to it and fail on a deployment nobody
+    created — a 404 that reads as "the model is gone" while the catalog says it is ready. An
+    import offered from that listing would produce the same entry, with the console vouching for
+    it.
+
+    Foundry builds the **OpenAI adapter class**, so both answers have to be properties of the
+    routing axis rather than of the class, or the plain endpoint loses them too.
+    """
+    azure = _adapter(_ok(COMPLETION))
+
+    assert azure.serves_provider == ""
+    assert azure.enumerates is False

@@ -620,3 +620,45 @@ def test_a_credential_failure_from_the_provider_is_not_handed_to_the_caller() ->
     with pytest.raises(Exception) as masked:
         transport._raise_for_status(unauthorised)
     assert "sk-abc123" not in str(masked.value)
+
+
+# == what this endpoint offers, asked rather than typed (`FRD-507` stage C) =======================
+
+
+async def test_the_listing_becomes_names_and_nothing_else() -> None:
+    """This dialect's listing publishes an id, an owner and a timestamp. No context window, no
+    method list, no capabilities — so every capability stays `None`: *the vendor said nothing*.
+
+    It would be one line to fill in `can_generate=True` on the grounds that a chat server serves
+    chat models, and that line would turn an assumption into a declaration on a screen whose whole
+    subject is that a declaration is a measurement (`FRD-114` FR-7)."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/models"
+        return httpx.Response(
+            200,
+            json={"data": [{"id": "qwen3:0.6b"}, {"id": "nomic-embed-text"}, {"object": "model"}]},
+        )
+
+    offered = await _adapter(handler).available_models()
+
+    assert [model.name for model in offered] == ["qwen3:0.6b", "nomic-embed-text"]
+    assert offered[0].can_generate is None
+    assert offered[0].max_output_tokens is None
+
+
+def test_a_server_that_serves_nothing_configured_still_states_where_it_ran() -> None:
+    """The correction stage B had to make for Google, one adapter over: provenance is read from the
+    registry, and a catalogue-resolved model has no entry there. An empty residency column is worse
+    than the second list this removes — "the configuration says on-premises" is a claim and "this
+    request went to on-premises" is evidence, and blank is neither."""
+    adapter = OpenAIAdapter(
+        OpenAITransport(client=httpx.AsyncClient()),
+        [],
+        provider="ollama",
+        publisher="local",
+        region="on-premises",
+    )
+
+    assert adapter.models() == []
+    assert adapter.provenance == ("ollama", "local", "on-premises")

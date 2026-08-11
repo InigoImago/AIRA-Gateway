@@ -77,6 +77,8 @@ class VertexModel:
 class VertexGeminiAdapter:
     """Google models on Vertex. Same bodies as the Generative Language API, different URL."""
 
+    platform_label = "Google Vertex AI"
+
     def __init__(self, transport: VertexTransport, models: list[VertexModel]) -> None:
         self._transport = transport
         self._models = {model.name: model for model in models}
@@ -131,6 +133,8 @@ class VertexGeminiAdapter:
 
 class VertexAnthropicAdapter:
     """Anthropic models on Vertex: `:rawPredict`, and a different body in both directions."""
+
+    platform_label = "Google Vertex AI"
 
     def __init__(
         self,

@@ -27,7 +27,7 @@ from aira_gateway.core.canonical import (
     ToolCallPart,
 )
 from aira_gateway.core.schema import ResponseSchema, SchemaType
-from aira_gateway.upstreams.base import UpstreamModel
+from aira_gateway.upstreams.base import OfferedModel, UpstreamModel
 
 _STREAM_WORDS_PER_CHUNK = 3
 _DEFAULT_DIMENSIONS = 8
@@ -45,12 +45,41 @@ class MockProvider:
 
     """A deterministic, offline provider exposing a single ``mock-1`` model."""
 
-    def __init__(self, model: str = "mock-1") -> None:
-        self._model = UpstreamModel(
-            name=model,
-            version=model,
-            supported_methods=("generateContent", "streamGenerateContent", "embedContent"),
-        )
+    #: The provider name this adapter owns (`FRD-507`), and where it says its answers come from.
+    #:
+    #: Stated for the same reason every option is honoured above: a feature that can only be
+    #: exercised against a cloud nobody has in CI is a feature nobody exercises. The provider
+    #: picker, the vendor listing and the import are all demonstrable on a laptop because this
+    #: names itself — and `local` is the only environment it is registered in, so nothing in a
+    #: deployment can be catalogued under it.
+    #: **No region, deliberately.** The same rule `build_openai_upstreams` records: a region is a
+    #: claim, and `RegionAllowed` checks every model that makes one — so declaring `local` here
+    #: made every mock request fail residency under the EU default, which is a correct control
+    #: refusing a fiction. Nothing runs anywhere; there is nothing to claim.
+    platform_label = "Mock — deterministic fiction, local only"
+    serves_provider = "mock"
+    provenance = (serves_provider, "aira", "")
+    enumerates = True
+
+    def __init__(self, *models: str) -> None:
+        """One adapter, however many models a test needs.
+
+        It took one model until 2026-08-10, so a test wanting two registered **two adapters** — and
+        the moment this provider owned a name, that became two adapters claiming it, which is the
+        ambiguity `ProviderRegistry` refuses to boot on and refuses correctly. The registry was
+        right and the expression was wrong: those tests never meant two upstreams, they meant one
+        upstream serving two models.
+        """
+        self._models = [
+            UpstreamModel(
+                name=name,
+                version=name,
+                supported_methods=("generateContent", "streamGenerateContent", "embedContent"),
+                provider=self.serves_provider,
+                publisher="aira",
+            )
+            for name in (models or ("mock-1",))
+        ]
 
     #: The mock is our own code, so it can honour anything the canonical request carries — and
     #: it must declare that rather than inherit it, or the declaration would be optional in
@@ -62,7 +91,31 @@ class MockProvider:
     tools_with_schema = True
 
     def models(self) -> list[UpstreamModel]:
-        return [self._model]
+        return list(self._models)
+
+    async def available_models(self) -> list[OfferedModel]:
+        """What this "vendor" offers — which for a deterministic double is what it serves.
+
+        It states the two verbs it really implements and **says nothing about the rest**, exactly
+        as a real listing does: a mock that claimed every capability would make the import's whole
+        subject — that a vendor's silence must not become a declaration — true by construction and
+        untested (`FRD-133` made the same choice about never reporting a cache hit).
+        """
+        return [
+            OfferedModel(
+                name=model.name,
+                display_name="Mock model (deterministic fiction)",
+                description="Answers without contacting anything. Not a model.",
+                can_generate=True,
+                can_embed=True,
+                can_cache_prompts=False,
+            )
+            for model in self._models
+        ]
+
+    async def ping(self) -> str:
+        """Answers instantly and contacts nothing, which is the honest verdict for a double."""
+        return f"{len(self._models)} model(s) listed"
 
     async def generate(self, request: CanonicalRequest) -> CanonicalResponse:
         if request.tools:

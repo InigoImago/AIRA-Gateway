@@ -14,8 +14,10 @@ import {
   CAPABILITIES,
   Capability,
   CatalogModel,
+  GatewayProvider,
   Me,
   ModelCheck,
+  OfferedModel,
   ServedModel,
 } from '../../core/api/models';
 import { MeService } from '../../core/api/me.service';
@@ -294,11 +296,17 @@ export class ModelCatalog implements OnInit {
     this.defaultOutput.set(null);
     this.deprecated.set(false);
     this.approved.set(false);
+    // The vendor's answers belong to the model that was open. Left standing, they describe the
+    // previous one — a note saying "its output cap was filled in" beside a form where it was not.
+    this.providerIsCustom.set(false);
+    this.vendorFilled.set([]);
+    this.vendorSaid.set([]);
   }
 
   /** Open the window empty, for a model the catalog does not have yet. */
   protected add(): void {
     this.reset();
+    this.loadProviders();
     this.checkedName.set(null);
     // A verdict about the last model, left on a window that is now about a new one, is a wrong
     // answer wearing a right one's clothes.
@@ -460,6 +468,7 @@ export class ModelCatalog implements OnInit {
    */
   protected importServed(model: ServedModel): void {
     this.reset();
+    this.loadProviders();
     this.name.set(model.name);
     this.provider.set(model.airaProvider ?? '');
     this.publisher.set(model.airaPublisher ?? '');
@@ -468,9 +477,298 @@ export class ModelCatalog implements OnInit {
     this.showAdd.set(true);
   }
 
+  // ---- the provider, and what it offers (`FRD-507` stage C) --------------------------------
+  //
+  // The field was a text box. A model is declared under whatever string somebody typed, and the
+  // two refusals a typo produces — `not in the model catalog` and `has not been approved` — are
+  // both correct and neither says which string was wrong. What the gateway is configured with is
+  // a fact it already has; asking it removes the transcription and leaves the decision.
+
+  /** The upstreams this gateway is configured with, or `null` until asked. */
+  protected readonly providers = signal<GatewayProvider[] | null>(null);
+  protected readonly loadingProviders = signal(false);
+  /**
+   * Why the list could not be fetched, if it could not.
+   *
+   * Not fatal, and that is deliberate. Declaring a model **before** its credential exists is the
+   * ordinary order of work — you write the catalog, then configure the platform — so a gateway
+   * that cannot be reached must degrade to the text box it replaced rather than lock somebody out
+   * of their own catalog. `FRD-114`'s rule one level up: a diagnostic informs, it does not block.
+   */
+  protected readonly providersError = signal<string | null>(null);
+
+  /** The sentinel the select uses for "not one of these". */
+  protected readonly OTHER = '__other__';
+  /** Whether the provider is being typed rather than chosen. */
+  protected readonly providerIsCustom = signal(false);
+
+  protected readonly selectedProvider = computed(
+    () => (this.providers() ?? []).find((p) => p.name === this.provider()) ?? null,
+  );
+
+  // ---- browsing a vendor's own catalogue ---------------------------------------------------
+  //
+  // Its own window rather than a picker inside the editor, and the reason is size: one real key
+  // answered with **50 models**. A dropdown of fifty inside a form that already has eighteen
+  // fields is a control somebody scrolls past; a window can list them, mark the ones already
+  // catalogued, be searched, and hand exactly one of them to the editor.
+  //
+  // Two windows, one at a time: browsing ends by opening the editor.
+
+  protected readonly showBrowse = signal(false);
+  /** The provider being browsed. Deliberately **not** the editor's `provider` signal: opening a
+   *  window to look at something must not edit the form behind it. */
+  protected readonly browseProvider = signal('');
+  protected readonly browseSearch = signal('');
+
+  /** What this provider offers, once asked. `null` means not asked or not askable. */
+  protected readonly offerings = signal<OfferedModel[] | null>(null);
+  protected readonly loadingOfferings = signal(false);
+  protected readonly offeringsError = signal<string | null>(null);
+
+  /** The providers that can actually be asked — the only ones this window is about. */
+  protected readonly askable = computed(() =>
+    (this.providers() ?? []).filter((provider) => provider.canEnumerate),
+  );
+
+  protected readonly browsedProvider = computed(
+    () => (this.providers() ?? []).find((p) => p.name === this.browseProvider()) ?? null,
+  );
+
+  /** The offered models matching the search box, or all of them. */
+  protected readonly browseMatches = computed(() => {
+    const query = this.browseSearch().trim().toLowerCase();
+    const list = this.offerings() ?? [];
+    if (!query) return list;
+    return list.filter((model) =>
+      `${model.name} ${model.displayName} ${model.description}`.toLowerCase().includes(query),
+    );
+  });
+
+  protected openBrowse(): void {
+    this.showBrowse.set(true);
+    this.browseSearch.set('');
+    this.offerings.set(null);
+    this.offeringsError.set(null);
+    this.loadProviders(() => {
+      // One provider that can be asked is not a choice, and a select with a single option is a
+      // click that teaches nothing. Two or more, and the reader picks.
+      const askable = this.askable();
+      if (askable.length === 1 && !this.browseProvider())
+        this.chooseBrowseProvider(askable[0].name);
+    });
+  }
+
+  protected closeBrowse(): void {
+    this.showBrowse.set(false);
+    this.browseProvider.set('');
+    this.offerings.set(null);
+    this.offeringsError.set(null);
+    this.browseSearch.set('');
+  }
+
+  protected chooseBrowseProvider(name: string): void {
+    this.browseProvider.set(name);
+    this.browseSearch.set('');
+    this.offerings.set(null);
+    this.offeringsError.set(null);
+    if (name) this.loadOfferings(name);
+  }
+
+  /**
+   * What was copied from the vendor's answer, named.
+   *
+   * The point of the sentence, not decoration: an import that silently fills six fields and
+   * silently leaves five others is indistinguishable from one that was supposed to fill them all
+   * and failed. A reader has to be able to see that the price and the capabilities are theirs to
+   * enter, at the moment they are looking at a form that is suddenly half full.
+   */
+  protected readonly vendorFilled = signal<string[]>([]);
+  /** What the vendor said that the console deliberately did **not** turn into a declaration. */
+  protected readonly vendorSaid = signal<string[]>([]);
+
+  private loadProviders(then?: () => void): void {
+    if (this.providers() !== null) {
+      then?.();
+      return;
+    }
+    if (this.loadingProviders()) return;
+    this.loadingProviders.set(true);
+    this.service.providers().subscribe({
+      next: (providers) => {
+        this.loadingProviders.set(false);
+        this.providers.set(providers);
+        then?.();
+        // Decided in **both** directions, and the first version only did one. Opening the editor
+        // fires this call, so a form already carrying a provider is laid out before the answer
+        // arrives — and a one-way rule left a perfectly configured provider stuck in the text box
+        // it was supposed to replace, for every model opened faster than the gateway answered.
+        //
+        // A provider the gateway does not have is still not an error: it is a model declared
+        // ahead of its credential, which is the ordinary order of work.
+        if (this.provider()) {
+          this.providerIsCustom.set(!providers.some((p) => p.name === this.provider()));
+        }
+      },
+      error: (response: unknown) => {
+        this.loadingProviders.set(false);
+        this.providers.set([]);
+        this.providerIsCustom.set(true);
+        this.providersError.set(
+          errorMessage(response, 'Could not ask the gateway which providers it has.'),
+        );
+      },
+    });
+  }
+
+  /** The editor's provider select changed: either a configured provider, or "type it yourself". */
+  protected chooseProvider(value: string): void {
+    if (value === this.OTHER) {
+      this.providerIsCustom.set(true);
+      this.provider.set('');
+      return;
+    }
+    this.providerIsCustom.set(false);
+    this.provider.set(value);
+    const provider = this.providers()?.find((p) => p.name === value);
+    if (provider) {
+      this.publisher.set(provider.publisher || this.publisher());
+      this.platform.set(provider.name);
+    }
+  }
+
+  private loadOfferings(provider: string): void {
+    this.loadingOfferings.set(true);
+    this.service.providerOfferings(provider).subscribe({
+      next: (models) => {
+        this.loadingOfferings.set(false);
+        this.offerings.set(models);
+      },
+      error: (response: unknown) => {
+        this.loadingOfferings.set(false);
+        // Its own message rather than the page banner: this failed *inside* the window, about the
+        // provider on screen, and a red bar behind an open window is a report about nothing.
+        this.offeringsError.set(
+          errorMessage(response, 'Could not ask this provider what it offers.'),
+        );
+      },
+    });
+  }
+
+  /** The names the catalog already holds, so the picker can mark them. */
+  protected readonly catalogued = computed(() => new Set(this.models().map((m) => m.name)));
+
+  /**
+   * A provider as a line somebody chooses from.
+   *
+   * The **label** leads and the name follows in brackets, because they answer different questions:
+   * "which vendor is this" and "what string will be written into the catalog". Showing only the
+   * first would hide the value that ends up on every audit row; only the second is what a reader
+   * reported as unreadable — `generative-language` beside `local` names neither vendor.
+   */
+  protected providerLabel(provider: GatewayProvider): string {
+    const where = provider.region ? ` · ${provider.region}` : '';
+    return provider.label && provider.label !== provider.name
+      ? `${provider.label} (${provider.name})${where}`
+      : `${provider.name}${where}`;
+  }
+
+  /** Whether this offered model is already declared — marked, never hidden: the reader would
+   *  otherwise have to check each one against the table behind the window. */
+  protected isCatalogued(model: OfferedModel): boolean {
+    return this.catalogued().has(model.name);
+  }
+
+  /**
+   * Take one of the vendor's entries into the editor.
+   *
+   * The window closes. Two open windows would leave the reader with a list and a form and no
+   * indication which one their next click belongs to — and the list is a *choice*, made once.
+   */
+  protected catalogueOffered(model: OfferedModel): void {
+    const provider = this.browsedProvider();
+    const existing = this.models().find((m) => m.name === model.name);
+    this.showBrowse.set(false);
+    // A model the catalog already has is **corrected**, not added a second time: the editor opens
+    // on the existing declaration, so a measured capability or a price is not silently replaced by
+    // an empty form carrying the vendor's answer.
+    if (existing) {
+      this.edit(existing);
+      return;
+    }
+    this.reset();
+    this.editing.set('');
+    this.showAdd.set(true);
+    if (provider) {
+      this.provider.set(provider.name);
+      this.publisher.set(provider.publisher);
+      this.platform.set(provider.name);
+      this.providerIsCustom.set(false);
+    }
+    this.useOffered(model);
+  }
+
+  /**
+   * Fill the form from one of the vendor's own entries.
+   *
+   * **What may be copied is the whole design.** Three things arrive from the endpoint as facts:
+   * the name, the vendor's display name, and its output ceiling — the API refuses a larger
+   * request, so that is measured rather than claimed. So are the verbs: Google returns an
+   * exhaustive method list and answers 404 for a method missing from it.
+   *
+   * What is left blank is left blank on purpose. A price nobody set is not zero (`FRD-403`), and
+   * what a model is *good* at is a measurement — `FRD-131` found one advertising `tools` in its
+   * own metadata that returns the JSON as prose. `thinking` is the sharpest case: the vendor's
+   * flag says a model reasons, and `FRD-114` needs the modes and the budgets, which no listing
+   * publishes. It is shown and never ticked.
+   *
+   * Capabilities are **added, never removed**: a vendor saying nothing must not untick a box an
+   * administrator has just ticked from their own knowledge.
+   */
+  protected useOffered(model: OfferedModel): void {
+    this.name.set(model.name);
+    if (model.displayName) this.displayName.set(model.displayName);
+    if (model.maxOutputTokens) this.maxOutput.set(model.maxOutputTokens);
+
+    const stated: Capability[] = [];
+    if (model.canGenerate) stated.push('generate');
+    if (model.canEmbed) stated.push('embed');
+    if (model.canCachePrompts) stated.push('prompt_caching');
+    this.capabilities.set([...new Set([...this.capabilities(), ...stated])]);
+
+    const filled = ['the model id', 'where it is reached'];
+    if (model.displayName) filled.push('its display name');
+    if (model.maxOutputTokens) filled.push('its output cap');
+    if (stated.length) filled.push(`what it may be asked to do (${stated.join(', ')})`);
+    this.vendorFilled.set(filled);
+
+    const said: string[] = [];
+    if (model.thinking)
+      said.push('it reasons — declare the modes and budgets you have measured, not the flag');
+    if (model.description) said.push(model.description);
+    this.vendorSaid.set(said);
+
+    // Picking from a listing the vendor answered a second ago **is** having looked, and that is
+    // what `mustCheck` refuses to skip: the ignorance, not the verdict. It counts only where
+    // cataloguing the model is enough to reach it — where it is not, the model still needs an
+    // entry in the gateway's configuration, and the check is exactly what says so.
+    const provider = this.browsedProvider() ?? this.selectedProvider();
+    this.checkedName.set(provider?.cataloguedIsEnough ? model.name : null);
+  }
+
   protected edit(model: CatalogModel): void {
     this.check.set(null);
     this.checkedName.set(null);
+    this.loadProviders();
+    // Editing is not importing: the picker stays shut, because a listing offered beside a model
+    // that already exists invites replacing a declaration somebody measured with a vendor's claim.
+    // The provider select still needs its current value, and a value the gateway does not have is
+    // a model declared ahead of its credential — shown as typed, not silently blanked.
+    this.providerIsCustom.set(
+      !!model.provider && !(this.providers() ?? []).some((p) => p.name === model.provider),
+    );
+    this.vendorFilled.set([]);
+    this.vendorSaid.set([]);
     this.name.set(model.name);
     this.displayName.set(model.display_name ?? '');
     this.provider.set(model.provider ?? '');

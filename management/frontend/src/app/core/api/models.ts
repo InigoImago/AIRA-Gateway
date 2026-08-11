@@ -57,6 +57,14 @@ export interface UseCase {
   restrict_members_to_own_requests?: boolean;
   /** How long stored prompts and responses are kept, in days (FRD-404). */
   retention_days?: number;
+  /**
+   * Which catalogued models this use case may call (`FRD-308`).
+   *
+   * **Empty means none.** A use case reaches the models somebody released for it; absence of a
+   * release is not a release. `undefined` is a different thing again — the server did not send the
+   * field — and the console must not render that as an empty release.
+   */
+  allowed_models?: string[];
   created_at?: string;
   updated_at?: string;
 }
@@ -131,7 +139,7 @@ export interface IssuedApiKey {
   issued_by?: string;
 }
 
-export type StepType = 'injection_filter' | 'allow_check' | 'model_route';
+export type StepType = 'injection_filter' | 'model_route';
 
 export interface RouteCategory {
   name: string;
@@ -153,8 +161,6 @@ export interface StepConfig {
    * while still showing as active in the builder.
    */
   on_undetermined?: 'block' | 'allow';
-  // allow_check
-  models?: string[];
   // model_route
   model?: string; // classifier model
   categories?: RouteCategory[];
@@ -629,4 +635,58 @@ export interface ServedModel {
   airaProvider?: string | null;
   airaPublisher?: string | null;
   airaRegion?: string | null;
+}
+
+/**
+ * An upstream this installation is configured with (`FRD-507` stage C).
+ *
+ * The provider field used to be a free-text box, so a model was declared under whatever string
+ * somebody typed and the two refusals that follow a typo — `not in the model catalog`, `has not
+ * been approved` — are both correct and both unhelpful about which string was wrong.
+ *
+ * Two of these fields are the ones a reader has to be told, because getting them wrong produces a
+ * catalog entry that looks complete and does not work:
+ *
+ * - `canEnumerate` — whether this platform can be **asked** what it offers. A platform that cannot
+ *   is not broken, and a picker that showed an error for it would report a capability gap as a
+ *   fault.
+ * - `cataloguedIsEnough` — whether declaring a model here is sufficient to reach it, or whether it
+ *   must also be named in the gateway's configuration (`FRD-507` stage B). True exactly where the
+ *   model name is the whole addressing.
+ */
+export interface GatewayProvider {
+  name: string;
+  /**
+   * What to call it on screen — `Google AI Studio`, not `generative-language`.
+   *
+   * The **name** is an identifier: it goes into the catalog, onto every audit row and into
+   * routing, so it cannot be prettified. The label comes from the adapter rather than from a map
+   * in here, because a second vocabulary restated in TypeScript is the drift `FRD-206` paid for.
+   */
+  label: string;
+  publisher: string;
+  region: string;
+  canEnumerate: boolean;
+  cataloguedIsEnough: boolean;
+  servedModels: number;
+  adapters: number;
+}
+
+/**
+ * A model a **vendor** says this installation's credential can reach.
+ *
+ * Every capability is `boolean | null`, and `null` is a third answer rather than a missing one:
+ * the vendor did not say. Google returns an exhaustive method list, so a verb absent from it
+ * really is a "no"; an OpenAI-compatible endpoint returns bare ids and says nothing at all.
+ * Collapsing the two would pre-fill a form with a declaration nobody made (`FRD-114` FR-7).
+ */
+export interface OfferedModel {
+  name: string;
+  displayName: string;
+  description: string;
+  maxOutputTokens: number | null;
+  canGenerate: boolean | null;
+  canEmbed: boolean | null;
+  canCachePrompts: boolean | null;
+  thinking: boolean | null;
 }

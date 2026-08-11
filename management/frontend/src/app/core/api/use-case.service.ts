@@ -9,7 +9,9 @@ import {
   Budget,
   BudgetUsage,
   DirectoryResults,
+  GatewayProvider,
   GroupGrant,
+  OfferedModel,
   RateLimit,
   CatalogModel,
   ServedModel,
@@ -235,6 +237,34 @@ export class UseCaseService {
         })),
       ),
     );
+  }
+
+  /**
+   * Which upstreams this gateway is configured with (`FRD-507` stage C).
+   *
+   * Asked of the gateway for the same reason the served list is: which providers exist is a
+   * property of the gateway's configuration and nothing else knows it. Management could hold a
+   * hard-coded vocabulary of "supported platforms" instead, and it would be a list of what the
+   * *product* supports rather than what *this installation* has — which is the difference between
+   * a dropdown that helps and one that offers a provider no credential reaches.
+   */
+  providers(): Observable<GatewayProvider[]> {
+    return this.http
+      .get<{ providers: GatewayProvider[] }>('/gw/v1beta/providers')
+      .pipe(map((body) => body.providers ?? []));
+  }
+
+  /**
+   * What one provider says it offers this installation's credential.
+   *
+   * A separate call, made only when a provider is chosen: one key here answered with **50
+   * models**, and a page that fetched every provider's catalogue on load would spend a remote
+   * round trip per upstream to fill a dropdown nobody had opened.
+   */
+  providerOfferings(provider: string): Observable<OfferedModel[]> {
+    return this.http
+      .get<{ models: OfferedModel[] }>(`/gw/v1beta/providers/${seg(provider)}/offerings`)
+      .pipe(map((body) => body.models ?? []));
   }
 
   removeModel(name: string): Observable<void> {

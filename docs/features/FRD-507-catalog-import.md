@@ -105,6 +105,111 @@ removes — `FRD-115`'s point is that "the configuration says EU" is a claim and
 to `eu`" is evidence, and blank is neither. The adapter that owns the provider answers instead, and
 states its provenance once so an empty configured list still produces a complete row.
 
+## 4.5 Ask the vendor, not the configuration (stage C)
+
+Stage B removed the second list and left a circle: discovery reads back the models somebody typed
+into the gateway's configuration. That is an echo. The list nobody had was the **vendor's**.
+
+    the vendor offers   — what a credential can reach.  `GET /v1beta/providers/{name}/offerings`
+    the gateway serves  — what an adapter is wired for.  `GET /v1beta/models`
+    the catalog permits — what may actually be used.     `FRD-307`
+
+Three lists, and the design is mostly about keeping them apart: collapsing any two produces a
+screen that is confidently wrong rather than empty.
+
+**FR-6** The provider field is a **choice**, not a string. `GET /v1beta/providers` answers what
+_this installation_ is configured with — a hard-coded vocabulary would describe what the product
+supports, which is a different question and offers providers no credential reaches. A provider not
+on the list may still be typed: declaring a model before its platform is configured is the ordinary
+order of work, so an unreachable gateway degrades to the box it replaced rather than locking an
+administrator out of their own catalog.
+
+**FR-7** Each provider carries two facts, because getting either wrong produces a catalog entry
+that looks complete and does not work:
+
+- `canEnumerate` — whether the platform can be **asked**. Stated, never discovered by trying: a
+  platform without a listing is not broken, and an error beside it reports a capability gap as a
+  fault. Those send a reader to two different systems.
+- `cataloguedIsEnough` — whether declaring the model suffices to reach it, or whether it must also
+  be named in the gateway's configuration. True exactly where the model name is the whole
+  addressing (§4.4).
+
+**FR-8** Where a provider can be asked, choosing it lists what it offers, marking what the catalog
+already has. Nothing is filtered out: "nothing left to import" and "this credential reaches
+nothing" must not be the same empty list.
+
+**FR-8a** That list is a **window of its own**, reached from a button beside _Add model_ — not a
+dropdown inside the editor. One real key answered with **50 models**, and a select of fifty inside
+a form that already has eighteen fields is a control somebody scrolls past. The window lists,
+searches, marks and scrolls; it ends by handing exactly one model to the editor, and closes, since
+two open windows leave a reader unsure which one their next click belongs to.
+
+**FR-8b** A model the catalog already has opens its **existing declaration**, never a blank form
+carrying the vendor's answer — a measured capability or an entered price must not be replaced by a
+claim.
+
+**FR-9** Choosing one fills in **what the vendor stated and nothing else**, and the console names
+both halves.
+
+**FR-9a** A provider carries a **label** as well as a name, and the adapter states it. The name is
+an identifier — it goes into the catalog, onto every audit row and into routing, so it stays
+`generative-language` — and a picker showing only that, beside a self-hosted server called `local`,
+names neither vendor. It was reported from the running console exactly that way. The label comes
+from the adapter rather than from a map in the SPA, because a second vocabulary restated in
+TypeScript is the drift `FRD-206` and the capability list both paid for.
+
+### What may be copied, revisited
+
+§4.2 said provenance may be copied and capabilities may not. Stage C sharpens that, because the
+vendor's answer contains two different kinds of thing:
+
+| The vendor's answer         | Copied? | Why                                                     |
+| --------------------------- | ------- | ------------------------------------------------------- |
+| name, display name          | yes     | identity                                                |
+| `outputTokenLimit`          | yes     | the API refuses a larger request — an interface fact     |
+| `supportedGenerationMethods`| yes     | exhaustive; the API answers 404 for a method not in it   |
+| `thinking: true`            | **no**  | `FRD-114` needs modes and budgets; no listing has them   |
+| tools, structured output    | **no**  | a claim, not evidence (`FRD-131`)                        |
+| price                       | **no**  | a price nobody set is not zero (`FRD-403`)               |
+
+`createCachedContent` is how prompt caching appears in that method list. The word "caching" is
+nowhere in the response, so an implementation reading the obvious field declares no caching for a
+model that has it (`FRD-133`).
+
+**FR-10** Every capability is **three-valued**. `null` means the vendor said nothing — an
+OpenAI-compatible listing publishes bare ids and answers no capability question at all — and it is
+a different answer from `false`, which is a statement. Serialising the first as the second
+pre-fills a form somebody is about to save with a declaration nobody made: `FRD-114` FR-7 at the
+one moment it is hardest to notice, because a half-full form looks like a working feature either
+way. A capability is therefore **added** from a vendor's statement and never removed by its
+silence.
+
+**FR-11** A provider name does not identify one adapter. An EU Vertex deployment registers two
+(Gemini and Anthropic — one platform, one credential, two dialects) and both stamp `vertex`. They
+are one entry that **cannot be asked**: a listing answering for one dialect while claiming to
+answer for the platform is `ADR-0011`'s ambiguous routing table in a read-only costume.
+
+**FR-12** Picking from a listing the vendor answered a moment ago satisfies `FRD-506`'s
+"you have to look" gate — but only where `cataloguedIsEnough`. Where it is not, the model still
+needs a configuration entry and the reachability check is exactly what says so.
+
+### Which platforms can be asked
+
+| Platform                     | Asked | Cataloguing is enough | Why |
+| ---------------------------- | ----- | --------------------- | --- |
+| Google AI Studio             | yes   | yes                   | paged `ListModels`; the id is the model name |
+| OpenAI-compatible (Ollama, …)| yes   | yes                   | `/v1/models`; ids are names, and nothing else |
+| Microsoft Foundry (Azure)    | no    | no                    | the listing names models needing a **deployment** first |
+| Vertex (Gemini + Anthropic)  | no    | no                    | two adapters under one provider name |
+| Mock (local only)            | yes   | yes                   | so the flow is demonstrable without a credential |
+
+Azure is what the distinction was written for. `/openai/models` answers "which models could this
+resource run"; each needs a deployment created before any request reaches it, and the deployment
+name is the addressing. An import from there is catalogued, priced, approved — and answers 404 on
+its first request, with the catalog vouching for it. So `names_models()` lives on the **routing
+axis** rather than in the dialect, and Foundry, which builds the very same adapter class, claims no
+provider name and offers no listing.
+
 ## 5. Testing
 
 - The listing carries provenance for a model whose adapter declares it.

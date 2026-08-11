@@ -26,7 +26,13 @@ from guardian.shortcuts import get_objects_for_user
 from rest_framework.permissions import BasePermission
 
 from aira_common.roles import parse_role_groups, roles_from_groups
-from aira_management.roles import ALL_ROLES, GOVERNANCE_ROLES, OVERSIGHT_ROLES, Role
+from aira_management.roles import (
+    ALL_ROLES,
+    CATALOG_ROLES,
+    GOVERNANCE_ROLES,
+    OVERSIGHT_ROLES,
+    Role,
+)
 
 #: The two object permissions a role gate ever has to ask about. Defined here rather than in
 #: `apps.usecases.access` because that module imports *this* one — and one definition is the whole
@@ -164,6 +170,23 @@ class _HasAnyRole(BasePermission):
 
 class IsGlobalAdmin(_HasAnyRole):
     roles = (Role.GLOBAL_ADMIN,)
+
+
+class MayCatalogueModels(_HasAnyRole):
+    """Who may declare a model, price it and release it for use (`FRD-307`).
+
+    The same set as `IsGlobalAdmin` today, and a separate name anyway — because the **gateway**
+    now answers a question guarded by the same rule (asking a vendor what its credential offers is
+    only useful to somebody who may act on the answer), and one plane's answer has to come from
+    the other's definition. `CATALOG_ROLES` is that definition; `test_catalog_roles_are_one_
+    definition` fails if this class stops agreeing with it.
+
+    `FRD-503` is why this is not left as a convention: the gateway's kill switch was guarded by a
+    *visibility* predicate while Management correctly refused the same person, and the two planes
+    disagreed for as long as nobody asked them the same question in the same minute.
+    """
+
+    roles = tuple(sorted(CATALOG_ROLES))
 
 
 class IsITSecurity(_HasAnyRole):

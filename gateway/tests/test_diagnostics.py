@@ -442,3 +442,27 @@ def test_the_trace_header_is_exposed_to_a_browser() -> None:
         response = client.get("/healthz", headers={"Origin": "https://spa.example"})
 
     assert "x-trace-id" in response.headers.get("access-control-expose-headers", "").lower()
+
+
+async def test_an_adapter_that_serves_no_configured_model_is_still_probed() -> None:
+    """The probe walked `registry.models()` and therefore walked **past** an adapter with an empty
+    configured list — which stopped being a hypothetical the day cataloguing a model became enough
+    to serve it (`FRD-507` stage B) and is now the ordinary shape of a Google AI Studio
+    deployment: the catalog names the models, configuration names none.
+
+    `/readyz` then said nothing whatsoever about that upstream, and *nothing* is the wrong answer.
+    `FRD-117`'s rule is that "we did not look" and "it is fine" are different verdicts; an
+    upstream that is silently not probed reads as the first while being neither.
+    """
+
+    class _CatalogueOnly(_Provider):
+        probe_name = "catalogue-only"
+        serves_provider = "vendor-x"
+
+        def models(self) -> list[UpstreamModel]:
+            return []
+
+    verdicts = await _probe(_CatalogueOnly()).probe_once()
+
+    assert "catalogue-only" in verdicts
+    assert verdicts["catalogue-only"].probed is True

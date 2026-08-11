@@ -306,10 +306,34 @@ array**, and the vendor reports **no stream usage** unless `stream_options.inclu
 a stream reporting none would be released rather than settled, and every streamed request would be
 silently free.
 
-### Google Gemini public API
+### Google AI Studio (the Gemini public API)
 
 An API key (`AIRA_GOOGLE_API_KEY`). Simplest to start with, and the one to avoid where residency
-matters.
+matters: `generativelanguage.googleapis.com` names no region and guarantees none, so AIRA records it
+as `global` — a value the EU default does **not** contain. A deployment that wants it says `global`
+in `AIRA_ALLOWED_REGIONS` out loud, which turns "may we send data there" from something somebody
+remembers into a line of configuration and a region on every audit row.
+
+`AIRA_GEMINI_MODELS` may be left empty: cataloguing a model under this provider is enough to serve
+it (`FRD-507`).
+
+### Which platforms can be asked what they offer
+
+The console can ask a provider for its model list and start a catalog entry from one of them. That
+is a property of the platform, not a setting:
+
+| Platform | Can be asked | Cataloguing alone reaches it |
+|---|---|---|
+| Google AI Studio | yes | yes |
+| Self-hosted, OpenAI-compatible | yes | yes |
+| Microsoft Foundry / Azure | no | no — each model needs a **deployment** first |
+| Google Vertex AI | no | no — two adapters serve one provider name |
+
+A platform that cannot be asked is not misconfigured. Its models are named in the gateway's
+configuration or typed into the catalog, and the editor's reachability check is what says whether
+anything serves them. Nothing a vendor lists is ever catalogued automatically: a listing is not an
+approval (`FRD-307`), a capability flag is a claim rather than evidence (`FRD-131`), and no listing
+publishes a price.
 
 > done credentials in Vault or a mounted secret · regions on the allow-list · every model that will be
 > served declared in the catalog with a **price** and its **capabilities**

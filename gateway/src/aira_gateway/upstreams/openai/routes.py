@@ -39,6 +39,23 @@ class Routes(Protocol):
         """A path that is cheap to GET and proves the endpoint is answering (`FRD-117` §5.2)."""
         ...
 
+    def names_models(self) -> bool:
+        """Whether that listing's ids are names a **caller** could use (`FRD-507` stage C).
+
+        The third axis again, and the reason it is a question at all. On a plain endpoint the
+        listing's ids *are* the model names: read one, catalogue it, call it. On a platform that
+        addresses by path, the same listing names models the resource could run — each of which
+        needs a deployment created for it before any request can reach it, and the deployment name
+        is what the addressing carries. Importing from there produces a catalog entry that looks
+        complete and is unreachable, which is `FRD-506`'s "listed is not usable" with the catalog
+        vouching for it.
+
+        Declared per platform, never defaulted: undeclared would have to mean *yes* for the
+        protocol to stay silent about it, and this file's whole subject is that a platform's
+        addressing must be stated rather than assumed.
+        """
+        ...
+
 
 class StandardRoutes:
     """The plain form: one path, the model in the body. Ollama, direct OpenAI, a NIM endpoint."""
@@ -57,3 +74,7 @@ class StandardRoutes:
 
     def listing(self) -> str:
         return "/v1/models"
+
+    def names_models(self) -> bool:
+        # `{"data": [{"id": "qwen3:0.6b"}]}` — the id is exactly what a caller puts in a request.
+        return True
