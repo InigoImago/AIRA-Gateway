@@ -35,6 +35,7 @@ from aira_management.apps.anomalies.models import AnomalyRule
 from aira_management.apps.anomalies.views import rule_payload
 from aira_management.apps.apikeys.models import ApiKey
 from aira_management.apps.budgets.models import Budget
+from aira_management.apps.catalog.models import Model as CatalogModel
 from aira_management.apps.pipelines.models import PipelineConfig
 from aira_management.apps.ratelimits.models import RateLimit
 from aira_management.apps.seed.registry import SeedResult, register
@@ -61,6 +62,16 @@ CHAT_MODEL = os.environ.get("AIRA_SEED_LOCAL_CHAT_MODEL", "qwen3:0.6b")
 #: never again, and is what the UI demonstrates. Saying so here matters more than the code does:
 #: a reader who generalises from a seed to the product would generalise the wrong thing.
 DEMO_KEY_SALT = "aira-showcase-demo-not-a-secret"
+
+
+#: Which models each demo use case is released (`FRD-308`). A slug missing from here gets every
+#: approved model.
+#:
+#: **Seed data, not a default.** A use case starts with nothing released and refuses everything —
+#: that is the rule, and a demo whose ten requests were all refused would teach it backwards, the
+#: way a `block` anomaly rule would (`FRD-500`). A real installation chooses per use case, which is
+#: exactly what `entwicklung` shows: narrower than the rest, on purpose.
+RELEASES: dict[str, list[str]] = {"entwicklung": [CHAT_MODEL]}
 
 
 def _use_cases() -> list[dict[str, Any]]:
@@ -327,10 +338,11 @@ def _pipelines() -> dict[str, dict[str, Any]]:
             ],
             "fallback_models": [],
         },
-        "entwicklung": {
-            "steps": [{"type": "allow_check", "config": {"models": [CHAT_MODEL]}}],
-            "fallback_models": [],
-        },
+        # `entwicklung` used to carry an `allow_check` step here. That step is gone (`FRD-308`),
+        # and leaving it would have been the worst of both: the gateway drops an unknown step
+        # silently, so the demo would show a restriction that does nothing. Its *intent* — one use
+        # case deliberately narrower than the others — moved to `RELEASES` below, where it is now
+        # enforced at every hop instead of once before routing.
     }
 
 
@@ -381,6 +393,13 @@ def seed_showcase(fresh: bool) -> SeedResult:
                 slug=declaration["slug"], defaults=declaration
             )
             created["use_cases"] += int(was_created)
+            # What this use case may call (`FRD-308`). See `RELEASES` for why the demo releases
+            # anything at all, and why `entwicklung` gets less than the others.
+            approved = CatalogModel.objects.filter(approved=True)
+            named = RELEASES.get(usecase.slug)
+            usecase.allowed_models.set(
+                approved.filter(name__in=named) if named is not None else approved
+            )
             events.emit("usecase.upserted", _snapshot(usecase))
 
         # Reconcile, do not merely add. A membership the declaration no longer names is a ghost

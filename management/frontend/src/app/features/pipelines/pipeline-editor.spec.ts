@@ -146,7 +146,7 @@ describe('PipelineEditor', () => {
     const { component, fixture, text } = setup({ steps: [], fallback_models: [] });
     expect(component.dirty()).toBe(false);
 
-    component.addStep('allow_check');
+    component.addStep('model_route');
     fixture.detectChanges();
     expect(component.dirty()).toBe(true);
     expect(text()).toContain('Unsaved changes');
@@ -187,13 +187,13 @@ describe('PipelineEditor', () => {
 
   it('asks before removing a step and keeps it when declined', () => {
     const declined = setup(
-      { steps: [{ type: 'allow_check', config: {} }], fallback_models: [] },
+      { steps: [{ type: 'model_route', config: {} }], fallback_models: [] },
       { confirm: false },
     );
     declined.component.removeStep(0);
     expect(declined.component.config().steps.length).toBe(1);
 
-    const accepted = setup({ steps: [{ type: 'allow_check', config: {} }], fallback_models: [] });
+    const accepted = setup({ steps: [{ type: 'model_route', config: {} }], fallback_models: [] });
     accepted.component.removeStep(0);
     expect(accepted.component.config().steps.length).toBe(0);
   });
@@ -201,7 +201,7 @@ describe('PipelineEditor', () => {
   it('knows when a step cannot move any further', () => {
     const { component } = setup({
       steps: [
-        { type: 'allow_check', config: {} },
+        { type: 'model_route', config: {} },
         { type: 'injection_filter', config: {} },
       ],
       fallback_models: [],
@@ -214,7 +214,7 @@ describe('PipelineEditor', () => {
   it('reorders steps and follows the moved one', () => {
     const { component } = setup({
       steps: [
-        { type: 'allow_check', config: {} },
+        { type: 'model_route', config: {} },
         { type: 'injection_filter', config: {} },
       ],
       fallback_models: [],
@@ -229,16 +229,16 @@ describe('PipelineEditor', () => {
 
   // ---- inspector editing -----------------------------------------------------------
 
-  it('edits the fallback chain and the allow-list from comma-separated input', () => {
+  it('edits the fallback chain and a step list from comma-separated input', () => {
     const { component } = setup({
-      steps: [{ type: 'allow_check', config: {} }],
+      steps: [{ type: 'injection_filter', config: {} }],
       fallback_models: [],
     });
     component.setFallback('a-1, b-2 , ');
     expect(component.config().fallback_models).toEqual(['a-1', 'b-2']);
 
-    component.setListField(0, 'models', 'gemini-2.0-flash\nmock-1');
-    expect(component.config().steps[0].config.models).toEqual(['gemini-2.0-flash', 'mock-1']);
+    component.setListField(0, 'patterns', 'exfiltrate\nbypass');
+    expect(component.config().steps[0].config.patterns).toEqual(['exfiltrate', 'bypass']);
   });
 
   it('adds, edits, and removes routing categories', () => {
@@ -260,7 +260,6 @@ describe('PipelineEditor', () => {
   it('summarizes each step type for the graph node', () => {
     const { component } = setup({ steps: [], fallback_models: [] });
     expect(component.summarize({ type: 'injection_filter', config: {} })).toBe('heuristic · block');
-    expect(component.summarize({ type: 'allow_check', config: {} })).toContain('0 allowed');
     expect(component.summarize({ type: 'model_route', config: {} })).toContain('0 categor');
   });
 
@@ -278,7 +277,7 @@ describe('PipelineEditor', () => {
     const { component } = setup({
       steps: [
         { type: 'injection_filter', config: { mode: 'llm' } },
-        { type: 'allow_check', config: {} },
+        { type: 'model_route', config: {} },
         { type: 'model_route', config: {} },
       ],
       fallback_models: [],
@@ -290,7 +289,7 @@ describe('PipelineEditor', () => {
     const { component } = setup({
       steps: [
         { type: 'injection_filter', config: { mode: 'heuristic', action: 'block' } },
-        { type: 'allow_check', config: {} },
+        { type: 'model_route', config: {} },
       ],
       fallback_models: [],
     });
@@ -402,13 +401,6 @@ describe('PipelineEditor inspector', () => {
     expect(html.querySelector('#insp-patterns')).toBeNull();
   });
 
-  it('renders the allow-list field', async () => {
-    const harness = open({ type: 'allow_check', config: { models: ['mock-1'] } });
-    await harness.fixture.whenStable(); // ngModel writes the value asynchronously
-    expect(el(harness).querySelector<HTMLInputElement>('#insp-allowed')?.value).toBe('mock-1');
-    expect(harness.text()).toContain('rejected with 403');
-  });
-
   it('renders one editable row per routing category', async () => {
     const harness = open({
       type: 'model_route',
@@ -440,7 +432,7 @@ describe('PipelineEditor inspector', () => {
   it('disables the move buttons at the ends of the chain', () => {
     const harness = setup({
       steps: [
-        { type: 'allow_check', config: {} },
+        { type: 'model_route', config: {} },
         { type: 'injection_filter', config: {} },
       ],
       fallback_models: [],
@@ -454,7 +446,7 @@ describe('PipelineEditor inspector', () => {
   });
 
   it('marks the selected node for assistive technology', () => {
-    const harness = open({ type: 'allow_check', config: {} });
+    const harness = open({ type: 'model_route', config: {} });
     expect(el(harness).querySelector('.node--step')?.getAttribute('aria-pressed')).toBe('true');
   });
 
@@ -478,12 +470,13 @@ describe('PipelineEditor interactions', () => {
   it('adds each step type from the toolbar', () => {
     const harness = setup({ steps: [], fallback_models: [] });
     const buttons = html(harness).querySelectorAll<HTMLButtonElement>('.pipe__add .btn');
-    expect(buttons.length).toBe(3);
+    // Two, since `allow_check` left: which models a use case may call is a property of the use
+    // case now (`FRD-308`), released on its own screen and enforced at every hop.
+    expect(buttons.length).toBe(2);
     buttons.forEach((button) => button.click());
     harness.fixture.detectChanges();
     expect(harness.component.config().steps.map((s) => s.type)).toEqual([
       'injection_filter',
-      'allow_check',
       'model_route',
     ]);
   });
@@ -491,7 +484,7 @@ describe('PipelineEditor interactions', () => {
   it('selects a step by clicking its node and by keyboard', () => {
     const harness = setup({
       steps: [
-        { type: 'allow_check', config: {} },
+        { type: 'model_route', config: {} },
         { type: 'injection_filter', config: {} },
       ],
       fallback_models: [],
@@ -513,16 +506,20 @@ describe('PipelineEditor interactions', () => {
   it('moves and removes a step from the node controls', () => {
     const harness = setup({
       steps: [
-        { type: 'allow_check', config: {} },
+        { type: 'model_route', config: {} },
         { type: 'injection_filter', config: {} },
       ],
       fallback_models: [],
     });
-    html(harness).querySelector<HTMLButtonElement>('[aria-label="Move Allow-Check down"]')?.click();
+    html(harness)
+      .querySelector<HTMLButtonElement>('[aria-label="Move Model Routing (LLM) down"]')
+      ?.click();
     harness.fixture.detectChanges();
-    expect(harness.component.config().steps[1].type).toBe('allow_check');
+    expect(harness.component.config().steps[1].type).toBe('model_route');
 
-    html(harness).querySelector<HTMLButtonElement>('[aria-label="Remove Allow-Check"]')?.click();
+    html(harness)
+      .querySelector<HTMLButtonElement>('[aria-label="Remove Model Routing (LLM)"]')
+      ?.click();
     harness.fixture.detectChanges();
     expect(harness.component.config().steps.length).toBe(1);
   });
@@ -536,7 +533,7 @@ describe('PipelineEditor interactions', () => {
 
   it('saves and dry-runs from their buttons', () => {
     const harness = setup({ steps: [], fallback_models: [] });
-    harness.component.addStep('allow_check');
+    harness.component.addStep('model_route');
     harness.fixture.detectChanges();
 
     html(harness).querySelector<HTMLButtonElement>('.btn--primary')?.click();

@@ -43,7 +43,7 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
   inevitably do when both were written from the same mental model — and line coverage cannot see
   a *missing requirement*: on 2026-08-05 a review found seven real defects behind a green suite at
   99% coverage. So: **prove a test can fail.** Break the property, watch it go red, restore.
-  `make mutants` (`tools/mutation_check.py`) does this for **346 properties** across auth, budgets,
+  `make mutants` (`tools/mutation_check.py`) does this for **359 properties** across auth, budgets,
   pipeline, retention, the management control plane and the gateway's counters; when
   you fix a bug, add the mutation that reintroduces it. Two traps that cost real defects here:
   a stand-in that is more permissive than the thing it replaces (reuse the real method where you
@@ -1333,6 +1333,76 @@ usable by naming `global` out loud, which turns a thing somebody remembers into 
 and a region on every row. The guard is **structural** — every `build_*_upstream(s)` must mention
 `check_region` — and its first run flagged `build_token_source`, which builds a *credential* and
 has no region; narrowed to the layer's two suffixes, then proved sharp again.
+
+**A use case reaches the models somebody gave it (`FRD-308`, 2026-08-11)** — `FRD-307` answered
+*which models may be used here at all*; nothing answered *which of those a use case may call*, so
+the HR drafting use case could call the most expensive reasoning model in the catalog. There **was**
+a mechanism — the `allow_check` pipeline step — and it was **measured rather than read**: a caller
+naming a forbidden model got 403, a `model_route` step re-targeting the request to one got **200,
+served**, and a `fallback_models` chain reaching one got **200, served**. It ran once, before
+routing, against the model the *caller* named — and `requirements.py` had already written the rule
+in its own docstring: *the check that runs before routing protects nothing.* Attachments, tools,
+thinking, schemas and residency are all per hop; this was the one control that was not. Now a
+release is a property of the use case, enforced as a dispatch requirement beside `ModelApproved`.
+**Two gates, two owners**: a Global Administrator decides what the installation may use, an
+administrator *of that use case* which of those it reaches (`may_admin`, not `may_manage` —
+releasing a model changes what a use case *is*), and the inner gate can never open what the outer
+one closed (an unapproved model is refused **by name**). **Empty means none**, chosen by the owner
+over the alternative and knowing the consequence — every existing use case without the old step
+stops until somebody releases a model — so the refusal names the model, the use case and who can
+act, the console leads with the empty state rather than a blank list, and the demo seed releases
+**explicitly**, because a showcase refusing its own ten requests would teach the rule backwards.
+**Three states, not two**: `None` is *no event has said*, `[]` is *somebody released nothing*, a
+list is exactly those; folding the first into the second would stop **every** use case on a
+partially upgraded stack whose Management sends no such field — a governance control arriving as an
+outage, `FRD-500`'s lesson, and the same split `FRD-307` made for `approved`. A **relation** in
+Management and a **JSON list** in the gateway, because the planes ask different questions: *which
+use cases would break if I retire this* wants a relation (and cleans up on delete), while *may this
+use case call that model* is one row already fetched — and JSON containment is written differently
+on SQLite and Postgres (`FRD-505`). **The migration carries a decision and only a decision**: an
+`allow_check` list was a choice somebody made and becomes the release; a use case that never had
+the step is left **empty**, because writing the approved catalog into it would keep it running
+while showing, in a console built to record who released what, a release nobody made — `FRD-122`'s
+audit rule applied to configuration. `allow_check` is gone from the vocabulary, the builder, the
+serializer and the read-model. `J1`–`J7`, of which **`J4` survived its first run**: nothing
+defended the consumer's reading of an absent field, the one property that decides whether a
+half-upgraded stack keeps serving.
+
+**Ask the vendor instead of typing it (`FRD-507` stage C, 2026-08-10)** — the console had two of
+the three lists that exist and asked an administrator to **type** the first: what a vendor *offers*
+a credential, what the gateway *serves*, what the catalog *permits*. That transcription is how
+`gemini-2.5-flash` came to stand in a shipped default after Google had withdrawn it from new keys.
+`GET /v1beta/providers[/{name}/offerings]`, bounded by **role** (`CATALOG_ROLES` — one definition
+both planes read, after `FRD-503` found them disagreeing about a kill switch), answers it; the
+console gets a provider **dropdown** and, beside *Add model*, a **window** listing what that vendor
+offers. **What may be copied is the whole design**: the name, display name, output ceiling and the
+*verbs* are facts (the API refuses a larger request and answers 404 for a method missing from an
+exhaustive list — `createCachedContent` is how prompt caching appears, invisible to anyone reading
+the obvious field); the price and every behaviour flag are not, so they stay blank and the console
+**names both halves**. Every capability is therefore **three-valued** — `null` is *the vendor did
+not say*, and an OpenAI-compatible listing says nothing at all; serialising that to `false`
+pre-fills a form somebody is about to save with a declaration nobody made, `FRD-114` FR-7 at the
+moment it is hardest to see. Two facts had to travel with each provider or an import produces a
+convincing decoration: **`canEnumerate`** is *stated*, never discovered by trying (a platform with
+no listing is not broken, and an error beside it reports a capability gap as a fault), and
+**`cataloguedIsEnough`** — true exactly where the model name is the whole addressing. Azure is what
+that second one was written for: its listing names models that each need a **deployment** first, so
+an import would be catalogued, priced, approved and answer 404 with the catalog vouching for it —
+hence `names_models()` on the **routing axis**, and Foundry, which builds the same adapter class,
+claims no provider name and offers no listing. A provider name also **does not identify one
+adapter** (an EU Vertex deployment registers two, Gemini and Anthropic), so those are one entry
+that cannot be asked. Three older things fell out: **the readiness probe walked past an adapter
+with an empty configured list** — the ordinary shape of an AI Studio deployment since stage B — so
+`/readyz` said *nothing* about it, which reads as "no such thing"; **the AI Studio adapter had no
+`ping` at all**; and **the mock declared no provenance**, so a laptop had an empty picker and the
+whole flow was demonstrable only against a cloud nobody has in CI (it claims no *region*, because
+declaring one made every mock request fail residency — the control correctly refusing a fiction).
+Also: a provider is **labelled** by its adapter (`Google AI Studio`, not `generative-language`)
+with the name kept visible, since the name is what reaches the catalog and every audit row.
+**Test lesson, twice in two days**: the late-arrival case was written with a stubbed `of()`, which
+answers inside the call that starts it — so the assertion read the editor's own guess and the
+deferred rule never ran, passing against broken code. With a `Subject` it went red, and found that
+the rule had only been written in one direction. `I1`–`I6`.
 
 **Two roles nobody could use, removed (2026-08-10)** — `ADR-0017` abolished `use-case-admin` and
 `use-case-user` a day earlier and they stayed in the `Role` enum, the realm file, the seed (which

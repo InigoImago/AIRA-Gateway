@@ -113,6 +113,8 @@ EDGE = "gateway/tests/test_edge_cases.py"
 FOUNDRY = "gateway/tests/test_foundry.py"
 SECRETS = "libs/tests/test_secrets.py"
 DIAGNOSTICS = "gateway/tests/test_diagnostics.py"
+PROVIDER_OFFERINGS = "gateway/tests/test_provider_offerings.py"
+RELEASE = "gateway/tests/test_use_case_model_release.py"
 CSV_EXPORT = "gateway/tests/test_csv_export.py"
 THINKING = "gateway/tests/test_thinking.py gateway/tests/test_serving_options.py"
 RESPONSE_SCHEMA = "gateway/tests/test_response_schema.py gateway/tests/test_serving_options.py"
@@ -3122,6 +3124,122 @@ MUTATIONS = [
         '        out["additionalProperties"] = False',
         "        pass",
         "gateway/tests/test_vertex.py",
+    ),
+    # ---- asking the vendor what it offers (`FRD-507` stage C, 2026-08-10) --------------------
+    #
+    # Six properties, and four of them are about a **silence**. The import fills a form somebody is
+    # about to save, so every value that arrives without having been said becomes a declaration
+    # nobody made — `FRD-114` FR-7 at the one moment it is hardest to notice, because a half-full
+    # form looks like a working feature either way.
+    Mutation(
+        "I1",
+        "only whoever may declare a model may ask a vendor what it offers",
+        "gateway/src/aira_gateway/api/providers.py",
+        "    if not may_catalogue(principal.roles):",
+        "    if False:",
+        PROVIDER_OFFERINGS,
+    ),
+    Mutation(
+        "I2",
+        "a vendor that said nothing about a verb has not said no",
+        "gateway/src/aira_gateway/upstreams/gemini.py",
+        "        can_generate=None if listed is None else bool(listed & _GENERATE_METHODS),",
+        "        can_generate=bool(listed and listed & _GENERATE_METHODS),",
+        PROVIDER_OFFERINGS,
+    ),
+    Mutation(
+        "I3",
+        "the listing is read to its last page, so no model is silently missing from the picker",
+        "gateway/src/aira_gateway/upstreams/gemini.py",
+        '            page_token = str(data.get("nextPageToken") or "")',
+        '            page_token = ""',
+        PROVIDER_OFFERINGS,
+    ),
+    Mutation(
+        "I4",
+        "a platform that cannot be asked says so rather than answering for one of two dialects",
+        "gateway/src/aira_gateway/api/providers.py",
+        "    if len(upstreams) > 1 or not can_enumerate(first):",
+        "    if not can_enumerate(first):",
+        PROVIDER_OFFERINGS,
+    ),
+    Mutation(
+        "I5",
+        "an adapter serving no configured model is still probed rather than passed over",
+        "gateway/src/aira_gateway/diagnostics.py",
+        "        return list(self.registry.each())",
+        "        return [self.registry.provider_for(m.name) for m in self.registry.models()]",
+        DIAGNOSTICS,
+    ),
+    Mutation(
+        "I6",
+        "cataloguing is enough to serve a model only where the name is the whole addressing",
+        "gateway/src/aira_gateway/upstreams/openai/adapter.py",
+        '        return self._provider if self._routes.names_models() else ""',
+        "        return self._provider",
+        FOUNDRY,
+    ),
+    # ---- which models a use case may call (`FRD-308`, 2026-08-11) -----------------------------
+    #
+    # The step this replaces was measured before it was replaced: it refused a model the caller
+    # named and let both a routing rule and a fallback chain reach one it did not. So the first
+    # two here are the holes, and they are checked where every other dispatch condition is.
+    Mutation(
+        "J1",
+        "a model nobody released to this use case is refused, at every hop",
+        "gateway/src/aira_gateway/requirements.py",
+        "        if model in self._released:\n            return None",
+        "        if True:\n            return None",
+        RELEASE,
+    ),
+    Mutation(
+        "J2",
+        "an empty release is an answer, and the answer is no",
+        "gateway/src/aira_gateway/requirements.py",
+        "        if self._released is None:\n            return None",
+        "        if not self._released:\n            return None",
+        RELEASE,
+    ),
+    Mutation(
+        "J3",
+        "a use case no event has described is not treated as releasing nothing",
+        "gateway/src/aira_gateway/api/serving.py",
+        "    return None if released is None else [str(name) for name in released]",
+        "    return [str(name) for name in (released or [])]",
+        RELEASE,
+    ),
+    Mutation(
+        "J4",
+        "an event that says nothing about the release leaves the read-model alone",
+        "gateway/src/aira_gateway/consumer/apply.py",
+        "    if not isinstance(released, list):\n        return None",
+        "    if not isinstance(released, list):\n        return []",
+        "gateway/tests/test_consumer_apply.py",
+    ),
+    Mutation(
+        "J5",
+        "only an approved model can be released to a use case",
+        "management/backend/src/aira_management/apps/usecases/serializers.py",
+        "        unapproved = sorted(model.name for model in models if not model.approved)",
+        "        unapproved: list[str] = []",
+        "management/backend/tests/test_usecases.py",
+    ),
+    Mutation(
+        "J6",
+        "the release travels to the gateway, or it enforces yesterday's decision",
+        "management/backend/src/aira_management/apps/usecases/views.py",
+        '        "allowed_models": sorted(usecase.allowed_models.values_list("name", flat=True)),',
+        '        "allowed_models": [],',
+        "management/backend/tests/test_usecases.py",
+    ),
+    Mutation(
+        "J7",
+        "the migration carries an allow-list somebody chose, rather than dropping it",
+        "management/backend/src/aira_management/apps/usecases/migrations/"
+        "0010_release_models_from_allow_check.py",
+        "        usecase.allowed_models.add(*Model.objects.filter(name__in=set(names)))",
+        "        pass",
+        "management/backend/tests/test_release_migration.py",
     ),
 ]
 

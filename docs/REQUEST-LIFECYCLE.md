@@ -150,8 +150,11 @@ Per use case, config-driven, authored in the SPA's graph builder
 | Step               | Does                                       | Notes                                                             |
 | ------------------ | ------------------------------------------ | ----------------------------------------------------------------- |
 | `injection_filter` | heuristic patterns, or an LLM classifier   | verdict is **three-valued**; `undetermined` **blocks** by default |
-| `allow_check`      | model allow-list for the use case          |                                                                   |
 | `model_route`      | an LLM classifier picks a category → model |                                                                   |
+
+There is no `allow_check` step: which models a use case may call is a property of the use case
+([`FRD-308`](features/FRD-308-use-case-model-release.md)), checked as a dispatch condition at every
+hop. As a step it ran once, before routing — so a route or a fallback went straight past it.
 
 Then a `fallback_models` chain. **A pipeline model call is a first-class request**: it leaves its own
 audit row named `pipeline:<step>`, priced, booked against the budget with `requests=0` — the caller

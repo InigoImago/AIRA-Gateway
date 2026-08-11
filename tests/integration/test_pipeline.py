@@ -54,6 +54,18 @@ async def _use_case_with_key(engine: AsyncEngine, slug: str) -> str:
     return full
 
 
+async def _released(engine: AsyncEngine, slug: str, models: list[str]) -> str:
+    """A use case with an explicit release (`FRD-308`). Written straight into the read-model, like
+    every other fixture here — the event path is covered by the consumer's own tests."""
+    key = await _use_case_with_key(engine, slug)
+    async with engine.begin() as connection:
+        await connection.execute(
+            text("UPDATE use_cases SET allowed_models = :models WHERE slug = :slug"),
+            {"slug": slug, "models": json.dumps(models)},
+        )
+    return key
+
+
 async def _pipeline(engine: AsyncEngine, slug: str, steps: list, fallbacks: list) -> None:
     async with engine.begin() as connection:
         await connection.execute(
@@ -117,20 +129,35 @@ async def test_flagging_annotates_without_refusing(engine: AsyncEngine) -> None:
     assert (await _post(key, INJECTION)).status_code == 200
 
 
-async def test_the_allow_list_refuses_a_model_outside_it(engine: AsyncEngine) -> None:
+async def test_a_model_the_use_case_was_not_released_is_refused(engine: AsyncEngine) -> None:
+    """`FRD-308` replaced the `allow_check` step this used to exercise, and the wire answer
+    changed with it: **400 FAILED_PRECONDITION**, not 403.
+
+    Deliberately. `NoCapableModel` means every candidate was excluded, which an operator can fix by
+    releasing the model — and 403 reads as "your credential may not", which sends them to the wrong
+    system entirely. Same argument the residency and capability refusals already make."""
     slug = f"itest-{uuid.uuid4().hex[:8]}"
-    key = await _use_case_with_key(engine, slug)
-    await _pipeline(engine, slug, [{"type": "allow_check", "config": {"models": ["other-1"]}}], [])
+    key = await _released(engine, slug, ["other-1"])
 
     refused = await _post(key, BODY)
-    assert refused.status_code == 403
-    assert refused.json()["error"]["status"] == "PERMISSION_DENIED"
+    assert refused.status_code == 400
+    assert refused.json()["error"]["status"] == "FAILED_PRECONDITION"
+    assert "released" in refused.json()["error"]["message"]
 
 
-async def test_the_allow_list_admits_a_model_on_it(engine: AsyncEngine) -> None:
+async def test_a_released_model_is_admitted(engine: AsyncEngine) -> None:
+    slug = f"itest-{uuid.uuid4().hex[:8]}"
+    key = await _released(engine, slug, ["mock-1"])
+
+    assert (await _post(key, BODY)).status_code == 200
+
+
+async def test_a_use_case_no_event_has_described_still_serves(engine: AsyncEngine) -> None:
+    """The upgrade case, live: a row whose `allowed_models` is NULL was written by a Management
+    that predates this feature, and reading that as "released nothing" would stop every use case
+    on a half-upgraded stack."""
     slug = f"itest-{uuid.uuid4().hex[:8]}"
     key = await _use_case_with_key(engine, slug)
-    await _pipeline(engine, slug, [{"type": "allow_check", "config": {"models": ["mock-1"]}}], [])
 
     assert (await _post(key, BODY)).status_code == 200
 

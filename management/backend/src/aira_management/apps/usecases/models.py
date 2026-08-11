@@ -46,6 +46,28 @@ class UseCase(models.Model):
             "confidential should not be opted in by somebody else's cost decision."
         ),
     )
+    #: Which catalogued models this use case may call (`FRD-308`).
+    #:
+    #: **Empty means none, and that is the owner's decision** (2026-08-11): a use case reaches the
+    #: models somebody released for it, not everything the installation happens to have approved.
+    #: `FRD-307` is the outer boundary — a Global Administrator decides what may be used *here at
+    #: all* — and this is the inner one, which the use case's own administrator owns.
+    #:
+    #: A **relation** rather than a list of names, and the reason is a question somebody asks:
+    #: "which use cases would break if I retired this model". With a JSON list that is a
+    #: containment query written differently on SQLite and Postgres, which `FRD-505` already paid
+    #: for once; with a relation it is `model.use_cases.all()`, and removing a model from the
+    #: catalog cleans the releases up rather than leaving names that resolve to nothing.
+    allowed_models = models.ManyToManyField(
+        "catalog.Model",
+        blank=True,
+        related_name="use_cases",
+        help_text=(
+            "The models this use case may call (FRD-308). Empty means none: a model is released "
+            "for a use case, never assumed. Only approved models can be released."
+        ),
+    )
+
     PROMPT_CACHE_TTLS = [("5m", "5 minutes"), ("1h", "1 hour")]
     prompt_cache_ttl = models.CharField(
         max_length=4,

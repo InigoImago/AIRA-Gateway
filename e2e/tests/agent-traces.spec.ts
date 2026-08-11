@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { USERS, createUseCase, login, logout, uniqueSlug } from './support';
+import { USERS, createUseCase, login, logout, releaseAllModels, uniqueSlug } from './support';
 
 /**
  * What an incident actually does, in a real browser (`FRD-131` FR-7, `FRD-502`).
@@ -151,6 +151,9 @@ test.describe('Reading what was actually sent', () => {
     // that looks like a product defect.
     await login(page, USERS.globalAdmin);
     const slug = await createUseCase(page, uniqueSlug('payload'), 'Reading a prompt');
+    // A new use case may call nothing until somebody releases a model (`FRD-308`) — the step an
+    // administrator now takes, and the reason this line is here rather than inside the helper.
+    await releaseAllModels(page, slug);
     await page.goto(`/use-cases/${slug}?tab=keys`);
     await page.click('button:has-text("+ Issue key")');
     await page.fill('#key-label', 'e2e-payload');

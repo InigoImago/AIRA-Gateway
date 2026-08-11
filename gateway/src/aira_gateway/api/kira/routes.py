@@ -328,7 +328,7 @@ async def chat(request: Request, principal: Principal = Depends(require_principa
                 registry_of(request),
                 canonical,
                 fallbacks,
-                permits=requirements_for(request, canonical),
+                permits=await requirements_for(request, canonical),
                 provider_of=await declared_provider(request),
             )
             trail.served_by(dispatched.response.model, dispatched.candidate_index)
@@ -381,7 +381,7 @@ async def streaming_chat(
                     registry_of(request),
                     canonical,
                     fallbacks,
-                    permits=requirements_for(request, canonical),
+                    permits=await requirements_for(request, canonical),
                     provider_of=await declared_provider(request),
                 )
                 # Inside the same `try`, deliberately. This surface's "stream" delivers one

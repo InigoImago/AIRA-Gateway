@@ -22,6 +22,7 @@ import { PageFeedback } from '../../core/ui/page-feedback';
 import { windowFor } from '../../core/ui/periods';
 import { BudgetsTab } from './budgets-tab';
 import { ConsumptionPanel } from './consumption-panel';
+import { ModelReleasePanel } from './model-release-panel';
 import { AccessPanel } from './access-panel';
 import { RulesTab } from './rules-tab';
 import { TracesTab } from './traces-tab';
@@ -53,6 +54,7 @@ const TABS: readonly Tab[] = [
     BudgetsTab,
     InfoHint,
     ConsumptionPanel,
+    ModelReleasePanel,
     RateLimitsTab,
     RulesTab,
     WarningsTab,
@@ -137,6 +139,9 @@ export class UseCaseDetail implements OnInit {
    * showing it a moment later.
    */
   protected readonly canManage = computed(() => this.useCase()?.permissions?.can_manage ?? false);
+  /** May change what the use case **is** — which is what releasing a model is (`FRD-308`), and it
+   *  is a narrower answer than `can_manage`: the server's own `perform_update` asks `may_admin`. */
+  protected readonly canAdmin = computed(() => this.useCase()?.permissions?.can_admin ?? false);
   /** Membership, which is what issuing a key needs — and seeing a use case is not (ADR-0007). */
   protected readonly isMember = computed(() => this.useCase()?.permissions?.is_member ?? false);
 

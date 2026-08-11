@@ -28,7 +28,7 @@ Legend: done built and verified · partly partial, with the missing half named �
 | 10 | Independence from Google / Microsoft | partly | proven for **three** platforms by an architecture assertion — Foundry reused the OpenAI dialect unchanged and its diff never left `upstreams/`; still unproven against a real Azure subscription |
 | 11 | Overview of all use cases | partly | list and detail done — **no governance view of the processing logic** across use cases (`FRD-600`) |
 | 12 | Self-service filter and routing pipeline | done | `FRD-303`, `FRD-306` |
-| 13 | Permitted models per use case | partly | allow-list done, capabilities enforced done, **approval enforced** (`FRD-307`, 2026-08-09 — a dispatch condition at every hop). Missing: the **pickers**. The pipeline builder still takes model names as free text and does not know the catalog, so it offers what the server refuses — `FRD-206`'s defect, one screen along |
+| 13 | Permitted models per use case | **done** | Two gates with two owners: a Global Administrator approves a model for the *installation* (`FRD-307`), an administrator of the use case releases it to *that* use case (`FRD-308`, 2026-08-11). Both are dispatch conditions at **every hop**, so neither `model_route` nor a fallback chain goes past them. Empty means **none**. The console picks from the catalog rather than taking free text, and the `allow_check` step — which checked only the name the caller sent, once, before routing — is gone |
 | 14 | Model smoke tests and jailbreak batteries | done | `FRD-504` (2026-08-09) — one flat catalogue of 100 questions, put to a model and judged by a person; a model's standing is its **latest run**, never a sum. Narrower than drafted: no repetition-as-a-rate, no two modes, no machine-checked expectations |
 | 15 | Budget overview and limits | done | `FRD-400`–`403`, `FRD-601`, `FRD-603` — a use case's consumption is shown **with or without a limit** |
 | 16 | Anomaly detection | done | `FRD-500`/`501` — seven kinds, evaluated against the audit trail |
@@ -197,7 +197,7 @@ declarations that no longer existed.
 | Gap | Note |
 |---|---|
 | `FRD-117` FR-7 — a second OpenAPI 3.0 document | Not built, stated rather than implied |
-| `FRD-307` — approved model catalog with pickers | The *price* half is built; the approval half is not |
+| `FRD-307` — approved model catalog with pickers | **done** (2026-08-09), with the per-use-case release in `FRD-308` (2026-08-11) |
 | `FRD-600` — governance view of processing logic | Reporting exists; the read-only "what does each use case do" view does not |
 | `FRD-118` — multiple identity backends | Need unclear; not scheduled |
 | `FRD-121` — document conversion for models that cannot read a type | Deliberately not built: the recommendation is to refuse rather than convert |

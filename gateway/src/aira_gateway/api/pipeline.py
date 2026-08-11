@@ -39,20 +39,22 @@ class DryRunRequest(BaseModel):
 def _model_the_pipeline_is_about(pipeline: dict[str, Any], models: list[Any]) -> str:
     """Which model to simulate when the caller named none.
 
-    The first *registered* model was the obvious choice and the wrong one: a builder testing an
-    allow-check that permits `qwen3:0.6b` was answered **"Blocked: Model 'mock-1' is not
-    allowed"** — a refusal about a model the operator never chose, on a rule that is working
-    correctly. The dry run looked broken while the pipeline was fine.
+    The first *registered* model was the obvious choice and the wrong one: a builder testing a
+    rule about `qwen3:0.6b` was answered with a refusal about `mock-1`, a model the operator never
+    chose, on a rule that was working correctly. The dry run looked broken while the pipeline was
+    fine.
 
-    So the pipeline's own configuration is asked first. A step that names models is a step saying
+    So the pipeline's own configuration is asked first. A step that names a model is a step saying
     which models this pipeline is *for*.
+
+    The `models` list of the old `allow_check` step used to be read here too. That branch went
+    when the step did (`FRD-308`): no step carries such a list any more, and a lookup that can
+    never match is a rule the code claims and does not have — the same unreachable guard
+    `parse_role_groups` had to lose.
     """
     steps = pipeline.get("steps") or []
     for step in steps:
         config = step.get("config") or {}
-        allowed = config.get("models") or []
-        if allowed:
-            return str(allowed[0])
         for category in config.get("categories") or []:
             if category.get("model"):
                 return str(category["model"])

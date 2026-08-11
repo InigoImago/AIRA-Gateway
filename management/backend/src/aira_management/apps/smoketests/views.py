@@ -26,8 +26,11 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 
+from aira_management.apps.catalog.models import Model
 from aira_management.apps.usecases.access import may_call_queryset
+from aira_management.apps.usecases.events import emit
 from aira_management.apps.usecases.models import UseCase
+from aira_management.apps.usecases.views import _snapshot as usecase_snapshot
 from aira_management.rbac import IsITSecurity, MayTestModels
 
 from .models import SMOKE_TEST_USE_CASE, TestCase, TestResult, TestRun, Verdict
@@ -71,6 +74,33 @@ class TestAttributionViewSet(viewsets.ViewSet):
         )
 
 
+def _release_for_testing(model: str) -> None:
+    """Let the smoke-test use case call the model somebody just asked it to test (`FRD-308`).
+
+    Since a use case may only call the models released to it, the testing use case would otherwise
+    be refused every model that was approved after it was seeded — and the refusal would arrive as
+    a run of failures that read as the *model* being broken, which is the opposite of what a smoke
+    test is for.
+
+    Written as a release rather than exempting this use case from the rule, and the difference
+    matters: an exemption is a hole that no longer shows up anywhere, while this leaves a row, an
+    event and a visible entry on the use case's own panel. Starting a smoke test **is** a decision
+    to let that model be called there, taken by somebody `MayTestModels` has already checked.
+
+    Only an approved model — the outer gate is not this function's to open — and silent when there
+    is nothing to release, because a run against an uncatalogued model is refused by name at the
+    gateway and that message is the better one.
+    """
+    use_case = UseCase.objects.filter(slug=SMOKE_TEST_USE_CASE).first()
+    declaration = Model.objects.filter(name=model, approved=True).first()
+    if use_case is None or declaration is None:
+        return
+    if use_case.allowed_models.filter(pk=declaration.pk).exists():
+        return
+    use_case.allowed_models.add(declaration)
+    emit("usecase.upserted", usecase_snapshot(use_case))
+
+
 class TestCaseViewSet(viewsets.ModelViewSet[TestCase]):
     """The catalogue. **Retired questions are not part of it** — they are history, kept because
     somebody judged answers against their wording, and listing them would promise a longer run than
@@ -111,6 +141,7 @@ class TestRunViewSet(viewsets.ModelViewSet[TestRun]):
         shows what it did not get to rather than looking complete and short.
         """
         run = serializer.save(requested_by=self.request.user)
+        _release_for_testing(run.model)
         TestResult.objects.bulk_create(
             TestResult(run=run, case=case) for case in TestCase.objects.filter(retired=False)
         )

@@ -168,6 +168,18 @@
       <app-consumption-panel [slug]="slug" [consumption]="consumption()" />
 
       <!--
+        Which models this use case may call (`FRD-308`). On the overview beside the other
+        configuration, because it is the most consequential setting a use case has: with nothing
+        released it answers every request with a refusal.
+      -->
+      <app-model-release-panel
+        [slug]="slug"
+        [canManage]="canAdmin()"
+        [released]="useCase()?.allowed_models ?? []"
+        (saved)="useCase.set($event)"
+      />
+
+      <!--
         Not data protection, and it was in that panel because that is where the form was — which
         put two unrelated switches between "store prompts" and "keep them for N days", the pair a
         reader treats as one setting. Its own section, its own save, its own sentence when it

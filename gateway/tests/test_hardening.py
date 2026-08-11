@@ -237,7 +237,7 @@ async def test_scanned_text_is_bounded() -> None:
 def test_pipeline_from_dict_bounds_steps_and_fallbacks() -> None:
     pipeline = Pipeline.from_dict(
         {
-            "steps": [{"type": "allow_check"}] * (MAX_STEPS + 10),
+            "steps": [{"type": "injection_filter"}] * (MAX_STEPS + 10),
             "fallback_models": [f"m{i}" for i in range(MAX_FALLBACK_MODELS + 10)],
         }
     )
@@ -247,7 +247,7 @@ def test_pipeline_from_dict_bounds_steps_and_fallbacks() -> None:
 
 def test_pipeline_from_dict_tolerates_malformed_steps() -> None:
     pipeline = Pipeline.from_dict(
-        {"steps": ["not-a-dict", {"type": "nope"}, {"type": "allow_check", "config": "bad"}]}
+        {"steps": ["not-a-dict", {"type": "nope"}, {"type": "injection_filter", "config": "bad"}]}
     )
     assert len(pipeline.steps) == 1
     assert pipeline.steps[0].config == {}

@@ -1,0 +1,113 @@
+<div #root class="multiselect" [attr.data-testid]="testid()">
+  <!--
+    The chosen set, first and always visible. In a plain dropdown it is behind the same scroll as
+    everything else, so "what did I actually pick" costs a scroll through a list of fifty — which
+    is the question somebody arriving at this screen has.
+  -->
+  @if (chosen().length) {
+    <ul class="chips" [attr.data-testid]="testid() + '-chosen'">
+      @for (option of chosen(); track option.value) {
+        <li class="chip" [class.chip--warning]="option.warning">
+          <span class="chip__label">{{ option.label }}</span>
+          @if (option.warning) {
+            <span class="chip__note">{{ option.warning }}</span>
+          }
+          @if (!disabled()) {
+            <button
+              type="button"
+              class="chip__remove"
+              [attr.aria-label]="'Remove ' + option.label"
+              [attr.data-testid]="testid() + '-remove-' + option.value"
+              (click)="remove(option.value); refocus()"
+            >
+              ✕
+            </button>
+          }
+        </li>
+      }
+    </ul>
+  }
+
+  @if (!disabled()) {
+    <div class="multiselect__field">
+      <input
+        #field
+        type="text"
+        role="combobox"
+        [attr.aria-label]="label()"
+        [attr.aria-expanded]="open()"
+        [attr.aria-controls]="testid() + '-list'"
+        [attr.aria-activedescendant]="open() && matches().length ? optionId(active()) : null"
+        aria-autocomplete="list"
+        autocomplete="off"
+        [value]="query()"
+        [placeholder]="placeholder()"
+        [attr.data-testid]="testid() + '-search'"
+        (input)="query.set($any($event.target).value); show()"
+        (focus)="show()"
+        (keydown)="onKey($event)"
+      />
+      <button
+        type="button"
+        class="btn btn--sm btn--ghost multiselect__toggle"
+        [attr.aria-label]="open() ? 'Hide the list' : 'Show the list'"
+        [attr.data-testid]="testid() + '-toggle'"
+        (click)="toggleList()"
+      >
+        {{ open() ? '▴' : '▾' }}
+      </button>
+    </div>
+
+    @if (open()) {
+      <!--
+        `absolute` inside a wrapper this component owns, so the list floats over what follows
+        instead of pushing the page around while somebody types. Its own height is capped rather
+        than the container's: a list that grows the section it sits in moves every control below
+        it on each keystroke.
+      -->
+      <ul class="picker" role="listbox" [id]="testid() + '-list'">
+        @for (option of matches(); track option.value; let i = $index) {
+          <li>
+            <button
+              type="button"
+              class="picker__item"
+              role="option"
+              [id]="optionId(i)"
+              [class.is-active]="i === active()"
+              [attr.aria-selected]="isSelected(option.value)"
+              [attr.data-testid]="testid() + '-option-' + option.value"
+              (click)="toggle(option.value); refocus()"
+            >
+              <span class="picker__check" aria-hidden="true">
+                {{ isSelected(option.value) ? '✓' : '' }}
+              </span>
+              <span class="picker__label">
+                {{ option.label }}
+                @if (option.detail) {
+                  <span class="picker__detail">{{ option.detail }}</span>
+                }
+              </span>
+              @if (option.warning) {
+                <span class="badge badge--warning">{{ option.warning }}</span>
+              }
+            </button>
+          </li>
+        }
+        @if (!matches().length) {
+          <!--
+            Two different empties, said differently. "Nothing matches what you typed" is the
+            reader's to fix; "there is nothing to choose from" is somebody else's, and a shared
+            message would send half of them to the wrong place.
+          -->
+          <li class="picker__empty" [attr.data-testid]="testid() + '-empty'">
+            @if (query().trim()) {
+              Nothing matches “{{ query() }}”.
+            } @else {
+              {{ emptyHint() || 'There is nothing to choose from.' }}
+            }
+          </li>
+        }
+      </ul>
+    }
+  }
+</div>

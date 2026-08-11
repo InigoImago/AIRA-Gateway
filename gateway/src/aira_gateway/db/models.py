@@ -293,6 +293,20 @@ class UseCaseRead(Base):
     #: against 1.25x, and only pays for itself when turns are regularly further apart than five
     #: minutes, which is a question about somebody's traffic rather than a preference.
     prompt_cache_ttl: Mapped[str] = mapped_column(String(4), default="5m")
+    #: Which models this use case has been released (`FRD-308`). **Empty means none.**
+    #:
+    #: A JSON list here and a relation in Management, on purpose: the two planes ask different
+    #: questions of it. Management asks "which use cases would break if I retired this model",
+    #: which wants a relation; the gateway asks "may *this* use case call *that* model", which is
+    #: one row it already fetches. A containment query over JSON is written differently on SQLite
+    #: and Postgres, and this way there is never one.
+    #:
+    #: `None` is not the same as `[]` and the difference decides whether traffic flows: a row
+    #: written by an **older Management** carries no such field, and reading that absence as "no
+    #: model released" would stop every use case on a partially upgraded stack. Absent means *this
+    #: event could not say*; empty means *somebody released nothing*. The same split `FRD-307` made
+    #: for `approved`, and for the same upgrade.
+    allowed_models: Mapped[list[str] | None] = mapped_column(JSON, nullable=True, default=None)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

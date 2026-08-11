@@ -465,3 +465,107 @@ def test_the_permissions_a_use_case_reports_are_the_ones_it_enforces() -> None:
             f"{BASE}agree-uc/api-keys/", {"label": "k"}, format="json"
         ).status_code
         assert (member_allowed != 403) is said["is_member"]
+
+
+# ---- which models this use case may call (`FRD-308`) ------------------------------------
+
+
+def _approved(name: str, approved: bool = True):
+    from aira_management.apps.catalog.models import Model
+
+    return Model.objects.create(name=name, approved=approved)
+
+
+def test_an_administrator_of_the_use_case_releases_models_for_it(captured_events) -> None:
+    """The owner's rule, 2026-08-11: *either a Global Administrator or a use-case administrator
+    releases the allowed models for a use case*. The second half is the interesting one — it is a
+    grant on that use case (`ADR-0017`), not an organisation-wide role."""
+    _approved("gemini-2.5-flash")
+    _approved("claude-sonnet-4-5")
+    usecase = UseCase.objects.create(slug="uc", name="UC")
+    admin = _administrator("uc-admin", usecase)
+
+    response = _client(admin).patch(
+        f"{BASE}uc/", {"allowed_models": ["gemini-2.5-flash"]}, format="json"
+    )
+
+    assert response.status_code == 200, response.data
+    assert response.json()["allowed_models"] == ["gemini-2.5-flash"]
+    # And it travels, or the gateway enforces yesterday's decision.
+    upserted = [p for t, p in captured_events if t == "usecase.upserted"]
+    assert upserted[-1]["allowed_models"] == ["gemini-2.5-flash"]
+
+
+def test_a_member_who_does_not_administer_it_cannot(captured_events) -> None:
+    """Releasing a model is changing what the use case *is*, not working inside it."""
+    _approved("gemini-2.5-flash")
+    usecase = UseCase.objects.create(slug="uc", name="UC")
+    member = _user("plain")
+    UseCaseMembership.objects.create(use_case=usecase, user=member, role=UseCaseMembership.USER)
+
+    response = _client(member).patch(
+        f"{BASE}uc/", {"allowed_models": ["gemini-2.5-flash"]}, format="json"
+    )
+
+    assert response.status_code in (403, 404)
+    assert list(UseCase.objects.get(slug="uc").allowed_models.all()) == []
+
+
+def test_a_model_nobody_approved_cannot_be_released_and_is_named() -> None:
+    """Two gates, two owners: a Global Administrator decides what may be used in this installation
+    at all (`FRD-307`), a use-case administrator which of those this use case reaches. Letting the
+    second hand out something the first withheld would invert them — and the request would be
+    refused at dispatch anyway, so the console would be showing a release that never works.
+
+    Named, because "one of the models you chose is not approved" sends somebody back through a
+    list of thirty to work out which one."""
+    _approved("released-1")
+    _approved("draft-1", approved=False)
+    UseCase.objects.create(slug="uc", name="UC")
+
+    response = _client(_user("root", "global-admin")).patch(
+        f"{BASE}uc/", {"allowed_models": ["released-1", "draft-1"]}, format="json"
+    )
+
+    assert response.status_code == 400
+    # The unapproved one by name, and the approved one **not** blamed for it.
+    assert "draft-1" in str(response.data)
+    assert "released-1" not in str(response.data)
+    assert list(UseCase.objects.get(slug="uc").allowed_models.all()) == []
+
+
+def test_a_use_case_starts_with_no_model_released() -> None:
+    """**Empty means none** (owner decision, 2026-08-11). The default is the decision: a use case
+    reaches the models somebody chose for it, and a new one has had nobody choose yet."""
+    response = _create(_client(_user("root", "global-admin")), "fresh")
+
+    assert response.status_code == 201
+    assert response.json()["allowed_models"] == []
+
+
+def test_retiring_a_model_takes_it_out_of_every_release() -> None:
+    """The question a relation was chosen for. With a list of names, "which use cases would break
+    if I retire this" is a containment query written differently on SQLite and Postgres — the
+    thing `FRD-505` already paid for once — and a deleted model would leave names behind that
+    resolve to nothing."""
+    model = _approved("retiring-1")
+    usecase = UseCase.objects.create(slug="uc", name="UC")
+    usecase.allowed_models.add(model)
+    assert list(model.use_cases.all()) == [usecase]
+
+    model.delete()
+
+    assert list(UseCase.objects.get(slug="uc").allowed_models.all()) == []
+
+
+def test_a_release_list_is_bounded() -> None:
+    """The bound the `allow_check` step used to carry, kept when the step went. Every name is a
+    database lookup, and an input nobody bounded is one somebody eventually sends ten thousand
+    of (`ADR-0007`)."""
+    UseCase.objects.create(slug="uc", name="UC")
+
+    response = _client(_user("root", "global-admin")).patch(
+        f"{BASE}uc/", {"allowed_models": [f"m-{i}" for i in range(200)]}, format="json"
+    )
+
+    assert response.status_code == 400

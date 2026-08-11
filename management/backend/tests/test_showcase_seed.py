@@ -424,3 +424,50 @@ def test_a_model_whose_tag_is_implicit_is_recognised() -> None:
 
     declared = set(Model.objects.filter(platform="ollama").values_list("name", flat=True))
     assert {d["name"] for d in local_models._declarations()} <= declared
+
+
+def test_every_demo_use_case_can_actually_call_a_model(seeded) -> None:  # noqa: ARG001
+    """`FRD-308`: a use case with nothing released refuses **every** request.
+
+    That rule is the whole feature, and it is also the fastest way to ship a demo that answers ten
+    refusals and looks broken — the shape `FRD-500` records, where a control that blocks wrongly
+    on its first run gets switched off for good. So the seed releases explicitly, which is what a
+    real installation does too; what it must never do is *default* to it.
+    """
+    from aira_management.apps.catalog.models import Model
+    from aira_management.apps.usecases.models import UseCase
+
+    # The catalog is seeded first in a real run (`local_models` is `order=40`, the showcase is
+    # `order=50`) and needs a live endpoint to know what to declare. Standing one in here states
+    # the dependency instead of assuming it — a showcase that released nothing because the catalog
+    # was empty is precisely the failure this guards.
+    Model.objects.create(name="demo-chat", approved=True)
+    Model.objects.create(name="not-released-yet", approved=False)
+    seed_showcase(fresh=False)
+
+    approved = {m.name for m in Model.objects.filter(approved=True)}
+    assert approved == {"demo-chat"}
+
+    for usecase in UseCase.objects.all():
+        released = {m.name for m in usecase.allowed_models.all()}
+        # `entwicklung` is deliberately narrower — the demo's own example of the feature — and it
+        # names a model the catalog here does not have, so it lands on the empty intersection.
+        # Every other use case gets what the installation approved.
+        expected = set() if usecase.slug == "entwicklung" else approved
+        assert released == expected, usecase.slug
+
+
+def test_what_it_releases_travels_to_the_gateway(seeded) -> None:
+    """A release the gateway never hears about is a use case that refuses everything while the
+    console shows it fully configured — two correct halves and no wire, the failure this project
+    has now recorded five times."""
+    from aira_management.apps.usecases.models import UseCase
+
+    _result, recorded = seeded
+    upserted = [p for t, p in recorded if t == "usecase.upserted"]
+    assert upserted, "no use case was announced at all"
+    for payload in upserted:
+        expected = sorted(
+            m.name for m in UseCase.objects.get(slug=payload["slug"]).allowed_models.all()
+        )
+        assert payload["allowed_models"] == expected, payload["slug"]

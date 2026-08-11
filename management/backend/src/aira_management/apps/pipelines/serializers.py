@@ -14,7 +14,9 @@ from rest_framework import serializers
 from aira_common.patterns import is_catastrophic
 from aira_management.apps.pipelines.models import PipelineConfig
 
-STEP_TYPES = {"injection_filter", "allow_check", "model_route"}
+#: `allow_check` left on 2026-08-11: which models a use case may call is a property of the
+#: use case (`FRD-308`), enforced at every hop, not a stage that ran once before routing.
+STEP_TYPES = {"injection_filter", "model_route"}
 
 MAX_STEPS = 32
 MAX_FALLBACK_MODELS = 16
@@ -81,8 +83,6 @@ def _validate_step_config(step_type: str, config: dict[str, Any]) -> None:
                 f"step.config.on_undetermined must be one of {list(UNDETERMINED_POLICIES)}, "
                 f"not '{policy}'."
             )
-    elif step_type == "allow_check":
-        _check_str_list(config.get("models", []), "models", MAX_MODELS, MAX_MODEL_LENGTH)
     elif step_type == "model_route":
         categories = config.get("categories", [])
         if not isinstance(categories, list) or len(categories) > MAX_CATEGORIES:

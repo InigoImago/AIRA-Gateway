@@ -8,14 +8,12 @@ import { ConfirmService } from '../../core/ui/confirm.service';
 
 const STEP_LABELS: Record<StepType, string> = {
   injection_filter: 'Injection Filter',
-  allow_check: 'Allow-Check',
   model_route: 'Model Routing (LLM)',
 };
 
 const STEP_HELP: Record<StepType, string> = {
   injection_filter:
     'Scans the prompt for prompt-injection / jailbreak attempts and blocks or flags them.',
-  allow_check: 'Rejects the request if the requested model is not in the allow-list.',
   model_route:
     'An LLM reads system + user text, picks one of your categories, and routes to that category’s model.',
 };
@@ -50,8 +48,6 @@ function defaultConfig(type: StepType): PipelineStep['config'] {
         use_builtins: true,
         patterns: [],
       };
-    case 'allow_check':
-      return { models: [] };
     case 'model_route':
       return { categories: [{ name: '', description: '', model: '' }], default_model: '' };
   }
@@ -101,7 +97,10 @@ export class PipelineEditor implements OnInit {
   protected readonly dryRunning = signal(false);
   protected slug = '';
 
-  protected readonly stepTypes: StepType[] = ['injection_filter', 'allow_check', 'model_route'];
+  // `allow_check` left on 2026-08-11. Which models a use case may call is a property of the use
+  // case, released on its own screen and enforced at every hop (`FRD-308`) — the step ran once,
+  // before routing, so a route or a fallback went straight past it.
+  protected readonly stepTypes: StepType[] = ['injection_filter', 'model_route'];
   protected readonly label = (type: StepType): string => STEP_LABELS[type];
   protected readonly help = (type: StepType): string => STEP_HELP[type];
   protected readonly builtinLabels = BUILTIN_LABELS;
@@ -123,8 +122,6 @@ export class PipelineEditor implements OnInit {
     switch (step.type) {
       case 'injection_filter':
         return `${step.config.mode ?? 'heuristic'} · ${step.config.action ?? 'block'}`;
-      case 'allow_check':
-        return `${(step.config.models ?? []).length} allowed model(s)`;
       case 'model_route':
         return `${(step.config.categories ?? []).length} categor(ies)`;
     }
@@ -166,8 +163,6 @@ export class PipelineEditor implements OnInit {
         const action = hit ? (step.config.action === 'flag' ? 'flagged' : 'blocked') : 'passed';
         if (action === 'blocked') blocked = true;
         rows.push({ label: name, action, note: hit ? 'matched a pattern' : 'no pattern matched' });
-      } else if (step.type === 'allow_check') {
-        rows.push({ label: name, action: 'runtime', note: 'Depends on the requested model' });
       } else {
         rows.push({
           label: name,

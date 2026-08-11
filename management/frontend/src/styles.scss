@@ -1202,3 +1202,150 @@ tr.is-open > * {
     grid-column: span 1;
   }
 }
+
+/* ---- picking several things out of a list that only grows ----------------------------------
+ *
+ * `.picker` was written for the access panel's directory results and **had no CSS at all** — the
+ * list rendered as unstyled `<li><button>` rows for as long as that screen has existed. The same
+ * shape of defect as `routerLinkActive` styling nothing and the info hints that showed nothing:
+ * a declaration nobody implemented announces itself through absolutely nothing. Styling it here
+ * fixes both screens, because both use the same class.
+ */
+.multiselect {
+  position: relative;
+  min-width: min(28rem, 100%);
+}
+.multiselect__field {
+  display: flex;
+  align-items: stretch;
+  gap: 0.25rem;
+}
+.multiselect__field input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.multiselect__toggle {
+  flex: 0 0 auto;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0 0 0.45rem;
+  padding: 0;
+  list-style: none;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.15rem 0.3rem 0.15rem 0.5rem;
+  border: 1px solid var(--aira-border-strong);
+  border-radius: 999px;
+  background: var(--aira-brand-soft);
+  font-size: 0.82rem;
+  line-height: 1.6;
+}
+.chip--warning {
+  background: var(--aira-warning-soft);
+  border-color: var(--aira-warning);
+  color: var(--aira-warning);
+}
+.chip__label {
+  font-family: var(--aira-mono);
+  /* A model name is long and the set of them is wide. Breaking inside one keeps a row of chips
+     inside the card rather than pushing the page sideways. */
+  overflow-wrap: anywhere;
+}
+.chip__note {
+  font-size: 0.75rem;
+  font-style: italic;
+}
+.chip__remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.15rem;
+  height: 1.15rem;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+.chip__remove:hover {
+  background: rgba(17, 24, 39, 0.1);
+}
+
+.picker {
+  margin: 0.25rem 0 0;
+  padding: 0.25rem;
+  list-style: none;
+  /* Its **own** height, not the section's. A list that grows the block it sits in moves every
+     control below it on each keystroke. */
+  max-height: 18rem;
+  overflow-y: auto;
+  border: 1px solid var(--aira-border-strong);
+  border-radius: var(--aira-radius);
+  background: var(--aira-surface);
+  box-shadow: var(--aira-shadow);
+}
+
+/* **Floating is the multi-select's, not the class's.** The first version made `.picker` itself
+   `position: absolute`, and the access panel — which has used this class since `FRD-209` and has
+   no positioned ancestor — laid its directory results across the whole page. Shared *appearance*
+   is what a shared class is for; where a thing sits is a property of the screen it sits on. */
+.multiselect .picker {
+  position: absolute;
+  z-index: 30;
+  left: 0;
+  right: 0;
+  box-shadow: var(--aira-shadow-lg);
+}
+.picker__item {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.4rem 0.5rem;
+  border: 0;
+  border-radius: var(--aira-radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.picker__item:hover,
+.picker__item.is-active {
+  background: var(--aira-brand-soft);
+}
+.picker__item[aria-selected='true'] {
+  font-weight: 600;
+}
+.picker__check {
+  flex: 0 0 1rem;
+  color: var(--aira-brand);
+}
+.picker__label {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--aira-mono);
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+.picker__detail {
+  display: block;
+  font-family: inherit;
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: var(--aira-text-muted);
+}
+.picker__empty {
+  padding: 0.5rem;
+  color: var(--aira-text-muted);
+  font-size: 0.85rem;
+}

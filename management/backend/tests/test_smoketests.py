@@ -404,3 +404,38 @@ def test_seeding_the_use_case_announces_it_to_the_gateway() -> None:
     assert any(p.get("slug") == SMOKE_TEST_USE_CASE for p in upserts), (
         "a use case the gateway never hears about is one it refuses every request for"
     )
+
+
+def test_starting_a_run_releases_the_model_to_the_testing_use_case() -> None:
+    """`FRD-308`: a use case may only call the models released to it, and the smoke-test use case
+    is seeded once while models are approved later.
+
+    Without this, every run against a newly approved model would come back as a page of failures
+    that read as the **model** being broken — the opposite of what a smoke test is for. Written as
+    a release rather than as an exemption: an exemption is a hole that stops showing up anywhere,
+    a release leaves a row, an event, and a visible entry on the use case's own panel.
+    """
+    from aira_management.apps.catalog.models import Model
+    from aira_management.apps.smoketests.models import SMOKE_TEST_USE_CASE
+    from aira_management.apps.usecases.models import UseCase
+
+    UseCase.objects.update_or_create(slug=SMOKE_TEST_USE_CASE, defaults={"name": "Smoke tests"})
+    Model.objects.create(name="fresh-1", approved=True)
+    Model.objects.create(name="draft-1", approved=False)
+    user = _user("tester", "global-admin")
+
+    response = _client(user).post(
+        "/api/v1/test-runs/", {"model": "fresh-1", "use_case": SMOKE_TEST_USE_CASE}, format="json"
+    )
+    assert response.status_code == 201, response.data
+
+    released = {m.name for m in UseCase.objects.get(slug=SMOKE_TEST_USE_CASE).allowed_models.all()}
+    assert released == {"fresh-1"}
+
+    # The outer gate is not this path's to open: a model nobody approved stays unreleasable, and
+    # the gateway refuses it by name — a better message than a silent release that then fails.
+    _client(user).post(
+        "/api/v1/test-runs/", {"model": "draft-1", "use_case": SMOKE_TEST_USE_CASE}, format="json"
+    )
+    released = {m.name for m in UseCase.objects.get(slug=SMOKE_TEST_USE_CASE).allowed_models.all()}
+    assert released == {"fresh-1"}

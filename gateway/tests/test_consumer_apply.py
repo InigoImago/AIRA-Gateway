@@ -45,6 +45,39 @@ async def test_usecase_upsert_is_idempotent(make_session) -> None:
     assert rows[0].name == "N2"
 
 
+async def test_a_release_the_event_does_not_mention_is_not_a_release_of_nothing(
+    make_session,
+) -> None:
+    """`FRD-308`, and the difference decides whether traffic flows.
+
+    An event from a Management that predates this feature carries no `allowed_models`. Reading
+    that absence as "released nothing" would stop **every** use case on a partially upgraded
+    stack — a governance control arriving as an outage, which `FRD-500` records as the way a
+    control gets switched off for good. Absent means *this event could not say*; an empty list
+    means *somebody released nothing*, and only the second is an answer.
+    """
+    async with make_session() as session:
+        await apply_event(session, "usecase.upserted", {"slug": "old", "name": "N"})
+        await apply_event(
+            session, "usecase.upserted", {"slug": "none", "name": "N", "allowed_models": []}
+        )
+        await apply_event(
+            session, "usecase.upserted", {"slug": "some", "name": "N", "allowed_models": ["b", "a"]}
+        )
+        # Not a list at all: a malformed payload must not be able to stop a use case either.
+        await apply_event(
+            session, "usecase.upserted", {"slug": "junk", "name": "N", "allowed_models": "a,b"}
+        )
+
+    rows = {row.slug: row.allowed_models for row in await _all(make_session, UseCaseRead)}
+    assert rows["old"] is None
+    assert rows["none"] == []
+    # Sorted and de-duplicated, so a compacted topic replaying the same release does not look like
+    # a change to anybody diffing the read-model.
+    assert rows["some"] == ["a", "b"]
+    assert rows["junk"] is None
+
+
 async def test_usecase_delete_removes_members(make_session) -> None:
     async with make_session() as session:
         await apply_event(session, "usecase.upserted", {"slug": "uc", "name": "N"})
@@ -310,7 +343,7 @@ async def test_pipeline_upsert_is_idempotent_and_updates(make_session) -> None:
         await apply_event(
             session,
             "pipeline.upserted",
-            {"use_case": "uc", "steps": [{"type": "allow_check"}], "fallback_models": ["a"]},
+            {"use_case": "uc", "steps": [{"type": "injection_filter"}], "fallback_models": ["a"]},
         )
         await apply_event(
             session,

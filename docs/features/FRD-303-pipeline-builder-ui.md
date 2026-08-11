@@ -16,7 +16,6 @@ the gateway (FRD-300/303 backend).
   per-step up/down/remove; add-step buttons per type.
 - Inspector (right, sticky) per step type:
   - `injection_filter`: mode (heuristic|llm), on-detection (block|flag), optional classifier model.
-  - `allow_check`: allowed models (comma list).
   - `model_route`: ordered rules (`under chars` + target model), add/remove.
   - fallback node: fallback models (comma list, ordered).
 - Zoneless-safe: state in signals; edits are immutable `update()`s (`structuredClone` + `set`).

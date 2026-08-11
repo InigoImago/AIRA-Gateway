@@ -15,8 +15,13 @@ so existing behavior is unchanged.
 ## 2. Goals & Non-Goals
 **Goals**
 - Deterministic engine over the canonical request: `steps[]` + a dispatch `fallback_models[]`.
-- Step types: `injection_filter` (`heuristic`|`llm`, action `block`|`flag`), `allow_check` (model
-  allow-list), `model_route` (rule-based, incl. cost/length-based rerouting).
+- Step types: `injection_filter` (`heuristic`|`llm`, action `block`|`flag`), `model_route`
+  (rule-based, incl. cost/length-based rerouting).
+- **`allow_check` was a third step type and was removed on 2026-08-11** (`FRD-308`). It ran once,
+  before routing, against the model the *caller* named — measured, a `model_route` step and a
+  fallback chain both reached a forbidden model and were served 200. Which models a use case may
+  call is now a property of the use case, checked at every hop like every other dispatch
+  condition.
 - LLM filter uses the provider abstraction (hermetic in tests via the mock/stub provider).
 - Wired into `generateContent`/`streamGenerateContent`; decisions recorded on the request log +
   trace (`aira.pipeline.*`). Blocked requests return a shaped Gemini error.

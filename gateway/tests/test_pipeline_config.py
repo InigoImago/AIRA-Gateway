@@ -19,9 +19,9 @@ def test_from_dict_parses_steps_and_fallbacks() -> None:
 
 def test_from_dict_skips_unknown_or_malformed_steps() -> None:
     pipeline = Pipeline.from_dict(
-        {"steps": [{"type": "future_step"}, {"no_type": 1}, {"type": "allow_check"}]}
+        {"steps": [{"type": "future_step"}, {"no_type": 1}, {"type": "injection_filter"}]}
     )
-    assert [s.type for s in pipeline.steps] == [StepType.ALLOW_CHECK]
+    assert [s.type for s in pipeline.steps] == [StepType.INJECTION_FILTER]
 
 
 def test_empty_pipeline() -> None:

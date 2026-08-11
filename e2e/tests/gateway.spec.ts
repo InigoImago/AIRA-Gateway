@@ -59,8 +59,10 @@ test.describe('Gateway integration', () => {
     await createUseCase(page, slug, 'Save probe');
 
     await page.goto(`/use-cases/${slug}/pipeline`);
-    await page.click('button:has-text("Allow-Check")');
-    await page.fill('#insp-allowed', 'mock-1');
+    // Was `Allow-Check` until 2026-08-11. That step is gone (`FRD-308`) — which models a use case
+    // may call is a property of the use case, released on its own panel and enforced at every hop.
+    await page.click('button:has-text("Injection Filter")');
+    await page.selectOption('#insp-action', 'flag');
     await expect(page.locator('[role="status"]')).toContainText('Unsaved changes');
 
     await page.click('button:has-text("Save pipeline")');
@@ -69,7 +71,7 @@ test.describe('Gateway integration', () => {
     // The saved config survives a reload — i.e. it really reached the control plane.
     await page.reload();
     await page.click('.node--step');
-    await expect(page.locator('#insp-allowed')).toHaveValue('mock-1');
+    await expect(page.locator('#insp-action')).toHaveValue('flag');
   });
 
   test('consumption is shown for a use case the caller is a Keycloak member of', async ({

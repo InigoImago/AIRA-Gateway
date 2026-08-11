@@ -8,6 +8,7 @@ from django.contrib.auth.models import Group
 from django.db.models import Count
 from rest_framework import serializers
 
+from aira_management.apps.catalog.models import Model as CatalogModel
 from aira_management.apps.usecases.access import is_member, may_admin, may_manage
 from aira_management.apps.usecases.models import (
     UseCase,
@@ -15,6 +16,10 @@ from aira_management.apps.usecases.models import (
     UseCaseMembership,
 )
 from aira_management.rbac import django_group_name
+
+#: How many models one use case may be released. Generous — an installation contracts tens of
+#: models, not hundreds — and finite, which is the point.
+MAX_RELEASED_MODELS = 64
 
 
 class UseCaseSerializer(serializers.ModelSerializer[UseCase]):
@@ -38,10 +43,50 @@ class UseCaseSerializer(serializers.ModelSerializer[UseCase]):
             "is_member": is_member(user, obj),
         }
 
+    #: The models released for this use case, by name (`FRD-308`).
+    #:
+    #: Names rather than ids, because a name is what a caller puts in a request, what the audit row
+    #: carries and what the gateway enforces against. An id would be a fourth identifier for one
+    #: model, meaningful only inside this database.
+    allowed_models = serializers.SlugRelatedField(
+        many=True,
+        slug_field="name",
+        required=False,
+        queryset=CatalogModel.objects.all(),
+    )
+
+    def validate_allowed_models(self, models: list[CatalogModel]) -> list[CatalogModel]:
+        """Only an **approved** model may be released to a use case, and not unboundedly many.
+
+        Two gates, two owners: a Global Administrator decides what may be used in this installation
+        at all (`FRD-307`), and a use-case administrator decides which of those this use case
+        reaches. Letting the second hand out something the first has not released would invert
+        them — and the request would be refused at dispatch anyway, so the console would show a
+        release that never works.
+
+        Refused **by name**, because "one of the models you chose is not approved" sends somebody
+        back through a list of thirty to find out which.
+        """
+        if len(models) > MAX_RELEASED_MODELS:
+            # The bound the `allow_check` step used to carry, kept when the step went. Every name
+            # here is a database lookup, and an input nobody bounded is one somebody eventually
+            # sends ten thousand of (`ADR-0007`).
+            raise serializers.ValidationError(
+                f"A use case can be released at most {MAX_RELEASED_MODELS} models."
+            )
+        unapproved = sorted(model.name for model in models if not model.approved)
+        if unapproved:
+            raise serializers.ValidationError(
+                f"Not approved for use in this installation: {', '.join(unapproved)}. A Global "
+                "Administrator releases a model into the catalog before a use case can be given it."
+            )
+        return models
+
     class Meta:
         model = UseCase
         fields = [
             "permissions",
+            "allowed_models",
             "slug",
             "name",
             "description",

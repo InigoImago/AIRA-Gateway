@@ -39,7 +39,7 @@ are *allowed*. Two gaps:
 ### 3.2 Enforcement (security by default)
 - UI restriction alone is not enough. The **approved set is distributed to the gateway** over Kafka
   (`model.approved` / `model.revoked` → read-model), and the gateway **rejects requests for a model
-  not in the approved catalog** (global gate, on top of the per-use-case `allow_check`). This closes
+  not in the approved catalog** (the global gate; the per-use-case one is `FRD-308`). This closes
   the bypass where a key holder calls a non-approved model directly. (May be phased: catalog + pickers
   first, gateway enforcement second.)
 

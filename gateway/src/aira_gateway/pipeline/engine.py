@@ -2,7 +2,6 @@
 
 Walks a use case's ordered steps over the canonical request:
 - ``injection_filter`` — heuristic (built-in + custom patterns) or LLM classifier; may block.
-- ``allow_check`` — model allow-list; may block.
 - ``model_route`` — an LLM classifies the request (system + user) into one of the configured
   categories and routes to that category's model.
 
@@ -145,16 +144,6 @@ class PipelineEngine:
                 )
                 if blocking:
                     raise PipelineRejected(_rejection(verdict))
-            elif step.type is StepType.ALLOW_CHECK:
-                if self._allow_violation(step.config, outcome.request):
-                    outcome.decisions.append(
-                        {"step": "allow_check", "action": "blocked", "to": outcome.request.model}
-                    )
-                    raise PipelineRejected(
-                        f"Model '{outcome.request.model}' is not allowed for this use case.",
-                        code=403,
-                        status="PERMISSION_DENIED",
-                    )
             elif step.type is StepType.MODEL_ROUTE:
                 category, target, call = await self._route(step.config, outcome.request)
                 if call is not None:
@@ -198,12 +187,6 @@ class PipelineEngine:
                         detail,
                     )
                 )
-            elif step.type is StepType.ALLOW_CHECK:
-                if self._allow_violation(step.config, current):
-                    trace.append(TraceEntry("allow_check", "rejected", {"model": current.model}))
-                    blocked, reason = True, f"Model '{current.model}' is not allowed."
-                    break
-                trace.append(TraceEntry("allow_check", "allowed", {"model": current.model}))
             elif step.type is StepType.MODEL_ROUTE:
                 category, target, _ = await self._route(step.config, current)
                 if target and target != current.model:
@@ -244,10 +227,6 @@ class PipelineEngine:
                 return LlmInjectionClassifier(provider, model, config.get("instruction"))
         extras = tuple(config.get("patterns", []))
         return HeuristicInjectionClassifier(extras, use_builtins=config.get("use_builtins", True))
-
-    def _allow_violation(self, config: dict[str, Any], request: CanonicalRequest) -> bool:
-        allowed = config.get("models", [])
-        return bool(allowed) and request.model not in allowed
 
     async def _route(
         self, config: dict[str, Any], request: CanonicalRequest

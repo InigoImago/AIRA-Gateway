@@ -248,17 +248,6 @@
                   ></textarea>
                 </div>
               }
-            } @else if (step.type === 'allow_check') {
-              <div class="field">
-                <label for="insp-allowed">Allowed models (comma-separated)</label>
-                <input
-                  id="insp-allowed"
-                  [ngModel]="(step.config.models || []).join(', ')"
-                  (ngModelChange)="setListField(selectedIndex(), 'models', $event)"
-                  placeholder="gemini-2.0-flash, mock-1"
-                />
-              </div>
-              <p class="muted">Requests for any other model are rejected with 403.</p>
             } @else if (step.type === 'model_route') {
               <div class="field">
                 <label for="insp-route-model">Classifier model</label>

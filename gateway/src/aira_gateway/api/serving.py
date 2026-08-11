@@ -58,6 +58,7 @@ from aira_gateway.ratelimit.errors import RateLimited
 from aira_gateway.requirements import (
     MediaTypesSupported,
     ModelApproved,
+    ModelReleasedForUseCase,
     RegionAllowed,
     Requirement,
     SamplingExpressible,
@@ -275,11 +276,15 @@ def registry_of(request: Request) -> ProviderRegistry:
     return registry
 
 
-def requirements_for(request: Request, canonical: CanonicalRequest | None) -> Permits:
+async def requirements_for(request: Request, canonical: CanonicalRequest | None) -> Permits:
     """What a candidate must satisfy to serve this request (`ADR-0012` §3).
 
     Assembled per request because the answer depends on the request: residency always, and the
     attachment media types only when the caller actually sent one.
+
+    **Async since `FRD-308`**, because one of the checks is a fact about the caller's use case
+    rather than about the request — read **once here** and then asked per hop, so a chain of five
+    candidates is one query rather than five.
     """
     settings = request.app.state.settings
     # One list, every transport (`ADR-0012` §6) — reading a Vertex-named setting here would make
@@ -290,6 +295,13 @@ def requirements_for(request: Request, canonical: CanonicalRequest | None) -> Pe
         # asked for, and this one is a property of the installation. Whether a model may be used
         # at all is not a question a request gets to make go away (`FRD-307`).
         ModelApproved(catalog_of(request), registry_of(request)),
+        # The second gate, with a different owner (`FRD-308`). `ModelApproved` is the
+        # installation's decision about what may be used at all; this is the use case's own
+        # administrator's about which of those it reaches. Unconditional for the same reason: not
+        # a question a request gets to make go away.
+        ModelReleasedForUseCase(
+            await released_models(request), use_case_of(request), registry_of(request)
+        ),
     ]
     if canonical is not None and canonical.media_types:
         checks.append(MediaTypesSupported(catalog_of(request), canonical.media_types))
@@ -417,6 +429,42 @@ async def check_tools_permitted(request: Request, canonical: CanonicalRequest) -
             "functions can declare them.",
             "FAILED_PRECONDITION",
         )
+
+
+def use_case_of(request: Request) -> str | None:
+    """Which use case this request is attributed to, if any."""
+    attribution = getattr(request.state, "attribution", None)
+    slug = getattr(attribution, "use_case", None)
+    return str(slug) if slug else None
+
+
+async def released_models(request: Request) -> list[str] | None:
+    """Which models this request's use case may call (`FRD-308`), or ``None`` for no answer.
+
+    Three states, and each says something different:
+
+    - ``None`` — **nobody has told us**. A request with no use case at all (an unbound break-glass
+      key, `ADR-0015`), or a read-model row from a Management that predates this feature. Not ours
+      to refuse: an absent *answer* is not an absent *release*, and treating it as one would stop
+      every use case on a half-upgraded stack.
+    - ``[]`` — somebody released nothing. That is an answer, and the answer is no.
+    - a list — exactly those.
+
+    Read once per request. The requirement is then asked per candidate, so a five-model fallback
+    chain costs one query rather than five.
+    """
+    slug = use_case_of(request)
+    if slug is None:
+        return None
+    sessionmaker = request.app.state.db_sessionmaker
+    async with sessionmaker() as session:
+        record = await session.get(UseCaseRead, slug)
+    if record is None:
+        # The use case is not in the read-model at all. Attribution already refused an unknown one
+        # where it matters; here it is the same "nothing has told us" as an older event.
+        return None
+    released = record.allowed_models
+    return None if released is None else [str(name) for name in released]
 
 
 async def cache_prefix_wanted(request: Request, declaration: ModelDeclaration) -> bool:

@@ -130,6 +130,70 @@ class ModelApproved:
         )
 
 
+class ModelReleasedForUseCase:
+    """This use case must have been given the model (`FRD-308`).
+
+    The second of two gates, and they have different owners. `ModelApproved` above is the
+    installation's: a Global Administrator decides what may be used **here at all**. This one is
+    the use case's own administrator's: which of those *this* use case reaches. Neither implies the
+    other, and a system with only the first lets any use case call every model anybody approved.
+
+    **Empty means none** — the owner's decision, 2026-08-11. A use case reaches the models somebody
+    released for it; absence of a release is not a release, the same rule as "unpriced is not free"
+    and "undeclared is not permitted".
+
+    `None` is a third state and it is not "none": it means **no event has said**, which is what a
+    read-model row written by an older Management looks like. Reading that as an empty release
+    would stop every use case on a partially upgraded stack — a governance control arriving as an
+    outage, which `FRD-500` records as the way a control gets switched off permanently.
+
+    Checked at **every hop**, which is the whole reason this is a requirement rather than a
+    pipeline step. The step it replaces (`allow_check`) ran once, before routing, against the model
+    the *caller* named — and measurement on 2026-08-11 showed both ways around it: a `model_route`
+    step re-targeted the request to a forbidden model and it was served 200, and a `fallback_models`
+    chain dispatched to one and it was served 200. This file's own docstring had already written
+    the rule down: *the check that runs before routing protects nothing.*
+    """
+
+    def __init__(
+        self,
+        released: Sequence[str] | None,
+        use_case: str | None,
+        registry: object | None = None,
+    ) -> None:
+        self._released = None if released is None else frozenset(released)
+        self._use_case = use_case
+        self._registry = registry
+
+    async def refusal(self, model: str) -> str | None:
+        if self._released is None:
+            return None  # nothing has told us; not ours to refuse
+        provider = (
+            self._registry.provider_for(model)  # type: ignore[attr-defined]
+            if self._registry is not None
+            else None
+        )
+        if getattr(provider, "is_test_double", False):
+            # Not a model, exactly as `ModelApproved` reasons — and bounded the same way, by the
+            # double being registered in no environment but `local`.
+            return None
+        if model in self._released:
+            return None
+        if not self._released:
+            # Said separately, because it is what every use case looks like on the day this
+            # shipped and the two need different actions: one is "release this model", the other
+            # is "release *a* model".
+            return (
+                f"use case '{self._use_case}' has no model released to it. An administrator of "
+                "the use case chooses which approved models it may call; until one is chosen it "
+                "can call none."
+            )
+        return (
+            f"'{model}' has not been released to use case '{self._use_case}'. An administrator of "
+            f"the use case can add it; it currently has {len(self._released)} model(s)."
+        )
+
+
 class ToolsSupported:
     """The model must be able to answer with a function call (`FRD-131` FR-4).
 

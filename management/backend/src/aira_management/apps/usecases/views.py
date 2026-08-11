@@ -101,6 +101,10 @@ def _snapshot(usecase: UseCase) -> dict[str, Any]:
         "prompt_caching_enabled": usecase.prompt_caching_enabled,
         "prompt_cache_ttl": usecase.prompt_cache_ttl,
         "retention_days": usecase.retention_days,
+        # `FRD-308`. Sorted so the event is stable: a compacted topic keyed by slug replays the
+        # last value, and a payload that differs only in ordering makes every diff of the log a
+        # false positive.
+        "allowed_models": sorted(usecase.allowed_models.values_list("name", flat=True)),
     }
 
 

@@ -18,8 +18,21 @@ MAX_FALLBACK_MODELS = 16
 
 
 class StepType(StrEnum):
+    """The steps a pipeline may run before dispatch.
+
+    `allow_check` was a member until 2026-08-11 and is now `FRD-308`'s per-use-case model release.
+    It is not a rename: the step ran **once, before routing**, against the model the caller named,
+    and measurement showed both ways around it — a `model_route` step re-targeted a request to a
+    forbidden model and it was served 200, and a fallback chain dispatched to one and it was served
+    200. A release is a property of the use case rather than a stage of its pipeline, and it is
+    enforced at every hop like every other dispatch condition (`ADR-0012` §3).
+
+    An unknown step name in a stored config is dropped rather than refused (see `parse_pipeline`),
+    so a read-model row still carrying the old step degrades to a pipeline without it — which is
+    correct, because the release now enforces what it used to.
+    """
+
     INJECTION_FILTER = "injection_filter"
-    ALLOW_CHECK = "allow_check"
     MODEL_ROUTE = "model_route"
 
 

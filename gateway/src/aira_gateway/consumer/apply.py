@@ -76,6 +76,19 @@ async def apply_event(session: AsyncSession, event_type: str, payload: dict[str,
     await session.commit()
 
 
+def _released_models(payload: dict[str, Any]) -> list[str] | None:
+    """The models this event says the use case may call, or ``None`` if it did not say.
+
+    Anything that is not a list of strings is read as "did not say" rather than as "released
+    nothing": a malformed payload must not be able to stop a use case, and the consumer's job is
+    to apply what it understands (`aira_common.models.parse_capabilities` takes the same line).
+    """
+    released = payload.get("allowed_models")
+    if not isinstance(released, list):
+        return None
+    return sorted({str(name) for name in released if isinstance(name, str) and name})
+
+
 async def _upsert_usecase(session: AsyncSession, payload: dict[str, Any]) -> None:
     existing = await session.get(UseCaseRead, payload["slug"])
     fields = {
@@ -103,6 +116,15 @@ async def _upsert_usecase(session: AsyncSession, payload: dict[str, Any]) -> Non
             payload.get("restrict_members_to_own_requests", False)
         ),
         "retention_days": int(payload.get("retention_days") or DEFAULT_RETENTION_DAYS),
+        # `FRD-308`, and the **third** reading of an absent field on this row — none of them is
+        # the same as the others, which is why each says so where it is decided.
+        #
+        # Absent means *this event could not answer*, so the column keeps its `None` and the
+        # gateway treats the use case as unrestricted. An empty **list** is an answer: somebody
+        # released nothing, and nothing may be called. Collapsing the two would stop every use
+        # case on a stack whose Management has not been upgraded yet — a governance feature
+        # arriving as an outage, which is how one gets switched off for good (`FRD-500`).
+        "allowed_models": _released_models(payload),
     }
     if existing is None:
         session.add(UseCaseRead(slug=payload["slug"], **fields))

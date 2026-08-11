@@ -325,7 +325,7 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
                     registry_of(request),
                     canonical,
                     fallbacks,
-                    permits=requirements_for(request, canonical),
+                    permits=await requirements_for(request, canonical),
                     provider_of=await declared_provider(request),
                 )
                 canonical_response = dispatched.response

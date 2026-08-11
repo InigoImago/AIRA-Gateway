@@ -1,0 +1,110 @@
+<div class="disclosure">
+  <h3 class="section-title" style="margin-bottom: 0.25rem">
+    Models this use case may call
+    <app-info-hint label="Model release" testid="model-release" [wide]="true">
+      Two decisions, with two owners. A <strong>Global Administrator</strong> decides which models
+      may be used in this installation at all — that is the model catalog, and this screen cannot
+      change it. An <strong>administrator of this use case</strong> decides which of those this use
+      case reaches. A model that is not released here is refused by name, at every step: a routing
+      rule cannot re-target a request at it and a fallback chain cannot reach it either.
+    </app-info-hint>
+  </h3>
+
+  @if (loading()) {
+    <p class="loading" style="margin: 0">
+      <span class="spinner" aria-hidden="true"></span>
+      Loading the catalog…
+    </p>
+  } @else {
+    <!--
+      The empty case is the loudest thing here, and deliberately. A use case with nothing released
+      answers **every** request with a refusal, and this screen is where the cause is — a quiet
+      blank list would leave somebody reading gateway logs.
+    -->
+    @if (!count()) {
+      <p
+        class="callout callout--warning"
+        data-testid="nothing-released"
+        style="margin: 0 0 0.75rem"
+      >
+        No model is released, so this use case cannot call anything. Requests are refused by name
+        until an administrator chooses at least one below.
+      </p>
+    } @else {
+      <p class="muted" style="margin: 0 0 0.75rem" data-testid="release-summary">
+        {{ count() }} of {{ releasable().length }} approved model(s) released. This use case can
+        call those and no others.
+      </p>
+    }
+
+    @if (withdrawn().length) {
+      <!--
+        Shown rather than dropped. The gateway refuses these anyway — approval is checked before
+        the release is — so a use case carrying one is already failing for a reason its own screen
+        would otherwise never mention. The picker marks them as chips too, so taking one out does
+        not mean finding it in a list that no longer offers it.
+      -->
+      <p class="callout callout--danger" data-testid="withdrawn-models" style="margin: 0 0 0.75rem">
+        Released here but no longer approved for this installation:
+        <strong>{{ withdrawn().join(', ') }}</strong
+        >. Requests naming them are refused. Ask a Global Administrator to approve them again, or
+        take them out below.
+      </p>
+    }
+
+    @if (!canManage()) {
+      <!--
+        Read-only means **inert, not un-saveable** (`FRD-206`): the list is still worth reading, so
+        it is rendered as a list rather than as a picker nobody can use.
+      -->
+      <p data-testid="release-readonly" style="margin: 0">
+        @if (count()) {
+          This use case may call
+          @for (model of chosenList(); track model) {
+            <code>{{ model }}</code>
+          }
+        } @else {
+          No model is released for this use case.
+        }
+        Only an administrator of this use case, or a Global Administrator, can change that.
+      </p>
+    } @else if (!releasable().length) {
+      <p class="empty" data-testid="nothing-approved" style="margin: 0">
+        No model in the catalog has been approved for use yet, so there is nothing to release. A
+        Global Administrator approves a model on <strong>Models &amp; prices</strong> first.
+      </p>
+    } @else {
+      <!--
+        A picker rather than a checkbox per row. The catalog only grows — one real credential
+        offered 50 models — and a table of checkboxes makes the reader scroll a list they cannot
+        search to find the four they want, with what is already chosen scattered through it. The
+        chips answer "what did I pick"; the search answers "what else is there".
+      -->
+      <app-multi-select
+        label="Models released to this use case"
+        testid="release-picker"
+        placeholder="type part of a model name or a provider…"
+        [options]="choices()"
+        [selected]="chosenList()"
+        (changed)="setChosen($event)"
+      />
+
+      <div class="row" style="margin-top: 0.75rem">
+        <button
+          type="button"
+          class="btn btn--primary"
+          [disabled]="!dirty() || feedback.busy()"
+          (click)="save()"
+          data-testid="save-release"
+        >
+          {{ feedback.busy() ? 'Saving…' : 'Save' }}
+        </button>
+        @if (dirty()) {
+          <span class="field__hint" data-testid="release-unsaved">
+            Not saved yet — the gateway still enforces what was here before.
+          </span>
+        }
+      </div>
+    }
+  }
+</div>

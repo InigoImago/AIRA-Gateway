@@ -5,6 +5,164 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-11 — A use case reaches the models somebody gave it (`FRD-308`)
+
+The ask: _"wir beschränken Use Cases nicht auf die Modelle … entweder globale admin oder Use Case
+admin für einen Use Case erlaubte Modelle freigeben."_ Half of it existed and did not work.
+
+**Measured before it was replaced.** The `allow_check` pipeline step refuses a model outside its
+list — and only the one the *caller* named:
+
+```
+caller names a forbidden model      → 403   ✅
+a model_route step re-targets one   → 200, served
+a fallback_models chain reaches one → 200, served
+```
+
+It runs **once, before routing**. `requirements.py` had written the rule down in its own docstring
+already — _the check that runs before routing protects nothing_ — and attachments, tools, thinking,
+schemas and residency are all checked per hop for exactly that reason. The model allow-list was the
+one control that was not, and it was also opt-in, buried in the graph editor, and invisible to
+anybody who did not open it.
+
+So a release is now a property of the use case, enforced as a dispatch requirement beside
+`ModelApproved`. Two gates, two owners: a **Global Administrator** decides what may be used in this
+installation at all (`FRD-307`), an **administrator of that use case** which of those it reaches —
+`may_admin`, not `may_manage`, because releasing a model changes what a use case *is*.
+
+**Empty means none**, chosen by the owner over the alternative and knowing the consequence: every
+existing use case without an `allow_check` step stops until somebody releases a model. What follows
+is that the refusal has to be worth reading — it names the model, the use case and who can act —
+that the console leads with the empty state instead of a blank list, and that the demo seed
+releases explicitly, because a showcase refusing its own ten requests would teach the rule
+backwards.
+
+**Three states, not two.** `None` is *no event has said*; `[]` is *somebody released nothing*; a
+list is exactly those. The first would be easy to fold into the second and would stop **every** use
+case on a partially upgraded stack, whose Management sends no such field — a governance control
+arriving as an outage, which `FRD-500` recorded as how a control gets switched off for good. The
+same split `FRD-307` made for `approved`.
+
+**A relation in Management, a JSON list in the gateway**, because the two planes ask different
+questions: _which use cases would break if I retire this model_ wants a relation (and cleans up on
+delete), while _may this use case call that model_ is one row the gateway already fetches — and a
+containment query over JSON is written differently on SQLite and Postgres, which `FRD-505` paid for
+once.
+
+**The migration carries a decision and only a decision.** An `allow_check` list was a choice
+somebody made, so it becomes the release. A use case that never had the step could call everything
+approved — and writing the whole catalog into it would have kept it running while showing, in a
+console built to record who released what, **a release nobody made**. That is `FRD-122`'s rule
+about the audit row applied to configuration: an unverifiable claim is not evidence.
+
+**The picker came out of the first walkthrough**: a checkbox per row is honest and stops working
+around thirty, and one real credential offers fifty. `core/ui/multi-select.ts` answers the two
+questions separately — chips above for *what did I pick*, search below for *what else is there* —
+and its tests are mostly keyboard, because unlike a checkbox there is no fallback underneath a
+picker that needs a mouse. Two findings while building it: the first draft advanced the highlight
+on the **same keypress that opened the list**, so ArrowDown into a closed picker landed on the
+*second* option and the first was unreachable without a mouse; and `.picker`, the class the access
+panel's directory results have used since `FRD-209`, turned out to have **no CSS at all** — that
+list has rendered unstyled for as long as the screen has existed, the `routerLinkActive` shape
+again. Styling it fixed both screens; making the shared class `position: absolute` laid the access
+panel's results across the whole page, so appearance is shared and *where it floats* is not.
+
+`allow_check` is gone from the vocabulary, the builder, the serializer and the read-model.
+`J1`–`J7` — of which **`J4` survived its first run**: nothing defended the consumer's reading of an
+absent field, which is precisely the property that decides whether a half-upgraded stack keeps
+serving.
+
+---
+
+## 2026-08-10 — Ask the vendor instead of typing it (`FRD-507` stage C)
+
+The ask: _"da wir aktuell mehrere vendors haben, wenn vendor die Möglichkeit anbieten Modelliste zu
+nutzen, dann wird ein Dropdown mit modellen erscheinen"_ — a provider dropdown of what is actually
+supported, and, where a vendor publishes a listing, the models to pick from.
+
+**Three lists exist and they were never the same list.** What a vendor *offers* a credential, what
+the gateway *serves*, and what the catalog *permits*. The console had the second (stage A) and the
+third and asked an administrator to **type** the first — which is how `gemini-2.5-flash` came to
+stand in a shipped default after Google had withdrawn it from new keys. Asking removes the
+transcription and removes nothing from the decision: `approved` still defaults to false, nothing
+here writes anything, and `GET /v1beta/providers[/{name}/offerings]` is bounded by **role**
+(`CATALOG_ROLES` — one definition both planes read, after `FRD-503` found the two disagreeing about
+a kill switch).
+
+**What may be copied is the whole design.** Three things are facts: the name, the vendor's display
+name, and its output ceiling — the API refuses a larger request. So are the verbs, because Google
+returns an *exhaustive* method list and answers 404 for one missing from it; `createCachedContent`
+is how prompt caching appears, and an implementation reading the obvious field finds nothing and
+declares no caching for a model that has it. What is left blank stays blank: a price nobody set is
+not zero (`FRD-403`), a capability is a measurement (`FRD-131` found a model advertising `tools`
+that answers in prose), and `thinking` is shown and never ticked — the flag says a model reasons,
+and `FRD-114` needs the modes and budgets no listing publishes. Every capability is therefore
+**three-valued**: `null` is *the vendor did not say*, and an OpenAI-compatible listing says nothing
+at all. Serialising that to `false` would have pre-filled a form somebody is about to save with a
+declaration nobody made — `FRD-114` FR-7 at the moment it is hardest to see, because a half-full
+form looks like a working feature either way. The console **names what it copied and what it left**.
+
+Two facts the picker had to carry, because getting either wrong produces a catalog entry that looks
+complete and does not work. **`canEnumerate`** is stated, never discovered by trying: a platform
+without a listing is not broken, and an error beside it would report a capability gap as a fault,
+which sends a reader to a different system. **`cataloguedIsEnough`** says whether declaring the
+model is sufficient to reach it — true exactly where the model name is the *whole* addressing
+(stage B). Azure is what that distinction was written for: `/openai/models` answers "which models
+could this resource run", each needs a deployment created first, and an import from there would be
+catalogued, priced, approved and answer 404 with the catalog vouching for it. So `names_models()`
+lives on the **routing axis**, and Foundry — which builds the OpenAI adapter class — claims no
+provider name and offers no listing, while a plain endpoint does both.
+
+A provider name **does not identify one adapter**: an EU Vertex deployment registers two, Gemini
+and Anthropic, one platform and one credential. Keying by name and keeping the last would have
+described the provider with whichever registered second and offered a listing answering for one
+dialect — `ADR-0011`'s ambiguous routing table in a read-only costume. Grouped, and a name with two
+adapters cannot be asked.
+
+Three things fell out that were older than this feature:
+
+- **The readiness probe walked past an adapter with an empty configured list.** It iterated
+  `registry.models()`, and since stage B made cataloguing enough to serve a model, that is the
+  ordinary shape of a working Google AI Studio deployment: the catalog names the models,
+  configuration names none. `/readyz` said **nothing whatsoever** about that upstream, and nothing
+  reads as "no such thing" — the wrong half of `FRD-117`'s distinction between *we did not look*
+  and *it is fine*. Shown red before it was fixed.
+- **The Generative Language adapter had no `ping` at all**, so `/readyz` and `FRD-506`'s
+  reachability check both reported it unprobed — honestly, with nothing behind the honesty. The
+  listing is that cheap question, and it is a GET, never a generation.
+- **The mock declared no provenance**, so a laptop had an empty provider dropdown and the whole
+  flow was only demonstrable against a cloud nobody has in CI. It names itself now (`local` only)
+  and states the two verbs it really implements and nothing more — a double that claimed every
+  capability would make this feature's own subject true by construction. Declaring a *region* for
+  it broke every mock request under the EU default, which is the residency control correctly
+  refusing a fiction: it claims none, the rule `build_openai_upstreams` already recorded.
+
+Also: two `MockProvider`s registered to serve two models became two adapters claiming one provider
+name, which the registry refuses to boot on and refuses correctly — the registry was right and the
+expression was wrong, so the mock takes several models.
+
+**Two corrections from the first walkthrough of the running console**, both about the same thing —
+a control's size and a control's name. The picker was a dropdown inside the model editor, and a
+select of fifty entries inside a form with eighteen fields is something somebody scrolls past: it
+is a **window of its own** now, reached from a button beside _Add model_, listing rather than
+picking — searchable, scrollable, marking what the catalog already has, and closing as it hands one
+model to the editor. And the providers read `generative-language` beside `local`, which names
+neither vendor. They carry a **label** now, stated by the adapter (`Google AI Studio`,
+`local — OpenAI-compatible endpoint`) with the name kept in brackets, because the name is the
+identifier that reaches the catalog and every audit row. A label map in the SPA would have been a
+second vocabulary in TypeScript — the drift `FRD-206` and the capability checkbox list both paid
+for.
+
+**Test lesson, the same one twice in two days.** The late-arrival case — the provider list
+answering *after* the editor is laid out — was written with a stubbed `of()`, which answers inside
+the call that starts it, so the editor's own guess was what the assertion read and the deferred
+rule never ran. It passed against the broken code. Rewritten with a `Subject`, it goes red, and it
+found that the rule had only been written in one direction: a perfectly configured provider stayed
+stuck in the text box it was meant to replace for every model opened faster than the gateway
+answered. `I1`–`I6`.
+
+---
+
 ## 2026-08-10 — Prompt caching, measured first (`FRD-133`)
 
 The ask: agents are expensive because the whole conversation goes over on every turn. The FRD had

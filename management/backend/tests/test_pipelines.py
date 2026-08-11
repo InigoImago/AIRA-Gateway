@@ -133,7 +133,7 @@ def test_put_rejects_non_dict_step_config() -> None:
     _make_uc(admin, "demo-uc")
     resp = _client(admin).put(
         f"{BASE}demo-uc/pipeline/",
-        {"steps": [{"type": "allow_check", "config": "oops"}], "fallback_models": []},
+        {"steps": [{"type": "injection_filter", "config": "oops"}], "fallback_models": []},
         format="json",
     )
     assert resp.status_code == 400
@@ -211,7 +211,7 @@ def test_accepts_invalid_regex_as_literal() -> None:
 
 
 def test_rejects_too_many_steps() -> None:
-    resp = _save([{"type": "allow_check", "config": {}}] * 40)
+    resp = _save([{"type": "injection_filter", "config": {}}] * 40)
     assert resp.status_code == 400
 
 
@@ -235,8 +235,10 @@ def test_rejects_overlong_instruction() -> None:
     assert resp.status_code == 400
 
 
-def test_rejects_too_many_allowed_models() -> None:
-    resp = _save([{"type": "allow_check", "config": {"models": ["m"] * 100}}])
+def test_rejects_a_step_type_that_is_not_in_the_vocabulary() -> None:
+    """`allow_check` is one of those now (`FRD-308`). The bound it used to carry — how many models
+    a use case may name — moved with the rule, to `UseCaseSerializer.validate_allowed_models`."""
+    resp = _save([{"type": "allow_check", "config": {"models": ["m"]}}])
     assert resp.status_code == 400
 
 

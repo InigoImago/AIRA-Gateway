@@ -125,6 +125,32 @@ export async function grantGroup(page: Page, slug: string, path: string, role = 
   expect(status, `could not grant ${path} on ${slug}`).toBeLessThan(300);
 }
 
+/**
+ * Release every approved model to a use case, through the API (`FRD-308`).
+ *
+ * A new use case may call **nothing**, so any test that creates one and then sends real traffic
+ * has to do what an administrator now has to do. Deliberately **not** folded into
+ * `createUseCase`: the step would then be invisible in every test, and the one thing this suite
+ * should say out loud is that a use case without a release is a use case that refuses everything.
+ */
+export async function releaseAllModels(page: Page, slug: string) {
+  const status = await page.evaluate(async (slug) => {
+    const token = sessionStorage.getItem('access_token') ?? localStorage.getItem('access_token');
+    const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+    const catalog = await (await fetch('/api/v1/models/', { headers })).json();
+    const approved = catalog
+      .filter((model: { approved?: boolean }) => model.approved !== false)
+      .map((model: { name: string }) => model.name);
+    const response = await fetch(`/api/v1/use-cases/${slug}/`, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({ allowed_models: approved }),
+    });
+    return response.status;
+  }, slug);
+  expect(status, `could not release models on ${slug}`).toBeLessThan(300);
+}
+
 /** A slug that is unique per run so reruns do not collide on the unique constraint. */
 export function uniqueSlug(prefix: string) {
   return `${prefix}-${Math.random().toString(36).slice(2, 8)}`;

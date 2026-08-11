@@ -163,9 +163,6 @@ def test_a_dry_run_simulates_the_model_the_pipeline_is_about() -> None:
     class _Model:
         name = "mock-1"
 
-    allow = {"steps": [{"type": "allow_check", "config": {"models": ["qwen3:0.6b"]}}]}
-    assert _model_the_pipeline_is_about(allow, [_Model()]) == "qwen3:0.6b"
-
     route = {
         "steps": [
             {
@@ -195,9 +192,19 @@ def test_a_dry_run_still_honours_a_model_the_caller_named() -> None:
             json={
                 "user": "hi",
                 "model": "named-by-the-caller",
-                "pipeline": {"steps": [{"type": "allow_check", "config": {"models": ["other"]}}]},
+                "pipeline": {
+                    "steps": [
+                        {
+                            "type": "model_route",
+                            "config": {"categories": [{"name": "c", "model": "elsewhere"}]},
+                        }
+                    ]
+                },
             },
         )
 
     assert response.status_code == 200
-    assert "named-by-the-caller" in response.json()["block_reason"]
+    # The pipeline would have *inferred* `elsewhere` had the caller named nothing. What matters is
+    # which model the run actually started from — read off the route step's own `from`.
+    route = next(e for e in response.json()["trace"] if e["type"] == "model_route")
+    assert route["detail"]["from"] == "named-by-the-caller"
