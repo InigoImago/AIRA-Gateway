@@ -133,4 +133,37 @@ test.describe('Per-person limits', () => {
     expect(refused.status()).toBe(429);
     expect(JSON.stringify(await refused.json())).toContain('Request budget');
   });
+
+  test('a per-person rate is enforced per person, not per use case', async ({ page, request }) => {
+    /** The budget above proves the *how much*; this proves the *how fast*, which is a different
+     *  store (Redis) reached through a different service. Both were changed by the same scope and
+     *  only one of them needed repairing — which is precisely why neither should be taken on
+     *  trust.
+     */
+    await login(page, USERS.globalAdmin);
+    const slug = uniqueSlug('perheadrate');
+    await createUseCase(page, slug, 'Per-head rate enforcement probe');
+    await releaseAllModels(page, slug);
+
+    await page.goto(`/use-cases/${slug}?tab=rate-limits`);
+    await page.click('[data-testid="add-rate-limit"]');
+    await page.selectOption('#rl-scope', 'each_member');
+    await page.fill('#rl-rpm', '60');
+    await page.fill('#rl-burst', '1'); // one at a time: the second arrives before the refill
+    await (await submitOfOpenForm(page)).click();
+    await expect(page.locator('[data-testid="rate-limit-editor"]')).toBeHidden();
+
+    const key = await issueKey(page, slug);
+    await expect
+      .poll(async () => (await ask(request, key)).status(), {
+        timeout: 30_000,
+        message: 'the issued key never reached the gateway',
+      })
+      .toBe(200);
+
+    const refused = await ask(request, key);
+    expect(refused.status()).toBe(429);
+    // A well-behaved client is told when to come back, not merely that it was refused.
+    expect(refused.headers()['retry-after']).toBeTruthy();
+  });
 });

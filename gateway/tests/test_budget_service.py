@@ -241,3 +241,25 @@ async def test_a_per_person_budget_reports_no_figure_to_somebody_it_does_not_bin
 
     nobodys = (await service.usage("uc", NOW))[0]
     assert nobodys["used_tokens"] is None and nobodys["measured_for"] is None
+
+
+async def test_a_pipeline_call_is_booked_against_the_caller_own_per_person_budget(
+    sessionmaker,
+) -> None:
+    """`FRD-125b`'s path, which reaches the counter through a different door.
+
+    `book_side_call` resolves the applicable budgets itself rather than being handed a reservation,
+    so it is the one place a per-person row could be booked under the wrong key without any other
+    test noticing — and the consequence would be quiet: a use case's governing cost counted against
+    nobody, which is exactly what `FRD-125b` was written to stop.
+    """
+    await _add(sessionmaker, id=1, scope="each_member", subject="", limit_tokens=1000)
+    service = BudgetService(sessionmaker)
+
+    await service.book_side_call("uc", "alice", tokens=40, cost_nanos=500, now=NOW)
+
+    mine = (await service.usage("uc", NOW, subject="alice"))[0]
+    assert (mine["used_tokens"], mine["used_requests"]) == (40, 0), (
+        "the classifier's tokens are consumption; the caller still made one request, not two"
+    )
+    assert (await service.usage("uc", NOW, subject="bob"))[0]["used_tokens"] == 0
