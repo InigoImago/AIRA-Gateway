@@ -61,6 +61,7 @@ class RateLimitService:
         units: int = 1,
         *,
         extra: Sequence[BucketRequest] = (),
+        username: str | None = None,
     ) -> None:
         """Raise :class:`RateLimited` if the caller is over its configured rate.
 
@@ -75,7 +76,9 @@ class RateLimitService:
         if not self._enforce:
             return
         configured = (
-            self._applicable(await self._config(use_case), use_case, subject) if use_case else []
+            self._applicable(await self._config(use_case), use_case, subject, username)
+            if use_case
+            else []
         )
         buckets = [*configured, *extra]
         if not buckets:
@@ -114,7 +117,11 @@ class RateLimitService:
         )
 
     def _applicable(
-        self, records: list[RateLimitRead], use_case: str, subject: str | None
+        self,
+        records: list[RateLimitRead],
+        use_case: str,
+        subject: str | None,
+        username: str | None = None,
     ) -> list[BucketRequest]:
         """Turn the configured records into the buckets this request must pass.
 
@@ -132,6 +139,7 @@ class RateLimitService:
                 use_case=use_case,
                 subject=record.subject,
                 caller=subject,
+                caller_username=username,
             )
             if scope is None:
                 continue

@@ -188,6 +188,7 @@ async def require_attribution(
     attribution = Attribution(
         subject=principal.subject,
         method=principal.method,
+        username=principal.username,
         use_case=use_case,
         credential=principal.credential,
     )

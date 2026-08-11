@@ -1,6 +1,10 @@
 """Budget enforcement wired into the Gemini route (FRD-401)."""
 
+from collections.abc import AsyncIterator
+
+import pytest_asyncio
 from fastapi.testclient import TestClient
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from aira_gateway.app import create_app
 from aira_gateway.auth.principal import Principal
@@ -9,6 +13,16 @@ from aira_gateway.budgets.service import BudgetService, Reservation
 from aira_gateway.config import GatewaySettings
 
 _BODY = {"contents": [{"role": "user", "parts": [{"text": "hi"}]}]}
+
+
+@pytest_asyncio.fixture
+async def sessionmaker() -> AsyncIterator[async_sessionmaker]:
+    from aira_gateway.db.base import build_engine, build_sessionmaker, create_all
+
+    engine = build_engine("sqlite+aiosqlite:///:memory:")
+    await create_all(engine)
+    yield build_sessionmaker(engine)
+    await engine.dispose()
 
 
 class _MemberOf:
@@ -22,7 +36,7 @@ class _MemberOf:
 
 
 class _BlockingBudgets:
-    async def guard(self, use_case, subject, *, estimated=None):  # noqa: ANN001, ANN201
+    async def guard(self, use_case, subject, *, estimated=None, username=None):  # noqa: ANN001, ANN201
         raise BudgetExceeded("Request budget exhausted for use_case (day).")
 
     # The real signature, including `requests` — a stand-in narrower than the thing it replaces
@@ -49,7 +63,7 @@ class _RecordingBudgets:
         self.released = 0
         self.estimates: list[object] = []
 
-    async def guard(self, use_case, subject, *, estimated=None):  # noqa: ANN001, ANN201
+    async def guard(self, use_case, subject, *, estimated=None, username=None):  # noqa: ANN001, ANN201
         self.estimates.append(estimated)
         return Reservation()
 
@@ -131,9 +145,11 @@ def test_stream_records_usage() -> None:
 class _UsageBudgets:
     def __init__(self) -> None:
         self.asked_for: list[str | None] = []
+        self.named: list[str | None] = []
 
-    async def usage(self, use_case, *, subject=None):  # noqa: ANN001, ANN201
+    async def usage(self, use_case, *, subject=None, username=None):  # noqa: ANN001, ANN201
         self.asked_for.append(subject)
+        self.named.append(username)
         return [{"id": 1, "used_tokens": 5, "used_requests": 2, "measured_for": subject}]
 
 
@@ -189,3 +205,82 @@ def test_usage_endpoint_rejects_invalid_slug() -> None:
     with TestClient(app) as client:
         resp = client.get("/v1beta/usage/Not%20A%20Slug")
     assert resp.status_code == 400
+
+
+# == a rule written about a person by name finds them, whichever credential they used ============
+
+
+def _oidc_app(subject: str, username: str | None, sessionmaker) -> tuple[object, object]:
+    """A gateway whose caller is an OIDC principal, with the real budget service behind it."""
+    from aira_gateway.auth.dependencies import require_principal
+
+    app = create_app(GatewaySettings(auth_required=False, require_use_case=False))
+    app.state.budgets = BudgetService(sessionmaker)
+    app.dependency_overrides[require_principal] = lambda: Principal(
+        subject=subject, method="oidc", username=username, use_cases=("uc",)
+    )
+    return app, app.state.budgets
+
+
+async def _member_budget(sessionmaker, subject: str) -> None:
+    from aira_gateway.db.models import BudgetRead
+
+    async with sessionmaker() as session:
+        session.add(
+            BudgetRead(
+                id=1,
+                use_case="uc",
+                scope="member",
+                subject=subject,
+                period="day",
+                limit_requests=1,
+                enabled=True,
+            )
+        )
+        await session.commit()
+
+
+async def test_a_member_budget_written_by_name_refuses_an_oidc_caller(sessionmaker) -> None:
+    """The defect, at the route rather than in the service — which is where it lived.
+
+    An administrator writes a budget about `alice`. Her API-key traffic bound, because a key's
+    subject *is* her username; her browser and service-account traffic did not, because an OIDC
+    subject is the directory's user id. Measured live before this was written: a limit of one
+    request, four calls, four 200s, with the console showing the budget as active.
+
+    Asserted here because the service can resolve the name perfectly and the **route** can still
+    fail to hand it over — the same shape as `FRD-124`'s export, and the reason that lesson is
+    written down twice.
+    """
+    await _member_budget(sessionmaker, "alice")
+    app, _ = _oidc_app("1361bd47-388d-554e-a6b4-93efdf9a6605", "alice", sessionmaker)
+
+    with TestClient(app) as client:
+        first = client.post(
+            "/v1beta/models/mock-1:generateContent",
+            json=_BODY,
+            headers={"X-AIRA-Use-Case": "uc"},
+        )
+        second = client.post(
+            "/v1beta/models/mock-1:generateContent",
+            json=_BODY,
+            headers={"X-AIRA-Use-Case": "uc"},
+        )
+
+    assert first.status_code == 200
+    assert second.status_code == 429, "the budget named her and did not find her"
+
+
+async def test_that_budget_still_binds_nobody_else(sessionmaker) -> None:
+    """The half that must not have been widened: matching a *name* is not matching anyone."""
+    await _member_budget(sessionmaker, "alice")
+    app, _ = _oidc_app("2fc398cc-717d-5350-a1db-c0d48a2bb4e1", "bob", sessionmaker)
+
+    with TestClient(app) as client:
+        for _ in range(3):
+            resp = client.post(
+                "/v1beta/models/mock-1:generateContent",
+                json=_BODY,
+                headers={"X-AIRA-Use-Case": "uc"},
+            )
+            assert resp.status_code == 200, "alice's budget refused bob"

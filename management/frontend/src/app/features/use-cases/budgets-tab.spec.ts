@@ -92,6 +92,18 @@ function setup(options: Options = {}) {
 }
 
 describe('BudgetsTab', () => {
+  it('says what a username has to match, on the screen that asks for one', () => {
+    /** With two credentials answering "who is this" in two alphabets, the honest thing is to name
+     *  what the field reaches: the person's own sign-in and their own keys, and nobody else's. */
+    const harness = setup();
+    harness.component.showForm.set(true);
+    harness.component.budgetScope.set('member');
+    harness.fixture.detectChanges();
+
+    expect(harness.text()).toContain('The name they sign in with');
+    expect(harness.text()).toContain("nobody else's key");
+  });
+
   it('requires a username for a member budget', () => {
     const { component } = setup();
     component.budgetScope.set('member');

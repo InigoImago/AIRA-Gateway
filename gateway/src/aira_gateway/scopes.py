@@ -38,21 +38,39 @@ class Scope:
 
     @classmethod
     def applying(
-        cls, *, scope: str, use_case: str, subject: str, caller: str | None
+        cls,
+        *,
+        scope: str,
+        use_case: str,
+        subject: str,
+        caller: str | None,
+        caller_username: str | None = None,
     ) -> Scope | None:
         """The scope a configured row describes — or ``None`` if it does not bind this caller.
 
         ``subject`` is the member named in the configuration; ``caller`` is who is making the
-        request. A use-case row binds everyone; a member row binds only its own subject, and
+        request, and ``caller_username`` is the name that caller is known by where the credential
+        carries one. A use-case row binds everyone; a member row binds only its own subject, and
         binds nobody at all when the request carries no subject.
 
         This is the single place a new scope is added: give it a branch here and both the budget
         and the rate-limit path follow, instead of one of them being forgotten.
+
+        **Why a member row matches two names.** The two credentials answer "who is this" in
+        different alphabets: an API key's subject is its owner's username, an OIDC token's is the
+        directory's user id. An administrator writing a rule about a person types the name — so
+        the rule bound API-key traffic and, for the same person over OIDC, silently bound nothing.
+        Measured on a live stack: a limit of one request, four calls, four 200s. A rule that is
+        configured, displayed and inert is worse than an absent one (`FRD-125`).
+
+        The **key stays the row's own subject** whichever name matched, so a person is one counter
+        rather than two, and every counter already in ``budget_usage`` keeps being found — that
+        shape is stored, and changing it would not lose the rows, it would stop finding them.
         """
         if scope == USE_CASE:
             return cls(use_case)
-        if scope == MEMBER and caller and subject == caller:
-            return cls(use_case, caller)
+        if scope == MEMBER and subject and subject in (caller, caller_username):
+            return cls(use_case, subject)
         if scope == EACH_MEMBER and caller:
             # The row names nobody; the **caller** is the subject. So one configured row produces a
             # counter per person, under exactly the key a row naming that person would have used —

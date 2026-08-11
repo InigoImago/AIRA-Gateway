@@ -177,6 +177,7 @@ async def dry_run(
     request.state.attribution = Attribution(
         subject=principal.subject,
         method=principal.method,
+        username=principal.username,
         use_case=payload.use_case,
         credential=principal.credential,
     )

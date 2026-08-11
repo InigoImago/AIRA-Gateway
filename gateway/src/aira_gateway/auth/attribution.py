@@ -38,6 +38,11 @@ class Attribution:
     use_case: str | None
     #: The calling system's credential identity, carried through to the audit row (FRD-122 FR-5).
     credential: str | None = None
+    #: The name this subject is known by, where the credential carries one. **Not** an identity
+    #: and never written to the audit row — `subject` is what a row describes. It exists so a
+    #: rule an administrator wrote about a person by name can find them whichever credential they
+    #: used; see :meth:`aira_gateway.scopes.Scope.applying`.
+    username: str | None = None
 
 
 def usecases_from_groups(groups: Iterable[str]) -> tuple[str, ...]:

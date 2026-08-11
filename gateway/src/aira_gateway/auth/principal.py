@@ -23,6 +23,17 @@ class Principal:
 
     subject: str
     method: str
+    #: The caller's human-readable name, when the credential carries one — OIDC's
+    #: ``preferred_username``. **Never the identity**: `subject` is, and stays, what every audit
+    #: row and every counter is keyed on, because a name can be reassigned and a subject cannot.
+    #:
+    #: It exists because the two credentials answer "who is this" in two different alphabets: an
+    #: API key's subject is its owner's *username*, an OIDC token's is the directory's *user id*.
+    #: A `member`-scoped budget or limit is written by an administrator typing a name, so without
+    #: this it matched API-key traffic and silently matched nothing at all for the same person's
+    #: browser or service-account traffic. Measured: four calls against a limit of one, all
+    #: served. `None` where the credential names nobody, which is not the same as "".
+    username: str | None = None
     #: The *credential's* identity — an API key's prefix, or an OIDC client id. Distinct from
     #: ``subject``, which is whose credential it is. This is the one the audit trail needs to
     #: answer "which system called" (FRD-122 FR-5), and it never contains part of a secret.

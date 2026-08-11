@@ -313,7 +313,7 @@ class _RecordingBudgets:
         self.released = 0
         self.settled: list[int] = []
 
-    async def guard(self, use_case, subject, *, estimated=None):  # noqa: ANN001, ANN201
+    async def guard(self, use_case, subject, *, estimated=None, username=None):  # noqa: ANN001, ANN201
         from aira_gateway.budgets.service import Reservation
 
         self.estimates.append(estimated)
@@ -483,7 +483,7 @@ class _WeighingLimiter:
     def __init__(self) -> None:
         self.weights: list[int] = []
 
-    async def check(self, use_case, subject, units=1, *, extra=()):  # noqa: ANN001, ANN201
+    async def check(self, use_case, subject, units=1, *, extra=(), username=None):  # noqa: ANN001, ANN201
         # `extra` is part of the real signature (`FRD-503`: a throttle is an additional
         # bucket). A stand-in narrower than the thing it replaces is how this project has
         # already lost a defect once — CLAUDE.md §3.

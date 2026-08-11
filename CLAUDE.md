@@ -43,7 +43,7 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
   inevitably do when both were written from the same mental model — and line coverage cannot see
   a *missing requirement*: on 2026-08-05 a review found seven real defects behind a green suite at
   99% coverage. So: **prove a test can fail.** Break the property, watch it go red, restore.
-  `make mutants` (`tools/mutation_check.py`) does this for **374 properties** across auth, budgets,
+  `make mutants` (`tools/mutation_check.py`) does this for **376 properties** across auth, budgets,
   pipeline, retention, the management control plane and the gateway's counters; when
   you fix a bug, add the mutation that reintroduces it. Two traps that cost real defects here:
   a stand-in that is more permissive than the thing it replaces (reuse the real method where you
@@ -1526,6 +1526,30 @@ rules they guarded are gone — `allow_check` (replaced by `FRD-308`'s release, 
 by `J1`–`J4`) and the two abolished use-case roles (`ADR-0017`). A mutation kept alive against a
 deleted rule reports green about nothing, which is `N2`'s lesson with the anchor pointing at a
 grave rather than at moved code.
+
+**A rule about a person, and the name it never matched (2026-08-11)** — asked whether the per-head
+scope works when access is a **Keycloak group with no users listed**. It does, measured: a use case
+whose entire access is two group grants produced **two counters from one row that names nobody**,
+and over groups it is the only one of the three scopes that can work at all. The question then
+exposed something older: those keys are **uuids**, because the gateway takes an OIDC subject from
+`sub` while an API key's subject is its owner's *username* (`FRD-604`) — two credentials, two
+alphabets for one question. A `member` rule is written by **typing a name**, so it bound API-key
+traffic and bound **nothing at all** for the same person over OIDC: measured at a limit of one
+request serving **four** calls, with the console showing it active. `FRD-125`'s badge-wearing absent
+control, one identity system over, and true since member scopes existed. The repair is **option B of
+three, chosen with the owner**: a member row matches the caller's subject **or** the name they are
+known by (`preferred_username`). Making the subject *be* the username would rewrite every future
+audit row and move a renamed person's history onto whoever inherits the name; a directory picker
+fixes neither API callers nor a group-granted account that appears in no membership list. Three
+properties: **the name is never an identity** (`subject` stays what rows record and counters key
+on), **the key is the row's own subject** whichever name matched (one person, one counter — and the
+stored `usage_key` shape keeps finding its figures, since changing it would not lose rows but stop
+finding them), and **matching a name is not matching anyone**. After: `[200, 429, 429, 429]`.
+**Neither existing layer could have seen it** — a hermetic test mints no credentials, so it cannot
+express "two credentials disagree", and the browser suite authenticates with an **API key**, which
+is the half that always worked; it lives in `tests/integration/`, where a real token carries a `sub`
+that differs from the typed name. Route asserted apart from the rule (`FRD-124`), proved by cutting
+the one line that hands the name over. `S10`, `S11`; `S1` re-anchored.
 
 Next candidates: **`FRD-114`** (model metadata — now also carries publisher + default output cap,
 prerequisite for 110–113 and 119), **`FRD-110`** (documents/images — the widest gap),

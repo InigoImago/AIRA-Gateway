@@ -68,6 +68,7 @@ def resolve(request: Request, principal: Principal) -> Attribution:
     attribution = Attribution(
         subject=principal.subject,
         method=principal.method,
+        username=principal.username,
         use_case=selected,
         credential=principal.credential,
     )

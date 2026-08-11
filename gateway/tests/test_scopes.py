@@ -97,3 +97,40 @@ def test_a_per_person_row_binds_nobody_when_the_request_has_no_subject() -> None
     from aira_gateway.scopes import EACH_MEMBER, Scope
 
     assert Scope.applying(scope=EACH_MEMBER, use_case="uc", subject="", caller=None) is None
+
+
+def test_a_named_member_row_matches_the_name_the_caller_is_known_by() -> None:
+    """The defect this closed, measured live before it was written.
+
+    An administrator writes a rule about a person by typing their **name**. An API key's subject
+    *is* that name, so the rule bound; an OIDC token's subject is the directory's user id, so the
+    same rule bound nothing at all for the same person's browser or service-account traffic — a
+    limit of one request served four in a row, while the console showed it as active.
+    """
+    scope = Scope.applying(
+        scope="member",
+        use_case="uc",
+        subject="alice",
+        caller="1361bd47-388d-554e-a6b4-93efdf9a6605",
+        caller_username="alice",
+    )
+    assert scope is not None
+    # Keyed on the row's subject, not on whichever name matched: one person, one counter, and
+    # every figure already in `budget_usage` keeps being found.
+    assert scope.usage_key == "member:uc:alice"
+
+
+def test_a_named_member_row_still_binds_nobody_else() -> None:
+    """The half that must not have been widened. A name is matched, not merely carried."""
+    assert (
+        Scope.applying(
+            scope="member", use_case="uc", subject="alice", caller="bob", caller_username="bob"
+        )
+        is None
+    )
+    # And an unnamed row is not a wildcard: an empty subject with a caller who has no name of
+    # their own would otherwise match "" against "".
+    assert (
+        Scope.applying(scope="member", use_case="uc", subject="", caller=None, caller_username=None)
+        is None
+    )

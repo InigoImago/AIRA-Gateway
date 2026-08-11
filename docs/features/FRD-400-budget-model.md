@@ -49,6 +49,25 @@ Three consequences worth writing down:
   the row does not bind. Zero is what an untouched allowance looks like, and this is the one place
   where the two would be indistinguishable (`FRD-603`).
 
+### 2.2 Added 2026-08-11 — what a named member row matches
+A `member` row is written by an administrator **typing a name**, and the two credentials answer
+"who is this" in different alphabets: an API key's subject *is* its owner's username (`FRD-604`),
+an OIDC token's is the directory's user id. So the rule bound API-key traffic and bound **nothing
+at all** for the same person over OIDC — measured on the live stack as a request limit of one
+serving four calls, while the console showed the budget as active. `FRD-125`'s badge-wearing
+absent control, one identity system over.
+
+A member row now matches **either** the caller's subject or the name that caller is known by
+(`preferred_username`, carried on the `Principal` and the `Attribution`). Three properties:
+- **The name is never an identity.** `subject` remains what every audit row records and what every
+  counter is keyed on, because a username can be reassigned to somebody else and a subject cannot.
+- **The key is the row's own subject** whichever name matched, so a person is one counter rather
+  than two and every figure already in `budget_usage` keeps being found — that shape is stored.
+- **Matching a name is not matching anyone.** An empty subject binds nobody, and somebody else's
+  name is somebody else.
+
+`each_member` is unaffected: it never names anybody, which is one more reason to prefer it.
+
 ## 3. Functional Requirements
 - **FR-1**: A use-case admin defines budgets for their use case: one `use_case`-scoped budget per
   period, and any number of `member`-scoped budgets (one per member per period).

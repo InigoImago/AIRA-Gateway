@@ -50,9 +50,17 @@ class OidcValidator:
         # from `sub` — the same person's token from two applications should not look identical in
         # the audit trail.
         client = claims.get("azp") or claims.get("client_id")
+        # The name a person is known by, carried **beside** `sub` and never instead of it: a
+        # username can be reassigned to somebody else, so keying anything on it would move one
+        # person's history onto another. Bounded like every other claim that reaches a stored
+        # field, and taken only when it is a non-empty string — an absent claim is not an empty
+        # name, it is no name.
+        name = claims.get("preferred_username")
+        username = str(name)[:150] if isinstance(name, str) and name.strip() else None
         return Principal(
             subject=str(subject),
             method="oidc",
+            username=username,
             credential=str(client)[:64] if client else None,
             # The `/use-cases/<slug>` convention, resolvable from the token alone (`FRD-102`).
             # Group *grants* are added a layer out, where the read-model is — see

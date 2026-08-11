@@ -70,6 +70,11 @@ class ApiKeyService:
         return Principal(
             subject=record.subject,
             method="api_key",
+            # An API key's subject already **is** the owner's username (`FRD-604`), so the two
+            # answers coincide here. Stated rather than left implicit: it is what makes a
+            # `member`-scoped rule written by name behave identically whichever credential the
+            # person used, which is the whole point of carrying a name at all.
+            username=record.subject,
             # The prefix *is* the key's identity — it is the public half of the credential and is
             # already stored unhashed, so recording it discloses nothing the database does not.
             credential=record.prefix,

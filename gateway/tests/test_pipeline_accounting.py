@@ -286,12 +286,12 @@ class _Exhausted:
     is_test_double = True
     """A budget service that refuses before anything has been spent."""
 
-    async def refuse_if_exhausted(self, use_case, subject, now=None):  # noqa: ANN001, ANN201
+    async def refuse_if_exhausted(self, use_case, subject, now=None, *, username=None):  # noqa: ANN001, ANN201
         from aira_gateway.budgets.errors import BudgetExceeded
 
         raise BudgetExceeded("Cost budget exhausted for use_case (month).")
 
-    async def guard(self, use_case, subject, *, estimated=None):  # noqa: ANN001, ANN201
+    async def guard(self, use_case, subject, *, estimated=None, username=None):  # noqa: ANN001, ANN201
         raise AssertionError("the reservation should never be reached")
 
     async def book_side_call(self, *args, **kwargs):  # noqa: ANN002, ANN003, ANN201

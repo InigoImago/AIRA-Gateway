@@ -735,8 +735,8 @@ MUTATIONS = [
         "S1",
         "a member-scoped row binds only its own subject",
         "gateway/src/aira_gateway/scopes.py",
-        "        if scope == MEMBER and caller and subject == caller:",
-        "        if scope == MEMBER and caller:",
+        "        if scope == MEMBER and subject and subject in (caller, caller_username):",
+        "        if scope == MEMBER and subject:",
         "gateway/tests/test_scopes.py gateway/tests/test_budget_service.py gateway/tests/test_ratelimit.py",
     ),
     Mutation(
@@ -763,6 +763,24 @@ MUTATIONS = [
         "        caller=caller or budget.subject,",
         "        caller=budget.subject,",
         "gateway/tests/test_budget_service.py",
+    ),
+    Mutation(
+        "S10",
+        "a rule written about a person by name finds them whichever credential they used",
+        "gateway/src/aira_gateway/scopes.py",
+        "        if scope == MEMBER and subject and subject in (caller, caller_username):",
+        "        if scope == MEMBER and subject and subject == caller:",
+        "gateway/tests/test_scopes.py gateway/tests/test_budget_routes.py "
+        "gateway/tests/test_ratelimit.py",
+    ),
+    Mutation(
+        "S11",
+        "the name the caller is known by reaches the controls that were written about it",
+        "gateway/src/aira_gateway/auth/attribution.py",
+        "    username: str | None = None",
+        "    username: str | None = None\n\n    def __post_init__(self) -> None:\n"
+        "        object.__setattr__(self, 'username', None)",
+        "gateway/tests/test_budget_routes.py",
     ),
     Mutation(
         "S2",

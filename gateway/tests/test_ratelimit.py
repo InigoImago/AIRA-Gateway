@@ -483,3 +483,23 @@ async def test_a_recovered_store_stops_reporting_the_fallback(sessionmaker) -> N
     assert bucket.degraded is False
     assert log.features == {}
     assert not log
+
+
+async def test_a_member_limit_written_by_name_binds_the_person_over_oidc(sessionmaker) -> None:
+    """The same repair as the budget's, in the other service — and it is the reason the rule lives
+    in one module: this needed no separate fix, only the name passed in.
+
+    An administrator types `alice`. Her API-key subject *is* `alice`; her OIDC subject is the
+    directory's user id, so the limit used to bind nothing at all for the traffic she generates
+    from a browser or a service account.
+    """
+    await _limit(sessionmaker, scope="member", subject="alice", limit_rpm=60, burst=1)
+    service = RateLimitService(sessionmaker, InMemoryTokenBucket(FakeClock()))
+    oidc_subject = "1361bd47-388d-554e-a6b4-93efdf9a6605"
+
+    await service.check("uc", oidc_subject, username="alice")
+    with pytest.raises(RateLimited):
+        await service.check("uc", oidc_subject, username="alice")
+
+    # And it is still a rule about one person: somebody else's name is somebody else.
+    await service.check("uc", "2fc398cc-717d-5350-a1db-c0d48a2bb4e1", username="bob")

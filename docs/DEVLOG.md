@@ -5807,3 +5807,61 @@ searches for a model **by name** now, leaving one option, so the keypress has on
 whatever the use case already allows — and the case is genuinely state-independent rather than
 state-independent-looking. Same family as the hover above: **an assertion aimed at a position is an
 assertion about the arrangement, not about the behaviour.**
+
+
+## 2026-08-11 (later) — a rule about a person, and the name it never matched
+
+Asked whether the per-person scope works when access comes from a **Keycloak group and no users at
+all**. It does, and it was measured rather than reasoned: a use case whose entire access is two
+group grants, nobody named anywhere, one `each_member` budget — two identities called once each and
+the counters came back as
+
+    member:group-probe-2:1361bd47-…  1
+    member:group-probe-2:2fc398cc-…  1
+
+Two counters from one row that names nobody. Over groups it is the only one of the three scopes
+that can work at all, since `member` needs a row per person and there is no list of people.
+
+### And the question exposed something older
+
+Those keys are **uuids**. The gateway takes an OIDC subject from `sub`, while an API key's subject
+is its owner's *username* (`FRD-604`) — two credentials, two alphabets for the same question. A
+`member`-scoped rule is written by an administrator **typing a name**, so it bound API-key traffic
+and, for the same person over OIDC, bound nothing at all. Measured before touching anything:
+
+    budget: scope=member, subject="service-account-…-member", limit_requests=1
+    four calls by that account: [200, 200, 200, 200]
+
+Configured, displayed, inert — `FRD-125`'s badge-wearing absent control, one identity system over,
+and it had been that way since member scopes existed.
+
+**The repair is option B of three**, chosen with the owner: a member row matches **either** the
+caller's subject or the name they are known by (`preferred_username`). The alternatives were worse
+in ways worth recording — making the subject *be* the username would rewrite every future audit row
+and move a renamed person's history onto whoever inherits the name, and a directory picker in the
+console fixes neither API callers nor a group-granted account that appears in no membership list.
+
+Three properties hold it together:
+
+- **The name is never an identity.** `subject` stays what every row records and every counter is
+  keyed on. A username can be reassigned; a subject cannot.
+- **The key is the row's own subject**, whichever name matched — so a person is one counter rather
+  than two, and every figure already in `budget_usage` keeps being found. That shape is stored, and
+  changing it would not lose the rows, it would stop finding them.
+- **Matching a name is not matching anyone.** Somebody else's name is somebody else, and an empty
+  subject binds nobody — the widening that would have been easy to write by accident.
+
+Same measurement after: **[200, 429, 429, 429]**.
+
+### Where the proof had to live
+
+Neither existing layer could see this defect, and that is the interesting part. A hermetic test
+mints no credentials, so it cannot express "two credentials disagree"; the browser suite
+authenticates the gateway with an **API key**, which is exactly the half that always worked. Only a
+real Keycloak token carries a `sub` that differs from the name somebody would type — so
+`tests/integration/test_named_member_rules.py` is where it belongs, with the member account's
+username spelled out and its `sub` appearing nowhere in the file.
+
+The route is asserted separately from the rule (`FRD-124`'s lesson): the scope can resolve two
+names perfectly and the **route** can still fail to hand the second one over. Proved by cutting
+that one line and watching the case go red. `S10`, `S11`; `S1` re-anchored.

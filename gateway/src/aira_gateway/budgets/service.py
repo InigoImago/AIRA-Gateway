@@ -77,7 +77,7 @@ def _scope_label(budget: BudgetRead) -> str:
     return "use case" if budget.scope == USE_CASE else "member"
 
 
-def _scope_key(budget: BudgetRead, caller: str | None = None) -> str:
+def _scope_key(budget: BudgetRead, caller: str | None = None, username: str | None = None) -> str:
     """The key this budget's consumption is accounted under.
 
     The subject is passed as its own caller so a member budget resolves to itself: at this point
@@ -93,6 +93,7 @@ def _scope_key(budget: BudgetRead, caller: str | None = None) -> str:
         # one did not: the resolution would have failed the assertion below rather than mixing two
         # people's counters, but only because it is asserted.
         caller=caller or budget.subject,
+        caller_username=username,
     )
     assert scope is not None, (
         f"budget {budget.id} ({budget.scope}) does not bind caller {caller!r} — it should never "
@@ -118,6 +119,10 @@ class Reservation:
     #: Who the request is from. Carried because a `each_member` budget's counter key **is** the
     #: caller, and settle/release run long after the subject was resolved.
     subject: str | None = None
+    #: The name that subject is known by, where the credential carries one. Carried for the same
+    #: reason as `subject`: a member row may have matched on it, and settle/release run long
+    #: after the caller was resolved.
+    username: str | None = None
     reserved: Amounts = Amounts()
     period_keys: dict[int, str] = field(default_factory=dict)
     atomic: bool = False
@@ -152,6 +157,7 @@ class BudgetService:
         now: datetime | None = None,
         *,
         estimated: Amounts | None = None,
+        username: str | None = None,
     ) -> Reservation:
         """Reserve against the applicable budgets, or raise ``BudgetExceeded``.
 
@@ -165,12 +171,16 @@ class BudgetService:
         now = now or datetime.now(UTC)
         amounts = estimated or Amounts(requests=1)
         async with self._sessionmaker() as session:
-            budgets = await self._applicable(session, use_case, subject)
+            budgets = await self._applicable(session, use_case, subject, username)
             if not budgets:
                 return Reservation()
             if self._ledger is not None:
                 partial = Reservation(
-                    budgets=budgets, subject=subject, reserved=amounts, atomic=True
+                    budgets=budgets,
+                    subject=subject,
+                    username=username,
+                    reserved=amounts,
+                    atomic=True,
                 )
                 try:
                     reserved = await self._reserve(session, partial, now)
@@ -189,8 +199,8 @@ class BudgetService:
                         self.FEATURE,
                         "Postgres read-then-book; concurrent requests can overshoot a limit",
                     )
-            await self._check_only(session, budgets, now, subject)
-        return Reservation(budgets=budgets, subject=subject, atomic=False)
+            await self._check_only(session, budgets, now, subject, username)
+        return Reservation(budgets=budgets, subject=subject, username=username, atomic=False)
 
     async def _reserve(
         self, session: AsyncSession, reservation: Reservation, now: datetime
@@ -208,7 +218,7 @@ class BudgetService:
         assert self._ledger is not None
         amounts = reservation.reserved
         for budget in reservation.budgets:
-            scope_key = _scope_key(budget, reservation.subject)
+            scope_key = _scope_key(budget, reservation.subject, reservation.username)
             period_key = _period_key(budget.period, now)
             seed = await self._usage(session, scope_key, period_key)
             breached = await self._ledger.reserve(
@@ -239,6 +249,7 @@ class BudgetService:
         budgets: list[BudgetRead],
         now: datetime,
         caller: str | None = None,
+        username: str | None = None,
     ) -> None:
         """The pre-FRD-405 path: read the usage and refuse if a limit is already met.
 
@@ -248,7 +259,7 @@ class BudgetService:
         """
         for budget in budgets:
             usage = await self._usage(
-                session, _scope_key(budget, caller), _period_key(budget.period, now)
+                session, _scope_key(budget, caller, username), _period_key(budget.period, now)
             )
             breached = None
             if budget.limit_cost_nanos is not None and usage.cost_nanos >= budget.limit_cost_nanos:
@@ -315,6 +326,7 @@ class BudgetService:
             now=now,
             requests=requests,
             subject=reservation.subject,
+            username=reservation.username,
         )
         if not reservation.atomic or self._ledger is None:
             return
@@ -345,7 +357,9 @@ class BudgetService:
                 continue  # never reserved against this budget (the one that refused)
             try:
                 await self._ledger.adjust(
-                    _scope_key(budget, reservation.subject), period_key, amounts=amounts
+                    _scope_key(budget, reservation.subject, reservation.username),
+                    period_key,
+                    amounts=amounts,
                 )
             except CountersUnavailable:
                 # The counter keeps this request's estimate for now. It cannot be repaired from
@@ -363,6 +377,7 @@ class BudgetService:
         now: datetime | None = None,
         requests: int = 1,
         subject: str | None = None,
+        username: str | None = None,
     ) -> None:
         """Book a request — or a batch counted as the many it is — against every budget.
 
@@ -385,7 +400,7 @@ class BudgetService:
                 await session.execute(
                     _accumulate(
                         session,
-                        scope_key=_scope_key(budget, subject),
+                        scope_key=_scope_key(budget, subject, username),
                         period_key=_period_key(budget.period, now),
                         tokens=tokens,
                         requests=requests,
@@ -395,7 +410,12 @@ class BudgetService:
             await session.commit()
 
     async def refuse_if_exhausted(
-        self, use_case: str | None, subject: str | None, now: datetime | None = None
+        self,
+        use_case: str | None,
+        subject: str | None,
+        now: datetime | None = None,
+        *,
+        username: str | None = None,
     ) -> None:
         """Refuse a use case that is **already** over a limit, before anything is spent on it.
 
@@ -415,9 +435,9 @@ class BudgetService:
             return
         now = now or datetime.now(UTC)
         async with self._sessionmaker() as session:
-            budgets = await self._applicable(session, use_case, subject)
+            budgets = await self._applicable(session, use_case, subject, username)
             if budgets:
-                await self._check_only(session, budgets, now, subject)
+                await self._check_only(session, budgets, now, subject, username)
 
     async def book_side_call(
         self,
@@ -427,6 +447,7 @@ class BudgetService:
         *,
         cost_nanos: int | None = None,
         now: datetime | None = None,
+        username: str | None = None,
     ) -> None:
         """Book tokens the **gateway** spent on the caller's behalf (`FRD-125`).
 
@@ -453,9 +474,15 @@ class BudgetService:
             return
         now = now or datetime.now(UTC)
         async with self._sessionmaker() as session:
-            budgets = await self._applicable(session, use_case, subject)
+            budgets = await self._applicable(session, use_case, subject, username)
         await self.record(
-            budgets, tokens, cost_nanos=cost_nanos, now=now, requests=0, subject=subject
+            budgets,
+            tokens,
+            cost_nanos=cost_nanos,
+            now=now,
+            requests=0,
+            subject=subject,
+            username=username,
         )
         if self._ledger is None:
             return  # degraded to the Postgres path, which the line above already wrote
@@ -463,7 +490,9 @@ class BudgetService:
         for budget in budgets:
             try:
                 await self._ledger.adjust(
-                    _scope_key(budget, subject), _period_key(budget.period, now), amounts=amounts
+                    _scope_key(budget, subject, username),
+                    _period_key(budget.period, now),
+                    amounts=amounts,
                 )
             except CountersUnavailable:
                 # Postgres has it, and the counter rebuilds from Postgres when it expires. The
@@ -472,7 +501,12 @@ class BudgetService:
                 _log.warning("budget_side_call_adjust_degraded", budget_id=budget.id)
 
     async def usage(
-        self, use_case: str, now: datetime | None = None, *, subject: str | None = None
+        self,
+        use_case: str,
+        now: datetime | None = None,
+        *,
+        subject: str | None = None,
+        username: str | None = None,
     ) -> list[dict[str, Any]]:
         """Current-period usage per budget for a use case (for the UI consumption view, FRD-402).
 
@@ -507,7 +541,9 @@ class BudgetService:
                     out.append(row)
                     continue
                 usage = await self._usage(
-                    session, _scope_key(budget, subject), _period_key(budget.period, now)
+                    session,
+                    _scope_key(budget, subject, username),
+                    _period_key(budget.period, now),
                 )
                 row.update(
                     used_tokens=usage.tokens,
@@ -520,7 +556,11 @@ class BudgetService:
             return out
 
     async def _applicable(
-        self, session: AsyncSession, use_case: str, subject: str | None
+        self,
+        session: AsyncSession,
+        use_case: str,
+        subject: str | None,
+        username: str | None = None,
     ) -> list[BudgetRead]:
         result = await session.execute(
             select(BudgetRead).where(BudgetRead.use_case == use_case, BudgetRead.enabled.is_(True))
@@ -533,6 +573,7 @@ class BudgetService:
                 use_case=budget.use_case,
                 subject=budget.subject,
                 caller=subject,
+                caller_username=username,
             )
             is not None
         ]

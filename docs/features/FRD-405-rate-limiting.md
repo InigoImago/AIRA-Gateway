@@ -66,6 +66,10 @@ than better: per-process counters mean N instances permit N times the configured
   The budget path had to be repaired for the same scope, because there the key was read off the row
   long after the caller was out of scope — the same rule, two implementations, one of them wrong.
 
+  **A named member row matches the name it was written with** — see `FRD-400` §2.2. This service
+  needed no repair for it, only the name passed in: it resolves each row against the caller on
+  every request. The budget service did, which is why both are asserted rather than one.
+
   **Burst says what it costs, in the console.** It is the size of the bucket, not a second rate: a
   bucket of 20 refilling at `limit_rpm/60` per second lets twenty requests arrive together and then
   admits them at the sustained rate. Raising it does **not** raise how much a caller may send per

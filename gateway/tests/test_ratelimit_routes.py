@@ -66,7 +66,7 @@ def _stream_request(app) -> Request:  # noqa: ANN001
 
 
 class _AlwaysLimited:
-    async def check(self, use_case, subject, units=1, *, extra=()):  # noqa: ANN001, ANN201
+    async def check(self, use_case, subject, units=1, *, extra=(), username=None):  # noqa: ANN001, ANN201
         # `extra` is part of the real signature (`FRD-503`: a throttle is an additional
         # bucket). A stand-in narrower than the thing it replaces is how this project has
         # already lost a defect once — CLAUDE.md §3.
@@ -97,7 +97,7 @@ class _TrackingBudgets:
         self.released = 0
         self.settled = 0
 
-    async def guard(self, use_case, subject, *, estimated=None):  # noqa: ANN001, ANN201
+    async def guard(self, use_case, subject, *, estimated=None, username=None):  # noqa: ANN001, ANN201
         return Reservation()
 
     async def settle(self, reservation, tokens, *, cost_nanos=None, now=None, requests=1):  # noqa: ANN001, ANN201, E501
@@ -259,7 +259,7 @@ _EMBED_BODY = {"content": {"parts": [{"text": "hi"}]}}
 
 
 class _BlockingBudgets:
-    async def guard(self, use_case, subject, *, estimated=None):  # noqa: ANN001, ANN201
+    async def guard(self, use_case, subject, *, estimated=None, username=None):  # noqa: ANN001, ANN201
         raise BudgetExceeded("Cost budget exhausted for use_case (month).")
 
     async def settle(self, reservation, tokens, *, cost_nanos=None, now=None, requests=1):  # noqa: ANN001, ANN201, E501
@@ -348,7 +348,7 @@ class _RefusingLimiter:
     def __init__(self) -> None:
         self.weights: list[int] = []
 
-    async def check(self, use_case, subject, units=1, *, extra=()):  # noqa: ANN001, ANN201
+    async def check(self, use_case, subject, units=1, *, extra=(), username=None):  # noqa: ANN001, ANN201
         # `extra` is part of the real signature (`FRD-503`: a throttle is an additional
         # bucket). A stand-in narrower than the thing it replaces is how this project has
         # already lost a defect once — CLAUDE.md §3.
