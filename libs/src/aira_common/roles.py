@@ -1,8 +1,16 @@
-"""The canonical AIRA roles, shared by both services (ADR-0009).
+"""The canonical AIRA roles, shared by both services (`ADR-0009`, amended by `ADR-0017`).
 
-These five roles are Keycloak realm roles. Keycloak is the source of truth; neither service
-stores a role decision of its own, and both read the same `realm_access.roles` claim from the
-same token.
+**Three roles, conferred by group membership.** Keycloak remains the source of truth and neither
+service stores a role decision of its own — but what they read is the `groups` claim, resolved
+through `AIRA_ROLE_GROUPS` by :func:`roles_from_groups`. `realm_access.roles` is not read by
+either plane, and assigning a realm role directly grants nothing; that inertness is the guarantee
+`ADR-0017` was written to obtain, not an oversight.
+
+This paragraph said the opposite until 2026-08-11 — *"these five roles are Keycloak realm roles …
+both read the same `realm_access.roles` claim"* — every clause of it false, on the first thing a
+reader of this module sees. It is the defect this project names by its own past example: **a
+comment claiming a rule the system does not have.** A reader who trusted it would look for the
+role on the token, find nothing, and conclude the mapping was broken.
 
 They live in the shared library rather than in Management because the gateway needs the same
 answer to one question — *is this caller governance* — for reporting that spans use cases. Two
@@ -10,9 +18,9 @@ services deciding that independently is exactly how a role gets added in one pla
 other, and quietly grants or withholds access for months.
 
 What deliberately stays out of here is what each service *does* with a role. Management maps them
-to Django groups and object permissions; the gateway compares a claim on a request. Those are
-different mechanisms answering different questions, and pulling them together would make the data
-plane depend on ``django-guardian``.
+to Django groups and object permissions; the gateway compares the resolved set on a request. Those
+are different mechanisms answering different questions, and pulling them together would make the
+data plane depend on ``django-guardian``.
 """
 
 from __future__ import annotations

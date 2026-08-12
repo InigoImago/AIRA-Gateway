@@ -8,9 +8,8 @@ against the caller's Keycloak group membership. Membership groups live under
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any
 
 from fastapi import Request
 
@@ -56,20 +55,16 @@ def usecases_from_groups(groups: Iterable[str]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(slugs))  # de-duplicate, preserve order
 
 
-def realm_roles(claims: Mapping[str, Any]) -> tuple[str, ...]:
-    """The realm roles a token carries, from Keycloak's ``realm_access.roles`` (ADR-0009).
-
-    Anything malformed yields no roles rather than an error: a token whose claim is the wrong
-    shape is a token with no oversight, which is the safe reading. Failing authentication over it
-    would let a realm misconfiguration lock everyone out of the data plane.
-    """
-    access = claims.get("realm_access")
-    if not isinstance(access, dict):
-        return ()
-    roles = access.get("roles")
-    if not isinstance(roles, list):
-        return ()
-    return tuple(dict.fromkeys(str(role) for role in roles if isinstance(role, str)))
+# `realm_roles(claims)` lived here until 2026-08-11 and had been unreachable since `ADR-0017`
+# (2026-08-09) made group membership the single source of a role — `realm_access.roles` is not
+# read by either plane any more. Only its own tests still called it, and they asserted on
+# `use-case-user`, a role abolished the day before.
+#
+# Removed rather than kept, for the reason this project already applied to `_injection_verdict`:
+# **an unreachable helper is a rule the code claims and does not have.** A reader who finds it
+# concludes the gateway still honours a realm role, and one who copies its defensive shape
+# reintroduces the second mechanism `ADR-0017` existed to remove. The rule that replaced it is
+# `aira_common.roles.roles_from_groups`, and it is the only one.
 
 
 def resolve_use_case(request: Request) -> str | None:
