@@ -138,6 +138,11 @@ THROTTLE_WIRE = (
 ERROR_HEADERS = (
     "gateway/tests/test_error_responses_are_headered.py gateway/tests/test_security_headers.py"
 )
+REALLY_STREAMS = "gateway/tests/test_streams_actually_stream.py"
+REFUSAL_PARITY = (
+    "gateway/tests/test_surfaces_record_refusals_alike.py gateway/tests/test_kira_surface.py"
+)
+FIELD_SPELLINGS = "gateway/tests/test_kira_field_spellings.py gateway/tests/test_kira_surface.py"
 KIRA_ENVELOPE = "gateway/tests/test_kira_envelope_everywhere.py gateway/tests/test_kira_surface.py"
 KIRA_COMPAT = "gateway/tests/test_kira_compatibility_round.py gateway/tests/test_kira_surface.py"
 
@@ -3538,6 +3543,34 @@ MUTATIONS = [
         "        for name, value in SecurityHeadersMiddleware.HEADERS:",
         "        for name, value in ():",
         ERROR_HEADERS,
+    ),
+    Mutation(
+        "QA15",
+        "a stream hands each piece over as it is produced, not the lot at the end",
+        "gateway/src/aira_gateway/api/kira/routes.py",
+        "                    parts.append(chunk.text_delta)\n"
+        '                    yield f"data: {json.dumps(update_event(chunk.text_delta))}\\n\\n"',
+        "                    parts.append(chunk.text_delta)\n"
+        "                for piece in parts:\n"
+        '                    yield f"data: {json.dumps(update_event(piece))}\\n\\n"',
+        REALLY_STREAMS,
+    ),
+    Mutation(
+        "QA16",
+        "a refusal from a known caller is recorded on the compatibility surface too",
+        "gateway/src/aira_gateway/api/kira/routes.py",
+        "        resolve_attribution(request, principal)\n        body = await _json(request)",
+        "        body = await _json(request)\n        resolve_attribution(request, principal)",
+        REFUSAL_PARITY,
+    ),
+    Mutation(
+        "QA17",
+        "no spelling is accepted beyond the two the predecessor actually uses",
+        "gateway/src/aira_gateway/api/kira/schemas.py",
+        "    conversation_history: list[ConversationContent] | None = None",
+        "    conversation_history: list[ConversationContent] | None = Field(\n"
+        '        default=None, alias="conversationHistory"\n    )',
+        FIELD_SPELLINGS,
     ),
 ]
 

@@ -1,8 +1,16 @@
 """The predecessor's wire shapes (`kira_api.md` §2, §4).
 
-Field names are the predecessor's, camelCase aliases included, with ``populate_by_name`` so both
-spellings are accepted — exactly as §12.1 describes. A compatibility surface that required the
-"nicer" spelling would not be one.
+Field names are the predecessor's. Most of them are snake_case there and are spelled that way
+here; the ones the predecessor spells in camelCase — `maxTokens` and `responseSchema` (`FRD-107`
+FR-2) — carry an alias, with ``populate_by_name`` so the snake_case form is accepted too. A
+compatibility surface that required the "nicer" spelling would not be one.
+
+The sentence above used to say that *every* field accepted both spellings, and five fields carried
+an ``alias=`` that restated their own name — which looks like a second spelling and is not one.
+Nothing behaved wrongly; a reader checking whether `conversationHistory` was accepted would have
+been told yes by the module and no by the server. This project has named that shape often enough:
+a comment claiming a rule the system does not have. The redundant aliases are gone so the two
+that remain are the two that mean something.
 """
 
 from __future__ import annotations
@@ -26,13 +34,13 @@ class TextPart(BaseModel):
     text: str
 
 
-class DataPart(BaseModel):
-    """An attachment. `FRD-110` landed before this surface did, so Stage A carries documents —
-    the plan had them arriving in Stage B, and refusing a capability we have would be silly."""
-
-    model_config = _STRICT_ALIASED
-    mime_type: str = Field(alias="mime_type")
-    data: str
+# An attachment part had a class here and nothing ever built one: `parts` is deliberately a list
+# of plain dicts (see below), and the mapper reads them itself. It was worse than unused —
+# `extra="forbid"` on a shape accepting only `mime_type` described a surface stricter than the one
+# that runs, which takes `mimeType` as well. A shape that documents a contract the server does not
+# have is the unreachable-helper problem in a costume, so the validator below, which does run, is
+# where the rule lives. `FRD-110`'s attachments are unaffected: Stage A has carried documents since
+# the day it shipped, through `mapping._parts`.
 
 
 class RequestContent(BaseModel):
@@ -67,11 +75,9 @@ class ChatRequest(BaseModel):
     model_config = _STRICT_ALIASED
 
     request: RequestContent
-    model_id: int = Field(alias="model_id")
-    system_instruction: RequestContent | None = Field(default=None, alias="system_instruction")
-    conversation_history: list[ConversationContent] | None = Field(
-        default=None, alias="conversation_history"
-    )
+    model_id: int
+    system_instruction: RequestContent | None = None
+    conversation_history: list[ConversationContent] | None = None
     max_tokens: int | None = Field(default=None, alias="maxTokens")
     temperature: float = 1.0
     #: Served since Stage B (`FRD-111`). Validated against what the model declares, and the
@@ -95,8 +101,8 @@ class EmbeddingRequest(BaseModel):
     model_config = _STRICT_ALIASED
 
     text: str | list[str]
-    model_id: int = Field(alias="model_id")
-    task_type: str | None = Field(default=None, alias="task_type")
+    model_id: int
+    task_type: str | None = None
 
 
 class EmbeddingResponse(BaseModel):

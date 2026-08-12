@@ -5,6 +5,73 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-12 — A developer round against the KIRA surface, and the clock nobody had looked at
+
+Prompted by a fair complaint: several checks in a row had failed to notice that
+`/streaming-chat` did not stream. Worth naming the mechanism, because it is more instructive than
+the defect. Three layers agreed the surface was correct — the docstring described "exactly one
+`completed`" as the design, a hermetic test asserted exactly that, and a live probe **counted**
+the events and got a plausible number. None of them can feel what a client feels. An SSE response
+that arrives entirely at the end is indistinguishable from one that arrives progressively
+**unless you look at when the pieces arrive**, and nothing looked. My first probe did report
+`events: 0`; I attributed it to my own instrument (right about `data:` vs `event:`) and dismissed
+the count (wrong).
+
+**The regression test is the artefact.** `test_streams_actually_stream.py` asserts the *spread of
+arrival times* against a provider double that yields on a clock, parametrised over both surfaces.
+Proved by reverting the loop to the assemble-then-send shape, keeping the **event count
+identical**: the new case fails, and **157 existing kira/stream tests stay green**. That number is
+the finding.
+
+**The harness had to change with the question, and that is the other half.** Written first through
+`TestClient`, the case failed on *both* surfaces — including the one measured live at a 4.3 s
+spread minutes earlier. `TestClient` collects the whole body before the caller sees a line (the
+trap `CLAUDE.md` already records for the disconnect tests), so through it every stream looks like
+a block. The app is driven as the ASGI application it is now, stamping each `http.response.body`
+as it is handed over. What a buffering client does afterwards is the client's business.
+
+**Audit parity, found by looking in the database rather than at responses.** Malformed JSON from a
+valid credential left **a row on Gemini and nothing on KIRA**. `_refused` records only when
+attribution is set — deliberately, since a request refused before the credential was judged has
+nobody to attribute to (`FRD-122` §2) — and Gemini resolves attribution as a router dependency
+while KIRA resolved it *inside* the route, after parsing. Anything the parse rejected fell into the
+gap. Attribution never needed the body; it reads the header and the principal. Moved ahead of the
+parse on all three handlers, with `test_surfaces_record_refusals_alike.py` parametrised over both
+surfaces — and pinning the deliberate exception, that an unauthenticated request still leaves no
+row.
+
+**A module claiming a rule the code did not have.** `api/kira/schemas.py` said every field
+accepted both spellings, and five fields carried an `alias=` that restated their own name — which
+reads like a second spelling and is not one. Nothing behaved wrongly: `FRD-107` FR-2 names
+`maxTokens` and `responseSchema` as the only camelCase fields, and those two are right. But a
+reader asking whether `conversationHistory` was accepted would have been told yes by the module and
+no by the server. The redundant aliases are gone, and the claim is now **tested in both
+directions** — the two spellings are accepted, no third one is — after four earlier instances of a
+hand-written list agreeing with the constants one way only. A dead `DataPart` class went with it:
+nothing built one, and its `extra="forbid"` on `mime_type` alone described a surface *stricter*
+than the one that runs, which takes `mimeType` too.
+
+**Verified live, and these all held**: 83 updates then one terminal event carrying the identical
+joined text plus usage (first at 0.37 s, last at 3.13 s); an injection **blocked before the stream
+opened**, so the client gets a 400 rather than a stream that stops, audited with its decision;
+`responseSchema` on a stream; a list of texts embedding to cosine **1.000000** against the joined
+single, which is `FRD-113` §11's answer confirmed on the wire; six concurrent requests → six
+served, six rows, the counter at exactly six; a mid-stream hang-up → `499`/`client_gone` with the
+reservation released rather than leaked. Ten shapes a careless client sends, none a 500, each
+naming its problem.
+
+**One finding left open on purpose.** A `client_gone` row carries no tokens and no cost, and the
+report does not count it under `unpriced_requests` — that counter means "served on a model with no
+price", and the comment beside it reasons "nothing was spent, because nothing ran". For a dropped
+stream that is false: the upstream *was* producing, and its usage simply never arrived. So the
+spend figure is quietly short by whatever hung-up requests consumed, with no caveat. Folding it
+into `unpriced_requests` would be wrong for the same reason folding refusals in was wrong — two
+different unknowns — so this wants its own answer rather than a quick one. Recorded, not built.
+
+`QA15`–`QA17`; **393 properties**.
+
+---
+
 ## 2026-08-11 — A code-quality and security review, and the verb nobody had pointed the controls at
 
 A read of the whole codebase for quality and safety, with the brief that **no functionality
