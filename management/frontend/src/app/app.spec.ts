@@ -1,7 +1,7 @@
 import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
-import { of } from 'rxjs';
+import { of, throwError } from 'rxjs';
 import { App } from './app';
 import { MeService } from './core/api/me.service';
 import { Me } from './core/api/models';
@@ -193,5 +193,89 @@ describe('App when the identity provider cannot be reached', () => {
 
     expect(el.querySelector('[data-testid="startup-error"]')).toBeNull();
     expect(el.querySelector('router-outlet')).not.toBeNull();
+  });
+});
+
+describe('App when the console cannot find out who you are', () => {
+  /**
+   * `/me` had no error branch, and everything role-shaped in the shell comes from it: the
+   * username, the role chips, **Logout**, and the nav entries for investigating an incident and
+   * for oversight. A failure removed all of them and said nothing — so an IT Security reader saw
+   * a console built for somebody with fewer rights, with no error to explain it and no way to
+   * sign out.
+   *
+   * That is `FRD-206`'s complaint inverted, and the inverted one is the harder to notice: a
+   * refused action announces itself, an absent one reads as a boundary.
+   */
+  function configureFailing(): void {
+    TestBed.resetTestingModule();
+    loggedOut = false;
+    TestBed.configureTestingModule({
+      imports: [App],
+      providers: [
+        provideRouter([]),
+        {
+          provide: AuthService,
+          useValue: {
+            isAuthenticated: () => true,
+            startupError: signal<string | null>(null),
+            logout: () => {
+              loggedOut = true;
+            },
+          },
+        },
+        {
+          provide: MeService,
+          useValue: {
+            get: () =>
+              throwError(() => ({
+                status: 500,
+                error: { error: { message: 'Account service down.' } },
+              })),
+          },
+        },
+      ],
+    });
+  }
+
+  it('says so instead of quietly showing a console with fewer controls', async () => {
+    configureFailing();
+    const fixture = TestBed.createComponent(App);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+    const el = fixture.nativeElement as HTMLElement;
+
+    const notice = el.querySelector('[data-testid="account-error"]');
+    expect(notice).toBeTruthy();
+    expect(notice?.textContent).toContain('Account service down.');
+  });
+
+  it('leaves the reader able to sign out', async () => {
+    // The one action that reliably fixes it, and the one the failure used to take away: `Logout`
+    // lives inside the block that renders only when `me()` resolved.
+    configureFailing();
+    const fixture = TestBed.createComponent(App);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+    const el = fixture.nativeElement as HTMLElement;
+
+    const button = el.querySelector<HTMLButtonElement>('[data-testid="account-error"] button');
+    expect(button).toBeTruthy();
+    button?.click();
+    expect(loggedOut).toBe(true);
+  });
+
+  it('shows nothing when the account loads', async () => {
+    // The paired case: a notice that is always present is a notice nobody reads, and an
+    // assertion about something appearing is defended only by one that shows it normally does not.
+    configure(true, ['it-security']);
+    const fixture = TestBed.createComponent(App);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const el = fixture.nativeElement as HTMLElement;
+
+    expect(el.querySelector('[data-testid="account-error"]')).toBeNull();
   });
 });

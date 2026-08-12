@@ -29,6 +29,7 @@ from aira_common.health import check_tcp
 from aira_common.secrets import secrets_state
 from aira_gateway.auth.dependencies import resolve_principal
 from aira_gateway.config import GatewaySettings
+from aira_gateway.diagnostics import UpstreamProbe
 from aira_gateway.security import is_local
 
 router = APIRouter(tags=["health"])
@@ -117,7 +118,7 @@ async def readyz(request: Request) -> JSONResponse:
     # Read from a **cached** background verdict, never probed inline (`FRD-117` §5.2). An inline
     # probe makes readiness as slow as the slowest upstream, so one degraded provider evicts pods
     # that were serving perfectly well — a health check that can take down a healthy service.
-    probe = getattr(request.app.state, "upstream_probe", None)
+    probe: UpstreamProbe | None = getattr(request.app.state, "upstream_probe", None)
     upstreams = probe.snapshot() if probe is not None else {}
 
     degraded = not counters_ok or bool(fallbacks) or bool(probe and probe.degraded)

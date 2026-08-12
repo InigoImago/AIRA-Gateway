@@ -78,6 +78,17 @@ class GroupGrantResolver:
             # convention is unaffected, and refusing *everybody* because a read-model table could
             # not be read would turn a config-distribution problem into a total outage. The caller
             # who *was* a member only by grant is refused, which is the safe half.
+            #
+            # **Dropped, not served stale**, and that is the deliberate half: a review on
+            # 2026-08-12 proposed keeping the last good copy — one blink of the database takes
+            # access from every group-granted caller, which reads like a fault-tolerance gap — and
+            # `test_grants_are_dropped_rather_than_served_stale_when_the_read_fails` refused the
+            # change. It is right to. A grant is *permission*, so the safe direction is the
+            # opposite of a rate limit's: the moment this table stops being readable, its last
+            # answer stops being evidence, and handing it out anyway lets access outlive the row
+            # that justified it. `TokenSource` serving through a failed refresh is not the same
+            # case — a credential we already hold is still ours; a permission we can no longer
+            # verify is not still granted.
             _log.warning("group_grants_unavailable", error=str(exc), error_type=type(exc).__name__)
             self._grants = ()
         return self._grants

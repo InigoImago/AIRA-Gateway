@@ -5,6 +5,80 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-12 — A quality and fault-tolerance read of the whole code
+
+Brief: find defects, change no functionality, raise code quality and fault tolerance. Six findings,
+and the one that matters most had been sitting in the disaster-recovery path.
+
+**Every member of a use case shared one compaction key.** `record_to_outbox` derives the key from
+`id`/`prefix`/`slug`, and a `membership.upserted` payload is `{slug, username, role}` — so two
+members of one use case produced two messages under the same key. The topics are **compacted**, so
+the second erases the first, and a gateway rebuilding its read-model from the log sees **one member
+per use case** and silently loses the rest. The live read-model is right the whole time, because
+each event was applied as it arrived; it is only a rebuild that loses people, which is the worst
+possible place for a latent fault.
+
+The same defect was found for **group grants** in a live round and fixed as an `if` beside the
+function — while `membership.upserted`, three lines above it in the same table and carrying the
+same shape of payload, was left alone. So it is a table now (`_ALSO_IDENTIFIED_BY`), and the test
+asks the **rule** of every event type rather than the case of one: two different entities of a kind
+must produce two different keys. A third one cannot be forgotten.
+
+**One malformed config event stopped config distribution.** The consumer called `apply_event`
+straight out of `async for`, and every handler indexes its payload — so a renamed field, a
+truncated value or a database blink ended the process. Then the container restarts, reads the same
+message and dies again: a poison pill, while the gateway serves happily from a read-model that has
+quietly stopped updating. **A revoked API key goes on working.** And the opposite outcome is
+available too, because offsets auto-commit on a timer: the commit moves past the bad message and
+the event is lost instead. Which one you get is a race. Now one event that cannot be applied is one
+event skipped — **loudly**, with topic, partition and offset — and everything after it still lands.
+
+**A failed detection round lost the window it was about to evaluate.** `tick` takes the touched
+scopes in its first statement so a concurrent write cannot be missed, and reads a database for
+everything after that. Anything that raised in between took those minutes with it: the loop logged
+a warning and no rule ever saw that traffic. `ADR-0014` makes detection asynchronous, which
+promises it happens *later*, not that it may quietly not happen — a thousand rate-limited requests
+in the minute a database hiccupped is exactly the shape a detector is for. The scopes are merged
+back now, not assigned, because traffic keeps arriving while a round is failing.
+
+**The typed-state guard could not see the spelling that matters.** `test_app_state_is_typed`
+matched attribute access and missed `getattr(request.app.state, "rate_limits", None)`, which is the
+*more* dangerous form: an attribute read of a renamed service raises and is loud, a `getattr` with
+a default answers `None` and the call site's `if x is None: return` turns it into a control that
+silently does not run. The bound on failed authentications is one of the four sites it was blind
+to. Annotating them made mypy report three further reads immediately — `UpstreamProbe.snapshot()`
+was typed `dict[str, object]`, which is the same as saying nothing.
+
+**The migrations had drifted from the models**, found by running `makemigrations --check` for an
+unrelated reason: `FRD-308` altered `allowed_models` and never generated the migration. Nothing was
+broken, which is why it survived — what it does instead is land on somebody else, because the next
+person's unrelated `makemigrations` sweeps it into their change where a reviewer reads it as part
+of it. Generated, plus a test that runs the check so the next one cannot be silent. The outbox's
+`ordering` gained `id` beside `created_at` while it was open: an outbox's **order is its meaning**,
+two events in one transaction share a timestamp, and on a compacted topic that is the difference
+between an upsert followed by a delete and the reverse.
+
+**And the console could not say who you are.** `/me` had no error branch, and everything
+role-shaped in the shell comes from it: the username, the role chips, **Logout**, and the nav
+entries for investigating an incident and for oversight. A failure removed all of them in silence,
+so an IT Security reader saw a console built for somebody with fewer rights, with nothing to
+explain it and no way to sign out. `FRD-206`'s complaint inverted — a refused action announces
+itself, an absent one reads as a boundary.
+
+**One proposed fix was refused by the suite, and it was right to refuse it.** The group-grant cache
+assigns `()` when its read fails, so one database blink takes access from every group-granted
+caller; that reads like a fault-tolerance gap and I changed it to serve the last good copy.
+`test_grants_are_dropped_rather_than_served_stale_when_the_read_fails` went red, and its reasoning
+holds: a grant is *permission*, so the safe direction is the opposite of a rate limit's — the moment
+the table stops being readable its last answer stops being evidence. Reverted, and the argument is
+now written where the code is rather than only in the test. `TokenSource` serving through a failed
+refresh is not the same case: a credential we already hold is still ours, a permission we can no
+longer verify is not still granted.
+
+`QA27`–`QA29`; **405 properties**.
+
+---
+
 ## 2026-08-12 — The showcase runs, and the SDK found the field that mattered most
 
 A full `make showcase` from the committed state, then a walk over everything it starts. Fifteen

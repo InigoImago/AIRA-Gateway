@@ -194,8 +194,14 @@ class UpstreamProbe:
         else:
             self.degradation.working(FEATURE)
 
-    def snapshot(self) -> dict[str, object]:
-        """What `/readyz` reports. Never performs I/O — that is the whole point."""
+    def snapshot(self) -> dict[str, dict[str, object]]:
+        """What `/readyz` reports. Never performs I/O — that is the whole point.
+
+        The value type was `object`, which is the same as saying nothing: every consumer then read
+        `verdict.get("ok")` through an untyped `app.state` and nobody checked that a verdict is a
+        mapping at all. Declared properly the day the readers started saying what they had got —
+        and mypy immediately named three of those reads.
+        """
         now = self._now()
         return {
             name: verdict.as_dict(now, self.stale_after)

@@ -90,6 +90,23 @@ class AnomalyService:
     async def tick(self, now: datetime | None = None) -> list[AnomalyEvent]:
         """Evaluate every rule that could have been affected since the last tick."""
         touched, self._touched = self._touched, set()
+        try:
+            return await self._evaluate(touched, now)
+        except Exception:
+            # **Give the window back.** The set is taken here and evaluated below, so anything that
+            # raised in between — a database blink, a rule the evaluator could not read — used to
+            # take that window with it: the scopes were already cleared, the loop logged a warning,
+            # and the traffic in those minutes was never evaluated by any rule. Detection is
+            # asynchronous by `ADR-0014`, which is a promise that it happens *later*, not that it
+            # may quietly not happen.
+            #
+            # Merged rather than assigned, because traffic has been arriving the whole time and the
+            # scopes it touched must not be dropped either. Bounded by the number of use cases, so
+            # a persistent failure re-tries the same small set rather than growing one.
+            self._touched |= touched
+            raise
+
+    async def _evaluate(self, touched: set[str | None], now: datetime | None) -> list[AnomalyEvent]:
         if not touched:
             # Nothing happened. A quiet installation with 200 use cases should not run 200 queries
             # a minute forever.

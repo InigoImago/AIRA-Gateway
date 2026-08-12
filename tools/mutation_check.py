@@ -149,6 +149,9 @@ WIRE_CONTRACT = (
     "gateway/tests/test_kira_compatibility_round.py"
 )
 GOOGLE_SDK = "gateway/tests/test_google_sdk_speaks_to_us.py"
+COMPACTION_KEYS = "management/backend/tests/test_outbox_routing.py"
+CONSUMER_SURVIVES = "gateway/tests/test_config_distribution_survives_a_bad_event.py"
+DETECTION_WINDOW = "gateway/tests/test_a_failed_tick_keeps_its_window.py"
 KIRA_COMPAT = "gateway/tests/test_kira_compatibility_round.py gateway/tests/test_kira_surface.py"
 
 SERVING_OPTIONS = (
@@ -3648,6 +3651,30 @@ MUTATIONS = [
         "        if self.includeThoughts:",
         "        if False:",
         GOOGLE_SDK,
+    ),
+    Mutation(
+        "QA27",
+        "two entities of one kind never share a compaction key",
+        "management/backend/src/aira_management/apps/outbox/subscriber.py",
+        '    "membership.upserted": "username",',
+        "",
+        COMPACTION_KEYS,
+    ),
+    Mutation(
+        "QA28",
+        "one config event that cannot be applied does not stop the others",
+        "gateway/src/aira_gateway/consumer/worker.py",
+        "    except Exception as exc:  # noqa: BLE001 — see the docstring: never take the consumer down",
+        "    except ZeroDivisionError as exc:",
+        CONSUMER_SURVIVES,
+    ),
+    Mutation(
+        "QA29",
+        "a detection round that fails gives its window back",
+        "gateway/src/aira_gateway/anomalies/service.py",
+        "            self._touched |= touched\n            raise",
+        "            raise",
+        DETECTION_WINDOW,
     ),
 ]
 

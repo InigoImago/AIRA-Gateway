@@ -1,5 +1,6 @@
 import { Component, OnInit, inject, signal } from '@angular/core';
 import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+import { errorMessage } from './core/api/error-message';
 import { MeService } from './core/api/me.service';
 import { Me } from './core/api/models';
 import { AuthService } from './core/auth/auth.service';
@@ -43,9 +44,31 @@ export class App implements OnInit {
    */
   protected readonly startupError = this.auth.startupError;
 
+  /**
+   * Why the console could not load your account, or `null` when it could.
+   *
+   * `/me` had no error branch, and everything role-shaped in the shell is derived from it: the
+   * username, the role chips, **Logout**, and the nav entries for investigating an incident and
+   * for oversight. So a failed call left an IT Security reader looking at a console built for
+   * somebody with fewer rights — no error, no explanation, and no way to sign out. `FRD-206`'s
+   * complaint inverted: a capability with no way in, and only the other kind announces itself.
+   *
+   * A failure that removes controls has to say so, which is §3's "no silent failures in the UI"
+   * at the one place where nothing else can report it — this is the shell, so there is no page
+   * below it to carry the message.
+   */
+  protected readonly accountError = signal<string | null>(null);
+
   ngOnInit(): void {
     if (this.auth.isAuthenticated()) {
-      this.meService.get().subscribe((me) => this.me.set(me));
+      this.meService.get().subscribe({
+        next: (me) => {
+          this.me.set(me);
+          this.accountError.set(null);
+        },
+        error: (error: unknown) =>
+          this.accountError.set(errorMessage(error, 'Your account could not be loaded.')),
+      });
     }
   }
 

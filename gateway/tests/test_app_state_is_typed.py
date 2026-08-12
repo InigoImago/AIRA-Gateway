@@ -63,10 +63,18 @@ ACCESSOR_MODULE = "state.py"
 
 
 def _service_reads() -> list[tuple[str, int, str]]:
-    """Every `<something>.app.state.<service>` read outside the accessor module, unannotated.
+    """Every read of a service off `app.state` outside the accessor module, unannotated.
 
     An annotated assignment (`registry: ProviderRegistry = request.app.state.providers`) is the
     whole point, so those are excluded: they are exactly the fix this file asks for.
+
+    **Both spellings.** The first version matched attribute access only, and missed
+    `getattr(request.app.state, "rate_limits", None)` — which is the *more* dangerous of the two
+    and was in use at three sites. An attribute read of a renamed service raises `AttributeError`
+    and is loud; a `getattr` with a default answers `None`, and the call site's `if x is None:
+    return` then turns a renamed or mistyped service into a control that silently does not run.
+    The bound on failed authentications is one of those sites, so the guard was blind exactly
+    where a security control could disappear without a sound.
     """
     offenders: list[tuple[str, int, str]] = []
     for path in sorted(SOURCE.rglob("*.py")):
@@ -76,14 +84,26 @@ def _service_reads() -> list[tuple[str, int, str]]:
         tree = ast.parse(path.read_text())
         annotated = {id(node.value) for node in ast.walk(tree) if isinstance(node, ast.AnnAssign)}
         for node in ast.walk(tree):
-            if not isinstance(node, ast.Attribute) or node.attr not in SERVICES:
+            if isinstance(node, ast.Attribute) and node.attr in SERVICES:
+                if _is_app_state(node.value) and id(node) not in annotated:
+                    offenders.append((relative, node.lineno, node.attr))
                 continue
-            if not _is_app_state(node.value):
-                continue
-            if id(node) in annotated:
-                continue
-            offenders.append((relative, node.lineno, node.attr))
+            named = _getattr_on_app_state(node)
+            if named is not None and id(node) not in annotated:
+                offenders.append((relative, node.lineno, named))
     return offenders
+
+
+def _getattr_on_app_state(node: ast.AST) -> str | None:
+    """The service name in `getattr(<x>.app.state, "<service>", …)`, or None."""
+    if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+        return None
+    if node.func.id != "getattr" or len(node.args) < 2:
+        return None
+    target, name = node.args[0], node.args[1]
+    if not _is_app_state(target) or not isinstance(name, ast.Constant):
+        return None
+    return name.value if name.value in SERVICES else None
 
 
 def _is_app_state(node: ast.expr) -> bool:

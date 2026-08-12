@@ -64,6 +64,7 @@ from aira_gateway.budgets.errors import BudgetExceeded
 from aira_gateway.catalog import AmbiguousModelId, ModelDeclaration
 from aira_gateway.core.canonical import CanonicalResponse, CanonicalUsage
 from aira_gateway.core.schema import SchemaRejected
+from aira_gateway.diagnostics import UpstreamProbe
 from aira_gateway.embedding import (
     DEFAULT_TASK_TYPE,
     EMBEDDING_AGGREGATION_NOT_SUPPORTED,
@@ -627,7 +628,7 @@ async def health(request: Request) -> Response:
     # Still **no I/O here**, which is the whole reason the cache exists: probing per call would make
     # this as slow as the slowest provider and would bill somebody for asking whether a model is
     # alive (`FRD-117` §5.2, and `ADR-0012` §5 for a scaled-to-zero endpoint).
-    probe = getattr(request.app.state, "upstream_probe", None)
+    probe: UpstreamProbe | None = getattr(request.app.state, "upstream_probe", None)
     for name, verdict in (probe.snapshot() if probe is not None else {}).items():
         took = verdict.get("took_seconds")
         checks.append(

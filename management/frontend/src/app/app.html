@@ -24,6 +24,25 @@
       <button type="button" class="btn btn--sm" (click)="logout()">Logout</button>
     </div>
   }
+  <!--
+    The console is signed in and could not find out **who you are** (`/me` failed).
+
+    Everything role-shaped in this shell comes from that call: the username, the role chips, the
+    Logout button, and the nav entries for investigating an incident and for oversight. Without an
+    error branch a failure removed all of them silently, so an IT Security reader saw a console
+    built for somebody with fewer rights and nothing saying why — and no way to sign out, which is
+    the one action that reliably fixes it.
+
+    Beside the header rather than instead of the routes, unlike `startupError`: the screens below
+    still work, and each reports its own outcome. What is wrong here is the *shell*, so this says
+    so and leaves the reader able to leave.
+  -->
+  @if (accountError(); as message) {
+    <div class="aira-user" data-testid="account-error">
+      <span class="badge badge--danger">{{ message }}</span>
+      <button type="button" class="btn btn--sm" (click)="logout()">Logout</button>
+    </div>
+  }
 </header>
 
 <nav class="aira-nav" aria-label="Main navigation">

@@ -96,3 +96,88 @@ def test_two_grants_on_one_use_case_do_not_share_a_compaction_key() -> None:
         module.OutboxEvent = original  # type: ignore[assignment,misc]
 
     assert len(set(keys)) == 2, keys
+
+
+def test_no_two_entities_of_one_kind_share_a_compaction_key() -> None:
+    """The same rule as above, asked of **every** event type instead of the one that was fixed.
+
+    `use_case_group.granted` got a compound key when a live round found that a second grant erased
+    the first from the compacted log. `membership.upserted` carries `{slug, username, role}` and
+    was keyed on the slug alone, so **every member of one use case shared one key** — the identical
+    defect, one event type over, written into the same function on the same day and fixed in only
+    one of the two places.
+
+    It bites where it is hardest to notice: the live read-model is correct, because each event was
+    applied as it arrived. It is a *rebuild* that loses people — a fresh consumer group reading a
+    compacted topic sees one member per use case and silently drops the rest. That is the disaster
+    recovery path, which is the worst possible place for a latent fault.
+
+    So this is written as a rule about the function rather than a case about one event type: for
+    each kind, two different entities must produce two different keys. A third one cannot be
+    forgotten, because adding it without a discriminator fails here.
+    """
+    # Two *different* entities of the same kind, differing only in what identifies them.
+    pairs = [
+        (
+            "membership.upserted",
+            {"slug": "uc", "username": "anna", "role": "member"},
+            {"slug": "uc", "username": "bert", "role": "member"},
+        ),
+        (
+            "membership.removed",
+            {"slug": "uc", "username": "anna"},
+            {"slug": "uc", "username": "bert"},
+        ),
+        (
+            "use_case_group.granted",
+            {"slug": "uc", "group": "/ai/one"},
+            {"slug": "uc", "group": "/ai/two"},
+        ),
+        (
+            "use_case_group.revoked",
+            {"slug": "uc", "group": "/ai/one"},
+            {"slug": "uc", "group": "/ai/two"},
+        ),
+        ("budget.upserted", {"id": 1, "use_case": "uc"}, {"id": 2, "use_case": "uc"}),
+        ("ratelimit.upserted", {"id": 1, "use_case": "uc"}, {"id": 2, "use_case": "uc"}),
+        ("anomaly_rule.upserted", {"id": 1, "use_case": "uc"}, {"id": 2, "use_case": "uc"}),
+        ("api_key.created", {"prefix": "aaaa", "use_case": "uc"}, {"prefix": "bbbb"}),
+        ("model.upserted", {"name": "one"}, {"name": "two"}),
+        ("usecase.upserted", {"slug": "one"}, {"slug": "two"}),
+    ]
+
+    collisions: list[str] = []
+    for event_type, first, second in pairs:
+        keys = _keys_for([(event_type, first), (event_type, second)])
+        if keys[0] == keys[1]:
+            collisions.append(f"{event_type} -> both {keys[0]!r}")
+
+    assert not collisions, (
+        "these event types give two different entities the same compaction key, so the second "
+        "erases the first from the log and a rebuilt read-model loses it:\n  "
+        + "\n  ".join(collisions)
+    )
+
+
+def _keys_for(events: list[tuple[str, dict[str, object]]]) -> list[str]:
+    """The keys `record_to_outbox` would write, without a database."""
+    import aira_management.apps.outbox.subscriber as module
+
+    keys: list[str] = []
+
+    class _Manager:
+        @staticmethod
+        def create(**kwargs: object) -> None:
+            keys.append(str(kwargs["key"]))
+
+    class Recorder:
+        objects = _Manager()
+
+    original = module.OutboxEvent
+    module.OutboxEvent = Recorder  # type: ignore[assignment,misc]
+    try:
+        for event_type, payload in events:
+            module.record_to_outbox(event_type, payload)
+    finally:
+        module.OutboxEvent = original  # type: ignore[misc]
+    return keys

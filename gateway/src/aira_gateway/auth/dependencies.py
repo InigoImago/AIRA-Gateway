@@ -15,6 +15,7 @@ from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.auth.attempts import record_failed_authentication
 from aira_gateway.auth.attribution import Attribution, is_valid_use_case, resolve_use_case
 from aira_gateway.auth.credentials import extract_token
+from aira_gateway.auth.grants import GroupGrantResolver
 from aira_gateway.auth.keys import is_aira_key
 from aira_gateway.auth.oidc import OidcValidator
 from aira_gateway.auth.principal import Principal
@@ -57,7 +58,7 @@ async def _with_group_grants(request: Request, principal: Principal) -> Principa
     the roles differ the stronger wins, because an access decision that depends on which row was
     read first is not a decision anybody can review.
     """
-    resolver = getattr(request.app.state, "group_grants", None)
+    resolver: GroupGrantResolver | None = getattr(request.app.state, "group_grants", None)
     if resolver is None or not principal.groups:
         return principal
     granted = await resolver.use_cases(principal.groups)

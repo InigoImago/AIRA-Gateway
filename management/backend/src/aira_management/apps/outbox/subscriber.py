@@ -52,6 +52,30 @@ _TOPIC_FOR = {
 }
 
 
+#: What *else* identifies an entity, where its slug or id does not identify it on its own.
+#:
+#: A compacted topic keeps the **last** message per key, so the key has to be the entity's whole
+#: natural key. A group grant belongs to a (use case, group) pair and a membership to a (use case,
+#: user); keyed on the slug alone, the second one written erases the first from the log.
+#:
+#: That was found for grants in a live round and fixed **for grants only**, as an `if` beside this
+#: function — while `membership.upserted`, three lines above it in the same table and carrying the
+#: same shape of payload, kept a slug-only key. So every member of a use case shared one key.
+#:
+#: It bites exactly where it is hardest to see. The live read-model is right, because each event
+#: was applied as it arrived; it is a **rebuild** that loses people, when a fresh consumer group
+#: reads a compacted topic and finds one member per use case. Disaster recovery is the worst place
+#: to keep a latent fault.
+#:
+#: A table rather than a second `if`, because the third one would have been forgotten too.
+_ALSO_IDENTIFIED_BY = {
+    "membership.upserted": "username",
+    "membership.removed": "username",
+    "use_case_group.granted": "group",
+    "use_case_group.revoked": "group",
+}
+
+
 def record_to_outbox(event_type: str, payload: dict[str, Any]) -> None:
     topic = _TOPIC_FOR.get(event_type)
     if topic is None:
@@ -64,9 +88,7 @@ def record_to_outbox(event_type: str, payload: dict[str, Any]) -> None:
         or payload.get("name")
         or payload.get("use_case", "")
     )
-    # A compacted topic keeps the **last** message per key, so two grants on one use case must not
-    # share one. Without this, granting a second group would erase the first from the log — and a
-    # gateway rebuilding its read-model from the topic would silently lose access somebody has.
-    if event_type.startswith("use_case_group."):
-        key = f"{key}|{payload.get('group', '')}"
+    discriminator = _ALSO_IDENTIFIED_BY.get(event_type)
+    if discriminator is not None:
+        key = f"{key}|{payload.get(discriminator, '')}"
     OutboxEvent.objects.create(topic=topic, key=key, event_type=event_type, payload=payload)
