@@ -111,6 +111,27 @@ showcase: env ## Start the full demo: stack, local model, seeded roles/budgets, 
 	@echo "==> a coding assistant, governed end to end"
 	@uv run python tools/showcase_agent.py
 	@echo ""
+	@# What somebody watching this demo asks next: "how do I put *my* client behind it?" The
+	@# answer is four administration steps and a base URL, and it is the same four steps for both
+	@# surfaces — so the demo names them here rather than leaving a reader to infer them from a
+	@# seed script. Both documents were executed end to end against a running stack before being
+	@# written; neither is a description of what ought to work.
+	@echo "==> putting your own client behind the gateway"
+	@echo ""
+	@echo "  Four steps, once per client, and then only the base URL changes:"
+	@echo "    1. create a use case          POST /api/v1/use-cases/"
+	@echo "    2. release the models it may call   PATCH  …/use-cases/<slug>/  {\"allowed_models\": […]}"
+	@echo "       (empty means none — a new use case can call nothing until somebody releases one)"
+	@echo "    3. add its people or a Keycloak group   POST …/members/  ·  POST …/groups/"
+	@echo "    4. issue an API key           POST …/api-keys/   (shown once, bound to that use case)"
+	@echo ""
+	@echo "  A key belongs to one use case, so a client normally sends nothing else. A caller in"
+	@echo "  several names one with the 'X-AIRA-Use-Case: <slug>' header — which chooses among what"
+	@echo "  they already have and never grants anything."
+	@echo ""
+	@echo "    KIRA client   http://localhost:8001/kira/api/external   docs/MIGRATION-KIRA.md"
+	@echo "    Gemini client http://localhost:8001/v1beta              docs/MIGRATION-GEMINI.md"
+	@echo ""
 
 # Deliberately no reset here: this is the target for watching the bars fill and a limit be
 # reached, which is the thing `showcase` resets so that *its* run is the one you see.

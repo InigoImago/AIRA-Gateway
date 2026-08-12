@@ -5,6 +5,44 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-12 — Two migration guides, written by doing the migration
+
+The demo showed a governed gateway and left the next question unanswered: *how do I put my own
+client behind it?* Two documents answer it —
+[`MIGRATION-KIRA.md`](MIGRATION-KIRA.md) and [`MIGRATION-GEMINI.md`](MIGRATION-GEMINI.md) — and
+`make showcase` now names the four steps and links both, because an instruction with no
+destination is a defect this project has already recorded once.
+
+**Both were executed end to end against the running stack before a word was written**, and the
+outputs in them are what came back. That was not ceremony: writing from the code would have got
+three things wrong. The plaintext key is returned as `api_key` and not `key`; a key's name is
+`label` and not `name`; and the delay before a fresh key is accepted is a real, measurable **two
+seconds** (Kafka), which is the difference between "your key does not work" and "wait a moment".
+A guide nobody has followed works for whoever wrote it.
+
+The content is the same four administration steps for both surfaces, because they *are* the same:
+create the use case, release the models it may call, add its people or a Keycloak group, issue a
+key. What differs is one sentence at the end — a base URL. The step worth spelling out is the
+release: a new use case answers `allowed_models: []` and can call **nothing**, which reads as a
+bug for exactly as long as it takes to say that it is the point.
+
+`X-AIRA-Use-Case` gets its own section on both, because it is the one genuinely new concept and
+its behaviour is not guessable: a caller in exactly one use case sends nothing, one in several is
+refused with the candidates named, one in none is refused outright. And the header **chooses among
+what you already have** — naming somebody else's use case is a 403, demonstrated in the walkthrough
+rather than asserted.
+
+The Gemini page lists only clients that were actually run — `google-genai` and OpenCode — and says
+in as many words that LangChain, LlamaIndex and the Vertex SDK have not been tried. A compatibility
+page that implies coverage it does not have is worse than a short one.
+
+One thing the walkthrough checked and found **correct**: a model that was never released to the use
+case was served — because it was the mock, and the test-double exemption is deliberate, documented
+and bounded to `local`/demo. Verified rather than assumed, which is the only reason it is not in
+the list of findings above.
+
+---
+
 ## 2026-08-12 — A quality and fault-tolerance read of the whole code
 
 Brief: find defects, change no functionality, raise code quality and fault tolerance. Six findings,
