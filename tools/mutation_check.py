@@ -138,6 +138,7 @@ THROTTLE_WIRE = (
 ERROR_HEADERS = (
     "gateway/tests/test_error_responses_are_headered.py gateway/tests/test_security_headers.py"
 )
+KIRA_ENVELOPE = "gateway/tests/test_kira_envelope_everywhere.py gateway/tests/test_kira_surface.py"
 
 SERVING_OPTIONS = (
     "gateway/tests/test_serving_options.py gateway/tests/test_kira_surface.py "
@@ -3447,6 +3448,22 @@ MUTATIONS = [
         "            assert provider is not None",
         "gateway/tests/test_kira_surface.py "
         "gateway/tests/test_every_dispatch_applies_the_conditions.py",
+    ),
+    Mutation(
+        "QA10",
+        "a refusal raised before a KIRA route still answers in the KIRA envelope",
+        "gateway/src/aira_gateway/app.py",
+        "        if _kira(request):\n            return kira_error_response(exc.code, kira_code_for_status(exc.code), exc.message)",
+        "        if False:\n            return kira_error_response(exc.code, kira_code_for_status(exc.code), exc.message)",
+        KIRA_ENVELOPE,
+    ),
+    Mutation(
+        "QA11",
+        "the body ceiling answers each surface in its own error language",
+        "gateway/src/aira_gateway/middleware.py",
+        "        body = self._KIRA_TOO_LARGE if path.startswith(KIRA_PREFIX) else self._GEMINI_TOO_LARGE",
+        "        body = self._GEMINI_TOO_LARGE",
+        KIRA_ENVELOPE,
     ),
     Mutation(
         "QA9",

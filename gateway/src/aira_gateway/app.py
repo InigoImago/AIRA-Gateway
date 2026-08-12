@@ -31,6 +31,7 @@ from aira_gateway.anomalies.suspensions import SuspensionService
 from aira_gateway.api.gemini.errors import GeminiHTTPError, gemini_error_response
 from aira_gateway.api.gemini.routes import router as gemini_router
 from aira_gateway.api.incidents import router as incidents_router
+from aira_gateway.api.kira.errors import code_for_status as kira_code_for_status
 from aira_gateway.api.kira.errors import kira_error_response
 from aira_gateway.api.kira.routes import BASE as KIRA_BASE
 from aira_gateway.api.kira.routes import router as kira_router
@@ -311,9 +312,24 @@ def _configure_cors(app: FastAPI, settings: GatewaySettings) -> None:
 
 
 def _register_exception_handlers(app: FastAPI) -> None:
+    def _kira(request: Request) -> bool:
+        """Whether this request was aimed at the compatibility surface.
+
+        The same test the routing and validation handlers already make. It was missing from the
+        two handlers below, so a KIRA client meeting an oversized body or an invalid credential
+        got Google's envelope — on the surface whose entire purpose is that a client migrates by
+        changing a URL. `401` in particular is among the most commonly handled statuses there is,
+        and `NOT_AUTHENTICATED` was already in the predecessor's vocabulary with nothing emitting
+        it. Found by sending a KIRA request with no credential (2026-08-12).
+        """
+        return request.url.path.startswith(KIRA_BASE)
+
     @app.exception_handler(RequestTooLarge)
-    async def _handle_too_large(_request: Request, exc: RequestTooLarge) -> JSONResponse:
-        return gemini_error_response(413, "Request body too large.", "INVALID_ARGUMENT")
+    async def _handle_too_large(request: Request, exc: RequestTooLarge) -> JSONResponse:
+        message = "Request body too large."
+        if _kira(request):
+            return kira_error_response(413, kira_code_for_status(413), message)
+        return gemini_error_response(413, message, "INVALID_ARGUMENT")
 
     @app.exception_handler(AiraError)
     async def _handle_aira_error(_request: Request, exc: AiraError) -> JSONResponse:
@@ -323,7 +339,16 @@ def _register_exception_handlers(app: FastAPI) -> None:
         )
 
     @app.exception_handler(GeminiHTTPError)
-    async def _handle_gemini_error(_request: Request, exc: GeminiHTTPError) -> JSONResponse:
+    async def _handle_gemini_error(request: Request, exc: GeminiHTTPError) -> JSONResponse:
+        """A refusal that reached the application, rather than the route that could name it.
+
+        The KIRA routes catch their own refusals (`KIRA_REFUSALS`) and render them in their own
+        envelope, so what arrives here from that surface is what a **dependency** raised before
+        the route ran — authentication, in practice, which uses `GeminiHTTPError` because that is
+        the shared refusal type. It answered in Google's shape.
+        """
+        if _kira(request):
+            return kira_error_response(exc.code, kira_code_for_status(exc.code), exc.message)
         return exc.to_response()
 
     @app.exception_handler(StarletteHTTPException)

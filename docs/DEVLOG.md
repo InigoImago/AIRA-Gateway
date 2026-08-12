@@ -269,6 +269,39 @@ arriving over Kafka seconds later. It asks `airaDeclared` now.
 Three destroy-and-rebuild runs, the last with no weights at all: **`served 10, refused 1, failed
 0`**, zero error lines.
 
+### The compatibility surface, walked for the first time
+
+Asked whether the KIRA surface had been checked for stability. Hermetically yes; **live, not
+once** — the showcase drives only the Gemini surface, so the compatibility layer had received no
+real request all session, including after its embedding path was changed. Fourteen cases against
+the running gateway.
+
+Most of it holds: `/models`, `/health`, `/chat`, `/streaming-chat` and `/embed` (single *and*
+list) answer correctly, and every refusal carries this surface's envelope with the predecessor's
+codes — `MODEL_NOT_FOUND`, `NO_CHAT_CAPABILITIES`, `NO_EMBEDDING_CAPABILITIES`,
+`INVALID_JSON_BODY`, `VALIDATION_ERROR`.
+
+**Two apparent findings were the instrument, not the system**: the probe read `response` where the
+contract says `parts`, and counted `event:` where this format uses `data:`. The answers were there
+throughout. Worth recording because it is the same trap this project has hit before — the round
+that looks like a defect is sometimes the measurement.
+
+**One was real.** A request with no credential answered `401` in **Google's** envelope, on the
+surface whose entire premise is that a client migrates by changing a URL — and `401` is among the
+most commonly handled statuses a client has. The routes catch their own refusals and render them
+correctly; what escaped is what a *dependency* raised before the route ran. The body ceiling had
+the same shape: it answers in pure ASGI with a hardcoded body, and already knew the path, because
+`describe_target` reads that same prefix to put `api` on the audit row.
+
+The sharpest part is the vocabulary: `NOT_AUTHENTICATED` and `INVALID_TOKEN` have been declared in
+`kira/errors.py` from the start and **nothing emitted either**, while the real refusal went out in
+a foreign shape. A code defined and never raised is *"an enum member is not a specification"* seen
+from the other side.
+
+The Gemini surface is asserted alongside in the same file, deliberately: a fix that gave **both**
+surfaces the KIRA envelope would satisfy every assertion anybody thought to write about the
+surface being repaired, and quietly break the other contract. `QA10`, `QA11`.
+
 ### Where it was left
 
 `make showcase` from a destroyed stack, twice: **`served 10, refused 1, failed 0`**, zero error

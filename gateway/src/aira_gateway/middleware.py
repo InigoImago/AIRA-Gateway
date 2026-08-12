@@ -22,6 +22,11 @@ from aira_gateway.persistence.writer import PendingLog
 
 _USE_CASE_PATH = re.compile(r"^/uc/([^/]+)(/.*)$")
 
+#: Which surface a path belongs to, for the refusals that answer **before any route** and must
+#: still speak that surface's error language. One definition, read by `describe_target` (which
+#: puts `api` on the audit row) and by the body-ceiling's own response.
+KIRA_PREFIX = "/kira/"
+
 
 class UseCasePathMiddleware:
     def __init__(self, app: ASGIApp) -> None:
@@ -58,7 +63,7 @@ def describe_target(path: str) -> tuple[str, str, str]:
     guessing. An audit row that names the wrong model is worse than one that admits it does not
     know which was meant.
     """
-    api = "kira" if path.startswith("/kira/") else "gemini"
+    api = "kira" if path.startswith(KIRA_PREFIX) else "gemini"
     match = _RESOURCE.search(path)
     if not match:
         return api, "unknown", "unknown"
@@ -143,7 +148,7 @@ class BodySizeLimitMiddleware:
 
         if self._declared_length(scope) > self.max_bytes:
             await record_oversized(scope, self.max_bytes)
-            await self._reject(send)
+            await self._reject(send, str(scope.get("path", "")))
             return
 
         received = 0
@@ -178,11 +183,21 @@ class BodySizeLimitMiddleware:
                     return 0
         return 0
 
-    async def _reject(self, send: Send) -> None:
-        body = (
-            b'{"error":{"code":413,"message":"Request body too large.",'
-            b'"status":"INVALID_ARGUMENT"}}'
-        )
+    #: The refusal, in each surface's own envelope. Written out as bytes because this answers in
+    #: pure ASGI, before anything that could build a response object.
+    #:
+    #: **The path decides**, and this function already had it: `describe_target` reads the very
+    #: same prefix to put `api` on the audit row, so the middleware knew which surface it was
+    #: refusing and answered both of them in Google's shape. A KIRA client switches on `code`, and
+    #: `FRD-107`'s premise is that migrating is a change of URL — an error shape that depends on
+    #: how large the body was is not that.
+    _GEMINI_TOO_LARGE = (
+        b'{"error":{"code":413,"message":"Request body too large.","status":"INVALID_ARGUMENT"}}'
+    )
+    _KIRA_TOO_LARGE = b'{"code":"VALIDATION_ERROR","message":"Request body too large."}'
+
+    async def _reject(self, send: Send, path: str = "") -> None:
+        body = self._KIRA_TOO_LARGE if path.startswith(KIRA_PREFIX) else self._GEMINI_TOO_LARGE
         await send(
             {
                 "type": "http.response.start",

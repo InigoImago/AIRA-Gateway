@@ -61,3 +61,38 @@ INTERNAL_SERVER_ERROR = "INTERNAL_SERVER_ERROR"
 #: ours (`FRD-107` FR-2a). Not a KIRA code — the predecessor has none for "this gateway does not
 #: do that yet", because it always did. A new code is the honest answer to a new situation.
 NOT_YET_SUPPORTED = "NOT_YET_SUPPORTED"
+
+
+#: How a refusal raised **outside** a KIRA route body is named in this surface's vocabulary.
+#:
+#: The routes catch their own refusals and render them themselves; what reaches the application's
+#: exception handler is what a *dependency* raised before the route ran — in practice
+#: authentication, which raises a `GeminiHTTPError` because that is the shared refusal type.
+#:
+#: Found by sending a KIRA request with no credential on 2026-08-12: `401` in the **Gemini**
+#: envelope, `{"error": {"code": …, "status": "UNAUTHENTICATED"}}`, on the surface whose entire
+#: purpose is that a client migrates by changing a URL. `401` is among the most commonly handled
+#: statuses a client has, and `NOT_AUTHENTICATED` was already in this file — a code defined and
+#: emitted by nothing, while the real refusal went out in a foreign shape.
+#: Only the statuses that can actually arrive this way, and only codes this file already declares.
+#: A 404 is not here: an unroutable path is a `StarletteHTTPException` and already answers in this
+#: envelope, and every 404 a route raises is caught by the route.
+STATUS_CODES: dict[int, str] = {
+    401: NOT_AUTHENTICATED,
+    403: STANDARD_USER_PERMISSION_REQUIRED,
+    # The body ceiling refuses in pure ASGI, before any route (`middleware.py`). Named as a
+    # validation failure because that is what it is to the caller: the request was too large.
+    413: VALIDATION_ERROR,
+    # The bound on failed authentications (`ADR-0015`), which also answers before a route.
+    429: EXTERNAL_KI_API_TOO_MANY_REQUEST,
+}
+
+
+def code_for_status(status: int) -> str:
+    """This surface's code for a status raised before any route saw the request.
+
+    Anything unmapped is `INTERNAL_SERVER_ERROR`, which is what an unexpected status *is* from a
+    caller's side: not something they can act on. Guessing a more specific code would tell them to
+    fix something that is not theirs.
+    """
+    return STATUS_CODES.get(status, INTERNAL_SERVER_ERROR)
