@@ -1,3 +1,4 @@
+import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import { of } from 'rxjs';
@@ -27,6 +28,9 @@ function configure(authenticated: boolean, roles: string[] = []): void {
         provide: AuthService,
         useValue: {
           isAuthenticated: () => authenticated,
+          // The shell reads this to decide whether to render the routes at all. A stub without
+          // it is a stub of a different service — the trap `Live`'s teardown case recorded.
+          startupError: signal<string | null>(null),
           logout: () => {
             loggedOut = true;
           },
@@ -122,5 +126,72 @@ describe('App', () => {
     const el = render([]);
 
     expect(el.querySelector('[data-testid="nav-requests"]')).toBeNull();
+  });
+});
+
+describe('App when the identity provider cannot be reached', () => {
+  /**
+   * The console said **nothing at all** in this case until 2026-08-11.
+   *
+   * `AuthService.init()` runs in an app initialiser, and a rejected initialiser makes
+   * `bootstrapApplication` reject — so an unreachable Keycloak produced a completely white page
+   * with a `200` from the web server. A reader cannot tell "the login service is down" from "this
+   * application is broken", and they report the second. It cost a real afternoon: the stack's
+   * infrastructure had crashed, and the console was indistinguishable from a broken deployment
+   * of itself.
+   *
+   * These cases are about what a person **sees**, which is why they assert on rendered text
+   * rather than on the signal: a flag nobody renders is the same blank page with better
+   * bookkeeping.
+   */
+  function renderWithStartupError(issuer: string | null): HTMLElement {
+    TestBed.resetTestingModule();
+    TestBed.configureTestingModule({
+      imports: [App],
+      providers: [
+        provideRouter([]),
+        {
+          provide: AuthService,
+          useValue: {
+            isAuthenticated: () => false,
+            startupError: signal<string | null>(issuer),
+            logout: () => {},
+          },
+        },
+        { provide: MeService, useValue: { get: () => of(baseMe) } },
+      ],
+    });
+    const fixture = TestBed.createComponent(App);
+    fixture.detectChanges();
+    return fixture.nativeElement as HTMLElement;
+  }
+
+  it('says so, instead of rendering nothing', () => {
+    const el = renderWithStartupError('http://localhost:8080/realms/aira');
+    const panel = el.querySelector('[data-testid="startup-error"]');
+
+    expect(panel).not.toBeNull();
+    // The issuer is named: a *misdirected* console fails identically to an unreachable one, and
+    // the two need different people to fix them.
+    expect(panel?.textContent).toContain('http://localhost:8080/realms/aira');
+    // And it distinguishes the two things a reader is trying to tell apart.
+    expect(panel?.textContent).toContain('identity provider');
+  });
+
+  it('does not render the routes behind it', () => {
+    // Every screen behind this needs a token. Showing them would fill the page with failures that
+    // all have one cause and name none of it.
+    const el = renderWithStartupError('http://localhost:8080/realms/aira');
+
+    expect(el.querySelector('router-outlet')).toBeNull();
+  });
+
+  it('renders the console normally when the provider is reachable', () => {
+    // The guard against a panel that is always on — which would be the same defect with the
+    // opposite sign, and would announce itself to a stakeholder rather than to a test.
+    const el = renderWithStartupError(null);
+
+    expect(el.querySelector('[data-testid="startup-error"]')).toBeNull();
+    expect(el.querySelector('router-outlet')).not.toBeNull();
   });
 });

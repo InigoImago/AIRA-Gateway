@@ -34,10 +34,31 @@ export class App implements OnInit {
   protected readonly title = signal('AIRA Gateway');
   protected readonly me = signal<Me | null>(null);
 
+  /**
+   * The issuer the console could not reach at startup, or `null` when it could.
+   *
+   * Exposed to the template so the shell can say so instead of rendering nothing — see
+   * `AuthService.startupError`, and `app.html` for why it replaces the routes rather than sitting
+   * above them.
+   */
+  protected readonly startupError = this.auth.startupError;
+
   ngOnInit(): void {
     if (this.auth.isAuthenticated()) {
       this.meService.get().subscribe((me) => this.me.set(me));
     }
+  }
+
+  /**
+   * Reload the page.
+   *
+   * A full reload rather than a retry of the discovery call: everything that failed happened
+   * *before* the application existed, so re-running one step of it would leave the rest of the
+   * startup half-done. The identity provider coming back is not the common case here — a person
+   * fixing a deployment is — and a page they can press is what tells them it worked.
+   */
+  protected retryStartup(): void {
+    window.location.reload();
   }
 
   protected hasRole(role: string): boolean {

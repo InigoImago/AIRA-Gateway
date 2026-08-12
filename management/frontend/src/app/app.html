@@ -79,5 +79,33 @@
 </nav>
 
 <main class="aira-main">
-  <router-outlet />
+  <!--
+    The identity provider could not be reached when the console started (`AuthService.startupError`).
+
+    Rendered instead of the routes, not beside them: every screen behind this needs a token, so
+    showing them would fill the page with failures that all have one cause and name none of it.
+    Before this existed the whole page was **white** — a `200` from the web server and nothing in
+    it, which reads as "this application is broken" rather than "its login service is down". A
+    reader cannot tell those apart, and they report the wrong one.
+
+    It names the issuer, because a *misdirected* console fails identically to an unreachable one
+    and the two need different people to fix them.
+  -->
+  @if (startupError(); as issuer) {
+    <section class="panel" data-testid="startup-error">
+      <h2>The console cannot sign you in</h2>
+      <p>
+        AIRA could not reach its identity provider at <code>{{ issuer }}</code
+        >, so there is no way to log in and nothing below this message would load.
+      </p>
+      <p class="muted">
+        The console itself is running — this is about the service that issues logins. If you
+        administer this deployment, check that Keycloak is up and that the address above is the one
+        it is served from. Otherwise, please report the address above to whoever runs it.
+      </p>
+      <button type="button" class="btn" (click)="retryStartup()">Try again</button>
+    </section>
+  } @else {
+    <router-outlet />
+  }
 </main>

@@ -7,12 +7,37 @@ import { authConfig } from './auth.config';
 export class AuthService {
   private readonly oauth = inject(OAuthService);
   readonly authenticated = signal(false);
+  /**
+   * Set when the identity provider could not be reached at startup.
+   *
+   * **This is why it exists.** `init()` runs in an app initialiser, and a rejected initialiser
+   * makes `bootstrapApplication` reject — so an unreachable Keycloak produced a **completely white
+   * page**: no message, no header, no hint, and a `200` from the web server. On 2026-08-11 that
+   * cost real time: the stack's infrastructure had crashed, and the console was indistinguishable
+   * from a broken deployment of itself. A reader cannot tell "the login service is down" from
+   * "this application is broken", and they will report the second.
+   *
+   * So a failure here is **recorded, not thrown**: the app boots, and the shell renders a page
+   * that says what is wrong and what to do. That is the same rule this console already applies to
+   * every load and mutation (`core/api/error-message.ts`) — *no silent failures* — applied to the
+   * one step that runs before any of that exists.
+   */
+  readonly startupError = signal<string | null>(null);
   /** Set once a re-login has been started, so concurrent 401s do not each start their own. */
   private reauthenticating = false;
 
   async init(): Promise<void> {
     this.oauth.configure(authConfig);
-    await this.oauth.loadDiscoveryDocumentAndTryLogin();
+    try {
+      await this.oauth.loadDiscoveryDocumentAndTryLogin();
+    } catch (error: unknown) {
+      // Deliberately swallowed, and the reason is in `startupError` above: rethrowing here is
+      // exactly what produced the blank page. The issuer is named because a *misdirected* console
+      // fails the same way as an unreachable one, and the two need different people to fix them.
+      this.startupError.set(authConfig.issuer ?? 'the configured issuer');
+      console.error('AIRA: the identity provider could not be reached at startup', error);
+      return;
+    }
     this.authenticated.set(this.oauth.hasValidAccessToken());
     this.restoreLocation();
 
