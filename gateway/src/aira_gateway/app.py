@@ -220,15 +220,23 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
 
         FastAPIInstrumentor.instrument_app(app, server_request_hook=redact_span_query)
 
-    # Middleware runs outermost-last: the body limit is added last so it is the first thing an
-    # inbound request meets, before any of it is buffered.
+    # Middleware runs **outermost-last**, and the order below is the whole of what that buys.
+    #
+    # It used to end with the body limit, on the reasoning that the ceiling must be the first
+    # thing an inbound request meets. That reasoning is sound and the conclusion was wrong: the
+    # ceiling is enforced by wrapping `receive`, and the two middlewares above it never call it,
+    # so nothing was buffered any earlier or later either way. What the order *did* decide was
+    # which responses carry the headers — and both of the ones that answer without reaching a
+    # route came out bare. Measured: a 413 and a 500 with no `nosniff`, no `no-store` and no
+    # trace id, which is precisely the pair `TraceIdMiddleware` names in its own docstring as the
+    # reason it exists.
     _configure_cors(app, settings)
+    app.add_middleware(UseCasePathMiddleware)
+    app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.max_request_bytes)
+    app.add_middleware(SecurityHeadersMiddleware)
     # Outermost, so a response produced by an exception handler still carries it (`FRD-117` FR-4).
     # The requests that most need correlating are the ones that went wrong.
     app.add_middleware(TraceIdMiddleware)
-    app.add_middleware(SecurityHeadersMiddleware)
-    app.add_middleware(UseCasePathMiddleware)
-    app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.max_request_bytes)
 
     app.include_router(health_router)
     app.include_router(pipeline_router)
@@ -366,7 +374,15 @@ def _register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(Exception)
     async def _handle_unexpected(request: Request, exc: Exception) -> JSONResponse:
-        """Last resort: log full context server-side, return a safe, shaped error to the client."""
+        """Last resort: log full context server-side, return a safe, shaped error to the client.
+
+        The **one** response `SecurityHeadersMiddleware` cannot reach, whatever the order above:
+        Starlette answers an unhandled exception from `ServerErrorMiddleware`, which wraps the
+        entire user middleware stack, so this response is written past every one of them. The
+        headers are therefore applied here, from that middleware's own tuple rather than from a
+        second list — a defence restated is a defence that drifts, and this is the response class
+        least likely to be looked at again.
+        """
         attribution = getattr(request.state, "attribution", None)
         _log.error(
             "unhandled_error",
@@ -380,10 +396,14 @@ def _register_exception_handlers(app: FastAPI) -> None:
         )
         # API routes get a Gemini-shaped error; other routes get the AIRA envelope.
         if request.url.path.startswith("/v1beta"):
-            return gemini_error_response(
+            response = gemini_error_response(
                 500, "Internal error while processing the request.", "INTERNAL"
             )
-        envelope = ErrorResponse(
-            error=ErrorDetail(code="internal_error", message="Internal server error.")
-        )
-        return JSONResponse(status_code=500, content=envelope.model_dump(exclude_none=True))
+        else:
+            envelope = ErrorResponse(
+                error=ErrorDetail(code="internal_error", message="Internal server error.")
+            )
+            response = JSONResponse(status_code=500, content=envelope.model_dump(exclude_none=True))
+        for name, value in SecurityHeadersMiddleware.HEADERS:
+            response.headers.setdefault(name.decode("ascii"), value.decode("ascii"))
+        return response
