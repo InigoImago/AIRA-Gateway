@@ -202,6 +202,37 @@ class ModelDeclaration:
         return requested if requested is not None else self.default_max_output_tokens
 
 
+#: The widest model name the catalog can hold — `model_catalog.model` and `request_logs.model` are
+#: both `String(128)`. A name longer than this cannot name a declared model, by construction.
+MAX_MODEL_NAME = 128
+
+
+def is_lookupable(model: str) -> bool:
+    """Whether ``model`` is a name this catalog could possibly hold.
+
+    **A caller-supplied string reaching a database is the whole point.** The model name arrives in
+    a URL path segment and is used as a primary key, and two shapes of it were found to reach
+    Postgres and fail there — neither visible to the hermetic suite, because SQLite accepts both:
+
+    - a **NUL byte** (`mock-1%00:generateContent`) raises `psycopg.DataError` and the caller gets
+      a **500**, breaking this project's own rule that a caller's mistake is answered with an
+      actionable status and never with our error;
+    - a name of **300 characters** exceeds `String(128)`, and the row that records the refusal
+      then fails to write — so an oversized name is a request the audit trail does not have
+      (`FRD-122`), which is worse than the wrong status code.
+
+    Refused *before* the query rather than caught after it: a lookup that cannot match anything is
+    not worth a round trip, and catching a database error would make the answer depend on which
+    database is behind it. The same reasoning as `is_valid_use_case`, one identifier over.
+
+    Control characters generally, not just NUL: they cannot appear in a declared model name, and
+    every one of them is a value that behaves differently in a log line, a URL and a database.
+    """
+    if not model or len(model) > MAX_MODEL_NAME:
+        return False
+    return not any(ord(character) < 0x20 or ord(character) == 0x7F for character in model)
+
+
 class ModelCatalog:
     """Reads model declarations from the read-model. Never calls Management (FR-8)."""
 
@@ -209,6 +240,11 @@ class ModelCatalog:
         self._sessionmaker = sessionmaker
 
     async def declaration(self, model: str) -> ModelDeclaration:
+        if not is_lookupable(model):
+            # Undeclared, which is what it is: no such row can exist. The caller then meets the
+            # ordinary `model_not_found` 404 instead of a 500, and nothing about *which* database
+            # is running decides the answer.
+            return ModelDeclaration(name=model)
         async with self._sessionmaker() as session:
             record = await session.get(ModelRead, model)
         if record is None:

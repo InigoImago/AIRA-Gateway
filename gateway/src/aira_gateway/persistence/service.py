@@ -9,6 +9,37 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from aira_gateway.core.canonical import CanonicalUsage
 from aira_gateway.db.models import RequestLog
 
+#: `request_logs.model` and `.requested_model` are `String(128)`; `.operation` is `String(64)`.
+MODEL_COLUMN = 128
+OPERATION_COLUMN = 64
+
+
+def _fits(value: str | None, width: int = MODEL_COLUMN) -> str | None:
+    """``value``, in a form the column can actually store.
+
+    **A row that does not fit is a request the audit trail does not have.** The model name and the
+    method both come from the caller's URL, so their content is theirs to choose, and two shapes of
+    it made the INSERT fail on Postgres — after the request had been correctly refused. The writer
+    logged `request_log_write_failed`, and the row recording the refusal vanished: `FRD-122`'s rule
+    broken by the very row meant to satisfy it, reachable by anyone who can send a request.
+
+        a 300-character name   → value too long for type character varying(128)
+        a NUL byte             → PostgreSQL text fields cannot contain NUL (0x00) bytes
+
+    Both invisible to the hermetic suite, because **SQLite enforces neither** — the trap this
+    project has recorded twice before (a Keycloak client description over `varchar(255)`, and a
+    42-character migration id that applied its DDL and then failed writing `alembic_version`).
+
+    Two corrections, and the order matters: control characters are removed **before** the cut, so
+    the width is counted in characters that will survive. Sanitising rather than refusing, because
+    the row exists to say *what was asked* and a slightly less faithful row is worth incomparably
+    more than no row — the same trade `FRD-122` makes when it records a refusal it cannot
+    attribute.
+    """
+    if value is None:
+        return None
+    return "".join(c for c in value if ord(c) >= 0x20 and ord(c) != 0x7F)[:width]
+
 
 class RequestLogService:
     """Writes ``request_logs`` rows, bound to an async session."""
@@ -53,9 +84,12 @@ class RequestLogService:
             source_ip=source_ip,
             credential=credential,
             api=api,
-            operation=operation,
-            model=model,
-            requested_model=requested_model,
+            # All three are caller-derived — the model name and the method come straight out of
+            # the URL — so all three are bounded to their column. The cost is the row's
+            # *precision*; the alternative was the row itself.
+            operation=str(_fits(operation, OPERATION_COLUMN)),
+            model=str(_fits(model)),
+            requested_model=_fits(requested_model),
             model_selection=model_selection,
             status=status,
             outcome=outcome,
