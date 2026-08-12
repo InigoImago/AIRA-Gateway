@@ -355,6 +355,24 @@ The most instructive artefact is a test that had to be rewritten: `test_a_batch_
 per_text_in_order` pinned the disproven assumption. It was **faithful to the code and unfaithful to
 the contract**, which is all a test can ever prove — that the two agree. `QA12`–`QA14`.
 
+### A broad sweep of the console's endpoints
+
+Twelve reading endpoints, the dry run and both surfaces, against the running stack: **no 5xx**, and
+the 403s correct (an API key carries no oversight role, and those endpoints are bounded by one).
+
+One finding, and the function convicts itself. A dry run of `kundenservice` with an injection
+filter reported **`effective_model: all-minilm`** — the *embedding* model. Where a pipeline names no
+model of its own, which is the commonest case, the last resort was `released[0]`, and that is
+alphabetical: a use case released both an embedding and a chat model gets the embedding one. The
+paragraph directly above that line calls the previous fallback *"a guess that is guaranteed
+wrong"*, and this was the same guess in a second costume — a pipeline is about a request that
+**generates**, and an embedding model can never serve one. The builder reads that field to know
+what it is testing against.
+
+Now the first released model that can generate, falling back to the old answer when none can: a
+wrongly named model is still more use to a builder than a refusal to run, and the release check
+downstream says its own piece anyway.
+
 ### Where it was left
 
 `make showcase` from a destroyed stack, twice: **`served 10, refused 1, failed 0`**, zero error

@@ -177,6 +177,42 @@ def test_a_dry_run_simulates_the_model_the_pipeline_is_about() -> None:
     assert _model_the_pipeline_is_about({"steps": []}, [_Model()]) == "mock-1"
 
 
+def test_a_dry_run_simulates_a_model_that_can_actually_generate() -> None:
+    """Found by dry-running an injection filter for `kundenservice`: the builder was told
+    `effective_model: all-minilm` — the **embedding** model.
+
+    With no model named anywhere in the pipeline the last resort was `released[0]`, which is
+    alphabetical, and a use case released both an embedding and a chat model gets the embedding one
+    first. That is the guess the function's own comment calls *guaranteed wrong*, in a second
+    costume: a pipeline is about a request that generates, and an embedding model can never serve
+    one. The builder reads that field to know what it is testing against.
+    """
+    from aira_gateway.api.pipeline import _model_the_pipeline_is_about
+
+    class _M:
+        def __init__(self, name: str, *methods: str) -> None:
+            self.name = name
+            self.supported_methods = methods
+
+    registered = [_M("all-minilm", "embedContent"), _M("qwen3:0.6b", "generateContent")]
+    # Released in the order the read-model stores them — sorted, so the embedding model is first.
+    released = ["all-minilm", "qwen3:0.6b"]
+
+    assert _model_the_pipeline_is_about({"steps": []}, registered, released) == "qwen3:0.6b"
+
+
+def test_a_dry_run_still_answers_when_nothing_released_can_generate() -> None:
+    """A wrong model named is still more use to a builder than a refusal to run at all — and the
+    release check downstream will say so in its own words."""
+    from aira_gateway.api.pipeline import _model_the_pipeline_is_about
+
+    class _M:
+        name = "all-minilm"
+        supported_methods = ("embedContent",)
+
+    assert _model_the_pipeline_is_about({"steps": []}, [_M()], ["all-minilm"]) == "all-minilm"
+
+
 def test_a_dry_run_still_honours_a_model_the_caller_named() -> None:
     """The inference is a *default*, not an override: an operator asking "what happens to
     `gemini-2.5-pro` here" must get an answer about that model."""

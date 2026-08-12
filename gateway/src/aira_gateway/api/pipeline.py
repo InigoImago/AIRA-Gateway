@@ -111,7 +111,21 @@ def _model_the_pipeline_is_about(
     # filter on its own, the commonest one — was answered with a refusal about `mock-1`, a model
     # nobody chose and the use case had no right to. A guess that is guaranteed wrong is worse than
     # the one it replaced.
+    #
+    # **And it must be able to generate.** `released[0]` alone was alphabetical, so a use case
+    # released `all-minilm` and `qwen3:0.6b` had its chat pipeline simulated against the
+    # *embedding* model — reported back to the builder as `effective_model`, which is exactly the
+    # guess the paragraph above calls guaranteed wrong, in a second costume. A pipeline is about a
+    # request that generates; an embedding model can never serve one.
     if released:
+        generating = {
+            model.name for model in models if "generateContent" in model.supported_methods
+        }
+        for name in released:
+            if name in generating:
+                return name
+        # None of them generates, or none is registered here: the old answer, because a wrong
+        # model named is still more use to a builder than none at all.
         return released[0]
     return models[0].name if models else "mock-1"
 
