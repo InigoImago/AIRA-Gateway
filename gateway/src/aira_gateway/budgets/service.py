@@ -540,9 +540,22 @@ class BudgetService:
                     )
                     out.append(row)
                     continue
+                # **Only `each_member` depends on who is reading.** A `member` row names its own
+                # subject and is keyed on that; a `use_case` row names nobody. Passing the reader
+                # as the caller for every row asked whether *they* are bound by a rule written
+                # about somebody else — which for a named member row they are not, so
+                # `Scope.applying` returned `None` and `_scope_key`'s assertion fired: a **500**
+                # on the use-case page, for any reader looking at a use case that has a member
+                # budget naming anyone but themselves.
+                #
+                # Introduced with the per-head scope (2026-08-11, `744337f`) and found the same
+                # day by opening the console as `admin`. `None` restores the pre-existing meaning
+                # — the row resolves to its own subject — while `each_member`, which genuinely
+                # has one counter per reader, still resolves to the caller.
+                caller = subject if budget.scope == EACH_MEMBER else None
                 usage = await self._usage(
                     session,
-                    _scope_key(budget, subject, username),
+                    _scope_key(budget, caller, username if caller else None),
                     _period_key(budget.period, now),
                 )
                 row.update(
