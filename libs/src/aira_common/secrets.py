@@ -138,6 +138,22 @@ class VaultClient:
     def __init__(self, config: VaultConfig, client: httpx.Client | None = None) -> None:
         self._config = config
         self._client = client or httpx.Client(timeout=config.timeout, verify=True)
+        #: Whether this object made the client and therefore owes it a `close()`. An injected one
+        #: belongs to the caller — the tests pass a `MockTransport` client and reuse it — and
+        #: closing somebody else's is a harder bug to find than leaking one's own.
+        self._owns_client = client is None
+
+    def close(self) -> None:
+        """Release the connection pool, if this object opened one.
+
+        Secrets are read **once, at startup** (§"never a request-path dependency"), so the socket
+        this holds is used for two requests and then never again. Leaving it open is a small leak
+        and a lasting one: the pool outlives the only work it was created for, and in a process
+        that reads a second path it becomes one pool per read. Idempotent, because a `finally` that
+        can run twice is easier to get right than one that must not.
+        """
+        if self._owns_client:
+            self._client.close()
 
     def _headers(self, token: str) -> dict[str, str]:
         headers = {"X-Vault-Token": token}
@@ -238,7 +254,13 @@ def load_secrets(
         return {}
 
     vault = VaultClient(config, client)
-    secrets = vault.read(vault.login())
+    try:
+        secrets = vault.read(vault.login())
+    finally:
+        # In a `finally`, so a failed login or read releases the pool as well. Every path out of
+        # here except "no Vault configured" is a startup failure, and a process on its way down
+        # holding an open connection to a secret store is the one moment it should not.
+        vault.close()
     # Names only. Answering "did it pick up the new key?" must never require answering "what is
     # it?" — and a log line is the single most likely place for a secret to escape.
     VaultSourceCache.remember(secrets)

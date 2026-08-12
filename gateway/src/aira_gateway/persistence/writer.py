@@ -128,15 +128,59 @@ class RequestLogWriter:
         return self._queue.qsize()
 
     async def stop(self) -> None:
-        """Drain what is queued, then stop. A redeploy must not discard pending audit rows."""
+        """Drain what is queued, then stop. A redeploy must not discard pending audit rows.
+
+        **The drain cannot outlive the worker.** `_queue.join()` returns when every entry has been
+        marked done, and only the worker marks them — so if the worker is gone, this waits for a
+        signal nobody will ever send. Shutdown then hangs until the orchestrator loses patience and
+        sends `SIGKILL`, and the whole queue is discarded by the very call that promises not to
+        discard it: the failure mode is the exact opposite of the guarantee.
+
+        `_run` catches `Exception`, so this needs something it does not catch — an outside
+        cancellation, or a `BaseException` from the write path. Rare, and the cost of being wrong
+        about it is every pending audit row from a shutdown that went badly, which is precisely
+        when the rows matter.
+
+        So the drain races the worker: whichever finishes first decides, and if it was the worker,
+        what is still queued is written **here** rather than waited for.
+        """
         if self._worker is None:
             return
         self._stopping = True
-        await self._queue.join()
+        drained = asyncio.create_task(self._queue.join())
+        await asyncio.wait({drained, self._worker}, return_when=asyncio.FIRST_COMPLETED)
+        if not drained.done():
+            drained.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await drained
+            await self._write_remaining()
         self._worker.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await self._worker
         self._worker = None
+
+    async def _write_remaining(self) -> None:
+        """Write what is still queued, on this task, because the worker is not coming back.
+
+        Failures are logged rather than raised: this runs inside shutdown, and one bad row must not
+        stop the rest from being written — the same reasoning as the worker's own loop.
+        """
+        while True:
+            try:
+                entry = self._queue.get_nowait()
+            except asyncio.QueueEmpty:
+                return
+            try:
+                await self._write(entry)
+            except Exception as exc:  # noqa: BLE001 — see above
+                _log.error(
+                    "request_log_write_failed_during_shutdown",
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                    operation=entry.operation,
+                )
+            finally:
+                self._queue.task_done()
 
     async def submit(self, entry: PendingLog) -> None:
         """Hand an entry over; falls back to writing it here if the queue is saturated."""
