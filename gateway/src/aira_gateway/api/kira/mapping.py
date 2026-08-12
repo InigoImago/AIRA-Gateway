@@ -32,18 +32,48 @@ from aira_gateway.core.schema import parse as parse_schema
 from aira_gateway.thinking import INVALID_THINKING_MODE, ThinkingRejected
 
 
+#: What the predecessor puts between two text parts of one message (`api_service.py`).
+#:
+#: It joins them and sends **one** string; this surface kept them as separate canonical parts,
+#: which every adapter then renders its own way — Gemini as several parts, the OpenAI dialect as a
+#: concatenation with nothing between. So `["Hallo", "Welt"]` became `HalloWelt` on one provider
+#: and a two-part message on another, where the predecessor sends `"Hallo\nWelt"`.
+#:
+#: That is the expensive kind of incompatibility: no error anywhere, a 200, and an answer to a
+#: subtly different prompt. Found by a static comparison against the predecessor's source, which
+#: is the only place it *could* be found — no test of ours would call a missing newline a failure,
+#: because both sides of such a test would have come from the same idea of what the prompt is.
+TEXT_PART_SEPARATOR = "\n"
+
+
 def _parts(content: schemas.RequestContent, limits: Limits, offset: int) -> list[CanonicalPart]:
+    """The predecessor's parts, with its own joining rule applied (`FRD-107` FR-2).
+
+    Text parts are merged into one, in order, separated by a newline — and only *runs* of them, so
+    a message that interleaves text and attachments keeps its order rather than having all its
+    prose pulled to the front. An attachment ends a run, exactly as it would if the predecessor
+    had them.
+    """
     parts: list[CanonicalPart] = []
+    pending: list[str] = []
+
+    def _flush() -> None:
+        if pending:
+            parts.append(TextPart(text=TEXT_PART_SEPARATOR.join(pending)))
+            pending.clear()
+
     for local, raw in enumerate(content.parts):
         index = offset + local
         if "text" in raw:
-            parts.append(TextPart(text=str(raw["text"])))
+            pending.append(str(raw["text"]))
             continue
+        _flush()
         media_type = str(raw.get("mime_type") or raw.get("mimeType"))
         check_media_type(media_type, limits, index=index)
         data = decode(str(raw.get("data", "")), index=index)
         check_signature(media_type, data, index=index)
         parts.append(DataPart(media_type=media_type, data=data))
+    _flush()
     return parts
 
 

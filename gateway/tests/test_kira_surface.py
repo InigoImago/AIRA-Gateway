@@ -521,7 +521,7 @@ async def test_health_and_version_info_answer_without_authentication() -> None:
         version = client.get(f"{BASE}/version-info")
 
     assert health.status_code == 200
-    assert health.json()["status"] == "HEALTHY"
+    assert health.json()["status"] == "Healthy"
     # Absent build metadata is a valid state — a development run has no build number.
     assert version.status_code == 200
     assert "git" in version.json()

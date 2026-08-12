@@ -609,7 +609,12 @@ async def health(request: Request) -> Response:
     makes the probe as slow as the slowest provider. `FRD-117` §5.2 has the cached-probe design;
     until then this reports what the gateway itself can answer.
     """
-    checks = [schemas.HealthCheck(service="Gateway", healthy=True, tags=["aira"])]
+    started = time.monotonic()
+    # No I/O, so no duration to report — and 0.0 is the honest figure here rather than a stand-in,
+    # which is the difference between this and an unprobed upstream below.
+    checks = [
+        schemas.HealthCheck(service="Gateway", status="Healthy", time_taken=0.0, tags=["aira"])
+    ]
 
     # **The upstreams, from the cached verdict.** This used to report a single hardcoded `true` and
     # nothing else — a health endpoint that *cannot fail*, which is worse than none, because
@@ -624,12 +629,21 @@ async def health(request: Request) -> Response:
     # alive (`FRD-117` §5.2, and `ADR-0012` §5 for a scaled-to-zero endpoint).
     probe = getattr(request.app.state, "upstream_probe", None)
     for name, verdict in (probe.snapshot() if probe is not None else {}).items():
+        took = verdict.get("took_seconds")
         checks.append(
             schemas.HealthCheck(
                 service=name,
-                healthy=bool(verdict.get("ok", False)) and not verdict.get("stale", False),
+                status=(
+                    "Healthy"
+                    if bool(verdict.get("ok", False)) and not verdict.get("stale", False)
+                    else "Unhealthy"
+                ),
+                # The last probe's own duration. An adapter with nothing cheap to ask reports
+                # `None`, and 0.0 is what this shape has for it — which is why `not-probed` is on
+                # the tags: the number cannot carry "we did not look" and the tag can.
+                time_taken=float(took) if isinstance(took, int | float) else 0.0,
                 # `probed: false` means *we did not look* — reported rather than folded into the
-                # boolean, because "we did not look" and "it is fine" are different answers
+                # status, because "we did not look" and "it is fine" are different answers
                 # (`FRD-117`) and a tag is the only place this shape has to say so.
                 tags=["upstream"] if verdict.get("probed", True) else ["upstream", "not-probed"],
             )
@@ -638,10 +652,12 @@ async def health(request: Request) -> Response:
     # `UNHEALTHY` **and 503**, as the predecessor answers: a monitor reads the status code long
     # before it reads the body, and one that always says 200 is the "cannot fail" defect wearing
     # the body's clothes instead of the check's.
-    healthy = all(check.healthy for check in checks)
+    healthy = all(check.status == "Healthy" for check in checks)
     return JSONResponse(
         schemas.HealthResponse(
-            status="HEALTHY" if healthy else "UNHEALTHY", checks=checks
+            status="Healthy" if healthy else "Unhealthy",
+            total_time_taken=round(time.monotonic() - started, 3),
+            entities=checks,
         ).model_dump(),
         status_code=200 if healthy else 503,
         headers=_sunset(request),

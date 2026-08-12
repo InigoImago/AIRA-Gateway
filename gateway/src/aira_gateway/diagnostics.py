@@ -71,11 +71,18 @@ class Verdict:
     #: Whether a remote question was actually asked. An adapter with no cheap call is reported as
     #: *unprobed* rather than as healthy — the distinction the first draft of this module missed.
     probed: bool = True
+    #: How long the question took. It was measured all along and spent only on a formatted string
+    #: inside `detail`, which no consumer can read as a number — so the compatibility surface's
+    #: `time_taken`, which the predecessor reports per check, had nowhere to come from. `None`
+    #: where nothing was asked: an unprobed adapter took no time, and reporting 0.0 would make
+    #: "we did not look" indistinguishable from "it answered instantly".
+    took_seconds: float | None = None
 
     def as_dict(self, now: float, stale_after: float) -> dict[str, object]:
         age = max(0.0, now - self.at)
         return {
             "ok": self.ok,
+            "took_seconds": self.took_seconds,
             "probed": self.probed,
             "detail": self.detail,
             "age_seconds": round(age, 1),
@@ -151,14 +158,32 @@ class UpstreamProbe:
         try:
             detail = await asyncio.wait_for(ping(), timeout=self.timeout)
         except TimeoutError:
-            return Verdict(name, False, f"did not answer within {self.timeout:g}s", self._now())
+            return Verdict(
+                name,
+                False,
+                f"did not answer within {self.timeout:g}s",
+                self._now(),
+                took_seconds=round(self._now() - start, 3),
+            )
         except Exception as exc:  # noqa: BLE001 — any failure here is "not reachable"
             # Deliberately broad: a probe that let an unexpected exception escape would kill the
             # background task, and every verdict would then quietly go stale rather than red.
-            return Verdict(name, False, f"{type(exc).__name__}: {exc}"[:120], self._now())
+            return Verdict(
+                name,
+                False,
+                f"{type(exc).__name__}: {exc}"[:120],
+                self._now(),
+                took_seconds=round(self._now() - start, 3),
+            )
 
-        elapsed = (self._now() - start) * 1000
-        return Verdict(name, True, f"{detail or 'reachable'}, {elapsed:.0f}ms", self._now())
+        took = self._now() - start
+        return Verdict(
+            name,
+            True,
+            f"{detail or 'reachable'}, {took * 1000:.0f}ms",
+            self._now(),
+            took_seconds=round(took, 3),
+        )
 
     def _record_degradation(self) -> None:
         unreachable = sorted(v.provider for v in self._verdicts.values() if not v.ok)

@@ -349,7 +349,13 @@ class GenerateContentRequest(BaseModel):
 
 class Candidate(BaseModel):
     content: Content
-    finishReason: str
+    #: **Absent while the answer is still coming.** Google sets this on the chunk that ends the
+    #: message and omits it on the others; we sent `""` on every intermediate chunk, and the
+    #: `google-genai` SDK answers that with `UserWarning: '' is not a valid FinishReason` — once
+    #: per chunk, so a hundred lines of warning for one ordinary streamed answer. Nothing breaks,
+    #: which is why no test here noticed: our own client is a dict, and a dict does not have
+    #: opinions about an enum. Found by running the real SDK against the app (2026-08-12).
+    finishReason: str | None = None
     index: int
 
 
@@ -393,6 +399,16 @@ class ListModelsResponse(BaseModel):
 class EmbedContentRequest(BaseModel):
     model_config = _STRICT
     content: Content
+    #: **Where the `google-genai` SDK actually puts it.** It was declared one level up, on the
+    #: batch wrapper, by somebody who anticipated the field and guessed the level — so a plain
+    #: `client.models.embed_content(...)` was refused with `requests.0.model: Extra inputs are not
+    #: permitted`. Every embedding call the SDK makes goes to `:batchEmbedContents` with the model
+    #: inside each entry, single text or not, so this was the whole verb being unusable from the
+    #: official client. Found by running that client against this app; no test written here could
+    #: have found it, because they all send what we believe the SDK sends.
+    #:
+    #: Carried, checked, never honoured as an override — see `names_the_same_model`.
+    model: str | None = None
     taskType: str | None = None
     outputDimensionality: int | None = None
 
@@ -400,14 +416,31 @@ class EmbedContentRequest(BaseModel):
 class BatchEmbedContentsRequest(BaseModel):
     """Google's batch shape (`FRD-113` §7).
 
-    ``model`` is the one field this surface still accepts and ignores, and it is declared rather
-    than swallowed by `extra="ignore"` so that the exception is visible. The URL already named the
-    model; honouring a per-entry override would let one request address models the pre-dispatch
-    controls never checked."""
+    ``model`` is accepted here and inside each entry, and in neither place does it *select*
+    anything: the URL named the model, and the pre-dispatch controls have already been applied to
+    that name. Honouring an override would let one request address a model nothing checked.
+
+    But it is not ignored either. A caller who names a different model there is asking for
+    something this surface will not do, and answering with a confident vector from another model
+    is `FRD-124`'s defect exactly — a field accepted, dropped, and a 200. So a disagreement is
+    refused by name. A compliant client never sees it: the SDK sends the model it addressed.
+    """
 
     model_config = _STRICT
     model: str | None = None
     requests: list[EmbedContentRequest] = Field(min_length=1)
+
+
+def names_the_same_model(named: str | None, addressed: str) -> bool:
+    """Whether a `model` field in an embedding request agrees with the URL.
+
+    Google's clients write the **resource form** — `models/mock-1` for `mock-1` — which is the
+    same trap `FRD-507` hit when an import would have catalogued `models/…` as a model name.
+    Absent agrees with everything: the field is optional.
+    """
+    if not named:
+        return True
+    return named.removeprefix("models/") == addressed.removeprefix("models/")
 
 
 class ContentEmbedding(BaseModel):

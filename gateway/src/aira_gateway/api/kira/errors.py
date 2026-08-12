@@ -100,3 +100,20 @@ def code_for_status(status: int) -> str:
     fix something that is not theirs.
     """
     return STATUS_CODES.get(status, INTERNAL_SERVER_ERROR)
+
+
+def code_for_unauthenticated(credential_presented: bool) -> str:
+    """`INVALID_TOKEN` when something was offered and rejected, `NOT_AUTHENTICATED` when nothing
+    was offered at all.
+
+    The predecessor draws that line and this surface did not: both answered `NOT_AUTHENTICATED`,
+    so `INVALID_TOKEN` sat in this file as a **declared code nothing raised** — the same defect
+    `INVALID_JSON_BODY` was removed for, seen from the other side, and the one this module's own
+    docstring complains about two paragraphs up.
+
+    It is not cosmetic. The two mean different things to whoever is on call: *this client forgot
+    to send its key* is a deployment mistake, and *this client's key was rejected* is a rotation
+    that did not reach somebody, a revoked credential, or an attempt worth looking at. Collapsing
+    them puts a security signal and a configuration slip in one bucket.
+    """
+    return INVALID_TOKEN if credential_presented else NOT_AUTHENTICATED

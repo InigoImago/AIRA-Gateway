@@ -144,6 +144,11 @@ REFUSAL_PARITY = (
 )
 FIELD_SPELLINGS = "gateway/tests/test_kira_field_spellings.py gateway/tests/test_kira_surface.py"
 KIRA_ENVELOPE = "gateway/tests/test_kira_envelope_everywhere.py gateway/tests/test_kira_surface.py"
+WIRE_CONTRACT = (
+    "gateway/tests/test_kira_wire_contract.py gateway/tests/test_kira_surface.py "
+    "gateway/tests/test_kira_compatibility_round.py"
+)
+GOOGLE_SDK = "gateway/tests/test_google_sdk_speaks_to_us.py"
 KIRA_COMPAT = "gateway/tests/test_kira_compatibility_round.py gateway/tests/test_kira_surface.py"
 
 SERVING_OPTIONS = (
@@ -3572,8 +3577,55 @@ MUTATIONS = [
         '        default=None, alias="conversationHistory"\n    )',
         FIELD_SPELLINGS,
     ),
+    Mutation(
+        "QA18",
+        "a refusal a route raises is rendered in this surface's envelope, not as a 500",
+        "gateway/src/aira_gateway/app.py",
+        "    @app.exception_handler(KiraError)",
+        "    @app.exception_handler(_NeverRaised)",
+        KIRA_ENVELOPE,
+    ),
+    Mutation(
+        "QA19",
+        "health answers the predecessor's shape rather than one we invented",
+        "gateway/src/aira_gateway/api/kira/routes.py",
+        '            status="Healthy" if healthy else "Unhealthy",',
+        '            status="Unhealthy" if healthy else "Healthy",',
+        WIRE_CONTRACT,
+    ),
+    Mutation(
+        "QA20",
+        "a rejected credential is not reported as an absent one",
+        "gateway/src/aira_gateway/api/kira/errors.py",
+        "    return INVALID_TOKEN if credential_presented else NOT_AUTHENTICATED",
+        "    return NOT_AUTHENTICATED",
+        WIRE_CONTRACT,
+    ),
+    Mutation(
+        "QA21",
+        "the predecessor's newline between two text parts of one message",
+        "gateway/src/aira_gateway/api/kira/mapping.py",
+        'TEXT_PART_SEPARATOR = "\\n"',
+        'TEXT_PART_SEPARATOR = ""',
+        WIRE_CONTRACT,
+    ),
+    Mutation(
+        "QA22",
+        "the model an SDK writes into an embedding entry is accepted",
+        "gateway/src/aira_gateway/api/gemini/schemas.py",
+        "    model: str | None = None\n    taskType: str | None = None",
+        "    taskType: str | None = None",
+        GOOGLE_SDK,
+    ),
+    Mutation(
+        "QA23",
+        "an unfinished chunk carries no finish reason at all",
+        "gateway/src/aira_gateway/api/gemini/routes.py",
+        "if chunk.finish_reason else None",
+        'if chunk.finish_reason else ""',
+        GOOGLE_SDK,
+    ),
 ]
-
 
 def _recover() -> None:
     """Put back whatever a previous run was holding when it died."""

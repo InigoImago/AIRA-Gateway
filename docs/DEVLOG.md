@@ -5,6 +5,74 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-12 — A static comparison against the predecessor, and the SDK that had never been asked
+
+A compatibility check read KIRA's own source against ours. Most of what it flagged is deliberate
+and stays (strict fields — reversing that recreates `FRD-124`'s defect; authenticated `GET /models`;
+schema bounds; use-case attribution; and by owner decision our **more specific error codes**, since
+the Gemini surface is where the generic ones live). Four findings were real, and the first was not a
+compatibility question at all.
+
+**`/ki-usage` answered 500 to every expectable error.** Measured: no parameters, one parameter, an
+unparseable date, a backwards range — four `500 internal_error`, in *Google's* envelope. Three
+routes wrap their body in `except KIRA_REFUSALS`; this one did not, and there was no
+application-level handler, so every `KiraError` it raises fell through. Worst was the oversight-role
+check: a **permission** refusal reported as our own failure, which in a governance console is the
+conclusion that spreads. Third instance of one shape — the 174-case round found this surface had no
+branch for a shared control's refusal, the envelope round found the two classes that never reach a
+route — so the fix is an **application-level handler** plus a guard that walks every mounted route,
+not a fourth `try`. Building that guard immediately caught its own failure mode: a hand-rolled walk
+over `app.routes` returned **nothing** (this FastAPI keeps routers nested behind `_IncludedRouter`),
+so it passed by checking zero routes until it was made to assert that it had found some.
+
+**`/health` was invented rather than copied.** Ours: `{"status": "HEALTHY", "checks": [{service,
+healthy: bool, tags}]}`. The predecessor's: `{"status": "Healthy", "total_time_taken", "entities":
+[{service, status: str, time_taken, tags}]}`. Different key, field names, type and casing — a typed
+client cannot deserialise it, on the endpoint monitoring reads to decide whether to page somebody.
+`time_taken` needed a real number: the probe had **measured** each duration all along and spent it
+on a formatted string inside `detail`, so it now carries `took_seconds` and `None` where nothing was
+asked. An unprobed adapter reports 0.0 and keeps its `not-probed` tag, because the number cannot
+carry "we did not look" and the tag can.
+
+**`INVALID_TOKEN` was declared and raised by nothing**, so a rejected credential and an absent one
+both answered `NOT_AUTHENTICATED` — a security signal and a deployment slip in one bucket. The bit
+travels on the request, not on the error: the alternative is Google's shared refusal type carrying
+KIRA's vocabulary, which lasts until the third surface.
+
+**Two text parts of one message are joined with a newline**, as the predecessor joins them. We
+passed them through separately, so each dialect rendered them its way — `HalloWelt` on one provider,
+two parts on another, the predecessor's `Hallo\nWelt` on neither. No error, a 200, an answer to a
+subtly different prompt. Only *runs* of text merge, so an attachment keeps the prose around it in
+place.
+
+**Then the `google-genai` SDK was pointed at the app for the first time, and it found two things
+within a minute.** Every other test of this surface was written by whoever wrote the surface, so it
+agrees by construction; the SDK is the one participant here that never agreed to anything.
+`client.models.embed_content(...)` was **refused outright** — it posts to `:batchEmbedContents` with
+the model *inside each entry* (in Google's resource form, `models/mock-1`), and `model` had been
+declared one level up, on the batch wrapper, by somebody who anticipated the field and guessed the
+level. The whole verb was unusable from the official client. It is carried now, never honoured as an
+override — the URL chose the model and the controls ran against that name — and a **disagreement is
+refused by name** rather than dropped. And every streamed chunk carried `finishReason: ""`, which
+the SDK answers with `UserWarning: '' is not a valid FinishReason`, once per chunk: a hundred lines
+of complaint per answer, nothing broken, invisible to every test here because our own clients are
+dicts and a dict has no opinion about an enum. Omitted now, as Google omits it; the SDK case turns
+warnings into failures, because a client's log is part of what we hand somebody.
+
+**One concern of mine measured negative and is recorded as such.** `resolve_direct_target` sits
+between the reservation and `hold`, so a refusal there looked like it would leak budget. Two
+attempts to demonstrate it failed *as instruments* — the first read Postgres, where a Redis
+reservation is invisible, and passed with the release deliberately switched off; the second refused
+at model lookup, before anything was reserved, so it never reached the path it was named after.
+Measured live afterwards: a refused streaming request for an unreleased model creates **no counter
+at all**. There is nothing to fix, the test was deleted rather than shipped green, and the useful
+part is that both false starts were the same failure — a case that passes without touching what it
+claims to be about.
+
+`QA18`–`QA23`; **399 properties**. `google-genai` joins the dev dependencies.
+
+---
+
 ## 2026-08-12 — A developer round against the KIRA surface, and the clock nobody had looked at
 
 Prompted by a fair complaint: several checks in a row had failed to notice that

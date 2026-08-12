@@ -147,7 +147,7 @@ def test_health_reports_the_upstreams_from_the_cached_verdict(kira_client: TestC
     response = kira_client.get(f"{KIRA}/health")
 
     assert response.status_code == 200
-    services = {check["service"] for check in response.json()["checks"]}
+    services = {check["service"] for check in response.json()["entities"]}
     assert "Gateway" in services
     # More than the gateway's own opinion of itself.
     assert len(services) > 1
@@ -166,7 +166,7 @@ def test_health_answers_503_when_an_upstream_is_unreachable(kira_client: TestCli
     response = kira_client.get(f"{KIRA}/health")
 
     assert response.status_code == 503
-    assert response.json()["status"] == "UNHEALTHY"
+    assert response.json()["status"] == "Unhealthy"
 
 
 # == 4. malformed JSON answers what the predecessor answers ======================================

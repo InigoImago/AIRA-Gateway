@@ -149,15 +149,44 @@ class KiModel(BaseModel):
     supports_aggregation: bool | None = None
 
 
+#: The predecessor's health vocabulary is a **string**, title-cased, not a boolean and not an
+#: upper-cased one. Both fields carried the wrong spelling here until 2026-08-12, which a typed
+#: client cannot deserialise at all — the one failure mode a compatibility surface exists to
+#: prevent.
+HealthState = Literal["Healthy", "Unhealthy"]
+
+
 class HealthCheck(BaseModel):
+    """One entity of `GET /health` (`health_check_models.py`).
+
+    This shipped with `FRD-107` as ``{service, healthy: bool, tags}`` — invented rather than
+    copied, and inside a list called ``checks`` where the predecessor calls it ``entities``. Every
+    field name was different and the status was a boolean where the predecessor has a string, so
+    the endpoint that tells a monitoring system whether to page somebody was the *least*
+    compatible thing on the surface. Found by a static comparison against the predecessor's own
+    source, not by any test here: our tests assert our shape, which is exactly what a shape
+    somebody invented will always pass.
+    """
+
+    model_config = _ALIASED
+
     service: str
-    healthy: bool
+    status: HealthState
+    #: Seconds. The predecessor measures each check as it runs it; we probe in the background
+    #: (`FRD-117` §5.2 — probing inline makes readiness as slow as the slowest upstream), so this
+    #: is how long the **last** probe took. Real either way, which is the part that matters: a
+    #: fabricated 0.0 would be a number somebody graphs.
+    time_taken: float
     tags: list[str]
 
 
 class HealthResponse(BaseModel):
-    status: Literal["HEALTHY", "UNHEALTHY"]
-    checks: list[HealthCheck]
+    model_config = _ALIASED
+
+    status: HealthState
+    #: How long *this* call took. Small, and honestly so: the verdicts are already in memory.
+    total_time_taken: float
+    entities: list[HealthCheck]
 
 
 class GitInfo(BaseModel):

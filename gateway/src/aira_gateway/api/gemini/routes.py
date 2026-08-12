@@ -286,6 +286,19 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
             )
         except ValidationError as exc:
             raise GeminiHTTPError(400, _first_error(exc), "INVALID_ARGUMENT") from exc
+        # Carried by every SDK call and honoured by none: the URL chose the model and the
+        # pre-dispatch controls have already run against that choice. A *disagreement* is refused
+        # rather than dropped, because answering with another model's vector under a 200 is the
+        # failure `FRD-124` was written about (`schemas.names_the_same_model`).
+        for entry in entries:
+            if not schemas.names_the_same_model(entry.model, model):
+                raise GeminiHTTPError(
+                    400,
+                    f"An embedding request names model '{entry.model}' while the URL addresses "
+                    f"'{model}'. The URL decides which model serves a request; remove the field "
+                    "or address the model you meant.",
+                    "INVALID_ARGUMENT",
+                )
         embed_request = gemini_to_embedding(model, entries)
     else:
         raise GeminiHTTPError(400, f"Unknown method '{method}'.", "INVALID_ARGUMENT")
@@ -400,7 +413,7 @@ def _chunk_to_gemini(chunk: CanonicalChunk, model: str) -> schemas.GenerateConte
         candidates=[
             schemas.Candidate(
                 content=schemas.Content(role="model", parts=parts),
-                finishReason=(chunk.finish_reason.upper() if chunk.finish_reason else ""),
+                finishReason=(chunk.finish_reason.upper() if chunk.finish_reason else None),
                 index=0,
             )
         ],
@@ -466,7 +479,12 @@ async def _stream_response(
                             final_usage = chunk.usage
                         streamed_calls.extend(call.name for call in chunk.tool_calls)
                         parts.append(chunk.text_delta)
-                        payload = _chunk_to_gemini(chunk, canonical.model).model_dump_json()
+                        # `exclude_none`, so an unfinished chunk carries no `finishReason` at all rather than
+                        # a null or an empty string — which is what Google sends and what the SDK
+                        # parses without complaint.
+                        payload = _chunk_to_gemini(chunk, canonical.model).model_dump_json(
+                            exclude_none=True
+                        )
                         if sse:
                             yield f"data: {payload}\n\n"
                         else:

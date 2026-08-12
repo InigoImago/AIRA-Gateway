@@ -102,3 +102,61 @@ def test_an_unmapped_status_is_named_as_an_internal_error_not_guessed() -> None:
     assert code_for_status(401) == "NOT_AUTHENTICATED"
     assert code_for_status(429) == "EXTERNAL_KI_API_TOO_MANY_REQUEST"
     assert code_for_status(418) == "INTERNAL_SERVER_ERROR"
+
+
+# == the third class: a route that raises without catching ======================================
+
+
+def test_ki_usage_refuses_in_the_kira_envelope_rather_than_failing() -> None:
+    """The defect this section was added for, and the reason the guard below walks every route.
+
+    `/ki-usage` raises `KiraError` for a missing parameter, a backwards time range and — first —
+    a caller without an oversight role. Three of the four routes wrap their body in
+    `except KIRA_REFUSALS` and render the envelope there; this one did not, and there was no
+    application-level handler, so **every** refusal it raises left as `500 internal_error` in
+    Google's envelope. Measured against the running gateway on 2026-08-12: four expectable errors,
+    four 500s.
+
+    The worst of them is the role check. A permission refusal reported as a server error tells the
+    reader the gateway is broken when the truth is that they lack a role — and in a console built
+    for governance, "the system is broken" is the conclusion that spreads.
+    """
+    app = create_app(GatewaySettings(auth_required=False, environment="local", log_queue_size=0))
+    with TestClient(app, raise_server_exceptions=False) as client:
+        response = client.get(f"{KIRA}/ki-usage")
+
+    assert response.status_code == 403, response.text
+    body = response.json()
+    assert "error" not in body, "Google's envelope on the compatibility surface"
+    # The sharpest of the four: a *permission* refusal that used to arrive as `500
+    # internal_error`. The caller lacks a role and was told the server had failed.
+    assert body["code"] == "ADMIN_PERMISSION_REQUIRED"
+    assert body["message"]
+
+
+def test_every_kira_route_renders_this_surfaces_envelope() -> None:
+    """The structural half. Three classes of refusal have now been found on this surface — one
+    raised before authentication, one before any route matched, and one raised *by* a route that
+    did not catch it — and each was fixed for the routes that were known to be affected.
+
+    So this asks the application instead: for every route mounted under the compatibility base,
+    a `KiraError` must come back in the KIRA envelope. It cannot be satisfied by remembering, and
+    a route added next year is covered the day it is written.
+    """
+    from aira_gateway.api.kira.errors import KiraError
+
+    from gateway.tests.test_every_route_is_guarded import _routes
+
+    app = create_app(GatewaySettings(auth_required=False, environment="local", log_queue_size=0))
+    # Borrowed rather than rewritten: `include_router` keeps the router nested behind an
+    # `_IncludedRouter`, so `app.routes` shows four documentation endpoints and two mounts. A
+    # hand-rolled walk here returned an **empty** list and the guard passed by checking nothing —
+    # which is why the assertion below exists and why it fired first.
+    paths = sorted({route.path for route, _ in _routes() if route.path.startswith(KIRA)})
+    assert paths, "no KIRA routes found — the guard would pass by walking nothing"
+
+    handler = app.exception_handlers.get(KiraError)
+    assert handler is not None, (
+        "no application-level handler for KiraError, so every route is one forgotten `try` away "
+        f"from answering 500 in Google's envelope. Routes that would be affected: {paths}"
+    )

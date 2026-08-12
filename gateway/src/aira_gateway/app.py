@@ -31,8 +31,11 @@ from aira_gateway.anomalies.suspensions import SuspensionService
 from aira_gateway.api.gemini.errors import GeminiHTTPError, gemini_error_response
 from aira_gateway.api.gemini.routes import router as gemini_router
 from aira_gateway.api.incidents import router as incidents_router
+from aira_gateway.api.kira.errors import KiraError, kira_error_response
 from aira_gateway.api.kira.errors import code_for_status as kira_code_for_status
-from aira_gateway.api.kira.errors import kira_error_response
+from aira_gateway.api.kira.errors import (
+    code_for_unauthenticated as kira_code_for_unauthenticated,
+)
 from aira_gateway.api.kira.routes import BASE as KIRA_BASE
 from aira_gateway.api.kira.routes import router as kira_router
 from aira_gateway.api.pipeline import router as pipeline_router
@@ -348,8 +351,42 @@ def _register_exception_handlers(app: FastAPI) -> None:
         the shared refusal type. It answered in Google's shape.
         """
         if _kira(request):
-            return kira_error_response(exc.code, kira_code_for_status(exc.code), exc.message)
+            code = kira_code_for_status(exc.code)
+            if exc.code == 401:
+                # The predecessor separates "nothing was presented" from "what was presented was
+                # rejected", and the dependency records which one this was. See
+                # `code_for_unauthenticated`: they are a configuration slip and a security signal,
+                # and one bucket for both is a bucket nobody can act on.
+                code = kira_code_for_unauthenticated(
+                    bool(getattr(request.state, "credential_presented", False))
+                )
+            return kira_error_response(exc.code, code, exc.message)
         return exc.to_response()
+
+    @app.exception_handler(KiraError)
+    async def _handle_kira_error(_request: Request, exc: KiraError) -> JSONResponse:
+        """A refusal this surface named itself, arriving from a route that did not catch it.
+
+        Three of the routes wrap their body in ``except KIRA_REFUSALS`` and render the envelope
+        there. `/ki-usage` did not, and there was no handler here, so **every** refusal it raises
+        — a missing query parameter, a backwards time range, and worst of all the oversight-role
+        check — left as ``500 internal_error`` in *Google's* envelope. Measured on 2026-08-12:
+        four expectable errors, four 500s. A permission refusal reported as our own fault is the
+        most misleading answer a governance system can give at that point, because the reader
+        concludes the gateway is broken rather than that they lack a role.
+
+        This is the third instance of one shape. The 174-case round found that this surface had no
+        branch for a shared control's refusal, so every one became a 500; the envelope round found
+        the two classes of refusal that never reach a route at all (no credential, oversized body).
+        The third class is *a route that raises without catching* — and the answer is the same each
+        time: **stop relying on every route to remember**. A handler here cannot be forgotten by a
+        route that has not been written yet, and `test_kira_envelope_everywhere` now walks every
+        route on the surface rather than the two that were known to be exposed.
+
+        The routes keep their own ``except``: they need it anyway to close out the accounting, and
+        a refusal that has already been rendered never reaches here.
+        """
+        return kira_error_response(exc.status, exc.code, exc.message, exc.details)
 
     @app.exception_handler(StarletteHTTPException)
     async def _handle_routing_error(request: Request, exc: StarletteHTTPException) -> JSONResponse:

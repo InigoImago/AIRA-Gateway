@@ -69,6 +69,15 @@ async def _with_group_grants(request: Request, principal: Principal) -> Principa
 
 async def require_principal(request: Request) -> Principal:
     """Dependency: attach the Principal to ``request.state`` or raise a 401."""
+    # **Whether anything was offered at all**, recorded before the verdict. The predecessor's
+    # vocabulary separates `NOT_AUTHENTICATED` (nothing presented) from `INVALID_TOKEN` (presented
+    # and rejected), and both refusals arrive here as one `GeminiHTTPError` — so the bit has to
+    # travel somewhere. On the request rather than on the error, because the alternative is
+    # Google's error type carrying KIRA's vocabulary, and a shared refusal type that knows about
+    # one surface is a shared refusal type until the third surface arrives.
+    #
+    # Only meaningful when authentication is on: the demo path returns a principal without looking.
+    request.state.credential_presented = extract_token(request) is not None
     principal = await resolve_principal(request)
     if principal is None:
         # Before the 401, not after: an address that keeps failing is asked to wait. Every limit
