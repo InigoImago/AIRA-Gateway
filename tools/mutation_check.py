@@ -3633,6 +3633,22 @@ MUTATIONS = [
         '            if has_text and not isinstance(part["text"], str | int | float | bool | type(None) | dict | list):',
         WIRE_CONTRACT,
     ),
+    Mutation(
+        "QA25",
+        "the spelling the google-genai client actually puts on the wire for a thinking budget",
+        "gateway/src/aira_gateway/api/gemini/schemas.py",
+        '    thinkingBudget: int | None = Field(default=None, alias="thinking_budget")',
+        "    thinkingBudget: int | None = None",
+        GOOGLE_SDK,
+    ),
+    Mutation(
+        "QA26",
+        "asking for the model's reasoning is refused rather than answered without it",
+        "gateway/src/aira_gateway/api/gemini/schemas.py",
+        "        if self.includeThoughts:",
+        "        if False:",
+        GOOGLE_SDK,
+    ),
 ]
 
 

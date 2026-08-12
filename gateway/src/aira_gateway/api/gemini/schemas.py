@@ -143,10 +143,32 @@ class ThinkingConfig(BaseModel):
     the predecessor's clients use and the only way to reach the abstract levels, whose budgets are
     per model — so both spellings are accepted and **a request carrying both is a 400**, rather
     than a silent precedence rule nobody can predict from the outside.
+
+    **And `thinking_budget`, in snake_case, because that is what the SDK actually sends.**
+    Measured on 2026-08-12 against the running gateway: every field the `google-genai` client
+    serialises is camelCase — `maxOutputTokens`, `topP`, `stopSequences`, `responseMimeType`,
+    `systemInstruction` — *except* the two inside `thinkingConfig`, which come out as
+    `thinking_budget` and `include_thoughts`. An inconsistency in the client, and irrelevant which
+    of us thinks it is wrong: it is what the official client puts on the wire, so a surface that
+    refuses it is not Gemini-compatible.
+
+    The consequence was the worst available. "Do not think" is the single most common
+    configuration for a governed gateway — it is what this project's own demo traffic sets on every
+    request — and from the official SDK it answered `400 Extra inputs are not permitted`. Nothing
+    could be done about it from the client side, since the client chooses the spelling.
+
+    Third field this week that a real SDK sends in a place we did not anticipate, after the
+    embedding `model` and the empty `finishReason`. All three were invisible to every test here,
+    for one reason: our tests send what we believe the SDK sends.
     """
 
-    model_config = _STRICT
-    thinkingBudget: int | None = None
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    thinkingBudget: int | None = Field(default=None, alias="thinking_budget")
+    #: Google's request to have the model's reasoning **returned**. `false` asks for exactly what
+    #: this gateway does, so it is carried and means nothing; `true` is refused by name, because
+    #: thinking blocks are dropped and never persisted (`FRD-119` §5.4) and answering a request for
+    #: them with a 200 and no thoughts is the silent-drop failure `FRD-124` is about.
+    includeThoughts: bool | None = Field(default=None, alias="include_thoughts")
     mode: str | None = None
     tokens: int | None = None
 
@@ -155,6 +177,12 @@ class ThinkingConfig(BaseModel):
         if self.thinkingBudget is not None and (self.mode is not None or self.tokens is not None):
             raise ValueError(
                 "send either 'thinkingBudget' or 'mode'/'tokens' in thinkingConfig, not both"
+            )
+        if self.includeThoughts:
+            raise ValueError(
+                "'includeThoughts' is not served by this gateway: a model's reasoning is dropped "
+                "and never stored (FRD-119), so the answer would contain no thoughts and say so "
+                "nowhere. Send it as false, or omit it."
             )
         return self
 

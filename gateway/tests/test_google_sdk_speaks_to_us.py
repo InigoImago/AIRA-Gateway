@@ -145,3 +145,67 @@ def test_the_sdk_embeds(client: genai.Client) -> None:
 
     assert response.embeddings
     assert response.embeddings[0].values
+
+
+@pytest.mark.filterwarnings("error::UserWarning")
+def test_the_sdk_can_turn_thinking_off(client: genai.Client) -> None:
+    """The configuration a governed gateway sets on nearly every request, from the official client.
+
+    It answered `400 Extra inputs are not permitted` until 2026-08-12. The `google-genai` client
+    serialises **every** field in camelCase — `maxOutputTokens`, `topP`, `stopSequences`,
+    `responseMimeType`, `systemInstruction` — *except* the two inside `thinkingConfig`, which go
+    out as `thinking_budget` and `include_thoughts`. Whether that is a bug in the client does not
+    matter: it is what the official client puts on the wire, and nothing on the caller's side can
+    change it.
+
+    Written through the SDK rather than as a hand-built body, because a hand-built body is how
+    this was missed — every test here sent `thinkingBudget`, which is what we believed the SDK
+    sends.
+    """
+    response = client.models.generate_content(
+        model=MODEL,
+        contents="hallo",
+        config=types.GenerateContentConfig(
+            max_output_tokens=24, thinking_config=types.ThinkingConfig(thinking_budget=0)
+        ),
+    )
+
+    assert response.text
+
+
+def test_asking_for_the_models_reasoning_is_refused_by_name(client: genai.Client) -> None:
+    """The other half, and the one that must **not** become permissive by accident.
+
+    `includeThoughts` asks for the model's reasoning to be returned. This gateway drops thinking
+    blocks and never stores them (`FRD-119` §5.4), so serving that request would answer with no
+    thoughts, a 200, and nothing saying why — `FRD-124`'s silent drop, on a field whose entire
+    purpose is to add something to the answer. Accepting the snake_case spelling above must not
+    quietly extend to accepting this.
+    """
+    with pytest.raises(genai.errors.APIError) as raised:
+        client.models.generate_content(
+            model=MODEL,
+            contents="hallo",
+            config=types.GenerateContentConfig(
+                thinking_config=types.ThinkingConfig(include_thoughts=True)
+            ),
+        )
+
+    assert raised.value.code == 400
+    assert "includeThoughts" in (raised.value.message or ""), "the refusal must name the field"
+
+
+def test_include_thoughts_false_is_what_we_already_do(client: genai.Client) -> None:
+    """`false` asks for exactly this gateway's behaviour, so refusing it would be refusing
+    agreement. Carried, and it means nothing — which is the honest answer rather than a
+    convenient one."""
+    response = client.models.generate_content(
+        model=MODEL,
+        contents="hallo",
+        config=types.GenerateContentConfig(
+            max_output_tokens=24,
+            thinking_config=types.ThinkingConfig(include_thoughts=False, thinking_budget=0),
+        ),
+    )
+
+    assert response.text

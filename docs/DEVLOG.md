@@ -5,6 +5,45 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-12 — The showcase runs, and the SDK found the field that mattered most
+
+A full `make showcase` from the committed state, then a walk over everything it starts. Fifteen
+containers up, both surfaces serving, control plane and reporting answering, **no 5xx anywhere and
+no unhandled error in either service's log**. Every status in `request_logs` was one somebody
+asked for: 200, 400, 404, 422, 429, 499.
+
+Then the `google-genai` client was pointed at the **running** gateway rather than at an in-process
+app, and it refused to work at all:
+
+    400 INVALID_ARGUMENT  generationConfig.thinkingConfig.thinking_budget: Extra inputs are not permitted
+
+**The SDK writes those two fields in snake_case.** Measured rather than assumed — eleven config
+fields serialised and compared — and the result is exact: `maxOutputTokens`, `topP`, `topK`,
+`stopSequences`, `seed`, `responseMimeType`, `candidateCount`, `systemInstruction`,
+`presencePenalty` all camelCase, and *only* the two inside `thinkingConfig` come out as
+`thinking_budget` and `include_thoughts`. An inconsistency in the client, and it does not matter
+whose bug it is: it is what the official client puts on the wire, and no caller can change it.
+
+The consequence was the worst available. **"Do not think" is the configuration a governed gateway
+sets on nearly every request** — it is what this project's own demo traffic sends — and from the
+official SDK it was a 400. Both spellings are accepted now; the camelCase one keeps working, so a
+hand-built client is unaffected.
+
+`includeThoughts` arrived with it and is the opposite decision: **refused by name**. It asks for
+the model's reasoning to be returned, and this gateway drops thinking blocks and never stores them
+(`FRD-119` §5.4), so serving it would answer with no thoughts, a 200, and nothing saying why.
+`false` is carried and means nothing, because it asks for exactly what we already do and refusing
+agreement would be silly.
+
+Third field this week that a real SDK sends somewhere we did not anticipate, after the embedding
+`model` and the empty `finishReason`, and the three share one cause: **our tests send what we
+believe the SDK sends.** The SDK suite is up to seven cases and is the only thing here that can
+find this class at all.
+
+`QA25`, `QA26`; **402 properties**.
+
+---
+
 ## 2026-08-12 — A text part carries text, and the compatibility scope is settled
 
 A second static comparison against the predecessor produced a longer list. Most of it is
