@@ -5,6 +5,41 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-12 — A showcase check, and the column that said "never revoked"
+
+`make showcase` run again and walked end to end: 15 containers healthy, both surfaces serving,
+the control plane and reporting answering, the real `google-genai` SDK generating, streaming and
+embedding against the running gateway, **no 5xx and no unhandled error in any of the four service
+logs**. The three commands the showcase now *prints* were extracted from its own output and run
+**verbatim** — 200 on each, 18 SSE events on the streaming one. A demo that prints a command it
+has not executed is a demo that works for whoever wrote it.
+
+The check then found something by accident, in the way that counts: I queried `api_keys` for
+`revoked_at IS NULL` to see which credentials were live, got six, and concluded two keys had
+outlived their deleted use case. They had not — they answer `401`, and the column that says so is
+`is_active`. **My query was wrong, and it was wrong because the column I asked is a lie.**
+
+Two paths revoke a key. `ApiKeyService.revoke` — the gateway-side one, used by the CLI — sets
+`is_active` *and* stamps `revoked_at`. `_set_api_key_active`, which is how **every** revocation
+from Management arrives, set only the flag. So on any deployed system `revoked_at` was `NULL` for
+every key that had in fact been revoked: a field reading "never revoked" about exactly the ones
+that were.
+
+No credential was ever wrongly accepted — `verify` reads `is_active`, and that was always right.
+What was broken is the record, and the record is the whole point of this system: *when was this
+credential revoked* is an incident question, and the field that answers it was empty. It is stamped
+now, on the way down only, because revocation is terminal and a reactivation that cleared the time
+would erase a decision. The event carries no timestamp, so this is when the gateway **learned** of
+it — said out loud in the code rather than implied.
+
+Verified live: a key issued, revoked through Management, and the read-model row carrying
+`is_active = f` with a time beside it. The two rows from an earlier walkthrough still show the old
+shape, which is what the gap looked like everywhere until now.
+
+`QA30`; **406 properties**.
+
+---
+
 ## 2026-08-12 — The showcase hands a KIRA user something to paste, and says what the assistant is
 
 Asked where the demo tells somebody who runs KIRA today how to **try** it, and the honest answer

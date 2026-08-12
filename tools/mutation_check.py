@@ -152,6 +152,7 @@ GOOGLE_SDK = "gateway/tests/test_google_sdk_speaks_to_us.py"
 COMPACTION_KEYS = "management/backend/tests/test_outbox_routing.py"
 CONSUMER_SURVIVES = "gateway/tests/test_config_distribution_survives_a_bad_event.py"
 DETECTION_WINDOW = "gateway/tests/test_a_failed_tick_keeps_its_window.py"
+REVOCATION_TIME = "gateway/tests/test_consumer_apply.py"
 KIRA_COMPAT = "gateway/tests/test_kira_compatibility_round.py gateway/tests/test_kira_surface.py"
 
 SERVING_OPTIONS = (
@@ -3676,8 +3677,16 @@ MUTATIONS = [
         "            raise",
         DETECTION_WINDOW,
     ),
+    Mutation(
+        "QA30",
+        "a revocation that arrives over Kafka records when it happened",
+        "gateway/src/aira_gateway/consumer/apply.py",
+        "        if not active and record.revoked_at is None:\n"
+        "            record.revoked_at = datetime.now(UTC)",
+        "",
+        REVOCATION_TIME,
+    ),
 ]
-
 
 def _recover() -> None:
     """Put back whatever a previous run was holding when it died."""

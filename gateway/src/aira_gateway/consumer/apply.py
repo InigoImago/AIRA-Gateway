@@ -6,7 +6,7 @@ replaying a compacted topic) converges to the same state.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import delete, select, update
@@ -278,10 +278,31 @@ async def _upsert_api_key(session: AsyncSession, payload: dict[str, Any]) -> Non
 
 
 async def _set_api_key_active(session: AsyncSession, prefix: str, *, active: bool) -> None:
+    """Apply a revocation, and **write down when**.
+
+    Two paths revoke a key and they recorded different things. `ApiKeyService.revoke` — the
+    gateway-side one, used by the CLI — sets `is_active` *and* stamps `revoked_at`. This one is how
+    every revocation from Management arrives, and it set only the flag. So on any deployed system,
+    where revocations come over Kafka, `revoked_at` was **NULL for every key that had actually been
+    revoked**: a column that says "never revoked" about the ones that were.
+
+    Nothing authenticates on it — `verify` reads `is_active`, so no credential was ever accepted
+    that should not have been. What it breaks is the record, and the record is the point: "when was
+    this credential revoked" is an incident question, and the field that answers it was empty.
+    Found on 2026-08-12 by querying `revoked_at` during a showcase check and drawing exactly the
+    wrong conclusion from it, which is what a reader would have done.
+
+    The event carries no timestamp, so this is when the gateway *learned* of the revocation rather
+    than when it was decided — a few seconds later, and said out loud rather than implied. Only
+    stamped on the way down: revocation is terminal, and a reactivation that cleared the time would
+    erase the record of a decision.
+    """
     result = await session.execute(select(ApiKey).where(ApiKey.prefix == prefix))
     record = result.scalar_one_or_none()
     if record is not None:
         record.is_active = active
+        if not active and record.revoked_at is None:
+            record.revoked_at = datetime.now(UTC)
 
 
 async def _upsert_pipeline(session: AsyncSession, payload: dict[str, Any]) -> None:

@@ -318,6 +318,46 @@ async def test_api_key_revoked_stops_verification(make_session) -> None:
         assert await ApiKeyService(session).verify(full) is None
 
 
+async def test_a_revocation_records_when_it_happened(make_session) -> None:
+    """`is_active` is what authentication reads; `revoked_at` is what a review reads.
+
+    Two paths revoke a key. `ApiKeyService.revoke` — the gateway-side one, used by the CLI — sets
+    both. This one, which is how **every** revocation from Management arrives, set only the flag,
+    so on any deployed system `revoked_at` was NULL for every key that had in fact been revoked: a
+    column saying "never revoked" about exactly the ones that were.
+
+    No credential was ever wrongly accepted, because `verify` reads `is_active`. What was broken is
+    the record, and the record is the point — "when was this credential revoked" is an incident
+    question, and the field that answers it was empty. Found by asking it during a showcase check
+    and drawing the wrong conclusion, which is what any reader would have done.
+    """
+    _full, prefix, key_hash = keys.generate_api_key()
+    async with make_session() as session:
+        await apply_event(session, "api_key.created", _created_event(prefix, key_hash))
+        await apply_event(session, "api_key.revoked", {"prefix": prefix})
+
+    rows = await _all(make_session, ApiKey)
+
+    assert rows[0].is_active is False
+    assert rows[0].revoked_at is not None, (
+        "a revoked key carries no revocation time, so the audit trail cannot say when access ended"
+    )
+
+
+async def test_an_active_key_carries_no_revocation_time(make_session) -> None:
+    """The paired case. An assertion that a field is filled in is defended only by one showing it
+    is normally empty — otherwise a column stamped on creation would pass the case above while
+    saying every key had been revoked the moment it was issued."""
+    _full, prefix, key_hash = keys.generate_api_key()
+    async with make_session() as session:
+        await apply_event(session, "api_key.created", _created_event(prefix, key_hash))
+
+    rows = await _all(make_session, ApiKey)
+
+    assert rows[0].is_active is True
+    assert rows[0].revoked_at is None
+
+
 async def test_replayed_created_event_does_not_resurrect_a_revoked_key(make_session) -> None:
     """Delivery is at-least-once: a re-delivered `created` must not undo a revocation."""
     full, prefix, key_hash = keys.generate_api_key()
