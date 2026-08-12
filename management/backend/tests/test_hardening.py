@@ -190,6 +190,44 @@ def test_same_subject_resolves_to_the_same_user() -> None:
     assert first.pk == second.pk
 
 
+def test_a_lost_race_returns_the_winners_user_rather_than_a_500() -> None:
+    """The first request from a new person is more than one request.
+
+    The console loads `/api/v1/me` and `/api/v1/use-cases/` at the same moment, so two requests
+    carrying the same brand-new `sub` arrive together: both find no identity, both create one, and
+    the second loses on `api_oidcidentity_subject_key`. That surfaced as a **500 on the first
+    screen, for every user's first login** — measured against a freshly seeded stack, which is the
+    state a demonstration starts from.
+
+    `transaction.atomic` never prevented it: it makes each attempt atomic, not exclusive, and the
+    two attempts are on different connections. The property is that whoever arrives second **loses
+    gracefully** — re-reads, and uses the row the winner wrote.
+
+    The race is expressed by writing the winner's row between the read and the write, which is
+    exactly what the other connection does and is deterministic here.
+    """
+    subject = "sub-raced"
+    winner = get_user_model().objects.create(username="raced-winner")
+    original = OidcIdentity.objects.filter
+
+    def _first_call_sees_nothing(*args: object, **kwargs: object):
+        """Answer "no identity" once, then let the real query through — the winner has committed
+        by the time the loser looks again."""
+        OidcIdentity.objects.filter = original  # type: ignore[method-assign]
+        OidcIdentity.objects.create(subject=subject, user=winner)
+        return original(pk=None)
+
+    OidcIdentity.objects.filter = _first_call_sees_nothing  # type: ignore[method-assign]
+    try:
+        resolved = _provision(subject, "raced")
+    finally:
+        OidcIdentity.objects.filter = original  # type: ignore[method-assign]
+
+    # The winner's user, and exactly one identity for the subject — not a second account.
+    assert resolved.pk == winner.pk
+    assert OidcIdentity.objects.filter(subject=subject).count() == 1
+
+
 def test_existing_unbound_user_is_adopted_on_first_login() -> None:
     """Accounts created before the binding existed keep their permissions."""
     legacy = get_user_model().objects.create(username="legacy")

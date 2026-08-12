@@ -15,7 +15,7 @@ from typing import Any
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import AbstractBaseUser
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from rest_framework.authentication import BaseAuthentication
 from rest_framework.exceptions import AuthenticationFailed
 from rest_framework.request import Request
@@ -80,6 +80,20 @@ class KeycloakJWTAuthentication(BaseAuthentication):
            their permissions), which then gets bound;
         3. otherwise a fresh user, whose username is suffixed if the preferred one is taken by
            somebody else's identity.
+
+        **The first request from a new person is more than one request.** The console loads
+        `/api/v1/me` and `/api/v1/use-cases/` at the same moment, so two requests carrying the same
+        brand-new `sub` arrive concurrently: both find no identity, both create one, and the second
+        loses on `api_oidcidentity_subject_key` — a **500 on the first screen, for every user's
+        first login**. Measured on 2026-08-11 against a freshly seeded stack, which is exactly the
+        state a demonstration starts from.
+
+        `transaction.atomic` does not prevent it and was never going to: it makes each attempt
+        atomic, not exclusive, and the two attempts are on different connections. The fix is the
+        one the race actually calls for — **lose gracefully**: whoever arrives second re-reads and
+        uses the row the winner wrote. A savepoint keeps the failed INSERT from poisoning the
+        surrounding transaction, which is why the create sits in its own `atomic` block rather
+        than relying on the decorator.
         """
         identity = OidcIdentity.objects.filter(subject=subject).select_related("user").first()
         if identity is not None:
@@ -89,12 +103,26 @@ class KeycloakJWTAuthentication(BaseAuthentication):
         preferred = str(claims.get("preferred_username") or subject)
         email = claims.get("email", "")
 
-        existing = user_model.objects.filter(username=preferred).first()
-        if existing is not None and not OidcIdentity.objects.filter(user=existing).exists():
-            OidcIdentity.objects.create(subject=subject, user=existing)
-            return existing
+        try:
+            with transaction.atomic():
+                existing = user_model.objects.filter(username=preferred).first()
+                if existing is not None and not OidcIdentity.objects.filter(user=existing).exists():
+                    OidcIdentity.objects.create(subject=subject, user=existing)
+                    return existing
 
-        username = preferred if existing is None else f"{preferred}-{subject[:8]}"
-        user = user_model.objects.create(username=username, email=email)
-        OidcIdentity.objects.create(subject=subject, user=user)
-        return user
+                username = preferred if existing is None else f"{preferred}-{subject[:8]}"
+                user = user_model.objects.create(username=username, email=email)
+                OidcIdentity.objects.create(subject=subject, user=user)
+                return user
+        except IntegrityError:
+            # Somebody else provisioned this subject between the read above and the write. Their
+            # row is the binding; ours was never needed. Re-read rather than retry the create,
+            # because the winner's row is exactly what this function was trying to produce.
+            identity = OidcIdentity.objects.filter(subject=subject).select_related("user").first()
+            if identity is None:
+                # Not the race, then: a genuine constraint failure — most likely the username,
+                # taken by an account this subject may not have. Raised rather than worked
+                # around, because inventing a second account for one person is how an audit
+                # trail comes to name two people who are one.
+                raise
+            return identity.user
