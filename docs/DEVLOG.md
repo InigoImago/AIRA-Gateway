@@ -5,6 +5,37 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-12 — The showcase hands a KIRA user something to paste, and says what the assistant is
+
+Asked where the demo tells somebody who runs KIRA today how to **try** it, and the honest answer
+was: it does not. The previous entry added the four administration steps and two migration guides —
+which is what a reader needs to *migrate*, and not what they need to *try*, because the demo has
+already done all four for its own use cases. What was missing was one command that works.
+
+`tools/showcase_try_it.py` prints it, and it **reads the running catalog** rather than restating it:
+the key comes from the same derivation the seed uses, the integer model id from
+`GET /kira/api/external/models`. A block written by hand would carry an id from the day it was
+written, and `FRD-114` FR-6a is why that matters — ids are assigned in the catalog, and a stale one
+names a model nobody has. Both printed commands were then run **verbatim**: `200` on each.
+
+The Gemini equivalent is beside it deliberately. The two surfaces answer the same question from the
+same key and land in the same audit trail under different API names, and putting them next to each
+other is the shortest way to say so.
+
+**And the coding assistant was described as a tool rather than as a use case.** The block jumped
+straight to the OpenCode command, so a reader watched an assistant work and could not say what
+about it was *governed* — which is the only reason it is in the demo rather than a second chatbot.
+It now says what makes it its own: function calling is on and it is the **only** use case here that
+has it (checked against the running read-model, not the seed source); one human instruction becomes
+many model calls, so the limit is 240 rpm and sized for an agent rather than for a chatbot; source
+code and file paths are content and end up in stored prompts; and prompt caching is deliberately
+**off**, because this runtime reports no cached tokens and a switch shown as on while doing nothing
+is an absent control wearing a present one's badge.
+
+Every claim in that block is a seeded value, so the console can be opened on any of them.
+
+---
+
 ## 2026-08-12 — Two migration guides, written by doing the migration
 
 The demo showed a governed gateway and left the next question unanswered: *how do I put my own

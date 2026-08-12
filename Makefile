@@ -132,6 +132,12 @@ showcase: env ## Start the full demo: stack, local model, seeded roles/budgets, 
 	@echo "    KIRA client   http://localhost:8001/kira/api/external   docs/MIGRATION-KIRA.md"
 	@echo "    Gemini client http://localhost:8001/v1beta              docs/MIGRATION-GEMINI.md"
 	@echo ""
+	@# And one that runs *now*. The four steps above are what a reader needs to migrate; they are
+	@# not what a reader needs to **try**, because the demo has already done all four for its own
+	@# use cases. Values are read from the running catalog, so the id in the command is the id
+	@# this installation assigned rather than one that was true when the block was written.
+	@-uv run python tools/showcase_try_it.py
+	@echo ""
 
 # Deliberately no reset here: this is the target for watching the bars fill and a limit be
 # reached, which is the thing `showcase` resets so that *its* run is the one you see.

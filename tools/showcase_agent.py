@@ -73,6 +73,29 @@ def main() -> None:
 
     print(f"  Written: {target}")
     print()
+    # **What the use case is**, not only what to type. The block used to jump straight to the
+    # command, so a reader saw a coding assistant work and could not say what about it was
+    # *governed* — which is the whole reason this use case is in the demo rather than a second
+    # chatbot. Every number below is seeded, so the console can be opened on any claim here.
+    print("  What this use case is, and why it is its own:")
+    print()
+    print("    • **Function calling is on — and it is the only use case here that has it.** A tool")
+    print("      declaration is carried to the model and the call comes back to the client; AIRA")
+    print("      never runs one. Off by default everywhere else, because a use case that")
+    print("      summarises documents has no business declaring functions.")
+    print("    • **One human instruction becomes many model calls.** A trivial ask produced three")
+    print("      gateway requests when this was measured — served, refused, client_gone — so the")
+    print("      limit and the budget are sized for an agent (240 rpm) and not for a chatbot. A")
+    print("      limit calibrated for a chatbot trips in the first minute and reads as a broken")
+    print("      gateway rather than as a wrong limit.")
+    print("    • **Source code and file paths are content.** They end up in stored prompts, so the")
+    print("      retention window and who may read a payload are decisions somebody made here.")
+    print(
+        "    • **Prompt caching is deliberately off.** This runtime reports no cached tokens, and"
+    )
+    print("      a switch shown as on while doing nothing is an absent control wearing a present")
+    print("      one's badge.")
+    print()
     print("  Point a coding assistant at the showcase:")
     print()
     print(f"      OPENCODE_CONFIG={target} opencode run 'list the files here'")
