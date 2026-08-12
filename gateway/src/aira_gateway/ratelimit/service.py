@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from aira_common.logging import get_logger
 from aira_gateway.db.models import RateLimitRead
-from aira_gateway.ratelimit.buckets import BucketRequest, TokenBucket
+from aira_gateway.ratelimit.buckets import BucketRequest, TokenBucket, per_minute
 from aira_gateway.ratelimit.errors import RateLimited
 from aira_gateway.scopes import Scope
 
@@ -144,11 +144,8 @@ class RateLimitService:
             if scope is None:
                 continue
             buckets.append(
-                BucketRequest(
-                    key=scope.bucket_key,
-                    capacity=_capacity(record),
-                    refill_per_second=record.limit_rpm / 60,
-                    label=scope.label,
+                per_minute(
+                    scope.bucket_key, record.limit_rpm, label=scope.label, burst=record.burst
                 )
             )
         return buckets
@@ -175,6 +172,9 @@ class RateLimitService:
 
 
 def _capacity(record: RateLimitRead) -> int:
-    """Bucket size. An unset burst means the limit itself, so a plain "60 per minute" behaves
-    the way someone reading it expects rather than allowing nothing through at once."""
-    return record.burst if record.burst and record.burst > 0 else record.limit_rpm
+    """Bucket size, as :func:`per_minute` resolves it.
+
+    Kept as a name of its own because the tests and the refusal message both ask "how big is this
+    bucket", and answering it by restating the rule is how the two came to disagree elsewhere.
+    """
+    return per_minute("", record.limit_rpm, burst=record.burst).capacity

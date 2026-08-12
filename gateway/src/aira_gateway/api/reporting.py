@@ -33,6 +33,7 @@ from aira_gateway.db.models import AnomalyEvent, PayloadAccess, RequestLog
 from aira_gateway.payloads import may_read_payload, payload_body, restricted_use_cases
 from aira_gateway.reporting.csv_export import BREAKDOWNS, filename, render
 from aira_gateway.reporting.service import ReportingService, Scope
+from aira_gateway.state import sessionmaker_of, settings_of
 
 _log = structlog.get_logger(__name__)
 
@@ -180,7 +181,7 @@ async def reporting(
     if fmt == "json":
         return JSONResponse(report)
 
-    settings = request.app.state.settings
+    settings = settings_of(request)
     body = render(report, breakdown, settings.currency)
     name = filename(breakdown, window_start.isoformat(), window_end.isoformat())
     return Response(
@@ -234,7 +235,7 @@ async def anomalies(
     # A use case may show its **users** their own requests only (`FRD-505` FR-4). Applied to the
     # list and not only to the payload: leaving the rows visible would still disclose who else
     # calls, how often and at what cost, which is the interesting half of what is being withheld.
-    sessionmaker = request.app.state.db_sessionmaker
+    sessionmaker = sessionmaker_of(request)
     async with sessionmaker() as session:
         restricted = await restricted_use_cases(session, principal)
     if restricted:
@@ -252,7 +253,7 @@ async def anomalies(
         )
     stmt = stmt.order_by(AnomalyEvent.created_at.desc(), AnomalyEvent.id.desc()).limit(limit + 1)
 
-    sessionmaker = request.app.state.db_sessionmaker
+    sessionmaker = sessionmaker_of(request)
     async with sessionmaker() as session:
         rows = list((await session.execute(stmt)).scalars().all())
 
@@ -449,7 +450,7 @@ async def traces(
     # list and not only to the payload: leaving the rows visible would still disclose who else
     # calls, how often and at what cost — the interesting half of what is being withheld — while
     # the content refusal beside it would read as a broken screen rather than a boundary.
-    sessionmaker = request.app.state.db_sessionmaker
+    sessionmaker = sessionmaker_of(request)
     async with sessionmaker() as session:
         restricted = await restricted_use_cases(session, principal)
     if restricted:
@@ -513,7 +514,7 @@ async def trace_payload(
     line beside it.
     """
     scope = visible_scope(principal)
-    sessionmaker = request.app.state.db_sessionmaker
+    sessionmaker = sessionmaker_of(request)
     async with sessionmaker() as session:
         row = (
             await session.execute(select(RequestLog).where(RequestLog.id == trace_row_id))

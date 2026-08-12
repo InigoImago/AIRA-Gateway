@@ -27,6 +27,8 @@ from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.auth.dependencies import require_principal
 from aira_gateway.auth.principal import Principal
 from aira_gateway.catalog import ModelCatalog
+from aira_gateway.state import sessionmaker_of, suspensions_of
+from aira_gateway.upstreams.base import ProviderRegistry
 
 #: A check must be quick enough that somebody presses the button and waits for it.
 MODEL_CHECK_TIMEOUT_SECONDS = 5.0
@@ -62,7 +64,7 @@ async def list_suspensions(
     request: Request, principal: Principal = Depends(require_principal)
 ) -> JSONResponse:
     _require_oversight(principal)
-    sessionmaker = request.app.state.db_sessionmaker
+    sessionmaker = sessionmaker_of(request)
     async with sessionmaker() as session:
         stmt = select(AccessSuspension).order_by(AccessSuspension.created_at.desc()).limit(200)
         rows = list((await session.execute(stmt)).scalars().all())
@@ -117,11 +119,11 @@ async def create_suspension(
         author=f"user:{principal.subject}",
         reason=str(body.get("reason") or "")[:500],
     )
-    sessionmaker = request.app.state.db_sessionmaker
+    sessionmaker = sessionmaker_of(request)
     async with sessionmaker() as session:
         session.add(row)
         await session.commit()
-    request.app.state.suspensions.invalidate()
+    suspensions_of(request).invalidate()
     return JSONResponse(as_dict(row), status_code=201)
 
 
@@ -131,7 +133,7 @@ async def lift_suspension(
 ) -> JSONResponse:
     """Lift one. The row is kept and stamped, never deleted (`FRD-503` FR-8)."""
     _require_oversight(principal)
-    sessionmaker = request.app.state.db_sessionmaker
+    sessionmaker = sessionmaker_of(request)
     async with sessionmaker() as session:
         row = await session.get(AccessSuspension, suspension_id)
         if row is None:
@@ -141,7 +143,7 @@ async def lift_suspension(
             row.lifted_by = f"user:{principal.subject}"
             await session.commit()
         payload = as_dict(row)
-    request.app.state.suspensions.invalidate()
+    suspensions_of(request).invalidate()
     return JSONResponse(payload)
 
 
@@ -184,7 +186,10 @@ async def check_model(
         )
 
     catalog: ModelCatalog = request.app.state.catalog
-    registry = request.app.state.providers
+    # Annotated like its neighbour above. It was the one service read in the gateway that was not,
+    # and the annotation is the only thing that makes the call below type-checked at all — see
+    # `state.py` for what an unchecked one cost.
+    registry: ProviderRegistry = request.app.state.providers
     declaration = await catalog.declaration(model)
     provider = registry.provider_for(model)
 

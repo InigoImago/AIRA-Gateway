@@ -19,6 +19,7 @@ from aira_gateway.auth.keys import is_aira_key
 from aira_gateway.auth.oidc import OidcValidator
 from aira_gateway.auth.principal import Principal
 from aira_gateway.auth.service import ApiKeyService
+from aira_gateway.state import sessionmaker_of
 
 _DEMO_PRINCIPAL = Principal(subject="demo", method="demo")
 
@@ -37,8 +38,7 @@ async def resolve_principal(request: Request) -> Principal | None:
         return None
 
     if is_aira_key(token):
-        sessionmaker = request.app.state.db_sessionmaker
-        async with sessionmaker() as session:
+        async with sessionmaker_of(request)() as session:
             return await ApiKeyService(session).verify(token)
 
     # Otherwise treat it as an OIDC bearer (JWT), if OIDC is configured.

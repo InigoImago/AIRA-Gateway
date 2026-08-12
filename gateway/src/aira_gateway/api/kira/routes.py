@@ -51,6 +51,7 @@ from aira_gateway.api.serving import (
     refusal_outcome,
     registry_of,
     requirements_for,
+    resolve_direct_target,
     schema_bounds,
     upstream_status,
 )
@@ -438,8 +439,12 @@ async def embed(request: Request, principal: Principal = Depends(require_princip
         async with accounting(
             request, trail, prepared, api="kira", operation="embed", body=body, started=started
         ) as acct:
-            provider = registry_of(request).provider_for(model)
-            assert provider is not None
+            # The shared resolver, not a registry lookup: an embedding has no dispatch chain, so
+            # asking the registry directly meant no condition was applied — an unapproved
+            # (`FRD-307`) and an unreleased (`FRD-308`) model both answered 200 here, exactly as
+            # on the Gemini surface. One function, both surfaces, for the reason `FRD-126` states:
+            # a rule restated on a second surface is a rule that differs on one of them.
+            provider = await resolve_direct_target(request, model)
             vectors = await provider.embed(embed_request)
             payload = (
                 schemas.BatchEmbeddingResponse(vectors=vectors).model_dump()

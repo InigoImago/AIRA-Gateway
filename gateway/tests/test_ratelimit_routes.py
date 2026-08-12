@@ -232,9 +232,13 @@ async def test_a_client_that_disconnects_mid_stream_does_not_leak_the_reservatio
 
     with TestClient(app):  # runs the lifespan so app.state is complete
         request = _stream_request(app)
-        response = _stream_response(
+        # No provider argument any more, and the function is a coroutine: since 2026-08-11
+        # `_stream_response` **resolves its own adapter**, because doing so is what applies the
+        # dispatch conditions — the streamed path had been reaching a provider with none of them
+        # asked. The property under test here is untouched by that: what a dropped connection does
+        # to the reservation and to the audit row.
+        response = await _stream_response(
             request,
-            app.state.providers.provider_for("mock-1"),
             _canonical(),
             _BODY,
             _prepared(),

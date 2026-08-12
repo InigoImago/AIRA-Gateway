@@ -29,14 +29,14 @@ from aira_common.logging import get_logger
 from aira_common.models import Capability
 from aira_common.money import cost_nanos
 from aira_common.observability import set_span_attributes
-from aira_gateway.anomalies.suspensions import Suspended
+from aira_gateway.anomalies.suspensions import Suspended, SuspensionService
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.api.gemini.errors import gemini_error_response as _error
 from aira_gateway.attachments import AttachmentRejected
 from aira_gateway.audit import AuditTrail, Outcome, decision_summary, tool_summary
 from aira_gateway.budgets.errors import BudgetExceeded
 from aira_gateway.budgets.ledger import Amounts
-from aira_gateway.budgets.service import Reservation
+from aira_gateway.budgets.service import BudgetService, Reservation
 from aira_gateway.catalog import ModelCatalog, ModelDeclaration
 from aira_gateway.core.canonical import (
     CanonicalEmbeddingRequest,
@@ -50,11 +50,13 @@ from aira_gateway.embedding import EmbeddingBounds, EmbeddingRejected
 from aira_gateway.embedding import estimated_tokens as embedding_tokens
 from aira_gateway.embedding import validate as validate_embedding
 from aira_gateway.persistence.recorder import record_request
-from aira_gateway.pipeline.dispatch import NoCapableModel, Permits
+from aira_gateway.pipeline.dispatch import NoCapableModel, Permits, Skipped
 from aira_gateway.pipeline.engine import PipelineEngine
 from aira_gateway.pipeline.errors import PipelineRejected
 from aira_gateway.pipeline.store import PipelineStore
+from aira_gateway.ratelimit.buckets import per_minute
 from aira_gateway.ratelimit.errors import RateLimited
+from aira_gateway.ratelimit.service import RateLimitService
 from aira_gateway.requirements import (
     MediaTypesSupported,
     ModelApproved,
@@ -69,9 +71,17 @@ from aira_gateway.requirements import (
     permits,
 )
 from aira_gateway.residency import parse_allowed
+from aira_gateway.state import (
+    budgets_of,
+    pricing_of,
+    rate_limits_of,
+    sessionmaker_of,
+    settings_of,
+    suspensions_of,
+)
 from aira_gateway.thinking import ThinkingRejected, reserved_tokens
 from aira_gateway.thinking import resolve as resolve_thinking
-from aira_gateway.upstreams.base import ProviderRegistry, UpstreamError
+from aira_gateway.upstreams.base import ProviderRegistry, Upstream, UpstreamError
 
 _log = get_logger("aira_gateway")
 
@@ -160,11 +170,27 @@ async def guard_before_work(request: Request, *, units: int = 1) -> None:
 
     # First of all: a caller who has been stopped is stopped, and must not pay for a classifier
     # on the way to being told (`FRD-503` FR-3). Same argument that moved rate limiting here.
-    throttles = await request.app.state.suspensions.check(use_case, subject, credential)
-    await request.app.state.rate_limits.check(
-        use_case, subject, units, extra=throttles, username=username
+    #
+    # **Annotated, and that is the point.** `app.state` is untyped, so every call made through it
+    # is unchecked — and this seam was broken: `check` returns `Throttle`, `RateLimitService.check`
+    # takes `BucketRequest`, and the two share no field the limiter reads. A `throttle` suspension
+    # therefore raised `AttributeError` and became a **500** for every request from the caller it
+    # was meant to slow down, while the console showed the decision as active. The same shape as
+    # `FRD-125`'s badge-wearing absent control, and invisible to mypy for exactly this reason. The
+    # annotations are what let the type checker see the contract; `per_minute` is what makes the
+    # two vocabularies meet in one place instead of at a call site.
+    suspensions: SuspensionService = suspensions_of(request)
+    rate_limits: RateLimitService = rate_limits_of(request)
+    budgets: BudgetService = budgets_of(request)
+    throttles = await suspensions.check(use_case, subject, credential)
+    await rate_limits.check(
+        use_case,
+        subject,
+        units,
+        extra=[per_minute(t.key, t.limit_rpm, label=t.label) for t in throttles],
+        username=username,
     )
-    await request.app.state.budgets.refuse_if_exhausted(use_case, subject, username=username)
+    await budgets.refuse_if_exhausted(use_case, subject, username=username)
     request.state.early_gate_taken = True
 
 
@@ -219,7 +245,7 @@ async def enforce_pre_dispatch(
         extra_tokens=extra_tokens,
     )
     # `app.state` is untyped, so the annotation is what states the contract the route relies on.
-    reservation: Reservation = await request.app.state.budgets.guard(
+    reservation: Reservation = await budgets_of(request).guard(
         use_case, subject, estimated=expected, username=getattr(attribution, "username", None)
     )
     return reservation
@@ -245,7 +271,7 @@ async def estimate(
     An unpriced model estimates zero cost — the same "unknown is not zero" rule as everywhere
     else: it is not counted as free, it simply cannot constrain a cost limit.
     """
-    settings = request.app.state.settings
+    settings = settings_of(request)
     # The model's own default before the installation-wide one: a per-model figure is a better
     # estimate for every vendor, and it is the same number the request will actually carry.
     declaration = await catalog_of(request).declaration(model)
@@ -258,7 +284,7 @@ async def estimate(
     # as output. Reserving without it would leave the most expensive knob on the request invisible
     # to the limit that exists to bound spend.
     tokens += extra_tokens
-    price = await request.app.state.pricing.price_for(model)
+    price = await pricing_of(request).price_for(model)
     cost = 0 if price is None else cost_nanos(tokens, price.output_per_million_nanos)
     return Amounts(tokens=tokens, requests=units, cost_nanos=cost)
 
@@ -289,7 +315,7 @@ async def requirements_for(request: Request, canonical: CanonicalRequest | None)
     rather than about the request — read **once here** and then asked per hop, so a chain of five
     candidates is one query rather than five.
     """
-    settings = request.app.state.settings
+    settings = settings_of(request)
     # One list, every transport (`ADR-0012` §6) — reading a Vertex-named setting here would make
     # the first Azure model fail a check named after Google.
     checks: list[Requirement] = [
@@ -323,7 +349,7 @@ async def requirements_for(request: Request, canonical: CanonicalRequest | None)
 
 
 def schema_bounds(request: Request) -> SchemaBounds:
-    settings = request.app.state.settings
+    settings = settings_of(request)
     return SchemaBounds(
         max_bytes=settings.max_response_schema_bytes,
         max_depth=settings.max_response_schema_depth,
@@ -332,7 +358,7 @@ def schema_bounds(request: Request) -> SchemaBounds:
 
 
 def embedding_bounds(request: Request) -> EmbeddingBounds:
-    settings = request.app.state.settings
+    settings = settings_of(request)
     return EmbeddingBounds(
         max_batch=settings.max_embedding_batch,
         max_total_chars=settings.max_embedding_chars,
@@ -421,7 +447,7 @@ async def check_tools_permitted(request: Request, canonical: CanonicalRequest) -
             "use case that has tool calling enabled.",
             "FAILED_PRECONDITION",
         )
-    sessionmaker = request.app.state.db_sessionmaker
+    sessionmaker = sessionmaker_of(request)
     async with sessionmaker() as session:
         record = await session.get(UseCaseRead, use_case)
     if record is None or not record.tools_enabled:
@@ -459,7 +485,7 @@ async def released_for(request: Request, slug: str | None) -> list[str] | None:
     """
     if not slug:
         return None
-    sessionmaker = request.app.state.db_sessionmaker
+    sessionmaker = sessionmaker_of(request)
     async with sessionmaker() as session:
         record = await session.get(UseCaseRead, slug)
     if record is None:
@@ -499,7 +525,7 @@ async def cache_prefix_wanted(request: Request, declaration: ModelDeclaration) -
     slug = getattr(use_case, "use_case", None)
     if not slug:
         return False
-    sessionmaker = request.app.state.db_sessionmaker
+    sessionmaker = sessionmaker_of(request)
     async with sessionmaker() as session:
         record = await session.get(UseCaseRead, slug)
     return bool(record is not None and record.prompt_caching_enabled)
@@ -512,7 +538,7 @@ async def cache_ttl_for(request: Request) -> str:
     slug = getattr(use_case, "use_case", None)
     if not slug:
         return "5m"
-    sessionmaker = request.app.state.db_sessionmaker
+    sessionmaker = sessionmaker_of(request)
     async with sessionmaker() as session:
         record = await session.get(UseCaseRead, slug)
     chosen = getattr(record, "prompt_cache_ttl", "5m") if record is not None else "5m"
@@ -772,6 +798,64 @@ async def prepare_for_dispatch(
     return Prepared(canonical, embed, fallbacks, declaration, reservation)
 
 
+async def resolve_direct_target(
+    request: Request, model: str, canonical: CanonicalRequest | None = None
+) -> Upstream:
+    """The adapter for a request that **cannot go through the dispatch chain** — after routing,
+    and after every condition a candidate has to meet (`ADR-0012` §3).
+
+    Two verbs are in that position and both were reaching a provider with no condition asked:
+
+    - **a stream**, because :func:`dispatch_with_fallback` returns a finished response;
+    - **an embedding**, because there is nothing to fall back *to* — a vector from a second model
+      is not a substitute for a vector from the first, and the pipeline does not run for it.
+
+    Measured on 2026-08-11 against the hermetic app. Each of these is refused by name on
+    `:generateContent` and was **served with a 200** on both verbs below:
+
+        a model no Global Administrator approved (`FRD-307`)
+        a model the use case was never released (`FRD-308`)
+
+    Residency (`FRD-115`) travels the same way, so it went with them. That is the `:embedContent`
+    bypass of `FRD-405` for the third time in this codebase's history, and the reason it keeps
+    recurring is that the conditions lived inside the *chain* rather than on the path every verb
+    takes. They live here now, and `test_every_dispatch_applies_the_conditions.py` counts the
+    verbs so a fourth one cannot be added without answering the question.
+
+    The streaming case lost a second half, about evidence rather than authorisation: **the
+    provider was resolved from the model the caller named**, before the pipeline had run. A
+    `model_route` step re-targeting the request sent it to the *first* model's adapter under the
+    *second* model's name — measured as an answer from server A recorded as having come from
+    server B, which is precisely the claim `FRD-115` exists to make checkable. Hence ``model``
+    is a parameter: a caller passes the model **routing** chose, never the one that was typed.
+
+    ``canonical`` is the request where there is one. An embedding has none, and passing ``None``
+    is not a shortcut — :func:`requirements_for` then assembles exactly the three checks that are
+    properties of the *installation* rather than of the body (residency, approval, release), which
+    is the correct set for a verb that carries no attachment, schema, thinking budget or tool.
+
+    **Conditions only, no chain.** Neither verb falls back, and that is unchanged: once a stream's
+    first chunk is on the wire the status is 200 and the answer has begun, and a vector from a
+    different model is not a substitute for the one that was asked for. What changes is that an
+    unqualified candidate is refused *before* any of that, with a status the caller can read.
+    """
+    permits = await requirements_for(request, canonical)
+    refusal = await permits(model)
+    if refusal is not None:
+        # The same exception the chain raises when nothing qualifies, so every verb answers
+        # `400 FAILED_PRECONDITION` with the same wording and records the same outcome.
+        raise NoCapableModel([Skipped(model, refusal)])
+
+    declared = await catalog_of(request).declaration(model)
+    provider = registry_of(request).provider_for(model, declared.provider)
+    if provider is None:
+        # `prepare_for_dispatch` already refuses this for a routed model; repeated here because
+        # this function's contract is to return an adapter, and returning `None` would push the
+        # decision back out to the surfaces that call it.
+        raise GeminiHTTPError(404, f"Model '{model}' not found.", "NOT_FOUND")
+    return provider
+
+
 @dataclass(slots=True)
 class Accounting:
     """What a request produced, reported into the sequence that will account for it.
@@ -869,7 +953,7 @@ async def accounting(
     # The accounting runs **inside** `hold`, not around it. Outside, `hold` sees an unresolved
     # reservation on the way out and gives it back — and then the settle books it again. One
     # request, settled once and released once, which a test caught immediately.
-    async with request.app.state.budgets.hold(prepared.reservation):
+    async with budgets_of(request).hold(prepared.reservation):
         try:
             yield state
         except asyncio.CancelledError, GeneratorExit:
@@ -912,7 +996,7 @@ async def _settle_and_record(
     record: bool = True,
 ) -> None:
     model = state.model or prepared.model
-    cost = await request.app.state.pricing.cost_nanos(model, state.usage)
+    cost = await pricing_of(request).cost_nanos(model, state.usage)
     if not state.produced:
         # Nothing chargeable, so nothing is settled — and nothing is released here either, because
         # `hold` has already given an unresolved reservation back by the time this runs. Releasing
@@ -922,7 +1006,7 @@ async def _settle_and_record(
         # request limit would lose allowance to a caller who hung up or an upstream that failed.
         cost = None
     else:
-        await request.app.state.budgets.settle(
+        await budgets_of(request).settle(
             prepared.reservation,
             state.usage.total_tokens if state.usage else 0,
             cost_nanos=cost,
@@ -973,7 +1057,7 @@ async def record_pipeline_calls(request: Request, trail: AuditTrail) -> None:
     try:
         attribution = getattr(request.state, "attribution", None)
         for call in trail.model_calls:
-            cost = await request.app.state.pricing.cost_nanos(call.model, call.usage)
+            cost = await pricing_of(request).cost_nanos(call.model, call.usage)
             await record_request(
                 request,
                 # Named for the step, so the reporting breakdown separates "what the use case
@@ -993,7 +1077,7 @@ async def record_pipeline_calls(request: Request, trail: AuditTrail) -> None:
                 requested_model=call.model,
                 provenance=await provenance(request, call.model),
             )
-            await request.app.state.budgets.book_side_call(
+            await budgets_of(request).book_side_call(
                 getattr(attribution, "use_case", None),
                 getattr(attribution, "subject", None),
                 call.usage.total_tokens,

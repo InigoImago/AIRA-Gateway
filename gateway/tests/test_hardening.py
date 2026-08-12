@@ -289,6 +289,12 @@ async def test_stream_error_is_recorded_with_the_real_status() -> None:
     from aira_gateway.upstreams.base import UpstreamError, UpstreamModel
 
     class _Failing:
+        # Marked, as `FRD-307` requires of every stand-in: an invented model is not a catalogued
+        # one, and this case is about what happens *after* dispatch begins. It went unmarked while
+        # the streaming verb asked no conditions at all — the very hole this flag exists inside
+        # (see `test_streaming_takes_the_same_conditions.py`), so the omission could not show.
+        is_test_double = True
+
         def models(self) -> list[UpstreamModel]:
             return [UpstreamModel("mock-1", "mock-1", ("streamGenerateContent",))]
 

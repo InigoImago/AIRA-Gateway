@@ -40,6 +40,7 @@ from aira_gateway.api.serving import (
     refusal_outcome,
     registry_of,
     requirements_for,
+    resolve_direct_target,
     schema_bounds,
     upstream_error,
     upstream_status,
@@ -59,7 +60,7 @@ from aira_gateway.pipeline.dispatch import NoCapableModel, dispatch_with_fallbac
 from aira_gateway.pipeline.errors import PipelineRejected
 from aira_gateway.ratelimit.errors import RateLimited
 from aira_gateway.thinking import ThinkingRejected
-from aira_gateway.upstreams.base import Upstream, UpstreamError
+from aira_gateway.upstreams.base import UpstreamError
 
 _log = get_logger("aira_gateway")
 
@@ -343,9 +344,11 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
                 )
             return JSONResponse(payload, headers=deprecation_headers(declaration))
         sse = request.query_params.get("alt") == "sse"
-        return _stream_response(
+        # The adapter is **not** passed in any more: `_stream_response` resolves its own, because
+        # resolving it is what applies the conditions, and handing an already-chosen provider to a
+        # function that streams is how the two came apart in the first place.
+        return await _stream_response(
             request,
-            provider,
             canonical,
             body,
             prepared,
@@ -355,6 +358,11 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
         )
 
     assert embed_request is not None  # the method dispatch above guarantees it
+    # Same as the streamed branch, and for the same reason: an embedding has no chain to carry the
+    # conditions, so it was reaching a provider with none of them asked — an unapproved and an
+    # unreleased model both answered 200. `canonical` is `None` here, which is what selects the
+    # three checks that are properties of the installation rather than of a generation body.
+    provider = await resolve_direct_target(request, str(embed_request.model))
     started = time.monotonic()
     async with accounting(
         request, trail, prepared, api="gemini", operation=method, body=body, started=started
@@ -405,9 +413,8 @@ def _chunk_to_gemini(chunk: CanonicalChunk, model: str) -> schemas.GenerateConte
     )
 
 
-def _stream_response(
+async def _stream_response(
     request: Request,
-    provider: Upstream,
     canonical: CanonicalRequest,
     body: dict[str, Any],
     prepared: Prepared,
@@ -416,7 +423,18 @@ def _stream_response(
     sse: bool,
     headers: dict[str, str] | None = None,
 ) -> StreamingResponse:
-    """Stream chunks as SSE (`?alt=sse`, for the google-genai SDK) or a JSON array (Gemini REST)."""
+    """Stream chunks as SSE (`?alt=sse`, for the google-genai SDK) or a JSON array (Gemini REST).
+
+    **Resolves its own adapter**, and that is the point rather than a convenience: getting
+    something to call and being allowed to call it are one act (`serving.resolve_direct_target`).
+    This function used to be handed a provider looked up from the model the *caller* named, before
+    the pipeline had run and with no condition asked — so it streamed from unapproved models, from
+    models the use case was never released, and from the wrong machine after routing.
+
+    Resolved **before** the generator is built, so a refusal is a status the caller can read
+    rather than an exception inside a response whose headers are already on the wire.
+    """
+    provider = await resolve_direct_target(request, canonical.model, canonical)
 
     async def generate_chunks() -> AsyncIterator[str]:
         started = time.monotonic()

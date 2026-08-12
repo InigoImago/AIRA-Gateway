@@ -106,6 +106,37 @@ class BucketRequest:
     label: str = ""
 
 
+#: Below this a bucket refills so slowly that ``capacity / refill`` overflows the expiry the Lua
+#: script sets, and the in-memory bucket answers ``inf`` seconds. A limit of "nothing per minute"
+#: is not a limit anyone configures on purpose, and it is not this module's to interpret — the
+#: callers already refuse a non-positive rate. Stated as a floor so a future caller cannot make
+#: the two implementations disagree about division by zero.
+MINIMUM_RPM = 1
+
+
+def per_minute(
+    key: str, limit_rpm: int, label: str = "", burst: int | None = None
+) -> BucketRequest:
+    """A "``limit_rpm`` requests per minute" allowance, as the bucket that enforces it.
+
+    Written once because it is written in three places and the three must not drift: a configured
+    rate limit (`FRD-405`), the bound on failed authentications (`ADR-0015`), and a throttling
+    suspension (`FRD-503`). The last of those is the reason this exists — it was building its own
+    object with the *wrong shape entirely*, and nothing compared the two because the seam between
+    them runs through the untyped ``app.state``.
+
+    ``burst`` is the bucket's size. Unset means the limit itself, so a plain "60 per minute"
+    behaves the way somebody reading it expects rather than allowing nothing through at once.
+    """
+    rate = max(MINIMUM_RPM, limit_rpm)
+    return BucketRequest(
+        key=key,
+        capacity=burst if burst and burst > 0 else rate,
+        refill_per_second=rate / 60,
+        label=label,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class BucketDecision:
     """Whether the request may proceed, how long until it could, and which bucket refused."""

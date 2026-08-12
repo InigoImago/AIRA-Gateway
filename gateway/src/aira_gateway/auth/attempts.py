@@ -32,8 +32,11 @@ from fastapi import Request
 
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.persistence.recorder import client_ip
-from aira_gateway.ratelimit.buckets import BucketRequest
+from aira_gateway.ratelimit.buckets import per_minute
+from aira_gateway.state import settings_of
 
+#: The bound is expressed per minute, which is what :func:`per_minute` builds. Kept as a name
+#: because the docstring above and the setting's own comment both say "per minute".
 WINDOW_SECONDS = 60.0
 
 
@@ -44,7 +47,7 @@ async def record_failed_authentication(request: Request) -> None:
     credential was not judged, the caller is being asked to slow down — and it does not tell a
     prober whether the credential they just tried was closer than the last one.
     """
-    settings = request.app.state.settings
+    settings = settings_of(request)
     limit = int(getattr(settings, "max_auth_failures_per_minute", 0) or 0)
     if limit <= 0:
         return
@@ -55,14 +58,7 @@ async def record_failed_authentication(request: Request) -> None:
 
     source = client_ip(request) or "unknown"
     decision = await bucket.take(
-        [
-            BucketRequest(
-                key=f"authfail:{source}",
-                capacity=limit,
-                refill_per_second=limit / WINDOW_SECONDS,
-                label="authentication failures",
-            )
-        ]
+        [per_minute(f"authfail:{source}", limit, label="authentication failures")]
     )
     if decision.allowed:
         return

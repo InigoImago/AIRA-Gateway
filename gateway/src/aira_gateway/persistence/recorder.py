@@ -18,6 +18,7 @@ from aira_common.observability import set_span_attributes, trace_context_fields
 from aira_gateway.audit import Outcome, was_flagged
 from aira_gateway.core.canonical import CanonicalUsage
 from aira_gateway.persistence.writer import PendingLog
+from aira_gateway.state import settings_of, writer_of
 
 
 def client_ip(request: Request) -> str | None:
@@ -40,7 +41,7 @@ def client_ip(request: Request) -> str | None:
     ignored in favour of the socket peer. That is the safe direction: an unspoofable address that
     is merely the proxy's beats a spoofable one that claims to be the client's.
     """
-    settings = request.app.state.settings
+    settings = settings_of(request)
     if settings.trust_forwarded_for:
         forwarded = request.headers.get("x-forwarded-for")
         if forwarded:
@@ -128,7 +129,7 @@ async def record_request(
         }
     )
 
-    await request.app.state.log_writer.submit(
+    await writer_of(request).submit(
         PendingLog(
             subject=attribution.subject,
             auth_method=attribution.method,
