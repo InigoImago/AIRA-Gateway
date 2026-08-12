@@ -45,7 +45,17 @@ class _Classifier:
 
 def _app(*providers: object):  # noqa: ANN202
     # Demo mode seeds the deterministic demo key so the authenticated calls below have one.
-    app = create_app(GatewaySettings(auth_required=True, demo_mode=True))
+    # `log_queue_size=0` writes the audit row **on** the request path, which the cases that read
+    # `request_logs` need: `FRD-405` moved that write off it, so a row is merely *queued* when the
+    # response returns, and those assertions raced it — winning on an idle machine and losing the
+    # first time one was busy with a container build.
+    #
+    # Not `log_writer.drain()`, which was the first repair and was worse than the defect it fixed:
+    # `TestClient` runs the application in its **own event loop** on another thread, so awaiting
+    # that queue from the test's loop waits for a wake-up that cannot arrive. A flake became a
+    # **hang**, which is the failure that reports nothing at all — the whole suite sat at 58% for
+    # forty minutes before anybody looked.
+    app = create_app(GatewaySettings(auth_required=True, demo_mode=True, log_queue_size=0))
     if providers:
         registry = ProviderRegistry(list(providers))
         app.state.providers = registry
