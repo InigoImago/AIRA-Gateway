@@ -238,6 +238,37 @@ trail comes to name two people who are one.
 Verified by deleting every `OidcIdentity` row — which is precisely "nobody has logged in yet" —
 and logging in as all five demo roles: **clean, every one**.
 
+### The question that had not been asked: no model downloaded
+
+Asked directly, and the honest answer was no — both from-scratch runs above kept the model volume
+deliberately, so the one step never exercised was the **pull**. Run for real, from a machine with
+no volumes, no images and no weights: **`served 0, refused 11`**, every one a 401.
+
+**The seed died when no model was present.** Ollama answers `{"data": null}` while it serves
+nothing — the state on a first run, mid-pull — and `payload.get("data", [])` defaults only when the
+key is *absent*, so `_served_models` raised `TypeError: 'NoneType' object is not iterable` and took
+the whole seed with it: no accounts, no use cases, no keys. What it broke is the mechanism written
+to answer *"which models are really there"* with **evidence instead of ordering**, and it crashed
+in the single case that mechanism exists for. *Absent and empty are different answers* — here,
+between absent and **null**.
+
+**And `make showcase` waited for the wrong thing.** `wait-healthy` checks four HTTP endpoints;
+none says anything about the seed, and the seed waits on the pull. Then it slept six seconds "for
+the read model to catch up", which is not a statement about anything. With the model already
+present the pull returns at once and everything fits inside those six seconds — so it worked for
+everyone who had run it before and broke for exactly the person the target is for. The **fourth**
+instance of that shape here, after a pulled image, a Vault path and a Keycloak realm.
+
+The repair waits for the pull, seeds again against what the pull produced, and then waits on the
+condition the traffic is about to test. **The first version of that condition was wrong in an
+instructive way**: it asked whether the model appears in `/v1beta/models`, which reports what the
+*registry* serves — populated from startup whether or not anybody catalogued anything. It went
+green and the traffic answered `400 not in the model catalog` eleven times, with the catalog
+arriving over Kafka seconds later. It asks `airaDeclared` now.
+
+Three destroy-and-rebuild runs, the last with no weights at all: **`served 10, refused 1, failed
+0`**, zero error lines.
+
 ### Where it was left
 
 `make showcase` from a destroyed stack, twice: **`served 10, refused 1, failed 0`**, zero error
