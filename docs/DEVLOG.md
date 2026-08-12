@@ -5,6 +5,270 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-11 — A code-quality and security review, and the verb nobody had pointed the controls at
+
+A read of the whole codebase for quality and safety, with the brief that **no functionality
+changes**. Three defects, and the first one makes that brief interesting: fixing it *removes*
+answers the gateway was giving. They were answers it was never supposed to give.
+
+**1. `:streamGenerateContent` asked none of the dispatch conditions.** The non-streaming branch
+goes through `dispatch_with_fallback`, which is where `ADR-0012` §3's conditions live; the
+streaming branch called `provider.stream_generate(...)` directly. Measured against the hermetic
+app — each of these refused by name on `:generateContent` and **served with a 200** on the
+streaming verb:
+
+    a model no Global Administrator approved (`FRD-307`)      → 200, served
+    a model the use case was never released (`FRD-308`)       → 200, served
+
+Residency (`FRD-115`), media types (`FRD-110`), tools, thinking and schemas travel through that
+same mechanism, so all of them were bypassed with it — on the verb **every chat client and every
+coding assistant uses**. The `:embedContent` bypass of `FRD-405`, one verb over, and the same
+lesson: *a control belongs on the path every branch takes, not inside one of them.*
+
+Its second half is about evidence rather than authorisation. The adapter was resolved from the
+model the **caller named**, before the pipeline had run — so a `model_route` step re-targeting a
+request sent it to the first model's machine under the second model's name. Measured: an answer
+produced by server A, recorded and priced as having come from server B, which is exactly the claim
+`FRD-115` exists to make checkable.
+
+`serving.resolve_stream_target` now asks the same `permits` the chain asks and resolves the adapter
+from the routed model, **before** the response exists, so the refusal carries a status the caller
+can read. Deliberately **conditions only, no chain**: a stream still cannot fall back, because once
+the first chunk is on the wire the status is 200 and the answer has begun. That remaining gap is
+recorded rather than closed — a fallback for streams is a feature, not a repair.
+
+**2. A `throttle` suspension was a 500.** `SuspensionService.check` returns `Throttle`;
+`RateLimitService.check` consumes `BucketRequest`; `guard_before_work` passed the first straight
+into the second, and they share no field the limiter reads. Every request from a throttled caller
+raised `AttributeError` — while the console showed the decision as active and enforcing.
+`FRD-125`'s badge-wearing absent control, in the incident-response half.
+
+**Nothing could see it.** mypy could not: the two services meet through `app.state`, which is
+untyped, so all 76 calls across that seam are unchecked. The tests could not either, and that is
+the instructive half — `test_suspensions.py` asserts the throttle carries `limit_rpm == 5` and
+**stops exactly at the seam**. Two correct halves and no wire, after `record_to_outbox`, the
+missing Kafka topics, `payload_size` and the unannounced catalog. The repair is `per_minute()`,
+one reading of "n requests per minute as a bucket" now shared by all three callers (a configured
+limit, the failed-authentication bound, a throttle), plus **annotated locals** at the gate — the
+idiom `enforce_pre_dispatch` already uses one function above, with the comment saying why.
+
+**3. The two failure responses that answer without reaching a route carried no security headers.**
+A 413 refused on its declared size, and a 500. No `nosniff`, no `no-store`, no trace id — on
+exactly the pair `TraceIdMiddleware` names in its own docstring as its reason for existing
+(*"the requests that most need correlating are the ones that went wrong"*). Two causes: the body
+limit was mounted *outside* the header middleware (the ordering argument for that was sound and
+the conclusion wrong — the ceiling wraps `receive`, and nothing above it calls `receive`), and the
+500 is written past the entire user middleware stack by `ServerErrorMiddleware` and can only be
+headered by the handler itself.
+
+**Also removed: `realm_roles()`**, unreachable since `ADR-0017` (2026-08-09) made group membership
+the single source of a role. Only its own tests still called it, and they asserted on
+`use-case-user` — a role abolished the day before. An unreachable helper is a rule the code claims
+and does not have, and its four tests reported green about nothing.
+
+### Then the class, not the instances
+
+Fixing three defects one at a time is what produces a fourth, so both root causes got a structural
+answer — and **each one found something within minutes of being written**, which is the only
+evidence that a guard is worth having.
+
+**`test_every_dispatch_applies_the_conditions.py`** parses the source, finds every call that can
+reach a model, and requires it to sit inside `dispatch_with_fallback` or `resolve_direct_target` —
+or on a written list with a reason. Two findings on its first run:
+
+- **it caught the fix above.** `resolve_stream_target` was called in `_generate` and the dispatch
+  happened in a closure inside `_stream_response`, so the check and the call were in different
+  functions and only a human knew they belonged together. `_stream_response` resolves its own
+  adapter now: getting something to call and being allowed to call it are one act.
+- **`:embedContent` had the identical hole**, and nobody had looked. An embedding has no chain
+  either — a vector from a second model is not a substitute for the first — so nobody wrote one,
+  and the conditions went with it. Measured: an unapproved and an unreleased model, both **200**,
+  on both surfaces. The literal `:embedContent` bypass for the **third** time in this codebase's
+  history, which is what makes it a class rather than a mistake.
+
+The guard that already existed is the sharpest part of this. `test_every_model_call_is_accounted`
+parses the same call sites and already **names** `api/gemini/routes.py:stream_generate`, with a
+justification vouching for attribution, billing and recording — all true. Nobody had asked whether
+the candidate was *allowed*. **A list is only as good as the property it is a list about.**
+
+**`aira_gateway/state.py` + `test_app_state_is_typed.py`** close the second cause. Every service
+read off `app.state` is now annotated or goes through an accessor, and the effect was verified
+rather than assumed: reintroducing the throttle defect now fails the **build**, before a test runs —
+
+    error: Argument "extra" to "check" of "RateLimitService" has incompatible type
+    "list[Throttle]"; expected "Sequence[BucketRequest]"
+
+The idiom was already here, applied twice (`registry_of`, `catalog_of`) with a comment saying
+exactly why; what was missing was finishing the thought across the other eighteen attributes. The
+guard's first run found the one service read left unannotated.
+
+`QA1`–`QA9`. `QA1` reported **STALE** an hour after being written, because generalising the helper
+from streams to every chainless verb moved its anchor — `N2`'s lesson working as built, and a
+reminder that a mutation defending moved code reports green about nothing.
+
+### Three smaller things, and one assumption made checkable
+
+- **`stop()` could hang on the promise it makes.** `RequestLogWriter.stop()` says *"a redeploy must
+  not discard pending audit rows"* and kept that by waiting on `_queue.join()` — which returns only
+  when the worker marks every entry done. If the worker is gone, that waits for a signal nobody
+  will send: shutdown hangs, the orchestrator sends `SIGKILL`, and the whole queue is discarded by
+  the call whose purpose is not to discard it. **The failure mode is the exact inverse of the
+  guarantee.** The drain now races the worker, and what is still queued is written here instead.
+  Both new cases *hung* against the old code rather than failing, so they carry a timeout — a test
+  that hangs reports nothing at all.
+- **`VaultClient` never closed the pool it opened.** Small and lasting: secrets are read once at
+  startup, so the socket is used twice and held forever. Closed in a `finally`, so a failed login
+  releases it too — a process on its way down should not be the one holding an open connection to
+  a secret store.
+- **Twenty `assert`s in production code, and no check that they survive.** `python -O` removes all
+  of them, including the one whose own comment says it is what keeps two people's budget counters
+  apart. No image sets it today — which is the point: that is an *assumption*, and
+  `tools/tests/test_assertions_are_not_optimised_away.py` makes it a checked one, so switching the
+  optimiser on becomes a decision somebody has to take deliberately rather than a base image doing
+  it quietly. Deliberately **not** a rewrite of the twenty: turning type narrowing into `if …
+  raise` adds branches no test can reach and no reader benefits from.
+
+**Reported, not changed** — each would alter behaviour, and this pass was asked not to:
+
+- a **stream has no fallback chain**. `prepared.fallbacks` is ignored on that path, so a use case
+  with a chain gets one everywhere except the verb its clients use. Now that the conditions are
+  applied, an unqualified primary is *refused* where a chain would have moved on. Closing it is a
+  feature.
+- the **KIRA surface's 500 answers in the AIRA envelope**, while its routing and validation errors
+  correctly answer in KIRA's. Consistent with neither, and changing a response body is a contract
+  change.
+
+### The demo, rebuilt from nothing — and the three things that only that finds
+
+Ahead of a stakeholder walkthrough, the whole stack was destroyed (app images deleted, Postgres
+and Kafka volumes removed; the model weights kept, because tomorrow runs on this machine) and
+`make showcase` was run from empty. Three defects, none of which any suite could have reported.
+
+**1. The console showed a blank page when Keycloak was down.** `AuthService.init()` runs in an app
+initialiser, and a rejected initialiser makes `bootstrapApplication` reject — so an unreachable
+identity provider produced a **completely white page** with a `200` from the web server. A reader
+cannot tell *"the login service is down"* from *"this application is broken"*, and they report the
+second: it cost an afternoon when the stack's infrastructure crashed. The failure is now recorded
+rather than thrown, the shell renders a panel **naming the issuer** (a *misdirected* console fails
+identically to an unreachable one, and the two need different people), and the guard no longer
+starts a login it knows cannot complete — that navigation would take away the only explanation the
+console can still give.
+
+**2. The demo was breaking the governance rule it exists to demonstrate.** The first clean run
+reported **"served 9, refused 2"** where its own record says ten and one. The extra refusal was an
+embedding batch sent as `entwicklung` — the use case the seed deliberately narrows to the chat
+model, to show `FRD-308`. It had been wrong for as long as both existed, and was invisible because
+`:embedContent` reached the provider **without the release being consulted at all**. Applying the
+control made the seed's own contradiction the first thing a walkthrough would have seen. Fixed in
+the *traffic*, not the seed: releasing everything to `entwicklung` would also have made it green
+and would have deleted the decision the use case exists to show — a fix that removes the feature
+it was protecting. `tools/tests/test_the_demo_asks_only_what_it_allows.py` now reads both files and
+fails if they disagree again, because a stakeholder walkthrough is the worst place to find out.
+
+**3. A `500` on the first screen a walkthrough opens.** Clicking any use case as `admin` returned
+`500` from `/v1beta/usage/<slug>`: `BudgetService.usage()` passed **the reader** as the caller for
+every budget row, so a `member` row naming anybody else resolved to no scope and `_scope_key`'s
+assertion fired. A regression from the per-head scope work earlier the same day (`744337f`), and
+the distinction it missed is the whole point of that feature: `each_member` is one counter *per
+reader* and depends on who is asking; a `member` row **names its own subject** and does not. The
+assertion was right to exist — it is an invariant of the *reservation* path — and asking a reading
+question in the reservation's vocabulary is what turned a legitimate view into a 500.
+
+After the fixes, from an empty machine: **`served 10, refused 1, failed 0`**, all five demo roles
+log in with role-correct navigation and **no console errors**, and all ten screens — including
+every use-case detail — render clean.
+
+### Two more, from running the integration suite against a real database
+
+The hermetic suite runs on SQLite, and **SQLite enforces neither NUL bytes nor column lengths**.
+Both of these are therefore invisible to it, and both are reachable by anyone who can send a
+request — the model name and the method come straight out of the URL.
+
+    POST /v1beta/models/mock-1%00:generateContent        → psycopg.DataError → **500**
+    POST /v1beta/models/aaa…(300 chars):generateContent  → the refusal's audit row is **lost**
+
+The first breaks the rule the 174-edge-case round established: a caller's mistake is answered with
+an actionable status, never with our error. The second is quieter and worse — the request *was*
+correctly refused with a 404, and the row recording that refusal failed to insert, so `FRD-122`'s
+*"the log records what was asked"* was broken by the very row meant to satisfy it.
+
+Two fixes, because they are two problems. `catalog.is_lookupable` refuses the **lookup**: a name no
+column can hold cannot name a declared model, so there is nothing to ask the database — and
+answering before the query stops the reply depending on which database is behind it.
+`persistence.service._fits` bounds the **row**: control characters removed, then cut to the column,
+in that order, so the width is counted in characters that will survive. Sanitising rather than
+refusing, because a slightly less faithful row is worth incomparably more than no row.
+
+**The first fix did not reach the second problem, and only a measurement found that.** Refusing the
+lookup stopped the 500 — and the audit row still carried the NUL into `request_logs.model`, so the
+refusal stayed unrecorded. Verified against the running stack, before and after:
+`request_log_write_failed` in the log, then the row present with `outcome = model_not_found`.
+`operation` is bounded too: `String(64)`, also chosen by the caller, and a bound applied to one
+half of `model:method` and not the other is the same defect with a different column name.
+
+**The other thirteen integration failures are environment, not regression**, and saying which is
+which is the point: the suite expects a stack whose OpenAI server is named `gpu-b` (this one names
+it `local`), whose `qwen2.5:3b` is pulled (it is not here), and which predates two decisions made
+earlier the same day — `AIRA_REQUIRE_USE_CASE` defaulting to true, and `FRD-308` requiring an
+explicit release. A test asserting a release refusal against a stack where the **mock is
+registered** cannot pass either: the mock is a declared test double and is exempt by design.
+
+### And the one that would have hit every stakeholder in the room
+
+A final browser pass over the freshly seeded stack — the state a demonstration actually starts
+from — returned **`500` on `/api/v1/use-cases/?page=1`**, the first screen after logging in:
+
+    django.db.utils.IntegrityError: duplicate key value violates unique constraint
+    "api_oidcidentity_subject_key"
+
+**The first request from a new person is more than one request.** The console loads `/api/v1/me`
+and `/api/v1/use-cases/` at the same moment, so two requests carrying the same brand-new `sub`
+arrive together: both find no identity, both create one, and the second loses. It is therefore a
+**500 on every user's first login**, and it had been there since `ADR-0007` bound users to the
+`sub`. Nothing had caught it because every earlier walkthrough logged in as somebody the previous
+walkthrough had already provisioned — the defect is invisible from the second login onward.
+
+`transaction.atomic` never prevented it and was never going to: it makes each attempt atomic, not
+exclusive, and the two attempts are on different connections. The fix is the one the race calls
+for — **lose gracefully**: whoever arrives second re-reads and uses the row the winner wrote, in
+its own savepoint so the failed INSERT does not poison the surrounding transaction. A genuine
+constraint failure still raises, because inventing a second account for one person is how an audit
+trail comes to name two people who are one.
+
+Verified by deleting every `OidcIdentity` row — which is precisely "nobody has logged in yet" —
+and logging in as all five demo roles: **clean, every one**.
+
+### Where it was left
+
+`make showcase` from a destroyed stack, twice: **`served 10, refused 1, failed 0`**, zero error
+lines. Five roles, first login and after, across every screen: **no console errors, no 5xx**. Five
+use cases and no test residue. The unit suite, the frontend suite (733), ruff, mypy and the
+mutation harness all green.
+
+One test was repaired rather than its subject: `test_a_dry_run_records_and_bills_what_it_spent`
+read `request_logs` immediately after the response, and `FRD-405` moved that write **off** the
+request path — so it won a race it was never guaranteed to win, and lost it the first time the
+machine was busy with a container build. *A test that passes only on an idle machine reports on
+the machine.*
+
+**And the first repair for it was worse than the defect**, which is worth writing down because it
+is the same shape as everything above. `log_writer.drain()` looks exactly right — it is the method
+that exists for this — and `TestClient` runs the application in its **own event loop on another
+thread**, so awaiting that queue from the test's loop waits for a wake-up that cannot arrive. A
+flake became a **hang**: the suite sat at 58 % for forty minutes, and a hang reports nothing at
+all, where a flake at least reports something. `log_queue_size=0` — writing on the request path,
+which is what the rest of the suite does for cases that read the row — is deterministic and was
+run three times to say so.
+
+`QA1`–`QA6`, each observed to fail before its fix was written. One existing test needed a change
+and it is not a weakening: `test_hardening.py`'s failing stream stand-in was not marked
+`is_test_double`, which it had got away with **because the streaming verb asked no conditions at
+all** — the omission could not show while the hole was open.
+
+Nothing else about what the platform does changed.
+
+---
+
 ## 2026-08-11 — A staircase, and the three guards that could not see it
 
 Reported from the running console: on a use case's **Members** tab, "Grant access to" and "As" do

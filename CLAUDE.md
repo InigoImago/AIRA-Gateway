@@ -43,7 +43,7 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
   inevitably do when both were written from the same mental model — and line coverage cannot see
   a *missing requirement*: on 2026-08-05 a review found seven real defects behind a green suite at
   99% coverage. So: **prove a test can fail.** Break the property, watch it go red, restore.
-  `make mutants` (`tools/mutation_check.py`) does this for **376 properties** across auth, budgets,
+  `make mutants` (`tools/mutation_check.py`) does this for **385 properties** across auth, budgets,
   pipeline, retention, the management control plane and the gateway's counters; when
   you fix a bug, add the mutation that reintroduces it. Two traps that cost real defects here:
   a stand-in that is more permissive than the thing it replaces (reuse the real method where you
@@ -1550,6 +1550,58 @@ express "two credentials disagree", and the browser suite authenticates with an 
 is the half that always worked; it lives in `tests/integration/`, where a real token carries a `sub`
 that differs from the typed name. Route asserted apart from the rule (`FRD-124`), proved by cutting
 the one line that hands the name over. `S10`, `S11`; `S1` re-anchored.
+
+**A quality and security review of the whole code (2026-08-11)** — brief: no functionality
+changes. Three defects, all one shape — *a rule the code claims and does not have* — and the first
+makes the brief interesting, because fixing it **removes answers the gateway was giving**.
+**`:streamGenerateContent` asked none of the dispatch conditions.** The non-streaming branch goes
+through `dispatch_with_fallback`, where `ADR-0012` §3's conditions live; the streaming branch
+called `provider.stream_generate(...)` directly. Measured: an **unapproved** model (`FRD-307`) and
+one the use case was never **released** (`FRD-308`) were each refused by name on `:generateContent`
+and **served with a 200** on the streaming verb — and residency (`FRD-115`), media types
+(`FRD-110`), tools, thinking and schemas ride the same mechanism, so all of them went with it, on
+the verb every chat client and every coding assistant uses. The `:embedContent` bypass one verb
+over. Its second half is evidence rather than authorisation: the adapter was resolved from the
+model the **caller named**, before the pipeline ran, so a `model_route` step sent the request to
+machine A and recorded it as B. `resolve_stream_target` asks the same `permits` and resolves from
+the routed model, **before the response exists** so the refusal carries a status.
+**Conditions only, no chain** — a stream still cannot fall back once a chunk is on the wire, and
+that remaining gap is recorded rather than closed, because a fallback for streams is a feature.
+**A `throttle` suspension was a 500**: `check` returns `Throttle`, the limiter consumes
+`BucketRequest`, and the gate passed one into the other. mypy could not see it — the two services
+meet through the untyped `app.state`, **76 unchecked calls** — and neither could the suite, whose
+`test_suspensions.py` asserts `limit_rpm == 5` and **stops exactly at the seam**. Fifth instance of
+*two correct halves and no wire*. `per_minute()` is now the one reading of "n per minute as a
+bucket" for all three callers, and the gate's locals are **annotated**, which is the idiom
+`enforce_pre_dispatch` already uses one function above. And **the two responses that answer without
+reaching a route carried no security headers** (a 413 on declared size, a 500): the body limit was
+mounted *outside* the header middleware — that ordering argument was sound and its conclusion wrong,
+since the ceiling wraps `receive` and nothing above it calls `receive` — while a 500 is written past
+the whole user stack by `ServerErrorMiddleware` and can only be headered by the handler. Also
+removed: **`realm_roles()`**, unreachable since `ADR-0017`, whose four surviving tests asserted on a
+role abolished the day before. One existing test changed and it is not a weakening: its stream
+stand-in was unmarked as a test double and got away with it **because the verb asked no conditions
+at all**.
+**Then the class rather than the instances**, and each guard found something within minutes of
+being written — which is the only evidence that one is worth having.
+`test_every_dispatch_applies_the_conditions.py` parses the source and requires every call that can
+reach a model to sit inside `dispatch_with_fallback` or `resolve_direct_target`, or on a written
+list with a reason. It **caught the fix above** (the gate was in `_generate`, the dispatch in a
+closure inside `_stream_response`, so only a human knew they belonged together — `_stream_response`
+resolves its own adapter now, because getting something to call and being allowed to call it are
+one act), and it found that **`:embedContent` had the identical hole**: no chain, so no conditions,
+measured at 200 for an unapproved *and* an unreleased model on **both** surfaces. That is the
+literal `:embedContent` bypass for the **third** time, which is what makes it a class. The sharpest
+part: `test_every_model_call_is_accounted` already **names** that streaming call site and vouches
+for attribution, billing and recording — all true, and nobody had asked whether the candidate was
+*allowed*. **A list is only as good as the property it is a list about.**
+`aira_gateway/state.py` + `test_app_state_is_typed.py` close the other cause: every service read
+off `app.state` is annotated or goes through an accessor, and the effect was **verified, not
+assumed** — reintroducing the throttle defect now fails the *build* (`incompatible type
+"list[Throttle]"; expected "Sequence[BucketRequest]"`). The idiom was already here, applied twice
+with a comment saying why; what was missing was finishing it across the other eighteen attributes.
+`QA1`–`QA9`, each shown to fail first; `QA1` reported **STALE** an hour after being written because
+generalising the helper moved its anchor — `N2` working as built.
 
 Next candidates: **`FRD-114`** (model metadata — now also carries publisher + default output cap,
 prerequisite for 110–113 and 119), **`FRD-110`** (documents/images — the widest gap),
