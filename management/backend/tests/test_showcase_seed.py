@@ -471,3 +471,62 @@ def test_what_it_releases_travels_to_the_gateway(seeded) -> None:
             m.name for m in UseCase.objects.get(slug=payload["slug"]).allowed_models.all()
         )
         assert payload["allowed_models"] == expected, payload["slug"]
+
+
+# == what the endpoint answers while it is still pulling (found from an empty machine) ============
+
+
+def test_a_listing_with_a_null_data_field_is_no_models_rather_than_a_crash(monkeypatch) -> None:
+    """Ollama answers `{"data": null}` while it serves nothing — which is exactly the state on a
+    first run, mid-pull.
+
+    `payload.get("data", [])` defaults only when the key is **absent**, so this raised
+    `TypeError: 'NoneType' object is not iterable` and took the whole seed down: no demo accounts,
+    no use cases, no API keys — and `make showcase` drove traffic anyway and met eleven 401s.
+    Measured on 2026-08-12 from a machine with no model downloaded, which is the machine this
+    target exists for.
+
+    The mechanism it broke is the one written to answer *"which models are really there"* with
+    evidence instead of with ordering (`docker-compose.apps.yml`), and it crashed in the single
+    case it exists for. *Absent and empty are different answers* — here, between absent and null.
+    """
+    import io
+    import json
+    from contextlib import contextmanager
+
+    from aira_management.apps.seed.contributions import local_models
+
+    @contextmanager
+    def _answering(payload: dict[str, object]):
+        yield io.BytesIO(json.dumps(payload).encode())
+
+    monkeypatch.setattr(local_models, "_local_endpoint", lambda: "http://ollama:11434")
+    monkeypatch.setattr(
+        local_models.urllib.request, "urlopen", lambda *a, **k: _answering({"data": None})
+    )
+
+    # An answer, and the answer is "none" — not an exception, and not `None`, which this function
+    # reserves for "the endpoint could not be reached at all".
+    assert local_models._served_models() == set()
+
+
+def test_a_listing_that_names_models_is_still_read(monkeypatch) -> None:
+    """The guard against fixing the crash by returning nothing in every case."""
+    import io
+    import json
+    from contextlib import contextmanager
+
+    from aira_management.apps.seed.contributions import local_models
+
+    @contextmanager
+    def _answering(payload: dict[str, object]):
+        yield io.BytesIO(json.dumps(payload).encode())
+
+    monkeypatch.setattr(local_models, "_local_endpoint", lambda: "http://ollama:11434")
+    monkeypatch.setattr(
+        local_models.urllib.request,
+        "urlopen",
+        lambda *a, **k: _answering({"data": [{"id": "qwen3:0.6b"}, {"id": "all-minilm"}]}),
+    )
+
+    assert local_models._served_models() == {"qwen3:0.6b", "all-minilm:latest"}

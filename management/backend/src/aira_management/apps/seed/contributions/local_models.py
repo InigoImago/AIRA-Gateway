@@ -185,7 +185,16 @@ def _served_models(timeout: float = 5.0) -> set[str] | None:
             payload = json.loads(response.read())
     except Exception:  # noqa: BLE001 - unreachable is an answer, and it is "do not declare"
         return None
-    return {_tagged(entry["id"]) for entry in payload.get("data", []) if entry.get("id")}
+    # `or []`, not a default argument. A default only applies when the key is **absent**, and this
+    # endpoint answers `{"data": null}` while it serves nothing — which is precisely the state on a
+    # first run, mid-pull. `payload.get("data", [])` therefore returned `None` and this line raised
+    # `TypeError: 'NoneType' object is not iterable`, taking the whole seed down with it: no demo
+    # accounts, no use cases, no keys, and eleven 401s from traffic that ran anyway.
+    #
+    # The mechanism above is written to answer "which models are really there" with evidence, and
+    # it crashed in the one case it exists for. *Absent and empty are different answers* — this
+    # project's own rule, here between absent and **null**.
+    return {_tagged(entry["id"]) for entry in payload.get("data") or [] if entry.get("id")}
 
 
 def _tagged(model: str) -> str:

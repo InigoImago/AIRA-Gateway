@@ -56,8 +56,26 @@ showcase: env ## Start the full demo: stack, local model, seeded roles/budgets, 
 	@# longer, the one URL the walkthrough starts at answered nothing. Two ideas of "ready", and the
 	@# weaker one was the one this target used.
 	@$(MAKE) --no-print-directory wait-healthy
-	@echo "==> giving the read model a moment to catch up with the seeded config"
-	@sleep 6
+	@# The seed deliberately waits only for the pull to **start** (`docker-compose.apps.yml` says
+	@# why: a blocked registry must not cost the accounts, use cases and budgets that have nothing
+	@# to do with models). Its companion rule is that it catalogues only models the endpoint really
+	@# serves. On a **first** run those two combine into a demo with no models in it — correct by
+	@# both rules and not a demo — so the pull is waited for here and the seed, which is
+	@# idempotent, runs once more against what the pull actually produced.
+	@echo "==> waiting for the model pull to finish"
+	@for i in $$(seq 1 300); do \
+		s=$$(docker inspect -f '{{.State.Status}}' aira-ollama-pull 2>/dev/null || echo gone); \
+		[ "$$s" = "running" ] || break; \
+		sleep 3; \
+	done
+	@echo "==> seeding again, now that the models are on disk"
+	@$(COMPOSE_FULL) --profile demo run --rm --no-deps management-seed >/dev/null
+	@# **Not a sleep.** This waited six seconds "for the read model to catch up", which is not a
+	@# statement about anything. `demo_wait_ready.py` asks the question the traffic is about to
+	@# ask: will the gateway accept a demo credential and serve the demo's model? That is true
+	@# only when the pull, the seed, the relay, Kafka and the consumer have all done their work.
+	@echo "==> waiting until the gateway accepts the demo's credentials and model"
+	uv run python tools/demo_wait_ready.py
 	@echo "==> clearing what earlier runs consumed, so this run tells its own story"
 	@-uv run python tools/demo_reset_usage.py
 	@echo "==> driving real traffic so the reports are not empty"
