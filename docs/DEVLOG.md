@@ -5,6 +5,56 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-12 — A text part carries text, and the compatibility scope is settled
+
+A second static comparison against the predecessor produced a longer list. Most of it is
+deliberate and stays; one item was a defect of ours, and it is worse than the report described.
+
+**`str(...)` on a text part converted anything.** `parts` is a list of plain dicts so that a part
+can be text *or* an attachment, and the mapper handed whatever arrived to `str`. Measured:
+
+    {"text": null}      → the model was asked about the word  "None"
+    {"text": 123}       → "123"
+    {"text": true}      → "True"
+    {"text": {"a": 1}}  → "{'a': 1}"      a Python repr, on the wire
+
+No error at any point. A caller sending a null gets a fluent answer to a question nobody asked,
+with a 200, and blames the model. That is `FRD-124`'s rule broken in our own code — a value
+silently transformed is worse than one refused, because only the refusal is visible — and the
+same family as the missing newline found the day before. The type is checked where the request is
+**parsed** (`RequestContent`), not in the mapper: a surface parses and the layer decides, and one
+place that can refuse beats two that can disagree. The refusal names the part index and what was
+sent, and the caller's value never comes back out in `details` — this body reaches logs and
+screens, and echoing content is how a refusal becomes a second copy of the thing refused.
+
+That the predecessor types the field as a string and rejects the rest is a coincidence here. The
+fix would be right against any predecessor.
+
+**Scope settled by the owner, so the remaining items are decisions rather than debt.** Model ids
+stay as they are — the receiving project adapts, and `FRD-114`'s numeric alias means an operator
+*can* assign the predecessor's ids where that is wanted. Error messages stay **English**
+throughout, whatever the predecessor does. Error codes and statuses stay **more specific** than
+the predecessor's, which is a deliberate divergence: a client switching on `code` sees the same
+strings for everything the predecessor can produce, and the extra ones name cases it never had.
+SSE keepalive is deferred, on purpose, with the question written down.
+
+Everything else the report listed is already recorded as deliberate: `GET /models` behind
+authentication, `extra="forbid"` (reversing it recreates the defect where eleven fields returned
+200 and did nothing), the attachment signature check, the schema bounds, and cached health probes
+(`FRD-117`: a health check must not be able to take down a healthy service — the *shape* became
+the predecessor's yesterday, the semantics are deliberately ours). One listed difference is not
+one: we normalise embedding task types to upper case where the predecessor is case-sensitive, so
+we are the *more* permissive of the two and no working client can notice.
+
+**`/version-info` stays open**, and is the same class as `/health` was: we answer a partial object
+without `jenkins`, where the predecessor's DTO is all-fields-or-null. Which of the two repairs is
+right depends on whether that field is nullable there, which is a question for the predecessor's
+source rather than a guess here.
+
+`QA24`; **400 properties**.
+
+---
+
 ## 2026-08-12 — A static comparison against the predecessor, and the SDK that had never been asked
 
 A compatibility check read KIRA's own source against ours. Most of what it flagged is deliberate

@@ -56,6 +56,27 @@ class RequestContent(BaseModel):
                 raise ValueError(
                     f"parts[{index}]: a part carries either 'text' or 'mime_type' + 'data'"
                 )
+            # **A text part carries text.** `parts` is a list of plain dicts so that a part can be
+            # either kind, and the mapper used to hand whatever arrived to `str(...)`. Measured on
+            # 2026-08-12:
+            #
+            #     {"text": null}      → the model was asked about the word  "None"
+            #     {"text": 123}       → "123"
+            #     {"text": true}      → "True"
+            #     {"text": {"a": 1}}  → "{'a': 1}"      (a Python repr, on the wire)
+            #
+            # No error, a 200, and a fluent answer to a question nobody asked — the shape this
+            # project keeps paying for, and our own `FRD-124` rule broken in our own code: a value
+            # silently transformed is worse than one refused, because only the refusal is visible.
+            # The predecessor types this field as a string and rejects the rest, so refusing is
+            # also the *compatible* answer; that is a coincidence, and it would be right either
+            # way.
+            if has_text and not isinstance(part["text"], str):
+                raise ValueError(
+                    f"parts[{index}]: 'text' must be a string, not "
+                    f"{type(part['text']).__name__}. A non-string would be converted and the "
+                    "model would answer about the conversion."
+                )
         return self
 
 

@@ -3625,7 +3625,16 @@ MUTATIONS = [
         'if chunk.finish_reason else ""',
         GOOGLE_SDK,
     ),
+    Mutation(
+        "QA24",
+        "a non-string text part is refused, never converted into a prompt",
+        "gateway/src/aira_gateway/api/kira/schemas.py",
+        '            if has_text and not isinstance(part["text"], str):',
+        '            if has_text and not isinstance(part["text"], str | int | float | bool | type(None) | dict | list):',
+        WIRE_CONTRACT,
+    ),
 ]
+
 
 def _recover() -> None:
     """Put back whatever a previous run was holding when it died."""

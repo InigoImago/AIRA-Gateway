@@ -24,6 +24,7 @@ from collections.abc import Iterator
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from aira_gateway.api.kira import schemas
 from aira_gateway.api.kira.mapping import TEXT_PART_SEPARATOR, to_canonical
@@ -187,3 +188,69 @@ def test_an_attachment_keeps_the_prose_in_its_place() -> None:
     parts = to_canonical(request, "mock-1").messages[-1].parts
 
     assert [type(part).__name__ for part in parts] == ["TextPart", "DataPart", "TextPart"]
+
+
+# == a text part carries text, and nothing is converted on the way through =======================
+
+
+@pytest.mark.parametrize(
+    ("value", "would_have_become"),
+    [
+        pytest.param(None, "None", id="null"),
+        pytest.param(123, "123", id="number"),
+        pytest.param(True, "True", id="boolean"),
+        pytest.param({"a": 1}, "{'a': 1}", id="object"),
+        pytest.param(["a"], "['a']", id="array"),
+    ],
+)
+def test_a_non_string_text_is_refused_rather_than_converted(
+    value: object, would_have_become: str
+) -> None:
+    """The measurement that started this: `str(...)` in the mapper accepted anything.
+
+    `{"text": null}` asked the model about the word **"None"** and answered 200; an object became
+    a Python repr on the wire. No error at any point, which is what makes it expensive — a caller
+    reads a fluent answer to a question nobody asked and blames the model.
+
+    The refusal names the field and its type, because "validation failed" would send somebody
+    looking at the wrong part of a request that looks perfectly reasonable.
+    """
+    with pytest.raises(ValidationError) as raised:
+        schemas.RequestContent.model_validate({"parts": [{"text": value}]})
+
+    message = str(raised.value)
+    assert "must be a string" in message
+    assert type(value).__name__ in message, "the refusal must name what was sent"
+    # And the conversion is never offered as though it were the value: naming `"None"` as what we
+    # made of a null would read as a suggestion rather than as a refusal.
+    assert f"'{would_have_become}'" not in message.replace("input_value", "")
+
+
+def test_a_string_still_passes_untouched() -> None:
+    """The paired case. A check that refuses everything is not a stricter check, and an assertion
+    about a refusal is only defended by one that shows the accepted case still works."""
+    content = schemas.RequestContent.model_validate({"parts": [{"text": "123"}]})
+
+    assert content.parts[0]["text"] == "123"
+
+
+def test_the_refusal_reaches_the_caller_as_this_surfaces_envelope(client: TestClient) -> None:
+    """Asserted at the route as well as at the model (`FRD-124`'s lesson, twice over now): the
+    rule can be perfectly right in the schema and reach the caller as something else entirely."""
+    response = client.post(
+        f"{KIRA}/chat", json={"request": {"parts": [{"text": None}]}, "model_id": 9001}
+    )
+
+    assert response.status_code == 422, response.text
+    body = response.json()
+    assert "error" not in body
+    assert body["code"] == "VALIDATION_ERROR"
+    assert body["details"], "the predecessor's clients read `details` to find the field"
+    # `loc` names the field pydantic was validating; the part index rides in the message, which
+    # is how the neighbouring "either text or mime_type" rule already reports and what a
+    # migrating client's error display already handles.
+    assert body["details"][0]["loc"] == ["request"]
+    assert "parts[0]" in body["details"][0]["msg"], "the refusal must point at the part"
+    # The caller's own value never comes back out. It is their content, this body goes into logs
+    # and screens, and echoing it is how a refusal becomes a second copy of the thing refused.
+    assert "input" not in str(body["details"])

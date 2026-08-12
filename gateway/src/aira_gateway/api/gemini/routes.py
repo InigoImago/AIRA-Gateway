@@ -479,7 +479,8 @@ async def _stream_response(
                             final_usage = chunk.usage
                         streamed_calls.extend(call.name for call in chunk.tool_calls)
                         parts.append(chunk.text_delta)
-                        # `exclude_none`, so an unfinished chunk carries no `finishReason` at all rather than
+                        # `exclude_none`, so an unfinished chunk carries no `finishReason`
+                        # at all rather than
                         # a null or an empty string — which is what Google sends and what the SDK
                         # parses without complaint.
                         payload = _chunk_to_gemini(chunk, canonical.model).model_dump_json(

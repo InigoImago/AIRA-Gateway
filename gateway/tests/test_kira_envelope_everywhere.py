@@ -143,9 +143,9 @@ def test_every_kira_route_renders_this_surfaces_envelope() -> None:
     a `KiraError` must come back in the KIRA envelope. It cannot be satisfied by remembering, and
     a route added next year is covered the day it is written.
     """
-    from aira_gateway.api.kira.errors import KiraError
-
     from gateway.tests.test_every_route_is_guarded import _routes
+
+    from aira_gateway.api.kira.errors import KiraError
 
     app = create_app(GatewaySettings(auth_required=False, environment="local", log_queue_size=0))
     # Borrowed rather than rewritten: `include_router` keeps the router nested behind an

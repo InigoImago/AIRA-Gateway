@@ -31,7 +31,6 @@ from aira_gateway.core.schema import SchemaBounds
 from aira_gateway.core.schema import parse as parse_schema
 from aira_gateway.thinking import INVALID_THINKING_MODE, ThinkingRejected
 
-
 #: What the predecessor puts between two text parts of one message (`api_service.py`).
 #:
 #: It joins them and sends **one** string; this surface kept them as separate canonical parts,
@@ -65,7 +64,11 @@ def _parts(content: schemas.RequestContent, limits: Limits, offset: int) -> list
     for local, raw in enumerate(content.parts):
         index = offset + local
         if "text" in raw:
-            pending.append(str(raw["text"]))
+            # `str(...)` stood here and converted anything — a null into the word "None", a dict
+            # into a Python repr. The type is checked where the request is parsed
+            # (`RequestContent`), because a surface parses and the layer decides; this stays a
+            # plain read so there is one place that can refuse rather than two that can disagree.
+            pending.append(raw["text"])
             continue
         _flush()
         media_type = str(raw.get("mime_type") or raw.get("mimeType"))
