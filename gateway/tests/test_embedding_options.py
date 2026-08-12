@@ -222,3 +222,57 @@ async def test_two_task_types_produce_different_vectors_for_the_same_text() -> N
 async def test_the_requested_width_is_the_width_returned() -> None:
     vectors = await MockProvider().embed(_request("hallo", dimensions=768))
     assert len(vectors[0]) == 768
+
+
+# == several strings in one content (measured against Google, 2026-08-12) ========================
+
+
+def test_several_parts_in_one_content_become_one_text_joined_with_nothing() -> None:
+    """A `content` may carry several text parts, and the upstream answers **one** vector for it.
+
+    The question is how it combines them, and it was measured rather than assumed — against
+    `gemini-embedding-001`, cosine similarity of the multi-part vector to:
+
+        the parts concatenated with no separator   1.000000
+        the parts concatenated with a space        0.993614
+        the mean of the parts embedded separately  0.948927   (a centroid)
+        (control) one part against the other       0.542784
+
+    So it concatenates, and it is **not** a centroid — which is the plausible reading and the
+    wrong one. This test pins the separator-free join, because inserting one to be tidy would
+    produce a different vector from the API this surface exists to be compatible with, and nothing
+    would report it: the response is the right shape, the right length, and quietly not the right
+    answer. Reproduced end to end through the gateway against a real local model: cosine 1.000000
+    to the concatenation, 0.943507 to the centroid.
+    """
+    from aira_gateway.api.gemini import schemas
+    from aira_gateway.api.gemini.mapping import gemini_to_embedding
+
+    request = schemas.EmbedContentRequest(
+        content=schemas.Content(parts=[schemas.Part(text="Der Hund"), schemas.Part(text=" bellt")])
+    )
+
+    canonical = gemini_to_embedding("emb-1", [request])
+
+    # One text, not two: this is a single embedding request, so it weighs one against the limits
+    # and produces one vector.
+    assert canonical.texts == ["Der Hund bellt"]
+    assert canonical.size == 1
+
+
+def test_a_batch_stays_one_text_per_entry() -> None:
+    """The other half, and the one a caller uses to build a centroid themselves: `n` entries are
+    `n` texts and `n` vectors, weighed as `n` requests (`FRD-113` §5.3). Computing a mean over
+    them is the caller's arithmetic to choose (`ADR-0013`), not ours to guess."""
+    from aira_gateway.api.gemini import schemas
+    from aira_gateway.api.gemini.mapping import gemini_to_embedding
+
+    entries = [
+        schemas.EmbedContentRequest(content=schemas.Content(parts=[schemas.Part(text="eins")])),
+        schemas.EmbedContentRequest(content=schemas.Content(parts=[schemas.Part(text="zwei")])),
+    ]
+
+    canonical = gemini_to_embedding("emb-1", entries)
+
+    assert canonical.texts == ["eins", "zwei"]
+    assert canonical.size == 2

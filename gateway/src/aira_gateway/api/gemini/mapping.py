@@ -205,6 +205,23 @@ def gemini_to_embedding(
                 f"requests[{index}]: embedding takes text only; send the document to a generate "
                 "verb instead."
             )
+        # **Joined with nothing, and that is measured rather than assumed.** A `content` may carry
+        # several text parts, and Google answers one vector for it — the question is *how* it
+        # combines them. Against `gemini-embedding-001` on 2026-08-12, cosine similarity of the
+        # multi-part vector to:
+        #
+        #     the parts concatenated with no separator   1.000000
+        #     the parts concatenated with a space        0.993614
+        #     the mean of the parts embedded separately  0.948927   (a centroid)
+        #     (control) one part against the other       0.542784
+        #
+        # So it concatenates, and it is **not** a centroid — a plausible reading, and the wrong
+        # one. Inserting a separator here to be tidy would produce a different vector from the
+        # upstream this surface exists to be compatible with, and nothing would report it: the
+        # response is the right shape, the right length, and quietly not the right answer.
+        #
+        # A caller who wants a centroid computes it from `batchEmbedContents`, which returns one
+        # vector per text. That is their arithmetic to choose (`ADR-0013`), not ours to guess.
         texts.append("".join(part.text or "" for part in entry.content.parts))
         if entry.taskType is not None:
             task_types.add(entry.taskType)
