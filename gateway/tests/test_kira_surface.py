@@ -132,6 +132,9 @@ async def test_the_error_envelope_is_the_predecessors() -> None:
 
 
 async def test_a_body_that_is_not_json_says_so_in_the_predecessors_code() -> None:
+    """**422, not 400, since 2026-08-12.** `400` is the better answer about HTTP — `422` means
+    well-formed but wrong — and the predecessor answers `422` because malformed JSON reaches its
+    validation handler. A compatibility surface copies the behaviour, not the better idea."""
     app = _app()
     with TestClient(app) as client:
         await _catalogue(app)
@@ -139,8 +142,8 @@ async def test_a_body_that_is_not_json_says_so_in_the_predecessors_code() -> Non
             f"{BASE}/chat", content=b"not json", headers={"content-type": "application/json"}
         )
 
-    assert response.status_code == 400
-    assert response.json()["code"] == "INVALID_JSON_BODY"
+    assert response.status_code == 422
+    assert response.json()["code"] == "VALIDATION_ERROR"
 
 
 @pytest.mark.parametrize(
@@ -424,20 +427,31 @@ async def test_empty_embedding_input_is_refused(text: Any) -> None:
     assert response.status_code == 422
 
 
-async def test_a_batch_returns_one_vector_per_text_in_order() -> None:
-    """Stage B. The singular `vector` cannot express n vectors, so a list answers under `vectors`
-    — an extension, stated rather than smuggled (`FRD-113` §11 has the open question)."""
+async def test_a_list_answers_one_vector_for_the_joined_text() -> None:
+    """**Rewritten on 2026-08-12, because what it asserted turned out to be wrong.**
+
+    It used to pin `vectors` — one per text — which `FRD-113` §11 had recorded as an *assumption*
+    with the other reading written beside it, and asked to be confirmed against the running
+    predecessor. The predecessor's source says the other one: the texts go as several parts of one
+    call and it answers the documented singular `vector`.
+
+    So the old assertion was faithful to the code and unfaithful to the contract — a test can only
+    ever prove that those two agree. What makes the difference serious is that it was **data**, not
+    an error: a caller indexing five chunks received five vectors where the predecessor gives one.
+    """
     app = _app()
     with TestClient(app) as client:
         await _catalogue(app, embedding={"supports_batch": True})
-        response = client.post(f"{BASE}/embed", json={"text": ["a", "bb"], "model_id": 1004})
+        joined = client.post(f"{BASE}/embed", json={"text": ["ab", "cd"], "model_id": 1004})
+        whole = client.post(f"{BASE}/embed", json={"text": "abcd", "model_id": 1004})
 
-    assert response.status_code == 200, response.text
-    vectors = response.json()["vectors"]
-    assert len(vectors) == 2
-    # Order is the contract, and two different texts must not produce the same vector — otherwise
-    # "in the order submitted" would be unfalsifiable.
-    assert vectors[0] != vectors[1]
+    assert joined.status_code == 200, joined.text
+    body = joined.json()
+    # The predecessor's singular key, and no plural one to fall back on.
+    assert "vectors" not in body
+    # And the vector is the one for the concatenation, which is what the provider does with several
+    # parts of one content — measured, not assumed (`mapping.to_embedding`).
+    assert body["vector"] == whole.json()["vector"]
 
 
 async def test_a_model_without_batch_support_keeps_the_predecessors_code() -> None:

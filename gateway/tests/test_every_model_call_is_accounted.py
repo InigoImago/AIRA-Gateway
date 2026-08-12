@@ -48,6 +48,13 @@ ACCOUNTED: dict[str, str] = {
         "context; the settle is `asyncio.shield`ed so a client dropping the socket mid-stream "
         "still books what was spent (`FRD-110`)."
     ),
+    "api/kira/routes.py:stream_generate": (
+        "The KIRA surface's `/streaming-chat`, which since 2026-08-12 actually streams — it used "
+        "to call the non-streaming dispatch and send one terminal event. Attribution is this "
+        "surface's own (`FRD-107` §5.3), and the call sits inside the same `Accounting` context, "
+        "whose settle is `asyncio.shield`ed so a caller dropping the socket mid-answer still books "
+        "what was spent and still leaves a row."
+    ),
     "api/kira/routes.py:embed": (
         "The KIRA surface's `/embed`. That surface resolves its own attribution (`FRD-107` §5.3 — "
         "one membership, or a header, never an unattributed bucket) and shares this file's "

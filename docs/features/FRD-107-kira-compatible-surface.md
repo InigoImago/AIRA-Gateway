@@ -149,6 +149,38 @@ Anything else discovered during implementation is added here rather than being a
 a compatibility surface with undocumented differences is worse than no compatibility surface,
 because it is trusted.
 
+**Added 2026-08-12, after a comparison against the predecessor's own source** (not its document).
+Ten differences; four were repaired the same day and are not listed here. These six remain, each
+because it is a decision rather than an oversight:
+
+- **`GET /ki-usage` groups by member only, reports `model_id: 0`, and does not honour
+  `Accept: text/csv`.** The predecessor groups by `(user_id, model_id)` and offers a CSV download.
+  AIRA answers the same question through the console's own reporting screen and its CSV export
+  (`FRD-602`), which is where a person looks — so this endpoint stays a thin compatibility shim.
+  A reporting client that parses CSV from *this* URL is the one case that must migrate.
+- **`GET /health` reports fewer entities.** The predecessor lists every checked entity with its
+  own runtime; ours reports the gateway and one entry per upstream, from a cached verdict, and
+  answers `503` when any of them is unhealthy. It does **not** probe the database per call. The
+  status code and the healthy/unhealthy verdict are compatible; the per-entity timings are not.
+- **`POST /chat` and `POST /embed` require a use case, not a standard-user group.** The
+  predecessor gates on a configured group; AIRA attributes every model call to a use case
+  (`ADR-0015`), which is what makes budgets, limits and retention apply at all. Tokens and groups
+  therefore do not carry over unchanged — this is the migration's real work.
+- **Unknown `model_id` answers `404`, not `422`.** The predecessor uses `422 MODEL_NOT_FOUND`;
+  the code is the same and the status is not. An ambiguous id — two catalog rows sharing one —
+  answers `503`, which the predecessor has no case for (`FRD-114` FR-6a).
+- **Unknown JSON fields are refused, not ignored.** `FRD-124` reversed `FRD-100` FR-7 on evidence:
+  a field accepted and dropped produces a confident answer to a question nobody asked, and Google's
+  own API refuses them too. A migrating client learns at migration time, which is the point of
+  running a compatibility surface rather than hoping.
+- **`temperature` is unbounded here.** The predecessor enforces `0 ≤ t ≤ 2`. That range is not
+  universal — Anthropic's is `0–1` — so a bound in the canonical core would be a claim that is
+  false for one of the vendors this gateway serves (`ADR-0011`). The provider refuses what it
+  cannot accept, and the refusal names the field.
+- **`GET /version-info` carries no `jenkins` object** and `GET /models` uses one shared entry shape
+  with `None` fields removed, where the predecessor has separate chat and embedding DTOs with
+  type-specific required fields. A strictly typed client can fail on both.
+
 ### 5.6 A surface with an ending
 
 Per `ADR-0010` Option C: `Deprecation: true` and a `Sunset` date on every response from day one,

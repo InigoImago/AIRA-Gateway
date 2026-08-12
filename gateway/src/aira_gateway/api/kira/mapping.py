@@ -141,5 +141,22 @@ def to_embedding(request: schemas.EmbeddingRequest, model: str) -> CanonicalEmbe
     (two ids for one model, differing only in width). Each id is its own catalog row, and the row's
     declared default is what the validator applies.
     """
-    texts = [request.text] if isinstance(request.text, str) else list(request.text)
-    return CanonicalEmbeddingRequest(model=model, texts=texts, task_type=request.task_type)
+    # **A list is one embedding, not many.** `FRD-113` §11 recorded this as an open question with
+    # two readings — a list yields one vector per text, or a list is combined into a single vector
+    # — assumed the first, and asked for it to be confirmed against the running predecessor. It
+    # was confirmed on 2026-08-12, from the predecessor's own source: it sends the texts as
+    # several **parts of one** embedding call and answers the documented singular `vector`.
+    #
+    # So the assumption was wrong, and the consequence was the worst kind: a caller sending five
+    # chunks received five vectors where the predecessor gives one — not an error, *different
+    # data*, in the right shape for a different question.
+    #
+    # Joined with nothing between them, which is not a guess either: measured against
+    # `gemini-embedding-001` the same day, a multi-part content's vector is cosine **1.000000** to
+    # the parts concatenated with no separator, 0.9936 with a space, and **0.9489** to their mean.
+    # The provider concatenates; it does not build a centroid, which is the plausible reading and
+    # the wrong one. A caller who wants a centroid computes it from n separate calls — their
+    # arithmetic to choose (`ADR-0013`), and the Gemini surface's `batchEmbedContents` is where it
+    # is available.
+    text = request.text if isinstance(request.text, str) else "".join(request.text)
+    return CanonicalEmbeddingRequest(model=model, texts=[text], task_type=request.task_type)

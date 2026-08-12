@@ -26,7 +26,12 @@ from sqlalchemy import select
 
 from aira_gateway.app import create_app
 from aira_gateway.config import GatewaySettings
-from aira_gateway.core.canonical import CanonicalRequest, CanonicalResponse, CanonicalUsage
+from aira_gateway.core.canonical import (
+    CanonicalChunk,
+    CanonicalRequest,
+    CanonicalResponse,
+    CanonicalUsage,
+)
 from aira_gateway.db.models import ModelRead, RequestLog
 from aira_gateway.upstreams.base import ProviderRegistry, UpstreamModel
 
@@ -45,7 +50,15 @@ class _SlowProvider:
         self.calls = 0
 
     def models(self) -> list[UpstreamModel]:
-        return [UpstreamModel("slow-1", "1", ("generateContent",), provider="test", region="eu")]
+        return [
+            UpstreamModel(
+                "slow-1",
+                "1",
+                ("generateContent", "streamGenerateContent"),
+                provider="test",
+                region="eu",
+            )
+        ]
 
     async def generate(self, request: CanonicalRequest) -> CanonicalResponse:
         self.calls += 1
@@ -58,8 +71,26 @@ class _SlowProvider:
         )
 
     async def stream_generate(self, request: CanonicalRequest):  # noqa: ANN201
-        raise NotImplementedError
-        yield  # pragma: no cover
+        """The slow path this file is really about, since 2026-08-12.
+
+        `/streaming-chat` used to call the **non-streaming** dispatch, so this double only had to
+        make `generate` slow and could raise here. Now the surface actually streams, and the
+        property these cases assert — a caller who goes away mid-answer is still recorded, and is
+        not billed for what never reached them — is a property of *this* method.
+
+        One chunk goes out first, so the caller is genuinely mid-stream when it disappears rather
+        than waiting for a stream that never began. The usage arrives only with the second, which
+        is what makes "not billed for what it did not deliver" observable at all.
+        """
+        self.calls += 1
+        yield CanonicalChunk(text_delta="do")
+        self.entered.set()
+        await self.finish.wait()
+        yield CanonicalChunk(
+            text_delta="ne",
+            usage=CanonicalUsage(prompt_tokens=3, completion_tokens=4),
+            finish_reason="stop",
+        )
 
     async def embed(self, request: object) -> list[list[float]]:
         return [[0.0]]

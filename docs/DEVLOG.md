@@ -302,6 +302,59 @@ The Gemini surface is asserted alongside in the same file, deliberately: a fix t
 surfaces the KIRA envelope would satisfy every assertion anybody thought to write about the
 surface being repaired, and quietly break the other contract. `QA10`, `QA11`.
 
+### The predecessor, compared against its source rather than its document
+
+A KIRA↔AIRA comparison read from the predecessor's **own code** produced ten differences. Six are
+decisions and are now written into `FRD-107` §5.5, as that section's own rule demands — *a
+compatibility surface with undocumented differences is worse than no compatibility surface, because
+it is trusted*. Four were not decisions.
+
+**A list of texts is one embedding, not many.** `FRD-113` §11 recorded exactly this as an open
+question, wrote both readings down, assumed *one vector per text*, and asked for confirmation
+against the running predecessor — then made the assumption **visible on the wire** under a distinct
+`vectors` key so that whoever checked would notice rather than have to dig. The check happened and
+the assumption was wrong: the predecessor sends the texts as several **parts of one** call and
+answers the documented singular `vector`. The consequence was the worst kind available to a
+compatibility layer — **different data, not an error**: five chunks in, five vectors out, where the
+predecessor gives one. What the joining *means* was measured the same day (`gemini-embedding-001`,
+cosine 1.000000 to the concatenation and 0.9489 to the mean): the provider concatenates, it does
+not build a centroid. `BatchEmbeddingResponse` is gone; the key did its job and its job is over.
+
+**`/streaming-chat` did not stream.** It called the non-streaming dispatch, waited for the whole
+answer and sent one terminal event — SSE as a costume. `FRD-111` §5.4 is why, and it was half
+right: it refused to invent `update` events *carrying no model output*, which remains correct, and
+that is a different question from whether output should arrive progressively. The two were answered
+as one. A chat client saw a blank view for the length of the answer and then all of it at once, and
+could not tell *"still thinking"* from *"the connection died"*. Now every chunk is an `update`
+carrying real text and `completed` still carries the whole answer — measured live: **38 updates,
+one terminal event, and the two agree**. The cost is stated rather than discovered: a stream cannot
+fall back, so the conditions are checked before the response exists (`resolve_direct_target`), the
+same trade the Gemini surface makes on the same verb.
+
+**`/health` could not fail.** It reported one hardcoded `true`. The comment there said so and named
+`FRD-117` §5.2's cached probe as the fix *"until then"* — and that shipped long ago, with `/readyz`
+reading it ever since. It now reports one check per upstream from the same cached verdict, still
+with no I/O per call, `probed: false` surfaced as a tag rather than folded into the boolean, and
+**503** when anything is unhealthy. A health check a monitor believes and that cannot go red is
+worse than none.
+
+**Malformed JSON answers 422**, as the predecessor does. `400` is the better answer about HTTP —
+`422` means well-formed but wrong — and the predecessor's `422` is an artefact of its framework
+rather than a decision. Being right about semantics on a compatibility layer means being wrong
+about what the layer is for. `INVALID_JSON_BODY` went with it: a code nothing raises is the defect
+this file removed twice in two days.
+
+Two things caught the work rather than the other way round. **The structural guard written this
+morning** reported the new `stream_generate` call site immediately — a model call on no list, which
+is precisely what it counts. And a standing test caught a regression the rewrite introduced:
+`check_structured_result` was lost, and the property had to *change* rather than be restored, since
+the status cannot change once events are out — the terminal event is **withheld** instead, so a
+client waiting for `completed` never treats half a document as whole.
+
+The most instructive artefact is a test that had to be rewritten: `test_a_batch_returns_one_vector_
+per_text_in_order` pinned the disproven assumption. It was **faithful to the code and unfaithful to
+the contract**, which is all a test can ever prove — that the two agree. `QA12`–`QA14`.
+
 ### Where it was left
 
 `make showcase` from a destroyed stack, twice: **`served 10, refused 1, failed 0`**, zero error

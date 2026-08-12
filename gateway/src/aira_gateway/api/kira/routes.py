@@ -37,6 +37,7 @@ from aira_gateway.api.kira.mapping import (
     to_canonical,
     to_chat_response,
     to_embedding,
+    update_event,
 )
 from aira_gateway.api.serving import (
     REFUSALS,
@@ -61,9 +62,13 @@ from aira_gateway.auth.dependencies import require_principal
 from aira_gateway.auth.principal import Principal
 from aira_gateway.budgets.errors import BudgetExceeded
 from aira_gateway.catalog import AmbiguousModelId, ModelDeclaration
-from aira_gateway.core.canonical import CanonicalResponse
+from aira_gateway.core.canonical import CanonicalResponse, CanonicalUsage
 from aira_gateway.core.schema import SchemaRejected
-from aira_gateway.embedding import DEFAULT_TASK_TYPE, EmbeddingRejected
+from aira_gateway.embedding import (
+    DEFAULT_TASK_TYPE,
+    EMBEDDING_AGGREGATION_NOT_SUPPORTED,
+    EmbeddingRejected,
+)
 from aira_gateway.persistence.recorder import record_request
 from aira_gateway.pipeline.dispatch import NoCapableModel, dispatch_with_fallback
 from aira_gateway.pipeline.errors import PipelineRejected
@@ -346,12 +351,28 @@ async def chat(request: Request, principal: Principal = Depends(require_principa
 async def streaming_chat(
     request: Request, principal: Principal = Depends(require_principal)
 ) -> Response:
-    """The predecessor's SSE contract: typed events, terminating in ``completed``.
+    """The predecessor's SSE contract: ``update`` events as the answer arrives, then ``completed``.
 
-    Not a synthetic progress heartbeat: `FRD-111` §5.4 decided against inventing ``update`` events
-    that carry no model output, and Stage A honours that by sending exactly one ``completed``.
-    A client written against the predecessor ignores unknown event types and reads the terminal
-    one, which is the half of the contract that carries the answer.
+    **This used not to stream at all.** It called the non-streaming dispatch, waited for the whole
+    answer and sent one terminal event — SSE as a costume. `FRD-111` §5.4 is the reason, and it was
+    half right: it decided against inventing ``update`` events *that carry no model output*, which
+    remains correct. But that is a different question from whether the output should arrive
+    progressively, and the two were answered as one.
+
+    The consequence was invisible and real. The entire purpose of SSE in a chat client is that text
+    appears while it is being written; a caller migrating from the predecessor saw a blank view for
+    the length of the whole answer and then all of it at once — no error, no message, just worse.
+    With a single event a client also cannot tell *"still thinking"* from *"the connection died"*,
+    which is precisely what intermediate events exist to distinguish.
+
+    So each chunk is an ``update`` carrying real text, and the terminal ``completed`` still carries
+    the whole answer and the usage — a client that only reads the terminal event is unaffected.
+
+    **The cost, stated rather than discovered:** a stream cannot fall back. Once the first chunk is
+    on the wire the status is 200 and the answer has begun, so there is no second candidate to try.
+    The conditions every candidate must meet are therefore checked *before* the response exists
+    (`resolve_direct_target`), where a refusal can still be a status the caller can read — the same
+    trade the Gemini surface makes on the same verb.
     """
     started = time.monotonic()
     trail = AuditTrail(operation="streaming-chat")
@@ -360,8 +381,13 @@ async def streaming_chat(
         body = await _json(request)
         trail.body = body
         prepared, parsed = await _prepare(request, principal, body, trail)
-        canonical, fallbacks = prepared.canonical, prepared.fallbacks
+        canonical, _fallbacks = prepared.canonical, prepared.fallbacks
         assert canonical is not None
+        # Before the response exists, so a candidate that may not serve this request is refused
+        # with a status rather than with a stream that stops. The fallback chain is deliberately
+        # not used here — see the docstring: there is nothing to fall back *from* once a chunk has
+        # gone out, and pretending otherwise would mean discovering it mid-answer.
+        provider = await resolve_direct_target(request, canonical.model, canonical)
     except KIRA_REFUSALS as exc:
         return await _refused(
             request, trail, exc, body=body, started=started, operation="streaming-chat"
@@ -377,29 +403,51 @@ async def streaming_chat(
             body=body,
             started=started,
         ) as acct:
+            parts: list[str] = []
+            usage: CanonicalUsage | None = None
+            finish_reason = "stop"
             try:
-                dispatched = await dispatch_with_fallback(
-                    registry_of(request),
-                    canonical,
-                    fallbacks,
-                    permits=await requirements_for(request, canonical),
-                    provider_of=await declared_provider(request),
-                )
-                # Inside the same `try`, deliberately. This surface's "stream" delivers one
-                # terminal event carrying the whole answer, so an incomplete document would arrive
-                # looking exactly like complete data — and a refusal raised *outside* the handler
-                # would escape the generator as a 500 rather than being recorded as the refusal
-                # it is.
-                check_structured_result(canonical, dispatched.response)
+                async for chunk in provider.stream_generate(canonical):
+                    if chunk.usage is not None:
+                        usage = chunk.usage
+                    if chunk.finish_reason:
+                        finish_reason = chunk.finish_reason
+                    if not chunk.text_delta:
+                        # No text, nothing to say. An event carrying an empty string is exactly
+                        # the synthetic heartbeat `FRD-111` §5.4 refused, and a chunk that only
+                        # reports usage is one of these.
+                        continue
+                    parts.append(chunk.text_delta)
+                    yield f"data: {json.dumps(update_event(chunk.text_delta))}\n\n"
             except KIRA_REFUSALS as exc:
                 # Headers are already sent, so the failure cannot change the status. Reported into
                 # the accounting rather than recorded here, so that one exit covers every way out.
                 acct.failed(502, refusal_outcome(exc))
                 return
-            trail.served_by(dispatched.response.model, dispatched.candidate_index)
-            trail.passed_over(dispatched.skipped)
-            event = completed_event(dispatched.response)
-            acct.served(dispatched.response.model, dispatched.response.usage, event["data"])
+
+            # The terminal event still carries the **whole** answer and the usage, so a client
+            # that reads only `completed` — which is what a conservative predecessor client does —
+            # is unaffected by the updates above.
+            answer = CanonicalResponse(
+                model=canonical.model,
+                text="".join(parts),
+                usage=usage or CanonicalUsage(prompt_tokens=0, completion_tokens=0),
+                finish_reason=finish_reason,
+            )
+            try:
+                # **A schema-constrained answer that did not finish is not data** (`FRD-112` FR-6),
+                # and that holds no less because the text arrived in pieces. The updates have gone
+                # out by now — headers were sent with the first one — so the refusal cannot change
+                # the status. What it *can* do is withhold the terminal event: a client waiting for
+                # `completed` never gets one and therefore never treats half a document as whole,
+                # which is the property this check exists for.
+                check_structured_result(canonical, answer)
+            except KIRA_REFUSALS as exc:
+                acct.failed(502, refusal_outcome(exc))
+                return
+            trail.served_by(answer.model, 0)
+            event = completed_event(answer)
+            acct.served(answer.model, usage, event["data"])
             yield f"data: {json.dumps(event)}\n\n"
 
     return StreamingResponse(events(), media_type="text/event-stream", headers=_sunset(request))
@@ -436,6 +484,26 @@ async def embed(request: Request, principal: Principal = Depends(require_princip
         )
         embed_request = prepared.embed
         assert embed_request is not None
+
+        # **Aggregation, asked where the shape is still known.** The shared validator refuses a
+        # list against a model that cannot batch, by counting texts — and this surface now joins a
+        # list into one text before it gets there (`mapping.to_embedding`), so that count is always
+        # one and the check could never fire again.
+        #
+        # Under the corrected reading the predecessor's own name for the flag finally fits:
+        # `supports_aggregation` is about combining several texts into **one** vector, which is
+        # exactly what a list now asks for. So the question survives the change and only its
+        # vantage point moves — here, where `parsed.text` still says whether a list was sent.
+        if (
+            isinstance(parsed.text, list)
+            and len(parsed.text) > 1
+            and not prepared.declaration.supports_batch
+        ):
+            raise EmbeddingRejected(
+                EMBEDDING_AGGREGATION_NOT_SUPPORTED,
+                f"Model '{prepared.declaration.name}' does not accept a list of texts. Send them "
+                "one at a time, or use a model whose catalog entry declares batch support.",
+            )
         async with accounting(
             request, trail, prepared, api="kira", operation="embed", body=body, started=started
         ) as acct:
@@ -446,11 +514,11 @@ async def embed(request: Request, principal: Principal = Depends(require_princip
             # a rule restated on a second surface is a rule that differs on one of them.
             provider = await resolve_direct_target(request, model)
             vectors = await provider.embed(embed_request)
-            payload = (
-                schemas.BatchEmbeddingResponse(vectors=vectors).model_dump()
-                if isinstance(parsed.text, list)
-                else schemas.EmbeddingResponse(vector=vectors[0] if vectors else []).model_dump()
-            )
+            # **One vector, whatever the input shape** — the predecessor's documented `vector`,
+            # confirmed against its source on 2026-08-12 (`mapping.to_embedding` has the
+            # measurement). A list is joined into one text before it gets here, so there is
+            # exactly one vector to return and no branch to get wrong.
+            payload = schemas.EmbeddingResponse(vector=vectors[0] if vectors else []).model_dump()
             acct.embedded(model, payload, units=embed_request.size)
         return JSONResponse(payload, headers=_sunset(request))
     except KIRA_REFUSALS as exc:
@@ -513,8 +581,40 @@ async def health(request: Request) -> Response:
     until then this reports what the gateway itself can answer.
     """
     checks = [schemas.HealthCheck(service="Gateway", healthy=True, tags=["aira"])]
+
+    # **The upstreams, from the cached verdict.** This used to report a single hardcoded `true` and
+    # nothing else — a health endpoint that *cannot fail*, which is worse than none, because
+    # somebody's monitoring points at it and believes it. The comment that stood here said so
+    # itself, and named the fix as pending: *"`FRD-117` §5.2 has the cached-probe design; **until
+    # then** this reports what the gateway itself can answer."* That design shipped. `UpstreamProbe`
+    # runs in the background and `/readyz` has been reading its verdict since; this simply reads the
+    # same one.
+    #
+    # Still **no I/O here**, which is the whole reason the cache exists: probing per call would make
+    # this as slow as the slowest provider and would bill somebody for asking whether a model is
+    # alive (`FRD-117` §5.2, and `ADR-0012` §5 for a scaled-to-zero endpoint).
+    probe = getattr(request.app.state, "upstream_probe", None)
+    for name, verdict in (probe.snapshot() if probe is not None else {}).items():
+        checks.append(
+            schemas.HealthCheck(
+                service=name,
+                healthy=bool(verdict.get("ok", False)) and not verdict.get("stale", False),
+                # `probed: false` means *we did not look* — reported rather than folded into the
+                # boolean, because "we did not look" and "it is fine" are different answers
+                # (`FRD-117`) and a tag is the only place this shape has to say so.
+                tags=["upstream"] if verdict.get("probed", True) else ["upstream", "not-probed"],
+            )
+        )
+
+    # `UNHEALTHY` **and 503**, as the predecessor answers: a monitor reads the status code long
+    # before it reads the body, and one that always says 200 is the "cannot fail" defect wearing
+    # the body's clothes instead of the check's.
+    healthy = all(check.healthy for check in checks)
     return JSONResponse(
-        schemas.HealthResponse(status="HEALTHY", checks=checks).model_dump(),
+        schemas.HealthResponse(
+            status="HEALTHY" if healthy else "UNHEALTHY", checks=checks
+        ).model_dump(),
+        status_code=200 if healthy else 503,
         headers=_sunset(request),
     )
 
@@ -595,14 +695,27 @@ async def ki_usage(request: Request, principal: Principal = Depends(require_prin
 
 
 async def _json(request: Request) -> dict[str, Any]:
+    """The body, or the predecessor's answer for one that is not a JSON object.
+
+    **422 `VALIDATION_ERROR`, not 400 `INVALID_JSON_BODY`**, and the reasoning is worth keeping
+    because it argues against itself. `400` is the semantically better answer: `422` means
+    *well-formed but wrong*, and a body that does not parse is not well-formed. The predecessor
+    answers `422` only because malformed JSON reaches FastAPI's `RequestValidationError` there —
+    an artefact, not a decision, and its own `InvalidJsonBodyError` is dead in that request path.
+
+    We copy the artefact anyway, because this surface's contract *is* the predecessor's behaviour
+    and a migrating client switches on `code`. Being right about HTTP semantics on a compatibility
+    layer means being wrong about the thing the layer is for. `INVALID_JSON_BODY` went with it: a
+    code nothing raises is what this project has just finished removing twice.
+    """
     try:
         body = await request.json()
     except ValueError as exc:
         raise errors.KiraError(
-            400, errors.INVALID_JSON_BODY, "Request body is not valid JSON."
+            422, errors.VALIDATION_ERROR, "Request body is not valid JSON."
         ) from exc
     if not isinstance(body, dict):
-        raise errors.KiraError(400, errors.INVALID_JSON_BODY, "Request body must be an object.")
+        raise errors.KiraError(422, errors.VALIDATION_ERROR, "Request body must be an object.")
     return body
 
 

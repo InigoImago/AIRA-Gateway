@@ -139,6 +139,7 @@ ERROR_HEADERS = (
     "gateway/tests/test_error_responses_are_headered.py gateway/tests/test_security_headers.py"
 )
 KIRA_ENVELOPE = "gateway/tests/test_kira_envelope_everywhere.py gateway/tests/test_kira_surface.py"
+KIRA_COMPAT = "gateway/tests/test_kira_compatibility_round.py gateway/tests/test_kira_surface.py"
 
 SERVING_OPTIONS = (
     "gateway/tests/test_serving_options.py gateway/tests/test_kira_surface.py "
@@ -3464,6 +3465,30 @@ MUTATIONS = [
         "        body = self._KIRA_TOO_LARGE if path.startswith(KIRA_PREFIX) else self._GEMINI_TOO_LARGE",
         "        body = self._GEMINI_TOO_LARGE",
         KIRA_ENVELOPE,
+    ),
+    Mutation(
+        "QA12",
+        "a list of texts is one embedding, as the predecessor answers it",
+        "gateway/src/aira_gateway/api/kira/mapping.py",
+        '    text = request.text if isinstance(request.text, str) else "".join(request.text)\n    return CanonicalEmbeddingRequest(model=model, texts=[text], task_type=request.task_type)',
+        "    texts = [request.text] if isinstance(request.text, str) else list(request.text)\n    return CanonicalEmbeddingRequest(model=model, texts=texts, task_type=request.task_type)",
+        KIRA_COMPAT,
+    ),
+    Mutation(
+        "QA13",
+        "the stream streams — updates carry the answer as it arrives, not after it",
+        "gateway/src/aira_gateway/api/kira/routes.py",
+        '                    yield f"data: {json.dumps(update_event(chunk.text_delta))}\\n\\n"',
+        "                    pass  # the answer arrives only in the terminal event",
+        KIRA_COMPAT,
+    ),
+    Mutation(
+        "QA14",
+        "a health check that can fail — the upstreams are in its verdict",
+        "gateway/src/aira_gateway/api/kira/routes.py",
+        "    healthy = all(check.healthy for check in checks)",
+        "    healthy = True",
+        KIRA_COMPAT,
     ),
     Mutation(
         "QA9",

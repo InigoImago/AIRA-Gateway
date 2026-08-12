@@ -44,7 +44,11 @@ NOT_AUTHENTICATED = "NOT_AUTHENTICATED"
 INVALID_TOKEN = "INVALID_TOKEN"
 ADMIN_PERMISSION_REQUIRED = "ADMIN_PERMISSION_REQUIRED"
 STANDARD_USER_PERMISSION_REQUIRED = "STANDARD_USER_PERMISSION_REQUIRED"
-INVALID_JSON_BODY = "INVALID_JSON_BODY"
+# `INVALID_JSON_BODY` stood here until 2026-08-12. The predecessor declares it and never
+# raises it — malformed JSON reaches its FastAPI validation handler and answers `422
+# VALIDATION_ERROR` — so this surface now answers the same, and the constant had nothing
+# left to name. A code defined and emitted by nothing is the defect this file fixed on the
+# authentication side the same day; leaving a second one behind would be odd.
 MISSING_QUERY_PARAM = "MISSING_QUERY_PARAM"
 INVALID_TIME_RANGE = "INVALID_TIME_RANGE"
 MODEL_NOT_FOUND = "MODEL_NOT_FOUND"

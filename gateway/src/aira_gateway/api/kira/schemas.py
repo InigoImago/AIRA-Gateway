@@ -105,20 +105,16 @@ class EmbeddingResponse(BaseModel):
     vector: list[float]
 
 
-class BatchEmbeddingResponse(BaseModel):
-    """Many texts in, one vector each, in the order submitted.
-
-    **An extension, and deliberately a visible one.** The predecessor documents a *singular*
-    ``vector`` for an input that may be a list, which reads two ways: a list yields one vector per
-    text, or a list is reduced to a single vector. `FRD-113` §11 records the ambiguity and assumes
-    the first — it is what the provider API offers and what a chunk-indexing consumer needs.
-
-    Returning n vectors under the singular key would be a lie about the shape; returning only the
-    first would be a silent data loss. A distinct key makes the assumption checkable by whoever
-    confirms it against the running predecessor, instead of burying it.
-    """
-
-    vectors: list[list[float]]
+# `BatchEmbeddingResponse` stood here until 2026-08-12, carrying `vectors: list[list[float]]`.
+#
+# It existed because `FRD-113` §11 could not tell which of two readings the predecessor meant for a
+# list input — one vector per text, or one vector for the lot — assumed the first, and made the
+# assumption **visible on the wire** under a distinct key so that whoever checked against the real
+# predecessor would notice rather than have to dig.
+#
+# That is exactly what happened: a comparison against the predecessor's own source confirmed the
+# **second** reading. The key did its job, and its job is finished. Kept as a note rather than as a
+# class, because a response model nothing returns is a shape somebody will eventually return.
 
 
 class ThinkingConfig(BaseModel):
