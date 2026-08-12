@@ -128,6 +128,16 @@ AUTH_BOUND = "gateway/tests/test_auth_attempt_bound.py"
 SECURITY_HEADERS = "gateway/tests/test_security_headers.py"
 REDACTION = "gateway/tests/test_redaction.py gateway/tests/test_store_payloads.py"
 KEY_EXPIRY = "gateway/tests/test_auth_service.py management/backend/tests/test_apikeys.py"
+STREAM_CONDITIONS = (
+    "gateway/tests/test_streaming_takes_the_same_conditions.py gateway/tests/test_hardening.py"
+)
+THROTTLE_WIRE = (
+    "gateway/tests/test_throttle_reaches_the_limiter.py gateway/tests/test_ratelimit.py "
+    "gateway/tests/test_auth_attempt_bound.py"
+)
+ERROR_HEADERS = (
+    "gateway/tests/test_error_responses_are_headered.py gateway/tests/test_security_headers.py"
+)
 
 SERVING_OPTIONS = (
     "gateway/tests/test_serving_options.py gateway/tests/test_kira_surface.py "
@@ -3397,6 +3407,95 @@ MUTATIONS = [
         "            else THINKING_CLASSIFIER_OUTPUT_TOKENS",
         "            else CLASSIFIER_OUTPUT_TOKENS",
         CLASSIFIERS,
+    ),
+    # -- 2026-08-11 quality/security review: three defects, each a rule the code claimed and did
+    #    not have. Each mutation below was observed to fail before its fix was written.
+    Mutation(
+        "QA1",
+        "a request with no chain still meets the dispatch conditions",
+        "gateway/src/aira_gateway/api/serving.py",
+        # **Re-anchored 2026-08-11**, within the hour of being written: the helper was generalised
+        # from streams to every verb without a chain, so `canonical.model` became `model`. The
+        # harness reported STALE rather than green, which is `N2`'s lesson working as built — a
+        # mutation whose anchor has moved defends nothing and says so.
+        "    refusal = await permits(model)",
+        "    refusal = None",
+        STREAM_CONDITIONS,
+    ),
+    Mutation(
+        "QA2",
+        "a streamed request is answered by the model routing chose, not the one it named",
+        "gateway/src/aira_gateway/api/gemini/routes.py",
+        "    provider = await resolve_direct_target(request, canonical.model, canonical)",
+        "    provider = registry_of(request).provider_for(canonical.model)  # pre-routing lookup",
+        STREAM_CONDITIONS,
+    ),
+    Mutation(
+        "QA7",
+        "an embedding meets the same conditions — the third instance of the :embedContent bypass",
+        "gateway/src/aira_gateway/api/gemini/routes.py",
+        "    provider = await resolve_direct_target(request, str(embed_request.model))",
+        "    provider = registry_of(request).provider_for(str(embed_request.model))",
+        STREAM_CONDITIONS,
+    ),
+    Mutation(
+        "QA8",
+        "the KIRA surface's embedding meets them too, from the same function",
+        "gateway/src/aira_gateway/api/kira/routes.py",
+        "            provider = await resolve_direct_target(request, model)",
+        "            provider = registry_of(request).provider_for(model)\n"
+        "            assert provider is not None",
+        "gateway/tests/test_kira_surface.py "
+        "gateway/tests/test_every_dispatch_applies_the_conditions.py",
+    ),
+    Mutation(
+        "QA9",
+        "the structural guard reaches inside a closure, where the hole actually was",
+        "gateway/tests/test_every_dispatch_applies_the_conditions.py",
+        "            if isinstance(child, Function):\n                chain = [child, *enclosing]",
+        "            if isinstance(child, Function) and not enclosing:\n"
+        "                chain = [child, *enclosing]",
+        "gateway/tests/test_every_dispatch_applies_the_conditions.py",
+    ),
+    Mutation(
+        "QA3",
+        "a throttling suspension arrives at the limiter as a bucket it can read",
+        "gateway/src/aira_gateway/api/serving.py",
+        "        extra=[per_minute(t.key, t.limit_rpm, label=t.label) for t in throttles],",
+        "        extra=throttles,  # type: ignore[arg-type]",
+        THROTTLE_WIRE,
+    ),
+    Mutation(
+        "QA4",
+        "a rate of nothing per minute cannot reach a bucket and divide by zero",
+        "gateway/src/aira_gateway/ratelimit/buckets.py",
+        "    rate = max(MINIMUM_RPM, limit_rpm)",
+        "    rate = limit_rpm",
+        THROTTLE_WIRE,
+    ),
+    Mutation(
+        "QA5",
+        "a body refused on its size still carries the security headers",
+        "gateway/src/aira_gateway/app.py",
+        # The original ordering, restored verbatim — the mutation is the *order*, not the absence
+        # of the middleware. Removing it altogether would fail the served case too and report a
+        # property nobody had doubted; this one leaves the 200 intact and takes the 413 bare,
+        # which is precisely what was measured.
+        "    app.add_middleware(UseCasePathMiddleware)\n"
+        "    app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.max_request_bytes)\n"
+        "    app.add_middleware(SecurityHeadersMiddleware)",
+        "    app.add_middleware(SecurityHeadersMiddleware)\n"
+        "    app.add_middleware(UseCasePathMiddleware)\n"
+        "    app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.max_request_bytes)",
+        ERROR_HEADERS,
+    ),
+    Mutation(
+        "QA6",
+        "an unhandled error carries them too — the one response no middleware can reach",
+        "gateway/src/aira_gateway/app.py",
+        "        for name, value in SecurityHeadersMiddleware.HEADERS:",
+        "        for name, value in ():",
+        ERROR_HEADERS,
     ),
 ]
 
