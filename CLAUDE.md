@@ -1603,6 +1603,107 @@ with a comment saying why; what was missing was finishing it across the other ei
 `QA1`–`QA9`, each shown to fail first; `QA1` reported **STALE** an hour after being written because
 generalising the helper moved its anchor — `N2` working as built.
 
+**The guards that had stopped guarding (2026-08-12)** — a structure/test read with no functionality
+changes, and three of its four findings are one shape: **a rule checked only by something nobody
+runs.** (1) **Thirteen of the 406 mutation properties were defending nothing.** Ten anchors named
+moved or deleted code (`O2` had vouched for a parse of `realm_access` since `ADR-0017` deleted it),
+and three matched *several* places — worse, because the harness edits the **first** match, so `C2`
+claimed the catalog's "no such row" branch while editing "un-lookupable name" three lines above and
+reported a confident `caught`. `make mutants` does print `STALE`; it is a multi-hour run, it is not
+in CI, and nothing else asked, so the invariant that decides whether the whole harness means
+anything had **no fast check**. `tools/tests/test_mutation_anchors.py` asks it in milliseconds
+(exists · exactly once · actually changes something · names a live test selection) and the harness
+refuses an ambiguous anchor before running, which its docstring had required all along. All
+thirteen were re-anchored **and then run**. Two repairs went past the harness, which is the point of
+asking: `O2`'s property was undefended in the ordinary sense too (three shapes a real directory
+sends — a bare string from a single-valued mapper, an object, a number — had no test, and the
+mutation that *isolates* the rule survives the whole existing file; the obvious `= raw_groups` is
+caught by the **absent**-claim tests, a different property), and `QA16` was ambiguous because the
+KIRA surface wrote the same three lines and the same nine-line comment into all three dispatching
+routes — one function now, so the anchor is unique **by construction** rather than by a string kept
+unique by hand. (2) **The suite finished and did not exit**: two tests configure real OTel providers
+— globals, never taken down — each starting three non-daemon OTLP exporters at `localhost:4318` plus
+a root-logger handler, so every later span and log record queued for a collector that is not there
+and the SDK retried the flush at exit. **0.13 s of tests, 15.7 s of process**; minutes on the full
+run, which reads as "the suite is slow" rather than as a defect with an address. The root
+`conftest.py` already says a unit test must not read the developer's machine; it now also says one
+must not leave the network running — autouse take-back of anything installed globally, bounded
+export attempts, and a **session-scoped assertion that no exporter thread survives the run**. Full
+hermetic suite: **1 m 52 s start to exit.** (3) **One rule, two definitions** — the gateway held its
+own character-for-character copy of `usecases_from_group_paths` and its prefix constant while
+`aira_common.access` exists to be that rule's single home and says so; nothing had drifted yet,
+which is the only reason it was still true (`FRD-209` is the record of what it costs when it stops
+being). And the two seeds declaring the local models hold the same measurements twice — that pair
+has drifted **twice** (`minimal`, then `tools`, the second making all of `FRD-131` unreachable from
+`make showcase`), fixed by hand both times; neither can import the other, so they are now compared
+**in both directions**, shown failing against both historical drifts first. (4) `test_app_state_is_
+typed.SERVICES` was a hand-written list with **no counterpart**, so a twenty-first service would
+have been governed by nothing and announced by nothing — *a set has no opinion about what it does
+not contain*. Compared against what `create_app` assembles, both directions, four exemptions named
+and reasoned. Writing the second direction immediately caught the guard's own bug: it reused a
+predicate matching `<x>.app.state` and found nothing at all.
+
+**`make down` did not, and exited 0 (2026-08-13)** — reported after a showcase, and the reporting
+machine still had it: infrastructure gone, six application containers up for eight hours, the
+consumer crash-looping against the Postgres `down` had just deleted. **Two definitions of "the
+stack"**: `showcase` runs both compose files with two profiles (21 services), `down` named one file
+and one profile (**8**), so thirteen were not in its model — and the app services carry `restart:
+unless-stopped` while the infrastructure does not, so they come *back*. Compose then could not
+remove its own network, **printed that it could not**, and the target exited 0: an operation
+accepted, apparently worked, did not happen. **Starting may take a subset; stopping meets whatever
+an `up` left**, so `COMPOSE_ALL` (both files, every profile) is read by `down`/`destroy`/`ps`/
+`logs`/`restart`, with `--remove-orphans`. Both halves proved necessary rather than assumed:
+`--remove-orphans` alone removed the six app containers and **left** `ollama` and `management-seed`
+— a service behind an inactive profile is *in the model* and so is not an orphan. `destroy` was the
+worst (deleting volumes under running services); `down-full` is now an alias, not a second set to
+get wrong. Profiles are **written out, not `--profile "*"`** — the wildcard needs Compose v2.24 and
+on anything older silently matches a profile named `*`, i.e. this bug again — with
+`test_compose_lifecycle_covers_the_stack.py` comparing the list to the declared profiles **in both
+directions**. Then the same question one level out: the link checker now reads `make` commands, and
+`docs/deployment/showcase.md` was ending its first-run guide with **`make down-full-volumes`, a
+target that has never existed** (`FRD-208`'s instruction with no destination), plus `make
+retention` (→ `prune`), `make relay-once` (the relay publishes what is pending and **exits**, so
+`relay` *is* the once — the page had also been calling it long-running) and `make
+seed-local-catalog` (no such target). Its first draft scanned prose and needed a stop-word list for
+"make sure"/"make sense" — a hand-written list with no counterpart, which is the defect it checks
+for — so commands are read out of **code fences and inline spans** instead: what a reader runs is
+what is typeset as a command.
+
+**The integration suite had stopped following the product (2026-08-13)** — `make showcase` end to
+end (21 containers, 10 served / 1 refused / 0 failed), then `make test-integration` against it:
+**19 failed, 559 passed**. **No product defect among them, and none from the day's work** — proved
+by stashing the three changed production files, rebuilding the gateway from `HEAD` and re-running:
+identical failures. The causes cluster on the deliberate changes of 09.–12.08., i.e. the suite has
+not been green since that work landed. Two were measured rather than read. **`FRD-308` is
+enforced**: against a use case released only for `other-1`, a real model is refused by name and
+`mock-1` is served — the requirement exempts a provider marked `is_test_double`, and the test
+posted **against the double**, the one model the rule does not apply to; its sibling
+`test_a_released_model_is_admitted` was **green for the same reason** and would have stayed green
+with the release empty, absent, or the check deleted. *The clearest instance yet of a test that
+cannot detect the property it is named after* — both now use a real model, shown to go red when the
+release is flipped either way. And **the cursor paging is sound**: it failed under load and passed
+3/3 in isolation because the audit write is off the request path (`FRD-405`) and the test waited for
+**three** rows before paging as though six existed. Two corrections to my own work along the way: the
+single `vector` for a list is not a silent loss but a decision confirmed against the predecessor's
+source and measured by cosine (1.000000), and a 401 in the first probe was a regex clipping the API
+key by one character. The other fifteen: six use cases created **without a release**, two requests
+with **no use case** (`AIRA_REQUIRE_USE_CASE` default), one hard-coding `gpu-b` — a server name from
+that file's *own* fallback fixture, so it tested the deployment's `AIRA_OPENAI_SERVERS` naming —
+one asserting `HEALTHY` after `/health` was corrected to the predecessor's `Healthy` shape, one dry
+run predating `use_case` becoming required, one expecting `["ok",""]` refused (from when a list
+meant *many* embeddings), and four asking for `qwen2.5:3b`, which nothing pulls. Three repairs went
+past the failing assertion, because **a stale expectation is usually a missing one**: the skip guard
+**existed and was applied once out of five times** (now a fixture that asks the model list *before*
+the request — a 404 also means retired, mistyped or uncatalogued — plus a parser that fails any test
+reaching for `TOOL_MODEL` without it); **the hang-up is performed rather than waited for** (it wrapped
+itself in `pytest.raises(ReadTimeout)` against a 5 s timeout, so it exercised a disconnect only when
+the model was slow, and failed when it was quick — it now closes the socket mid-body and asserts the
+status and recorded outcome **agree**); and the provider is compared **between the two surfaces**
+rather than to a constant, with `publisher` added, the one of the provenance triple that column list
+was missing. `["ok",""]` moved out of the refusal table into a test that asserts the **join** — `200`
+alone is also true of a surface that dropped the element, embedded only the first, or embedded the
+literal list. After: **575 passed, 22 skipped, 0 failed** under full-suite load.
+
 Next candidates: **`FRD-114`** (model metadata — now also carries publisher + default output cap,
 prerequisite for 110–113 and 119), **`FRD-110`** (documents/images — the widest gap),
 **`FRD-115`/`FRD-119`** (Vertex EU + the Anthropic dialect — required), **`FRD-116`** (Vault),
