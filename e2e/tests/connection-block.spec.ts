@@ -153,31 +153,33 @@ test.describe('Connecting a client', () => {
   });
 
   /**
-   * **The third inert control this repository has shipped**, after a `title` attribute that showed
-   * nothing and a `routerLinkActive` that styled nothing — and the third found by somebody using
-   * the console rather than by any suite.
+   * The block offers no key-issuing control, on purpose.
    *
-   * "Issue a key" was a `routerLink` carrying `fragment="api-keys"`, and it did nothing at all.
-   * Two mistakes in one attribute, neither able to announce itself: the page selects its tab from a
-   * **query parameter**, and the tab is called `keys`. A third was waiting behind them — the parent
-   * reads the parameter from the route *snapshot*, so navigating to the same route with a different
-   * one changes the URL and nothing else.
+   * One was added with it and did nothing — a `routerLink` with `fragment="api-keys"`, where the
+   * page selects its tab from a query parameter and calls it `keys`, and where the parent reads
+   * that parameter from the route *snapshot* so the same route with a different one moves nothing.
+   * The owner chose removal over repair: the tab bar above already leads to where keys are issued,
+   * and a second route to one place is a second thing that can rot.
    *
-   * Asserted as *where the reader ends up*, which is the only formulation that would have failed:
-   * a test that the button exists passed throughout, and so would one that checked its `href`
-   * against the same wrong name the component was written with.
+   * In a browser because that is where it was found. The three defects were each invisible to a
+   * component test, which sees a rendered anchor and has no opinion about where it goes — and this
+   * is the third inert control this repository has shipped, after a `title` attribute that showed
+   * nothing and a `routerLinkActive` that styled nothing.
    */
-  test('"Issue a key" opens the tab where keys are issued', async ({ page }) => {
+  test('offers no key control of its own, and the tab bar still leads to one', async ({ page }) => {
     await login(page, USERS.globalAdmin);
     await page.goto('/use-cases/kundenservice');
 
     const block = page.getByTestId('connection');
     await expect(block).toBeVisible({ timeout: 20_000 });
-    await block.scrollIntoViewIfNeeded();
-    await page.getByTestId('connection-issue-key').click();
 
-    // The panel that issues keys is on screen — not merely a URL that says it should be.
-    await expect(page.getByTestId('api-keys')).toBeVisible();
-    await expect(page.getByRole('tab', { name: /keys/i })).toHaveAttribute('aria-selected', 'true');
+    await expect(block.getByRole('button', { name: /issue a key/i })).toHaveCount(0);
+    await expect(block.getByRole('link', { name: /issue a key/i })).toHaveCount(0);
+
+    // The route that does exist: the page's own tab bar, and it lands on the panel that issues.
+    // Asserted on the panel, not on the tab's own `aria-selected` — a tab can mark itself active
+    // while showing nothing, which is the defect this whole test replaced.
+    await page.getByRole('tab', { name: /API keys/i }).click();
+    await expect(page.getByRole('tabpanel')).toContainText('API keys');
   });
 });

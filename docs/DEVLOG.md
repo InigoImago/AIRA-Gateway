@@ -18,17 +18,23 @@ so the alternative failure — two pictures of one logo, drifting the day a colo
 start. The SVG is what current browsers use; Safari has never supported an SVG favicon, so the
 `.ico` is a fallback rather than a leftover.
 
-**"Issue a key" did nothing**, and it had three defects stacked in one attribute. It was a
+**"Issue a key" is gone.** It had three defects stacked in one attribute. It was a
 `routerLink` with `fragment="api-keys"`: the page selects its tab from a **query parameter**, and
 the tab is called `keys`, so the corrected fragment would have pointed at a name that is not a tab —
 and behind both, the parent reads the parameter from the route **snapshot**, so navigating to the
-same route with a different one changes the URL and nothing else. An `output` now, because the
-parent owns the tab bar. The third inert control this repository has shipped after a `title`
-attribute that showed nothing and a `routerLinkActive` that styled nothing, and the third found by
-somebody using the console rather than by any suite: the only assertion anywhere was that the block
-renders. Both new tests were shown to fail first — and the e2e one asserts **where the reader ends
-up**, which is the only formulation that would have caught it, since a test comparing the link
-against a tab name would have been written from the same wrong idea the component was.
+same route with a different one changes the URL and nothing else. Repaired as an `output` first, then **removed** on the
+owner's decision: the tab bar two centimetres above already leads to where keys are issued, and a
+second route to one place is a second thing that can rot. The third inert control this repository
+has shipped after a `title` attribute that showed nothing and a `routerLinkActive` that styled
+nothing, and the third found by somebody using the console rather than by any suite — the only
+assertion anywhere was that the block renders.
+
+**A removal has no natural counterpart**, so both tests now assert the absence and the route that
+does exist: nothing fails when a control comes back, and without them the next reader to ask
+"connecting a client, but where do I get a key?" adds one again. Writing the e2e assertion also
+caught me guessing a `data-testid` that does not exist — it asserts the tab **panel's content**
+now, because a tab can mark itself selected while showing nothing, which is the defect this test
+replaced.
 
 **And a question measured rather than answered**: can an arbitrary Keycloak group be granted a use
 case, and can its people then issue keys and authenticate with a bearer token? Yes to all three,
@@ -38,6 +44,13 @@ immediately and at the gateway about eight seconds later** — it travels by Kaf
 read-model, and until it arrives the gateway answers 403 to a caller the console already shows as a
 member. That is the design (`FRD-204`: the gateway never asks Management on the request path), and
 it is worth knowing before somebody grants access, refreshes, and concludes it did not work.
+
+**Both reports came back "unchanged", and both times the reason was the same**: the console runs
+from a built image, and the running one was three hours old. It was still serving the 15 086-byte
+Angular icon while the repository held the 1 226-byte mark. Nothing in the repository can catch
+that — it is not a defect in the code, it is the code not having been deployed — but it is worth
+writing down, because a fix that cannot be seen reads exactly like a fix that did not work. The
+served bytes are now compared against what the generator produces: identical.
 
 ---
 

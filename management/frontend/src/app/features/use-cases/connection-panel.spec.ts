@@ -64,23 +64,26 @@ describe('ConnectionPanel', () => {
   });
 
   /**
-   * The button did nothing at all — a `routerLink` with `fragment="api-keys"`, where the page
-   * selects its tab from a **query parameter** and calls it `keys`. Reported by the owner, who
-   * clicked it; no suite had an opinion, because the only assertion anywhere was that the block
-   * renders.
+   * There is no "Issue a key" button here, and that is the decision rather than an omission.
    *
-   * Asserted as an **emission**, not as an `href`: the destination is the parent's to decide, and
-   * a test comparing the link against a tab name would have been written from the same wrong idea
-   * the component was.
+   * It was added with the block and did nothing: a `routerLink` carrying `fragment="api-keys"`,
+   * where the page selects its tab from a **query parameter** and calls it `keys` — and behind
+   * both, the parent reads that parameter from the route *snapshot*, so navigating to the same
+   * route with a different one changes the URL and moves nothing. Offered as "make it work or take
+   * it out", the owner chose out: the panel's job is to say how to call the use case, and the tab
+   * bar two centimetres above already leads to where keys are issued. A second route to the same
+   * place is a second thing that can rot.
+   *
+   * Asserted because a **removal has no other counterpart**. Nothing fails when a control comes
+   * back, so without this the next person to read "connecting a client, but where do I get a key?"
+   * adds one, and the answer to that question is the tab bar.
    */
-  it('asks the page to open its keys tab, rather than linking somewhere of its own', () => {
+  it('offers no key-issuing control of its own', () => {
     build(['chat-model']);
-    let asked = 0;
-    fixture.componentInstance.issueKey.subscribe(() => (asked += 1));
+    answer();
 
-    testid('connection-issue-key')?.click();
-
-    expect(asked).toBe(1);
+    expect(testid('connection-issue-key')).toBeNull();
+    expect(text()).not.toContain('Issue a key');
   });
 
   it('offers only the models this use case may call', () => {

@@ -3,17 +3,7 @@
   what this use case actually has, so a block that cannot be filled in honestly says so instead.
 -->
 <div class="card" data-testid="connection">
-  <div class="spread">
-    <h3 class="section-title" style="margin: 0">Connecting a client</h3>
-    <button
-      class="btn btn--sm"
-      type="button"
-      (click)="issueKey.emit()"
-      data-testid="connection-issue-key"
-    >
-      Issue a key
-    </button>
-  </div>
+  <h3 class="section-title" style="margin: 0">Connecting a client</h3>
   <p class="muted" style="margin: 0.25rem 0 0">
     A key is issued for one use case and carries it, so a client normally sends nothing else — no
     use case in the URL, no header. Both surfaces below take the same key.
