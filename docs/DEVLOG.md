@@ -5,6 +5,56 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-13 — A developer round: 227 tests over one governed use case
+
+One use case with a real language model and a real embedding model, both surfaces, four verbs, and
+the policies changed underneath it while the gateway runs — filter, router, fallback chain, release,
+tool switch, caching, storage, rate limits in three scopes, budgets across three limits and two
+periods, and the kill switch. Five files, **227 tests, 3:42**; with the existing suites, **802
+passed, 22 skipped, 0 failed**.
+
+**It needed a fixture of its own, and the reason is the finding.** `conftest.Fixture` builds a use
+case and a key, and since `FRD-308` such a use case may call **nothing** — so a suite written on it
+can only ever exercise `mock-1`, which is exempt from the release *and* approval gates and therefore
+cannot answer a question about either. Three existing suites had quietly become tests of the double.
+`governed.py` releases both real models and offers the policies as methods.
+
+**Written against the running stack rather than from the source.** Every wire shape was probed live
+before a test asserted it, which is what kept 227 tests from encoding my assumptions — and four of
+those assumptions were wrong. They are now written down where the next reader meets them:
+
+- **A chain does not rescue a primary nobody serves.** `prepare_for_dispatch` answers 404 before the
+  chain is consulted, which is right: a name nothing serves is a typo or a retirement, and answering
+  from a different model would be the substitution `ADR-0012` §3 exists to prevent. The chain covers
+  candidates that fail a *condition*, not candidates that are fiction.
+- **A budget and a rate bucket differ on an oversized request, deliberately.** The reservation script
+  checks `requests >= limit` *before* adding — "already at it" is what refuses — so one request may
+  carry the counter past the line, while a bucket refuses a batch bigger than its capacity outright.
+  Refusing in the budget too would mean a batch of five hundred could never run under a 499-request
+  monthly budget, even on the first of the month. So the weighting is asserted through what the
+  batch *left behind* rather than through its own status.
+- **An empty use-case header is no selector, not a bad one** — a client sending an unset variable,
+  which falls through to what the key is bound to.
+- And a whitespace one cannot be sent over HTTP at all; `httpx` refuses it before the gateway sees it.
+
+**Proved able to fail, not assumed.** Three properties were broken in the gateway and rebuilt —
+`tool_summary` made to carry a tool's arguments, an embedding batch made to weigh one, the injection
+filter made to record only what it flagged. Each of the three tests named for those went red, and
+green again on restore.
+
+**One finding, reported rather than asserted.** Both streams were driven and hung up after the first
+chunk, side by side:
+
+    gemini  streamGenerateContent  status=200  outcome=client_gone
+    kira    streaming-chat         status=499  outcome=client_gone
+
+They agree on what happened and disagree on the number. Each side documents its reasoning — the
+Gemini stream sets 200 because the headers really did go out with one, and `Accounting` defaults to
+499 because `FRD-122` invented that code for exactly this case. Both are defensible; what they are
+not is the same, and this repository's rule is that the two surfaces leave the same facts. The test
+asserts the outcome and deliberately does **not** encode `{gemini: 200, kira: 499}`, because writing
+a divergence into a green test is how a defect becomes a specification.
+
 ## 2026-08-13 — All four layers run, and the fourth found the same defect again
 
 The two checks the repair round left open, run to the end.

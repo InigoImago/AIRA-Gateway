@@ -1721,6 +1721,33 @@ two days of a test naming something only one machine has**, after `gpu-b` and `q
 is identical each time — *the assertion is about behaviour and the failure is about inventory*.
 Standing totals: **2068 hermetic · 575 integration · 127 e2e · 406 mutation properties**.
 
+**A developer round, 227 tests over one governed use case (2026-08-13)** — one use case with a real
+language model and a real embedding model, both surfaces, four verbs, and every policy changed
+underneath it while the gateway runs (filter · router · fallback · release · tools · caching ·
+storage · rate limits in three scopes · budgets over three limits and two periods · kill switch).
+`tests/integration/test_dev_round_*.py`, **227 in 3:42**; with the existing suites **802 passed, 22
+skipped, 0 failed**. **It needed its own fixture, and that is the finding**: `conftest.Fixture`
+builds a use case that since `FRD-308` may call **nothing**, so a suite written on it can only
+exercise `mock-1` — exempt from the release *and* approval gates, and therefore unable to answer a
+question about either. Three existing suites had quietly become tests of the double; `governed.py`
+releases both real models and offers the policies as methods. **Written against the running stack,
+not from the source** — every wire shape probed live first, which is what kept 227 tests from
+encoding assumptions, and **four of mine were wrong**: a chain does *not* rescue a primary nobody
+serves (the 404 comes first, and rightly — the chain covers candidates that fail a *condition*, not
+candidates that are fiction); a **budget and a rate bucket differ on purpose** on an oversized
+request (the reservation checks `>= limit` *before* adding, so one request may carry the counter
+past the line, while a bucket refuses a batch bigger than its capacity — refusing in the budget too
+would forbid a 500-item batch under a 499-request monthly limit on the first of the month, so the
+weighting is asserted through what the batch *left behind*); an empty use-case header is **no**
+selector rather than a bad one; and a whitespace one cannot be sent over HTTP at all. **Proved able
+to fail**: three properties were broken in the gateway and rebuilt — `tool_summary` made to carry a
+tool's arguments, an embedding batch made to weigh one, the filter made to record only what it
+flagged — each named test went red and green again on restore. **One finding reported rather than
+asserted**: both streams hung up after the first chunk record `client_gone` with **different
+statuses** (Gemini 200, KIRA 499), each side documenting its own reasoning; the test asserts the
+outcome and deliberately does not encode the divergence, because writing one into a green test is
+how a defect becomes a specification.
+
 Next candidates: **`FRD-114`** (model metadata — now also carries publisher + default output cap,
 prerequisite for 110–113 and 119), **`FRD-110`** (documents/images — the widest gap),
 **`FRD-115`/`FRD-119`** (Vertex EU + the Anthropic dialect — required), **`FRD-116`** (Vault),
