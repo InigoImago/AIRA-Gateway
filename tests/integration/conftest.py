@@ -349,3 +349,29 @@ async def fixture(engine: AsyncEngine):
             "DELETE FROM use_cases WHERE slug = :slug",
         ):
             await connection.execute(text(statement), {"slug": slug, "like": f"%{slug}%"})
+
+
+@pytest.fixture
+async def governed(engine: AsyncEngine):
+    """A use case that may call a real language model **and** a real embedding model.
+
+    Separate from `fixture` above, and the difference is `FRD-308`: a use case starts able to call
+    nothing, so a fixture that releases no model can only exercise `mock-1` — the test double,
+    which is exempt from the release and approval gates and therefore cannot answer a question
+    about either. See `tests/integration/governed.py`.
+    """
+    from . import governed as _governed
+
+    built = await _governed.build(engine)
+    yield built
+    await _governed.destroy(built)
+
+
+@pytest.fixture
+async def second_governed(engine: AsyncEngine):
+    """A second one, for the cases about one use case not reaching another's allowance."""
+    from . import governed as _governed
+
+    built = await _governed.build(engine)
+    yield built
+    await _governed.destroy(built)
