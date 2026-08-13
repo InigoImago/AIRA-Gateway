@@ -48,7 +48,10 @@ def _token(
     sub: str | None = "user-123",
     iat: bool = True,
     exp: bool = True,
-    groups: list[str] | None = None,
+    # `object`, not `list[str]`: the case worth testing is a claim that is **not** a list, which a
+    # narrower annotation would have made unwritable — and unwritten is how the branch that
+    # narrows it came to be undefended.
+    groups: object = None,
     roles: list[str] | None = None,
     expired: bool = False,
 ) -> str:
@@ -121,6 +124,54 @@ def test_no_groups_claim_yields_no_use_cases() -> None:
     principal = validator.validate(_token(private))
     assert principal is not None
     assert principal.use_cases == ()
+
+
+@pytest.mark.parametrize(
+    ("claim", "why"),
+    [
+        pytest.param(
+            "/aira/global-admins",
+            "a single-valued group mapper sends the path as a bare string, and iterating a string "
+            "yields its characters — 20 group paths one letter long",
+            id="a-string",
+        ),
+        pytest.param(
+            {"/aira/global-admins": True},
+            "a mapper configured to emit an object; its keys look enough like paths to be used",
+            id="an-object",
+        ),
+        pytest.param(
+            7,
+            "not iterable at all, so the claim raises inside authentication rather than conferring "
+            "nothing",
+            id="a-number",
+        ),
+    ],
+)
+def test_a_malformed_groups_claim_confers_nothing_rather_than_failing(
+    role_groups, claim: object, why: str
+) -> None:
+    """A realm misconfiguration must stop **authority**, never authentication (`ADR-0017`).
+
+    Groups are the single source of both organisation-wide roles and use-case access, so this one
+    claim decides everything a token may do. `validate` narrows it to a list before reading it, and
+    until now nothing proved that line did anything: every test passed a well-formed list.
+
+    The three cases are the three shapes a real directory produces, and they fail differently —
+    which is why the assertion is on all three answers rather than on "it did not raise". A string
+    confers no role and no use case and still puts twenty single characters into `groups`, where
+    the group-grant resolver would then look every one of them up in the read-model; a number does
+    not survive the first `for` at all.
+    """
+    private, public = _keypair()
+    validator = OidcValidator(ISSUER, None, _Resolver(public), role_groups=role_groups)
+
+    principal = validator.validate(_token(private, groups=claim))
+
+    assert principal is not None, f"authentication failed on {why}"
+    assert principal.use_cases == ()
+    assert principal.groups == ()
+    assert principal.roles == ()
 
 
 def test_missing_subject_rejected() -> None:

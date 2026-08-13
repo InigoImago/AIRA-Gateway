@@ -225,6 +225,34 @@ async def _resolve_model(request: Request, model_id: int) -> str:
     return name
 
 
+async def _attributed_body(
+    request: Request, principal: Principal, trail: AuditTrail
+) -> dict[str, Any]:
+    """Resolve who is calling, **then** read the body — in that order, once.
+
+    **Attribution first, before the body is even parsed.** It needs only the header and the
+    principal — never the body — and putting it after meant a caller with a *valid* credential
+    sending malformed JSON left **no audit row at all**: `_refused` records only when
+    `request.state.attribution` is set. The Gemini surface writes that row, because there
+    attribution is a router-level dependency and is therefore always resolved first.
+
+    Two surfaces, one governance question, two answers — the shape this project keeps finding.
+    `FRD-122`'s rule is that the log records what was **asked**, and a malformed body from a known
+    credential is very much something that was asked.
+
+    **Extracted 2026-08-12.** These three lines and the paragraph above them stood, byte for byte,
+    in all three of this surface's dispatching routes. That is the failure `prepare_for_dispatch`
+    was written about one layer up: a fact repeated at every entry point is a fact eventually
+    missing from one of them, and the *order* is the whole guarantee — which no copy can state for
+    the others. It is also how the mutation guarding this property came to protect one verb: the
+    anchor matched three identical blocks and the harness edits the first.
+    """
+    resolve_attribution(request, principal)
+    body = await _json(request)
+    trail.body = body
+    return body
+
+
 async def _prepare(
     request: Request, principal: Principal, body: dict[str, Any], trail: AuditTrail
 ) -> tuple[Prepared, Any]:
@@ -317,18 +345,7 @@ async def chat(request: Request, principal: Principal = Depends(require_principa
     trail = AuditTrail(operation="chat")
     body: dict[str, Any] = {}
     try:
-        # **Attribution first, before the body is even parsed.** It needs only the header and the
-        # principal — never the body — and putting it after meant a caller with a *valid*
-        # credential sending malformed JSON left **no audit row at all**: `_refused` records only
-        # when `request.state.attribution` is set. The Gemini surface writes that row, because
-        # there attribution is a router-level dependency and is therefore always resolved first.
-        #
-        # Two surfaces, one governance question, two answers — the shape this project keeps
-        # finding. `FRD-122`'s rule is that the log records what was **asked**, and a malformed
-        # body from a known credential is very much something that was asked.
-        resolve_attribution(request, principal)
-        body = await _json(request)
-        trail.body = body
+        body = await _attributed_body(request, principal, trail)
         prepared, parsed = await _prepare(request, principal, body, trail)
         canonical, fallbacks = prepared.canonical, prepared.fallbacks
         assert canonical is not None
@@ -389,18 +406,7 @@ async def streaming_chat(
     trail = AuditTrail(operation="streaming-chat")
     body: dict[str, Any] = {}
     try:
-        # **Attribution first, before the body is even parsed.** It needs only the header and the
-        # principal — never the body — and putting it after meant a caller with a *valid*
-        # credential sending malformed JSON left **no audit row at all**: `_refused` records only
-        # when `request.state.attribution` is set. The Gemini surface writes that row, because
-        # there attribution is a router-level dependency and is therefore always resolved first.
-        #
-        # Two surfaces, one governance question, two answers — the shape this project keeps
-        # finding. `FRD-122`'s rule is that the log records what was **asked**, and a malformed
-        # body from a known credential is very much something that was asked.
-        resolve_attribution(request, principal)
-        body = await _json(request)
-        trail.body = body
+        body = await _attributed_body(request, principal, trail)
         prepared, parsed = await _prepare(request, principal, body, trail)
         canonical, _fallbacks = prepared.canonical, prepared.fallbacks
         assert canonical is not None
@@ -480,18 +486,7 @@ async def embed(request: Request, principal: Principal = Depends(require_princip
     trail = AuditTrail(operation="embed")
     body: dict[str, Any] = {}
     try:
-        # **Attribution first, before the body is even parsed.** It needs only the header and the
-        # principal — never the body — and putting it after meant a caller with a *valid*
-        # credential sending malformed JSON left **no audit row at all**: `_refused` records only
-        # when `request.state.attribution` is set. The Gemini surface writes that row, because
-        # there attribution is a router-level dependency and is therefore always resolved first.
-        #
-        # Two surfaces, one governance question, two answers — the shape this project keeps
-        # finding. `FRD-122`'s rule is that the log records what was **asked**, and a malformed
-        # body from a known credential is very much something that was asked.
-        resolve_attribution(request, principal)
-        body = await _json(request)
-        trail.body = body
+        body = await _attributed_body(request, principal, trail)
         try:
             parsed = schemas.EmbeddingRequest.model_validate(body)
         except ValidationError as exc:

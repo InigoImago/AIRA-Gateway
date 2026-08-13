@@ -551,9 +551,13 @@ MUTATIONS = [
     Mutation(
         "M4",
         "an unset burst means the per-minute figure, not zero",
-        "gateway/src/aira_gateway/ratelimit/service.py",
-        "    return record.burst if record.burst and record.burst > 0 else record.limit_rpm",
-        "    return record.burst",
+        # Re-anchored: the rule moved out of the service and into `per_minute`, which is now the
+        # one reading of "n per minute as a bucket" for all three callers (a configured limit, the
+        # bound on failed authentications, a throttling suspension). A mutation whose anchor has
+        # moved protects nothing.
+        "gateway/src/aira_gateway/ratelimit/buckets.py",
+        "        capacity=burst if burst and burst > 0 else rate,",
+        "        capacity=burst or 0,",
         RATELIMIT,
     ),
     Mutation(
@@ -655,9 +659,13 @@ MUTATIONS = [
         "M15",
         "budgets are still enforced when Redis is unreachable",
         "gateway/src/aira_gateway/budgets/service.py",
-        "            await self._check_only(session, budgets, now, subject)\n"
-        "        return Reservation(budgets=budgets, subject=subject, atomic=False)",
-        "        return Reservation(budgets=budgets, subject=subject, atomic=False)",
+        # Re-anchored: both calls gained `username` when a member rule learned to match the name a
+        # caller is known by as well as their subject. The property is unchanged.
+        "            await self._check_only(session, budgets, now, subject, username)\n"
+        "        return Reservation(budgets=budgets, subject=subject, username=username,"
+        " atomic=False)",
+        "        return Reservation(budgets=budgets, subject=subject, username=username,"
+        " atomic=False)",
         f"{BUDGET_RESERVATION} {BUDGET_SERVICE}",
     ),
     Mutation(
@@ -692,7 +700,18 @@ MUTATIONS = [
         "M17",
         "shutdown drains what was accepted",
         "gateway/src/aira_gateway/persistence/writer.py",
-        "        self._stopping = True\n        await self._queue.join()",
+        # Re-anchored: the bare `await self._queue.join()` became a race between the drain and the
+        # worker, so that a shutdown whose worker had already died writes what is left here rather
+        # than waiting for a signal nobody will send. The property is the same one, and the
+        # mutation removes the whole drain — which is the defect it was written for.
+        "        self._stopping = True\n"
+        "        drained = asyncio.create_task(self._queue.join())\n"
+        "        await asyncio.wait({drained, self._worker}, return_when=asyncio.FIRST_COMPLETED)\n"
+        "        if not drained.done():\n"
+        "            drained.cancel()\n"
+        "            with contextlib.suppress(asyncio.CancelledError):\n"
+        "                await drained\n"
+        "            await self._write_remaining()",
         "        self._stopping = True",
         LOG_WRITER,
     ),
@@ -866,11 +885,28 @@ MUTATIONS = [
     ),
     Mutation(
         "O2",
-        "a malformed roles claim yields no oversight rather than an error",
-        "gateway/src/aira_gateway/auth/attribution.py",
-        "    if not isinstance(access, dict):\n        return ()",
-        "    if not isinstance(access, dict):\n        raise ValueError(access)",
-        "gateway/tests/test_attribution.py",
+        "a malformed groups claim yields no access rather than an error",
+        # **Re-anchored 2026-08-12.** It defended the same shape one claim over: `realm_access` was
+        # parsed defensively so a malformed claim conferred nothing instead of raising. `ADR-0017`
+        # stopped reading realm roles and the helper was deleted on 2026-08-11 — so this anchor had
+        # been pointing at a grave, which is worse than no mutation at all: it reports green about
+        # nothing.
+        #
+        # The rule survived the move. Groups are now the single source of both roles and use-case
+        # access, and `validate` narrows the claim to a list for exactly the reason the old one
+        # narrowed a dict: a realm whose mapper is single-valued sends a **string**, and iterating
+        # one yields characters; a numeric claim raises `TypeError` inside authentication, which
+        # turns a realm misconfiguration into a 500 on every request that token makes. A
+        # misconfiguration must stop *authority*, not authentication.
+        # `or []` rather than a bare `raw_groups`, deliberately. The bare form is caught by
+        # `test_no_groups_claim_yields_no_use_cases` — an **absent** claim is `None`, which is not
+        # iterable — so it would report this property as defended while testing a different one.
+        # `or []` handles absence correctly and mishandles malformation, which isolates the rule
+        # this mutation is about. Verified: with it, only the malformed-claim cases fail.
+        "gateway/src/aira_gateway/auth/oidc.py",
+        "        groups = raw_groups if isinstance(raw_groups, list) else []",
+        "        groups = raw_groups or []",
+        "gateway/tests/test_auth_oidc.py",
     ),
     Mutation(
         # **Re-anchored 2026-08-09** (`ADR-0017`). It named `realm_roles(claims)`, which no longer
@@ -1220,7 +1256,13 @@ MUTATIONS = [
         "C2",
         "a model absent from the catalog still serves the baseline, so nothing regresses",
         "gateway/src/aira_gateway/catalog.py",
-        "            return ModelDeclaration(name=model)",
+        # Disambiguated 2026-08-12. The anchor matched **two** returns and the harness edits the
+        # first, so this was reporting on the *un-lookupable name* branch — a different property
+        # ("a name no row could hold answers 404 rather than 500") — while the branch it names,
+        # `record is None`, went undefended. Anchored on the `if` as well, which only the intended
+        # one carries.
+        "        if record is None:\n            return ModelDeclaration(name=model)",
+        "        if record is None:\n"
         "            return ModelDeclaration(name=model, capabilities=frozenset())",
         MODEL_CATALOG,
     ),
@@ -1523,8 +1565,11 @@ MUTATIONS = [
         "E1",
         "a batch of n weighs n against the rate limit, not one",
         "gateway/src/aira_gateway/api/serving.py",
-        "    await request.app.state.rate_limits.check(use_case, subject, units, extra=throttles)",
-        "    await request.app.state.rate_limits.check(use_case, subject, 1, extra=throttles)",
+        # Re-anchored: the call was reformatted and the raw `app.state` read replaced by the typed
+        # accessor when `state.py` closed the untyped-seam hole. `units` is still the whole
+        # property, and it is still the argument this replaces.
+        "    await rate_limits.check(\n        use_case,\n        subject,\n        units,",
+        "    await rate_limits.check(\n        use_case,\n        subject,\n        1,",
         EMBEDDING,
     ),
     Mutation(
@@ -1964,8 +2009,13 @@ MUTATIONS = [
         "Y9",
         "a request refused on size is audited, not answered 413 and forgotten",
         "gateway/src/aira_gateway/middleware.py",
-        "            await record_oversized(scope, self.max_bytes)\n            await self._reject(send)",
-        "            await self._reject(send)",
+        # Re-anchored: `_reject` gained the path it is refusing. Anchored on the **declared
+        # `Content-Length`** exit rather than the read-past-the-ceiling one, because that is the
+        # exit `FRD-122` §12 was found on — a 20 MB body refused before any route, leaving no trace
+        # at all.
+        "            await record_oversized(scope, self.max_bytes)\n"
+        '            await self._reject(send, str(scope.get("path", "")))',
+        '            await self._reject(send, str(scope.get("path", "")))',
         HARDENING,
     ),
     Mutation(
@@ -2050,8 +2100,12 @@ MUTATIONS = [
         "Z8",
         "a pipeline call is booked against the budget as tokens and not as a second request",
         "gateway/src/aira_gateway/budgets/service.py",
-        "            budgets, tokens, cost_nanos=cost_nanos, now=now, requests=0, subject=subject",
-        "            budgets, 0, cost_nanos=cost_nanos, now=now, requests=0, subject=subject",
+        # Re-anchored: the call was split over several lines when `username` joined it. `tokens` is
+        # still the argument the property is about — a classifier's spend is consumption and is
+        # counted; the caller made one request, and booking a second would inflate every request
+        # figure and could trip a request limit for traffic nobody sent.
+        "        await self.record(\n            budgets,\n            tokens,",
+        "        await self.record(\n            budgets,\n            0,",
         f"{ACCOUNTING} gateway/tests/test_budget_service.py",
     ),
     Mutation(
@@ -2352,8 +2406,15 @@ MUTATIONS = [
         "N19",
         "only an incident role may stop traffic by hand",
         "gateway/src/aira_gateway/api/incidents.py",
-        "    if not principal.may_act_on_incidents:",
-        "    if False:",
+        # Disambiguated 2026-08-12: a second endpoint (`FRD-506`'s reachability check) asks the
+        # same predicate, so the bare line matched twice and the harness edits the first. It
+        # happened to be the intended one; that it did was luck, and the next endpoint to ask this
+        # question would have moved it. Anchored on the refusal `_require_oversight` raises, which
+        # only the kill switch has.
+        "    if not principal.may_act_on_incidents:\n        raise GeminiHTTPError(\n            403,\n"
+        '            "Only IT Security or a Global Administrator may suspend or restore access.",',
+        "    if False:\n        raise GeminiHTTPError(\n            403,\n"
+        '            "Only IT Security or a Global Administrator may suspend or restore access.",',
         "gateway/tests/test_suspensions.py gateway/tests/test_reporting.py",
     ),
     # ---- what the live round found (FRD-503 §7) -------------------------------------------
@@ -2863,8 +2924,14 @@ MUTATIONS = [
         "N39",
         "two grants on one use case do not share a compaction key",
         "management/backend/src/aira_management/apps/outbox/subscriber.py",
-        "    if event_type.startswith(\"use_case_group.\"):\n        key = f\"{key}|{payload.get('group', '')}\"",
-        "    if False:\n        key = f\"{key}|{payload.get('group', '')}\"",
+        # Re-anchored: the `if` for grants became `_ALSO_IDENTIFIED_BY`, a table, when the same
+        # defect turned out to be true of memberships three lines above it — "a table rather than a
+        # second `if`, because the third one would have been forgotten too". The mutation now
+        # empties the table, which is the same defect for every entry rather than for one of them.
+        '_ALSO_IDENTIFIED_BY = {\n    "membership.upserted": "username",',
+        "_ALSO_IDENTIFIED_BY: dict[str, str] = {}\n"
+        "_UNUSED = {\n"
+        '    "membership.upserted": "username",',
         "management/backend/tests/test_outbox_routing.py",
     ),
     Mutation(
@@ -3468,8 +3535,12 @@ MUTATIONS = [
         "QA10",
         "a refusal raised before a KIRA route still answers in the KIRA envelope",
         "gateway/src/aira_gateway/app.py",
-        "        if _kira(request):\n            return kira_error_response(exc.code, kira_code_for_status(exc.code), exc.message)",
-        "        if False:\n            return kira_error_response(exc.code, kira_code_for_status(exc.code), exc.message)",
+        # Re-anchored: the handler learned to separate "nothing was presented" from "what was
+        # presented was rejected" for a 401, so the code is chosen above the return rather than in
+        # it. The branch this switches off is the same one, and it is the one the property is
+        # about — `_kira(request)` is what decides whose envelope a refusal goes out in.
+        "        if _kira(request):\n            code = kira_code_for_status(exc.code)",
+        "        if False:\n            code = kira_code_for_status(exc.code)",
         KIRA_ENVELOPE,
     ),
     Mutation(
@@ -3500,7 +3571,10 @@ MUTATIONS = [
         "QA14",
         "a health check that can fail — the upstreams are in its verdict",
         "gateway/src/aira_gateway/api/kira/routes.py",
-        "    healthy = all(check.healthy for check in checks)",
+        # Re-anchored: the checks report the predecessor's `"Healthy"`/`"Unhealthy"` strings rather
+        # than a boolean, so the verdict is read from `status`. The property is unchanged: a health
+        # check whose answer does not depend on the upstreams is a health check that cannot fail.
+        '    healthy = all(check.status == "Healthy" for check in checks)',
         "    healthy = True",
         KIRA_COMPAT,
     ),
@@ -3568,8 +3642,13 @@ MUTATIONS = [
         "QA16",
         "a refusal from a known caller is recorded on the compatibility surface too",
         "gateway/src/aira_gateway/api/kira/routes.py",
-        "        resolve_attribution(request, principal)\n        body = await _json(request)",
-        "        body = await _json(request)\n        resolve_attribution(request, principal)",
+        # Re-anchored 2026-08-12, and the anchor was **ambiguous** before it was stale: the same
+        # two lines stood in all three dispatching routes, and the harness edits the first match —
+        # so this reported a property about `/chat` while `/streaming-chat` and `/embed` were
+        # untouched. The three copies are now one function, which makes the anchor unique by
+        # construction rather than by a longer string somebody has to keep unique by hand.
+        "    resolve_attribution(request, principal)\n    body = await _json(request)",
+        "    body = await _json(request)\n    resolve_attribution(request, principal)",
         REFUSAL_PARITY,
     ),
     Mutation(
@@ -3688,6 +3767,7 @@ MUTATIONS = [
     ),
 ]
 
+
 def _recover() -> None:
     """Put back whatever a previous run was holding when it died."""
     if not JOURNAL.exists():
@@ -3736,8 +3816,40 @@ def _refuse_duplicate_ids() -> None:
         raise SystemExit(2)
 
 
+def _refuse_ambiguous_anchors() -> None:
+    """An anchor must name exactly one place.
+
+    This module's own docstring has stated the rule since it was written, and nothing checked it —
+    so on 2026-08-12 three anchors matched two or three places each. `path.write_text(...replace(
+    old, new, 1))` edits the **first** match, which means an ambiguous anchor quietly reports on
+    whichever copy comes first in the file. `C2` named the model catalog's "no such row" branch and
+    was editing the "un-lookupable name" branch three lines above it: a different property, a
+    different test, and a confident `caught`.
+
+    That is worse than the stale anchors found the same day. A stale one at least prints `STALE`;
+    this one prints a result that reads exactly like a working guard.
+
+    Refused before the run rather than reported after it, like the duplicate-id check above and for
+    the same reason: no result about an ambiguous anchor can be read, so producing one is worse
+    than producing none. `tools/tests/test_mutation_anchors.py` asks the same question in
+    milliseconds, so this is the backstop rather than the working check — the whole-run harness is
+    not what anybody runs before pushing.
+    """
+    ambiguous = []
+    for mutation in MUTATIONS:
+        count = (ROOT / mutation.path).read_text().count(mutation.old)
+        if count > 1:
+            ambiguous.append(f"  {mutation.ident}: matches {count} places in {mutation.path}")
+    if ambiguous:
+        print("These anchors name more than one place, and only the first would be edited:")
+        print("\n".join(ambiguous))
+        print("Widen the anchor, or remove the duplication in the source it is pointing at.")
+        raise SystemExit(2)
+
+
 def main() -> int:
     _refuse_duplicate_ids()
+    _refuse_ambiguous_anchors()
     _recover()
     # `--only A1,B2` runs a subset. Added 2026-08-08 after a five-mutation change cost a full
     # 306-property run: the whole set is what CI checks, and the whole set is not what somebody
