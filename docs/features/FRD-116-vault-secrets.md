@@ -1,7 +1,7 @@
 # FRD-116 — Secrets actually read from Vault
 
-> Phase: 8 (KIRA parity) · Status: **Done (2026-08-06)** · Owner: Vadim Scheibe · Last updated: 2026-08-06
-> Origin: `kira_api.md` §10 (Vault AppRole), programme: `ADR-0010`. Extends `ADR-0007`.
+> Phase: 8 (KIRA parity) · Status: **Done** · Owner: Vadim Scheibe
+> Origin: the predecessor's contract (Vault AppRole), programme: `ADR-0010`. Extends `ADR-0007`.
 
 ## 1. Problem
 

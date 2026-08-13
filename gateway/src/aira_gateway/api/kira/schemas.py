@@ -1,4 +1,4 @@
-"""The predecessor's wire shapes (`kira_api.md` §2, §4).
+"""The predecessor's wire shapes (the predecessor's contract).
 
 Field names are the predecessor's. Most of them are snake_case there and are spelled that way
 here; the ones the predecessor spells in camelCase — `maxTokens` and `responseSchema` (`FRD-107`
@@ -127,7 +127,7 @@ class EmbeddingRequest(BaseModel):
 
 
 class EmbeddingResponse(BaseModel):
-    """One text in, one vector out — the predecessor's documented shape (`kira_api.md` §2.3)."""
+    """One text in, one vector out — the shape the contract documents."""
 
     vector: list[float]
 

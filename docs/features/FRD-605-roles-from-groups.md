@@ -1,7 +1,7 @@
 # FRD-605 — Roles from groups
 
-> Phase: 2 (Management Foundation, revisited) · Status: **Built (2026-08-09)** · Owner: Vadim Scheibe
-> Last updated: 2026-08-09
+> Phase: 2 (Management Foundation, revisited) · Status: **Built** · Owner: Vadim Scheibe
+>
 > Decision: [`ADR-0017`](../adr/ADR-0017-a-role-is-held-through-a-group.md). Read that first — this
 > document is how it was carried out and what it cost.
 > Related: `FRD-201` (RBAC), `FRD-209` (access by group), `ADR-0009` (the shared role definition),

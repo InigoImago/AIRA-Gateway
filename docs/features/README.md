@@ -20,62 +20,62 @@ status that goes stale in the copy nobody opens.
 | [103](FRD-103-request-response-persistence.md) | Request/response persistence | 1 | ✅ Done (Phase 1) |
 | [104](FRD-104-mock-upstream.md) | Mock upstream fidelity (streaming SSE, generationConfig) | 1 | ✅ Done (Phase 1) |
 | [105](FRD-105-tracing-and-ip.md) | Tracing enrichment: attribution & source IP on spans | 1 | ✅ Done (Phase 1) |
-| [107](FRD-107-kira-compatible-surface.md) | A KIRA-compatible API surface | 8 (KIRA parity) | ✅ Done — Stage A + B (2026-08-06) |
-| [110](FRD-110-multimodal-content.md) | Documents and images in a request | 8 (KIRA parity) | ✅ Done (2026-08-06) |
-| [111](FRD-111-thinking-control.md) | Thinking control | 8 (KIRA parity) | ✅ Done (2026-08-06) |
-| [112](FRD-112-structured-output.md) | Structured output (`responseSchema`) | 8 (KIRA parity) | ✅ Done (2026-08-06) |
-| [113](FRD-113-embedding-options.md) | Embedding: task types, batches and dimensions | 8 (KIRA parity) | ✅ Done (2026-08-06) |
-| [114](FRD-114-model-capability-metadata.md) | What a model can do, and where its limits are | 8 (KIRA parity) | ✅ Done (2026-08-06) |
-| [115](FRD-115-vertex-ai-upstream.md) | Reaching the models: Vertex AI / Model Garden in the EU | 8 (KIRA parity) | ✅ Done (2026-08-06) |
-| [116](FRD-116-vault-secrets.md) | Secrets actually read from Vault | 8 (KIRA parity) | ✅ Done (2026-08-06) |
-| [117](FRD-117-diagnostics-and-compatibility.md) | Diagnostics and client compatibility | 8 (KIRA parity) | ✅ Done except FR-7 (2026-08-06) |
+| [107](FRD-107-kira-compatible-surface.md) | A KIRA-compatible API surface | 8 (KIRA parity) | ✅ Done — Stage A + B |
+| [110](FRD-110-multimodal-content.md) | Documents and images in a request | 8 (KIRA parity) | ✅ Done |
+| [111](FRD-111-thinking-control.md) | Thinking control | 8 (KIRA parity) | ✅ Done |
+| [112](FRD-112-structured-output.md) | Structured output (`responseSchema`) | 8 (KIRA parity) | ✅ Done |
+| [113](FRD-113-embedding-options.md) | Embedding: task types, batches and dimensions | 8 (KIRA parity) | ✅ Done |
+| [114](FRD-114-model-capability-metadata.md) | What a model can do, and where its limits are | 8 (KIRA parity) | ✅ Done |
+| [115](FRD-115-vertex-ai-upstream.md) | Reaching the models: Vertex AI / Model Garden in the EU | 8 (KIRA parity) | ✅ Done |
+| [116](FRD-116-vault-secrets.md) | Secrets actually read from Vault | 8 (KIRA parity) | ✅ Done |
+| [117](FRD-117-diagnostics-and-compatibility.md) | Diagnostics and client compatibility | 8 (KIRA parity) | ✅ Done except FR-7 |
 | [118](FRD-118-federated-identity.md) | Several Keycloak backends, and groups from UserInfo | 8 (KIRA parity) | ○ Draft — requirement not yet confirmed |
-| [119](FRD-119-anthropic-on-vertex.md) | Anthropic models on Vertex: the second dialect | 8 (KIRA parity) | ✅ Done (2026-08-06) |
+| [119](FRD-119-anthropic-on-vertex.md) | Anthropic models on Vertex: the second dialect | 8 (KIRA parity) | ✅ Done |
 | [120](FRD-120-microsoft-foundry.md) | Microsoft Foundry: Azure OpenAI and Microsoft's own models | 8 (KIRA parity) / Phase 3 backlog | ✅ Built, hermetically verified only |
 | [121](FRD-121-document-normalisation.md) | Document normalisation for models that cannot read documents | 8 (KIRA parity) | ○ Draft — optional, and probably should not be built first |
-| [122](FRD-122-complete-audit-trail.md) | A complete audit trail: what was asked, what was decided, what was served | 8 | ✅ Done (2026-08-06) |
-| [123](FRD-123-local-models-for-verification.md) | A real model in the stack (Ollama, over the OpenAI dialect) | 8 (KIRA parity) | ✅ Done (2026-08-06) |
-| [124](FRD-124-no-silently-dropped-fields.md) | Nothing a request asks for is silently dropped | 8 | ✅ Done (2026-08-06) |
-| [125](FRD-125-pipeline-verdicts.md) | The pipeline's own model calls are first class | 3 (correction) | ✅ Done (2026-08-06) |
-| [126](FRD-126-one-pre-dispatch-sequence.md) | A surface parses; the layer decides | 8 (structural) | ✅ Done (2026-08-07) |
-| [128](FRD-128-one-post-dispatch-sequence.md) | A request the caller abandoned is still a request that happened | 8 (structural) | ✅ Done (2026-08-07) |
-| [130](FRD-130-demo-showcase.md) | A demo somebody can walk through | 0 (extension) | ✅ Done (2026-08-07) |
-| [131](FRD-131-tool-calling.md) | Tool calling: carried, never executed, and off until somebody turns it on | 9 | ✅ Done (2026-08-08) |
-| [132](FRD-132-coding-assistant-surface.md) | Which surface a coding assistant needs, measured rather than assumed | 9 | ✅ Stage A done (2026-08-08) — B1: no new surface needed |
-| [133](FRD-133-prompt-caching.md) | Prompt caching: written down now, built after the agent work | 9 | ✅ Built (2026-08-10) |
+| [122](FRD-122-complete-audit-trail.md) | A complete audit trail: what was asked, what was decided, what was served | 8 | ✅ Done |
+| [123](FRD-123-local-models-for-verification.md) | A real model in the stack (Ollama, over the OpenAI dialect) | 8 (KIRA parity) | ✅ Done |
+| [124](FRD-124-no-silently-dropped-fields.md) | Nothing a request asks for is silently dropped | 8 | ✅ Done |
+| [125](FRD-125-pipeline-verdicts.md) | The pipeline's own model calls are first class | 3 (correction) | ✅ Done |
+| [126](FRD-126-one-pre-dispatch-sequence.md) | A surface parses; the layer decides | 8 (structural) | ✅ Done |
+| [128](FRD-128-one-post-dispatch-sequence.md) | A request the caller abandoned is still a request that happened | 8 (structural) | ✅ Done |
+| [130](FRD-130-demo-showcase.md) | A demo somebody can walk through | 0 (extension) | ✅ Done |
+| [131](FRD-131-tool-calling.md) | Tool calling: carried, never executed, and off until somebody turns it on | 9 | ✅ Done |
+| [132](FRD-132-coding-assistant-surface.md) | Which surface a coding assistant needs, measured rather than assumed | 9 | ✅ Stage A done — B1: no new surface needed |
+| [133](FRD-133-prompt-caching.md) | Prompt caching: written down now, built after the agent work | 9 | ✅ Built |
 | [200](FRD-200-mgmt-backend-foundation.md) | Management backend foundation (DRF API + OIDC) | 2 | ✅ Done (Phase 2) |
 | [201](FRD-201-keycloak-rbac.md) | RBAC: roles + object-level use-case permissions | 2 | ✅ Done (Phase 2) |
 | [202](FRD-202-usecase-crud.md) | Use-case CRUD & membership (self-service) | 2 | ✅ Done (Phase 2) |
 | [203](FRD-203-angular-shell.md) | Angular shell: OIDC login, role-aware nav, use-case views | 2 | ✅ Done (Phase 2) |
 | [204](FRD-204-config-distribution-kafka.md) | Config distribution over Kafka (Management → Gateway read-model) | 2 | ✅ Done (Phase 2) |
 | [205](FRD-205-api-key-issuance.md) | Self-service API-key issuance (Management → Gateway) | 2 | ✅ Done (Phase 2) |
-| [206](FRD-206-console-truthfulness.md) | The console offers only what the server would allow | 2 (correction) | ✅ Done (2026-08-07) |
-| [207](FRD-207-console-legibility.md) | The console holds still, explains itself, and stays usable as it grows | 2/5 | ✅ Done (2026-08-08) |
-| [208](FRD-208-paging-and-use-case-rules.md) | Paging that is real, and a rule somebody can actually change | 2/5 | ✅ Done (2026-08-08) |
-| [209](FRD-209-access-by-group.md) | Access by group, and one place to search for whoever gets it | 2 | ✅ Done (2026-08-08) |
+| [206](FRD-206-console-truthfulness.md) | The console offers only what the server would allow | 2 (correction) | ✅ Done |
+| [207](FRD-207-console-legibility.md) | The console holds still, explains itself, and stays usable as it grows | 2/5 | ✅ Done |
+| [208](FRD-208-paging-and-use-case-rules.md) | Paging that is real, and a rule somebody can actually change | 2/5 | ✅ Done |
+| [209](FRD-209-access-by-group.md) | Access by group, and one place to search for whoever gets it | 2 | ✅ Done |
 | [300](FRD-300-pipeline-engine.md) | Pre-dispatch pipeline engine (filter · routing · fallback) | 3 | ✅ Done |
 | [303](FRD-303-pipeline-builder-ui.md) | Pipeline builder UI (clickable graph) | 3 | ✅ Done |
 | [304](FRD-304-upstream-adapters.md) | Real upstream adapter: Google Gemini | 3 | ✅ Done |
 | [306](FRD-306-pipeline-usability.md) | Pipeline rework: LLM routing, explainable filter, dry-run | 3 | ✅ Done |
-| [307](FRD-307-model-catalog.md) | Approved-model catalog + model pickers | 3 | ○ Approval delivered 2026-08-09; candidate lists and builder pickers still open |
-| [308](FRD-308-use-case-model-release.md) | Which models a use case may call | 3 | ✅ Built (2026-08-11) |
+| [307](FRD-307-model-catalog.md) | Approved-model catalog + model pickers | 3 | ○ Approval delivered; candidate lists and builder pickers still open |
+| [308](FRD-308-use-case-model-release.md) | Which models a use case may call | 3 | ✅ Built |
 | [400](FRD-400-budget-model.md) | Budget model & distribution | 4 | ✅ Done |
 | [401](FRD-401-budget-enforcement.md) | Budget enforcement & usage accounting | 4 | ✅ Done |
 | [402](FRD-402-budget-ui.md) | Budget UI (set limits + view consumption) | 4 | ✅ Done |
 | [403](FRD-403-cost-budgets.md) | Cost-based budgeting (model prices, spend limits) | 4 | ✅ Done |
 | [404](FRD-404-retention.md) | Payload storage and retention (per use case, one week by default) | 4 | ✅ Done |
 | [405](FRD-405-rate-limiting.md) | Rate limiting, atomic budget reservation, and persistence off the hot path | 4 | ✅ Done |
-| [406](FRD-406-content-redaction.md) | Redaction of credentials in stored payloads | 4 | ✅ Done — credential half only (2026-08-08) |
-| [500](FRD-500-anomaly-rules.md) | Anomaly rules | 5 | ✅ Done (2026-08-07) |
-| [501](FRD-501-anomaly-detection-engine.md) | The detection engine | 5 | ✅ Done (2026-08-07) |
-| [502](FRD-502-security-console-and-traces.md) | The IT Security console, own warnings, and per-use-case traces | 5 | ✅ Done (2026-08-08) |
-| [503](FRD-503-incident-response.md) | Incident response | 5 | ✅ Done (2026-08-07) |
+| [406](FRD-406-content-redaction.md) | Redaction of credentials in stored payloads | 4 | ✅ Done — credential half only |
+| [500](FRD-500-anomaly-rules.md) | Anomaly rules | 5 | ✅ Done |
+| [501](FRD-501-anomaly-detection-engine.md) | The detection engine | 5 | ✅ Done |
+| [502](FRD-502-security-console-and-traces.md) | The IT Security console, own warnings, and per-use-case traces | 5 | ✅ Done |
+| [503](FRD-503-incident-response.md) | Incident response | 5 | ✅ Done |
 | [504](FRD-504-model-smoke-tests.md) | Model smoke tests for IT Security | 5 (IT Security) | ✅ Built |
-| [505](FRD-505-requests-and-prompts.md) | The requests view, and reading what was actually sent | 5 (IT Security) | ✅ Done (2026-08-09) |
-| [506](FRD-506-model-reachability.md) | Is this model reachable, or only written down? | 3 (catalog) | ✅ Done (2026-08-09) |
-| [507](FRD-507-catalog-import.md) | Importing what the adapters already serve | 6 | ✅ Built (2026-08-10) |
+| [505](FRD-505-requests-and-prompts.md) | The requests view, and reading what was actually sent | 5 (IT Security) | ✅ Done |
+| [506](FRD-506-model-reachability.md) | Is this model reachable, or only written down? | 3 (catalog) | ✅ Done |
+| [507](FRD-507-catalog-import.md) | Importing what the adapters already serve | 6 | ✅ Built |
 | [601](FRD-601-spend-and-usage-reporting.md) | Spend and usage reporting | 6 | ✅ Done |
-| [602](FRD-602-report-export.md) | Exporting the usage report | 8 (KIRA parity) | ✅ Done (2026-08-06) |
-| [603](FRD-603-use-case-consumption.md) | What a use case consumed, with or without a budget | 6 (Governance & Analytics) | ✅ Done (2026-08-09) |
+| [602](FRD-602-report-export.md) | Exporting the usage report | 8 (KIRA parity) | ✅ Done |
+| [603](FRD-603-use-case-consumption.md) | What a use case consumed, with or without a budget | 6 (Governance & Analytics) | ✅ Done |
 | [604](FRD-604-credential-accountability.md) | Who answers for a credential | 5 (IT Security) | ✅ Both stages done |
-| [605](FRD-605-roles-from-groups.md) | Roles from groups | 2 (Management Foundation, revisited) | ✅ Built (2026-08-09) |
+| [605](FRD-605-roles-from-groups.md) | Roles from groups | 2 (Management Foundation, revisited) | ✅ Built |

@@ -1,6 +1,6 @@
 # FRD-304 — Real upstream adapter: Google Gemini
 
-> Phase: 3 · Status: **Done** · Owner: Vadim Scheibe · Last updated: 2026-08-04
+> Phase: 3 · Status: **Done** · Owner: Vadim Scheibe
 > Related: `docs/PRD.md` §4, §8 (FR-GW-4); `docs/ROADMAP.md` Phase 3; builds on FRD-100; `ADR-0005`
 
 ## 1. Summary

@@ -1,6 +1,6 @@
 # FRD-306 — Pipeline rework: LLM routing, explainable filter, dry-run
 
-> Phase: 3 · Status: **Done** · Owner: Vadim Scheibe · Last updated: 2026-08-04
+> Phase: 3 · Status: **Done** · Owner: Vadim Scheibe
 > Supersedes the length-based routing in FRD-300/301. Driven by user feedback that the builder was
 > opaque and routing was too simplistic.
 

@@ -1,6 +1,6 @@
 # Migrating a KIRA client to AIRA
 
-For somebody who has a working **KIA-KIRA-API** client and wants it to keep working against AIRA.
+For somebody who has a working **the predecessor API** client and wants it to keep working against AIRA.
 
 Every request and response in this document was executed against a running stack on 2026-08-12 and
 the outputs are what came back. Where AIRA answers differently from the predecessor, it says so.

@@ -1,7 +1,7 @@
 # FRD-113 — Embedding: task types, batches and dimensions
 
-> Phase: 8 (KIRA parity) · Status: **Done (2026-08-06)** · Owner: Vadim Scheibe · Last updated: 2026-08-06
-> Origin: `kira_api.md` §2.3, §4.4, §5.2, programme: `ADR-0010`.
+> Phase: 8 (KIRA parity) · Status: **Done** · Owner: Vadim Scheibe
+> Origin: the predecessor's contract, programme: `ADR-0010`.
 > Depends on: `FRD-114`. Touches `FRD-401`/`FRD-405` (a batch is one request and many tokens).
 
 ## 1. Problem
@@ -202,7 +202,7 @@ Mutations **E1–E8**.
 ## 11. Dependencies & Risks
 
 - **`FRD-114`** for `task_types`, `supports_batch` and `dimensions`.
-- **Open — the predecessor's aggregation semantics.** `kira_api.md` names the flag
+- **Open — the predecessor's aggregation semantics.** the predecessor's contract names the flag
   `supports_aggregation` and shows a **singular** `{"vector": [...]}` response for an input that
   may be a list. Two readings: a list yields one vector per text (ordinary batching), or a list is
   combined into a single vector. This FRD assumes the first, which is what the provider API offers

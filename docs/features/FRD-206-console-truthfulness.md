@@ -1,6 +1,6 @@
 # FRD-206 — The console offers only what the server would allow
 
-> Phase: 2 (correction) · Status: **Done (2026-08-07)** · Owner: AIRA · Last updated: 2026-08-07
+> Phase: 2 (correction) · Status: **Done** · Owner: AIRA
 > Related: `FRD-201` (RBAC), `FRD-202` (use-case CRUD), `FRD-203` (Angular shell), `FRD-205`
 > (key issuance), `FRD-402`, `FRD-405`, `FRD-601`, `docs/adr/ADR-0007.md`
 

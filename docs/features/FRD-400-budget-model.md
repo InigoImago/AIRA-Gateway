@@ -1,10 +1,10 @@
 # FRD-400 — Budget model & distribution
 
-> **Extended by [FRD-403](FRD-403-cost-budgets.md) (2026-08-05)**: a budget may now cap **spend**
+> **Extended by [FRD-403](FRD-403-cost-budgets.md)**: a budget may now cap **spend**
 > in the installation currency, not only tokens and request counts. A token limit could not
 > express cost — a token differs in price by more than an order of magnitude between models.
 
-> Phase: 4 · Status: **Done** · Owner: Vadim Scheibe · Last updated: 2026-08-04
+> Phase: 4 · Status: **Done** · Owner: Vadim Scheibe
 > Related: `docs/ROADMAP.md` Phase 4; builds on FRD-102 (attribution), FRD-103 (request logs),
 > FRD-202/204 (use-case CRUD + Kafka distribution). Companion: FRD-401 (enforcement), FRD-402 (UI).
 

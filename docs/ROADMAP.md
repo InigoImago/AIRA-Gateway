@@ -151,8 +151,8 @@ FRDs: `FRD-700-hardening`, `FRD-701-k8s-helm`, `FRD-702-perf-and-ha`.
 ---
 
 ## Phase 8 — KIRA parity
-**Goal:** AIRA carries every capability of the predecessor **KIA-KIRA-API** (`kira_api.md`), so that
-it can be decommissioned.
+**Goal:** AIRA carries every capability of the **predecessor API**, so that it can be
+decommissioned.
 
 A review on 2026-08-06 found the gap is not where it might be assumed. In breadth AIRA is well
 ahead — the predecessor has no use cases, no budgets, no rate limits, no pipeline, no management

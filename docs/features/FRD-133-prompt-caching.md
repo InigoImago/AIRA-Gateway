@@ -1,6 +1,6 @@
 # FRD-133 — Prompt caching: written down now, built after the agent work
 
-> Phase: 9 · Status: **Built (2026-08-10)** — all three stages · Owner: Vadim Scheibe · Last updated: 2026-08-10
+> Phase: 9 · Status: **Built** — all three stages · Owner: Vadim Scheibe
 > Related: `FRD-131` (tool calling), `FRD-132` (the assistant surface), `FRD-403` (cost),
 > `FRD-119` §usage (Anthropic cache tokens), `ADR-0012` (capabilities say _whether_, never _how_),
 > `ADR-0013` (no conversation state)

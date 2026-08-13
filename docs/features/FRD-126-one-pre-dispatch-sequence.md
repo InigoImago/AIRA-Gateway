@@ -1,6 +1,6 @@
 # FRD-126 — A surface parses; the layer decides
 
-> Phase: 8 (structural) · Status: **Done (2026-08-07)** · Owner: AIRA · Last updated: 2026-08-07
+> Phase: 8 (structural) · Status: **Done** · Owner: AIRA
 > Related: `ADR-0010` (a second surface), `FRD-107`, `FRD-405`, `FRD-125`, `FRD-127`, `FRD-128`
 
 ## 1. Summary

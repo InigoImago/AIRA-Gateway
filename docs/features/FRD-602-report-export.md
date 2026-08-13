@@ -1,8 +1,8 @@
 # FRD-602 — Exporting the usage report
 
-> Phase: 8 (KIRA parity) · Status: **Done (2026-08-06)** · Owner: Vadim Scheibe · Last updated: 2026-08-06
-> Origin: `kira_api.md` §2.7 (content negotiation, CSV), programme: `ADR-0010`.
-> Follows `FRD-601` (delivered 2026-08-06).
+> Phase: 8 (KIRA parity) · Status: **Done** · Owner: Vadim Scheibe
+> Origin: the predecessor's contract (content negotiation, CSV), programme: `ADR-0010`.
+> Follows `FRD-601`.
 
 ## 1. Problem
 

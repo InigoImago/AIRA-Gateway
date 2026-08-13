@@ -1,8 +1,8 @@
 # FRD-118 — Several Keycloak backends, and groups from UserInfo
 
 > Phase: 8 (KIRA parity) · Status: **Draft — requirement not yet confirmed** · Owner: Vadim Scheibe
-> Last updated: 2026-08-06
-> Origin: `kira_api.md` §3.1–3.2, programme: `ADR-0010`. Touches `FRD-101`, `FRD-102`, `FRD-200`.
+>
+> Origin: the predecessor's contract, programme: `ADR-0010`. Touches `FRD-101`, `FRD-102`, `FRD-200`.
 
 > **Read §11 before starting this one.** Two of its three requirements may exist in the predecessor
 > for reasons that do not apply to us, and one of them would make every authenticated request

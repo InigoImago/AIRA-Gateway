@@ -7,7 +7,7 @@ serving perfectly well, and against a paid endpoint it bills for the privilege.
 
 Everything else here is about being *findable* when something does go wrong: a trace id on the
 responses that failed, a version endpoint that answers on a development build, and a CORS policy
-that refuses the configuration the predecessor ships.
+that refuses a permissive CORS configuration outright.
 """
 
 from __future__ import annotations
@@ -411,7 +411,7 @@ def test_a_named_origin_is_allowed_and_others_are_not() -> None:
 
 
 def test_a_wildcard_with_credentials_refuses_to_start() -> None:
-    """The predecessor ships exactly this (`kira_api.md` §8.1). Browsers reject the combination,
+    """A compatibility surface is never a reason to relax this. Browsers reject the combination,
     and a server that implements it by *reflecting* the origin disables the protection entirely:
     any site a user visits can then call the API with their credentials.
 

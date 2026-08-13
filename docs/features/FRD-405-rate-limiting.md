@@ -1,6 +1,6 @@
 # FRD-405 — Rate limiting, atomic budget reservation, and persistence off the hot path
 
-> Phase: 4 · Status: **Done** · Owner: Vadim Scheibe · Last updated: 2026-08-05
+> Phase: 4 · Status: **Done** · Owner: Vadim Scheibe
 > Depends on `FRD-401` (budget enforcement) and `FRD-403` (cost budgets). Decided in `ADR-0008`.
 
 ## 1. Problem

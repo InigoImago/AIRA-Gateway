@@ -1,6 +1,6 @@
 # FRD-209 — Access by group, and one place to search for whoever gets it
 
-> Phase: 2 · Status: **Done (2026-08-08)** · Owner: AIRA · Last updated: 2026-08-08
+> Phase: 2 · Status: **Done** · Owner: AIRA
 > Related: [`FRD-102`](FRD-102-attribution.md) (attribution from Keycloak groups),
 > [`FRD-201`](FRD-201-keycloak-rbac.md) (roles → Django groups), [`FRD-202`](FRD-202-usecase-crud.md)
 > (membership), [`FRD-206`](FRD-206-console-truthfulness.md), `ADR-0007`, `ADR-0009`

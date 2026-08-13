@@ -1,7 +1,7 @@
 # FRD-504 — Model smoke tests for IT Security
 
 > Phase: 5 (IT Security) · Status: **Built**, narrower than drafted · Owner: Vadim Scheibe
-> Last updated: 2026-08-09
+>
 > Origin: the owner's feature definition (PRD §1.1, item 14).
 > Related: `FRD-300` (injection filter), `FRD-114` (model catalog), `FRD-403` (cost), `FRD-122`
 > (audit), `FRD-502` (IT Security console).
@@ -10,7 +10,7 @@
 > as the record of what was intended; several of their ideas were dropped on evidence and the
 > deviations are named where they occur. The largest is vocabulary: the draft speaks throughout of
 > **batteries**, plural and named. There is **one flat catalogue** of questions and no grouping —
-> the owner's decision on 2026-08-09, and §5.7 says why grouping was not merely unnecessary but
+> the owner's decision, and §5.7 says why grouping was not merely unnecessary but
 > harmful to the thing the catalogue is for. Read "battery" below as "the catalogue".
 
 ## 1. Problem

@@ -5,6 +5,39 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The repository is public — say what AIRA does, not what the predecessor's system looks like
+
+The instruction: the predecessor's product name out entirely, less information about its API, and
+no dates in the documentation that is read as current.
+
+The compatibility surface keeps its name — `/kira/api/external` is on the wire, and a client
+migrating by changing a base URL is the whole point of `FRD-107`. What came out is everything
+*around* it, which had accumulated without anybody deciding to publish it: the product name in four
+documents, the specification document by **filename and section structure in forty-seven places**,
+a source file of theirs cited in a comment, and — the one that matters most — its **security
+posture**. Sentences saying the predecessor disables TLS verification and ships
+`allow_origins=["*"]` with credentials existed to explain why *our* rule is different. That is a
+good reason to state the rule and no reason at all to name whose weakness it is: a system that is
+presumably still running does not need its weak spots described in a public repository by its
+successor. The rules are unchanged and still explained; only the attribution is gone.
+
+Dates left the two places read as *current* — `CLAUDE.md` and each FRD's header, and with it the
+generated index. `Status: **Done (2026-08-06)**` is a delivery timeline nobody chose to publish,
+and `git log` answers "when" better than a header somebody has to remember to update. **The DEVLOG
+keeps its dates**: it is a log, and a log without dates is a list.
+
+`tools/tests/test_public_repository_hygiene.py` is the counterpart, because the alternative is
+remembering and every one of those forty-seven citations was defensible where it stood. It parses
+every tracked text file and fails on the product name, the specification filename, a source file of
+theirs, or a sentence describing their configuration — and separately on a date in `CLAUDE.md`,
+`LESSONS.md`, the index or an FRD header. `.gitignore` is exempt on purpose: the rule that keeps
+the predecessor's document out of this repository has to name it, and trading that protection for
+one fewer mention of a filename is the wrong direction.
+
+It found eleven FRD headers my own pass had missed — dates sitting in `Origin:` and `Related:`
+lines rather than in the `Status:` field it was written to clean. All four properties were shown to
+fail before being believed.
+
 ## 2026-08-13 — `CLAUDE.md` §6 was a third copy of this file, and the copies disagreed
 
 Reported by the owner: the status section is over a thousand lines, and short feature descriptions
@@ -229,7 +262,7 @@ The two that were worth measuring rather than reading:
   rows" — a paging defect that was not one.
 
 One correction to my own reading, and one to my own instrument: the single `vector` returned for a
-list is not a silent loss but a decision confirmed against the predecessor's source and measured by
+list is not a silent loss but a decision confirmed against the contract and measured by
 cosine (1.000000 to the parts concatenated); and a 401 in the first probe was a regex that clipped
 the API key by one character.
 
@@ -3686,9 +3719,9 @@ task and lose the span context, so the header would be absent exactly when a spa
 outermost because the responses that most need correlating are the ones an exception handler
 produced. Confirmed on a deployed gateway: the 401 carries one.
 
-CORS refuses `*` with credentials **at startup**. The predecessor ships that combination; browsers
-reject it, and a server implementing it by reflecting the origin lets any site a user visits call
-the API with their credentials. A misconfiguration that only appears under a browser is one that
+CORS refuses `*` with credentials **at startup**. Browsers reject that combination, and a server
+implementing it by reflecting the origin lets any site a user visits call the API with their
+credentials. A misconfiguration that only appears under a browser is one that
 ships.
 
 **FR-7, the second OpenAPI 3.0 document, is not built** — it serves a legacy portal this deployment
@@ -4704,7 +4737,7 @@ it, and getting it wrong is a rewrite rather than a correction.
 
 ## 2026-08-06 — KIRA parity: the programme, and where the gap actually is
 
-The predecessor's requirements (`kira_api.md`, KIA-KIRA-API v0.1.2) arrived with the instruction
+The predecessor's requirements (the predecessor's contract, the predecessor API) arrived with the instruction
 that AIRA must carry all of them. Reviewed against the code rather than against our own
 documentation, the result was not what the phase history would suggest.
 
@@ -4741,10 +4774,10 @@ limits exist for. Recorded as _Proposed_; `FRD-107` stays blocked until it is de
 else is contract-independent and can start immediately.
 
 Three places where the FRDs deliberately **do not** copy the predecessor, each written down so the
-deviation is a decision rather than an omission: TLS verification stays on (`kira_api.md` sets
-`verify=False`); CORS is an origin allow-list, not `*` with credentials; and `GET /models` requires
-authentication. A fourth is close to it — the predecessor resolves group membership from the
-UserInfo endpoint on **every request**, which would make each authenticated call depend on Keycloak
+deviation is a decision rather than an omission: TLS verification stays on; CORS is an origin
+allow-list, not `*` with credentials; and `GET /models` requires authentication. A fourth is close
+to it — resolving group membership from the UserInfo endpoint on **every request** would make each
+authenticated call depend on Keycloak
 being up and fast; `FRD-118` §11 asks whether that requirement even applies to us before anyone
 builds it.
 

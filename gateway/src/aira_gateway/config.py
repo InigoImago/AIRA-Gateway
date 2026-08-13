@@ -224,7 +224,7 @@ class GatewaySettings(BaseAiraSettings):
     # from the same origin through the proxy, so anything cross-origin is a deliberate choice.
     # `*` together with credentials refuses to start: browsers reject the combination, and a server
     # that implements it by reflecting the origin lets any site a user visits call this API with
-    # their credentials. The predecessor ships exactly that; parity would be a regression.
+    # their credentials. Compatibility is never a reason to relax it.
     cors_origins: str = ""
     cors_allow_credentials: bool = False
 

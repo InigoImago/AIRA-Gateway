@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 from typing import Any
 
-#: The media types AIRA accepts, from the predecessor's list (`kira_api.md` §4.2). What a *model*
+#: The media types AIRA accepts, taken from the compatibility contract. What a *model*
 #: accepts is narrower and is declared per model (`FRD-114`); the two are intersected, and the
 #: intersection is checked against the model about to be dispatched to.
 DEFAULT_MEDIA_TYPES: frozenset[str] = frozenset(

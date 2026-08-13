@@ -1,6 +1,6 @@
 # FRD-101 — Authentication: API keys + OIDC bearer
 
-> Phase: 1 · Status: **Done (Phase 1)** · Owner: Vadim Scheibe · Last updated: 2026-08-04
+> Phase: 1 · Status: **Done (Phase 1)** · Owner: Vadim Scheibe
 > Related: `docs/PRD.md` §5 (FR-GW-2), §9; `docs/ROADMAP.md` Phase 1; `ADR-0005`; builds on FRD-100
 
 ## 1. Summary

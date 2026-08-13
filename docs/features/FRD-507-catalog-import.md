@@ -1,6 +1,6 @@
 # FRD-507 — Importing what the adapters already serve
 
-> Phase: 6 · Status: **Built (2026-08-10)** · Owner: Vadim Scheibe · Last updated: 2026-08-10
+> Phase: 6 · Status: **Built** · Owner: Vadim Scheibe
 
 ## 1. Problem
 

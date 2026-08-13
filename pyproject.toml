@@ -28,9 +28,9 @@ target-version = "py314"
 line-length = 100
 src = ["gateway/src", "libs/src"]
 # Ruff formats Python fenced in Markdown, and the code in our documents is illustrative rather than
-# compiled — a snippet is often deliberately partial, and `kira_api.md` is the predecessor's own
-# document, not ours to restyle. Reformatting prose to satisfy a code formatter is the tail wagging
-# the dog; the gate is for code we own.
+# compiled — a snippet is often deliberately partial, and a supplied contract document is not ours
+# to restyle. Reformatting prose to satisfy a code formatter is the tail wagging the dog; the gate
+# is for code we own.
 extend-exclude = ["*.md"]
 
 [tool.ruff.lint]

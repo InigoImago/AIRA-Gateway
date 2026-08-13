@@ -1,7 +1,7 @@
 # FRD-117 — Diagnostics and client compatibility
 
-> Phase: 8 (KIRA parity) · Status: **Done except FR-7 (2026-08-06)** · Owner: Vadim Scheibe · Last updated: 2026-08-06
-> Origin: `kira_api.md` §2.5, §2.6, §8.1–8.3, §12.2, programme: `ADR-0010`.
+> Phase: 8 (KIRA parity) · Status: **Done except FR-7** · Owner: Vadim Scheibe
+> Origin: the predecessor's contract, programme: `ADR-0010`.
 > Touches `FRD-001` and `FRD-105` (observability), `FRD-100` (surface).
 
 ## 1. Problem
@@ -107,11 +107,11 @@ exported to a system with different access control from the database.
 which requires it to sit outside the exception handlers, or the responses that most need
 correlating are the ones that lack it.
 
-### 5.4 CORS is an allow-list, and the predecessor's setting is not one to copy
+### 5.4 CORS is an allow-list, and compatibility is no reason to widen it
 
-`kira_api.md` §8.1 has `allow_origins=["*"]` with `allow_credentials=True`. That combination is
-rejected by browsers and, where a server implements it by reflecting the origin, it disables the
-protection entirely — any site a user visits can call the API with their credentials.
+`allow_origins=["*"]` together with `allow_credentials=True` is rejected by browsers and, where a
+server implements it by reflecting the origin, it disables the protection entirely — any site a
+user visits can call the API with their credentials.
 
 Ours takes an explicit origin list, defaults to empty, and refuses `*` together with credentials at
 startup rather than at request time. Parity here would be a security regression, and this is the
@@ -207,9 +207,9 @@ report `2 model(s) listed, 2ms`; the mock says it was not checked.
 app in a separate task and lose the span context, so the header would be missing exactly when a
 span exists. Confirmed against the deployed gateway: the 401 carries one.
 
-CORS refuses `*` **with credentials at startup**. The predecessor ships that combination
-(`kira_api.md` §8.1); browsers reject it, and a server implementing it by reflecting the origin lets
-any site a user visits call the API with their credentials. A misconfiguration that only shows up
+CORS refuses `*` **with credentials at startup**. Browsers reject that combination, and a server
+implementing it by reflecting the origin lets any site a user visits call the API with their
+credentials. A misconfiguration that only shows up
 under a browser is one that ships.
 
 24 hermetic tests, 9 integration, mutations **D1**–**D6**.

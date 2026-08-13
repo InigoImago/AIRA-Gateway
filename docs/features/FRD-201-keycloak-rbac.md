@@ -1,6 +1,6 @@
 # FRD-201 — RBAC: roles + object-level use-case permissions
 
-> Phase: 2 · Status: **Done (Phase 2)** · Owner: Vadim Scheibe · Last updated: 2026-08-04
+> Phase: 2 · Status: **Done (Phase 2)** · Owner: Vadim Scheibe
 > Related: `docs/PRD.md` §3, §5 (FR-MG-2); `docs/ROADMAP.md` Phase 2; builds on FRD-200; `roles.py`
 
 ## 1. Summary

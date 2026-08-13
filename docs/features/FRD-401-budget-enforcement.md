@@ -1,10 +1,10 @@
 # FRD-401 — Budget enforcement & usage accounting
 
-> **Extended by [FRD-403](FRD-403-cost-budgets.md) (2026-08-05)**: the gateway prices every
+> **Extended by [FRD-403](FRD-403-cost-budgets.md)**: the gateway prices every
 > request from the model catalog and enforces cost limits with the same 429. Consumption that
 > cannot be priced is counted apart, never as zero.
 
-> Phase: 4 · Status: **Done** · Owner: Vadim Scheibe · Last updated: 2026-08-04
+> Phase: 4 · Status: **Done** · Owner: Vadim Scheibe
 > Builds on FRD-400 (budget definitions in the gateway read-model), FRD-102/103 (attribution + logs).
 
 ## 1. Summary

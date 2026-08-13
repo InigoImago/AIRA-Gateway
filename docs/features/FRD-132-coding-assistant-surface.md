@@ -1,9 +1,9 @@
 # FRD-132 — Which surface a coding assistant needs, measured rather than assumed
 
-> Phase: 9 · Status: **Stage A done (2026-08-08) — B1: no new surface needed** · Owner: Vadim Scheibe · Last updated: 2026-08-08
-> Related: `FRD-131` (tool calling — the prerequisite), `FRD-106` (OpenAI surface, withdrawn
-> 2026-08-07), `FRD-107` (the KIRA surface, as the precedent for adding one), `FRD-123` (the
-> OpenAI dialect, already built as an upstream), `ADR-0011`
+> Phase: 9 · Status: **Stage A done — B1: no new surface needed** · Owner: Vadim Scheibe
+> Related: `FRD-131` (tool calling — the prerequisite), `FRD-106` (OpenAI surface, withdrawn),
+> `FRD-107` (the KIRA surface, as the precedent for adding one), `FRD-123` (the OpenAI dialect,
+> already built as an upstream), `ADR-0011`
 
 ## 1. Summary
 

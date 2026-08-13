@@ -1,6 +1,6 @@
 # FRD-200 — Management backend foundation (DRF API + OIDC)
 
-> Phase: 2 · Status: **Done (Phase 2)** · Owner: Vadim Scheibe · Last updated: 2026-08-04
+> Phase: 2 · Status: **Done (Phase 2)** · Owner: Vadim Scheibe
 > Related: `docs/PRD.md` §4.2, §5 (FR-MG-*); `docs/ROADMAP.md` Phase 2; builds on FRD-101
 
 ## 1. Summary

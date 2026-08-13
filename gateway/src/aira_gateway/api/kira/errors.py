@@ -1,4 +1,4 @@
-"""KIRA's error vocabulary (`kira_api.md` §6).
+"""KIRA's error vocabulary (the predecessor's contract).
 
 A different envelope from Gemini's and a different set of codes. Both are kept faithfully, because
 a compatibility surface whose errors a client cannot match is not compatible — the whole point is
@@ -37,7 +37,8 @@ def kira_error_response(
     return JSONResponse(status_code=status, content=body)
 
 
-# The codes from `kira_api.md` §6.2 that Stage A can produce. The ones belonging to features that
+# The codes from the compatibility contract that Stage A can produce. The ones belonging to
+# features that
 # do not exist yet (thinking bounds, embedding task types) arrive with those features rather than
 # being declared here as constants nothing raises.
 NOT_AUTHENTICATED = "NOT_AUTHENTICATED"

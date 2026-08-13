@@ -1,6 +1,6 @@
 # FRD-128 — A request the caller abandoned is still a request that happened
 
-> Phase: 8 (structural) · Status: **Done (2026-08-07)** · Owner: AIRA · Last updated: 2026-08-07
+> Phase: 8 (structural) · Status: **Done** · Owner: AIRA
 > Related: `FRD-126` (the half before dispatch), `FRD-122` (audit), `FRD-405` (reservations),
 > `FRD-110` (the shield), `FRD-127`
 

@@ -101,7 +101,7 @@ def _sunset(request: Request) -> dict[str, str]:
     return {**SUNSET_HEADERS, **({"Sunset": configured} if configured else {})}
 
 
-#: A shared control's HTTP status, in the predecessor's error vocabulary (`kira_api.md` §6.2).
+#: A shared control's HTTP status, in the compatibility surface's error vocabulary.
 #: Anything unmapped is a validation error, which is what a 4xx from a pre-dispatch check is.
 _KIRA_CODE_FOR = {
     404: errors.MODEL_NOT_FOUND,
@@ -112,11 +112,11 @@ _KIRA_CODE_FOR = {
 
 
 def _error_response(request: Request, exc: Exception) -> JSONResponse:
-    """Every refusal, in the predecessor's vocabulary (`kira_api.md` §6.2)."""
+    """Every refusal, in the predecessor's vocabulary (the predecessor's contract)."""
     if isinstance(exc, errors.KiraError):
         response = exc.to_response()
     elif isinstance(exc, ThinkingRejected | EmbeddingRejected):
-        # These carry the predecessor's own codes (`kira_api.md` §6.2) — `INVALID_THINKING_MODE`,
+        # These carry the contract's own codes — `INVALID_THINKING_MODE`,
         # `THINKING_TOKEN_COUNT_TOO_HIGH`, `EMBEDDING_AGGREGATION_NOT_SUPPORTED` and the rest — so
         # a migrating client's error handling keeps switching on the same strings it always did.
         response = errors.kira_error_response(422, exc.code, exc.message)
@@ -179,7 +179,7 @@ def _details(exc: ValidationError) -> list[dict[str, Any]]:
 
 
 def _thinking_config(declaration: ModelDeclaration) -> schemas.ThinkingConfig | None:
-    """What the predecessor's `/models` says about a model's thinking (`kira_api.md` §2.4).
+    """What the predecessor's `/models` says about a model's thinking (the predecessor's contract).
 
     ``None`` for a model that declares none — rather than an empty config, which would read as
     "thinking exists here and nothing is allowed" instead of "nobody has said".

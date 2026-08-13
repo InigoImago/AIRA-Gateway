@@ -1,7 +1,7 @@
 # FRD-114 — What a model can do, and where its limits are
 
-> Phase: 8 (KIRA parity) · Status: **Done (2026-08-06)** · Owner: Vadim Scheibe · Last updated: 2026-08-06
-> Origin: `kira_api.md` §2.4, §5, programme: `ADR-0010`.
+> Phase: 8 (KIRA parity) · Status: **Done** · Owner: Vadim Scheibe
+> Origin: the predecessor's contract, programme: `ADR-0010`.
 > Extends the `Model` row introduced by `FRD-403`; the **approval** half stays in `FRD-307`.
 > Model identity and addressing follow **`ADR-0011`** rules 2 and 3.
 > Depended on by: `FRD-111`, `FRD-112`, `FRD-113`, `FRD-107`.

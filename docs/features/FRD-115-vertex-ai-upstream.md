@@ -1,7 +1,7 @@
 # FRD-115 — Reaching the models: Vertex AI / Model Garden in the EU
 
-> Phase: 8 (KIRA parity) · Status: **Done (2026-08-06)** · Owner: Vadim Scheibe · Last updated: 2026-08-06
-> Origin: `kira_api.md` §5, §10; **confirmed 2026-08-06: EU residency applies, and access is via
+> Phase: 8 (KIRA parity) · Status: **Done** · Owner: Vadim Scheibe
+> Origin: the predecessor's contract; **confirmed: EU residency applies, and access is via
 > the Gemini Enterprise platform's Model Garden, serving Gemini *and Anthropic* models.**
 > Programme: `ADR-0010`. Architecture: **`ADR-0011`** (platform × dialect × identity).
 > Extends `FRD-304`. Paired with `FRD-119` (the Anthropic dialect); `FRD-120` reuses its
@@ -79,8 +79,8 @@ either dialect exists, and keeps the dialect work free of authentication concern
 - **FR-5 EU-only by configuration, checked at startup.** See §5.5.
 - **FR-6 One adapter per model, decided loudly.** A model name offered by two providers refuses to
   start, naming both (§5.4).
-- **FR-7 TLS is verified.** Stated because the predecessor sets `verify=False` (`kira_api.md`
-  §12.5). We do not copy it.
+- **FR-7 TLS is verified.** Stated rather than left to the default: compatibility is never a
+  reason to soften a security setting.
 - **FR-8 The credential never leaves the process.** Not logged, not in spans, not in error
   messages, not in `/readyz`. Restated from `FRD-304` because a service-account private key is
   materially more valuable than an API key.

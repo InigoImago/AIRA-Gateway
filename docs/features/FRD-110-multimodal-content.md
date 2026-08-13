@@ -1,7 +1,7 @@
 # FRD-110 — Documents and images in a request
 
-> Phase: 8 (KIRA parity) · Status: **Done (2026-08-06)** · Owner: Vadim Scheibe · Last updated: 2026-08-06
-> Origin: `kira_api.md` §4.1–4.2 (`RequestContent`, `DocumentMimeTypeEnum`), programme: `ADR-0010`.
+> Phase: 8 (KIRA parity) · Status: **Done** · Owner: Vadim Scheibe
+> Origin: the predecessor's contract (`RequestContent`, `DocumentMimeTypeEnum`), programme: `ADR-0010`.
 > Multi-vendor consequences governed by **`ADR-0012`** (documents are not uniformly supported).
 > Touches: `FRD-100` (Gemini surface), `FRD-103` (persistence), `FRD-300` (pipeline),
 > `FRD-401`/`FRD-405` (budgets), `FRD-404` (retention), `FRD-406` (redaction, deferred).
@@ -69,7 +69,7 @@ question is about.
   are base64; in the canonical model they are `bytes`. Invalid base64 is a **400**, not a
   truncated forward.
 - **FR-3 Media-type allow-list, intersected with the model.** The fourteen types from
-  `kira_api.md` §4.2 are what *AIRA* accepts; what the **target model** accepts is declared in
+  the predecessor's contract are what *AIRA* accepts; what the **target model** accepts is declared in
   `FRD-114`, and Anthropic's set is a subset of Google's. A part is admitted only if both allow it,
   and a refusal names which of the two refused — "AIRA does not accept HEIC" and "this model does
   not accept HEIC" call for different actions. Checked against the model actually dispatched to,

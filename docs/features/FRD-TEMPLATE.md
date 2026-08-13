@@ -1,6 +1,6 @@
 # FRD-XXX — <Feature Title>
 
-> Phase: <n> · Status: **Draft** · Owner: <name> · Last updated: <YYYY-MM-DD>
+> Phase: <n> · Status: **Draft** · Owner: <name>
 > Related: `docs/PRD.md` §<x>, `docs/ROADMAP.md` Phase <n>
 
 ## 1. Summary

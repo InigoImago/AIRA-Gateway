@@ -41,8 +41,8 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
   **rendered DOM and real interactions**, not just component methods.
 - **A green test proves nothing on its own.** It proves the code and the test agree, which they
   inevitably do when both were written from the same mental model — and line coverage cannot see
-  a *missing requirement*: on 2026-08-05 a review found seven real defects behind a green suite at
-  99% coverage. So: **prove a test can fail.** Break the property, watch it go red, restore.
+  a *missing requirement*: a review once found seven real defects behind a green suite at 99%
+  coverage. So: **prove a test can fail.** Break the property, watch it go red, restore.
   `make mutants` (`tools/mutation_check.py`) does this for **409 properties** across auth, budgets,
   pipeline, retention, the management control plane and the gateway's counters; when
   you fix a bug, add the mutation that reintroduces it. Two traps that cost real defects here:
@@ -83,7 +83,7 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
 - **Async on the hot path**: persistence and event emission must not block the gateway request path.
 - **Security by default**: validate input, scope every query by role/object, redact where required.
 
-### Reader-facing documentation (added 2026-08-07)
+### Reader-facing documentation
 The ADRs and FRDs record *why*; six documents record *what*, and the `README.md` is a hub linking
 them: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) (C4 in Mermaid),
 [`docs/REQUEST-LIFECYCLE.md`](docs/REQUEST-LIFECYCLE.md) (one request, every control, in order),
@@ -111,8 +111,8 @@ Always keep documentation in sync with what is actually built. On any meaningful
 6. Keep this `CLAUDE.md` updated as **conventions** evolve.
 
 **What must not go in `CLAUDE.md`.** Per-feature status, and the story of a round. Both have a home
-above, and both were written here as well until 2026-08-13, when §6 stood at **1667 lines — 93% of
-this file** and was a third copy of the DEVLOG. The cost was not length: twenty-two FRD headers had
+above, and both were written here as well until §6 stood at **1667 lines — 93% of this file** and
+was a third copy of the DEVLOG. The cost was not length: twenty-two FRD headers had
 gone stale saying *Draft* about shipped features, because the copy that is read every session
 stayed true and the copy nobody opens rotted. `tools/tests/test_claude_md_stays_short.py` fails when
 §6 grows past its limit, for the reason every other guard here exists: a rule only a reviewer

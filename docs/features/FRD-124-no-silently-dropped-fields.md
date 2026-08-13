@@ -1,6 +1,6 @@
 # FRD-124 — Nothing a request asks for is silently dropped
 
-> Phase: 8 · Status: **Done (2026-08-06)** · Owner: AIRA · Last updated: 2026-08-06
+> Phase: 8 · Status: **Done** · Owner: AIRA
 > Related: `docs/PRD.md` §1.2, `docs/adr/ADR-0011.md`, `docs/adr/ADR-0012.md`, `docs/adr/ADR-0013.md`,
 > supersedes `FRD-100` FR-7
 

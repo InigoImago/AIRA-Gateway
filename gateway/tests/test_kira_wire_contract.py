@@ -1,5 +1,5 @@
 """Three shapes the compatibility surface got wrong, each found by comparing against the
-predecessor's source rather than by any test here.
+documented contract rather than by any test here.
 
 That is the common thread and the reason this file exists. Every other test of this surface was
 written by whoever wrote the surface, from the same idea of what the predecessor does — so a shape

@@ -1,10 +1,10 @@
 # FRD-307 — Approved-model catalog + model pickers
 
-> **Partially delivered by [FRD-403](FRD-403-cost-budgets.md) (2026-08-05)**: the Management
+> **Partially delivered by [FRD-403](FRD-403-cost-budgets.md)**: the Management
 > `Model` record and its Kafka distribution exist now, carrying prices. Approval, the candidate
 > list and the builder pickers described below are still open and build on the same row.
 
-> Phase: 3 · Status: **Approval delivered 2026-08-09; candidate lists and builder pickers still open** · Owner: Vadim Scheibe · Last updated: 2026-08-04
+> Phase: 3 · Status: **Approval delivered; candidate lists and builder pickers still open** · Owner: Vadim Scheibe
 > Origin: user feature request — "an overview of all models, and pick them in the injection filter /
 > allowed-model config." Refined: **model availability is governed — only models a Global
 > Administrator has approved are usable; the raw gateway model list is not the same as the usable set.**

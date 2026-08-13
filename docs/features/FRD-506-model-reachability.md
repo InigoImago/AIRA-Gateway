@@ -1,7 +1,7 @@
 # FRD-506 — Is this model reachable, or only written down?
 
-> Phase: 3 (catalog) · Status: **Done (2026-08-09)** · Owner: Vadim Scheibe
-> Last updated: 2026-08-09
+> Phase: 3 (catalog) · Status: **Done** · Owner: Vadim Scheibe
+>
 > Related: `FRD-114` (the catalog as a runtime authority), `FRD-117` (diagnostics, and why a health
 > check must not wake a model), `ADR-0011` (transport × dialect × identity), `FRD-307` (the
 > approved-model catalog, still open).

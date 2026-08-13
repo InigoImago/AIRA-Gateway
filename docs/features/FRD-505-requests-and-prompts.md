@@ -1,7 +1,7 @@
 # FRD-505 — The requests view, and reading what was actually sent
 
-> Phase: 5 (IT Security) · Status: **Done (2026-08-09)** · Owner: Vadim Scheibe
-> Last updated: 2026-08-09
+> Phase: 5 (IT Security) · Status: **Done** · Owner: Vadim Scheibe
+>
 > Decides: [`ADR-0016`](../adr/ADR-0016-content-is-readable-and-every-read-is-recorded.md), which
 > amends `ADR-0009`. Related: `FRD-502` (traces), `FRD-404` (retention), `FRD-406` (redaction),
 > `FRD-206` (the console stops promising what the server refuses), `FRD-131` FR-7 (tool calls).

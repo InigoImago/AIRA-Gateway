@@ -43,8 +43,9 @@ def build_vertex_upstreams(settings: GatewaySettings) -> list[Upstream]:
     for model in models:
         check_region(model.region, allowed)
 
-    # TLS verification stays on (FR-7). Stated because the predecessor sets `verify=False`, and a
-    # place where parity would be a security regression is worth naming where it is decided.
+    # TLS verification stays on (FR-7). Named here rather than left to the default, because a
+    # place where compatibility must not soften a security setting is worth stating where it is
+    # decided.
     client = httpx.AsyncClient(timeout=settings.vertex_timeout_seconds, verify=True)
     transport = VertexTransport(
         project=settings.vertex_project,

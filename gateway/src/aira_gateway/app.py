@@ -287,11 +287,11 @@ class CorsMisconfigured(Exception):
 def _configure_cors(app: FastAPI, settings: GatewaySettings) -> None:
     """An explicit allow-list, defaulting to none (`FRD-117` §5.4).
 
-    The predecessor sets ``allow_origins=["*"]`` **with** ``allow_credentials=True``. Browsers
-    reject that combination outright, and a server that implements it by *reflecting* the origin
-    disables the protection entirely: any site a user visits can then call this API with their
-    credentials. Parity here would be a security regression, so it is refused **at startup** rather
-    than at request time — a misconfiguration that only shows up under a browser is one that ships.
+    ``allow_origins=["*"]`` **with** ``allow_credentials=True`` is refused **at startup**.
+    Browsers reject that combination outright, and a server that implements it by *reflecting* the
+    origin disables the protection entirely: any site a user visits can then call this API with
+    their credentials. Refused at startup rather than at request time — a misconfiguration that
+    only shows up under a browser is one that ships.
 
     Empty by default because the SPA is served from the same origin through the proxy, so a
     deployment that needs cross-origin access is making a deliberate choice.

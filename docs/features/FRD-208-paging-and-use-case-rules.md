@@ -1,6 +1,6 @@
 # FRD-208 — Paging that is real, and a rule somebody can actually change
 
-> Phase: 2/5 · Status: **Done (2026-08-08)** · Owner: AIRA · Last updated: 2026-08-08
+> Phase: 2/5 · Status: **Done** · Owner: AIRA
 > Related: [`FRD-207`](FRD-207-console-legibility.md) (the pass this corrects),
 > [`FRD-206`](FRD-206-console-truthfulness.md), [`FRD-500`](FRD-500-anomaly-rules.md),
 > [`FRD-502`](FRD-502-security-console-and-traces.md)

@@ -1,7 +1,7 @@
 # FRD-120 — Microsoft Foundry: Azure OpenAI and Microsoft's own models
 
 > Phase: 8 (KIRA parity) / Phase 3 backlog · Status: **Built, hermetically verified only**
-> Owner: Vadim Scheibe · Last updated: 2026-08-09
+> Owner: Vadim Scheibe
 >
 > `FoundryTransport` × the **unchanged** OpenAI dialect × `AzureRoutes` exist and are tested
 > (`gateway/tests/test_foundry.py`). What has never happened is a request to a real Azure

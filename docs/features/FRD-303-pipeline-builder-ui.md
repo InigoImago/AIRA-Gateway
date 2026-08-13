@@ -1,6 +1,6 @@
 # FRD-303 — Pipeline builder UI (clickable graph)
 
-> Phase: 3 · Status: **Done** · Owner: Vadim Scheibe · Last updated: 2026-08-04
+> Phase: 3 · Status: **Done** · Owner: Vadim Scheibe
 > Related: `docs/ROADMAP.md` Phase 3; builds on FRD-300 (engine) + FRD-303 backend CRUD.
 
 ## 1. Summary

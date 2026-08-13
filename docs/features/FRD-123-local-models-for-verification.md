@@ -1,6 +1,6 @@
 # FRD-123 — A real model in the stack (Ollama, over the OpenAI dialect)
 
-> Phase: 8 (KIRA parity) · Status: **Done (2026-08-06)** · Owner: Vadim Scheibe · Last updated: 2026-08-06
+> Phase: 8 (KIRA parity) · Status: **Done** · Owner: Vadim Scheibe
 > Depends on: `ADR-0011` (transport × dialect), `FRD-114` (declarations). Unblocks part of `FRD-120`.
 
 ## 1. Problem

@@ -7,7 +7,7 @@
 
 ## Context
 
-AIRA is the successor to **KIA-KIRA-API** (`kira_api.md`, v0.1.2), and is meant to carry all of its
+AIRA is the successor to the **predecessor API**, and is meant to carry all of its
 functionality. A review of the predecessor's requirements against the code as it stands produced a
 clear split.
 

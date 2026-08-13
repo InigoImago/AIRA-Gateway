@@ -1,8 +1,8 @@
 # FRD-107 — A KIRA-compatible API surface
 
-> Phase: 8 (KIRA parity) · Status: **Done — Stage A + B (2026-08-06)** · Owner: Vadim Scheibe
-> Last updated: 2026-08-06
-> Origin: `kira_api.md` §2, §6, §12. Depends on `FRD-110`–`FRD-114`.
+> Phase: 8 (KIRA parity) · Status: **Done — Stage A + B** · Owner: Vadim Scheibe
+>
+> Origin: the predecessor's contract Depends on `FRD-110`–`FRD-114`.
 
 > **`ADR-0010` is decided (Option C).** The owner's feature definition names KIRA-API compatibility
 > as a central feature (PRD §1.1, item 3), so this surface is built — **with a sunset date and its
@@ -46,7 +46,7 @@ changing a base URL.
 
 - **FR-1 Endpoints** under `/kira/api/external`: `POST /chat`, `POST /streaming-chat`,
   `POST /embed`, `GET /models`, `GET /health`, `GET /version-info`, `GET /ki-usage`.
-- **FR-2 Request and response shapes** exactly as `kira_api.md` §2 and §4, including the camelCase
+- **FR-2 Request and response shapes** exactly as the predecessor's contract and §4, including the camelCase
   aliases (`maxTokens`, `responseSchema`, `thinkingConfig`, …) and `populate_by_name`.
 - **FR-2a Staged, and never silent** (§5.2). A field the gateway cannot yet honour is **refused**
   with the predecessor's error vocabulary and a message naming it. No field is ever accepted and
@@ -102,7 +102,7 @@ a client is never misled. "Not yet supported here" is information a team can act
 dropped field is not.
 
 > The one thing Stage A must not do is *approximate*. KIRA applies a model's default thinking when
-> the caller sends none (`kira_api.md` §4.3); Stage A must either apply the real default or refuse
+> the caller sends none (the predecessor's contract); Stage A must either apply the real default or refuse
 > — never quietly send no thinking at all and let the answer be different for reasons nobody can
 > see. If the model catalog cannot yet express the default, that model is not in Stage A.
 
@@ -195,7 +195,7 @@ No migration.
 
 ## 7. API / Interface Contract
 
-`kira_api.md` §2 and §4 are the contract; this FRD does not restate them. The mapping table from
+the predecessor's contract and §4 are the contract; this FRD does not restate them. The mapping table from
 KIRA error codes to canonical failures belongs in the implementation and is asserted by tests, one
 per code.
 
@@ -215,7 +215,7 @@ per code.
 ## 10. Testing & Acceptance Criteria
 
 - **Contract tests** — one per endpoint, asserting the response shape field by field against
-  `kira_api.md`, and **one per error code** in §6.2 asserting the code and the status. These are
+  the predecessor's contract, and **one per error code** in §6.2 asserting the code and the status. These are
   the tests that make "compatible" a fact rather than a claim.
 - **Unit (attribution)** — one membership resolves automatically; a header selects among several; a
   header naming a non-membership is 403; several memberships with no header is **403 naming the
@@ -268,7 +268,7 @@ through each surface and compares the resulting audit rows, which is the only wa
 step was skipped rather than merely present.
 
 Coverage: 28 contract tests (shape, error codes and refusals, field by field against
-`kira_api.md`), 5 integration tests, mutations **K1–K8**, each verified to be caught. Seven existing
+the predecessor's contract), 5 integration tests, mutations **K1–K8**, each verified to be caught. Seven existing
 mutation anchors followed their functions into `api/serving.py` and were repaired — a mutation whose
 anchor has moved protects nothing, which is why the harness reports them rather than skipping.
 
@@ -308,7 +308,7 @@ is not**, and it fails exactly as loudly.
 - **`ADR-0010`** (blocking), then `FRD-110`–`FRD-114`.
 - **Risk — the surface outlives its purpose.** The mitigation is §5.6 and nothing else; a sunset
   date with no measurement is a wish.
-- **Risk — `kira_api.md` is a description, not the source.** Details will differ from the running
+- **Risk — the predecessor's contract is a description, not the source.** Details will differ from the running
   predecessor. Contract tests should be validated against **captured real traffic** where possible,
   not only against the document. The embedding aggregation question in `FRD-113` §11 is a known
   instance and will not be the only one.

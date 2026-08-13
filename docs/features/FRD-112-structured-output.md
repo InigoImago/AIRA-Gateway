@@ -1,7 +1,7 @@
 # FRD-112 — Structured output (`responseSchema`)
 
-> Phase: 8 (KIRA parity) · Status: **Done (2026-08-06)** · Owner: Vadim Scheibe · Last updated: 2026-08-06
-> Origin: `kira_api.md` §4.5 (`responseSchema`), programme: `ADR-0010`.
+> Phase: 8 (KIRA parity) · Status: **Done** · Owner: Vadim Scheibe
+> Origin: the predecessor's contract (`responseSchema`), programme: `ADR-0010`.
 > Touches: `FRD-100` (surface), `FRD-300` (pipeline routing), `FRD-114` (model capabilities).
 
 ## 1. Problem

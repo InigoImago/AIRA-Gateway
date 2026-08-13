@@ -1,6 +1,6 @@
 # FRD-601 — Spend and usage reporting
 
-> Phase: 6 · Status: **Done** · Owner: Vadim Scheibe · Last updated: 2026-08-06
+> Phase: 6 · Status: **Done** · Owner: Vadim Scheibe
 > Builds on `FRD-103` (request logs), `FRD-403` (cost per request), `FRD-404` (retention).
 > The visibility boundary is decided in `ADR-0009`.
 

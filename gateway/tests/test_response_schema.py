@@ -20,7 +20,7 @@ from aira_gateway.core.schema import (
 )
 from aira_gateway.upstreams.vertex.anthropic_mapping import to_json_schema
 
-# `kira_api.md` §4.5's own example — the thing a migrating client actually sends.
+# the predecessor's contract's own example — the thing a migrating client actually sends.
 RECIPES = {
     "type": "ARRAY",
     "items": {

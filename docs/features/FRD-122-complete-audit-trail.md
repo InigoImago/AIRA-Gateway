@@ -1,7 +1,7 @@
 # FRD-122 — A complete audit trail: what was asked, what was decided, what was served
 
-> Phase: 8 · Status: **Done (2026-08-06)** · Owner: Vadim Scheibe · Last updated: 2026-08-06
-> Origin: a review against `ADR-0013`'s "auditable brains" standard, 2026-08-06, and against the owner's feature definition
+> Phase: 8 · Status: **Done** · Owner: Vadim Scheibe
+> Origin: a review against `ADR-0013`'s "auditable brains" standard, and against the owner's feature definition
 > (PRD §1.1) — *"welches System wann was womit aufgerufen hat"*.
 > Extends `FRD-103` (request log). Touches `FRD-300`, `FRD-405`, `FRD-601`, `FRD-115`.
 

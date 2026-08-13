@@ -1,7 +1,7 @@
 # FRD-604 — Who answers for a credential
 
-> Phase: 5 (IT Security) · Status: **Both stages done** (A 2026-08-09, B 2026-08-10) · Owner: Vadim Scheibe
-> Last updated: 2026-08-09
+> Phase: 5 (IT Security) · Status: **Both stages done** · Owner: Vadim Scheibe
+>
 > Origin: the owner, describing the two use cases this installation is being built for.
 > Related: `FRD-205` (self-service keys), `FRD-122` (audit), `FRD-505` (requests view),
 > `FRD-131`/`FRD-132` (tool calling), `ADR-0013` (scope).

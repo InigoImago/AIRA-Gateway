@@ -1,6 +1,6 @@
 # FRD-130 — A demo somebody can walk through
 
-> Phase: 0 (extension) · Status: **Done (2026-08-07)** · Owner: AIRA · Last updated: 2026-08-07
+> Phase: 0 (extension) · Status: **Done** · Owner: AIRA
 > Related: `FRD-002` (seed & demo mode), `FRD-123` (local models), `FRD-201` (RBAC),
 > `FRD-402`, `FRD-405`, `FRD-601`
 

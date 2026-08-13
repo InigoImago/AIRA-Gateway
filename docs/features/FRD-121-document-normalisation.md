@@ -1,7 +1,7 @@
 # FRD-121 — Document normalisation for models that cannot read documents
 
 > Phase: 8 (KIRA parity) · Status: **Draft — optional, and probably should not be built first**
-> Owner: Vadim Scheibe · Last updated: 2026-08-06
+> Owner: Vadim Scheibe
 > Governed by `ADR-0012` §4. Requires `FRD-110` (attachments) and `FRD-114` (capabilities).
 
 > **`ADR-0013` places this on the far side of the gateway's scope line** — it is content

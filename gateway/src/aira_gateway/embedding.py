@@ -23,7 +23,7 @@ from aira_common.models import Capability
 from aira_gateway.catalog import ModelDeclaration
 from aira_gateway.core.canonical import CanonicalEmbeddingRequest
 
-#: `kira_api.md` §4.4. A closed set: the whole value of the field is that a wrong one fails loudly
+#: A closed set: the whole value of the field is that a wrong one fails loudly
 #: rather than producing quietly worse vectors, and a passthrough string cannot do that.
 TASK_TYPES: frozenset[str] = frozenset(
     {

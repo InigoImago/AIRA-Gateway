@@ -30,7 +30,7 @@ from aira_gateway.core.schema import SchemaBounds
 from aira_gateway.core.schema import parse as parse_schema
 from aira_gateway.thinking import mode_from
 
-#: What the predecessor puts between two text parts of one message (`api_service.py`).
+#: What the predecessor puts between two text parts of one message.
 #:
 #: It joins them and sends **one** string; this surface kept them as separate canonical parts,
 #: which every adapter then renders its own way — Gemini as several parts, the OpenAI dialect as a
@@ -38,7 +38,7 @@ from aira_gateway.thinking import mode_from
 #: and a two-part message on another, where the predecessor sends `"Hallo\nWelt"`.
 #:
 #: That is the expensive kind of incompatibility: no error anywhere, a 200, and an answer to a
-#: subtly different prompt. Found by a static comparison against the predecessor's source, which
+#: subtly different prompt. Found by comparing against the documented contract, which
 #: is the only place it *could* be found — no test of ours would call a missing newline a failure,
 #: because both sides of such a test would have come from the same idea of what the prompt is.
 TEXT_PART_SEPARATOR = "\n"
@@ -100,9 +100,9 @@ def to_canonical(
 ) -> CanonicalRequest:
     """Map a KIRA chat request onto the canonical one.
 
-    History arrives oldest-first (`kira_api.md` §2.1) and is placed before the current turn, which
-    is the order every provider expects — reversing it would produce a coherent conversation about
-    the wrong thing.
+    History arrives oldest-first, as the contract specifies, and is placed before the current
+    turn, which is the order every provider expects — reversing it would produce a coherent
+    conversation about the wrong thing.
     """
     limits = limits or Limits()
     messages: list[CanonicalMessage] = []
@@ -147,7 +147,7 @@ def to_chat_response(response: CanonicalResponse) -> schemas.ChatResponse:
 
 
 def completed_event(response: CanonicalResponse) -> dict[str, Any]:
-    """The predecessor's terminal SSE event (`kira_api.md` §2.2)."""
+    """The predecessor's terminal SSE event (the predecessor's contract)."""
     return {"status": "completed", "data": to_chat_response(response).model_dump()}
 
 

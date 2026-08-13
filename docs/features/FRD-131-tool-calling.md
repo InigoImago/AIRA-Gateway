@@ -1,6 +1,6 @@
 # FRD-131 — Tool calling: carried, never executed, and off until somebody turns it on
 
-> Phase: 9 · Status: **Done (2026-08-08)** · Owner: Vadim Scheibe · Last updated: 2026-08-08
+> Phase: 9 · Status: **Done** · Owner: Vadim Scheibe
 > Related: `ADR-0013` (scope), `ADR-0011` (transport × dialect), `ADR-0012` §3 (dispatch
 > conditions), `FRD-110` (ordered parts), `FRD-112` (structured output), `FRD-122` (audit),
 > `FRD-124` (nothing is silently dropped), `FRD-125` (the injection filter)

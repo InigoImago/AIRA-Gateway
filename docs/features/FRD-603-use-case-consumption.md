@@ -1,7 +1,7 @@
 # FRD-603 — What a use case consumed, with or without a budget
 
-> Phase: 6 (Governance & Analytics) · Status: **Done (2026-08-09)** · Owner: Vadim Scheibe
-> Last updated: 2026-08-09
+> Phase: 6 (Governance & Analytics) · Status: **Done** · Owner: Vadim Scheibe
+>
 > Origin: the owner, looking at the smoke-test use case (`FRD-504`) and finding neither a token
 > count nor a figure of money on its page.
 > Related: `FRD-402` (budget UI), `FRD-403` (cost), `FRD-601` (reporting), `FRD-602` (export),

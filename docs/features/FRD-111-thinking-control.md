@@ -1,7 +1,7 @@
 # FRD-111 — Thinking control
 
-> Phase: 8 (KIRA parity) · Status: **Done (2026-08-06)** · Owner: Vadim Scheibe · Last updated: 2026-08-06
-> Origin: `kira_api.md` §4.3 (`ThinkingSetting` / `ThinkingConfig`), programme: `ADR-0010`.
+> Phase: 8 (KIRA parity) · Status: **Done** · Owner: Vadim Scheibe
+> Origin: the predecessor's contract (`ThinkingSetting` / `ThinkingConfig`), programme: `ADR-0010`.
 > Depends on: `FRD-114` (a model must declare what it allows). Touches `FRD-401`/`FRD-403`/`FRD-405`.
 
 ## 1. Problem

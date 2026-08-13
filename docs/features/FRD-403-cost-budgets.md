@@ -1,6 +1,6 @@
 # FRD-403 — Cost-based budgeting (model prices, spend limits)
 
-> Phase: 4 · Status: **Done** · Owner: Vadim Scheibe · Last updated: 2026-08-05
+> Phase: 4 · Status: **Done** · Owner: Vadim Scheibe
 > Origin: user feedback — *"bei der Budgetierung kann man nur die Anzahl an Tokens angeben, nicht
 > die Kosten, das finde ich problematisch."*
 > Builds on FRD-400 (budget model), FRD-401 (enforcement), FRD-402 (budget UI). Introduces the

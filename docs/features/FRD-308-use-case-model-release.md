@@ -1,6 +1,6 @@
 # FRD-308 — Which models a use case may call
 
-> Phase: 3 · Status: **Built (2026-08-11)** · Owner: Vadim Scheibe · Last updated: 2026-08-11
+> Phase: 3 · Status: **Built** · Owner: Vadim Scheibe
 
 ## 1. Problem
 

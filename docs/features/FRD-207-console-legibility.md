@@ -1,6 +1,6 @@
 # FRD-207 — The console holds still, explains itself, and stays usable as it grows
 
-> Phase: 2/5 · Status: **Done (2026-08-08)** · Owner: AIRA · Last updated: 2026-08-08
+> Phase: 2/5 · Status: **Done** · Owner: AIRA
 > Related: [`FRD-206`](FRD-206-console-truthfulness.md) (the console tells the truth),
 > [`FRD-502`](FRD-502-security-console-and-traces.md) (the screens this pass first landed on),
 > `FRD-601`/`FRD-602` (reporting and export), `ADR-0014` (detection and enforcement)

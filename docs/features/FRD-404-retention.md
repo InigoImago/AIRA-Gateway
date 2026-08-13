@@ -1,6 +1,6 @@
 # FRD-404 — Payload storage and retention (per use case, one week by default)
 
-> Phase: 4 · Status: **Done** · Owner: Vadim Scheibe · Last updated: 2026-08-05
+> Phase: 4 · Status: **Done** · Owner: Vadim Scheibe
 > Builds on FRD-103 (request/response persistence). Closes the retention gap listed in
 > `docs/DEPLOYMENT.md §7`.
 

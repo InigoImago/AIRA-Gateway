@@ -1,6 +1,6 @@
 # FRD-125 — The pipeline's own model calls are first class
 
-> Phase: 3 (correction) · Status: **Done (2026-08-06)** · Owner: AIRA · Last updated: 2026-08-06
+> Phase: 3 (correction) · Status: **Done** · Owner: AIRA
 > Related: `FRD-300`, `FRD-306`, `FRD-405` (fail-closed), `FRD-122` (audit), `docs/adr/ADR-0013.md`
 
 ## 1. Summary

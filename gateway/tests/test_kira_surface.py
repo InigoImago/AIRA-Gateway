@@ -1,8 +1,9 @@
 """The predecessor's contract, served by AIRA (FRD-107, Stage A + B).
 
-These are **contract tests**: they assert the response shape field by field against `kira_api.md`,
-because "compatible" has to be a fact rather than a claim. A migrating consumer changes a base URL
-and nothing else, and the only thing that makes that true is checking it.
+These are **contract tests**: they assert the response shape field by field against the
+compatibility contract, because "compatible" has to be a fact rather than a claim. A migrating
+consumer changes a base URL and nothing else, and the only thing that makes that true is checking
+it.
 
 Stage B turned the fields Stage A refused — thinking, `responseSchema`, batch embedding and task
 types — into fields it serves, without touching the wire format. The second theme therefore
@@ -57,7 +58,7 @@ def _chat(**over: Any) -> dict[str, Any]:
 
 
 async def test_chat_answers_in_the_predecessors_shape() -> None:
-    """`kira_api.md` §2.1: ``parts`` plus ``usage_data`` with the two token counts."""
+    """the predecessor's contract: ``parts`` plus ``usage_data`` with the two token counts."""
     app = _app()
     with TestClient(app) as client:
         await _catalogue(app)
@@ -215,7 +216,7 @@ async def test_a_thinking_mode_the_model_does_not_offer_keeps_its_own_code() -> 
     ],
 )
 async def test_each_budget_failure_has_its_own_code(tokens: int | None, code: str) -> None:
-    """`kira_api.md` §6.2 gives these three separate codes, and the separation is the point: a
+    """The contract gives these three separate codes, and the separation is the point: a
     client that cannot tell "you forgot the count" from "the count is too high" can fix neither."""
     app = _app()
     with TestClient(app) as client:
@@ -235,7 +236,7 @@ async def test_each_budget_failure_has_its_own_code(tokens: int | None, code: st
 
 
 async def test_a_response_schema_produces_a_document_of_that_shape() -> None:
-    """Stage B. `kira_api.md` §4.5's example, and the answer has to parse as what was asked for."""
+    """Stage B. The contract's own example, and the answer has to parse as what was asked for."""
     app = _app()
     schema = {
         "type": "ARRAY",
@@ -432,7 +433,7 @@ async def test_a_list_answers_one_vector_for_the_joined_text() -> None:
 
     It used to pin `vectors` — one per text — which `FRD-113` §11 had recorded as an *assumption*
     with the other reading written beside it, and asked to be confirmed against the running
-    predecessor. The predecessor's source says the other one: the texts go as several parts of one
+    predecessor. The contract says the other one: the texts go as several parts of one
     call and it answers the documented singular `vector`.
 
     So the old assertion was faithful to the code and unfaithful to the contract — a test can only
@@ -587,7 +588,7 @@ async def test_a_refusal_on_this_surface_is_recorded_too() -> None:
 
 
 async def test_models_reports_what_a_client_needs_to_ask_for_the_features() -> None:
-    """`kira_api.md` §2.4. A client reads this list to decide what to *request* — so a surface
+    """A client reads this list to decide what to *request* — so a surface
     that serves thinking and task types while reporting neither leaves every caller concluding the
     models support none of it. The capability would exist and be unreachable, which from the
     outside is indistinguishable from not having built it."""

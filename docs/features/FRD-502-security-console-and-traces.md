@@ -1,6 +1,6 @@
 # FRD-502 — The IT Security console, own warnings, and per-use-case traces
 
-> Phase: 5 · Status: **Done (2026-08-08)** · Owner: AIRA · Last updated: 2026-08-08
+> Phase: 5 · Status: **Done** · Owner: AIRA
 > Related: `FRD-500`/`501`/`503` (rules, engine, response), `FRD-601` (reporting),
 > `FRD-206` (the console tells the truth), `ADR-0009`, `ADR-0014`, `FRD-406` (redaction)
 
