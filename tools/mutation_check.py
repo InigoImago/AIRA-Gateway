@@ -2965,7 +2965,10 @@ MUTATIONS = [
         "H2",
         "the KIRA surface asks the shared rule rather than keeping its own",
         "gateway/src/aira_gateway/api/kira/attribution.py",
-        "        refusal = use_case_refusal(principal, header)",
+        # Re-anchored: `header` became `selector` when this surface started reading the `/uc/<slug>`
+        # prefix as well — it had read only the header, so the prefix worked on the Gemini surface
+        # and was invisible here. A rename; the property is untouched.
+        "        refusal = use_case_refusal(principal, selector)",
         "        refusal = None",
         SELECTOR,
     ),

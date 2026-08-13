@@ -105,18 +105,43 @@ async def test_a_bound_key_needs_no_selector_at_all(governed: Governed) -> None:
     assert (await governed.last_row())["use_case"] == governed.slug
 
 
-async def test_the_path_selector_reaches_the_same_use_case(governed: Governed) -> None:
+@pytest.mark.parametrize("surface", ["gemini", "kira"])
+async def test_the_path_selector_reaches_the_same_use_case(
+    governed: Governed, surface: str
+) -> None:
     """`/uc/<slug>` is the other way in (`FRD-102`). It chooses among what the caller already has
-    and never grants anything."""
+    and never grants anything.
+
+    **Both surfaces, because for a long time it was one.** The middleware is mounted before every
+    route and the Gemini routes read the scope it writes; the KIRA surface rewrote the header half
+    by hand and never looked at the path, so the prefix was invisible there — on the surface a
+    migrating client uses, which is the one whose base URL is configurable and whose headers often
+    are not.
+
+    Note what this case cannot prove on its own: a **bound** key carries its use case, so the
+    request succeeds whether or not the selector was read. That is exactly how the gap survived a
+    check — it was verified with the one credential that makes the selector unnecessary. The
+    property is proved in `gateway/tests/test_kira_use_case_selector.py`, where the caller holds
+    two memberships and the selector is the only thing that can decide between them; this case is
+    here so the *live* path is exercised too.
+    """
+    path = (
+        f"/uc/{governed.slug}{GEMINI}/models/{MOCK_MODEL}:generateContent"
+        if surface == "gemini"
+        else f"/uc/{governed.slug}{KIRA}/chat"
+    )
+    body = (
+        _body()
+        if surface == "gemini"
+        else {"request": {"parts": [{"text": "hi"}]}, "model_id": 9001, "maxTokens": 8}
+    )
     async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=90.0) as client:
-        response = await client.post(
-            f"/uc/{governed.slug}{GEMINI}/models/{MOCK_MODEL}:generateContent",
-            json=_body(),
-            headers=governed.headers(),
-        )
+        response = await client.post(path, json=body, headers=governed.headers())
 
     assert response.status_code == 200, response.text[:300]
-    assert (await governed.last_row())["use_case"] == governed.slug
+    row = await governed.last_row()
+    assert row["use_case"] == governed.slug
+    assert row["api"] == surface
 
 
 async def test_the_header_selector_reaches_the_same_use_case(governed: Governed) -> None:

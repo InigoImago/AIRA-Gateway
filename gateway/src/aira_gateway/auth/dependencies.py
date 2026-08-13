@@ -13,7 +13,13 @@ from fastapi import Depends, Request
 from aira_common.observability import set_span_attributes
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.auth.attempts import record_failed_authentication
-from aira_gateway.auth.attribution import Attribution, is_valid_use_case, resolve_use_case
+from aira_gateway.auth.attribution import (
+    USE_CASE_HEADER_NAME,
+    USE_CASE_PATH_FORM,
+    Attribution,
+    is_valid_use_case,
+    resolve_use_case,
+)
 from aira_gateway.auth.credentials import extract_token
 from aira_gateway.auth.grants import GroupGrantResolver
 from aira_gateway.auth.keys import is_aira_key
@@ -189,7 +195,7 @@ async def require_attribution(
         if must_name_a_use_case(request, principal):
             raise GeminiHTTPError(
                 400,
-                "Missing use case (X-AIRA-Use-Case header or /uc/<use-case> path).",
+                f"Missing use case ({USE_CASE_HEADER_NAME} header or {USE_CASE_PATH_FORM} path).",
                 "INVALID_ARGUMENT",
             )
     else:

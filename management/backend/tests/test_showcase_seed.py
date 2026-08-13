@@ -278,22 +278,21 @@ def test_the_handover_derives_the_key_the_seed_actually_stored(seeded) -> None:
     assert hash_api_key(module.demo_key("coding-assistant")) == key.key_hash
 
 
-def test_the_handover_offers_only_a_model_the_gateway_will_serve(seeded) -> None:
-    """OpenCode lists whatever the config declares. A menu naming a model the gateway refuses is
-    `FRD-206`'s complaint in another client — an action offered that cannot be carried out."""
-    import importlib.util
-    import pathlib
-
-    path = pathlib.Path(__file__).resolve().parents[3] / "tools" / "showcase_agent.py"
-    spec = importlib.util.spec_from_file_location("showcase_agent", path)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    spec.loader.exec_module(module)
-
-    config = module.config("qwen3:0.6b", "aira_x_y")
-
-    assert list(config["provider"]["aira"]["models"]) == ["qwen3:0.6b"]
-    assert config["model"] == "aira/qwen3:0.6b"
+# `test_the_handover_offers_only_a_model_the_gateway_will_serve` stood here until 2026-08-13, and
+# it is **removed rather than repaired**, because what it tested moved out of the seed.
+#
+# It called `showcase_agent.config("qwen3:0.6b", key)` and asserted the menu held that one model —
+# a fair test while the config *named* a model from an environment variable. It does not any more:
+# the menu is derived at run time from what the gateway serves and what this use case may call, so
+# the seed no longer decides it and a seed test can no longer assert it. The property lives in
+# `tools/tests/test_showcase_agent_config.py`, where it is checked in both directions.
+#
+# The seed's own half of the claim is still here, two tests up: the assistant has a model whose
+# catalog entry declares `tools`, which is the precondition for anything reaching a menu at all.
+#
+# Worth recording how it was found. The signature changed two commits before this broke, and the
+# runs after it were **subsets** — `tools/tests`, ruff, mypy, the frontend — so a stale call sat in
+# a green-looking tree until the next full suite. A subset that passes is not a suite that passes.
 
 
 def test_a_seeded_model_is_announced_and_not_only_written() -> None:

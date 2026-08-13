@@ -21,6 +21,15 @@ from dataclasses import dataclass
 from fastapi import Request
 
 USE_CASE_HEADER = "x-aira-use-case"
+#: The same header, spelled the way a caller writes it.
+#:
+#: `USE_CASE_HEADER` is lowercase because that is how a header is matched; a *message* naming it has
+#: to be the documented form, or the reader searches their client's configuration for a string that
+#: is not there. The two surfaces had drifted — one message said `X-AIRA-Use-Case` and the other
+#: `x-aira-use-case`, from the same header — so the human spelling gets a definition of its own.
+USE_CASE_HEADER_NAME = "X-AIRA-Use-Case"
+#: How the path selector is written, for the same reason: it appears in refusals on both surfaces.
+USE_CASE_PATH_FORM = "/uc/<use-case>"
 USE_CASE_PATH_KEY = "aira_use_case_path"
 
 # A client-supplied selector must look like a Management use-case slug (same charset and length
