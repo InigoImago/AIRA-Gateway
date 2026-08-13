@@ -104,7 +104,6 @@ def _sunset(request: Request) -> dict[str, str]:
 #: A shared control's HTTP status, in the compatibility surface's error vocabulary.
 #: Anything unmapped is a validation error, which is what a 4xx from a pre-dispatch check is.
 _KIRA_CODE_FOR = {
-    404: errors.MODEL_NOT_FOUND,
     403: errors.STANDARD_USER_PERMISSION_REQUIRED,
     429: errors.EXTERNAL_KI_API_TOO_MANY_REQUEST,
     502: errors.EXTERNAL_KI_API_ERROR,
@@ -122,6 +121,12 @@ def _error_response(request: Request, exc: Exception) -> JSONResponse:
         response = errors.kira_error_response(422, exc.code, exc.message)
     elif isinstance(exc, AttachmentRejected | SchemaRejected):
         response = errors.kira_error_response(400, errors.VALIDATION_ERROR, str(exc))
+    elif isinstance(exc, GeminiHTTPError) and exc.code == 404:
+        # Every 404 the shared layer raises is a model nothing serves — the same fact the numeric
+        # id lookup reports, arriving one step later because the id resolved and the *name* did
+        # not. It answers the same way, or the status a caller sees would depend on which of two
+        # equivalent failures happened to come first.
+        response = errors.kira_error_response(422, errors.MODEL_NOT_FOUND, exc.message)
     elif isinstance(exc, GeminiHTTPError):
         # The shared controls in `api/serving` raise this — they are surface-agnostic by design,
         # and this surface has to put their refusals into the predecessor's vocabulary. Without
@@ -217,8 +222,14 @@ async def _resolve_model(request: Request, model_id: int) -> str:
             "An administrator has to resolve it.",
         ) from exc
     if name is None:
+        # **422, the contract's own status.** It was 404 and written down as a deliberate deviation
+        # — the code was right and the status was ours — until the predecessor's own suite was run
+        # against this surface and the difference showed up as a failure a migrating client would
+        # also see. A client switching on the status rather than the code (which is what a
+        # generated HTTP client does) reads 404 as "wrong URL" and 422 as "wrong field", and only
+        # the second sends anybody to look at `model_id`.
         raise errors.KiraError(
-            404,
+            422,
             errors.MODEL_NOT_FOUND,
             f"No model with id {model_id}. Ids are assigned in the model catalog.",
         )
@@ -597,6 +608,25 @@ async def models(request: Request, principal: Principal = Depends(require_princi
     )
 
 
+def _upstream_tags(verdict: dict[str, object]) -> list[str]:
+    """What this check is, and how fresh its answer is.
+
+    Tags rather than fields because the contract's shape has no room for another one, and a
+    compatibility surface does not get to add keys — but it does get to say something true in the
+    space it has.
+    """
+    tags = ["upstream"]
+    if not verdict.get("probed", True):
+        tags.append("not-probed")
+        return tags
+    age = verdict.get("age_seconds")
+    if isinstance(age, int | float):
+        tags.append(f"cached:{int(age)}s")
+    if verdict.get("stale", False):
+        tags.append("stale")
+    return tags
+
+
 @router.get("/health")
 async def health(request: Request) -> Response:
     """Unauthenticated, as the predecessor's is — it carries no configuration and no catalog.
@@ -642,7 +672,15 @@ async def health(request: Request) -> Response:
                 # `probed: false` means *we did not look* — reported rather than folded into the
                 # status, because "we did not look" and "it is fine" are different answers
                 # (`FRD-117`) and a tag is the only place this shape has to say so.
-                tags=["upstream"] if verdict.get("probed", True) else ["upstream", "not-probed"],
+                #
+                # `cached:<n>s` says how old the verdict is, which the shape had no way to admit:
+                # `time_taken` is the *last probe's* duration and reads exactly like a measurement
+                # taken just now. Asked directly whether this endpoint reports a cached status,
+                # the honest answer was yes and nothing in the response said so — a figure that
+                # invites the wrong reading is the same defect as a wrong figure. The number is
+                # bounded by the probe interval, so a reader can tell a fresh verdict from one
+                # whose prober has stopped without knowing either setting.
+                tags=_upstream_tags(verdict),
             )
         )
 

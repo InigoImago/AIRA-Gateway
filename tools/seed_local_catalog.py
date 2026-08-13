@@ -145,7 +145,15 @@ DECLARATIONS = [
         # The wire format takes the whole batch in one `input` array, so batching is real here.
         # Task types are **not** declared, because this dialect has none — and `FRD-113` refuses an
         # undeclared one rather than sending a field the endpoint would ignore.
-        "embedding": {"supports_batch": True},
+        # Measured against this Ollama, not taken from the model card: two texts of very
+        # different length both came back with **384** values. `all-minilm` is the only
+        # embedding model this seed declares, and a second one would need its own measurement
+        # — a dimension is a property of a model, not of a runtime (`FRD-114` FR-7).
+        # 
+        # Declared because the compatibility surface reports it in `GET /models`, and a client
+        # sizing a vector store reads that field. Absent, it had to guess or embed once and
+        # count, which is the thing this catalog exists to spare it.
+        "embedding": {"supports_batch": True, "dimensions": [384], "default": 384},
         "approved": True,
         "numeric_id": EMBED_NUMERIC_ID,
     },

@@ -54,7 +54,7 @@ changing a base URL.
 - **FR-3 Error vocabulary** as §6.2: `{code, message, details?}` with the predecessor's codes and
   status mapping.
 - **FR-4 Integer model ids** resolved through `FRD-114`'s numeric alias; an unknown id is
-  `404 MODEL_NOT_FOUND`.
+  `422 MODEL_NOT_FOUND`, the contract's own status, and so is a model the gateway does not serve.
 - **FR-5 SSE events** as §2.2: `{status: "update"|"completed", data}`, terminating in a
   `CompletedEvent` carrying the full response and usage.
 - **FR-6 Attribution** resolved per §5.3 — this is the requirement with no counterpart in the
@@ -166,9 +166,18 @@ because it is a decision rather than an oversight:
   predecessor gates on a configured group; AIRA attributes every model call to a use case
   (`ADR-0015`), which is what makes budgets, limits and retention apply at all. Tokens and groups
   therefore do not carry over unchanged — this is the migration's real work.
-- **Unknown `model_id` answers `404`, not `422`.** The predecessor uses `422 MODEL_NOT_FOUND`;
-  the code is the same and the status is not. An ambiguous id — two catalog rows sharing one —
-  answers `503`, which the contract has no case for (`FRD-114` FR-6a).
+- ~~**Unknown `model_id` answers `404`, not `422`.**~~ **Withdrawn.** It answers `422
+  MODEL_NOT_FOUND`, the contract's own status, after the predecessor's suite was run against this
+  surface and the difference showed up as a failure a migrating client would also see: a generated
+  HTTP client switches on the status before the body, and only `422` sends anybody to look at
+  `model_id`. A model the gateway does not *serve* answers the same way, one step later, or the
+  status would depend on which of two equivalent failures came first. An ambiguous id — two catalog
+  rows sharing one — still answers `503`, which the contract has no case for (`FRD-114` FR-6a).
+- **A blank entry in an embedding list is refused**, not absorbed. A list is *one* embedding
+  (`FRD-113` §11), so `["ok", ""]` embedded exactly like `["ok"]` — 200, an ordinary-looking
+  vector, and no way for the caller to learn that one of their chunks was empty. Whitespace counts
+  as blank. Refused at the wire, where the message can name the position; the canonical validator
+  had always refused a blank text and never saw one, because this surface joins before validating.
 - **Unknown JSON fields are refused, not ignored.** `FRD-124` reversed `FRD-100` FR-7 on evidence:
   a field accepted and dropped produces a confident answer to a question nobody asked, and Google's
   own API refuses them too. A migrating client learns at migration time, which is the point of

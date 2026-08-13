@@ -5,6 +5,53 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The predecessor's own suite, run against this surface
+
+250 of the predecessor's tests against AIRA: 233 compatible, 17 differences. The owner went through
+them and kept most — a compatibility surface that copies every behaviour copies the mistakes too,
+which `FRD-107` §5.5 has always said. Four were changed and one was a question.
+
+**An unknown `model_id` answers `422`, not `404`.** This was a *documented* deviation: the code
+matched and the status did not, on the argument that 404 is what a missing thing gets. Running the
+suite turned it into a failure a migrating client would also see, and the argument does not survive
+that: a generated HTTP client switches on the status before it reads the body, `404` reads as
+"wrong URL", and only `422` sends anybody to look at `model_id`. **A model the gateway does not
+*serve* now answers the same way** — that refusal arrives from the shared layer one step later,
+and answering it differently would make the status depend on which of two equivalent failures came
+first.
+
+**A blank entry in an embedding list is refused rather than absorbed.** A list is *one* embedding
+(`FRD-113` §11), so `["ok", ""]` embedded exactly like `["ok"]`: 200, an ordinary-looking vector,
+and no way for the caller to learn that one of their chunks was empty — a silent drop in the one
+place nobody can notice it. The canonical validator had refused blank texts all along and never saw
+one, because this surface **joins before validating**. Whitespace counts.
+
+**`all-minilm` reports its width.** The fields have been in `GET /models` since Stage B and the
+*seed* declared none of them, so the model listed with a batch flag and no dimensions — which a
+reader takes as "no fixed width" rather than "nobody wrote it down". `FRD-114` FR-7 forbids
+inventing it, so it was **measured**: two texts of very different length, 384 values both times.
+Task types stay undeclared, because this dialect has none.
+
+**Fifteen media types, and the same fifteen.** Counted rather than assumed, and now pinned by a
+test that lists them — a count agrees with itself after a swap, which is the one edit a reviewer
+would not notice.
+
+**And the question: does `/health` really answer from a cache?** Yes, deliberately — probing every
+upstream per call makes the endpoint as slow as the slowest provider, bills somebody for asking
+whether a model is alive, and can wake a scaled-to-zero endpoint (`FRD-117` §5.2). Measured rather
+than defended: the probe runs every 60 s, a stale verdict is reported as stale after 180 s, and
+stopping the model container made the endpoint answer **503 within 30 seconds**, recovering on
+restart. What was wrong is that nothing *said* so — `time_taken` carries the last probe's duration
+and reads exactly like a measurement taken just now. Each upstream now carries a `cached:<n>s` tag,
+because a figure that invites the wrong reading is the same defect as a wrong figure.
+
+**A test that passed for the wrong reason, caught by breaking the rule it names.** The blank-entry
+cases were written against a model with no declared batch support, so every list was refused as
+`EMBEDDING_AGGREGATION_NOT_SUPPORTED` — a 422 with nothing to do with blankness. Deleting the new
+rule turned nothing red. Found the way this repository always finds it: break the property, watch.
+
+---
+
 ## The tab said Angular, and a button said nothing
 
 Three reports from using the console, two of them the same shape as everything else this week.

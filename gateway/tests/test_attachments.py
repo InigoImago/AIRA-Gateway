@@ -448,3 +448,42 @@ async def test_embedding_refuses_an_attachment_rather_than_embedding_the_prompt(
 
     assert response.status_code == 400
     assert "text only" in response.json()["error"]["message"]
+
+
+def test_the_accepted_media_types_are_the_fifteen_the_contract_names() -> None:
+    """The set is the contract's, and it is pinned here so it cannot drift quietly.
+
+    Counted after the predecessor's own suite was run against this surface: fifteen there, fifteen
+    here, the same fifteen. Nothing was wrong — the check is worth having because the failure mode
+    is silent in both directions. **Dropping one** turns a request a migrating client has always
+    sent into a refusal naming the media type, which reads as the client's fault. **Adding one**
+    accepts a document the contract never promised, and the caller finds out at whichever model
+    cannot read it.
+
+    Listed rather than counted. A count agrees with itself after a swap, which is the one edit a
+    reviewer would not notice.
+    """
+    from aira_gateway.attachments import DEFAULT_MEDIA_TYPES
+
+    contract = frozenset(
+        {
+            "application/pdf",
+            "application/x-javascript",
+            "text/javascript",
+            "text/plain",
+            "text/html",
+            "text/md",
+            "text/csv",
+            "text/xml",
+            "text/rtf",
+            "image/png",
+            "image/jpg",
+            "image/jpeg",
+            "image/webp",
+            "image/heic",
+            "image/heif",
+        }
+    )
+
+    assert contract == DEFAULT_MEDIA_TYPES
+    assert len(contract) == 15

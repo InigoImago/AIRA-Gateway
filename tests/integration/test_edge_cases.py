@@ -615,35 +615,48 @@ async def test_kira_embedding_refuses_in_the_predecessors_shape(
     assert "code" in response.json()
 
 
-async def test_an_empty_element_in_a_batch_is_part_of_the_text_and_not_a_refusal(
+async def test_a_list_is_joined_into_one_embedding_rather_than_many(
     fixture: Fixture,
 ) -> None:
-    """`["ok", ""]` is `"ok"`, and that is the contract rather than a leniency.
+    """A list is **one** embedding, its parts joined with nothing between them.
 
-    This case sat in the refusal table above expecting a 422, from when a list meant *many*
-    embeddings — where an empty element would be a vector for nothing, billed. On 2026-08-12 the
-    predecessor's own source settled the other reading: **a list is one embedding**, its parts
-    joined with no separator between them. An empty part therefore contributes nothing to join,
-    and refusing it would refuse a well-formed request.
+    Confirmed from the contract on 2026-08-12 after `FRD-113` §11 had assumed the other reading:
+    a caller sending five chunks receives one vector, not five. Asserted as the property rather
+    than as the status — `200` alone would also be true of a surface that embedded only the first
+    element, dropped the rest, or embedded the literal list — so the vector is compared against the
+    one the joined string produces on its own, which is the only thing that distinguishes joining
+    from any of those.
 
-    Asserted as the property rather than as the status. `200` alone would also be true of a surface
-    that silently dropped the second element, embedded only the first, or embedded the literal
-    string `["ok", ""]` — so the vector is compared against the one `"ok"` produces on its own,
-    which is the only thing that distinguishes joining from any of those.
+    This used to be written with `["ok", ""]`, which made it *also* an assertion that a blank
+    element is acceptable input. It is not, and the test below is why; the join is the same
+    property with a part that carries something.
     """
-    # `_check` is the refusal helper and answers `{}` for a 200 — deliberately, since there is no
-    # message to inspect on the happy path. This case is about the body, so it reads it directly.
-    padded = await _post(fixture, f"{KIRA}/embed", {"text": ["ok", ""], "model_id": 9002})
-    plain = await _post(fixture, f"{KIRA}/embed", {"text": "ok", "model_id": 9002})
+    joined = await _post(fixture, f"{KIRA}/embed", {"text": ["ok", "!"], "model_id": 9002})
+    plain = await _post(fixture, f"{KIRA}/embed", {"text": "ok!", "model_id": 9002})
 
-    assert padded.status_code == 200, padded.text[:300]
+    assert joined.status_code == 200, joined.text[:300]
     assert plain.status_code == 200, plain.text[:300]
-    first, second = padded.json()["vector"], plain.json()["vector"]
+    first, second = joined.json()["vector"], plain.json()["vector"]
 
     assert len(first) == len(second)
-    assert first == pytest.approx(second, abs=1e-6), (
-        "an empty part changed the embedding, so the list is not being joined"
-    )
+    assert first == pytest.approx(second, abs=1e-6), "the parts are not being joined into one text"
+
+
+async def test_a_blank_element_in_a_list_is_refused_rather_than_absorbed(
+    fixture: Fixture,
+) -> None:
+    """The join is exactly what makes this dangerous: an empty element disappears into it.
+
+    `["ok", ""]` embedded identically to `["ok"]`, answered 200, and nothing told the caller that
+    one of their chunks was empty — a silent drop, in the one place a caller cannot notice it,
+    since the vector looks perfectly normal. The contract refuses blank entries and so does this
+    surface now. Whitespace counts: three spaces contribute nothing to a vector either.
+    """
+    for text in (["ok", ""], ["ok", "   "], [""], []):
+        response = await _post(fixture, f"{KIRA}/embed", {"text": text, "model_id": 9002})
+
+        assert response.status_code == 422, f"{text!r}: {response.text[:200]}"
+        assert response.json()["code"], response.text[:200]
 
 
 async def test_the_kira_surface_announces_itself_as_transitional_even_when_refusing(

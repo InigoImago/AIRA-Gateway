@@ -106,14 +106,38 @@ async def test_the_system_prompt_and_history_reach_the_model_in_order() -> None:
     assert "Zutaten" in response.json()["parts"][0]["text"]
 
 
-async def test_an_unknown_model_id_is_404_model_not_found() -> None:
-    """§6.2. The integer id is the predecessor's addressing, and a client checks this code."""
+async def test_an_unknown_model_id_is_422_model_not_found() -> None:
+    """The contract's status, not ours.
+
+    It was `404` and written down as a deliberate deviation — the *code* matched and the status did
+    not — until the predecessor's own suite was run against this surface and the difference turned
+    up as a failure a migrating client would also see. A generated HTTP client switches on the
+    status before the body: `404` reads as "wrong URL" and `422` as "wrong field", and only the
+    second sends anybody to look at `model_id`.
+    """
     app = _app()
     with TestClient(app) as client:
         await _catalogue(app)
         response = client.post(f"{BASE}/chat", json=_chat(model_id=9999))
 
-    assert response.status_code == 404
+    assert response.status_code == 422
+    assert response.json()["code"] == "MODEL_NOT_FOUND"
+
+
+async def test_a_model_the_gateway_does_not_serve_answers_the_same_way() -> None:
+    """The other route to the same fact, which has to agree with the one above.
+
+    The id resolves and the **name** turns out to be served by nothing — a catalogued model whose
+    provider is gone. That refusal comes from the shared layer as a `404`, one step later than the
+    id lookup, and answering it differently would make the status a caller sees depend on which of
+    two equivalent failures happened to come first.
+    """
+    app = _app()
+    with TestClient(app) as client:
+        await _catalogue(app, model="not-served-by-anyone", numeric_id=4242)
+        response = client.post(f"{BASE}/chat", json=_chat(model_id=4242))
+
+    assert response.status_code == 422, response.text
     assert response.json()["code"] == "MODEL_NOT_FOUND"
 
 
@@ -683,3 +707,95 @@ async def test_an_ambiguous_model_id_is_refused_rather_than_resolved_by_luck() -
     assert body["code"] == "MODEL_NOT_FOUND"
     assert "uniquely" in body["message"]
     assert "one-1" not in response.text and "two-2" not in response.text
+
+
+@pytest.mark.parametrize(
+    ("text", "why"),
+    [
+        (["ok", ""], "an empty element disappears into the join"),
+        (["ok", "   "], "whitespace contributes nothing either"),
+        ([""], "a single blank is the same thing with one element"),
+        ([], "an empty list asks for an embedding of nothing"),
+        ("", "and so does a bare empty string"),
+    ],
+)
+async def test_a_blank_embedding_text_is_refused(text: object, why: str) -> None:
+    """**The join is what makes this worth refusing.** A list is one embedding
+    (`FRD-113` §11), so `["ok", ""]` embedded exactly like `["ok"]` — 200, a perfectly normal
+    vector, and no way for the caller to learn that one of their chunks was empty. A silent drop
+    in the one place nobody can see it.
+
+    The canonical validator has always refused a blank text; it never saw one here, because this
+    surface joins *before* validating. Refused at the wire now, which is also where the message
+    can name the position.
+    """
+    app = _app()
+    with TestClient(app) as client:
+        # **Batch support is declared on purpose.** Without it every list is refused as
+        # `EMBEDDING_AGGREGATION_NOT_SUPPORTED`, and this test passed against a gateway with the
+        # blank rule deleted — a 422 for a reason that has nothing to do with what it is named
+        # after. Found by breaking the rule and watching nothing go red.
+        await _catalogue(app, capabilities=["embed"], embedding={"supports_batch": True})
+        response = client.post(f"{BASE}/embed", json={"text": text, "model_id": 1004})
+
+    assert response.status_code == 422, f"{why}: {response.text[:200]}"
+    assert response.json()["code"], response.text[:200]
+
+
+async def test_a_list_of_real_texts_is_still_one_embedding() -> None:
+    """The rule above must not have narrowed the feature it guards: a list still works."""
+    app = _app()
+    with TestClient(app) as client:
+        await _catalogue(app, capabilities=["embed"], embedding={"supports_batch": True})
+        response = client.post(
+            f"{BASE}/embed", json={"text": ["hello", " world"], "model_id": 1004}
+        )
+
+    assert response.status_code == 200, response.text[:300]
+    assert isinstance(response.json()["vector"], list)
+
+
+async def test_an_embedding_model_reports_its_width_and_batch_support() -> None:
+    """What a client sizing a vector store reads.
+
+    The fields have been in this response since Stage B and the *seed* declared none of them, so
+    `all-minilm` listed with a batch flag and no width — which a reader takes as "this model has
+    no fixed width", not as "nobody wrote it down". `FRD-114` FR-7 forbids inventing it, so it was
+    measured (384, stable across two texts of very different length) and declared.
+    """
+    app = _app()
+    with TestClient(app) as client:
+        await _catalogue(
+            app,
+            capabilities=["embed"],
+            embedding={"supports_batch": True, "dimensions": [384], "default": 384},
+        )
+        response = client.get(f"{BASE}/models")
+
+    entry = next(m for m in response.json() if m["id"] == 1004)
+    assert entry["embedding_dimensions"] == 384
+    assert entry["supports_aggregation"] is True
+
+
+async def test_health_says_that_an_upstream_verdict_is_cached() -> None:
+    """The endpoint reports a **cached** probe, and the shape had no way to admit it.
+
+    Deliberate: probing every upstream per call makes this as slow as the slowest provider, bills
+    somebody for asking whether a model is alive, and can wake a scaled-to-zero endpoint
+    (`FRD-117` §5.2). But `time_taken` carries the *last probe's* duration and reads exactly like a
+    measurement taken just now — asked directly whether this was cached, the honest answer was yes
+    and nothing in the response said so. A figure that invites the wrong reading is the same defect
+    as a wrong figure.
+
+    A tag, because a compatibility surface does not get to add fields to somebody else's shape —
+    but it does get to say something true in the space it has.
+    """
+    app = _app()
+    with TestClient(app) as client:
+        response = client.get(f"{BASE}/health")
+
+    entities = response.json()["entities"]
+    upstreams = [e for e in entities if "upstream" in e["tags"]]
+    assert upstreams, "no upstream reported, so this asserts nothing"
+    for entity in upstreams:
+        assert any(t.startswith("cached:") or t == "not-probed" for t in entity["tags"]), entity

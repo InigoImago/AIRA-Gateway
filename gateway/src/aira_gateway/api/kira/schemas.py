@@ -125,6 +125,32 @@ class EmbeddingRequest(BaseModel):
     model_id: int
     task_type: str | None = None
 
+    @model_validator(mode="after")
+    def _no_blank_texts(self) -> EmbeddingRequest:
+        """A blank entry is refused, not quietly dropped.
+
+        The list is joined into **one** text (`FRD-113` §11 — the contract sends the parts of a
+        single embedding call), and a join absorbs an empty element without trace: `["ok", ""]`
+        embedded exactly like `["ok"]`, answered 200, and the caller had no way to learn that one
+        of their chunks was empty. The contract refuses it, and refusing is the better answer on
+        its own terms — an empty chunk in a batch is a bug in whatever produced the batch, and the
+        one moment it can still be reported is now.
+
+        Whitespace counts as blank. A chunk of three spaces contributes nothing to a vector, so
+        accepting it would be the same silent drop with an extra step.
+        """
+        entries = [self.text] if isinstance(self.text, str) else self.text
+        if not entries:
+            raise ValueError("text must not be an empty list.")
+        blanks = [index for index, entry in enumerate(entries) if not entry.strip()]
+        if blanks:
+            where = ", ".join(str(index) for index in blanks)
+            raise ValueError(
+                f"text contains blank entries at position(s) {where}. An empty text embeds to "
+                "nothing and would be dropped without a trace, so it is refused instead."
+            )
+        return self
+
 
 class EmbeddingResponse(BaseModel):
     """One text in, one vector out — the shape the contract documents."""
