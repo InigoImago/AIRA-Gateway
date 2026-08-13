@@ -1,5 +1,4 @@
-import { Component, computed, input, signal } from '@angular/core';
-import { RouterLink } from '@angular/router';
+import { Component, computed, input, output, signal } from '@angular/core';
 import { KiraModel } from '../../core/api/models';
 import { InfoHint } from '../../core/ui/info-hint';
 
@@ -47,11 +46,26 @@ interface Reachable {
 
 @Component({
   selector: 'app-connection-panel',
-  imports: [RouterLink, InfoHint],
+  imports: [InfoHint],
   templateUrl: './connection-panel.html',
 })
 export class ConnectionPanel {
   readonly slug = input.required<string>();
+  /**
+   * "Issue a key" asks the **parent** to open its API-keys tab.
+   *
+   * It was a `routerLink` with `fragment="api-keys"` and it did nothing at all — reported by the
+   * owner, who clicked it. Two mistakes in one attribute, and neither could announce itself: the
+   * page selects its tab from a **query parameter**, not a fragment, and the tab is called `keys`
+   * rather than `api-keys`, so even the corrected form would have navigated to a name that is not
+   * a tab. A third would still have been waiting: the parent reads `queryParamMap` from the
+   * route **snapshot** in `ngOnInit`, so navigating to the same route with a different parameter
+   * changes the URL and nothing else.
+   *
+   * An output instead. The parent owns the tab bar (`CLAUDE.md` §3), so asking it to switch is
+   * both the shorter path and the one that cannot drift from how tabs are actually selected.
+   */
+  readonly issueKey = output<void>();
   /** The release, straight from the use case — the same list the release panel shows. */
   readonly released = input.required<string[]>();
   /**

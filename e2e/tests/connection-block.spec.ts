@@ -151,4 +151,33 @@ test.describe('Connecting a client', () => {
       '/uc/kundenservice/kira/api/external',
     );
   });
+
+  /**
+   * **The third inert control this repository has shipped**, after a `title` attribute that showed
+   * nothing and a `routerLinkActive` that styled nothing — and the third found by somebody using
+   * the console rather than by any suite.
+   *
+   * "Issue a key" was a `routerLink` carrying `fragment="api-keys"`, and it did nothing at all.
+   * Two mistakes in one attribute, neither able to announce itself: the page selects its tab from a
+   * **query parameter**, and the tab is called `keys`. A third was waiting behind them — the parent
+   * reads the parameter from the route *snapshot*, so navigating to the same route with a different
+   * one changes the URL and nothing else.
+   *
+   * Asserted as *where the reader ends up*, which is the only formulation that would have failed:
+   * a test that the button exists passed throughout, and so would one that checked its `href`
+   * against the same wrong name the component was written with.
+   */
+  test('"Issue a key" opens the tab where keys are issued', async ({ page }) => {
+    await login(page, USERS.globalAdmin);
+    await page.goto('/use-cases/kundenservice');
+
+    const block = page.getByTestId('connection');
+    await expect(block).toBeVisible({ timeout: 20_000 });
+    await block.scrollIntoViewIfNeeded();
+    await page.getByTestId('connection-issue-key').click();
+
+    // The panel that issues keys is on screen — not merely a URL that says it should be.
+    await expect(page.getByTestId('api-keys')).toBeVisible();
+    await expect(page.getByRole('tab', { name: /keys/i })).toHaveAttribute('aria-selected', 'true');
+  });
 });

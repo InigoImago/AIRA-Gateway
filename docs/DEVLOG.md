@@ -5,6 +5,42 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The tab said Angular, and a button said nothing
+
+Three reports from using the console, two of them the same shape as everything else this week.
+
+**The favicon was Angular's default**, byte for byte, from the Phase 0 shell. The AIRA mark existed
+and was in the page header; the tab icon had simply never been changed. Nothing could have caught
+it — no test asserts what an image looks like, the file is never fetched by a suite, and every page
+renders correctly with a framework's logo above it. It is **generated from the mark's own geometry**
+now (`tools/make_favicon.py`, PNG and ICO written by hand because no imaging library is installed),
+so the alternative failure — two pictures of one logo, drifting the day a colour changes — cannot
+start. The SVG is what current browsers use; Safari has never supported an SVG favicon, so the
+`.ico` is a fallback rather than a leftover.
+
+**"Issue a key" did nothing**, and it had three defects stacked in one attribute. It was a
+`routerLink` with `fragment="api-keys"`: the page selects its tab from a **query parameter**, and
+the tab is called `keys`, so the corrected fragment would have pointed at a name that is not a tab —
+and behind both, the parent reads the parameter from the route **snapshot**, so navigating to the
+same route with a different one changes the URL and nothing else. An `output` now, because the
+parent owns the tab bar. The third inert control this repository has shipped after a `title`
+attribute that showed nothing and a `routerLinkActive` that styled nothing, and the third found by
+somebody using the console rather than by any suite: the only assertion anywhere was that the block
+renders. Both new tests were shown to fail first — and the e2e one asserts **where the reader ends
+up**, which is the only formulation that would have caught it, since a test comparing the link
+against a tab name would have been written from the same wrong idea the component was.
+
+**And a question measured rather than answered**: can an arbitrary Keycloak group be granted a use
+case, and can its people then issue keys and authenticate with a bearer token? Yes to all three,
+end to end on the running stack with a group deliberately outside the `/use-cases/<slug>`
+convention. What the measurement added is a number nobody had: **a grant is effective in Management
+immediately and at the gateway about eight seconds later** — it travels by Kafka into the
+read-model, and until it arrives the gateway answers 403 to a caller the console already shows as a
+member. That is the design (`FRD-204`: the gateway never asks Management on the request path), and
+it is worth knowing before somebody grants access, refreshes, and concludes it did not work.
+
+---
+
 ## The repository is public — say what AIRA does, not what the predecessor's system looks like
 
 The instruction: the predecessor's product name out entirely, less information about its API, and

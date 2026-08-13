@@ -63,6 +63,26 @@ describe('ConnectionPanel', () => {
     TestBed.configureTestingModule({ providers: [provideRouter([])] });
   });
 
+  /**
+   * The button did nothing at all — a `routerLink` with `fragment="api-keys"`, where the page
+   * selects its tab from a **query parameter** and calls it `keys`. Reported by the owner, who
+   * clicked it; no suite had an opinion, because the only assertion anywhere was that the block
+   * renders.
+   *
+   * Asserted as an **emission**, not as an `href`: the destination is the parent's to decide, and
+   * a test comparing the link against a tab name would have been written from the same wrong idea
+   * the component was.
+   */
+  it('asks the page to open its keys tab, rather than linking somewhere of its own', () => {
+    build(['chat-model']);
+    let asked = 0;
+    fixture.componentInstance.issueKey.subscribe(() => (asked += 1));
+
+    testid('connection-issue-key')?.click();
+
+    expect(asked).toBe(1);
+  });
+
   it('offers only the models this use case may call', () => {
     build(['chat-model', 'embed-model']);
     answer();

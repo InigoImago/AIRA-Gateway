@@ -26,7 +26,16 @@
                base-uri 'self';
                form-action 'self'"
     />
-    <link rel="icon" type="image/x-icon" href="favicon.ico" />
+    <!--
+      The tab icon. The SVG is what every current browser uses; Safari has never supported an SVG
+      favicon, so the `.ico` is the fallback rather than a leftover — it is generated from the same
+      mark by `tools/make_favicon.py`, because a second hand-made image is a second definition of
+      one logo and this one sat unnoticed as Angular's default from Phase 0 until the owner saw it
+      in a tab.
+    -->
+    <link rel="icon" type="image/svg+xml" href="aira-mark.svg" />
+    <link rel="alternate icon" type="image/x-icon" href="favicon.ico" />
+    <link rel="apple-touch-icon" href="aira-mark.svg" />
     <!--
       Deployment-time configuration, loaded before the bundle. Replaced per environment without a
       rebuild; see public/runtime-config.js. Same-origin, so the CSP above already allows it.

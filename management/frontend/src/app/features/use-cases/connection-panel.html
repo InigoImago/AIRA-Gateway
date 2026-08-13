@@ -5,7 +5,14 @@
 <div class="card" data-testid="connection">
   <div class="spread">
     <h3 class="section-title" style="margin: 0">Connecting a client</h3>
-    <a class="btn btn--sm" [routerLink]="['/use-cases', slug()]" fragment="api-keys">Issue a key</a>
+    <button
+      class="btn btn--sm"
+      type="button"
+      (click)="issueKey.emit()"
+      data-testid="connection-issue-key"
+    >
+      Issue a key
+    </button>
   </div>
   <p class="muted" style="margin: 0.25rem 0 0">
     A key is issued for one use case and carries it, so a client normally sends nothing else — no
