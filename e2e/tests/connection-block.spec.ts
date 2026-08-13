@@ -182,4 +182,38 @@ test.describe('Connecting a client', () => {
     await page.getByRole('tab', { name: /API keys/i }).click();
     await expect(page.getByRole('tabpanel')).toContainText('API keys');
   });
+
+  /**
+   * The two things the block did not say, both found by reading it rather than by any suite.
+   *
+   * Every example asked for `<your key>` and nothing said where one comes from — the gap the
+   * removed button left, an instruction with no destination one indirection out. And bearer tokens
+   * were missing outright, although they are how a person or a service account calls the gateway
+   * with no key minted at all, and the only way a Keycloak group grant reaches the data plane.
+   *
+   * In a browser because both are claims about what a reader can find on the page: a component
+   * test proves a string is rendered, not that somebody scrolling this card meets it.
+   */
+  test('says where a key comes from and how a bearer token is used', async ({ page }) => {
+    await login(page, USERS.globalAdmin);
+    await page.goto('/use-cases/kundenservice');
+
+    const credentials = page.getByTestId('connection-credentials');
+    await expect(credentials).toBeVisible({ timeout: 20_000 });
+    await credentials.scrollIntoViewIfNeeded();
+
+    // The key: where it is issued, and the forms the gateway accepts.
+    await expect(credentials).toContainText('API keys');
+    await expect(page.getByTestId('connection-key-forms')).toContainText('x-goog-api-key');
+
+    // The bearer: the header, and the one fact that separates it from a key.
+    await expect(page.getByTestId('connection-bearer-example')).toContainText(
+      'Authorization: Bearer',
+    );
+    await expect(credentials).toContainText('carries no use');
+
+    // And the tab it points at is real — the failure this block has already had twice.
+    await page.getByRole('tab', { name: /API keys/i }).click();
+    await expect(page.getByRole('tabpanel')).toContainText('API keys');
+  });
 });

@@ -78,6 +78,52 @@ describe('ConnectionPanel', () => {
    * back, so without this the next person to read "connecting a client, but where do I get a key?"
    * adds one, and the answer to that question is the tab bar.
    */
+  /**
+   * Every example said `<your key>` and nothing said where one comes from — an instruction with no
+   * destination, and the gap left behind when the "Issue a key" button was removed. Naming the tab
+   * is the answer, because that is where keys are issued and a second route to it is a second
+   * thing that can rot.
+   */
+  it('says where a key comes from, since every example asks for one', () => {
+    build(['chat-model']);
+    answer();
+
+    const credentials = testid('connection-credentials');
+    expect(credentials).not.toBeNull();
+    expect(credentials?.textContent).toContain('API keys');
+    expect(text()).toContain('x-goog-api-key');
+  });
+
+  /**
+   * Bearer tokens were absent outright, and they are not an edge case: they are how a person or a
+   * service account calls the gateway with no key minted, and the only way a Keycloak group grant
+   * reaches the data plane. Measured on the running stack before it was written here.
+   *
+   * The sentence that matters is the *difference* — a token carries an identity and **not** a use
+   * case — because it is what sends a reader to the section below instead of to a 403 they cannot
+   * explain.
+   */
+  it('covers the OIDC bearer, and says what it does not carry', () => {
+    build(['chat-model']);
+    answer();
+
+    expect(testid('connection-bearer-example')?.textContent).toContain('Authorization: Bearer');
+    expect(testid('connection-credentials')?.textContent).toContain('carries no use');
+  });
+
+  /**
+   * The measured number. Configuration reaches the gateway over the event bus, so a grant is
+   * effective in this console immediately and at the gateway a few seconds later — during which a
+   * caller the page shows as a member is answered 403. Written down because the alternative is
+   * somebody concluding the grant did not work.
+   */
+  it('warns that a fresh grant is not effective at the gateway instantly', () => {
+    build(['chat-model']);
+    answer();
+
+    expect(testid('connection-grant-delay')?.textContent).toContain('403');
+  });
+
   it('offers no key-issuing control of its own', () => {
     build(['chat-model']);
     answer();

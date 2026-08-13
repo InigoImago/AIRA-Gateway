@@ -29,6 +29,16 @@ has shipped after a `title` attribute that showed nothing and a `routerLinkActiv
 nothing, and the third found by somebody using the console rather than by any suite — the only
 assertion anywhere was that the block renders.
 
+**And removing it exposed what the button had been standing in for.** With it gone the block said
+`<your key>` four times and never said where one comes from, which is the same instruction-with-no-
+destination the button had been an attempt at. There is a **Credentials** section now: the API key,
+the tab it is issued on, and the three header forms the gateway accepts — plus the thing that was
+missing outright, the **OIDC bearer token**. That is not an edge case: it is how a person or a
+service account calls the gateway with no key minted, and the only way a Keycloak group grant
+reaches the data plane at all. The sentence that earns its place is the *difference* — a token
+carries an identity and **not** a use case — because without it a reader meets a 403 they cannot
+explain. The measured propagation delay is written down beside it for the same reason.
+
 **A removal has no natural counterpart**, so both tests now assert the absence and the route that
 does exist: nothing fails when a control comes back, and without them the next reader to ask
 "connecting a client, but where do I get a key?" adds one again. Writing the e2e assertion also

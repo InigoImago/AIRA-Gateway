@@ -309,6 +309,51 @@
       is the wrong place for the thing a caller in two use cases has to get right — a hint is read
       by somebody who already suspects there is something to know, and this reader does not.
     -->
+    <!--
+      Where the credential in every example above comes from. The block said `<your key>` four
+      times and never said where to get one — an instruction with no destination (`FRD-208`), and
+      the reason a button was added here and then removed: the answer is a tab on this same page,
+      so the block says so in words rather than growing a second route to it.
+
+      Bearer tokens were missing outright, and they are not an edge case: they are how a person or
+      a service account calls the gateway without anybody minting a key, and how a Keycloak group
+      grant reaches the data plane at all. What a reader has to know is that a token carries an
+      identity and **not** a use case, which is why the next section exists.
+    -->
+    <h4 class="section-title" style="margin-top: 1.5rem">Credentials</h4>
+    <div data-testid="connection-credentials" class="stack">
+      <div>
+        <p class="muted" style="margin: 0 0 0.25rem">
+          <strong>An API key</strong> — what the examples above use. Issued on this page under
+          <strong>API keys</strong>, shown once, and bound to this use case. Any of the three forms
+          a Gemini client already speaks is accepted, in this order:
+        </p>
+        <pre class="code-block" data-testid="connection-key-forms">
+x-goog-api-key: &lt;your key&gt;
+Authorization: Bearer &lt;your key&gt;
+?key=&lt;your key&gt;</pre>
+      </div>
+      <div>
+        <p class="muted" style="margin: 0 0 0.25rem">
+          <strong>An OIDC token</strong> — for a person or a service account, with no key to mint or
+          store. The same header as above; the gateway tells the two apart by their shape.
+        </p>
+        <pre class="code-block" data-testid="connection-bearer-example">
+Authorization: Bearer &lt;access token&gt;</pre>
+      </div>
+      <p class="muted" style="margin: 0">
+        The token has to reach this use case — through membership, or through a Keycloak group
+        somebody granted it under <strong>Members</strong>. And
+        <strong>it carries no use case</strong>, so unlike a key it must name one; that is the
+        section below.
+      </p>
+      <p class="muted" style="margin: 0" data-testid="connection-grant-delay">
+        A grant just made takes a few seconds to reach the gateway — configuration travels to the
+        data plane over the event bus, so the console can already show somebody as a member while a
+        request of theirs is still answered <code>403</code>.
+      </p>
+    </div>
+
     <h4 class="section-title" style="margin-top: 1.5rem">Naming a use case</h4>
     <div data-testid="connection-attribution" class="stack">
       <p class="muted" style="margin: 0">
