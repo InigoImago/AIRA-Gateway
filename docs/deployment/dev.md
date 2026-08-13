@@ -76,17 +76,18 @@ three times; the fourth is prevented by a test, not by memory.
 
 ---
 
-## Step 5: run the six processes
+## Step 5: run the processes
 
-Each in its own terminal.
+The first four in their own terminal; the last two publish or delete what is pending and exit, so
+run them when you need them.
 
 ```bash
-make run-gateway-oidc   # gateway            :8001
-make run-backend        # control plane API  :8002
-make run-frontend       # console            :4200
-make consume            # gateway config consumer (long-running)
-make relay              # outbox to Kafka (long-running)
-make retention          # payload retention (optional; hourly in production)
+make run-gateway-oidc   # gateway            :8001   (long-running)
+make run-backend        # control plane API  :8002   (long-running)
+make run-frontend       # console            :4200   (long-running)
+make consume            # gateway config consumer    (long-running)
+make relay              # outbox to Kafka            (publishes what is pending, then exits)
+make prune              # payload retention          (optional; hourly in production)
 ```
 
 Open <http://localhost:4200> and sign in as `admin` / `demo-password`.
@@ -107,10 +108,11 @@ Changing members, keys, pipelines, budgets, limits or rules in the console write
 outbox. The **relay** moves it to Kafka and the **consumer** applies it to the gateway's read-model.
 If either is not running, the console shows your change and the gateway never learns about it.
 
-If you would rather not keep both terminals open, run the change through once:
+The relay is not a daemon — it publishes whatever is pending and exits — so you do not have to keep
+a terminal on it. Run it after a change and the consumer picks it up:
 
 ```bash
-make relay-once
+make relay
 ```
 
 ### 3. Two databases, two migration tools

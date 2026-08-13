@@ -62,7 +62,7 @@ Start Ollama alongside the stack and pull something small:
 
 ```bash
 make verify-up          # starts Ollama and pulls a small chat and embedding model
-make seed-local-catalog # declares them in the catalog, approved
+uv run python tools/seed_local_catalog.py   # declares them in the catalog, approved
 ```
 
 ### Option B: a cloud model

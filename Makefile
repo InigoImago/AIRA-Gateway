@@ -9,6 +9,34 @@ COMPOSE_CORE := docker compose -f $(COMPOSE_DIR)/docker-compose.yml
 COMPOSE_FULL := docker compose -f $(COMPOSE_DIR)/docker-compose.yml \
                 -f $(COMPOSE_DIR)/docker-compose.apps.yml \
                 --profile observability --profile demo
+
+# Every service this repository can start — both files, every profile.
+#
+# **Stopping is not the mirror of starting, and that is the whole point.** A `up` target may
+# legitimately start a subset; a `down` target has to deal with whatever is *there*, which is the
+# union of everything any `up` target could have left behind. Those were two different sets, and
+# `down` had the smaller one: it named `docker-compose.yml` and the observability profile, so after
+# `make showcase` it knew 8 of the 21 services that were running.
+#
+# Measured on 2026-08-13, on a machine somebody had run the showcase on: `make down` removed the
+# infrastructure and left `gateway`, `management`, `gateway-consumer`, `management-relay`,
+# `frontend` and `gateway-retention` up — for eight hours, with the consumer crash-looping against
+# the Postgres that had just been deleted out from under it. It could not even remove its own
+# network (`Network aira Resource is still in use`) and **exited 0 while saying so**.
+#
+# Both halves are needed and neither substitutes for the other. `--remove-orphans` deals with a
+# container whose service is not in the model at all — a renamed or deleted service — and it does
+# **not** touch one that is in the model behind an inactive profile: tested, and `ollama` survived
+# it. The profiles are what reach those.
+#
+# The profiles are listed rather than passed as `--profile "*"`. The wildcard is self-maintaining
+# and needs Compose v2.24; on anything older it matches a profile literally called `*`, which is
+# silently this same bug again. A written list has a counterpart instead —
+# `tools/tests/test_compose_lifecycle_covers_the_stack.py` fails when a profile is declared that
+# this line does not name.
+COMPOSE_ALL := docker compose -f $(COMPOSE_DIR)/docker-compose.yml \
+               -f $(COMPOSE_DIR)/docker-compose.apps.yml \
+               --profile observability --profile demo --profile verify
 ENV_FILE := $(COMPOSE_DIR)/.env
 ENV_EXAMPLE := $(COMPOSE_DIR)/.env.example
 
@@ -169,8 +197,12 @@ showcase-doctor: ## Report which link of the demo is broken (reads only, changes
 showcase-agent: ## Write an OpenCode config for the showcase's coding-assistant use case
 	@uv run python tools/showcase_agent.py
 
-down-full: ## Stop the full containerised stack (keeps volumes)
-	$(COMPOSE_FULL) down
+down-full: down ## Stop the full containerised stack (keeps volumes) — an alias for `down`
+	@:
+# Two names, one implementation, deliberately. `down-full` had the same hole one profile smaller
+# (`COMPOSE_FULL` omits `verify`, so a `make verify-up` model survived it), and a second stopping
+# target is a second place for the set to be wrong. `down` now covers everything either could
+# reach, so the name is kept for whoever's fingers know it and the body is not written twice.
 
 logs-apps: ## Tail logs of the application containers only
 	$(COMPOSE_FULL) logs -f --tail=100 gateway gateway-consumer management management-relay frontend
@@ -197,20 +229,20 @@ verify-down: ## Stop the local model (keeps the downloaded weights)
 test-verify: ## Integration tests that need a real local model (skips cleanly without one)
 	uv run pytest -m integration --no-cov tests/integration/test_local_model.py
 
-down: ## Stop the stack (keep volumes)
-	$(COMPOSE) down
+down: ## Stop everything this repository can start (keeps volumes)
+	$(COMPOSE_ALL) down --remove-orphans
 
-destroy: ## Stop the stack and remove volumes (fresh state)
-	$(COMPOSE) down -v
+destroy: ## Stop everything and remove volumes (fresh state)
+	$(COMPOSE_ALL) down -v --remove-orphans
 
 ps: ## Show service status and health
-	$(COMPOSE) ps
+	$(COMPOSE_ALL) ps
 
 logs: ## Tail logs of all services
-	$(COMPOSE) logs -f --tail=100
+	$(COMPOSE_ALL) logs -f --tail=100
 
 restart: ## Restart the stack
-	$(COMPOSE) restart
+	$(COMPOSE_ALL) restart
 
 FRONTEND_DIR := management/frontend
 

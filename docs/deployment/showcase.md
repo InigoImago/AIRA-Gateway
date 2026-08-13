@@ -105,8 +105,8 @@ credential for reports that it is declared and nothing serves it.
 
 ```bash
 make showcase-traffic   # send another round through the gateway
-make down-full          # stop everything, keep the data
-make down-full-volumes  # stop everything and delete the data
+make down                # stop everything, keep the data
+make destroy             # stop everything and delete the data
 ```
 
 ---
