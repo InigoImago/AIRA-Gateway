@@ -107,7 +107,25 @@ def _declarations() -> list[dict[str, Any]]:
             # `structured_output` is measured too: this dialect takes a named `json_schema`, and
             # the running model returns a document that satisfies one.
             "capabilities": _chat_capabilities(),
-            "max_output_tokens": 4096,
+            # **Measured, and it had not been.** This said `4096` — a plausible-looking number
+            # sitting between two fields that each carry a "measured on …" note, with none of its
+            # own. It was not a fact about this model: `ollama show` reports
+            # `qwen3.context_length = 40960`, and the runtime accepts `max_tokens` of 32 000,
+            # 40 961 and 100 000 without complaint, truncating at the context window instead.
+            #
+            # The consequence was a refusal of traffic the model would have served. An agentic
+            # coding client asks for a large output budget as a matter of course — OpenCode sends
+            # 32 000 — so the first ordinary request from the very client `FRD-132` set this up for
+            # was answered `maxOutputTokens 32000 exceeds the 4096 this model accepts`. The control
+            # was working; the number it enforced was invented. `FRD-114` FR-7 in the direction
+            # this repository usually meets it from the other side.
+            #
+            # **The context length, because this runtime has no separate output limit.** Ollama
+            # enforces nothing here — a cap above the window is silently truncated — so the only
+            # honest ceiling is the window itself. Prompt and answer share it, which makes this a
+            # ceiling rather than a promise: 40 960 output tokens are reachable only with an empty
+            # prompt, exactly as on any model whose two figures are one.
+            "max_output_tokens": 40960,
             "default_max_output_tokens": 512,
             # **Measured, not guessed.** This block was deliberately empty until an integration
             # run against the running model answered the question (`FRD-114` FR-7: undeclared

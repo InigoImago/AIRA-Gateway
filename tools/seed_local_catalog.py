@@ -124,7 +124,11 @@ DECLARATIONS = [
         "publisher": "local",
         "platform": "ollama",
         "hosting": "self_deployed",
-        "max_output_tokens": 4096,
+        # Measured, and it had not been — see the note beside the same field in the Management
+        # seed. `ollama show` reports `qwen3.context_length = 40960`; the runtime accepts any
+        # `max_tokens` and truncates at the window, so the window is the only honest ceiling. The
+        # `4096` that stood here refused an agentic coding client's ordinary request.
+        "max_output_tokens": 40960,
         "default_max_output_tokens": 512,
         "approved": True,
         "numeric_id": CHAT_NUMERIC_ID,

@@ -198,7 +198,7 @@ async def test_the_same_text_embeds_to_the_same_vector_on_both_surfaces(
         pytest.param({"temperature": 0.1}, "temperature", id="temperature"),
         pytest.param({"topP": 0.5}, "top_p", id="topP"),
         pytest.param({"maxOutputTokens": 4}, "a small cap", id="tiny-cap"),
-        pytest.param({"maxOutputTokens": 4096}, "the model's ceiling", id="ceiling"),
+        pytest.param({"maxOutputTokens": 40960}, "the model's ceiling", id="ceiling"),
         pytest.param({"stopSequences": ["STOP"]}, "stop sequences", id="stopSequences"),
         pytest.param({"seed": 7}, "a seed this dialect can express", id="seed"),
         pytest.param({"responseMimeType": "text/plain"}, "a plain-text mime type", id="mime-text"),

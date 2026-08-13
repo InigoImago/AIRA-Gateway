@@ -390,23 +390,37 @@ async def test_the_pipeline_runs_before_the_declaration_is_checked_against_the_r
     """`prepare_for_dispatch` owns the order, and this is the property that order exists for: the
     output cap is checked against the model **routing chose**, not the one the caller named. Asked
     the other way round, a request could be accepted against one model's ceiling and served by a
-    model with a lower one."""
+    model with a lower one — a truncated answer with a 200.
+
+    **The direction matters, and the first version had it backwards.** It routed from the capped
+    model to the uncapped double and asserted `status in (200, 400)`, which accepts every answer
+    there is: with no cap on the destination, no ordering could have made it refuse. It proved
+    nothing.
+
+    So the caller names the model with **no** declared cap and the router sends the request to the
+    one that has 40 960, asking for 50 000. Checked against what the caller named, this is served;
+    checked against where it went, it is refused naming that model's number — and only the second
+    can happen.
+    """
     await governed.pipeline(
         {
             "type": "model_route",
             "config": {
                 "model": CHAT_MODEL,
-                "categories": [{"name": "anything", "model": MOCK_MODEL}],
-                "default_model": MOCK_MODEL,
+                "categories": [{"name": "anything", "model": CHAT_MODEL}],
+                "default_model": CHAT_MODEL,
             },
         }
     )
 
-    response = await governed.generate(_body(maxOutputTokens=4096), model=CHAT_MODEL)
+    response = await governed.generate(_body(maxOutputTokens=50_000), model=MOCK_MODEL)
 
-    assert response.status_code in (200, 400), response.text[:300]
+    assert response.status_code == 400, response.text[:300]
+    message = _message(response)
+    assert "maxOutputTokens" in message, message
+    assert "50000" in message, message
     row = await governed.last_row()
-    assert row["asked_for"] == CHAT_MODEL
+    assert row["asked_for"] == MOCK_MODEL, "the model the caller named was not kept"
 
 
 async def test_a_tool_request_that_is_also_over_budget_is_refused_by_the_budget(
