@@ -14,6 +14,7 @@ import {
   OfferedModel,
   RateLimit,
   CatalogModel,
+  KiraModel,
   ServedModel,
   DryRunResult,
   IssuedApiKey,
@@ -221,6 +222,18 @@ export class UseCaseService {
 
   saveModel(model: CatalogModel): Observable<CatalogModel> {
     return this.http.post<CatalogModel>('/api/v1/models/', model);
+  }
+
+  /**
+   * The models as the compatibility surface addresses them, with their integer ids (`FRD-107`).
+   *
+   * Asked of the gateway for the same reason `servedModels` is: which models are reachable, and
+   * under which number, is a property of the gateway. The catalog holds `numeric_id` too and is
+   * readable only by the catalog roles — so an administrator of a use case, the person who
+   * actually sets a client up, could not get at it there.
+   */
+  kiraModels(): Observable<KiraModel[]> {
+    return this.http.get<KiraModel[]>('/gw/kira/api/external/models');
   }
 
   /**

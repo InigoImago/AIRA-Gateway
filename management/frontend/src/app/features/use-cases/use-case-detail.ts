@@ -4,6 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { Observable } from 'rxjs';
 import {
+  KiraModel,
   ApiKey,
   Budget,
   BudgetUsage,
@@ -21,6 +22,7 @@ import { InfoHint } from '../../core/ui/info-hint';
 import { PageFeedback } from '../../core/ui/page-feedback';
 import { windowFor } from '../../core/ui/periods';
 import { BudgetsTab } from './budgets-tab';
+import { ConnectionPanel } from './connection-panel';
 import { ConsumptionPanel } from './consumption-panel';
 import { ModelReleasePanel } from './model-release-panel';
 import { AccessPanel } from './access-panel';
@@ -47,6 +49,7 @@ const TABS: readonly Tab[] = [
 @Component({
   selector: 'app-use-case-detail',
   imports: [
+    ConnectionPanel,
     DatePipe,
     FormsModule,
     RouterLink,
@@ -103,6 +106,10 @@ export class UseCaseDetail implements OnInit {
   private readonly consumptionFailures = signal(0);
   private readonly consumptionReason = signal('');
   protected readonly consumptionOutOfScope = signal(false);
+  /** The gateway's KIRA listing for the connection block; `null` until it answers. */
+  protected readonly kiraModels = signal<KiraModel[] | null>(null);
+  protected readonly kiraFailure = signal('');
+
   protected readonly consumption = computed<UseCaseConsumption>(() => {
     const month = this.consumptionMonth();
     const today = this.consumptionToday();
@@ -210,6 +217,21 @@ export class UseCaseDetail implements OnInit {
           models.filter((m) => (m.capabilities ?? []).includes('tools')).map((m) => m.name),
         ),
       error: () => undefined,
+    });
+    // The KIRA ids, for the connection block. Loaded here rather than in the panel because the
+    // page loads and a panel renders (`CLAUDE.md` §3) — and because a child that fetches for
+    // itself is a child the page's own tests cannot stand up.
+    //
+    // A failure is carried down rather than swallowed: without it every id would read as absent,
+    // which is a real state — a deployment where no model has a number — and a different one.
+    this.service.kiraModels().subscribe({
+      next: (models) => this.kiraModels.set(models),
+      error: (error) => {
+        this.kiraModels.set([]);
+        this.kiraFailure.set(
+          errorMessage(error, 'The gateway could not be asked for its model ids.'),
+        );
+      },
     });
     this.meService.get().subscribe({
       next: (me) => {

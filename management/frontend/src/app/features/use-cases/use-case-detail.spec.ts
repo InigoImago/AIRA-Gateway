@@ -88,6 +88,7 @@ interface Overrides {
   removeMember?: Observable<void>;
   issueApiKey?: Observable<unknown>;
   models?: Observable<unknown>;
+  kiraModels?: Observable<unknown>;
   revokeApiKey?: Observable<void>;
   createBudget?: Observable<Budget>;
   deleteBudget?: Observable<void>;
@@ -198,6 +199,11 @@ function setup(overrides: Overrides = {}, confirmAnswer = true, queryTab: string
     // method the component uses is the third stand-in today to fail for that reason.
     models: () =>
       overrides.models ?? of([{ name: 'qwen2.5:3b', capabilities: ['generate', 'tools'] }]),
+    // The gateway's KIRA listing, read on init for the connection block. Here for the same reason
+    // as `models` above — a harness missing a method the component uses fails every test in the
+    // file at once, and the failure names the harness rather than the change.
+    kiraModels: () =>
+      overrides.kiraModels ?? of([{ id: 9001, name: 'qwen2.5:3b', capabilities: ['CHAT'] }]),
     issueApiKey: (
       _s: string,
       label: string,

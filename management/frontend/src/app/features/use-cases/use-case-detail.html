@@ -180,6 +180,20 @@
       />
 
       <!--
+        How to *use* it, beside how it is governed. Everything else on this page is about the
+        second, and a person who has just issued a key had no address to put it against — an
+        instruction with no destination, which is the half of `FRD-206` that announces itself
+        through nothing. Below the release on purpose: what a client may call is what the examples
+        are built from, so the reader meets the setting before the consequence.
+      -->
+      <app-connection-panel
+        [slug]="slug"
+        [released]="useCase()?.allowed_models ?? []"
+        [kira]="kiraModels()"
+        [failure]="kiraFailure()"
+      />
+
+      <!--
         Not data protection, and it was in that panel because that is where the form was — which
         put two unrelated switches between "store prompts" and "keep them for N days", the pair a
         reader treats as one setting. Its own section, its own save, its own sentence when it

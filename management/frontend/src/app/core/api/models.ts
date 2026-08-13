@@ -657,6 +657,27 @@ export interface ServedModel {
 }
 
 /**
+ * A model as the **compatibility surface** addresses it (`FRD-107`).
+ *
+ * The predecessor names a model by an integer and a migrating client's configuration holds that
+ * number, so a connection block that printed only the model's name would leave the one field a
+ * KIRA caller actually has to fill in unanswered.
+ *
+ * Read from the gateway rather than from the catalog, and that is not a convenience: `numeric_id`
+ * lives in the catalog, which only the roles in `CATALOG_ROLES` may read — so an administrator of
+ * a use case, who is exactly the person setting a client up, could not see it. The gateway's own
+ * `/kira/api/external/models` needs a credential and no membership, which is the right bound for
+ * a listing that describes the installation rather than anybody's traffic.
+ */
+export interface KiraModel {
+  id: number;
+  name: string;
+  capabilities: string[];
+  deprecated?: boolean;
+  max_output_tokens?: number | null;
+}
+
+/**
  * An upstream this installation is configured with (`FRD-507` stage C).
  *
  * The provider field used to be a free-text box, so a model was declared under whatever string
