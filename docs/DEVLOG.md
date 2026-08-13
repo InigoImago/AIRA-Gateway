@@ -5,6 +5,43 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-13 — All four layers run, and the fourth found the same defect again
+
+The two checks the repair round left open, run to the end.
+
+**`make mutants`, all 406 properties: every one caught. No survivor, no stale
+anchor.** That answers the question the thirteen rotted anchors raised — whether
+there was a second kind of problem underneath, properties no test defends at all
+— and the answer is no. The run restored every file it touched and left no
+journal. It is worth stating what this run costs, because that is why it had not
+happened: about eight minutes checking the baselines are green, then roughly an
+hour applying 406 edits and running a pytest selection for each. The fast anchor
+check added this morning is what makes the expensive run worth trusting; it
+cannot tell you whether a property is defended, only that the question being
+asked is about this codebase rather than a previous one.
+
+**Playwright, 127 tests: one failure, and it was the same defect as `gpu-b`.**
+The model-release test typed `gemini-flash-latest` into the picker — a model that
+exists only where somebody configured a Google AI Studio credential and imported
+it (`FRD-507`). On `make showcase`, and in CI which seeds the same way, the
+catalogue holds `qwen3:0.6b` and `all-minilm`; the picker never offered that
+name, the keypress chose nothing, and the assertion waited out its ten-second
+timeout against an empty locator. The test is about a release being made and
+taken back — *which* model is a property of the deployment, so naming one made it
+assert the catalogue instead. It reads the picker's own first option now, and
+searches for that, which keeps the reason the name was introduced (searching
+leaves exactly one option, so the keypress has one possible meaning) without
+pinning it to one installation. It also dropped from 11.2 s to 1.9 s, because
+most of that was the timeout.
+
+Third instance in two days of a test naming something only one machine has, after
+`gpu-b` and `qwen2.5:3b`. The tell is the same each time: the assertion is about
+behaviour and the failure is about inventory.
+
+All four layers now: **2068 hermetic · 575 integration · 127 e2e · 406 mutation
+properties**, with one e2e test skipped on a documented cost decision (a hundred
+catalogue questions against a local model, minutes per run).
+
 ## 2026-08-13 — The integration suite had stopped following the product
 
 `make showcase` end to end (21 containers, 10 served / 1 refused / 0 failed — the refusal is the

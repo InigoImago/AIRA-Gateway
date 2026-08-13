@@ -1704,6 +1704,23 @@ was missing. `["ok",""]` moved out of the refusal table into a test that asserts
 alone is also true of a surface that dropped the element, embedded only the first, or embedded the
 literal list. After: **575 passed, 22 skipped, 0 failed** under full-suite load.
 
+**All four layers run (2026-08-13).** **`make mutants`, all 406: every one caught, no survivor and
+no stale anchor** — which answers what the thirteen rotted anchors raised (whether properties sat
+underneath that *no* test defends) with a no. About eight minutes of baseline checks then an hour of
+406 edit-and-run cycles; the fast anchor check is what makes that hour worth trusting, since it
+cannot say whether a property is defended, only that the question is about *this* codebase.
+**Playwright, 127 tests: one failure, and it was `gpu-b` again** — the model-release test typed
+`gemini-flash-latest`, which exists only where somebody configured a Google AI Studio credential and
+imported it (`FRD-507`); on `make showcase` and in CI the catalogue holds `qwen3:0.6b` and
+`all-minilm`, so the picker never offered it and the assertion timed out against an empty locator.
+The test is about a release being made and taken back — *which* model is a property of the
+deployment, so naming one made it assert the **catalogue**. It reads the picker's own first option
+now (keeping the reason the name existed: searching leaves exactly one option, so the keypress has
+one meaning), and dropped 11.2 s → 1.9 s, most of which had been the timeout. **Third instance in
+two days of a test naming something only one machine has**, after `gpu-b` and `qwen2.5:3b`; the tell
+is identical each time — *the assertion is about behaviour and the failure is about inventory*.
+Standing totals: **2068 hermetic · 575 integration · 127 e2e · 406 mutation properties**.
+
 Next candidates: **`FRD-114`** (model metadata — now also carries publisher + default output cap,
 prerequisite for 110–113 and 119), **`FRD-110`** (documents/images — the widest gap),
 **`FRD-115`/`FRD-119`** (Vertex EU + the Anthropic dialect — required), **`FRD-116`** (Vault),
