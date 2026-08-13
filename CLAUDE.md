@@ -1743,10 +1743,22 @@ selector rather than a bad one; and a whitespace one cannot be sent over HTTP at
 to fail**: three properties were broken in the gateway and rebuilt — `tool_summary` made to carry a
 tool's arguments, an embedding batch made to weigh one, the filter made to record only what it
 flagged — each named test went red and green again on restore. **One finding reported rather than
-asserted**: both streams hung up after the first chunk record `client_gone` with **different
-statuses** (Gemini 200, KIRA 499), each side documenting its own reasoning; the test asserts the
-outcome and deliberately does not encode the divergence, because writing one into a green test is
-how a defect becomes a specification.
+asserted, then fixed**: both streams hung up after the first chunk recorded `client_gone` with
+**different statuses** (Gemini 200, KIRA 499); the test asserted only the outcome, deliberately,
+because writing a divergence into a green test is how a defect becomes a specification. The Gemini
+stream assigned `acct.status = 200` unconditionally, reasoning that the already-sent headers carried
+a 200 — an argument about the **wire**, applied to a column that is not the wire: `499` appears once
+in the gateway, as `Accounting.status`'s default, commented *"Nobody is sent it; it exists so the
+audit can tell that case from a served one"*. KIRA never assigned it at all, which is why it was
+right; Gemini does the same now, and a second test compares the two surfaces **against each other**.
+`google/rpc/code.proto` maps `CANCELLED` to **499 Client Closed Request**, so the *predecessor's*
+compatibility surface had been following Google's convention while the Google-compatible one had
+not — what real Gemini *records* is not observable from a client and was not measured, only that its
+wire behaviour is a 200 SSE stream that closes, like ours. **No mutation entry, checked not
+assumed**: the defect was reintroduced and all **1424** hermetic gateway tests passed, because the
+two versions differ only when nothing was served and `TestClient` buffers a streamed body before a
+test can hang up — the second property in the harness's "cannot live here" list after
+`asyncio.shield`.
 
 Next candidates: **`FRD-114`** (model metadata — now also carries publisher + default output cap,
 prerequisite for 110–113 and 119), **`FRD-110`** (documents/images — the widest gap),

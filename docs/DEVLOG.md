@@ -42,18 +42,36 @@ those assumptions were wrong. They are now written down where the next reader me
 filter made to record only what it flagged. Each of the three tests named for those went red, and
 green again on restore.
 
-**One finding, reported rather than asserted.** Both streams were driven and hung up after the first
-chunk, side by side:
+**One finding, reported rather than asserted — and then fixed.** Both streams were driven and hung
+up after the first chunk, side by side:
 
     gemini  streamGenerateContent  status=200  outcome=client_gone
     kira    streaming-chat         status=499  outcome=client_gone
 
-They agree on what happened and disagree on the number. Each side documents its reasoning — the
-Gemini stream sets 200 because the headers really did go out with one, and `Accounting` defaults to
-499 because `FRD-122` invented that code for exactly this case. Both are defensible; what they are
-not is the same, and this repository's rule is that the two surfaces leave the same facts. The test
-asserts the outcome and deliberately does **not** encode `{gemini: 200, kira: 499}`, because writing
-a divergence into a green test is how a defect becomes a specification.
+They agreed on what happened and disagreed on the number, and the test asserted only the outcome —
+deliberately, because writing `{gemini: 200, kira: 499}` into a green test is how a defect becomes a
+specification.
+
+The Gemini stream assigned `acct.status = 200` unconditionally, on the reasoning that a stream which
+dies half way still has 200 in its already-sent headers. That is an argument about the **wire**, and
+the column is not the wire: `499` appears exactly once in the gateway, as `Accounting.status`'s
+default, with the comment beside it reading *"Nobody is sent it; it exists so the audit can tell that
+case from a served one"*. The KIRA route never assigned the status at all — `served()` or `failed()`
+and otherwise the default — which is why it was right. The Gemini one does the same now.
+
+**Google's own model agrees, and the real API was asked what it could answer.** `google/rpc/code.proto`
+maps `CANCELLED` — *"the operation was cancelled, typically by the caller"* — to **499 Client Closed
+Request**, so the *compatibility* surface for the predecessor had been following Google's convention
+while the Google-compatible one had not. What real Gemini *records* is not observable from a client
+and was not measured; what was measured is that its wire behaviour is a 200 SSE stream that simply
+closes, exactly like ours. (A side observation from the same call: 114 thought tokens for a 15-token
+answer — the order of magnitude `FRD-111`'s reservation exists for.)
+
+**No mutation entry, and that was checked rather than assumed.** The defect was reintroduced and the
+whole hermetic gateway suite passed, 1424 tests: the two versions differ only when nothing was
+served, and `TestClient` buffers a streamed body before a test can hang up. A mutation that survives
+would be a false claim, so the harness gets a note naming the integration test that does guard it —
+the second entry in that list, after `asyncio.shield`.
 
 ## 2026-08-13 — All four layers run, and the fourth found the same defect again
 
