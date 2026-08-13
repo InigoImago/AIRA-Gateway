@@ -69,7 +69,7 @@ question is about.
   are base64; in the canonical model they are `bytes`. Invalid base64 is a **400**, not a
   truncated forward.
 - **FR-3 Media-type allow-list, intersected with the model.** The fourteen types from
-  the predecessor's contract are what *AIRA* accepts; what the **target model** accepts is declared in
+  the media types the contract lists are what *AIRA* accepts; what the **target model** accepts is declared in
   `FRD-114`, and Anthropic's set is a subset of Google's. A part is admitted only if both allow it,
   and a refusal names which of the two refused — "AIRA does not accept HEIC" and "this model does
   not accept HEIC" call for different actions. Checked against the model actually dispatched to,

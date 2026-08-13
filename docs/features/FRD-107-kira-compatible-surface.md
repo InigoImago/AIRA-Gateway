@@ -2,7 +2,7 @@
 
 > Phase: 8 (KIRA parity) · Status: **Done — Stage A + B** · Owner: Vadim Scheibe
 >
-> Origin: the predecessor's contract Depends on `FRD-110`–`FRD-114`.
+> Origin: the predecessor's contract. Depends on `FRD-110`–`FRD-114`.
 
 > **`ADR-0010` is decided (Option C).** The owner's feature definition names KIRA-API compatibility
 > as a central feature (PRD §1.1, item 3), so this surface is built — **with a sunset date and its
@@ -46,7 +46,7 @@ changing a base URL.
 
 - **FR-1 Endpoints** under `/kira/api/external`: `POST /chat`, `POST /streaming-chat`,
   `POST /embed`, `GET /models`, `GET /health`, `GET /version-info`, `GET /ki-usage`.
-- **FR-2 Request and response shapes** exactly as the predecessor's contract and §4, including the camelCase
+- **FR-2 Request and response shapes** exactly as the contract specifies, including the camelCase
   aliases (`maxTokens`, `responseSchema`, `thinkingConfig`, …) and `populate_by_name`.
 - **FR-2a Staged, and never silent** (§5.2). A field the gateway cannot yet honour is **refused**
   with the predecessor's error vocabulary and a message naming it. No field is ever accepted and
@@ -102,7 +102,7 @@ a client is never misled. "Not yet supported here" is information a team can act
 dropped field is not.
 
 > The one thing Stage A must not do is *approximate*. KIRA applies a model's default thinking when
-> the caller sends none (the predecessor's contract); Stage A must either apply the real default or refuse
+> the caller sends none; Stage A must either apply the real default or refuse
 > — never quietly send no thinking at all and let the answer be different for reasons nobody can
 > see. If the model catalog cannot yet express the default, that model is not in Stage A.
 
@@ -195,9 +195,16 @@ No migration.
 
 ## 7. API / Interface Contract
 
-the predecessor's contract and §4 are the contract; this FRD does not restate them. The mapping table from
+The predecessor's contract is the contract; this FRD does not restate it. The mapping table from
 KIRA error codes to canonical failures belongs in the implementation and is asserted by tests, one
 per code.
+
+**The contract document is not in this repository, and is not ours to publish** — ask the owner for
+it. In practice the tests are the working reference: `gateway/tests/test_kira_wire_contract.py` and
+`test_kira_surface.py` assert the response shape field by field, and `test_kira_field_spellings.py`
+covers the spellings, so a question about what the wire carries is usually answered faster there
+than in any document. What the tests cannot answer is what the contract says about a case AIRA has
+never served — that is when the document is needed.
 
 ## 8. Security & Privacy
 
@@ -215,7 +222,7 @@ per code.
 ## 10. Testing & Acceptance Criteria
 
 - **Contract tests** — one per endpoint, asserting the response shape field by field against
-  the predecessor's contract, and **one per error code** in §6.2 asserting the code and the status. These are
+  the contract, and **one per error code** asserting the code and the status. These are
   the tests that make "compatible" a fact rather than a claim.
 - **Unit (attribution)** — one membership resolves automatically; a header selects among several; a
   header naming a non-membership is 403; several memberships with no header is **403 naming the

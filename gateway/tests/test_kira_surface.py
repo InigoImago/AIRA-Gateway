@@ -58,7 +58,7 @@ def _chat(**over: Any) -> dict[str, Any]:
 
 
 async def test_chat_answers_in_the_predecessors_shape() -> None:
-    """the predecessor's contract: ``parts`` plus ``usage_data`` with the two token counts."""
+    """The contract: ``parts`` plus ``usage_data`` with the two token counts."""
     app = _app()
     with TestClient(app) as client:
         await _catalogue(app)

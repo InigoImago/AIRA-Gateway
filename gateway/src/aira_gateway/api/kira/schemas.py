@@ -1,4 +1,4 @@
-"""The predecessor's wire shapes (the predecessor's contract).
+"""The predecessor's wire shapes.
 
 Field names are the predecessor's. Most of them are snake_case there and are spelled that way
 here; the ones the predecessor spells in camelCase — `maxTokens` and `responseSchema` (`FRD-107`

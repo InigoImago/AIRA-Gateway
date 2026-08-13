@@ -24,7 +24,7 @@ from aira_common.models import Capability, ThinkingMode
 from aira_gateway.catalog import ModelDeclaration
 from aira_gateway.core.canonical import Thinking
 
-#: The predecessor's codes (the predecessor's contract), plus one for a case it has no code for.
+#: The predecessor's codes, plus one for a case it has no code for.
 INVALID_THINKING_MODE = "INVALID_THINKING_MODE"
 MISSING_THINKING_TOKEN_COUNT = "MISSING_THINKING_TOKEN_COUNT"
 THINKING_TOKEN_COUNT_TOO_LOW = "THINKING_TOKEN_COUNT_TOO_LOW"

@@ -112,7 +112,7 @@ _KIRA_CODE_FOR = {
 
 
 def _error_response(request: Request, exc: Exception) -> JSONResponse:
-    """Every refusal, in the predecessor's vocabulary (the predecessor's contract)."""
+    """Every refusal, in the predecessor's vocabulary."""
     if isinstance(exc, errors.KiraError):
         response = exc.to_response()
     elif isinstance(exc, ThinkingRejected | EmbeddingRejected):
@@ -179,7 +179,7 @@ def _details(exc: ValidationError) -> list[dict[str, Any]]:
 
 
 def _thinking_config(declaration: ModelDeclaration) -> schemas.ThinkingConfig | None:
-    """What the predecessor's `/models` says about a model's thinking (the predecessor's contract).
+    """What the predecessor's `/models` says about a model's thinking.
 
     ``None`` for a model that declares none — rather than an empty config, which would read as
     "thinking exists here and nothing is allowed" instead of "nobody has said".

@@ -1,4 +1,4 @@
-"""KIRA's error vocabulary (the predecessor's contract).
+"""KIRA's error vocabulary.
 
 A different envelope from Gemini's and a different set of codes. Both are kept faithfully, because
 a compatibility surface whose errors a client cannot match is not compatible — the whole point is

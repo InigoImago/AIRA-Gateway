@@ -57,7 +57,23 @@ Where it runs, what it depends on and what it lacks are somebody else's operatio
 read alike — one sentence saying there is no error code for a case, another saying there is no
 rate limiting — so the **subject** is what separates them: seven statements now say *the contract*,
 which is more precise anyway, and the distinction became something a pattern can check instead of a
-reviewer. It caught this very entry on the first run, where both examples had been quoted verbatim. Three more properties, each shown to fail.
+reviewer. It caught this very entry on the first run, where both examples had been quoted verbatim.
+
+**And then the question that found the damage: "will you still understand me when I say KIRA?"**
+Yes — 940 mentions remain, and they are the ones that carry meaning: the module, the route, the
+tests, `FRD-107`, `ADR-0010`, the migration guide. But checking rather than answering turned up two
+things the gates could not see, because **no gate here reads prose**. A mechanical substitution
+across forty-seven citations had left about fifteen sentences broken — *"Origin: the predecessor's
+contract Depends on FRD-110"*, *"exactly as the predecessor's contract and §4"*, a docstring saying
+*"the predecessor's terminal SSE event (the predecessor's contract)"*. ruff, mypy and 2121 tests
+were all green over it: an operation accepted, apparently worked, and left the documentation worse
+than it found it, which is the shape this project keeps writing guards about — arriving this time
+in my own edit.
+
+The second is the cost of the change and worth stating plainly: forty-seven citations pointed at a
+contract document, and afterwards **nothing said the document exists**. `FRD-107` §7 now says it is
+held outside this repository and not ours to publish, and — more useful day to day — that the wire
+tests are the working reference, with the document needed only for a case AIRA has never served. Three more properties, each shown to fail.
 
 ## 2026-08-13 — `CLAUDE.md` §6 was a third copy of this file, and the copies disagreed
 
@@ -4758,7 +4774,7 @@ it, and getting it wrong is a rewrite rather than a correction.
 
 ## 2026-08-06 — KIRA parity: the programme, and where the gap actually is
 
-The predecessor's requirements (the predecessor's contract, the predecessor API) arrived with the instruction
+The predecessor's requirements arrived with the instruction
 that AIRA must carry all of them. Reviewed against the code rather than against our own
 documentation, the result was not what the phase history would suggest.
 

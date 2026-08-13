@@ -147,7 +147,7 @@ def to_chat_response(response: CanonicalResponse) -> schemas.ChatResponse:
 
 
 def completed_event(response: CanonicalResponse) -> dict[str, Any]:
-    """The predecessor's terminal SSE event (the predecessor's contract)."""
+    """The predecessor's terminal SSE event."""
     return {"status": "completed", "data": to_chat_response(response).model_dump()}
 
 

@@ -32,7 +32,7 @@ class SchemaRejected(Exception):
 
 
 class SchemaType(StrEnum):
-    """The predecessor's type set (the predecessor's contract), which is Google's."""
+    """The predecessor's type set, which is Google's."""
 
     STRING = "STRING"
     INTEGER = "INTEGER"
