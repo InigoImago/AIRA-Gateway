@@ -1,6 +1,6 @@
 # FRD-001 — Observability Baseline
 
-> Phase: 0 · Status: **Draft** · Owner: Vadim Scheibe · Last updated: 2026-08-04
+> Phase: 0 · Status: **Done (Phase 0)** · Owner: Vadim Scheibe · Last updated: 2026-08-04
 > Related: `docs/PRD.md` §6 (NFR-3), §10; `docs/ROADMAP.md` Phase 0; `ADR-0004` (supersedes ADR-0002)
 
 ## 1. Summary

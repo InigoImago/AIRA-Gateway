@@ -1,6 +1,6 @@
 # FRD-002 — Seed Data & Demo Mode
 
-> Phase: 0 · Status: **Draft** · Owner: Vadim Scheibe · Last updated: 2026-08-04
+> Phase: 0 · Status: **Done (Phase 0)** · Owner: Vadim Scheibe · Last updated: 2026-08-04
 > Related: `docs/PRD.md` §5 (FR-GW-13, FR-MG-11), §11, §12; `docs/ROADMAP.md` Phase 0
 
 ## 1. Summary

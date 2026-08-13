@@ -1,6 +1,6 @@
 # FRD-105 — Tracing enrichment: attribution & source IP on spans
 
-> Phase: 1 · Status: **Draft** · Owner: Vadim Scheibe · Last updated: 2026-08-04
+> Phase: 1 · Status: **Done (Phase 1)** · Owner: Vadim Scheibe · Last updated: 2026-08-04
 > Related: `docs/PRD.md` §5 (FR-GW-8/9), §10; `docs/ROADMAP.md` Phase 1; builds on FRD-001/102/103
 
 ## 1. Summary

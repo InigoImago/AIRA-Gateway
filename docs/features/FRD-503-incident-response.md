@@ -1,6 +1,6 @@
 # FRD-503 — Incident response
 
-> Phase: 5 · Status: **In progress (2026-08-07)** · Owner: AIRA · Last updated: 2026-08-07
+> Phase: 5 · Status: **Done (2026-08-07)** · Owner: AIRA · Last updated: 2026-08-07
 > Related: `ADR-0014`, `FRD-500` (the rules), `FRD-501` (the engine), `FRD-405` (rate limiting and
 > the fail-closed rule), `FRD-122` (the audit row that records it), PRD §1.1 features 6 and 7
 

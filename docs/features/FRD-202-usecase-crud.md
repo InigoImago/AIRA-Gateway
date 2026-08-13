@@ -1,6 +1,6 @@
 # FRD-202 — Use-case CRUD & membership (self-service)
 
-> Phase: 2 · Status: **Draft** · Owner: Vadim Scheibe · Last updated: 2026-08-04
+> Phase: 2 · Status: **Done (Phase 2)** · Owner: Vadim Scheibe · Last updated: 2026-08-04
 > Related: `docs/PRD.md` §5 (FR-MG-1/2); `docs/ROADMAP.md` Phase 2; builds on FRD-200/201
 
 ## 1. Summary

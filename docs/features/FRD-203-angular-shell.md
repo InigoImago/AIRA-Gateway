@@ -1,6 +1,6 @@
 # FRD-203 — Angular shell: OIDC login, role-aware nav, use-case views
 
-> Phase: 2 · Status: **Draft** · Owner: Vadim Scheibe · Last updated: 2026-08-04
+> Phase: 2 · Status: **Done (Phase 2)** · Owner: Vadim Scheibe · Last updated: 2026-08-04
 > Related: `docs/PRD.md` §4.2; `docs/ROADMAP.md` Phase 2; builds on FRD-200/201/202; `ADR-0001`
 
 ## 1. Summary

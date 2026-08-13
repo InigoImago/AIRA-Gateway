@@ -174,6 +174,9 @@ Full picture: [**Architecture**](docs/ARCHITECTURE.md) ·
 | [**Operations**](docs/DEPLOYMENT.md) | Running it: topics, jobs, degradation, backups |
 | [**Testing**](docs/TESTING.md) | The four layers and why each exists |
 | [**Gap analysis**](docs/GAP-ANALYSIS.md) | Requirements against what is built |
+| [**Features**](docs/features/README.md) | Every FRD, its status, its document — generated from the FRDs themselves |
+| [**Lessons**](docs/LESSONS.md) | The rules this project has already paid for, with the defects that produced them |
+| [**Development log**](docs/DEVLOG.md) | What changed when, and what each round measured |
 | [**Contributing**](CONTRIBUTING.md) | Conventions, and where the decision records live |
 
 ---

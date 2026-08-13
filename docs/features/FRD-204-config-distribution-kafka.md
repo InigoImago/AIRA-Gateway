@@ -1,6 +1,6 @@
 # FRD-204 — Config distribution over Kafka (Management → Gateway read-model)
 
-> Phase: 2 · Status: **Draft** · Owner: Vadim Scheibe · Last updated: 2026-08-04
+> Phase: 2 · Status: **Done (Phase 2)** · Owner: Vadim Scheibe · Last updated: 2026-08-04
 > Related: `docs/PRD.md` §4.3, §8; `docs/ROADMAP.md` Phase 2; builds on FRD-202; `ADR-0006`
 
 ## 1. Summary

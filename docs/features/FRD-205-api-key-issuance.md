@@ -1,6 +1,6 @@
 # FRD-205 — Self-service API-key issuance (Management → Gateway)
 
-> Phase: 2 · Status: **Done** · Owner: Vadim Scheibe · Last updated: 2026-08-04
+> Phase: 2 · Status: **Done (Phase 2)** · Owner: Vadim Scheibe · Last updated: 2026-08-04
 > Related: `docs/PRD.md` §5 (FR-GW-2, FR-MG-*); `docs/ROADMAP.md` Phase 2; **ADR-0006**; builds on FRD-201/202/204
 
 ## 1. Summary

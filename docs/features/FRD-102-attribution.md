@@ -1,6 +1,6 @@
 # FRD-102 — Request attribution & use-case selection (OIDC)
 
-> Phase: 1 · Status: **Draft** · Owner: Vadim Scheibe · Last updated: 2026-08-04
+> Phase: 1 · Status: **Done (Phase 1)** · Owner: Vadim Scheibe · Last updated: 2026-08-04
 > Related: `docs/PRD.md` §5 (FR-GW-3); `docs/ROADMAP.md` Phase 1; builds on FRD-101; `ADR-0006`
 
 ## 1. Summary

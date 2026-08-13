@@ -1,8 +1,9 @@
 # FRD-406 — Redaction of credentials in stored payloads
 
-* **Status**: Implemented (2026-08-08)
-* **Related**: `FRD-103` (the hook), `FRD-404` (retention and the storage switch), `ADR-0007`,
-  `ADR-0015`
+> Phase: 4 · Status: **Done — credential half only (2026-08-08)** · Owner: Vadim Scheibe · Last
+> updated: 2026-08-08
+> Related: `FRD-103` (the hook), `FRD-404` (retention and the storage switch), `ADR-0007`,
+> `ADR-0015`, `ADR-0016` (why the PII half was declined rather than deferred)
 
 ## 1. Problem
 

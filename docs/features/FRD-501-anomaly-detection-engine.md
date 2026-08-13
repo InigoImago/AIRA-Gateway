@@ -1,6 +1,6 @@
 # FRD-501 — The detection engine
 
-> Phase: 5 · Status: **In progress (2026-08-07)** · Owner: AIRA · Last updated: 2026-08-07
+> Phase: 5 · Status: **Done (2026-08-07)** · Owner: AIRA · Last updated: 2026-08-07
 > Related: `ADR-0014` (detection vs. enforcement), `FRD-500` (the rules), `FRD-503` (what is done
 > about a finding), `FRD-122` (the rows it reads), `FRD-405` (the counter store it will write to)
 

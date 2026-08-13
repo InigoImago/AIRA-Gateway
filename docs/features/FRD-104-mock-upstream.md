@@ -1,6 +1,6 @@
 # FRD-104 — Mock upstream fidelity (streaming SSE, generationConfig)
 
-> Phase: 1 · Status: **Draft** · Owner: Vadim Scheibe · Last updated: 2026-08-04
+> Phase: 1 · Status: **Done (Phase 1)** · Owner: Vadim Scheibe · Last updated: 2026-08-04
 > Related: `docs/PRD.md` §5 (FR-GW-13); `docs/ROADMAP.md` Phase 1; builds on FRD-100; `ADR-0005`
 
 ## 1. Summary

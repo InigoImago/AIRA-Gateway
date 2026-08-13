@@ -1,6 +1,6 @@
 # FRD-100 — Gemini-compatible Unified API
 
-> Phase: 1 · Status: **Draft** · Owner: Vadim Scheibe · Last updated: 2026-08-04
+> Phase: 1 · Status: **Done (Phase 1)** · Owner: Vadim Scheibe · Last updated: 2026-08-04
 > Related: `docs/PRD.md` §5 (FR-GW-1), `docs/ROADMAP.md` Phase 1, `ADR-0005`
 
 ## 1. Summary

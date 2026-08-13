@@ -5,6 +5,43 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-13 — `CLAUDE.md` §6 was a third copy of this file, and the copies disagreed
+
+Reported by the owner: the status section is over a thousand lines, and short feature descriptions
+would do — the FRDs, PRD and ADRs exist. Measured before touching it: **1801 lines, of which §6 was
+1667 — 93%**, 24 377 words, against a DEVLOG of 137 dated entries that already held the same
+rounds in the same prose.
+
+**The length was the complaint; the duplication was the defect, and it had already cost
+something.** Every FRD carries a `Status:` header and §6 restated it — so on inspection **twenty-two
+headers disagreed with §6**. `FRD-100`, the Gemini surface every request goes through, still said
+*Draft*; so did tool calling, all of Phase 0 and most of Phase 2. The copy loaded every session
+stayed true and the copy nobody opens rotted. That is *a hand-written list with no counterpart*, this
+repository's most repeated shape, arriving in the documentation instead of in the code — and the
+same rot had reached §6's own "next candidates" list, which named five features as upcoming that
+had all shipped.
+
+Three homes, each with a counterpart that fails:
+
+- **The FRD header is the single source.** `docs/features/README.md` is **generated** from the
+  headers (`tools/features_index.py`), and `test_features_index.py` compares the committed index
+  against them **in both directions** — a status changed without regenerating, and an FRD added
+  without either. Both were shown to fail. `FRD-406` had a header format of its own and was
+  invisible to any tool reading headers, which is exactly how a second format survives; normalised.
+- **`docs/LESSONS.md`** holds what is in no FRD: the recurring defect shapes and the rules they
+  produced, deduplicated (the same rule appeared up to six times in §6's prose, each time in
+  different words). 232 lines, grouped by where they apply, each with the cases that produced it —
+  and §4 now says a *new* rule is **merged** into an existing entry rather than appended, since
+  this file goes stale by growing.
+- **The DEVLOG keeps the narrative**, which is what it was always for.
+
+§6 is **46 lines**: what runs, where to look, and the five things deliberately open.
+`test_claude_md_stays_short.py` fails when it grows past 90 — not because length is the problem,
+but because 1667 lines happened one defensible paragraph at a time, and a rule only a reviewer
+enforces is one the next round breaks. Shown to fail by adding a hundred lines.
+
+`CLAUDE.md`: **1801 → 192 lines.** Nothing was lost — it moved to the document that owns it.
+
 ## 2026-08-13 — Where the two surfaces still forked, and why nothing said so
 
 Asked after the `/uc` prefix had to be *retrofitted* onto the KIRA surface: we agreed the surfaces
