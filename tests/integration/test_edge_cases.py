@@ -600,7 +600,6 @@ async def test_the_kira_surface_refuses_in_the_predecessors_shape(
     [
         ({"text": "", "model_id": 9002}, (422,)),
         ({"text": [], "model_id": 9002}, (422,)),
-        ({"text": ["ok", ""], "model_id": 9002}, (422,)),
         ({"text": "ok", "model_id": 9002, "task_type": "NONSENSE"}, (422,)),
         ({"text": 42, "model_id": 9002}, (422,)),
         ({"model_id": 9002}, (422,)),
@@ -614,6 +613,37 @@ async def test_kira_embedding_refuses_in_the_predecessors_shape(
     assert response.status_code != 500, response.text[:300]
     assert response.status_code in expect, f"got {response.status_code}: {response.text[:200]}"
     assert "code" in response.json()
+
+
+async def test_an_empty_element_in_a_batch_is_part_of_the_text_and_not_a_refusal(
+    fixture: Fixture,
+) -> None:
+    """`["ok", ""]` is `"ok"`, and that is the contract rather than a leniency.
+
+    This case sat in the refusal table above expecting a 422, from when a list meant *many*
+    embeddings — where an empty element would be a vector for nothing, billed. On 2026-08-12 the
+    predecessor's own source settled the other reading: **a list is one embedding**, its parts
+    joined with no separator between them. An empty part therefore contributes nothing to join,
+    and refusing it would refuse a well-formed request.
+
+    Asserted as the property rather than as the status. `200` alone would also be true of a surface
+    that silently dropped the second element, embedded only the first, or embedded the literal
+    string `["ok", ""]` — so the vector is compared against the one `"ok"` produces on its own,
+    which is the only thing that distinguishes joining from any of those.
+    """
+    # `_check` is the refusal helper and answers `{}` for a 200 — deliberately, since there is no
+    # message to inspect on the happy path. This case is about the body, so it reads it directly.
+    padded = await _post(fixture, f"{KIRA}/embed", {"text": ["ok", ""], "model_id": 9002})
+    plain = await _post(fixture, f"{KIRA}/embed", {"text": "ok", "model_id": 9002})
+
+    assert padded.status_code == 200, padded.text[:300]
+    assert plain.status_code == 200, plain.text[:300]
+    first, second = padded.json()["vector"], plain.json()["vector"]
+
+    assert len(first) == len(second)
+    assert first == pytest.approx(second, abs=1e-6), (
+        "an empty part changed the embedding, so the list is not being joined"
+    )
 
 
 async def test_the_kira_surface_announces_itself_as_transitional_even_when_refusing(

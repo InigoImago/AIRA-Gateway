@@ -47,6 +47,11 @@ async def _post(path: str, token: str, body: dict) -> httpx.Response:
         return await client.post(f"{MANAGEMENT_URL}{path}", headers=_auth(token), json=body)
 
 
+async def _patch(path: str, token: str, body: dict) -> httpx.Response:
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        return await client.patch(f"{MANAGEMENT_URL}{path}", headers=_auth(token), json=body)
+
+
 async def _get(path: str, token: str, **params) -> httpx.Response:
     async with httpx.AsyncClient(timeout=30.0) as client:
         return await client.get(f"{MANAGEMENT_URL}{path}", headers=_auth(token), params=params)
@@ -110,12 +115,28 @@ async def _until_refused(token: str, slug: str, attempts: int = 25) -> httpx.Res
     return response
 
 
+async def _release(token: str, slug: str) -> None:
+    """Let ``slug`` call :data:`MODEL` — a second step, and not an optional one.
+
+    **Creating a use case does not let it call anything** (`FRD-308`, 2026-08-11): a release starts
+    empty and empty means none. Every gateway call in this file was therefore answered `400 … has
+    no model released to it`, which is the release gate working correctly and reads nothing like
+    the access question these tests ask.
+
+    In the fixtures, because it is a precondition of this file and not its subject. A test that has
+    to remember it is a test that eventually reports an access failure that is a release failure.
+    """
+    response = await _patch(f"/api/v1/use-cases/{slug}/", token, {"allowed_models": [MODEL]})
+    assert response.status_code == 200, response.text
+
+
 @pytest.fixture
 async def slug(admin_token: str):
     name = f"acc-{uuid.uuid4().hex[:8]}"
     assert (
         await _post("/api/v1/use-cases/", admin_token, {"slug": name, "name": name})
     ).status_code == 201
+    await _release(admin_token, name)
     yield name
     await _delete(f"/api/v1/use-cases/{name}/", admin_token)
 
@@ -124,6 +145,7 @@ async def slug(admin_token: str):
 async def second(admin_token: str):
     name = f"acc2-{uuid.uuid4().hex[:8]}"
     await _post("/api/v1/use-cases/", admin_token, {"slug": name, "name": name})
+    await _release(admin_token, name)
     yield name
     await _delete(f"/api/v1/use-cases/{name}/", admin_token)
 

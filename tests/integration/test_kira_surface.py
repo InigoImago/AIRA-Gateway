@@ -26,9 +26,26 @@ async def test_health_and_version_answer_without_a_token() -> None:
         version = await client.get(f"{BASE}/version-info")
 
     assert health.status_code == 200, health.text
-    assert health.json()["status"] in ("HEALTHY", "UNHEALTHY")
     assert version.status_code == 200
     assert "git" in version.json()
+
+    # **The predecessor's shape, not ours.** This asserted `HEALTHY`/`UNHEALTHY`, which is
+    # `/healthz`'s vocabulary — AIRA's own. `/health` here was found to have been *invented rather
+    # than copied*: different key, field names, type and casing from the predecessor, on the one
+    # endpoint monitoring reads to decide whether to page somebody. The route was corrected to
+    # `{"status": "Healthy", "total_time_taken", "entities": [{service, status, time_taken, tags}]}`
+    # and this test kept the shape that had been replaced, so it failed against the fix.
+    #
+    # Asserted as the whole envelope rather than one string, because what a typed client breaks on
+    # is the *shape*, and a test that checks only the word would pass on a body nothing can
+    # deserialise.
+    body = health.json()
+    assert body["status"] in ("Healthy", "Unhealthy"), body["status"]
+    assert isinstance(body["total_time_taken"], int | float)
+    assert body["entities"], "a health check with no entities cannot report anything failing"
+    for entity in body["entities"]:
+        assert entity["status"] in ("Healthy", "Unhealthy"), entity
+        assert {"service", "status", "time_taken", "tags"} <= set(entity), entity
 
 
 async def test_every_response_announces_the_surface_is_transitional() -> None:

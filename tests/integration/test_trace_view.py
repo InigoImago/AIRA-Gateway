@@ -17,6 +17,8 @@ Nothing here asserts an answer's content.
 
 from __future__ import annotations
 
+import asyncio
+
 import httpx
 import pytest
 from sqlalchemy import text
@@ -131,11 +133,24 @@ async def test_paging_over_postgres_repeats_no_row_and_skips_none(
     async with httpx.AsyncClient(timeout=300.0) as client:
         for _ in range(6):
             assert (await _generate(client, fixture)).status_code == 200
-        for _ in range(20):
-            first = await _traces(client, governance_token, use_case=fixture.slug, limit=3)
-            if len(first["traces"]) == 3:
-                break
 
+        # **Wait for all six, not for a full first page.** The audit write is off the request path
+        # (`FRD-405`), so a 200 and its row are two events — and this waited only until *three*
+        # rows existed, then paged as though six did. Under a full suite the queue is deeper: page
+        # one took the newest three of five, page two correctly returned the remaining two, and the
+        # test reported "the second page lost rows" — a paging defect that was not one. It passed
+        # in isolation every time, which is the shape that costs an afternoon.
+        for _ in range(40):
+            listed = await _traces(client, governance_token, use_case=fixture.slug, limit=10)
+            if len(listed["traces"]) >= 6:
+                break
+            await asyncio.sleep(0.25)
+        assert len(listed["traces"]) >= 6, (
+            f"only {len(listed['traces'])} of six rows were written; the writer never drained"
+        )
+
+        first = await _traces(client, governance_token, use_case=fixture.slug, limit=3)
+        assert len(first["traces"]) == 3
         assert first["next_cursor"], "there are six rows and the first page claims to be the last"
         # Two more requests arrive between the pages — exactly what breaks an offset.
         for _ in range(2):

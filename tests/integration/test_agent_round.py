@@ -19,6 +19,8 @@ Nothing here asserts an answer's content — that tests the model, and flakes.
 
 from __future__ import annotations
 
+import pathlib
+
 import httpx
 import pytest
 
@@ -27,6 +29,9 @@ from .conftest import GATEWAY_URL
 pytestmark = pytest.mark.integration
 
 MODEL = "qwen3:0.6b"
+#: A model **measured** to emit real tool calls (`FRD-131`). Not the one `make showcase` and CI
+#: pull — those take the two smallest models there are, on purpose — so a stack that serves the
+#: rest of this file may well not serve this one.
 TOOL_MODEL = "qwen2.5:3b"
 SHORT = {"generationConfig": {"maxOutputTokens": 8}}
 
@@ -39,6 +44,60 @@ WEATHER = {
         }
     ]
 }
+
+
+@pytest.fixture
+async def tool_model(fixture) -> str:
+    """Skip unless this stack actually serves :data:`TOOL_MODEL`.
+
+    **A precondition stated once, because it was stated once out of five times.** The guard existed
+    — an inline `if response.status_code == 404: pytest.skip(...)` in a single test — and the other
+    four asked the same model on a stack that does not serve it and failed with
+    `404 Model 'qwen2.5:3b' not found`. That reads as a broken gateway; it means somebody chose not
+    to pull a 2 GB model for four tests.
+
+    A fixture rather than another inline `if`, and it asks **before** the request rather than
+    interpreting the answer: a 404 can also mean the model was retired, mistyped, or never
+    catalogued, and a skip that swallows those hides the failures worth seeing. Requesting the
+    fixture is also visible in a signature, which is what
+    :func:`test_every_tool_model_test_states_that_it_needs_one` can check — an inline skip is not.
+    """
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(f"{GATEWAY_URL}/v1beta/models", headers=fixture.headers())
+    response.raise_for_status()
+    served = {model.get("name", "").removeprefix("models/") for model in response.json()["models"]}
+    if TOOL_MODEL not in served:
+        pytest.skip(
+            f"this stack does not serve {TOOL_MODEL}; it serves {sorted(served)}. "
+            f"Pull it with: docker exec aira-ollama ollama pull {TOOL_MODEL}"
+        )
+    return TOOL_MODEL
+
+
+def test_every_tool_model_test_states_that_it_needs_one() -> None:
+    """A test that reaches for `TOOL_MODEL` without the fixture fails instead of skipping — which
+    is how four of the five came to report a missing model as a broken gateway.
+
+    Parsed rather than trusted: the whole reason this file needed fixing is that the rule was
+    applied where somebody remembered it.
+    """
+    import ast
+
+    source = pathlib.Path(__file__).read_text()
+    offenders = []
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.AsyncFunctionDef) or not node.name.startswith("test"):
+            continue
+        uses = any(
+            isinstance(inner, ast.Name) and inner.id == "TOOL_MODEL" for inner in ast.walk(node)
+        )
+        if uses and "tool_model" not in {argument.arg for argument in node.args.args}:
+            offenders.append(node.name)
+
+    assert not offenders, (
+        f"these ask for TOOL_MODEL without requesting the `tool_model` fixture: {offenders}. "
+        "On a stack that does not serve it they fail with a 404 that reads as a broken gateway."
+    )
 
 
 async def _traces(client: httpx.AsyncClient, token: str, **params) -> httpx.Response:
@@ -154,7 +213,7 @@ async def test_an_unknown_outcome_matches_nothing_rather_than_everything(governa
 
 
 async def test_a_declared_tool_is_recorded_and_its_arguments_are_not(
-    fixture, governance_token
+    fixture, governance_token, tool_model
 ) -> None:
     """Names and a count. The arguments are the caller's content — a file path, a query, a
     customer number — and this list is readable by every oversight role."""
@@ -170,8 +229,6 @@ async def test_a_declared_tool_is_recorded_and_its_arguments_are_not(
             },
             timeout=180.0,
         )
-        if response.status_code == 404:
-            pytest.skip(f"{TOOL_MODEL} is not available in this stack")
         assert response.status_code == 200, response.text
 
         rows: list = []
@@ -193,7 +250,7 @@ async def test_a_declared_tool_is_recorded_and_its_arguments_are_not(
 
 
 async def test_a_use_case_without_tools_is_refused_and_the_refusal_is_recorded(
-    fixture, governance_token
+    fixture, governance_token, tool_model
 ) -> None:
     """`FRD-131` FR-3: the toggle is **off** by default, and `FRD-122`: the log records what was
     *asked*, not only what was served. A refusal that left no row would make "somebody keeps
@@ -260,7 +317,7 @@ async def test_an_empty_tool_list_is_the_same_request_as_none(fixture) -> None:
     ids=["nameless", "uncallable-name", "declared-twice"],
 )
 async def test_an_uncallable_declaration_is_refused_at_the_surface(
-    fixture, declaration, reason
+    fixture, declaration, reason, tool_model
 ) -> None:
     """Parsing belongs to the surface. A name nothing can call, or the same name twice, would be
     rejected downstream with a message naming neither the tool nor the field — and a duplicate

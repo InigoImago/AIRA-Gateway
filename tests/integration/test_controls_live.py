@@ -379,10 +379,26 @@ async def test_both_surfaces_record_the_same_request_the_same_way(
     for api, row in by_api.items():
         assert row["outcome"] == "served", api
         assert row["model"] == REAL_MODEL, api
-        assert row["provider"] == "gpu-b", api
+        # **That it is recorded, not what it is called.** This asserted `"gpu-b"`, a server name
+        # from *this file's own* two-server fallback fixture — so on any other deployment the test
+        # failed for naming rather than for behaviour, and it did: `make showcase` calls its single
+        # server `local`. A test that hard-codes a deployment's `AIRA_OPENAI_SERVERS` entry is
+        # testing the environment.
+        #
+        # What `FRD-115` actually promises is that the column is **evidence**: blank is neither a
+        # claim nor a record. And what *this* test is about is that the two surfaces agree — so the
+        # provenance is compared between them, below, rather than against a constant.
+        assert row["provider"], f"{api}: no provenance recorded"
         assert int(row["prompt_tokens"] or 0) > 0, api
         assert row["use_case"] == fixture.slug, api
         assert row["credential"], api
+
+    # The property the test is named after: one request, two spellings, the same facts kept.
+    for field in ("provider", "publisher", "region", "model"):
+        assert by_api["gemini"][field] == by_api["kira"][field], (
+            f"the two surfaces recorded a different {field}: "
+            f"gemini={by_api['gemini'][field]!r} kira={by_api['kira'][field]!r}"
+        )
 
 
 async def test_a_kira_caller_meets_the_same_budget(engine: AsyncEngine, fixture: Fixture) -> None:
@@ -430,7 +446,9 @@ async def _all_rows(engine: AsyncEngine, slug: str) -> list[dict]:
         result = await connection.execute(
             text(
                 "SELECT api, operation, status, outcome, model, requested_model, model_selection,"
-                " provider, region, prompt_tokens, completion_tokens, request_payload,"
+                # The provenance triple, whole. `publisher` was the one of the three left out, and
+                # a comparison across surfaces can only cover the columns it selects.
+                " provider, publisher, region, prompt_tokens, completion_tokens, request_payload,"
                 " response_payload, use_case, credential"
                 " FROM request_logs WHERE use_case = :slug ORDER BY created_at"
             ),

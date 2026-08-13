@@ -17,7 +17,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from .conftest import GATEWAY_URL
+from .conftest import GATEWAY_URL, wait_for_row
 
 pytestmark = pytest.mark.integration
 
@@ -43,20 +43,25 @@ def _body(marker: str) -> dict:
     }
 
 
-async def test_a_model_that_cannot_read_a_document_refuses_it_over_the_wire(
-    governance_token: str,
-) -> None:
+async def test_a_model_that_cannot_read_a_document_refuses_it_over_the_wire(fixture) -> None:
     """The requirement, end to end: a caller gets a **refusal they can act on**, not a fluent
-    answer about a document the model never saw."""
-    marker = uuid.uuid4().hex[:8]
+    answer about a document the model never saw.
+
+    **Sent with a use case, and that is not incidental.** These two used a bare governance token
+    and named no use case, which the gateway served until `AIRA_REQUIRE_USE_CASE` became true by
+    default (2026-08-11) — an unattributed request bypasses every budget and limit. Afterwards the
+    refusal under test never ran: the request was turned away one control earlier, with
+    `Missing use case`, and the assertion `"mock-1" in message` read that sentence and failed.
+
+    A refusal arriving from the wrong control is the failure mode this whole file is about, one
+    layer up — so the request is attributed, and what it exercises is the media type again.
+    """
     async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=30.0) as client:
         response = await client.post(
             "/v1beta/models/mock-1:generateContent",
-            headers={"authorization": f"Bearer {governance_token}"},
-            json=_body(marker),
+            headers=fixture.headers(),
+            json=_body(uuid.uuid4().hex[:8]),
         )
-    if response.status_code == 403:
-        pytest.skip("attribution refused this caller; the refusal under test is downstream of it")
 
     assert response.status_code == 400, response.text
     message = response.json()["error"]["message"]
@@ -65,32 +70,31 @@ async def test_a_model_that_cannot_read_a_document_refuses_it_over_the_wire(
 
 
 async def test_the_refusal_is_recorded_as_a_capability_problem(
-    engine: AsyncEngine, governance_token: str
+    engine: AsyncEngine, fixture
 ) -> None:
     """`no_capable_model`, not an upstream error — an operator reading the report has to see a
-    configuration problem rather than an outage."""
-    marker = uuid.uuid4().hex[:8]
+    configuration problem rather than an outage.
+
+    Scoped to **this** use case, which the previous version could not be: with no use case to name
+    it asked for the newest row mentioning `mock-1` anywhere, so a row another test had just
+    written would have answered for it.
+    """
     async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=30.0) as client:
         response = await client.post(
             "/v1beta/models/mock-1:generateContent",
-            headers={"authorization": f"Bearer {governance_token}"},
-            json=_body(marker),
+            headers=fixture.headers(),
+            json=_body(uuid.uuid4().hex[:8]),
         )
-    if response.status_code == 403:
-        pytest.skip("attribution refused this caller; the refusal under test is downstream of it")
+    assert response.status_code == 400, response.text
 
-    async with engine.connect() as connection:
-        row = (
-            await connection.execute(
-                text(
-                    "SELECT outcome, status FROM request_logs"
-                    " WHERE requested_model = 'mock-1' ORDER BY created_at DESC LIMIT 1"
-                )
-            )
-        ).first()
+    row = await wait_for_row(
+        engine,
+        "SELECT outcome, status FROM request_logs"
+        " WHERE use_case = :slug AND requested_model = 'mock-1'"
+        " ORDER BY created_at DESC LIMIT 1",
+        {"slug": fixture.slug},
+    )
 
-    if row is None:
-        pytest.skip("the request was refused before attribution; nothing to assert")
     assert row[0] in ("no_capable_model", "invalid_request")
     assert row[1] == 400
 

@@ -254,26 +254,41 @@ async def test_a_client_that_hangs_up_on_a_kira_stream_is_still_recorded(fixture
     what is exposed is the long await in the middle — a caller who goes away while the model is
     still thinking."""
     model_id = await _kira_model_id(engine, CHAT)
-    async with httpx.AsyncClient(timeout=5.0) as client:
-        with pytest.raises((httpx.ReadTimeout, httpx.RemoteProtocolError, httpx.ReadError)):
-            async with client.stream(
-                "POST",
-                f"{GATEWAY_URL}/kira/api/external/streaming-chat",
-                headers=fixture.headers(),
-                json={
-                    "request": {"parts": [{"text": "Write a very long essay about the sea."}]},
-                    "model_id": model_id,
-                    "maxTokens": 400,
-                },
-            ) as response:
-                async for _ in response.aiter_bytes():
-                    pass
+    async with (
+        httpx.AsyncClient(timeout=60.0) as client,
+        client.stream(
+            "POST",
+            f"{GATEWAY_URL}/kira/api/external/streaming-chat",
+            headers=fixture.headers(),
+            json={
+                "request": {"parts": [{"text": "Write a very long essay about the sea."}]},
+                "model_id": model_id,
+                "maxTokens": 400,
+            },
+        ) as response,
+    ):
+        # **The hang-up is performed, not waited for.** This used to wrap the stream in
+        # `pytest.raises(ReadTimeout)` against a five-second client timeout — so it only
+        # exercised a disconnect when the model happened to take longer than five seconds to
+        # answer, and it failed outright on a machine where the model was quick. A test whose
+        # subject is "the caller went away" must make the caller go away.
+        #
+        # Breaking out and leaving the context closes the connection with the body unread,
+        # which is what a real client dropping a socket does — and it is what
+        # `asyncio.shield` in `accounting` exists for.
+        async for _ in response.aiter_bytes():
+            break
 
     rows = await _settled_rows(engine, fixture.slug, 1, timeout=20.0)
     assert rows[0]["operation"] == "streaming-chat"
-    # Served or abandoned, it is recorded. Which of the two depends on whether the model finished
-    # before the timeout, and asserting one of them would be asserting the model's speed.
-    assert rows[0]["status"] in (200, 499)
+    # Served or abandoned, it is recorded — which is the property. Which of the two it was still
+    # depends on how fast the model is, so that is not asserted; what *is* asserted is that the
+    # status and the outcome agree, which no amount of model speed can make true by accident.
+    assert rows[0]["status"] in (200, 499), rows[0]
+    expected = {200: "served", 499: "client_gone"}[rows[0]["status"]]
+    assert rows[0]["outcome"] == expected, (
+        f"status {rows[0]['status']} was recorded with outcome {rows[0]['outcome']!r}"
+    )
 
 
 # == 3. tokens and money, reconciled against the counters ========================================

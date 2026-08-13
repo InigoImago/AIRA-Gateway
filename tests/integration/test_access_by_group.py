@@ -30,13 +30,31 @@ MODEL = "qwen3:0.6b"
 
 
 async def _create_use_case(token: str, slug: str) -> None:
+    """A use case that may call :data:`MODEL`, which is two steps rather than one.
+
+    **Creating a use case does not let it call anything** (`FRD-308`, 2026-08-11): a release is
+    empty until somebody makes one, and empty means none. That is deliberate, and it is what these
+    tests forgot — every gateway call in this file was answered `400 … has no model released to
+    it`, which is the release gate working and reads nothing like the access question being asked.
+
+    Released here, in the fixture, because it is a *precondition* of this file rather than its
+    subject: what is under test is who reaches a use case, not which models it may call. Stating it
+    once means a new test cannot forget it, and the failure it prevents does not look like an
+    access failure.
+    """
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.post(
             f"{MANAGEMENT_URL}/api/v1/use-cases/",
             headers={"Authorization": f"Bearer {token}"},
             json={"slug": slug, "name": slug},
         )
-    assert response.status_code == 201, response.text
+        assert response.status_code == 201, response.text
+        released = await client.patch(
+            f"{MANAGEMENT_URL}/api/v1/use-cases/{slug}/",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"allowed_models": [MODEL]},
+        )
+    assert released.status_code == 200, released.text
 
 
 async def _grant(token: str, slug: str, group: str, role: str = "user") -> httpx.Response:
