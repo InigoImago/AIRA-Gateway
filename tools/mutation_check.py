@@ -29,6 +29,13 @@ Notes for whoever extends this:
   the shielded version from the unshielded one. It is guarded by `tests/integration/
   test_request_path.py` instead. A mutation that survives here would be a false claim, and a
   harness that makes one is worse than no harness.
+- **A second one of that family, 2026-08-13.** "A caller who hangs up mid-stream is recorded under
+  `499` on **both** surfaces" cannot live here either, and it was checked rather than assumed:
+  the defect was reintroduced — the Gemini stream assigning `acct.status = 200` unconditionally —
+  and the whole hermetic gateway suite passed, 1424 tests. It cannot see it, because the two
+  versions differ only when nothing was served, and `TestClient` buffers a whole streamed body
+  before a test can hang up. Guarded by `test_dev_round_evidence.py`, which drives both streams
+  over a real socket and asserts they record the same status as well as the same outcome.
 - Keep the test selection **wide enough**. A too-narrow selection reports a false gap: M25 was
   first reported as surviving only because the test that catches it lives in another file, and
   T10/E8/X3/X4 repeated the mistake three more times. **The rule that would have prevented all of

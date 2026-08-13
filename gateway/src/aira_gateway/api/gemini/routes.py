@@ -466,9 +466,27 @@ async def _stream_response(
             streamed_calls: list[str] = []
             final_usage = None
             separator = ""
-            # A stream that dies half way still has 200 in its (already sent) headers; the audit
-            # record keeps the real outcome so the log does not claim a success that never
-            # happened.
+            #: The status an **upstream failure** should be recorded under, and nothing else.
+            #:
+            #: It used to start at 200 and be assigned unconditionally below, on the reasoning that
+            #: a stream which dies half way still has 200 in its already-sent headers. That is an
+            #: argument about the **wire**, and `status` is not the wire: `499` appears exactly once
+            #: in this codebase, as `Accounting.status`'s default, with the comment *"Nobody is sent
+            #: it; it exists so the audit can tell that case from a served one"*.
+            #:
+            #: The cost was that the two surfaces recorded one event two ways. Measured on
+            #: 2026-08-13, both streams driven and hung up after the first chunk:
+            #:
+            #:     gemini  streamGenerateContent  status=200  outcome=client_gone
+            #:     kira    streaming-chat         status=499  outcome=client_gone
+            #:
+            #: The KIRA route never assigns `acct.status` at all — it calls `served()` or `failed()`
+            #: and otherwise leaves the default, which is why it was right. This one now does the
+            #: same, so a row saying `client_gone` says 499 whichever URL produced it.
+            #:
+            #: Google's own error model agrees, for whoever wants an external argument:
+            #: `google/rpc/code.proto` maps `CANCELLED` — *"the operation was cancelled, typically
+            #: by the caller"* — to **499 Client Closed Request**.
             status = 200
             try:
                 if not sse:
@@ -515,8 +533,11 @@ async def _stream_response(
                     acct.served(
                         canonical.model, final_usage, {"text": "".join(parts)}, streamed_calls
                     )
-                acct.status = status
                 if status != 200:
+                    # Only an upstream failure overrides. A finished stream was already recorded by
+                    # `served()` above, and a caller who left is recorded by neither — which leaves
+                    # the `Accounting` default standing, and the default is what says they left.
+                    acct.status = status
                     acct.outcome = Outcome.UPSTREAM_ERROR
 
     media_type = "text/event-stream" if sse else "application/json"

@@ -543,26 +543,64 @@ async def test_a_caller_who_hangs_up_mid_stream_is_still_recorded(
 
     row = await governed.last_row(timeout=30.0)
 
-    # **The outcome, not the status — and that is a finding rather than a shortcut.** Measured on
-    # 2026-08-13, both surfaces asked to stream and both hung up after the first chunk:
+    # **The status as well as the outcome, and both surfaces the same.** This asserted only the
+    # outcome for a day, because the two disagreed: measured 2026-08-13, `gemini` recorded
+    # `status=200 outcome=client_gone` and `kira` recorded `status=499 outcome=client_gone` for the
+    # identical event. The test deliberately did not encode `{gemini: 200, kira: 499}` — writing a
+    # divergence into a green test is how a defect becomes a specification — and the divergence was
+    # resolved instead: the Gemini stream stopped assigning `acct.status` on a path where nothing
+    # was served, which is what the KIRA route had always done.
     #
-    #     gemini  streamGenerateContent  status=200  outcome=client_gone
-    #     kira    streaming-chat         status=499  outcome=client_gone
-    #
-    # They agree on what happened and disagree on the number. Each side documents its reasoning —
-    # the Gemini stream sets 200 deliberately because the headers really did go out with a 200,
-    # while `Accounting` defaults to 499 because `FRD-122` invented that code for exactly this case
-    # ("nobody is sent it; it exists so the audit can tell that case from a served one"). Both are
-    # defensible; what they are not is the same, and this repository's own rule is that the two
-    # surfaces leave the same facts.
-    #
-    # So this asserts the fact an incident actually reads, and deliberately does **not** encode the
-    # divergence as expected behaviour — writing `{gemini: 200, kira: 499}` here would turn an open
-    # question into a green test, which is how a defect becomes a specification.
+    # `499` is not a wire status here and never was. It appears once in the gateway, as
+    # `Accounting.status`'s default, so that the audit can tell a caller who left from a request
+    # that was served. Google's own error model reaches the same place from the other side:
+    # `google/rpc/code.proto` maps `CANCELLED` to *499 Client Closed Request*.
     assert row["outcome"] in ("served", "client_gone"), row
-    assert int(row["status"]) in (200, 499), row
-    if row["outcome"] == "served":
-        assert int(row["status"]) == 200, row
+    assert int(row["status"]) == {"served": 200, "client_gone": 499}[str(row["outcome"])], row
+
+
+async def test_both_streams_record_a_hang_up_with_the_same_status(governed: Governed) -> None:
+    """One event, two wire formats, one pair of facts.
+
+    The parametrised case above checks each surface against the rule; this one checks them against
+    **each other**, which is the property that was actually broken and the one no per-surface test
+    can see. `FRD-126`'s rule — the two surfaces differ in their envelope and in nothing else —
+    applied to the audit trail.
+    """
+    for path, body in (
+        (
+            f"{GEMINI}/models/{CHAT_MODEL}:streamGenerateContent?alt=sse",
+            _body("Write a long essay about governance.", maxOutputTokens=400),
+        ),
+        (
+            f"{KIRA}/streaming-chat",
+            {
+                "request": {"parts": [{"text": "Write a long essay about governance."}]},
+                "model_id": 9001,
+                "maxTokens": 400,
+            },
+        ),
+    ):
+        async with (
+            httpx.AsyncClient(base_url=GATEWAY_URL, timeout=120.0) as client,
+            client.stream("POST", path, json=body, headers=governed.headers()) as response,
+        ):
+            assert response.status_code == 200, path
+            async for _ in response.aiter_bytes():
+                break
+
+    rows = await governed.wait_for_rows(2, timeout=40.0)
+    by_api = {str(row["api"]): row for row in rows}
+    assert {"gemini", "kira"} == set(by_api), sorted(by_api)
+
+    assert by_api["gemini"]["outcome"] == by_api["kira"]["outcome"], (
+        f"the surfaces disagree about what happened: "
+        f"gemini={by_api['gemini']['outcome']!r} kira={by_api['kira']['outcome']!r}"
+    )
+    assert int(by_api["gemini"]["status"]) == int(by_api["kira"]["status"]), (
+        f"the surfaces recorded one event under two statuses: "
+        f"gemini={by_api['gemini']['status']} kira={by_api['kira']['status']}"
+    )
 
 
 # ═══ 7. the credential itself ══════════════════════════════════════════════════════════════════
