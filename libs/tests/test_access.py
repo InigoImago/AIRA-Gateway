@@ -76,6 +76,18 @@ def test_the_same_use_case_twice_is_one_use_case() -> None:
     assert usecases_from_group_paths(["/use-cases/a", "/use-cases/a"]) == ("a",)
 
 
+def test_the_bare_prefix_names_no_use_case() -> None:
+    """`/use-cases/` is the parent group, not a grant.
+
+    A realm that puts every use case under one parent reports the parent path too, so this arrives
+    on ordinary tokens rather than only on malformed ones — and a use case whose slug were the
+    empty string is a request nothing could attribute. Kept from the gateway's own copy of this
+    function when that copy was removed: the case was only ever asserted there.
+    """
+    assert usecases_from_group_paths(["/use-cases/"]) == ()
+    assert usecases_from_group_paths([]) == ()
+
+
 # ---- resolution --------------------------------------------------------------------------
 
 

@@ -12,10 +12,10 @@ use-case roles were never read here at all.
 
 from __future__ import annotations
 
+from aira_common.access import usecases_from_group_paths
 from aira_common.logging import get_logger
 from aira_common.oidc import JwtVerifier, SigningKeyResolver, build_jwks_client
 from aira_common.roles import Role, roles_from_groups
-from aira_gateway.auth.attribution import usecases_from_groups
 from aira_gateway.auth.principal import Principal
 from aira_gateway.config import GatewaySettings
 
@@ -66,7 +66,7 @@ class OidcValidator:
             # Group *grants* are added a layer out, where the read-model is — see
             # `auth/grants.py`. Union, not replacement: this route keeps working, including when
             # the read-model cannot be read.
-            use_cases=usecases_from_groups(groups),
+            use_cases=usecases_from_group_paths(groups),
             groups=tuple(str(group) for group in groups if isinstance(group, str)),
             roles=roles_from_groups(
                 (str(group) for group in groups if isinstance(group, str)), self._role_groups

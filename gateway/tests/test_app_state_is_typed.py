@@ -26,6 +26,17 @@ often it is read.
 failure mode this guards is *calling a method on the wrong kind of object*, and those are read for
 their attributes by code that would break loudly and immediately. Widening the rule to everything
 would make it a style preference, and a guard that is mostly style is one people learn to silence.
+
+**`SERVICES` is a hand-written list, which is the shape this repository keeps getting caught by.**
+It was written by reading `create_app` once. Nothing tied the two together, so the twenty-first
+service would have been governed by nothing — and it would announce itself through nothing at all,
+because the rule below is a rule *about a set*, and a set that does not contain a thing has no
+opinion about it. That is the same silence as a capability the console cannot declare and a Kafka
+event with no topic. The answer is the one arrived at five times before it: compare the list
+against what `create_app` actually assembles, **in both directions**. A service missing from
+`SERVICES` is ungoverned; a name in `SERVICES` that `create_app` no longer sets is a rule about
+something that is gone, which is the harmless-looking half that makes the list stop describing the
+system.
 """
 
 from __future__ import annotations
@@ -60,6 +71,17 @@ SERVICES = frozenset(
 
 #: Where the accessors live. Reads there are the definition of the rule, not exceptions to it.
 ACCESSOR_MODULE = "state.py"
+
+#: The attributes `create_app` puts on `app.state` that hold no object with methods worth
+#: type-checking, and why each is exempt. Named individually rather than as a blanket "anything not
+#: in `SERVICES`", because the whole point of the check below is that the default for a **new**
+#: attribute is to be governed: an exemption should cost a line and a sentence.
+NOT_A_SERVICE = {
+    "settings": "a pydantic settings object, read for its fields; a wrong one fails on the field",
+    "db_engine": "the SQLAlchemy engine, handed to a sessionmaker and otherwise disposed of",
+    "counters": "may be `None` by design when Redis is absent, and every reader tests for that",
+    "degradation": "a log of what is degraded, read for its contents by the readiness probe",
+}
 
 
 def _service_reads() -> list[tuple[str, int, str]]:
@@ -114,6 +136,54 @@ def _is_app_state(node: ast.expr) -> bool:
         and isinstance(node.value, ast.Attribute)
         and node.value.attr == "app"
     )
+
+
+def _assembled_services() -> set[str]:
+    """Every attribute `create_app` assigns to `app.state`.
+
+    Assignments only. A *read* of `app.state.suspensions` inside `create_app` — there is one, where
+    the anomaly service is handed the suspension service — is not this application declaring a new
+    attribute, and counting it would make the two lists agree for the wrong reason.
+
+    Matched on the bare ``app.state``, not on `_is_app_state`: that predicate looks for
+    ``<x>.app.state``, which is how a *request* reaches it, and `create_app` holds the application
+    directly. Reusing it here found nothing at all and reported every tracked name as stale — the
+    guard's own failure mode, caught by having written both directions.
+    """
+    tree = ast.parse((SOURCE / "app.py").read_text())
+    return {
+        target.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Attribute)
+        and isinstance(target.value, ast.Attribute)
+        and target.value.attr == "state"
+        and isinstance(target.value.value, ast.Name)
+        and target.value.value.id == "app"
+    }
+
+
+def test_every_service_create_app_assembles_is_governed_by_this_rule() -> None:
+    """A new service on `app.state` is checked, or it is exempt on purpose and says why."""
+    ungoverned = sorted(_assembled_services() - SERVICES - set(NOT_A_SERVICE))
+
+    assert not ungoverned, (
+        f"`create_app` puts {ungoverned} on `app.state` and this file has no opinion about it.\n\n"
+        "Every call made through one of those is invisible to mypy, which is how a `throttle` "
+        "suspension became a 500. Add it to `SERVICES` if the request path calls methods on it, "
+        "or to `NOT_A_SERVICE` with the reason it does not need to be."
+    )
+
+
+def test_this_rule_names_nothing_create_app_has_stopped_assembling() -> None:
+    """The other direction. A name left behind describes a service that is gone — and the guard
+    then reads as covering more than it does, which is the half nobody notices because removing
+    something never breaks a test."""
+    tracked = SERVICES | set(NOT_A_SERVICE)
+    stale = sorted(tracked - _assembled_services())
+
+    assert not stale, f"`create_app` no longer puts these on `app.state`: {stale}"
 
 
 def test_the_parser_finds_the_accessors_it_is_built_around() -> None:

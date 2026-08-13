@@ -4,7 +4,7 @@ from starlette.requests import Request
 from aira_common.apikeys import generate_api_key
 from aira_gateway.app import create_app
 from aira_gateway.auth import keys
-from aira_gateway.auth.attribution import resolve_use_case, usecases_from_groups
+from aira_gateway.auth.attribution import resolve_use_case
 from aira_gateway.auth.principal import Principal
 from aira_gateway.config import GatewaySettings
 from aira_gateway.db.models import ApiKey, UseCaseRead
@@ -13,17 +13,11 @@ _BODY = {"contents": [{"role": "user", "parts": [{"text": "hi"}]}]}
 _OIDC_HEADERS = {"authorization": "Bearer tok"}
 
 
-# ---- unit: group extraction ------------------------------------------------------------
-
-
-def test_usecases_from_groups() -> None:
-    assert usecases_from_groups(["/use-cases/demo-uc", "/use-cases/other-uc", "/random"]) == (
-        "demo-uc",
-        "other-uc",
-    )
-    assert usecases_from_groups(["/use-cases/demo-uc", "/use-cases/demo-uc"]) == ("demo-uc",)
-    assert usecases_from_groups(["/use-cases/"]) == ()
-    assert usecases_from_groups([]) == ()
+# Group extraction used to be tested here against a **second copy** of the rule that lived in
+# `auth/attribution.py`. The rule belongs to both planes and has one home, `aira_common.access`,
+# so the copy is gone and `libs/tests/test_access.py` is where it is exercised. What the gateway
+# owns is the wiring — that a token's groups reach the principal — and that is asserted end to end
+# in `test_auth_oidc.py::test_groups_become_use_cases`.
 
 
 # ---- unit: selector precedence ---------------------------------------------------------

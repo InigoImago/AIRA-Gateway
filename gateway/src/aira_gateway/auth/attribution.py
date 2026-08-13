@@ -3,17 +3,23 @@
 The use case is chosen by the client (header overrides path) and, for OIDC, authorized
 against the caller's Keycloak group membership. Membership groups live under
 ``/use-cases/<slug>``.
+
+**Which group paths grant which use cases is not decided here.** That rule belongs to both planes
+— Management answers it for `/api/v1/me`, the gateway for a bearer token — and it lives once, in
+`aira_common.access`, whose own docstring says so: *"A slug typed twice is a slug that disagrees
+with itself eventually — this project has already paid for that between the two planes once."* It
+was nevertheless written out a second time here, character for character, prefix constant and all.
+Nothing had drifted yet, which is the only reason it was still true; `FRD-209` is the record of
+what it costs when it stops being.
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
 from dataclasses import dataclass
 
 from fastapi import Request
 
-USE_CASE_GROUP_PREFIX = "/use-cases/"
 USE_CASE_HEADER = "x-aira-use-case"
 USE_CASE_PATH_KEY = "aira_use_case_path"
 
@@ -42,17 +48,6 @@ class Attribution:
     #: rule an administrator wrote about a person by name can find them whichever credential they
     #: used; see :meth:`aira_gateway.scopes.Scope.applying`.
     username: str | None = None
-
-
-def usecases_from_groups(groups: Iterable[str]) -> tuple[str, ...]:
-    """Extract use-case slugs from Keycloak group paths (``/use-cases/<slug>``)."""
-    slugs: list[str] = []
-    for group in groups:
-        if group.startswith(USE_CASE_GROUP_PREFIX):
-            slug = group[len(USE_CASE_GROUP_PREFIX) :].strip("/").split("/")[-1]
-            if slug:
-                slugs.append(slug)
-    return tuple(dict.fromkeys(slugs))  # de-duplicate, preserve order
 
 
 # `realm_roles(claims)` lived here until 2026-08-11 and had been unreachable since `ADR-0017`
