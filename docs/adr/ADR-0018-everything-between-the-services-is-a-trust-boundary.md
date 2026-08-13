@@ -78,7 +78,7 @@ Only what was reachable by reading was reviewed. Three things are named rather t
 
 - **`version-info` discloses build identity unauthenticated**, on both surfaces. `routes/health.py`
   argues the case (a commit hash is what somebody correlating a bug report needs) and making it
-  authenticated would be a fourth documented deviation from the predecessor. It is now **listed**
+  authenticated would narrow the compatibility contract further. It is now **listed**
   in `test_every_route_is_guarded.py` rather than merely absent from anybody's attention — a
   decision to review, not an oversight. `_may_see_detail` is the pattern to reuse if the answer
   changes.

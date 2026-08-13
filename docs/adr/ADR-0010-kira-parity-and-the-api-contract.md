@@ -11,18 +11,18 @@ AIRA is the successor to the **predecessor API**, and is meant to carry all of i
 functionality. A review of the predecessor's requirements against the code as it stands produced a
 clear split.
 
-**In breadth, AIRA is well ahead.** Use cases with object-level RBAC, self-service API keys,
-budgets down to spend, cross-instance rate limits, a configurable pre-dispatch pipeline, Kafka
-config distribution, a management UI, per-use-case retention, cost reporting — KIRA has none of
-this, and none of it is at risk.
+**In breadth, AIRA is well ahead of the contract it has to carry.** Use cases with object-level
+RBAC, self-service API keys, budgets down to spend, cross-instance rate limits, a configurable
+pre-dispatch pipeline, Kafka config distribution, a management UI, per-use-case retention and cost
+reporting are all ours to keep; none of it is at risk.
 
 **In the core request path, AIRA is behind.** `CanonicalMessage` carries exactly one field,
 `text: str`, and the Gemini surface's `Part` requires `text`, so a request carrying `inlineData` is
-not merely unmapped — it is rejected at the door with a 400. KIRA accepts documents and images in
-fourteen MIME types, controls the model's thinking budget, and forces JSON output against a
-schema. None of that exists here. There is also a substantive difference in *where the model
-runs*: KIRA calls Vertex AI on regional endpoints (`europe-west1`, `eu`) with a service-account
-credential; AIRA calls the Generative Language API with an API key from an environment variable.
+not merely unmapped — it is rejected at the door with a 400. The contract covers documents and
+images in fourteen MIME types, a thinking budget, and JSON forced against a schema. None of that
+exists here. There is also a substantive difference in *where the model runs*: the contract assumes
+regional endpoints reached with a service-account credential, and AIRA calls the Generative
+Language API with an API key from an environment variable.
 
 **Answered 2026-08-06**: EU residency does apply, and access will be through the **Gemini
 Enterprise platform's Model Garden**, serving **Gemini and Anthropic** models. That settles the

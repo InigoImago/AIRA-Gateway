@@ -44,8 +44,8 @@ PUBLIC_PATHS = frozenset(
         # commit and branch to anyone who can reach the port. `routes/health.py` argues the case:
         # a commit hash identifies the code, which is what somebody correlating a bug report
         # needs. The counter-argument is real — it tells an attacker exactly which release is
-        # running — and making it authenticated would be a fourth documented deviation from the
-        # predecessor. Listed rather than changed, so the exposure is reviewable instead of
+        # running — and making it authenticated would further narrow the compatibility contract.
+        # Listed rather than changed, so the exposure is reviewable instead of
         # accidental; `_may_see_detail` in `routes/health.py` is the pattern to reuse if the answer
         # ever changes.
         "/kira/api/external/version-info",

@@ -130,7 +130,7 @@ No new tables. `request_logs` gains a conversion marker in the payload descripti
 
 Use-case configuration: `document_conversion: {enabled, method, media_types, bounds}`.
 Response: a provenance field naming the conversion; on the KIRA surface (`FRD-107`) it is an
-additional field, since the predecessor has no equivalent and its clients ignore unknown keys.
+additional field, since the contract has no equivalent and its clients ignore unknown keys.
 
 ## 8. Security & Privacy
 

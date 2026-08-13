@@ -1,6 +1,6 @@
 """Attribution for a surface that has no notion of a use case (FRD-107 §5.3).
 
-Every AIRA control is scoped to a use case. The predecessor has no such concept: a caller is a user
+Every AIRA control is scoped to a use case. The contract has no field for one: a caller is a user
 in a group, and that is all. So a KIRA request arrives with no selector — and without one it cannot
 be budgeted, limited, priced or reported.
 

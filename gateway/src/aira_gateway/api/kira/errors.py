@@ -63,7 +63,7 @@ EXTERNAL_KI_API_ERROR = "EXTERNAL_KI_API_ERROR"
 INTERNAL_SERVER_ERROR = "INTERNAL_SERVER_ERROR"
 
 #: Stage A refuses what it cannot yet honour, in the predecessor's own vocabulary rather than in
-#: ours (`FRD-107` FR-2a). Not a KIRA code — the predecessor has none for "this gateway does not
+#: ours (`FRD-107` FR-2a). Not a KIRA code — the contract has none for "this gateway does not
 #: do that yet", because it always did. A new code is the honest answer to a new situation.
 NOT_YET_SUPPORTED = "NOT_YET_SUPPORTED"
 

@@ -29,7 +29,7 @@ INVALID_THINKING_MODE = "INVALID_THINKING_MODE"
 MISSING_THINKING_TOKEN_COUNT = "MISSING_THINKING_TOKEN_COUNT"
 THINKING_TOKEN_COUNT_TOO_LOW = "THINKING_TOKEN_COUNT_TOO_LOW"
 THINKING_TOKEN_COUNT_TOO_HIGH = "THINKING_TOKEN_COUNT_TOO_HIGH"
-#: A token count sent with a mode that takes none. The predecessor has no code for it because its
+#: A token count sent with a mode that takes none. The contract has no code for it because its
 #: clients do not do it; ignoring the field would still be the wrong answer (`FRD-111` FR-1).
 UNEXPECTED_THINKING_TOKEN_COUNT = "UNEXPECTED_THINKING_TOKEN_COUNT"
 

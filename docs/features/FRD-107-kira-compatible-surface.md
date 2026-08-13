@@ -106,11 +106,11 @@ dropped field is not.
 > — never quietly send no thinking at all and let the answer be different for reasons nobody can
 > see. If the model catalog cannot yet express the default, that model is not in Stage A.
 
-### 5.3 Attribution: the one thing the predecessor does not have
+### 5.3 Attribution: the one thing the contract has no field for
 
-Every AIRA control is scoped to a **use case**. The predecessor has no such concept: a caller is a
-user in a group, and that is all. So a KIRA request arrives with no selector, and without one it
-cannot be budgeted, limited, priced or reported.
+Every AIRA control is scoped to a **use case**, and the compatibility contract has no place to name
+one — a caller is a user in a group, and that is all it carries. So a KIRA request arrives with no
+selector, and without one it cannot be budgeted, limited, priced or reported.
 
 The resolution, in order:
 
@@ -168,7 +168,7 @@ because it is a decision rather than an oversight:
   therefore do not carry over unchanged — this is the migration's real work.
 - **Unknown `model_id` answers `404`, not `422`.** The predecessor uses `422 MODEL_NOT_FOUND`;
   the code is the same and the status is not. An ambiguous id — two catalog rows sharing one —
-  answers `503`, which the predecessor has no case for (`FRD-114` FR-6a).
+  answers `503`, which the contract has no case for (`FRD-114` FR-6a).
 - **Unknown JSON fields are refused, not ignored.** `FRD-124` reversed `FRD-100` FR-7 on evidence:
   a field accepted and dropped produces a confident answer to a question nobody asked, and Google's
   own API refuses them too. A migrating client learns at migration time, which is the point of

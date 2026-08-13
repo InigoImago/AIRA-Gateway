@@ -38,12 +38,36 @@ ROOT = Path(__file__).resolve().parents[2]
 #: avoid one mention of a filename would be the trade in the wrong direction.
 EXEMPT = {".gitignore", "tools/tests/test_public_repository_hygiene.py"}
 
+#: **The line these patterns draw: describe the contract, never the deployment.**
+#:
+#: What the wire carries is ours to document — we serve it. `422 MODEL_NOT_FOUND`, a list called
+#: `entities`, a per-model default thinking mode: a reader implementing against this surface needs
+#: every one of them, and leaving them out would make the compatibility documentation useless.
+#:
+#: Where it runs, what it depends on, and which controls it does *not* have are a different thing
+#: entirely, and that is what a review of the ADRs turned up — a paragraph naming the regional
+#: endpoints and credential type of somebody else's deployment, another saying it depends on the
+#: identity provider for every authenticated request, and three saying it has no budgets, no rate
+#: limits and no attribution. Each was written to explain why *AIRA* is built as it is, which is a
+#: reason to state AIRA's rule and none at all to describe the system it replaces.
+#:
+#: **The two cases read alike, so the subject is what separates them**: *the contract* has no case
+#: for a 503 and calls that list `entities`; *the predecessor* would be the system somebody is
+#: running. Saying "the contract" is more precise anyway — it is the thing we implement against —
+#: and it makes the distinction something a pattern can check instead of a reviewer.
 FORBIDDEN = {
     r"KIA[-_ ]?KIRA": "the predecessor's product name",
     r"kira_api\.md": "the predecessor's specification document, by filename",
     r"api_service\.py": "a source file of the predecessor's",
     r"predecessor (?:ships|sets) ": "the predecessor's configuration, described",
     r"predecessor's source": "reading the predecessor's source, stated",
+    r"predecessor (?:calls|runs|deploys|resolves) ": "where the predecessor runs, or what it "
+    "depends on — the contract is ours to document, the deployment is not",
+    r"predecessor (?:has no|have no|has none|lacks) ": "a control the predecessor does not have — "
+    "say what AIRA has instead; a governance or security gap in a system that is presumably still "
+    "running is not ours to publish",
+    r"deviation from the predecessor": "our security baseline framed as a difference, which says "
+    "what the other system does one inference away",
 }
 
 #: Read as current, so a date in them is a claim about now.

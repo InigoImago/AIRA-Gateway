@@ -59,7 +59,7 @@ def test_health_answers_the_predecessors_shape(client: TestClient) -> None:
     assert body["status"] in ("Healthy", "Unhealthy"), "the predecessor's status is title-cased"
     assert isinstance(body["total_time_taken"], int | float)
     assert "checks" not in body, "the invented key"
-    assert body["entities"], "the predecessor calls the list 'entities'"
+    assert body["entities"], "the contract calls the list 'entities'"
 
     entity = body["entities"][0]
     assert set(entity) == {"service", "status", "time_taken", "tags"}

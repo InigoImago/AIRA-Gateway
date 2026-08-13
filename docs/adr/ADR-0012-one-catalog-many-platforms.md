@@ -31,8 +31,8 @@ prudent.
 
 And then the requirement that started the whole programme:
 
-**KIRA's callers send documents.** "Here is a PDF, answer questions about it" is a substantial share
-of what the predecessor is used for (`FRD-110`). Across the four families that capability is
+**Callers of the compatibility surface send documents.** "Here is a PDF, answer questions about
+it" is a substantial share of the traffic AIRA has to carry (`FRD-110`). Across the four families that capability is
 **genuinely not uniform** — Gemini and Claude read PDFs natively, including their visual layout;
 a text-only chat model and a NIM-hosted Nemotron cannot see a PDF at all.
 
@@ -88,7 +88,7 @@ Two rules make the vocabulary trustworthy rather than decorative:
 
 ### 3. Documents: capability-gated, and a chain that cannot degrade silently
 
-This is the decision the predecessor's use case depends on.
+This is the decision that use case depends on.
 
 **A request carrying attachments may only be dispatched to a model that declares those media
 types.** Checked against the model *about to be dispatched to* — after `model_route`, and at every

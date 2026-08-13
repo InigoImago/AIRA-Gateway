@@ -181,7 +181,7 @@ class HealthCheck(BaseModel):
     """One entity of `GET /health` (`health_check_models.py`).
 
     This shipped with `FRD-107` as ``{service, healthy: bool, tags}`` — invented rather than
-    copied, and inside a list called ``checks`` where the predecessor calls it ``entities``. Every
+    copied, and inside a list called ``checks`` where the contract calls it ``entities``. Every
     field name was different and the status was a boolean where the predecessor has a string, so
     the endpoint that tells a monitoring system whether to page somebody was the *least*
     compatible thing on the surface. Found by a static comparison against the predecessor's own

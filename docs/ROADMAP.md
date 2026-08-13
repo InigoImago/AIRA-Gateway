@@ -154,12 +154,13 @@ FRDs: `FRD-700-hardening`, `FRD-701-k8s-helm`, `FRD-702-perf-and-ha`.
 **Goal:** AIRA carries every capability of the **predecessor API**, so that it can be
 decommissioned.
 
-A review on 2026-08-06 found the gap is not where it might be assumed. In breadth AIRA is well
-ahead — the predecessor has no use cases, no budgets, no rate limits, no pipeline, no management
-UI. In the **core request path** it is behind: the canonical message carries one field, `text`,
-so documents and images are rejected at the door, thinking budgets do not exist, and structured
-output does not exist. There is also a difference in *where* the model runs — the predecessor uses
-Vertex AI on EU-regional endpoints with a service account; we use the global Generative Language
+A review found the gap is not where it might be assumed. In breadth AIRA is well ahead of the
+contract it has to carry — use cases, budgets, rate limits, the pipeline and the management UI are
+all ours to keep. In the **core request path** it is behind: the canonical message carries one
+field, `text`, so documents and images are rejected at the door, thinking budgets do not exist, and
+structured output does not exist. There is also a difference in *where* the model runs — the
+contract assumes EU-regional endpoints with a service account; we use the global Generative
+Language
 API with an API key.
 
 **Confirmed 2026-08-06**: EU residency applies, and models are reached through the **Gemini

@@ -38,6 +38,27 @@ It found eleven FRD headers my own pass had missed — dates sitting in `Origin:
 lines rather than in the `Status:` field it was written to clean. All four properties were shown to
 fail before being believed.
 
+**Then the ADRs were read rather than grepped, and that found what a pattern could not.** A regex
+finds the shapes somebody already thought of; `ADR-0010` held three it did not. It named the
+**regional endpoints and credential type** of somebody else's deployment, `ADR-0012` said what
+their system **is used for**, and three documents said which controls it **does not have** — no
+budgets, no rate limits, no attribution. `FRD-118` added a fourth: that every authenticated request
+there depends on the identity provider being reachable, which is an availability weakness written
+out in full. Each existed to explain why *AIRA* is built as it is, which is a reason to state
+AIRA's rule and none at all to describe the system it replaces. The same held for the **deviation
+list** — "TLS verification stays on; CORS is an allow-list, not `*` with credentials" is the
+removed disclosure one inference away, so those are now stated as our baseline rather than as
+differences.
+
+**The rule that came out of it: describe the contract, never the deployment.** What the wire
+carries is ours to document, because we serve it — `422 MODEL_NOT_FOUND`, a list called `entities`,
+a per-model default thinking mode; a reader implementing against this surface needs every one.
+Where it runs, what it depends on and what it lacks are somebody else's operational detail. The two
+read alike — one sentence saying there is no error code for a case, another saying there is no
+rate limiting — so the **subject** is what separates them: seven statements now say *the contract*,
+which is more precise anyway, and the distinction became something a pattern can check instead of a
+reviewer. It caught this very entry on the first run, where both examples had been quoted verbatim. Three more properties, each shown to fail.
+
 ## 2026-08-13 — `CLAUDE.md` §6 was a third copy of this file, and the copies disagreed
 
 Reported by the owner: the status section is over a thousand lines, and short feature descriptions
@@ -4741,9 +4762,9 @@ The predecessor's requirements (the predecessor's contract, the predecessor API)
 that AIRA must carry all of them. Reviewed against the code rather than against our own
 documentation, the result was not what the phase history would suggest.
 
-**In breadth we are well ahead.** Use cases with object RBAC, self-service keys, budgets down to
-spend, cross-instance rate limits, the pipeline, Kafka config distribution, the management UI,
-retention, cost reporting — the predecessor has none of it.
+**In breadth we are well ahead of the contract we have to carry.** Use cases with object RBAC,
+self-service keys, budgets down to spend, cross-instance rate limits, the pipeline, Kafka config
+distribution, the management UI, retention and cost reporting are all ours to keep.
 
 **In the core request path we are behind, and further than it looks.** `CanonicalMessage` carries
 exactly one field, `text: str`, and the Gemini surface's `Part` requires `text` — so a request with
@@ -4754,10 +4775,10 @@ two dimensionalities; ours takes one string.
 
 Two findings I had not expected to matter as much as they do:
 
-- **Vertex AI, not the Generative Language API.** The predecessor calls `europe-west1` and the
-  `eu` multi-region with a service account. We call the global endpoint with an API key. If a data
-  residency requirement sits behind that configuration — and an `eu` endpoint in a production file
-  is decent evidence — then no amount of feature parity makes our adapter a replacement.
+- **Vertex AI, not the Generative Language API.** The contract assumes EU-regional endpoints
+  reached with a service account; we call the global endpoint with an API key. If a data residency
+  requirement sits behind that — and an EU-regional assumption is decent evidence — then no amount
+  of feature parity makes our adapter a replacement.
   `FRD-115`, and it may be the most schedule-critical item in the programme.
 - **Vault is in the stack and nothing reads from it.** `CLAUDE.md` §2 has said "secrets only in
   Vault" since Phase 0; every secret actually comes from an environment variable. `FRD-116`. This
@@ -4773,10 +4794,10 @@ team, and until they migrate their traffic is ungoverned — which is the whole 
 limits exist for. Recorded as _Proposed_; `FRD-107` stays blocked until it is decided. Everything
 else is contract-independent and can start immediately.
 
-Three places where the FRDs deliberately **do not** copy the predecessor, each written down so the
-deviation is a decision rather than an omission: TLS verification stays on; CORS is an origin
-allow-list, not `*` with credentials; and `GET /models` requires authentication. A fourth is close
-to it — resolving group membership from the UserInfo endpoint on **every request** would make each
+Three security settings the FRDs fix independently of the contract, each written down so it is a
+decision rather than an omission: TLS verification stays on; CORS is an origin allow-list, never
+`*` with credentials; and `GET /models` requires authentication. A fourth is close to it —
+resolving group membership from the UserInfo endpoint on **every request** would make each
 authenticated call depend on Keycloak
 being up and fast; `FRD-118` §11 asks whether that requirement even applies to us before anyone
 builds it.

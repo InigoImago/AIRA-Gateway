@@ -76,7 +76,7 @@ is configured, which is today's documented behaviour.
 
 ### 5.3 UserInfo is a per-request call on the hot path, and that is the problem with it
 
-The predecessor calls `/userinfo` after validating every token. That means **every authenticated
+Resolving groups from `/userinfo` after validating every token means **every authenticated
 request depends on Keycloak being reachable and fast**. Keycloak becoming slow turns into the
 gateway becoming slow; Keycloak going down turns into every caller losing their group memberships
 and, by FR-4, being refused authorization. The failure is quiet — callers see 403, not 503 — which
