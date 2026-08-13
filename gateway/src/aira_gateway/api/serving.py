@@ -738,6 +738,13 @@ async def prepare_for_dispatch(
     render its error envelope, own its routes.
     """
     if canonical is not None:
+        # **Before anything can refuse.** It used to be set in `accounting`, which only runs once a
+        # request is on its way to a model — so a request that *offered* functions and was then
+        # refused (over budget, model not released, rate limited) recorded nothing about them, and
+        # "somebody keeps trying to use tools here" had no answer. `declared` beside `called` is
+        # what makes *offered ten and asked for none* different from *offered none* (`FRD-131`
+        # FR-7), and a refusal is exactly when that difference is worth having.
+        trail.tools_declared = len(canonical.tools)
         check_not_empty(canonical)
         # Before the bucket and the pipeline. A request that can never succeed should not spend
         # the caller's rate-limit allowance on the way to being refused, and it must not pay for
@@ -946,9 +953,6 @@ async def accounting(
     up, or on an upstream outage.
     """
     state = Accounting(model=prepared.model, trail=trail)
-    # The declaration is a property of the request and is known here, before dispatch — recorded
-    # once for every surface and every verb, rather than at whichever exit remembers.
-    trail.tools_declared = len(prepared.canonical.tools) if prepared.canonical is not None else 0
     record = True
     # The accounting runs **inside** `hold`, not around it. Outside, `hold` sees an unresolved
     # reservation on the way out and gives it back — and then the settle books it again. One
@@ -1076,6 +1080,11 @@ async def record_pipeline_calls(request: Request, trail: AuditTrail) -> None:
                 outcome=Outcome.SERVED,
                 requested_model=call.model,
                 provenance=await provenance(request, call.model),
+                # From the trail, not from a default. `record_request` used to default this to
+                # `"gemini"`, which made a call site that forgot it right on one surface and wrong
+                # on the other — measured as a KIRA request's classifier row filed under `gemini`,
+                # so a use case's *governance* spend was reported against a surface it never used.
+                api=trail.api,
             )
             await budgets_of(request).book_side_call(
                 getattr(attribution, "use_case", None),

@@ -161,6 +161,12 @@ CONSUMER_SURVIVES = "gateway/tests/test_config_distribution_survives_a_bad_event
 DETECTION_WINDOW = "gateway/tests/test_a_failed_tick_keeps_its_window.py"
 REVOCATION_TIME = "gateway/tests/test_consumer_apply.py"
 KIRA_COMPAT = "gateway/tests/test_kira_compatibility_round.py gateway/tests/test_kira_surface.py"
+SURFACE_PARITY = (
+    "gateway/tests/test_pipeline_accounting.py "
+    "gateway/tests/test_every_surface_records_alike.py "
+    "gateway/tests/test_tool_calling.py"
+)
+MODE_PARSE = "gateway/tests/test_thinking.py gateway/tests/test_kira_surface.py"
 
 SERVING_OPTIONS = (
     "gateway/tests/test_serving_options.py gateway/tests/test_kira_surface.py "
@@ -3774,6 +3780,30 @@ MUTATIONS = [
         "            record.revoked_at = datetime.now(UTC)",
         "",
         REVOCATION_TIME,
+    ),
+    Mutation(
+        "QA31",
+        "a pipeline's own model call is filed under the surface that caused it",
+        "gateway/src/aira_gateway/api/serving.py",
+        "                api=trail.api,",
+        '                api="gemini",',
+        SURFACE_PARITY,
+    ),
+    Mutation(
+        "QA32",
+        "a refused request still records the functions it offered",
+        "gateway/src/aira_gateway/api/gemini/routes.py",
+        "        tool_calls=tool_summary(trail),",
+        "",
+        SURFACE_PARITY,
+    ),
+    Mutation(
+        "QA33",
+        "both surfaces read a thinking mode string the same way",
+        "gateway/src/aira_gateway/thinking.py",
+        "        return ThinkingMode(raw.strip().lower())",
+        "        return ThinkingMode(raw)",
+        MODE_PARSE,
     ),
 ]
 

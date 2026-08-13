@@ -840,3 +840,34 @@ def test_a_schema_this_dialect_cannot_express_skips_the_candidate() -> None:
 
     assert refusal is not None
     assert "pattern" in refusal
+
+
+async def test_a_refused_request_still_records_what_it_declared() -> None:
+    """**The refusal is where this figure is worth most, and it was the one exit that lost it.**
+
+    `tools_declared` was set in `accounting`, which runs only once a request is on its way to a
+    model. So every request that offered functions and was then *refused* — over budget, rate
+    limited, use case not enabled, no capable model — recorded nothing about them. The audit row
+    is complete in every other respect, which is why nothing looked wrong.
+
+    *"Somebody keeps trying to use tools in a use case that has not enabled them"* is exactly the
+    question `FRD-122` says the log must answer, and exactly the traffic whose rows were blank.
+    """
+    from fastapi.testclient import TestClient
+
+    app = _app()
+    with TestClient(app) as client:
+        await _use_case(app, "no-tools-uc", tools_enabled=False)
+        await _declare_tools(app)
+        response = client.post(
+            "/v1beta/models/mock-1:generateContent",
+            json=BODY,
+            headers={"x-aira-use-case": "no-tools-uc"},
+        )
+        assert response.status_code == 400, response.text
+        rows = await _rows(app)
+
+    assert rows[-1].outcome != "served"
+    assert rows[-1].tool_calls == {"declared": 1, "called": []}, (
+        "a refused request that offered a function recorded nothing about it"
+    )

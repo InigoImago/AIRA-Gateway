@@ -43,6 +43,30 @@ class ThinkingRejected(Exception):
         self.message = message
 
 
+def mode_from(raw: str) -> ThinkingMode:
+    """Read a client's mode string, refusing an unknown one by name.
+
+    **Here rather than in each surface's mapper, where it was written twice.** Both spelled out the
+    same four lines — the same normalisation, the same code, the same message — and the risk is not
+    that the copies look different but that they *stop* being the same in a way no test compares:
+    a surface that forgets ``.strip()`` accepts `" high"` from a client the other one refuses, and
+    a surface that stops lowercasing turns `"HIGH"` into an error message naming the vocabulary it
+    just rejected. Neither is an error anywhere. That is the shape this project has paid for
+    repeatedly — an empty membership list meaning "anything goes" on one surface and nothing on the
+    other, a kill switch guarded by a visibility predicate on one plane.
+
+    The message names the known set from the enum rather than a list, so a mode added tomorrow is
+    in both surfaces' errors without either being edited.
+    """
+    try:
+        return ThinkingMode(raw.strip().lower())
+    except ValueError as exc:
+        raise ThinkingRejected(
+            INVALID_THINKING_MODE,
+            f"'{raw}' is not a thinking mode. Known: {sorted(str(m) for m in ThinkingMode)}.",
+        ) from exc
+
+
 def resolve(requested: Thinking | None, declaration: ModelDeclaration) -> Thinking | None:
     """The setting to send upstream, or ``None`` when there is nothing to send.
 

@@ -212,3 +212,50 @@ def test_a_request_that_asks_for_no_thinking_constrains_no_candidate(
     """Otherwise every fallback chain would start refusing candidates over a feature the request
     is not using — a limit that bites when nothing asked for it."""
     assert permitted_by(setting, ModelDeclaration(name="plain")) is None
+
+
+# ---- one reading of a mode string, for every surface -------------------------------------------
+
+
+@pytest.mark.parametrize("raw", ["HIGH", " high ", "High", "high"])
+def test_both_surfaces_read_a_mode_string_the_same_way(raw: str) -> None:
+    """The normalisation is the whole property, and it used to be written twice.
+
+    Each surface's mapper spelled out its own `ThinkingMode(raw.strip().lower())` with its own
+    copy of the refusal. Identical on the day it was written, and nothing compared them — so a
+    surface that lost the `.strip()` would accept `" high"` from a client the other refused, with
+    no error anywhere and no test that could tell. This project has paid for that shape more than
+    once: an empty membership list read as "anything goes" on one surface and as nothing on the
+    other.
+
+    Asserted through **both mappers** rather than through `mode_from` alone. The shared function
+    being right says nothing about whether a surface calls it — which is `FRD-124`'s lesson, and
+    the reason the same argument is made twice in this repository.
+    """
+    from aira_gateway.api.gemini import schemas as gemini_schemas
+    from aira_gateway.api.gemini.mapping import thinking_of as gemini_thinking
+    from aira_gateway.api.kira import schemas as kira_schemas
+    from aira_gateway.api.kira.mapping import thinking_of as kira_thinking
+
+    gemini = gemini_thinking(gemini_schemas.ThinkingConfig(mode=raw))
+    kira = kira_thinking(kira_schemas.ThinkingSetting(mode=raw))
+
+    assert gemini is not None and kira is not None
+    assert gemini.mode is kira.mode is ThinkingMode.HIGH
+
+
+def test_an_unknown_mode_is_refused_the_same_way_on_both() -> None:
+    """Including the code, because a migrating client's error handling switches on that string."""
+    from aira_gateway.api.gemini import schemas as gemini_schemas
+    from aira_gateway.api.gemini.mapping import thinking_of as gemini_thinking
+    from aira_gateway.api.kira import schemas as kira_schemas
+    from aira_gateway.api.kira.mapping import thinking_of as kira_thinking
+
+    with pytest.raises(ThinkingRejected) as gemini:
+        gemini_thinking(gemini_schemas.ThinkingConfig(mode="ponder"))
+    with pytest.raises(ThinkingRejected) as kira:
+        kira_thinking(kira_schemas.ThinkingSetting(mode="ponder"))
+
+    assert gemini.value.code == kira.value.code == INVALID_THINKING_MODE
+    assert gemini.value.message == kira.value.message
+    assert "ponder" in gemini.value.message

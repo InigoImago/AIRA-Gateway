@@ -57,7 +57,7 @@ from aira_gateway.api.serving import (
     upstream_status,
 )
 from aira_gateway.attachments import AttachmentRejected
-from aira_gateway.audit import AuditTrail, Outcome, decision_summary
+from aira_gateway.audit import AuditTrail, Outcome, decision_summary, tool_summary
 from aira_gateway.auth.dependencies import require_principal
 from aira_gateway.auth.principal import Principal
 from aira_gateway.budgets.errors import BudgetExceeded
@@ -335,14 +335,15 @@ async def _record(
         model_selection=trail.selection,
         pipeline_decisions=decision_summary(trail.decisions),
         provenance=await provenance(request, trail.served_model),
-        api="kira",
+        api=trail.api,
+        tool_calls=tool_summary(trail),
     )
 
 
 @router.post("/chat")
 async def chat(request: Request, principal: Principal = Depends(require_principal)) -> Response:
     started = time.monotonic()
-    trail = AuditTrail(operation="chat")
+    trail = AuditTrail(operation="chat", api="kira")
     body: dict[str, Any] = {}
     try:
         body = await _attributed_body(request, principal, trail)
@@ -403,7 +404,7 @@ async def streaming_chat(
     trade the Gemini surface makes on the same verb.
     """
     started = time.monotonic()
-    trail = AuditTrail(operation="streaming-chat")
+    trail = AuditTrail(operation="streaming-chat", api="kira")
     body: dict[str, Any] = {}
     try:
         body = await _attributed_body(request, principal, trail)
@@ -483,7 +484,7 @@ async def streaming_chat(
 @router.post("/embed")
 async def embed(request: Request, principal: Principal = Depends(require_principal)) -> Response:
     started = time.monotonic()
-    trail = AuditTrail(operation="embed")
+    trail = AuditTrail(operation="embed", api="kira")
     body: dict[str, Any] = {}
     try:
         body = await _attributed_body(request, principal, trail)

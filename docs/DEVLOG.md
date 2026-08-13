@@ -5,6 +5,60 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## 2026-08-13 — Where the two surfaces still forked, and why nothing said so
+
+Asked after the `/uc` prefix had to be *retrofitted* onto the KIRA surface: we agreed the surfaces
+would be abstracted as far as they can be and duplicates kept out — how did a fork appear anyway?
+The answer is that the boundary was drawn correctly and drawn once. `api/serving.py` extracted
+**everything below the surface** — the pre-dispatch gate, the pipeline, the dispatch chain, the
+audit writer — and what it left to each surface is what genuinely sits *at* the surface: parsing,
+the error envelope, and the two places a row is written for a request the shared path never
+finished. **Attribution sits exactly on that line**, which is why `use_case_refusal` (the
+*authorising* half, extracted after a bug) had been shared for weeks while `resolve_use_case` (the
+*reading* half) had not.
+
+So the fork was looked for mechanically rather than by reading: every `record_request` call site
+against every field it passes. Three divergences, none of them an error anywhere.
+
+- **`api` was a defaulted parameter.** `record_request(..., api: str = "gemini")` made a call site
+  that forgot it right on one surface and silently wrong on every other. Measured live: a KIRA
+  request whose pipeline ran an LLM filter left its classifier row under `api='gemini'`, so a use
+  case's *governance* spend (`FRD-125b`) was reported against a surface it had never called. The
+  discriminator now travels on the `AuditTrail`, set once by the surface that owns the request, and
+  **neither the parameter nor the field has a default** — a default on a discriminator is a
+  discriminator that stops discriminating at the first hurried call site.
+- **`tool_calls` was recorded only on the served path.** A request that offered functions and was
+  then refused recorded nothing about them, on either surface — so *"somebody keeps trying to use
+  tools here"*, which is a `FRD-122` question, had no answer. The count is taken in
+  `prepare_for_dispatch`, before anything can refuse, and both refusal recorders pass it.
+- **The thinking-mode parse was written out twice**, normalisation, code and message. Identical on
+  the day it was written and compared by nothing — so a surface that lost its `.strip()` would
+  accept `" high"` from a client the other refuses, with no error anywhere. One `mode_from`.
+
+Verified live after the fix: `kira|pipeline:injection_filter` beside `kira|chat`, and a refused
+tools request recording `{"declared": 1, "called": []}`. Each fix was shown to fail first — the
+pipeline row against the restored default, the tools row against **both** halves of the old code
+(the late count and the omitting recorder) — and three of the four mode-parse rows went red when a
+surface was made to drift, with the exact-match row correctly staying green.
+
+**The guard is the deliverable.** `test_every_surface_records_alike.py` compares every recording
+site against the shared one and requires an omission to be *named with its reason*, in both
+directions, so a third surface or a new kind of row has to be looked at rather than inheriting
+whatever the defaults happen to be. It caught the omitting recorder on its own. `QA31`–`QA33`;
+409 mutation properties, all three new ones caught. **No functionality changed.**
+
+**And the integration run found a fourth, in a test.** `test_an_embedding_batch_weighs_what_it_is`
+went red once under full-suite load and green in isolation — the signature of a test measuring the
+machine. It configured `limit_rpm=600`, which refills ten tokens a second, so the five its batch
+takes are back **half a second** later and the second request is refused only if the first answered
+faster than that; measured against the running stack, that call takes 82–234 ms, so the margin was
+a quarter of a second. The file's own `SLOW_REFILL` constant exists for exactly this and carries
+the lesson in its docstring — this one test did not use it. Now it does, and it was **shown to
+still fail for the right reason**: the gateway was rebuilt with the batch weighed as one, both
+batch tests went red, and the restore brought them back.
+
+---
+
 ## 2026-08-13 — A developer round: 227 tests over one governed use case
 
 One use case with a real language model and a real embedding model, both surfaces, four verbs, and

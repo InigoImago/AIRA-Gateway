@@ -46,7 +46,7 @@ from aira_gateway.api.serving import (
     upstream_status,
 )
 from aira_gateway.attachments import AttachmentRejected
-from aira_gateway.audit import AuditTrail, Outcome, decision_summary
+from aira_gateway.audit import AuditTrail, Outcome, decision_summary, tool_summary
 from aira_gateway.budgets.errors import BudgetExceeded
 from aira_gateway.core.canonical import (
     CanonicalChunk,
@@ -174,7 +174,7 @@ async def generate(resource: str, request: Request) -> Response:
     path every branch takes. So the branches *raise* and the boundary records (FRD-122 §5.1).
     """
     model, _, method = split_resource(resource)
-    trail = AuditTrail(operation=method or "unknown", requested_model=model)
+    trail = AuditTrail(operation=method or "unknown", requested_model=model, api="gemini")
     started = time.monotonic()
     try:
         return await _generate(resource, request, trail)
@@ -236,6 +236,12 @@ async def _write_refusal(
         model_selection=trail.selection,
         pipeline_decisions=decision_summary(trail.decisions),
         provenance=await provenance(request, trail.served_model),
+        # Stated rather than defaulted. It was right by accident here and wrong elsewhere.
+        api=trail.api,
+        # A refused request that *offered* functions recorded nothing about them, so "somebody
+        # keeps trying to use tools here" — a `FRD-122` question — had no answer. `declared`
+        # beside `called` is the whole point of the column (`FRD-131` FR-7).
+        tool_calls=tool_summary(trail),
     )
 
 

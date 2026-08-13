@@ -43,7 +43,7 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
   inevitably do when both were written from the same mental model — and line coverage cannot see
   a *missing requirement*: on 2026-08-05 a review found seven real defects behind a green suite at
   99% coverage. So: **prove a test can fail.** Break the property, watch it go red, restore.
-  `make mutants` (`tools/mutation_check.py`) does this for **406 properties** across auth, budgets,
+  `make mutants` (`tools/mutation_check.py`) does this for **409 properties** across auth, budgets,
   pipeline, retention, the management control plane and the gateway's counters; when
   you fix a bug, add the mutation that reintroduces it. Two traps that cost real defects here:
   a stand-in that is more permissive than the thing it replaces (reuse the real method where you
@@ -1759,6 +1759,32 @@ assumed**: the defect was reintroduced and all **1424** hermetic gateway tests p
 two versions differ only when nothing was served and `TestClient` buffers a streamed body before a
 test can hang up — the second property in the harness's "cannot live here" list after
 `asyncio.shield`.
+
+**Where the two surfaces still forked (2026-08-13)** — asked after the `/uc` prefix had to be
+*retrofitted* onto KIRA: the surfaces were to be abstracted as far as they can be, so how did a
+fork appear? **The boundary is right and was drawn once.** `api/serving.py` extracted everything
+*below* the surface; what each surface keeps is what sits *at* it — parsing, its error envelope,
+and the two places a row is written for a request the shared path never finished. **Attribution
+sits exactly on that line**, which is why `use_case_refusal` (the authorising half, extracted after
+a bug) had been shared for weeks while `resolve_use_case` (the reading half) had not. So the rest
+was looked for **mechanically** — every `record_request` call site against every field it passes —
+and produced three divergences, none of them an error anywhere. **`api` was a defaulted
+parameter**, which makes one surface right by accident: measured live, a KIRA request whose
+pipeline ran an LLM filter filed its classifier row under `gemini`, so a use case's *governance*
+spend (`FRD-125b`) was reported against a surface it never called; it travels on the `AuditTrail`
+now and **neither the parameter nor the field has a default**, since a default on a discriminator
+is one that stops discriminating at the first hurried call site. **`tool_calls` was recorded only
+on the served path**, so *"somebody keeps trying to use tools here"* — a `FRD-122` question — had
+no answer for exactly the traffic that asks it; the count is taken in `prepare_for_dispatch`,
+before anything can refuse. And **the thinking-mode parse was written out twice**, normalisation,
+code and message: identical the day it was written and compared by nothing, so a surface losing its
+`.strip()` would accept `" high"` from a client the other refuses. Each was shown to fail first —
+the tools row against **both** halves of the old code, and three of four mode rows when a surface
+was made to drift, the exact-match row correctly staying green. **The guard is the deliverable**:
+`test_every_surface_records_alike.py` compares every recording site against the shared one and
+requires an omission to be *named with its reason*, in both directions — it caught the omitting
+recorder on its own. `QA31`–`QA33`. Standing totals: **2099 hermetic · 409 mutation properties**.
+Nothing the platform does changed.
 
 Next candidates: **`FRD-114`** (model metadata — now also carries publisher + default output cap,
 prerequisite for 110–113 and 119), **`FRD-110`** (documents/images — the widest gap),

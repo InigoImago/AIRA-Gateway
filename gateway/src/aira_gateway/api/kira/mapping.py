@@ -13,7 +13,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from aira_common.models import ThinkingMode
 from aira_gateway.api.kira import schemas
 from aira_gateway.attachments import Limits, check_media_type, check_signature, decode
 from aira_gateway.core.canonical import (
@@ -29,7 +28,7 @@ from aira_gateway.core.canonical import (
 )
 from aira_gateway.core.schema import SchemaBounds
 from aira_gateway.core.schema import parse as parse_schema
-from aira_gateway.thinking import INVALID_THINKING_MODE, ThinkingRejected
+from aira_gateway.thinking import mode_from
 
 #: What the predecessor puts between two text parts of one message (`api_service.py`).
 #:
@@ -84,18 +83,13 @@ def thinking_of(setting: schemas.ThinkingSetting | None) -> Thinking | None:
     """The predecessor's ``{mode, tokens}`` onto the canonical one (`FRD-111` §5.1).
 
     An unknown mode is refused with the predecessor's own code rather than with a validation
-    error about an enum, because a migrating client's error handling switches on that string.
+    error about an enum, because a migrating client's error handling switches on that string —
+    and it is refused by :func:`aira_gateway.thinking.mode_from`, which both surfaces read, so the
+    two cannot come to disagree about what `" High"` means.
     """
     if setting is None:
         return None
-    try:
-        return Thinking(mode=ThinkingMode(setting.mode.strip().lower()), tokens=setting.tokens)
-    except ValueError as exc:
-        raise ThinkingRejected(
-            INVALID_THINKING_MODE,
-            f"'{setting.mode}' is not a thinking mode. "
-            f"Known: {sorted(str(m) for m in ThinkingMode)}.",
-        ) from exc
+    return Thinking(mode=mode_from(setting.mode), tokens=setting.tokens)
 
 
 def to_canonical(

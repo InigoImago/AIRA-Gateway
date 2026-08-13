@@ -193,8 +193,17 @@ async def test_the_stricter_of_two_scopes_wins(governed: Governed) -> None:
 
 async def test_an_embedding_batch_weighs_what_it_is(governed: Governed) -> None:
     """A batch of *n* is *n* requests (`FRD-113` FR-6). Admitting it as one would leave a limit of
-    ten allowing five thousand texts a minute — intact on paper and gone in practice."""
-    await governed.rate_limit(limit_rpm=600, burst=5)
+    ten allowing five thousand texts a minute — intact on paper and gone in practice.
+
+    At `SLOW_REFILL` for the reason that constant exists, which this one test did not use. It said
+    `limit_rpm=600` — ten tokens a second — so the five it needs are back **half a second** after
+    the first batch took them, and the second request is refused only if the first answers faster
+    than that. Measured against the running stack: 82 ms and 234 ms for this call unloaded, so the
+    margin was a quarter of a second wide, and it duly went green in isolation and red inside the
+    full suite. A test whose verdict turns on how quickly a real model answered is measuring the
+    machine.
+    """
+    await governed.rate_limit(limit_rpm=SLOW_REFILL, burst=5)
     await governed.settle()
 
     body = {

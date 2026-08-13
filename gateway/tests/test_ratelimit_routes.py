@@ -242,7 +242,7 @@ async def test_a_client_that_disconnects_mid_stream_does_not_leak_the_reservatio
             _canonical(),
             _BODY,
             _prepared(),
-            AuditTrail(operation="streamGenerateContent", requested_model="mock-1"),
+            AuditTrail(operation="streamGenerateContent", api="gemini", requested_model="mock-1"),
             sse=False,
         )
         iterator = response.body_iterator

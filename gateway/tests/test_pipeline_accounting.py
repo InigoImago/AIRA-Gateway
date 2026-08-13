@@ -364,3 +364,38 @@ async def test_the_compatibility_surface_takes_the_same_early_gate() -> None:
 
     assert response.status_code == 429
     assert guard.calls == 0, "the classifier ran for a request that was never going to be served"
+
+
+async def test_the_pipeline_row_is_filed_under_the_surface_that_caused_it() -> None:
+    """And it is recorded under the surface the **caller** used, not under a default.
+
+    `record_request` took `api: str = "gemini"`, and `record_pipeline_calls` — which sits in the
+    shared layer, below both surfaces — did not pass it. So a KIRA request whose pipeline ran an
+    LLM filter produced two rows on two different surfaces: the answer under `kira`, the classifier
+    that decided it under `gemini`. Measured against the running stack on 2026-08-13.
+
+    Nothing errors, and each row is individually plausible, which is what makes it the harder kind
+    of defect: `FRD-125b` exists so a use case's *governance* spend is visible and attributable,
+    and half of it was being attributed to a surface that use case never called.
+    """
+    guard = _Guard()
+    app = _app(_filter(action="flag"), guard)
+
+    with TestClient(app) as client:
+        async with app.state.db_sessionmaker() as session:
+            session.add(ModelRead(model="guard", numeric_id=7, capabilities=["generate"]))
+            await session.commit()
+
+        response = client.post(
+            "/kira/api/external/chat",
+            json={"request": {"parts": [{"text": "what is 2+2?"}]}, "model_id": 7},
+        )
+        assert response.status_code == 200, response.text
+        rows = await _rows(app)
+
+    assert guard.calls == 2
+    filed = {row.operation: row.api for row in rows}
+    assert filed == {"chat": "kira", "pipeline:injection_filter": "kira"}, (
+        "one caller request left rows on two surfaces; the classifier's row names a surface the "
+        "caller never used"
+    )

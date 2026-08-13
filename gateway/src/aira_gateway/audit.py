@@ -89,7 +89,26 @@ class AuditTrail:
     repeated at every ``return`` is a fact that will eventually be forgotten at one of them.
     """
 
-    operation: str = "unknown"
+    operation: str
+    #: Which surface this request arrived on, carried so every recording site agrees.
+    #:
+    #: **It was a defaulted parameter of `record_request` and that made one surface right by
+    #: accident.** `api: str = "gemini"` meant a call site that forgot it produced a Gemini row —
+    #: correct for the Gemini surface, wrong for the other, and silent either way. Measured on
+    #: 2026-08-13: a KIRA request whose pipeline ran an LLM filter left its classifier row under
+    #: `api='gemini'`, so a use case's *governance* spend was reported against a surface it never
+    #: used (`FRD-125b` exists precisely so that spend is visible and attributable).
+    #:
+    #: On the trail rather than passed down, because the trail is created once per request by the
+    #: surface that owns it and already reaches every exit — while `record_pipeline_calls` sits in
+    #: the shared layer and has no other way to know. A discriminator that each call site restates
+    #: is a discriminator one of them eventually restates wrongly.
+    #:
+    #: **No default here either**, which is why ``operation`` lost its own: a dataclass cannot put
+    #: a required field after a defaulted one, and the alternative — leaving ``api`` defaulted
+    #: because rearranging is inconvenient — is the accident moved one level up, where a third
+    #: surface would inherit "gemini" from a field it never knew existed.
+    api: str
     #: What the caller named, before any routing or fallback. Never overwritten.
     requested_model: str = ""
     #: What actually answered. Equal to ``requested_model`` unless routing or fallback intervened.

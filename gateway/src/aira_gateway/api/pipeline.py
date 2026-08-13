@@ -197,7 +197,7 @@ async def dry_run(
     )
     # The list is ours, so what the run spent survives whatever the run does — the same shape
     # `run` uses, and the reason it takes a caller-supplied list at all.
-    trail = AuditTrail(operation="pipeline:dryRun")
+    trail = AuditTrail(operation="pipeline:dryRun", api="gemini")
     try:
         result = await engine.dry_run(
             Pipeline.from_dict(payload.pipeline),

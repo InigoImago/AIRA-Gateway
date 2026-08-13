@@ -33,7 +33,7 @@ from aira_gateway.core.canonical import (
 )
 from aira_gateway.core.schema import SchemaBounds
 from aira_gateway.core.schema import parse as parse_schema
-from aira_gateway.thinking import INVALID_THINKING_MODE, ThinkingRejected
+from aira_gateway.thinking import mode_from
 from aira_gateway.upstreams.base import UpstreamModel
 
 _ROLE_FROM_GEMINI = {"user": Role.USER, "model": Role.MODEL, "system": Role.SYSTEM}
@@ -171,15 +171,7 @@ def thinking_of(config: schemas.ThinkingConfig | None) -> Thinking | None:
         return Thinking(mode=mode, tokens=tokens)
     if config.mode is None:
         return None
-    try:
-        mode = ThinkingMode(config.mode.strip().lower())
-    except ValueError as exc:
-        raise ThinkingRejected(
-            INVALID_THINKING_MODE,
-            f"'{config.mode}' is not a thinking mode. "
-            f"Known: {sorted(str(m) for m in ThinkingMode)}.",
-        ) from exc
-    return Thinking(mode=mode, tokens=config.tokens)
+    return Thinking(mode=mode_from(config.mode), tokens=config.tokens)
 
 
 def gemini_to_embedding(

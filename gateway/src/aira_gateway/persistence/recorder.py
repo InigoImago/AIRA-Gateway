@@ -103,12 +103,19 @@ async def record_request(
     pipeline_decisions: list[dict[str, Any]] | None = None,
     tool_calls: dict[str, Any] | None = None,
     provenance: tuple[str, str, str] | None = None,
-    api: str = "gemini",
+    api: str,
 ) -> None:
     """Queue a request/response record with its attribution for persistence.
 
     ``outcome`` defaults to ``served`` so every existing call site keeps its meaning; a refusal
     passes its own value from the closed vocabulary in :mod:`aira_gateway.audit`.
+
+    ``api`` deliberately has **no default**. It used to default to ``"gemini"``, which made a
+    caller that forgot it right on one surface and silently wrong on every other — measured on
+    2026-08-13, when a KIRA request's pipeline classifier row (`FRD-125b`) turned up filed under
+    the Gemini surface. A discriminator with a default is a discriminator that stops discriminating
+    at the first call site somebody adds in a hurry; it now travels on the :class:`AuditTrail`, set
+    once by the surface that owns the request.
     """
     attribution = request.state.attribution
     source_ip = client_ip(request)
