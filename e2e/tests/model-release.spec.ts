@@ -46,7 +46,23 @@ test.describe('Model release', () => {
     // rather than lands. It therefore passed for as long as the demo use case had released
     // nothing, and started failing the day it had released one. Searching first leaves exactly one
     // option, so the keypress has one possible meaning whatever this use case already allows.
-    const target = 'gemini-flash-latest';
+    //
+    // **Which model is asked of the picker, not written here.** The name used to be
+    // `gemini-flash-latest`, which exists only where somebody configured a Google AI Studio
+    // credential and imported it (`FRD-507`) — so on `make showcase`, and in CI, the picker never
+    // offered it and the keypress chose nothing. What this test is about is that a release can be
+    // made and taken back; *which* model is a property of the deployment, and naming one made the
+    // test assert the catalogue instead. Same shape as an integration test that hard-coded a
+    // server name from its own fixture.
+    await search.click();
+    const options = page.locator('[data-testid^="release-picker-option-"]');
+    await expect(options.first()).toBeVisible({ timeout: 20_000 });
+    const target = (await options.first().getAttribute('data-testid'))!.replace(
+      'release-picker-option-',
+      '',
+    );
+    await search.press('Escape');
+
     const chip = page.getByTestId('release-picker-chosen').locator('.chip', { hasText: target });
     const wasChosen = (await chip.count()) > 0;
 
