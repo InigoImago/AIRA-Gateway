@@ -71,6 +71,17 @@ export class ConnectionPanel {
   /** Why the listing could not be read, if it could not. Empty otherwise. */
   readonly failure = input('');
 
+  /**
+   * Which surface the reader is looking at.
+   *
+   * **Tabs rather than one stacked list**, because the two are alternatives and not steps: a
+   * migrating KIRA client will never send a model *name*, and a new Gemini client will never send
+   * an *id*. Stacked, every reader had to read both and work out which half applied — and the
+   * addressing, which is the one thing that genuinely differs, was the easiest thing to take from
+   * the wrong column.
+   */
+  protected readonly surface = signal<'gemini' | 'kira'>('gemini');
+
   protected readonly copied = signal('');
   /**
    * The panel's **own** failure, which is not the page's.
@@ -163,6 +174,23 @@ export class ConnectionPanel {
       `  -H 'content-type: application/json' \\`,
       `  -d '{"text":"hello","model_id":${model.kiraId}}'`,
     ].join('\n');
+  }
+
+  protected selectSurface(surface: 'gemini' | 'kira'): void {
+    this.surface.set(surface);
+  }
+
+  /**
+   * The path selector, shown for whichever surface the reader is on.
+   *
+   * Built from the same base as the examples, because the whole point of the prefix is that
+   * *everything after it is unchanged* — writing it out by hand would be a second place for the
+   * path to drift from the one two paragraphs above.
+   */
+  protected ucExample(): string {
+    const base = this.base();
+    const surface = this.surface() === 'gemini' ? '/v1beta' : '/kira/api/external';
+    return `${base}/uc/${this.slug()}${surface}`;
   }
 
   /**

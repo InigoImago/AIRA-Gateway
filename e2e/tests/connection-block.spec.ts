@@ -27,10 +27,14 @@ test.describe('Connecting a client', () => {
     await expect(block).toBeVisible({ timeout: 20_000 });
     await block.scrollIntoViewIfNeeded();
 
-    // Two surfaces, named, so a reader migrating a KIRA client does not have to know that the
-    // Gemini path is the other one.
+    // Two surfaces, two tabs — alternatives rather than steps, so only one is on screen. A reader
+    // migrating a KIRA client should not have to read the Gemini half to find their own.
     await expect(page.getByTestId('connection-gemini-base')).toContainText('/v1beta');
+    await expect(page.getByTestId('connection-kira-base')).toHaveCount(0);
+
+    await page.getByTestId('conn-tab-kira').click();
     await expect(page.getByTestId('connection-kira-base')).toContainText('/kira/api/external');
+    await expect(page.getByTestId('connection-gemini-base')).toHaveCount(0);
 
     // The address is described rather than asserted as *the* gateway: it is the console's proxy,
     // which works from anywhere that reaches the console and is not what a client elsewhere uses.
@@ -44,6 +48,7 @@ test.describe('Connecting a client', () => {
     await page.goto('/use-cases/kundenservice');
     await expect(page.getByTestId('connection')).toBeVisible({ timeout: 20_000 });
 
+    await page.getByTestId('conn-tab-kira').click();
     const table = page.getByTestId('connection-models');
     await expect(table).toBeVisible();
 
@@ -99,6 +104,7 @@ test.describe('Connecting a client', () => {
     await page.goto('/use-cases/kundenservice');
     await expect(page.getByTestId('connection')).toBeVisible({ timeout: 20_000 });
 
+    await page.getByTestId('conn-tab-kira').click();
     const shown = await page.getByTestId('connection-kira-chat').textContent();
     await page.getByTestId('copy-kira-chat').click();
 
@@ -121,5 +127,28 @@ test.describe('Connecting a client', () => {
     // because it reads as working.
     await expect(page.getByTestId('connection-nothing-released')).toBeVisible({ timeout: 20_000 });
     await expect(page.getByTestId('connection-gemini-chat')).toHaveCount(0);
+  });
+  test('explains the path prefix, for a client that can set a URL and not a header', async ({
+    page,
+  }) => {
+    await login(page, USERS.globalAdmin);
+    await page.goto('/use-cases/kundenservice');
+    await expect(page.getByTestId('connection')).toBeVisible({ timeout: 20_000 });
+
+    // It was half a sentence in a hover hint. A caller whose client can only be given a base URL
+    // does not go looking in a hint — they conclude the gateway has no way to do what they need.
+    const section = page.getByTestId('connection-attribution');
+    await expect(section).toContainText('/uc/');
+    await expect(section).toContainText('403');
+    await expect(page.getByTestId('connection-uc-example')).toContainText(
+      '/uc/kundenservice/v1beta',
+    );
+
+    // And it follows the open tab, because a prefix example naming the other surface is the one
+    // thing on this panel most likely to be pasted unread.
+    await page.getByTestId('conn-tab-kira').click();
+    await expect(page.getByTestId('connection-uc-example')).toContainText(
+      '/uc/kundenservice/kira/api/external',
+    );
   });
 });

@@ -47,6 +47,18 @@ describe('ConnectionPanel', () => {
     return (fixture.nativeElement as HTMLElement).querySelector(`[data-testid="${id}"]`);
   }
 
+  /**
+   * Switch surface.
+   *
+   * The two are tabs now, so only one is in the DOM at a time — which is why the assertions below
+   * changed rather than being added to. A test that still expected both at once would have been
+   * asserting the old layout.
+   */
+  function open(surface: 'gemini' | 'kira'): void {
+    testid(`conn-tab-${surface}`)?.click();
+    fixture.detectChanges();
+  }
+
   beforeEach(() => {
     TestBed.configureTestingModule({ providers: [provideRouter([])] });
   });
@@ -67,17 +79,47 @@ describe('ConnectionPanel', () => {
     build(['chat-model']);
     answer();
 
-    // The one field a migrating client actually has to fill in, and the one nobody could see: it
-    // lives in the catalog, which an administrator of a use case may not read.
-    expect(testid('connection-kira-chat')?.textContent).toContain('"model_id":9001');
+    // Gemini first, because that is the tab a reader lands on.
     expect(testid('connection-gemini-chat')?.textContent).toContain(
       '/models/chat-model:generateContent',
     );
+
+    open('kira');
+    // The one field a migrating client actually has to fill in, and the one nobody could see: it
+    // lives in the catalog, which an administrator of a use case may not read.
+    expect(testid('connection-kira-chat')?.textContent).toContain('"model_id":9001');
+  });
+
+  it('shows one surface at a time, and says which one is open', () => {
+    build(['chat-model']);
+    answer();
+
+    // The point of the split: a KIRA client will never send a model name and a Gemini client will
+    // never send an id, so showing both at once made every reader discard half of what they saw.
+    expect(testid('connection-gemini-base')).not.toBeNull();
+    expect(testid('connection-kira-base')).toBeNull();
+    expect(testid('conn-tab-gemini')?.getAttribute('aria-selected')).toBe('true');
+
+    open('kira');
+
+    expect(testid('connection-kira-base')).not.toBeNull();
+    expect(testid('connection-gemini-base')).toBeNull();
+    expect(testid('conn-tab-kira')?.getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('says how each surface addresses a model, which is the thing that differs', () => {
+    build(['chat-model']);
+    answer();
+
+    expect(testid('connection-gemini-addressing')?.textContent).toContain('by name');
+    open('kira');
+    expect(testid('connection-kira-addressing')?.textContent).toContain('integer id');
   });
 
   it('does not claim a model is unserved when it may simply have no KIRA number', () => {
     build(['chat-model']);
     answer([{ id: 9001, name: 'somebody-else', capabilities: ['CHAT'] }]);
+    open('kira');
 
     // The gateway omits a model from its KIRA listing when the catalog gave it no id, so an absent
     // entry is *either* no id *or* not served. This said "the gateway does not serve this model" —
@@ -96,6 +138,7 @@ describe('ConnectionPanel', () => {
     expect(testid('connection-gemini-embed')?.textContent).toContain(
       '/models/embed-model:embedContent',
     );
+    open('kira');
     expect(testid('connection-kira-embed')?.textContent).toContain('"model_id":9002');
   });
 
@@ -131,6 +174,7 @@ describe('ConnectionPanel', () => {
     answer();
 
     expect(testid('connection-gemini-base')?.textContent).toContain('/gw/v1beta');
+    open('kira');
     expect(testid('connection-kira-base')?.textContent).toContain('/gw/kira/api/external');
     // A URL that is right here and wrong everywhere else is worse than one that explains itself.
     expect(testid('connection-base-note')?.textContent).toContain('this console');
@@ -159,6 +203,7 @@ describe('ConnectionPanel', () => {
     });
     build(['chat-model']);
     answer();
+    open('kira');
 
     testid('copy-kira-chat')?.click();
     await fixture.whenStable();
@@ -216,6 +261,7 @@ describe('ConnectionPanel', () => {
   it('gives no KIRA embedding example for an embedding model without an id', () => {
     build(['embed-model']);
     answer([{ id: 0, name: 'other', capabilities: ['CHAT'] }]);
+    open('kira');
 
     // The embedding model is released and the gateway knows nothing about it, so neither example
     // can be built — and the table says which of the two is missing rather than showing a blank.
@@ -231,27 +277,25 @@ describe('ConnectionPanel', () => {
     build(['chat-model', 'embed-model']);
     answer();
 
-    // Every button, because a copy control wired to the wrong string is one that works and hands
-    // the reader somebody else's command — and the only way to see that is to press each one.
-    for (const id of [
-      'copy-gemini-base',
-      'copy-kira-base',
-      'copy-gemini-chat',
-      'copy-kira-chat',
-      'copy-gemini-embed',
-      'copy-kira-embed',
-    ]) {
-      testid(id)?.click();
-      await fixture.whenStable();
+    // Every button on both tabs, because a copy control wired to the wrong string is one that
+    // works and hands the reader somebody else's command — and the only way to see that is to
+    // press each one. Walked per surface now that they are tabs; a loop over all six against one
+    // tab would have found three of them absent and pressed nothing.
+    for (const surface of ['gemini', 'kira'] as const) {
+      open(surface);
+      for (const id of [`copy-${surface}-base`, `copy-${surface}-chat`, `copy-${surface}-embed`]) {
+        testid(id)?.click();
+        await fixture.whenStable();
+      }
     }
     fixture.detectChanges();
 
     expect(written).toHaveLength(6);
     expect(written[0]).toContain('/gw/v1beta');
-    expect(written[1]).toContain('/gw/kira/api/external');
-    expect(written[2]).toContain('chat-model:generateContent');
-    expect(written[3]).toContain('"model_id":9001');
-    expect(written[4]).toContain('embed-model:embedContent');
+    expect(written[1]).toContain('chat-model:generateContent');
+    expect(written[2]).toContain('embed-model:embedContent');
+    expect(written[3]).toContain('/gw/kira/api/external');
+    expect(written[4]).toContain('"model_id":9001');
     expect(written[5]).toContain('"model_id":9002');
   });
 
@@ -279,5 +323,34 @@ describe('ConnectionPanel', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+  it('explains the path prefix, and builds it from the same base as the examples', () => {
+    build(['chat-model']);
+    answer();
+
+    // The prefix had no explanation at all — it was half a sentence inside a hover hint, which is
+    // where somebody who already suspects there is something to know goes looking. A caller with a
+    // client that can set a URL and not a header does not suspect it.
+    const section = testid('connection-attribution')?.textContent ?? '';
+    expect(section).toContain('/uc/');
+    expect(section).toContain('403');
+    expect(section).toContain('header');
+
+    // Built, not written: the whole claim about the prefix is that everything after it is the URL
+    // shown above, so the two must come from one place.
+    expect(testid('connection-uc-example')?.textContent).toContain('/uc/demo-uc/v1beta');
+    expect(testid('connection-header-example')?.textContent).toContain('X-AIRA-Use-Case: demo-uc');
+  });
+
+  it('shows the path prefix for whichever surface is open', () => {
+    build(['chat-model']);
+    answer();
+    expect(testid('connection-uc-example')?.textContent).toContain('/uc/demo-uc/v1beta');
+
+    open('kira');
+
+    // A prefix example that kept naming the other surface would be the one thing on this panel a
+    // reader is most likely to paste unread.
+    expect(testid('connection-uc-example')?.textContent).toContain('/uc/demo-uc/kira/api/external');
   });
 });
