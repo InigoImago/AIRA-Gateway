@@ -40,6 +40,20 @@ always keyed on the caller — but it was covered by a test of the named scope, 
 would have deleted the knowledge. It is in `aira_gateway.scopes` and `FRD-400` §2.2 now, with the
 honest fix named: a stable identity for a person across credentials, not a scope that names one.
 
+**And the question that followed exposed what the removal costs, measured.** Asked whether a
+person's keys and their Keycloak sign-in share a pot: a limit of one per head on the live stack
+answers it. Two keys owned by one person → the second is refused, **one allowance** (a key's subject
+*is* its owner's name, so every key they own counts to the same place). The same person's bearer
+token → served, **a second allowance**. Nothing reconciles the two alphabets since the named scope
+went.
+
+Not fixed — keying counters on a name instead of a subject would move a renamed person's history,
+and `budget_usage` stores that shape — but **warned about, on the screen where the figure is
+typed**. A number that is wrong by a factor of two for anybody running an agent with a key while
+also working in a browser is not a footnote, and the form gave the reader no way to know. The
+warning appears when the per-head scope is chosen, on budgets and on rate limits, because the
+property is identical and a warning on one of them would leave the other silently wrong.
+
 Everything else followed: the option, the field and its suggestions, the validation, the labels,
 three mutation properties (`S1`, `S10`, `S11` — a mutation kept against a deleted rule reports green
 about nothing), the showcase seed's axes, and the tests that used `member` merely as a convenient

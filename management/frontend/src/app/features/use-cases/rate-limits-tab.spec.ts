@@ -263,3 +263,34 @@ describe('RateLimitsTab — a rate per person, a window, and what Burst means', 
  * knows — who is in a group is the identity provider's answer, which is why this cannot be an
  * error and must not be silence either.
  */
+
+/**
+ * The fact a per-head figure means something different depending on how people reach the gateway.
+ *
+ * Measured on the live stack (a limit of one per head): a person's API keys share **one** allowance
+ * — a key's subject is its owner's name, so every key they own counts to the same place — while the
+ * same person signed in through Keycloak gets a *separate* one. The two credentials answer "who is
+ * this" in different alphabets, and nothing reconciles them since the scope that named a person by
+ * hand was removed.
+ *
+ * A warning on the screen rather than a note in a document, because the number somebody types is
+ * wrong by a factor of two for anybody running an agent with a key while also working in a browser
+ * — and they have no way to know that from the form.
+ */
+describe('RateLimitsTab — the per-head warning', () => {
+  it('warns that a person has two allowances, and only for the per-head scope', () => {
+    const harness = setup();
+    harness.component.showForm.set(true);
+    harness.component.rlScope.set('use_case');
+    harness.fixture.detectChanges();
+    expect(harness.fixture.nativeElement.querySelector('[data-testid="rl-two-pots"]')).toBeNull();
+
+    harness.component.rlScope.set('each_member');
+    harness.fixture.detectChanges();
+
+    const warning = harness.fixture.nativeElement.querySelector('[data-testid="rl-two-pots"]');
+    expect(warning).not.toBeNull();
+    expect(warning?.textContent).toContain('Two allowances per person');
+    expect(warning?.textContent).toContain('Keycloak');
+  });
+});

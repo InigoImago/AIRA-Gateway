@@ -49,11 +49,28 @@
             } @else if (rlScope() === 'each_member') {
               Everybody gets this rate, separately — including people who join later. No names to
               keep up to date.
-            } @else {
-              Just this one person. Where both apply, the stricter one wins.
             }
           </span>
         </div>
+        <!--
+        **Measured, not assumed** (2026-08-14, live stack, a limit of one per head): a person's
+        API keys share one allowance — a key's subject is its owner's name, so every key they own
+        counts to the same place — while the same person signed in through Keycloak gets a
+        *separate* one. The two credentials answer "who is this" in different alphabets: a key
+        with the owner's username, a token with the directory's user id, and nothing reconciles
+        them since the scope that named a person by hand was removed.
+
+        A warning rather than a footnote, and here rather than in a hint, because the figure
+        somebody types means something different depending on how their people reach the gateway
+        — an agent with a key plus its owner's own browser traffic is two allowances, not one.
+      -->
+        @if (rlScope() === 'each_member') {
+          <p class="callout callout--warning" data-testid="rl-two-pots" role="status">
+            <strong>Two allowances per person, not one.</strong> All of somebody's API keys share
+            one; signing in through Keycloak gives them a second, separate one. Somebody running an
+            agent with a key <em>and</em> working in the browser therefore has this rate twice over.
+          </p>
+        }
         <div class="field">
           <label for="rl-rpm">Requests per minute</label>
           <input

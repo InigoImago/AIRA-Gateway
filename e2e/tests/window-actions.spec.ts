@@ -28,4 +28,37 @@ test.describe('Window actions', () => {
     await page.click('button:has-text("Issue key")');
     await expectFooterActionsApart(page, 'key-editor');
   });
+
+  /**
+   * The one thing a per-head figure does not say by itself.
+   *
+   * Measured on the live stack: a person's API keys share **one** allowance — a key's subject is
+   * its owner's name, so every key they own counts to the same place — while the same person
+   * signed in through Keycloak gets a *separate* one. Nothing reconciles the two since the scope
+   * that named a person by hand was removed, so somebody running an agent with a key while also
+   * working in a browser has the configured figure twice over.
+   *
+   * In a browser because it is a warning: a component test proves the template can render it, and
+   * only this shows that somebody choosing the scope meets it.
+   */
+  test('choosing a per-head limit warns that a person has two allowances', async ({ page }) => {
+    await login(page, USERS.globalAdmin);
+    await page.goto('/use-cases/kundenservice?tab=rate-limits');
+    await page.getByTestId('add-rate-limit').click();
+
+    const warning = page.getByTestId('rl-two-pots');
+    await expect(warning).toBeHidden();
+
+    await page.getByLabel('Applies to').selectOption('each_member');
+
+    await expect(warning).toBeVisible();
+    await expect(warning).toContainText('Two allowances per person');
+    await expect(warning).toContainText('Keycloak');
+
+    // And the same on budgets, where the figure is money rather than a rate.
+    await page.goto('/use-cases/kundenservice?tab=budgets');
+    await page.getByTestId('add-budget').click();
+    await page.getByLabel('Applies to').selectOption('each_member');
+    await expect(page.getByTestId('budget-two-pots')).toBeVisible();
+  });
 });
