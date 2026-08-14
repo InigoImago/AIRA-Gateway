@@ -36,11 +36,15 @@ interface Editor {
   dryRun: () => DryRunResult | null;
   dryRunError: () => string | null;
   dryRunning: () => boolean;
+  currentError: () => string | null;
+  notReached: () => { step: number; title: string }[];
+  pastBlocks: { set: (v: boolean) => void };
   traceCards: () => {
     step: number;
     title: string;
     output: string | null;
     classifier: string | null;
+    simulated: boolean;
   }[];
 }
 
@@ -447,6 +451,181 @@ describe('PipelineEditor', () => {
     const cards = component.traceCards();
     expect(cards.map((card) => card.step)).toEqual([1, 2, 3]);
     expect(cards[0].title).toBe('Injection Filter');
+  });
+
+  it('drops a rejection message once the pipeline it was about changes', () => {
+    // Reported from the console: *"when I start a dry run and it was rejected, the warning or
+    // error doesn't go away."* It stayed until the next run, so a reader who read it, changed the
+    // step it named and looked again was still being told about an attempt that no longer matched
+    // anything on the screen.
+    const { component, fixture, text } = setup(
+      { steps: [], fallback_models: [] },
+      { dryRun: throwError(() => ({ status: 403 })) },
+    );
+    component.runDryRun();
+    fixture.detectChanges();
+    expect(text()).toContain('Dry-run refused');
+
+    component.addStep('injection_filter');
+    fixture.detectChanges();
+    expect(component.currentError()).toBeNull();
+    expect(text()).not.toContain('Dry-run refused');
+  });
+
+  it('does not mark an old trace fresh when a later attempt fails', () => {
+    // The pairing this separation exists for. One signal for "what the last attempt was about"
+    // would be stamped with the new configuration by a *failed* run, while the trace on screen is
+    // still the old one — presenting a stale result as current, which is the failure the staleness
+    // marker was added to prevent.
+    let fail = false;
+    const { component, fixture, text } = setup({ steps: [], fallback_models: [] }, {
+      get dryRun() {
+        return fail
+          ? throwError(() => ({ status: 403 }))
+          : of({
+              blocked: false,
+              block_reason: null,
+              effective_model: 'mock-1',
+              fallback_models: [],
+              trace: [],
+            });
+      },
+    } as Options);
+    component.runDryRun();
+    fixture.detectChanges();
+
+    fail = true;
+    component.addStep('injection_filter');
+    component.runDryRun();
+    fixture.detectChanges();
+
+    expect(text()).toContain('Changed since this run');
+  });
+
+  it('shows the steps a block stopped it from reaching', () => {
+    // Reported with the above: *"I can't see the result of my dry run for each step, I would like
+    // to see it because then I can check compatibility for my use case."* The engine stops where
+    // production stops, which is right — but it left somebody whose first step blocks with no way
+    // to see that the rest of the pipeline is even there.
+    const { component, fixture, text } = setup(
+      {
+        steps: [
+          { type: 'injection_filter', config: {} },
+          { type: 'model_route', config: {} },
+          { type: 'pii_filter', config: {} },
+        ],
+        fallback_models: [],
+      },
+      {
+        dryRun: of({
+          blocked: true,
+          block_reason: 'Request rejected by the prompt-injection filter.',
+          effective_model: 'mock-1',
+          fallback_models: [],
+          trace: [{ type: 'injection_filter', action: 'blocked', detail: {} }],
+        }),
+      },
+    );
+    component.runDryRun();
+    fixture.detectChanges();
+
+    expect(component.notReached()).toEqual([
+      { step: 2, title: 'Model Routing (LLM)' },
+      { step: 3, title: 'Personal data filter (LLM)' },
+    ]);
+    expect(text()).toContain('not reached');
+    // Named, so a reader can tell which step is which — and numbered from where the trace ended,
+    // so the cards continue the graph rather than restarting at 1.
+    expect(text()).toContain('Model Routing (LLM)');
+  });
+
+  it('claims nothing about later steps when the pipeline was not blocked', () => {
+    // A guard on the guard: `notReached` slices a list, and a slice of a run that reached the end
+    // is empty for the right reason only while `blocked` is checked. Without it, a pipeline
+    // shortened between two runs would sprout phantom "not reached" steps.
+    const { component, fixture } = setup({
+      steps: [{ type: 'injection_filter', config: {} }],
+      fallback_models: [],
+    });
+    component.runDryRun();
+    fixture.detectChanges();
+    expect(component.notReached()).toEqual([]);
+  });
+
+  it('asks the gateway to keep going past a block only when told to', () => {
+    // Off by default, and that is the setting rather than the styling: the answer this panel gives
+    // by default has to be the answer production would give, and each step run past a block spends
+    // real tokens on a call the served path never makes.
+    const { component, fixture, dryRunPayload } = setup({ steps: [], fallback_models: [] });
+    component.runDryRun();
+    expect((dryRunPayload() as { past_blocks?: boolean }).past_blocks).toBe(false);
+
+    // **Through the checkbox**, not through the signal. Written the other way first, and it passed
+    // over a template that had never received the control at all — the setting was reachable from
+    // code and from nowhere a person could click. A test that asserts a payload while stepping
+    // around the only way to produce it is testing its own setup.
+    const box = (fixture.nativeElement as HTMLElement).querySelector<HTMLInputElement>(
+      '#past-blocks',
+    );
+    expect(box, 'the keep-going option must exist as a control').not.toBeNull();
+    expect(box!.checked).toBe(false);
+    box!.click();
+    fixture.detectChanges();
+
+    component.runDryRun();
+    expect((dryRunPayload() as { past_blocks?: boolean }).past_blocks).toBe(true);
+  });
+
+  it('marks the steps that only ran because it was told to keep going', () => {
+    // An unlabelled outcome for a step production never reaches is a confident statement about
+    // something that does not happen — the failure this whole panel is against.
+    const { component, fixture, text } = setup(
+      {
+        steps: [
+          { type: 'injection_filter', config: {} },
+          { type: 'model_route', config: {} },
+        ],
+        fallback_models: [],
+      },
+      {
+        dryRun: of({
+          blocked: true,
+          block_reason: 'Request rejected by the prompt-injection filter.',
+          effective_model: 'cheap-1',
+          fallback_models: [],
+          trace: [
+            { type: 'injection_filter', action: 'blocked', detail: {}, after_block: false },
+            {
+              type: 'model_route',
+              action: 'rerouted',
+              detail: { to: 'cheap-1' },
+              after_block: true,
+            },
+          ],
+        }),
+      },
+    );
+    component.pastBlocks.set(true);
+    component.runDryRun();
+    fixture.detectChanges();
+
+    expect(component.traceCards().map((card) => card.simulated)).toEqual([false, true]);
+    expect(text()).toContain('would not run');
+    // …and it does not also claim the step was never reached. It was — twice would contradict.
+    expect(component.notReached()).toEqual([]);
+    expect(text()).not.toContain('not reached');
+  });
+
+  it('treats the keep-going option as part of what a run was about', () => {
+    // Toggling it changes the answer, so a trace made with it off is stale the moment it goes on.
+    const { component, fixture, text } = setup({ steps: [], fallback_models: [] });
+    component.runDryRun();
+    fixture.detectChanges();
+    expect(text()).not.toContain('Changed since this run');
+
+    component.pastBlocks.set(true);
+    fixture.detectChanges();
+    expect(text()).toContain('Changed since this run');
   });
 
   it('says the trace is out of date once the pipeline changes under it', () => {

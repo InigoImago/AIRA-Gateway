@@ -196,10 +196,17 @@ export async function submitOfOpenForm(page: Page) {
   // comma-separated selector: those resolve in document order, so a page-level form rendered above
   // the dialog would be submitted instead — and the assertion after it would still pass, because
   // both buttons say "Add".
-  const inWindow = page.locator('.modal button[type="submit"]');
-  return (await inWindow.count())
-    ? inWindow.first()
-    : page.locator('form button[type="submit"]').first();
+  const inWindow = page.locator('.modal button[type="submit"]').first();
+  const inPage = page.locator('form button[type="submit"]').first();
+
+  // **Waited for, not sampled.** This used to branch on `await inWindow.count()`, which is a single
+  // immediate poll taken the moment the opening click returned — so on a slow render it saw zero,
+  // chose the page-level selector, and waited 45 s for something that cannot exist: a window's
+  // submit button lives in the modal footer with `form="…"`, outside any `<form>`. The button was
+  // on screen the whole time. Reproduced by restarting the management container first, which is
+  // the only reason it ever showed up: warm, the modal wins the race every time.
+  await expect(inWindow.or(inPage)).toBeVisible();
+  return (await inWindow.isVisible()) ? inWindow : inPage;
 }
 
 export function uniqueSlug(prefix: string) {

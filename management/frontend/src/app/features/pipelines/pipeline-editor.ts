@@ -110,6 +110,8 @@ interface TraceCard {
   output: string | null;
   before: string | null;
   after: string | null;
+  /** Ran only because the dry run was asked past a block — production stops before this. */
+  simulated: boolean;
 }
 
 function text(detail: Record<string, unknown>, key: string): string | null {
@@ -152,6 +154,16 @@ export class PipelineEditor implements OnInit {
   protected readonly dryRun = signal<DryRunResult | null>(null);
   protected readonly dryRunError = signal<string | null>(null);
   /**
+   * Keep evaluating after a step refuses.
+   *
+   * Asked for from the console: a filter that blocks the sample leaves every step behind it
+   * untested, and the only way to see them was to delete the filter and put it back. Off by
+   * default and deliberately so — the default answer this screen gives has to be the one
+   * production would give, and each step run past a block spends real tokens on a call the served
+   * path would never make.
+   */
+  protected readonly pastBlocks = signal(false);
+  /**
    * The pipeline as it was when the last dry run was made.
    *
    * A trace stays on screen while somebody keeps editing, and after the first change it describes
@@ -164,8 +176,58 @@ export class PipelineEditor implements OnInit {
     () => this.dryRun() !== null && this.dryRunOf() !== this.dryRunSubject(),
   );
 
+  /**
+   * The pipeline the last **failed** attempt was about.
+   *
+   * Reported from the console: *"when I start a dry run and it was rejected, the warning or error
+   * doesn't go away."* It did not — the message stayed until the next run, so a reader who read it,
+   * changed the step it was about and looked again was still being told about an attempt that no
+   * longer matched anything on the screen.
+   *
+   * Held apart from `dryRunOf` because a failed attempt and a displayed trace are about different
+   * things, and one signal for both got the pairing wrong in the case that matters: a failed run
+   * would have stamped the *new* configuration onto the *old* trace, marking a stale result fresh.
+   */
+  private readonly dryRunErrorOf = signal('');
+  /** The error, while it is still about what is on screen. */
+  protected readonly currentError = computed(() =>
+    this.dryRunErrorOf() === this.dryRunSubject() ? this.dryRunError() : null,
+  );
+
+  /**
+   * The steps that were configured but never evaluated, because an earlier one stopped the request.
+   *
+   * `dry_run` stops where production stops, which is the truthful thing for it to do — but it left
+   * a reader who blocks at step 1 with no way to find out whether steps 2 and 3 work at all, which
+   * is what somebody checking a use case for compatibility is actually asking. They are shown as
+   * what they are: configured, in order, **not reached**. Inventing outcomes for them would be a
+   * claim about model calls that were never made.
+   *
+   * Taken from the configuration **as it was when the run was made**, not the current one: the two
+   * differ exactly when the trace is stale, and pairing this run's trace with a step list edited
+   * afterwards is how a card comes to be labelled with the wrong step's name.
+   */
+  private readonly dryRunSteps = signal<PipelineStep[]>([]);
+  protected readonly notReached = computed(() => {
+    const result = this.dryRun();
+    // Nothing is unreached when the run was told to keep going: every configured step has a card
+    // of its own, and a second list of the same steps would contradict it.
+    if (!result?.blocked || result.trace.length >= this.dryRunSteps().length) return [];
+    return this.dryRunSteps()
+      .slice(result.trace.length)
+      .map((step, index) => ({
+        step: result.trace.length + index + 1,
+        title: STEP_LABELS[step.type] ?? step.type,
+      }));
+  });
+
   private dryRunSubject(): string {
-    return JSON.stringify([this.config(), this.sampleSystem(), this.sampleUser()]);
+    return JSON.stringify([
+      this.config(),
+      this.sampleSystem(),
+      this.sampleUser(),
+      this.pastBlocks(),
+    ]);
   }
 
   protected actionClass(action: string): string {
@@ -193,6 +255,7 @@ export class PipelineEditor implements OnInit {
         output: text(detail, 'output'),
         before: text(detail, 'before'),
         after: text(detail, 'after'),
+        simulated: entry.after_block === true,
       };
     }),
   );
@@ -449,7 +512,10 @@ export class PipelineEditor implements OnInit {
     // that appears to reload makes somebody wonder what else it just did.
     this.dryRunError.set(null);
     this.dryRunning.set(true);
-    this.dryRunOf.set(this.dryRunSubject());
+    // What this attempt is about, resolved **now**: the reader can keep editing while it runs, and
+    // the answer that comes back is about the pipeline that was sent, not the one on screen.
+    const subject = this.dryRunSubject();
+    const steps = this.config().steps;
     this.service
       .dryRunPipeline({
         // A dry run spends real tokens, so the gateway wants to know whose they are and refuses a
@@ -458,14 +524,18 @@ export class PipelineEditor implements OnInit {
         system: this.sampleSystem(),
         user: this.sampleUser(),
         pipeline: this.config(),
+        past_blocks: this.pastBlocks(),
       })
       .subscribe({
         next: (result) => {
           this.dryRun.set(result);
+          this.dryRunSteps.set(steps);
+          this.dryRunOf.set(subject);
           this.dryRunning.set(false);
         },
         error: (response: { status?: number }) => {
           this.dryRunning.set(false);
+          this.dryRunErrorOf.set(subject);
           this.dryRunError.set(
             // 401 and 403 were one message, and they are two different problems now. A dry run
             // spends real tokens, so the gateway applies the **membership** rule a request gets

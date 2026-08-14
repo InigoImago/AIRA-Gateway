@@ -3864,6 +3864,30 @@ MUTATIONS = [
         CLASSIFIERS,
     ),
     Mutation(
+        "QA37",
+        "the dry run stops where production stops unless it was asked not to",
+        "gateway/src/aira_gateway/pipeline/engine.py",
+        "                if not past_blocks:\n                    break",
+        "                pass",
+        "gateway/tests/test_pipeline_engine.py gateway/tests/test_pipeline_dryrun.py",
+    ),
+    Mutation(
+        "QA38",
+        "a step that only ran past a block is marked as the simulation it is",
+        "gateway/src/aira_gateway/pipeline/engine.py",
+        "            trace.append(TraceEntry(evaluation.type, evaluation.action, evaluation.detail, blocked))",  # noqa: E501
+        "            trace.append(TraceEntry(evaluation.type, evaluation.action, evaluation.detail, False))",  # noqa: E501
+        "gateway/tests/test_pipeline_engine.py gateway/tests/test_pipeline_dryrun.py",
+    ),
+    Mutation(
+        "QA39",
+        "the console's keep-going option reaches the engine",
+        "gateway/src/aira_gateway/api/pipeline.py",
+        "            past_blocks=payload.past_blocks,",
+        "",
+        "gateway/tests/test_pipeline_dryrun.py",
+    ),
+    Mutation(
         "QA36",
         "a router's answer names the model that gave it, not the one routed to",
         "gateway/src/aira_gateway/pipeline/engine.py",

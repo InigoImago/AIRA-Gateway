@@ -133,3 +133,34 @@ this panel exists to prevent. It is labelled out of date rather than cleared (th
 still the most useful thing there), and the browser-side live preview comes back, because at that
 moment it is the only thing on the panel describing the pipeline as it now stands. The comparison
 includes the **sample text**: a verdict about one sentence sitting under another is just as stale.
+
+### 4.5 What a refused dry run must still tell you
+
+Three defects, reported together from the console.
+
+**The rejection message outlived what it was about.** It stayed until the next run, so a reader who
+read it, changed the step it named and looked again was still being told about an attempt that no
+longer matched anything on screen. It is now bound to the same subject the trace is — configuration,
+sample text, and the option below — and disappears when that changes. Held in a *separate* signal
+from the trace's, because a failed attempt and a displayed trace are about different things: one
+signal for both stamped the new configuration onto the old trace, marking a stale result fresh.
+
+**A block hid every step behind it.** `dry_run` stops where production stops, which is the truthful
+thing for it to do, and it left somebody whose first step blocks unable to see that the rest of the
+pipeline is even there. The remaining configured steps now appear as cards marked *not reached*,
+taken from the configuration **as it was when the run was made** — the two differ exactly when the
+trace is stale, and pairing this trace with a step list edited afterwards labels a card with the
+wrong step's name.
+
+**And the steps can be run anyway**, because *"I would like to see it, because then I can check
+compatibility for my use case"* asks for results and not for an explanation of their absence.
+`past_blocks` keeps evaluating after a refusal. Off by default and opt-in: the answer this panel
+gives by default has to be the one production would give, and every step run past a block spends
+real tokens on a call the served path never makes (recorded like any other, `FRD-125b`). Those
+entries carry `after_block` and the screen badges them *would not run — refused above*; the refusal
+that describes production stays the first one, and a later step refusing is a second simulated
+outcome rather than a correction.
+
+The console's checkbox was written, tested and **absent from the template** — the tests set the
+signal directly and passed over a setting reachable from code and from nowhere a person could click.
+The test now goes through the control.

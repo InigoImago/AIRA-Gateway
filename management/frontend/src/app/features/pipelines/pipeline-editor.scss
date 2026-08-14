@@ -256,6 +256,22 @@
   background: #fafafa;
 }
 
+/* Configured but never reached. Dashed and faded, the same idiom the graph uses for a fallback:
+ * present in the pipeline, not on this request's path. */
+.trace__step--skipped {
+  border-style: dashed;
+  background: #fafafa;
+}
+/* Ran, but only in simulation: production refused before it. Dashed like a not-reached step,
+ * because that is what it would have been — the difference is that this one has an answer. */
+.trace__step--simulated {
+  border-style: dashed;
+}
+.trace__n--skipped {
+  color: var(--aira-text-muted);
+  background: #f3f4f6;
+}
+
 .trace__head {
   display: flex;
   align-items: center;

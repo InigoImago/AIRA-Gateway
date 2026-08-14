@@ -195,9 +195,13 @@ test.describe('Form alignment', () => {
     await page.goto(`/use-cases/${slug}?tab=members`);
     await expectFormControlsAligned(page, 'grant access');
 
-    await page.goto(`/use-cases/${slug}?tab=keys`);
-    await page.click('button:has-text("Issue key")');
-    await expectFormControlsAligned(page, 'issue key');
+    // The issue-key window is **not** checked, for the same reason as the create form and found
+    // the same way: the guard reported "nothing with two controls on a line was found to compare".
+    // It said `.form-inline` and laid out as three lines regardless — each field as wide as its own
+    // hint, so the inputs were 838, 641 and 461 px wide. It is a `stack` now, which is what a form
+    // in a window with a sentence under every field actually is, and a stack has no row that could
+    // become a staircase. Left here as a comment rather than deleted: the next person to look at
+    // that window should know it was considered.
 
     await page.goto(`/use-cases/${slug}?tab=budgets`);
     await page.click('button:has-text("Add budget")');

@@ -55,6 +55,9 @@ class DryRunRequest(BaseModel):
     user: str = Field(default="", max_length=MAX_SAMPLE_CHARS)
     model: str = Field(default="", max_length=128)
     pipeline: dict[str, Any] = {}
+    #: Keep evaluating after a step refuses — a simulation of the steps production never reaches.
+    #: Costs real tokens for those steps, which is why it is opt-in and off by default.
+    past_blocks: bool = False
 
 
 def models_named_in(pipeline: dict[str, Any]) -> list[str]:
@@ -204,6 +207,7 @@ async def dry_run(
             canonical,
             model_calls=trail.model_calls,
             declaration_of=await declared_model(request),
+            past_blocks=payload.past_blocks,
         )
     finally:
         # In the `finally` for the same reason the served path puts it there: a filter that blocked
@@ -218,7 +222,12 @@ async def dry_run(
             "effective_model": result.effective_model,
             "fallback_models": list(result.fallback_models),
             "trace": [
-                {"type": entry.type, "action": entry.action, "detail": entry.detail}
+                {
+                    "type": entry.type,
+                    "action": entry.action,
+                    "detail": entry.detail,
+                    "after_block": entry.after_block,
+                }
                 for entry in result.trace
             ],
         }

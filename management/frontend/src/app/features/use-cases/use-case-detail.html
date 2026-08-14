@@ -460,8 +460,20 @@
             for a team or a service rather than for you personally, issue it under an account that
             says so.
           </p>
-          <form id="issue-key-form" class="form-inline" (ngSubmit)="issueKey()">
-            <div class="field grow">
+          <!--
+            **A stack, not a row.** It declared `.form-inline` and laid out as three lines anyway:
+            each field is as wide as its own hint, so the inputs came out 838, 641 and 461 px wide
+            — a ragged right edge that reads as a rendering fault. `.form-inline` is for a filter
+            row, where two or three short controls genuinely share a line; a window is a form, and
+            a form in a 880 px dialog with a sentence under every field has one control per line
+            whatever class it claims.
+
+            The alignment guard found this by insisting it had something to compare: no line here
+            carries two controls, which is the same thing it reported about the create-use-case
+            form before that assertion was withdrawn for the same reason.
+          -->
+          <form id="issue-key-form" class="stack" (ngSubmit)="issueKey()">
+            <div class="field">
               <label for="key-label">Label (optional)</label>
               <input
                 id="key-label"

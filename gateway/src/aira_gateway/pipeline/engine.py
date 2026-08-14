@@ -209,6 +209,12 @@ class TraceEntry:
     type: str
     action: str  # passed | flagged | blocked | allowed | rejected | rerouted | unchanged
     detail: dict[str, Any]
+    #: This step ran only because the caller asked the dry run to keep going past a block. In
+    #: production the request would already have been refused, so what it says here is a
+    #: **simulation** and the screen has to label it as one — an unlabelled outcome for a step
+    #: production never reaches is exactly the confident statement about the wrong thing this panel
+    #: exists to prevent.
+    after_block: bool = False
 
 
 @dataclass
@@ -305,12 +311,21 @@ class PipelineEngine:
         *,
         model_calls: list[ModelCall] | None = None,
         declaration_of: DeclarationOf | None = None,
+        past_blocks: bool = False,
     ) -> DryRunResult:
         """Evaluate the pipeline without dispatching the caller's own generation.
 
         ``model_calls`` is the same caller-supplied list `run` takes, and for the same reason: a
         step that blocks still spent whatever it took to decide that, and the spend has to survive
         the exception rather than being read off a result that was never returned.
+
+        ``past_blocks`` keeps evaluating after a step refuses, which **production never does** —
+        asked for by an operator checking whether the rest of a pipeline works at all: a filter
+        that blocks the sample leaves every step behind it untested, and the only way to see them
+        was to delete the filter and put it back. Off by default, because the default answer this
+        screen gives has to be the one production would give, and every step it runs past a block
+        spends real tokens on a call the served path would never make. The entries are marked so
+        the screen can say which half is a simulation.
         """
         trace: list[TraceEntry] = []
         calls: list[ModelCall] = model_calls if model_calls is not None else []
@@ -323,10 +338,15 @@ class PipelineEngine:
                 calls.append(evaluation.call)
             if evaluation.request is not None:
                 current = evaluation.request
-            trace.append(TraceEntry(evaluation.type, evaluation.action, evaluation.detail))
-            if evaluation.block_reason is not None:
+            # `blocked` is read **before** this step's own outcome is folded in, so the step that
+            # blocks is not marked as coming after itself.
+            trace.append(TraceEntry(evaluation.type, evaluation.action, evaluation.detail, blocked))
+            if evaluation.block_reason is not None and not blocked:
+                # The **first** refusal is the one that describes production. A later step
+                # refusing as well is a second simulated outcome, not a correction of this one.
                 blocked, reason = True, evaluation.block_reason
-                break
+                if not past_blocks:
+                    break
         return DryRunResult(trace, blocked, reason, current.model, pipeline.fallback_models, calls)
 
     # -- one step, one answer -------------------------------------------------------------

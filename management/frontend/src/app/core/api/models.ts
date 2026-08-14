@@ -197,6 +197,11 @@ export interface DryRunTraceEntry {
   type: string;
   action: string;
   detail: Record<string, unknown>;
+  /**
+   * This step ran only because the dry run was asked to keep going past a block. Production stops
+   * at the refusal, so what this entry says is a **simulation** and the screen labels it as one.
+   */
+  after_block?: boolean;
 }
 
 export interface DryRunResult {

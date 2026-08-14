@@ -209,8 +209,32 @@
               {{ dryRunning() ? 'Running…' : 'Run dry-run' }}
             </button>
           </div>
+          <!--
+            Off by default, and that is the setting rather than the styling: the answer this panel
+            gives by default has to be the answer production would give. Asked for because a filter
+            that blocks the sample leaves every step behind it untested, and the only way to see
+            them was to delete the filter and put it back.
+          -->
+          <label class="checkline" style="margin: -0.4rem 0 0">
+            <input
+              type="checkbox"
+              id="past-blocks"
+              [ngModel]="pastBlocks()"
+              (ngModelChange)="pastBlocks.set($event)"
+            />
+            <span class="muted">
+              Keep going past a block — runs the later steps too, so you can check them against this
+              use case. Production stops at the refusal, and those steps cost tokens here.
+            </span>
+          </label>
 
-          @if (dryRunError(); as message) {
+          <!--
+            `currentError`, not `dryRunError`: the message is about one attempt, and it used to stay
+            on screen until the next run — so a reader who read it, changed the step it was about
+            and looked again was still being told about an attempt that no longer matched anything
+            in front of them.
+          -->
+          @if (currentError(); as message) {
             <p class="callout callout--danger" style="margin: 0">{{ message }}</p>
           }
           @if (dryRunning() && dryRun()) {
@@ -239,11 +263,21 @@
               -->
             <ol class="trace">
               @for (card of traceCards(); track $index) {
-                <li class="trace__step">
+                <li class="trace__step" [class.trace__step--simulated]="card.simulated">
                   <div class="trace__head">
-                    <span class="trace__n">{{ card.step }}</span>
+                    <span class="trace__n" [class.trace__n--skipped]="card.simulated">{{
+                      card.step
+                    }}</span>
                     <span class="trace__title">{{ card.title }}</span>
                     <span class="badge {{ card.badge }}">{{ card.action }}</span>
+                    <!--
+                      Said on the card, not once above the list: this entry describes a step
+                      production never reaches, and a reader scanning outcomes reads the badge
+                      beside the step, not a caption further up.
+                    -->
+                    @if (card.simulated) {
+                      <span class="badge badge--muted">would not run — refused above</span>
+                    }
                   </div>
                   <p class="trace__summary">{{ card.summary }}</p>
                   @if (card.classifier) {
@@ -269,6 +303,26 @@
                       </div>
                     </div>
                   }
+                </li>
+              }
+              <!--
+                Configured, in order, and never evaluated — because an earlier step stopped the
+                request. `dry_run` stops where production stops, which is the truthful thing for it
+                to do, but it left somebody whose first step blocks with no way to see whether the
+                rest of their pipeline works at all. Shown as what they are; an outcome invented
+                for them would be a claim about model calls that were never made.
+              -->
+              @for (card of notReached(); track $index) {
+                <li class="trace__step trace__step--skipped">
+                  <div class="trace__head">
+                    <span class="trace__n trace__n--skipped">{{ card.step }}</span>
+                    <span class="trace__title">{{ card.title }}</span>
+                    <span class="badge badge--muted">not reached</span>
+                  </div>
+                  <p class="trace__summary muted">
+                    The request stopped above, so this step was never asked. Remove or relax the
+                    step that blocked to test this one.
+                  </p>
                 </li>
               }
               <li class="trace__step trace__step--end">

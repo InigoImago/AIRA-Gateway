@@ -5,6 +5,48 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## A refused dry run still has to say what it found (`FRD-309`)
+
+Reported: *"when I start a dry run and it was rejected, the warning or error doesn't go away, and I
+can't see the result of my dry run for each step — I would like to see it, because then I can check
+compatibility for my use case."* Reproduced both halves in the browser before changing anything.
+
+**The message outlived its subject.** It stayed until the next run, so reading it, fixing the step
+it named and looking again still showed the old complaint. Bound to the same subject as the trace
+now — configuration, sample text, keep-going option — in a **separate** signal, because one signal
+for both stamped the new configuration onto the old trace and marked a stale result fresh. That
+second bug never reached the screen; it fell out of writing the first fix down.
+
+**A block hid every step behind it.** The remaining configured steps are cards marked *not reached*,
+built from the configuration as it was **when the run was made**.
+
+**And they can now be run.** `past_blocks` keeps evaluating past a refusal — opt-in, because the
+default answer has to be production's answer and each such step spends real tokens on a call the
+served path never makes. Marked `after_block` on the wire and badged *would not run — refused above*
+on screen. Verified live: a heuristic filter blocks, the routing step behind it runs, is dashed,
+badged, and shows the classifier's reply.
+
+**The checkbox was written, tested, and not in the template.** The component tests set the signal
+directly, so they passed over a setting reachable from code and from nowhere a person could click —
+found by the browser probe, not by the suite. The test goes through the control now, and fails when
+the control is missing.
+
+Fixed alongside, and it is the same shape: the **issue-key window** said `.form-inline` and laid out
+as three lines regardless, each field as wide as its own hint — inputs 838, 641 and 461px, a ragged
+right edge. It is a `stack`, which is what a form in a window with a sentence under every field
+actually is. That was the pre-existing alignment failure reported in the previous entry.
+
+And a **45-second timeout on a button that was on screen the whole time**: `submitOfOpenForm`
+branched on `await locator.count()`, a single immediate poll taken the moment the opening click
+returned. On a slow render it saw zero, fell back to the page-level selector, and waited for
+something that cannot exist — a window's submit button sits in the modal footer with `form="…"`,
+outside any `<form>`. Warm, the modal won the race every time; restarting the backend first
+reproduced it on demand. It waits for whichever appears now.
+
+`QA37`-`QA39`, each shown to fail first, and each half of the new wire broken separately.
+
+---
+
 ## The builder shows what the models said, and nothing scrolls inside it (`FRD-309`)
 
 Reported after the PII step shipped: the graph is short, the inspector on the right grows long, the

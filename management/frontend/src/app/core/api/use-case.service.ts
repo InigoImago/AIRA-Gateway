@@ -180,6 +180,8 @@ export class UseCaseService {
     user: string;
     model?: string;
     pipeline: PipelineConfig;
+    /** Keep evaluating after a step refuses. Costs real tokens for steps production never runs. */
+    past_blocks?: boolean;
   }): Observable<DryRunResult> {
     return this.http.post<DryRunResult>('/gw/v1beta/pipeline:dryRun', payload);
   }
