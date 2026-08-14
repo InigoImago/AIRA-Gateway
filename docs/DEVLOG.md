@@ -60,6 +60,13 @@ it, which is most of the time anybody spends on those tabs. **A warning nobody m
 that was not given.** It is on the tab as well now, wherever such a row already exists, rendered
 from **one** definition through an `ng-template` so the two places cannot drift.
 
+**Then: too strong.** It was written as a warning and read as one — nothing here is broken, a
+reader simply has to know how the figure is counted, and a callout that sounds like an alarm about
+a working system is the wrong kind of accurate. Two sentences now, and a plain callout rather than
+a warning one: *"Counted per credential. An API key and a Keycloak sign-in are two separate budgets
+for the same person; all of their keys share one. A budget for the whole use case still bounds
+both."*
+
 **And the second half of that report was the more important one**: *global budgets and global rate
 limits come before the personal limit*. Measured — a use-case cap of four requests, exhausted, and
 then **both** credentials refused, key and bearer alike. So the doubling is of the *per-head*

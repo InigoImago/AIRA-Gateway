@@ -52,7 +52,7 @@ test.describe('Window actions', () => {
     await page.getByLabel('Applies to').selectOption('each_member');
 
     await expect(warning).toBeVisible();
-    await expect(warning).toContainText('Two allowances per person');
+    await expect(warning).toContainText('Counted per credential');
     await expect(warning).toContainText('Keycloak');
 
     // The qualifier, which matters as much: a use-case-wide figure binds **both** allowances —

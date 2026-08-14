@@ -320,7 +320,7 @@ describe('RateLimitsTab — the per-head warning', () => {
 
     const warning = harness.fixture.nativeElement.querySelector('[data-testid="rl-two-pots"]');
     expect(warning).not.toBeNull();
-    expect(warning?.textContent).toContain('Two allowances per person');
+    expect(warning?.textContent).toContain('Counted per credential');
     expect(warning?.textContent).toContain('Keycloak');
   });
 });

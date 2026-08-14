@@ -178,31 +178,25 @@
 </div>
 
 <!--
-  **Measured on the live stack** (2026-08-14, a limit of one per head): a person's API keys share
-  one allowance — a key's subject is its owner's name, so every key they own counts to the same
-  place — while the same person signed in through Keycloak gets a *separate* one. The two
-  credentials answer "who is this" in different alphabets, and nothing reconciles them since the
-  scope that named a person by hand was removed.
+  Measured on the live stack (2026-08-14): a person's API keys share one allowance — a key's subject
+  is its owner's name — while the same person over Keycloak gets a separate one, because the two
+  credentials answer "who is this" in different alphabets and nothing reconciles them since the
+  scope that named a person by hand was removed. Also measured, and the reason the second sentence
+  is here: a use-case-wide figure binds **both**, so the doubling is of the per-head allowance and
+  not of what the use case can spend.
 
-  **And the qualifier is as important as the warning**, also measured: a budget or limit for the
-  whole use case binds **both** credentials. With a use-case cap of four requests exhausted, the
-  key and the bearer token were each refused. So the doubling is of the *per-head* allowance, not
-  of what the use case can spend — a reader who is told only the first half concludes the
-  governance is broken by a factor of two.
+  **Stated, not warned.** It was written as a warning and read as one — "too strong, make it
+  informative". Nothing here is broken; a reader simply has to know how the figure is counted, and
+  a callout that sounds like an alarm about a working system is the wrong kind of accurate.
 
-  Rendered in two places from one definition: in the window while somebody is choosing the scope,
-  where it prevents the mistake, **and on the tab wherever such a row already exists**, which is
-  where anybody reading the configuration is looking. It was in the window only, and the report
-  was exactly that — "where do I find these notes? there is nothing in budgets or rate limits".
-  A warning nobody meets is a warning that was not given.
+  Rendered from one definition in two places: in the window while the scope is being chosen, and on
+  the tab wherever such a row exists — the report that produced the second was "where do I find
+  these notes?", which a warning living only in a creation window earns.
 -->
 <ng-template #twoPots>
-  <p class="callout callout--warning" data-testid="rl-two-pots" role="status">
-    <strong>Two allowances per person, not one.</strong> All of somebody's API keys share one;
-    signing in through Keycloak gives them a second, separate one — so somebody running an agent
-    with a key <em>and</em> working in the browser has this rate twice over.
-    <br />
-    A rate for the <strong>whole use case</strong> still bounds both of them together. Set one of
-    those as well if the total is what matters.
+  <p class="callout" data-testid="rl-two-pots" role="status">
+    <strong>Counted per credential.</strong> An API key and a Keycloak sign-in are two separate
+    limits for the same person; all of their keys share one. A limit for the whole use case still
+    bounds both.
   </p>
 </ng-template>
