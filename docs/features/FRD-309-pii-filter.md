@@ -93,3 +93,43 @@ Text only. A `responseSchema` document with a sentence in front of it is unparse
 caller would get a parse error instead of an answer — worse than not being told. A tool call has no
 text: the answer *is* the call. Both cases are recorded rather than skipped, because "no notice
 shown" and "nothing was redacted" are different facts and an answer alone cannot distinguish them.
+
+### 4.4 The dry run explains itself, and the panel sits where it is read
+
+Reported after the step shipped: *the pipeline graph is short, the inspector on the right is long,
+and the test area ends up right at the bottom — no scrollable areas please — and it would be good
+if the dry run showed step by step what the models put out, so the results can be followed.*
+
+Measured with a routing step selected: graph 478 px, inspector 688 px, test panel starting at
+y=1232 in a 720 px viewport. The left column held 210 px of dead space while the panel whose whole
+job is to say whether the configuration works sat half a screen under the fold. It is in that space
+now (graph 397, panel below it starting at 675), and the inspector's `position: sticky` +
+`overflow-y: auto` is gone — a scroll container inside a document that already scrolls gives a
+reader two scrollbars, one of which only appears sometimes. The height cap it came with had its own
+failure: a sticky element taller than the viewport pins its top and leaves its lower half
+unreachable, which is what the routing step's default-model field used to do with enough
+categories. What made the sticky panel look necessary was the empty left column.
+
+**Two `<fieldset>`s, and the reason is the read-only rule.** A reader who cannot manage a pipeline
+may still run it, and `<fieldset disabled>` makes every descendant inert with no way to exempt one
+— wrapping the grid took the dry run away from exactly the people the read-only view is for.
+
+The trace used to render `[blocked] injection_filter` per entry: what happened, never why. For all
+three LLM-backed steps the why is a model's own answer, and nothing carried it. Each step is now a
+card naming the model that was **asked** (never the model routed *to*), what it replied verbatim,
+and — for the redactor — the caller's sentence before and after. `undetermined` is the case this
+exists for: neither word, both words, an empty reply and a refused call are one verdict and four
+different repairs.
+
+**Shown, never stored.** `FRD-122` §5.3 keeps a classifier's prose off the audit row through an
+allow-list, precisely so a step cannot start storing it by default. The reply travels in the trace
+entry's `detail`, which is a screen; a step's `decision` is the durable record and is unchanged.
+The gateway caps a reply at 600 characters, because a reasoning model asked for one word can
+deliberate for several hundred tokens.
+
+And a trace stays on screen while somebody keeps editing, so from the first change it describes a
+configuration that no longer exists — a confident statement about the wrong thing, which is what
+this panel exists to prevent. It is labelled out of date rather than cleared (the last result is
+still the most useful thing there), and the browser-side live preview comes back, because at that
+moment it is the only thing on the panel describing the pipeline as it now stands. The comparison
+includes the **sample text**: a verdict about one sentence sitting under another is just as stale.

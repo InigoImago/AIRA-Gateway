@@ -5,6 +5,65 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The builder shows what the models said, and nothing scrolls inside it (`FRD-309`)
+
+Reported after the PII step shipped: the graph is short, the inspector on the right grows long, the
+test area ends up at the very bottom — **no scrollable areas** — and the dry run should show step by
+step what the models put out.
+
+**Measured before touching it.** With a routing step selected: graph 478 px, inspector 688 px, test
+panel starting at **y=1232 in a 720 px viewport**. The left column held 210 px of dead space while
+the panel that says whether the configuration works sat half a screen under the fold. It lives in
+that space now (panel top **675**, page 1407 → 1269), and the inspector's `position: sticky` +
+`overflow-y: auto` is gone — a scroll container inside a document that already scrolls gives a
+reader two scrollbars and one of them appears only sometimes. Its height cap had its own failure: a
+sticky element taller than the viewport pins its top and leaves its lower half unreachable, which is
+what the routing step's default-model field used to do with enough categories. What made the sticky
+panel look necessary was the empty left column. The e2e guard that asserted `overflow-y: auto`
+**asserted the defect as a requirement**; it now asserts that nothing inside the builder scrolls on
+its own, over every element rather than the inspector by name.
+
+**Two `<fieldset>`s came out of it, and they are the read-only rule.** A reader who cannot manage a
+pipeline may still run it — the callout says so — and `<fieldset disabled>` makes every descendant
+inert with no way to exempt one, so the grid-wide guard took the dry run away from exactly the
+people the read-only view is for. Caught by the existing reader test, which now checks **every**
+fieldset: with one hard-coded binding, checking the first would pass.
+
+**The trace explains itself.** It rendered `[blocked] injection_filter` per entry — what happened,
+never why, and for all three LLM-backed steps the why is a model's own answer that nothing carried.
+Each step is a card now: the model that was **asked** (never the one routed *to* — the routed model
+is already on the same card, and borrowing that name makes the router's decision read as the
+answering model's), what it replied verbatim, and for the redactor the caller's sentence before and
+after. Live: an LLM filter against the mock returned `undetermined` and the panel showed the reply
+that explains it — which is the whole feature, since neither word, both words, an empty reply and a
+refused call are one verdict and four different repairs.
+
+**Shown, never stored.** `FRD-122` §5.3 keeps a classifier's prose off the audit row through an
+allow-list. The reply travels in the trace entry's `detail`, which is a screen; `decision` is
+unchanged, and a test asserts both halves of that at once.
+
+**A trace that outlives its configuration is a confident statement about the wrong thing** — the
+failure this panel exists to prevent. It is labelled out of date rather than cleared, and the
+browser-side live preview returns, being then the only thing describing the pipeline as it stands.
+The comparison includes the **sample text**: a verdict about one sentence sitting under another is
+just as stale.
+
+One e2e assertion was **passing for the wrong reason**: `expect('.callout--danger').not.toContainText(
+'AIRA_OIDC_ENABLED')` matched the *block reason*, which happened to be styled as a danger callout.
+With the refusal now a card, that locator matches nothing on a healthy run and
+`not.toContainText` **fails** against an absent element — which is how it announced itself.
+
+Also: the "nothing released" callout moved **above** the builder. It explains why every model
+dropdown is empty and why a dry run will refuse, and a reader who meets it after scrolling past both
+columns has already drawn their own conclusion.
+
+`QA34`–`QA36`, each shown to fail first. **Pre-existing and reported, not touched**: the e2e
+alignment guard fails on the *issue-key* window with "nothing with two controls on a line was found
+to compare" — the form declares `.form-inline` and lays out one field per line (the first carries
+`.grow`). Confirmed on `HEAD` by rebuilding the frontend from a stash.
+
+---
+
 ## A step that rewrites the prompt, and the two firsts it needed (`FRD-309`)
 
 Asked for: an LLM-based PII replacer — a trusted model from the use case's released list, an

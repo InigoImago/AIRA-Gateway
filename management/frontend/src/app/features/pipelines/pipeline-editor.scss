@@ -19,6 +19,15 @@
     width: min(1240px, calc(100vw - 4rem));
     margin-left: calc((100% - min(1240px, calc(100vw - 4rem))) / 2);
   }
+
+  /* The read-only guards are `<fieldset>`s, so they sit between the grid and the cards. A
+   * fieldset's default `min-width: min-content` ignores the track and pushes the column wide
+   * enough for its longest unbreakable word — which is what `minmax(0, …)` above exists to
+   * prevent. Stated here rather than left to `.bare`, because it is a consequence of this layout
+   * and not of what `.bare` means. */
+  > fieldset {
+    min-width: 0;
+  }
 }
 
 /* ---- graph ---------------------------------------------------------------------- */
@@ -151,21 +160,34 @@
 
 /* ---- inspector ------------------------------------------------------------------ */
 
+/* The inspector scrolls with the page, and that is the point.
+ *
+ * It used to be `position: sticky` with `overflow-y: auto`, which is a scroll container inside a
+ * document that already scrolls: two scrollbars, and the inner one only appears once the panel is
+ * taller than the viewport, so a form that fits looks nothing like one that does not. The height
+ * cap that came with it had its own failure — a sticky element taller than the viewport pins its
+ * top and leaves its lower half unreachable, which is how the routing step's "Default model" field
+ * became unscrollable with enough categories.
+ *
+ * What made the sticky panel seem necessary was the empty left column: with the test panel now
+ * under the graph, the two columns are of comparable height and there is nothing to pin. */
 .pipe__inspector {
   display: flex;
   flex-direction: column;
   gap: 0.85rem;
   min-width: 0;
+}
 
-  /* Sticky only where there is a second column to stay beside. The height cap matters: a
-   * sticky element taller than the viewport pins its top and leaves its lower half
-   * permanently unreachable — with many routing categories the "Default model" field was
-   * simply unscrollable. */
-  @media (min-width: 861px) {
-    position: sticky;
-    top: 1rem;
-    max-height: calc(100vh - 2rem);
-    overflow-y: auto;
+/* ---- left column: the graph, and the results underneath it ---------------------- */
+
+.pipe__left {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  min-width: 0;
+
+  > fieldset {
+    min-width: 0;
   }
 }
 
@@ -193,14 +215,138 @@
   background: #fafafa;
 }
 
-.test-cols {
+/* ---- the dry run's trace -------------------------------------------------------- */
+
+.trace {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.trace__step {
+  border: 1px solid var(--aira-border);
+  border-radius: var(--aira-radius-sm);
+  padding: 0.6rem 0.7rem;
+  background: var(--aira-surface);
+  min-width: 0;
+
+  /* The connector between two steps, drawn as a pseudo-element on the second so the last one has
+   * no dangling tail — the same shape the graph above uses, deliberately: this is that graph's
+   * result and reading one against the other should not mean translating between two idioms. */
+  & + .trace__step {
+    margin-top: 18px;
+    position: relative;
+
+    &::before {
+      content: '';
+      position: absolute;
+      left: 50%;
+      top: -18px;
+      width: 2px;
+      height: 18px;
+      background: var(--aira-border-strong);
+    }
+  }
+}
+
+.trace__step--end {
+  background: #fafafa;
+}
+
+.trace__head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.trace__n {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--aira-brand-strong);
+  background: var(--aira-brand-soft);
+  border-radius: 50%;
+}
+.trace__n--stop {
+  color: var(--aira-danger);
+  background: var(--aira-danger-soft);
+}
+.trace__n--go {
+  color: #f9fafb;
+  background: #111827;
+}
+
+.trace__title {
+  font-weight: 600;
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+.trace__summary {
+  margin: 0.35rem 0 0;
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
+.trace__asked {
+  margin: 0.2rem 0 0;
+  font-size: 0.78rem;
+}
+
+.trace__label {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--aira-text-muted);
+  margin-bottom: 0.15rem;
+}
+
+/* A model's reply, shown as what it is: text somebody else wrote. Wrapped rather than scrolled —
+ * the gateway caps the length, so there is no case where this runs away, and a scroll box inside
+ * a card inside a page is exactly what this screen was rearranged to get rid of. */
+.trace__said pre,
+.trace__diff pre {
+  margin: 0;
+  padding: 0.4rem 0.5rem;
+  border-radius: var(--aira-radius-sm);
+  background: #f6f7f9;
+  border: 1px solid var(--aira-border);
+  font-size: 0.78rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.trace__said {
+  margin-top: 0.5rem;
+}
+
+.trace__diff {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 1.25rem;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
 
-  @media (max-width: 640px) {
+  @media (max-width: 720px) {
     grid-template-columns: 1fr;
   }
+}
+
+/* The rewritten half, marked as the one that goes on. Colour alone would say "good"; the label
+ * above it says which is which, so this only has to be distinguishable. */
+.trace__after {
+  border-color: var(--aira-success) !important;
+  background: var(--aira-success-soft) !important;
 }
 
 .trace-row {

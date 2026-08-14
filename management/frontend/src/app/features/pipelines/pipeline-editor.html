@@ -36,109 +36,293 @@
         of this use case.
       </p>
     }
-    <!-- A native disabled fieldset, so every control inside it — including the buttons that add
-         and remove steps — is genuinely inert. Leaving the graph editable and only hiding Save
-         would let somebody rearrange a pipeline for nothing. -->
-    <fieldset class="bare" [disabled]="!canManage()">
-      <div class="pipe">
-        <!-- Graph -->
-        <div class="pipe__graph card">
-          <div class="node node--endpoint">Request in</div>
-          <div class="edge"></div>
+    @if (nothingReleased()) {
+      <!--
+        Said once, **above** the builder rather than under it, which is where it used to sit: it
+        explains why every model dropdown on this page is empty and why a dry run will refuse, so a
+        reader who meets it after scrolling past both has already drawn their own conclusion. A use
+        case with nothing released can serve nothing either, so a pipeline for it is a
+        configuration for traffic that is refused before a step runs.
+      -->
+      <p class="callout callout--warning" data-testid="pipeline-nothing-released">
+        No model is released to this use case, so there is nothing to route to and nothing to test
+        with — and every request it makes is refused before a step runs. Release a model on the use
+        case first.
+      </p>
+    }
+    <div class="pipe">
+      <!--
+        **The left column is the graph *and* the test panel.** Measured with a routing step
+        selected: the graph is 478 px tall and the inspector 688, so the left column left 210 px of
+        dead space while the test panel sat below both — starting at y=1232 in a 720 px viewport,
+        half a screen under the fold, on the one panel whose job is to say whether what you just
+        configured works.
 
-          @for (step of config().steps; track $index) {
-            <div
-              class="node node--step"
-              [class.is-selected]="selectedIndex() === $index"
-              (click)="select($index)"
-              (keydown.enter)="select($index)"
-              (keydown.space)="select($index); $event.preventDefault()"
-              tabindex="0"
-              role="button"
-              [attr.aria-pressed]="selectedIndex() === $index"
-              [attr.aria-label]="'Step ' + ($index + 1) + ': ' + label(step.type) + '. Configure.'"
-            >
-              <div class="node__body">
-                <span class="node__index" aria-hidden="true">{{ $index + 1 }}</span>
-                <div class="node__text">
-                  <div class="node__title">{{ label(step.type) }}</div>
-                  <div class="node__meta muted">{{ summarize(step) }}</div>
+        Putting it in that space balances the columns and brings the results up beside the step
+        being edited. No scroll container anywhere: the inspector used to be `position: sticky` with
+        `overflow-y: auto`, which is a scrollable area inside a page that already scrolls.
+
+        **The two fieldsets are the reason the grid is not inside one.** A reader who cannot manage
+        this pipeline may still run it — the callout above says so — and a `<fieldset disabled>`
+        makes *every* descendant inert, with no way to exempt one. Wrapping the whole grid put the
+        test panel inside the guard and took the dry run away from exactly the people the read-only
+        view is for. Both bind the same `canManage()`; there is one rule and two places it is
+        applied, which the reader test below asserts by checking every fieldset on the page.
+      -->
+      <div class="pipe__left">
+        <!-- A native disabled fieldset, so every control inside it — including the buttons that add
+             and remove steps — is genuinely inert. Leaving the graph editable and only hiding Save
+             would let somebody rearrange a pipeline for nothing. -->
+        <fieldset class="bare" [disabled]="!canManage()">
+          <!-- Graph -->
+          <div class="pipe__graph card">
+            <div class="node node--endpoint">Request in</div>
+            <div class="edge"></div>
+
+            @for (step of config().steps; track $index) {
+              <div
+                class="node node--step"
+                [class.is-selected]="selectedIndex() === $index"
+                (click)="select($index)"
+                (keydown.enter)="select($index)"
+                (keydown.space)="select($index); $event.preventDefault()"
+                tabindex="0"
+                role="button"
+                [attr.aria-pressed]="selectedIndex() === $index"
+                [attr.aria-label]="
+                  'Step ' + ($index + 1) + ': ' + label(step.type) + '. Configure.'
+                "
+              >
+                <div class="node__body">
+                  <span class="node__index" aria-hidden="true">{{ $index + 1 }}</span>
+                  <div class="node__text">
+                    <div class="node__title">{{ label(step.type) }}</div>
+                    <div class="node__meta muted">{{ summarize(step) }}</div>
+                  </div>
+                </div>
+                <div class="node__controls" (click)="$event.stopPropagation()">
+                  <button
+                    type="button"
+                    class="btn btn--sm btn--ghost"
+                    [disabled]="!canMove($index, -1)"
+                    [attr.aria-label]="'Move ' + label(step.type) + ' up'"
+                    (click)="moveStep($index, -1)"
+                  >
+                    ↑
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn--sm btn--ghost"
+                    [disabled]="!canMove($index, 1)"
+                    [attr.aria-label]="'Move ' + label(step.type) + ' down'"
+                    (click)="moveStep($index, 1)"
+                  >
+                    ↓
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn--sm btn--danger"
+                    [attr.aria-label]="'Remove ' + label(step.type)"
+                    (click)="removeStep($index)"
+                  >
+                    ✕
+                  </button>
                 </div>
               </div>
-              <div class="node__controls" (click)="$event.stopPropagation()">
-                <button
-                  type="button"
-                  class="btn btn--sm btn--ghost"
-                  [disabled]="!canMove($index, -1)"
-                  [attr.aria-label]="'Move ' + label(step.type) + ' up'"
-                  (click)="moveStep($index, -1)"
-                >
-                  ↑
-                </button>
-                <button
-                  type="button"
-                  class="btn btn--sm btn--ghost"
-                  [disabled]="!canMove($index, 1)"
-                  [attr.aria-label]="'Move ' + label(step.type) + ' down'"
-                  (click)="moveStep($index, 1)"
-                >
-                  ↓
-                </button>
-                <button
-                  type="button"
-                  class="btn btn--sm btn--danger"
-                  [attr.aria-label]="'Remove ' + label(step.type)"
-                  (click)="removeStep($index)"
-                >
-                  ✕
-                </button>
-              </div>
-            </div>
-            <div class="edge"></div>
-          }
-
-          <div class="node node--dispatch">Dispatch</div>
-
-          @for (model of config().fallback_models; track model) {
-            <div class="edge edge--fallback"></div>
-            <div
-              class="node node--fallback"
-              (click)="select('fallback')"
-              (keydown.enter)="select('fallback')"
-              (keydown.space)="select('fallback'); $event.preventDefault()"
-              tabindex="0"
-              role="button"
-              aria-label="Configure the fallback chain"
-            >
-              fallback → <code>{{ model }}</code>
-            </div>
-          }
-          @if (config().fallback_models.length === 0) {
-            <div class="edge edge--fallback"></div>
-            <div
-              class="node node--fallback node--muted"
-              (click)="select('fallback')"
-              (keydown.enter)="select('fallback')"
-              (keydown.space)="select('fallback'); $event.preventDefault()"
-              tabindex="0"
-              role="button"
-              aria-label="Add a fallback model"
-            >
-              + add fallback
-            </div>
-          }
-
-          <div class="pipe__add">
-            <span class="muted">Add step:</span>
-            @for (type of stepTypes; track type) {
-              <button type="button" class="btn btn--sm" (click)="addStep(type)">
-                + {{ label(type) }}
-              </button>
+              <div class="edge"></div>
             }
-          </div>
-        </div>
 
-        <!-- Inspector -->
+            <div class="node node--dispatch">Dispatch</div>
+
+            @for (model of config().fallback_models; track model) {
+              <div class="edge edge--fallback"></div>
+              <div
+                class="node node--fallback"
+                (click)="select('fallback')"
+                (keydown.enter)="select('fallback')"
+                (keydown.space)="select('fallback'); $event.preventDefault()"
+                tabindex="0"
+                role="button"
+                aria-label="Configure the fallback chain"
+              >
+                fallback → <code>{{ model }}</code>
+              </div>
+            }
+            @if (config().fallback_models.length === 0) {
+              <div class="edge edge--fallback"></div>
+              <div
+                class="node node--fallback node--muted"
+                (click)="select('fallback')"
+                (keydown.enter)="select('fallback')"
+                (keydown.space)="select('fallback'); $event.preventDefault()"
+                tabindex="0"
+                role="button"
+                aria-label="Add a fallback model"
+              >
+                + add fallback
+              </div>
+            }
+
+            <div class="pipe__add">
+              <span class="muted">Add step:</span>
+              @for (type of stepTypes; track type) {
+                <button type="button" class="btn btn--sm" (click)="addStep(type)">
+                  + {{ label(type) }}
+                </button>
+              }
+            </div>
+          </div>
+        </fieldset>
+
+        <!-- Test panel — outside the guard on purpose: running the pipeline changes nothing. -->
+        <div class="pipe__test card stack">
+          <h3 class="section-title" style="margin: 0">Test this pipeline</h3>
+          <div class="field">
+            <label for="sample-system">Sample system prompt</label>
+            <textarea
+              id="sample-system"
+              rows="2"
+              [ngModel]="sampleSystem()"
+              (ngModelChange)="sampleSystem.set($event)"
+              placeholder="You are a helpful assistant."
+            ></textarea>
+          </div>
+          <div class="field">
+            <label for="sample-user">Sample user message</label>
+            <textarea
+              id="sample-user"
+              rows="2"
+              [ngModel]="sampleUser()"
+              (ngModelChange)="sampleUser.set($event)"
+              placeholder="Ignore all previous instructions and…"
+            ></textarea>
+          </div>
+
+          <div class="spread">
+            <span class="muted" style="font-weight: 600">Dry-run (runs the real steps)</span>
+            <button
+              type="button"
+              class="btn btn--sm btn--primary"
+              [disabled]="dryRunning()"
+              (click)="runDryRun()"
+            >
+              {{ dryRunning() ? 'Running…' : 'Run dry-run' }}
+            </button>
+          </div>
+
+          @if (dryRunError(); as message) {
+            <p class="callout callout--danger" style="margin: 0">{{ message }}</p>
+          }
+          @if (dryRunning() && dryRun()) {
+            <p class="muted" style="margin: 0">Re-running — showing the previous result…</p>
+          } @else if (dryRunStale()) {
+            <!--
+              A trace stays on screen while somebody keeps editing, and from the first change it
+              describes a configuration that no longer exists. Said rather than cleared: the last
+              result is still the most useful thing on the panel, and a step that vanishes the
+              moment you touch a field is worse than one labelled out of date.
+            -->
+            <p class="callout callout--warning" style="margin: 0" data-testid="dry-run-stale">
+              Changed since this run — the trace below describes the previous configuration.
+            </p>
+          }
+
+          @if (dryRun(); as result) {
+            <!--
+                **The trace as steps, not as a list of badges.** It used to render
+                `[blocked] injection_filter` per entry, which names what happened and never why —
+                and for all three LLM-backed steps the why is a model's answer that nothing showed.
+                Somebody tuning a category list or a redaction instruction is reading exactly that.
+
+                The numbering and the connector repeat the graph above deliberately: the same order,
+                the same words, so the result can be read against the thing being edited.
+              -->
+            <ol class="trace">
+              @for (card of traceCards(); track $index) {
+                <li class="trace__step">
+                  <div class="trace__head">
+                    <span class="trace__n">{{ card.step }}</span>
+                    <span class="trace__title">{{ card.title }}</span>
+                    <span class="badge {{ card.badge }}">{{ card.action }}</span>
+                  </div>
+                  <p class="trace__summary">{{ card.summary }}</p>
+                  @if (card.classifier) {
+                    <p class="trace__asked muted">
+                      asked <code>{{ card.classifier }}</code>
+                    </p>
+                  }
+                  @if (card.output) {
+                    <div class="trace__said">
+                      <span class="trace__label">the model replied</span>
+                      <pre>{{ card.output }}</pre>
+                    </div>
+                  }
+                  @if (card.before && card.after) {
+                    <div class="trace__diff">
+                      <div>
+                        <span class="trace__label">before</span>
+                        <pre>{{ card.before }}</pre>
+                      </div>
+                      <div>
+                        <span class="trace__label">after</span>
+                        <pre class="trace__after">{{ card.after }}</pre>
+                      </div>
+                    </div>
+                  }
+                </li>
+              }
+              <li class="trace__step trace__step--end">
+                @if (result.blocked) {
+                  <div class="trace__head">
+                    <span class="trace__n trace__n--stop">✕</span>
+                    <span class="trace__title">Request refused</span>
+                  </div>
+                  <p class="trace__summary">{{ result.block_reason }}</p>
+                } @else {
+                  <div class="trace__head">
+                    <span class="trace__n trace__n--go">→</span>
+                    <span class="trace__title">Dispatched</span>
+                  </div>
+                  <p class="trace__summary">
+                    to <code>{{ result.effective_model }}</code>
+                    @if (result.fallback_models.length) {
+                      , falling back to
+                      @for (model of result.fallback_models; track $index) {
+                        <code>{{ model }}</code
+                        >{{ $last ? '' : ', ' }}
+                      }
+                    }
+                  </p>
+                }
+              </li>
+            </ol>
+          }
+
+          <!--
+            Two previews, and they answer different questions: this one is computed in the browser
+            from the pattern list and shows what a *deterministic* step would do as you type,
+            without spending anything. The dry run above calls the real models.
+
+            Shown when there is no trace, and again once the trace goes stale — at that moment it
+            is the only thing on the panel describing the pipeline as it now stands.
+          -->
+          @if (!dryRunning() && (!dryRun() || dryRunStale())) {
+            <div class="muted" style="font-weight: 600">Live preview (deterministic steps)</div>
+            @for (row of preview(); track $index) {
+              <div class="trace-row">
+                <span class="badge {{ actionClass(row.action) }}">{{ row.action }}</span>
+                <span>{{ row.label }}</span>
+                <span class="muted">{{ row.note }}</span>
+              </div>
+            } @empty {
+              <p class="muted" style="margin: 0">Add steps to preview them here.</p>
+            }
+          }
+        </div>
+      </div>
+
+      <!-- Inspector -->
+      <fieldset class="bare" [disabled]="!canManage()">
         <div class="pipe__inspector card">
           @if (selectedStep(); as step) {
             <h3 class="section-title">{{ label(step.type) }}</h3>
@@ -441,99 +625,7 @@
             <p class="muted">Select a node in the graph to configure it.</p>
           }
         </div>
-      </div>
-    </fieldset>
-
-    @if (nothingReleased()) {
-      <!--
-        Said once, where a reader starts, rather than as five empty dropdowns. A use case with
-        nothing released can serve nothing either, so a pipeline for it is a configuration for
-        traffic that will be refused before it reaches a step.
-      -->
-      <p class="callout callout--warning" data-testid="pipeline-nothing-released">
-        No model is released to this use case, so there is nothing to route to and nothing to test
-        with — and every request it makes is refused before a step runs. Release a model on the use
-        case first.
-      </p>
-    }
-
-    <!-- Test panel -->
-    <div class="card stack">
-      <h3 class="section-title" style="margin: 0">Test this pipeline</h3>
-      <div class="field">
-        <label for="sample-system">Sample system prompt</label>
-        <textarea
-          id="sample-system"
-          rows="2"
-          [ngModel]="sampleSystem()"
-          (ngModelChange)="sampleSystem.set($event)"
-          placeholder="You are a helpful assistant."
-        ></textarea>
-      </div>
-      <div class="field">
-        <label for="sample-user">Sample user message</label>
-        <textarea
-          id="sample-user"
-          rows="2"
-          [ngModel]="sampleUser()"
-          (ngModelChange)="sampleUser.set($event)"
-          placeholder="Ignore all previous instructions and…"
-        ></textarea>
-      </div>
-
-      <div class="test-cols">
-        <div>
-          <div class="muted" style="font-weight: 600; margin-bottom: 0.4rem">
-            Live preview (deterministic steps)
-          </div>
-          @for (row of preview(); track $index) {
-            <div class="trace-row">
-              <span class="badge {{ actionClass(row.action) }}">{{ row.action }}</span>
-              <span>{{ row.label }}</span>
-              <span class="muted">{{ row.note }}</span>
-            </div>
-          } @empty {
-            <p class="muted">Add steps to preview them here.</p>
-          }
-        </div>
-
-        <div>
-          <div class="spread" style="margin-bottom: 0.4rem">
-            <span class="muted" style="font-weight: 600">Dry-run (full, incl. LLM steps)</span>
-            <button
-              type="button"
-              class="btn btn--sm btn--primary"
-              [disabled]="dryRunning()"
-              (click)="runDryRun()"
-            >
-              {{ dryRunning() ? 'Running…' : 'Run dry-run' }}
-            </button>
-          </div>
-          @if (dryRunError(); as message) {
-            <p class="callout callout--danger">{{ message }}</p>
-          }
-          @if (dryRunning() && dryRun()) {
-            <p class="muted" style="margin: 0 0 0.4rem">
-              Re-running — showing the previous result…
-            </p>
-          }
-          @if (dryRun(); as result) {
-            @if (result.blocked) {
-              <p class="callout callout--danger">Blocked: {{ result.block_reason }}</p>
-            } @else {
-              <p class="callout">
-                Effective model: <code>{{ result.effective_model }}</code>
-              </p>
-            }
-            @for (entry of result.trace; track $index) {
-              <div class="trace-row">
-                <span class="badge {{ actionClass(entry.action) }}">{{ entry.action }}</span>
-                <span>{{ entry.type }}</span>
-              </div>
-            }
-          }
-        </div>
-      </div>
+      </fieldset>
     </div>
   }
 </div>

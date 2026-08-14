@@ -36,6 +36,12 @@ interface Editor {
   dryRun: () => DryRunResult | null;
   dryRunError: () => string | null;
   dryRunning: () => boolean;
+  traceCards: () => {
+    step: number;
+    title: string;
+    output: string | null;
+    classifier: string | null;
+  }[];
 }
 
 interface Options {
@@ -288,7 +294,14 @@ describe('PipelineEditor', () => {
     expect(component.actionClass('passed')).toBe('badge--success');
     expect(component.actionClass('blocked')).toBe('badge--danger');
     expect(component.actionClass('flagged')).toBe('badge--warning');
-    expect(component.actionClass('rerouted')).toBe('badge--muted');
+    // `rerouted` and `redacted` keep the plain brand badge: the request was changed, which is
+    // neither good news nor bad. Muted is reserved for the two outcomes where nothing happened,
+    // and reading "the prompt was rewritten" in the same grey as "no category matched" is how a
+    // step that did something comes to look like one that did not.
+    expect(component.actionClass('rerouted')).toBe('');
+    expect(component.actionClass('redacted')).toBe('');
+    expect(component.actionClass('unchanged')).toBe('badge--muted');
+    expect(component.actionClass('not_asked')).toBe('badge--muted');
   });
 
   // ---- preview + dry-run -----------------------------------------------------------
@@ -358,6 +371,170 @@ describe('PipelineEditor', () => {
     expect(component.dryRunning()).toBe(false);
     expect(component.dryRun()?.blocked).toBe(true);
     expect(text()).toContain('Prompt-injection filter blocked the request.');
+  });
+
+  it('shows what each model replied, step by step', () => {
+    // The reason this screen exists. A trace of `[blocked] injection_filter` says what happened
+    // and never why — and for all three LLM-backed steps the why is a model's own answer. Someone
+    // tuning a redaction instruction or a category list is reading exactly that.
+    const { component, fixture, text } = setup(
+      { steps: [], fallback_models: [] },
+      {
+        dryRun: of({
+          blocked: false,
+          block_reason: null,
+          effective_model: 'code-model',
+          fallback_models: ['mock-1'],
+          trace: [
+            {
+              type: 'injection_filter',
+              action: 'passed',
+              detail: {
+                mode: 'llm',
+                action: 'block',
+                verdict: 'clean',
+                output: 'SAFE',
+                classifier: 'guard-model',
+              },
+            },
+            {
+              type: 'pii_filter',
+              action: 'redacted',
+              detail: {
+                classifier: 'redactor-model',
+                changed: true,
+                before: 'Call Erika Mustermann on 0170 1234567',
+                after: 'Call <PERSON> on <PHONE>',
+              },
+            },
+            {
+              type: 'model_route',
+              action: 'rerouted',
+              detail: {
+                category: 'code',
+                from: 'chat-model',
+                to: 'code-model',
+                output: 'CODE',
+                classifier: 'router-model',
+              },
+            },
+          ],
+        }),
+      },
+    );
+    component.runDryRun();
+    fixture.detectChanges();
+    const shown = text();
+
+    // Each step's own model, named as the one that was *asked* — not the one routed to.
+    expect(shown).toContain('guard-model');
+    expect(shown).toContain('redactor-model');
+    expect(shown).toContain('router-model');
+    // What they replied, verbatim.
+    expect(shown).toContain('SAFE');
+    expect(shown).toContain('CODE');
+    // The rewrite as a before and an after, because "redacted" alone does not tell an operator
+    // whether their instruction did what they meant.
+    expect(shown).toContain('Call Erika Mustermann on 0170 1234567');
+    expect(shown).toContain('Call <PERSON> on <PHONE>');
+    // And in the reader's words rather than the wire's.
+    expect(shown).toContain('Classified as “code” → code-model');
+    expect(shown).toContain('Verdict clean');
+    // The end of the chain: where the request would actually have gone.
+    expect(shown).toContain('code-model');
+    expect(shown).toContain('mock-1');
+
+    const cards = component.traceCards();
+    expect(cards.map((card) => card.step)).toEqual([1, 2, 3]);
+    expect(cards[0].title).toBe('Injection Filter');
+  });
+
+  it('says the trace is out of date once the pipeline changes under it', () => {
+    // A trace stays on screen while somebody keeps editing, and from the first change it describes
+    // a configuration that no longer exists — a confident statement about the wrong thing, which
+    // is what this panel is for avoiding. Said rather than cleared: the last result is still the
+    // most useful thing on the screen.
+    const { component, fixture, text } = setup({ steps: [], fallback_models: [] });
+    component.runDryRun();
+    fixture.detectChanges();
+    expect(text()).not.toContain('Changed since this run');
+
+    component.addStep('injection_filter');
+    fixture.detectChanges();
+    expect(text()).toContain('Changed since this run');
+    // …and the live preview comes back, because it is now the only thing on the panel describing
+    // the pipeline as it stands.
+    expect(text()).toContain('Live preview');
+  });
+
+  it('treats a different sample prompt as a different run', () => {
+    // The trace is about a pipeline *and* an input. Comparing only the configuration would leave
+    // a verdict about one sentence sitting under another.
+    const { component, fixture, text } = setup({
+      steps: [{ type: 'injection_filter', config: { mode: 'heuristic' } }],
+      fallback_models: [],
+    });
+    component.runDryRun();
+    fixture.detectChanges();
+    expect(text()).not.toContain('Changed since this run');
+
+    component.sampleUser.set('something else entirely');
+    fixture.detectChanges();
+    expect(text()).toContain('Changed since this run');
+  });
+
+  it('leaves out a model reply that is not there', () => {
+    // A heuristic filter asks nobody. A box captioned "the model replied" over nothing reads as a
+    // rendering fault rather than as the fact that no model was involved.
+    const { component, fixture } = setup(
+      { steps: [], fallback_models: [] },
+      {
+        dryRun: of({
+          blocked: false,
+          block_reason: null,
+          effective_model: 'mock-1',
+          fallback_models: [],
+          trace: [
+            {
+              type: 'injection_filter',
+              action: 'passed',
+              detail: { mode: 'heuristic', action: 'block', verdict: 'clean' },
+            },
+          ],
+        }),
+      },
+    );
+    component.runDryRun();
+    fixture.detectChanges();
+
+    expect(component.traceCards()[0].output).toBeNull();
+    expect(component.traceCards()[0].classifier).toBeNull();
+    expect((fixture.nativeElement as HTMLElement).textContent).not.toContain('the model replied');
+  });
+
+  it('says a router was never asked, rather than that it changed nothing', () => {
+    const { component, fixture, text } = setup(
+      { steps: [], fallback_models: [] },
+      {
+        dryRun: of({
+          blocked: false,
+          block_reason: null,
+          effective_model: 'mock-1',
+          fallback_models: [],
+          trace: [
+            {
+              type: 'model_route',
+              action: 'not_asked',
+              detail: { why: 'the classifier could not be reached', to: 'mock-1' },
+            },
+          ],
+        }),
+      },
+    );
+    component.runDryRun();
+    fixture.detectChanges();
+
+    expect(text()).toContain('Not asked: the classifier could not be reached');
   });
 
   it('explains a dry-run the gateway would not authenticate', () => {
@@ -679,11 +856,21 @@ describe('PipelineEditor — a reader', () => {
     expect(html.textContent).not.toContain('Save pipeline');
     // Not merely hidden: a native disabled fieldset makes every control inside it inert, so the
     // add/remove buttons in the graph cannot be used either.
-    const guard = html.querySelector<HTMLFieldSetElement>('fieldset.bare');
-    expect(guard?.disabled).toBe(true);
-    // The test panel is outside it — a dry run changes nothing.
-    expect(guard?.querySelector('#sample-system')).toBeNull();
+    //
+    // **Every** guard, not the first. There are two — the graph and the inspector — because the
+    // test panel sits between them in the left column and a fieldset cannot exempt a descendant;
+    // one that wrapped the whole grid would take the dry run away from the reader this test is
+    // about. Asserting on `querySelector` alone would go green with the second one un-bound.
+    const guards = [...html.querySelectorAll<HTMLFieldSetElement>('fieldset.bare')];
+    expect(guards.length).toBeGreaterThanOrEqual(2);
+    expect(guards.every((guard) => guard.disabled)).toBe(true);
+    // The test panel is outside all of them — a dry run changes nothing.
+    expect(guards.some((guard) => guard.querySelector('#sample-system'))).toBe(false);
     expect(html.querySelector('#sample-system')).not.toBeNull();
+    const run = [...html.querySelectorAll<HTMLButtonElement>('button')].find((button) =>
+      button.textContent?.includes('Run dry-run'),
+    );
+    expect(run?.disabled).toBe(false);
   });
 });
 

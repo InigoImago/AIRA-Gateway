@@ -73,6 +73,15 @@ class Classification:
 
     verdict: Verdict
     call: ModelCall | None = None
+    #: What the model actually replied, verbatim, for a screen that is showing somebody why the
+    #: verdict is what it is. Empty for the heuristic, which asks nobody.
+    #:
+    #: **Never persisted.** The audit trail's decisions are an allow-list precisely so a step
+    #: cannot start storing a classifier's prose by default (`FRD-122` §5.3); this travels to the
+    #: dry run's trace and stops there. `UNDETERMINED` is the case it exists for — "neither word"
+    #: and "both words" and "an empty reply" are one verdict and three very different repairs, and
+    #: an operator staring at *undetermined* has no way to tell which they are looking at.
+    reply: str = ""
 
 
 @runtime_checkable
@@ -198,7 +207,7 @@ class LlmInjectionClassifier:
             # here reports usage on one.
             return Classification(Verdict.UNDETERMINED)
         call = ModelCall(step="injection_filter", model=self._model, usage=response.usage)
-        return Classification(self._verdict_of(response.text), call)
+        return Classification(self._verdict_of(response.text), call, response.text)
 
     async def verdict(self, text: str) -> Verdict:
         return (await self.classify_text(text)).verdict
@@ -260,6 +269,21 @@ def classifier_request(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class Routing:
+    """A category, what asking cost, and what the model replied.
+
+    A named triple rather than a tuple that grew a third element: the reply was added for the dry
+    run's screen, and a positional third member is the kind of thing a caller unpacks in the wrong
+    order once. Same shape and the same reasons as `Classification`, including that `reply` reaches
+    a screen and never the audit trail.
+    """
+
+    category: str | None
+    call: ModelCall | None = None
+    reply: str = ""
+
+
 class LlmCategoryRouter:
     """Classifies a request into one of the configured categories (or ``None``).
 
@@ -281,8 +305,8 @@ class LlmCategoryRouter:
         self._categories = categories
         self._thinking = thinking
 
-    async def classify_text(self, text: str) -> tuple[str | None, ModelCall | None]:
-        """The category and what asking for it cost."""
+    async def classify_text(self, text: str) -> Routing:
+        """The category, what asking for it cost, and what the model said."""
         listing = "\n".join(
             f"- {c.get('name', '')}: {c.get('description', '')}" for c in self._categories
         )
@@ -295,14 +319,14 @@ class LlmCategoryRouter:
         try:
             response = await self._provider.generate(request)
         except UpstreamError:
-            return None, None
+            return Routing(None)
         call = ModelCall(step="model_route", model=self._model, usage=response.usage)
         answer = response.text.strip().upper()
         for category in self._categories:
             name = category.get("name", "")
             if name and name.upper() in answer:
-                return name, call
-        return None, call
+                return Routing(name, call, response.text)
+        return Routing(None, call, response.text)
 
     async def classify(self, text: str) -> str | None:
         """The category alone, for callers with nothing to bill.
@@ -311,7 +335,7 @@ class LlmCategoryRouter:
         was noticed, and its `except UpstreamError` branch was already the only one no test
         reached — which is how two copies of one rule start to disagree.
         """
-        return (await self.classify_text(text))[0]
+        return (await self.classify_text(text)).category
 
 
 #: What a redactor is told when the operator has not written their own instruction.

@@ -47,8 +47,15 @@ test.describe('Gateway integration', () => {
     await page.click('button:has-text("Run dry-run")');
 
     // A 401/403 here would mean the gateway rejected the SPA's token.
-    await expect(page.locator('.callout--danger')).not.toContainText('AIRA_OIDC_ENABLED');
-    await expect(page.locator('text=/Blocked:/')).toBeVisible({
+    //
+    // Asserted on the page rather than on `.callout--danger`: that locator used to match the
+    // *block reason*, which was rendered as a danger callout, so this line was passing because a
+    // refusal happened to be styled like an error. With the refusal now a card in the trace there
+    // is no such element on a healthy run, and `not.toContainText` against a locator that matches
+    // nothing **fails** — which is how a green assertion for the wrong reason announced itself.
+    await expect(page.locator('body')).not.toContainText('AIRA_OIDC_ENABLED');
+    // The trace ends in a card saying where the request went, or that it did not go anywhere.
+    await expect(page.locator('text=/Request refused/')).toBeVisible({
       timeout: 20_000,
     });
     await expect(page.locator('.badge--danger').first()).toContainText('blocked');
@@ -69,7 +76,7 @@ test.describe('Gateway integration', () => {
     await page.fill('#sample-user', 'summarise this quarterly report');
     await page.click('button:has-text("Run dry-run")');
 
-    await expect(page.locator('text=/Effective model:/')).toBeVisible({
+    await expect(page.locator('.trace__step--end')).toContainText('Dispatched', {
       timeout: 20_000,
     });
   });

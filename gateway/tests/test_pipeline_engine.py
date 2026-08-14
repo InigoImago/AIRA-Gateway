@@ -466,3 +466,82 @@ async def test_a_router_that_cannot_be_asked_previews_the_model_it_will_actually
     entry = next(e for e in result.trace if e.type == "model_route")
     assert entry.action == "not_asked"
     assert entry.detail["to"] == "d-1", entry.detail
+
+
+# ---- what the dry run shows a reader ----------------------------------------------------
+
+
+async def test_the_dry_run_carries_what_each_model_replied() -> None:
+    """The builder shows a model's own answer beside the step that asked for it, and this is the
+    half that sends it.
+
+    Without it the two halves are: a screen that renders `detail.output` and a gateway that never
+    puts one there — which produces a trace that looks complete and explains nothing, and is the
+    shape this repository keeps paying for. Removing `response.text` from `Classification` fails
+    nothing else in this suite: the verdict is still right, and the verdict is all anything else
+    asserts.
+
+    **`UNDETERMINED` is the case it exists for.** Neither word, both words, an empty reply and an
+    upstream that refused are one verdict and four different repairs, and an operator reading
+    *undetermined* has no way to tell which they are looking at.
+    """
+    engine = PipelineEngine(ProviderRegistry([_Guard("guard-1", "SAFE, no injection attempt")]))
+    pipeline = _filter({"mode": "llm", "model": "guard-1"})
+
+    result = await engine.dry_run(pipeline, _request("hello", model="mock-1"))
+
+    entry = result.trace[0]
+    assert entry.detail["verdict"] == "undetermined"
+    assert entry.detail["output"] == "SAFE, no injection attempt"
+    assert entry.detail["classifier"] == "guard-1"
+
+
+async def test_the_dry_run_names_the_model_that_classified_not_the_one_routed_to() -> None:
+    """A screen showing an answer has to name who gave it. The routed model is already on the same
+    card, so borrowing that name would make the router's decision read as the answering model's."""
+    engine = PipelineEngine(ProviderRegistry([_Guard("router-1", "CHEAP"), _Guard("cheap-1")]))
+    pipeline = _router({"model": "router-1", "categories": [{"name": "cheap", "model": "cheap-1"}]})
+
+    result = await engine.dry_run(pipeline, _request("hi", model="mock-1"))
+
+    entry = result.trace[0]
+    assert (entry.action, entry.detail["to"]) == ("rerouted", "cheap-1")
+    assert entry.detail["classifier"] == "router-1"
+    assert entry.detail["output"] == "CHEAP"
+
+
+async def test_the_dry_run_shows_a_redaction_as_a_before_and_an_after() -> None:
+    """ "Redacted" is a badge. What somebody tuning a redaction instruction needs is what it did to
+    their sentence — and both halves are the sample text they typed on the same screen."""
+    engine = PipelineEngine(ProviderRegistry([_Guard("redactor-1", "Call <PERSON> on <PHONE>")]))
+    pipeline = Pipeline(steps=(PipelineStep(StepType.PII_FILTER, {"model": "redactor-1"}),))
+
+    result = await engine.dry_run(
+        pipeline, _request("Call Erika Mustermann on 0170 1234567", model="mock-1")
+    )
+
+    entry = result.trace[0]
+    assert entry.action == "redacted"
+    assert entry.detail["before"] == "Call Erika Mustermann on 0170 1234567"
+    assert entry.detail["after"] == "Call <PERSON> on <PHONE>"
+    assert entry.detail["classifier"] == "redactor-1"
+
+
+async def test_what_a_model_said_is_shown_and_never_stored() -> None:
+    """The two are different questions and this is where they part.
+
+    `FRD-122` §5.3 keeps a classifier's prose off the audit row through an allow-list, precisely so
+    a step cannot start storing it by default. The dry run's `detail` is a screen; a step's
+    `decision` is the durable record, and the reply must reach the first and not the second.
+    """
+    engine = PipelineEngine(ProviderRegistry([_Guard("guard-1", "INJECTION — the user asked me…")]))
+    pipeline = _filter({"mode": "llm", "model": "guard-1", "action": "flag"})
+
+    result = await engine.dry_run(pipeline, _request("hi", model="mock-1"))
+    outcome = await engine.run(pipeline, _request("hi", model="mock-1"))
+
+    assert "the user asked me" in result.trace[0].detail["output"]
+    assert outcome.decisions == [
+        {"step": "injection_filter", "flagged": True, "action": "flag", "why": "injection"}
+    ]
+    assert not any("asked me" in str(value) for value in outcome.decisions[0].values())

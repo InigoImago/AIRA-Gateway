@@ -85,6 +85,38 @@ interface PreviewRow {
   note: string;
 }
 
+/**
+ * One step of a dry run, as a card rather than a badge and a word.
+ *
+ * The trace used to render as `[blocked] injection_filter` and nothing else, which says what
+ * happened and not *why* — and for the three LLM-backed steps the why is a model's own answer.
+ * Somebody tuning a redaction instruction or a category list is reading exactly that: the sentence
+ * they typed, what the model made of it, and which model was asked.
+ *
+ * `output`, `before` and `after` reach this screen and are **not** stored (`FRD-122` §5.3 keeps a
+ * classifier's prose out of the audit row on purpose). They are the sample text on this page and
+ * the reply to it.
+ */
+interface TraceCard {
+  step: number;
+  title: string;
+  action: string;
+  badge: string;
+  /** One line saying what the step decided, in the reader's words rather than the wire's. */
+  summary: string;
+  /** The model that was asked — never the model the request was routed *to*. */
+  classifier: string | null;
+  /** What that model replied, verbatim (capped server-side). */
+  output: string | null;
+  before: string | null;
+  after: string | null;
+}
+
+function text(detail: Record<string, unknown>, key: string): string | null {
+  const value = detail[key];
+  return typeof value === 'string' && value.trim() ? value : null;
+}
+
 @Component({
   selector: 'app-pipeline-editor',
   imports: [FormsModule, RouterLink, MultiSelect],
@@ -119,12 +151,88 @@ export class PipelineEditor implements OnInit {
   protected readonly sampleUser = signal('');
   protected readonly dryRun = signal<DryRunResult | null>(null);
   protected readonly dryRunError = signal<string | null>(null);
+  /**
+   * The pipeline as it was when the last dry run was made.
+   *
+   * A trace stays on screen while somebody keeps editing, and after the first change it describes
+   * a configuration that no longer exists — which is the failure this whole screen is against: a
+   * confident statement about the wrong thing. Cheaper to compare than to invalidate, and
+   * comparing the *sample text* too, because a run against a different prompt is just as stale.
+   */
+  private readonly dryRunOf = signal('');
+  protected readonly dryRunStale = computed(
+    () => this.dryRun() !== null && this.dryRunOf() !== this.dryRunSubject(),
+  );
+
+  private dryRunSubject(): string {
+    return JSON.stringify([this.config(), this.sampleSystem(), this.sampleUser()]);
+  }
 
   protected actionClass(action: string): string {
     if (action === 'passed' || action === 'allowed') return 'badge--success';
     if (action === 'blocked' || action === 'rejected') return 'badge--danger';
     if (action === 'flagged') return 'badge--warning';
+    // `rerouted` and `redacted` keep the plain brand badge: something happened to the request, and
+    // that is neither good news nor bad. Muted would read as "nothing to see", which is what
+    // `unchanged` and `not_asked` are.
+    if (action === 'rerouted' || action === 'redacted') return '';
     return 'badge--muted';
+  }
+
+  /** The dry run's trace as cards. Empty until a run has been made. */
+  protected readonly traceCards = computed<TraceCard[]>(() =>
+    (this.dryRun()?.trace ?? []).map((entry, index) => {
+      const detail = entry.detail ?? {};
+      return {
+        step: index + 1,
+        title: STEP_LABELS[entry.type as StepType] ?? entry.type,
+        action: entry.action,
+        badge: this.actionClass(entry.action),
+        summary: this.describe(entry.type, entry.action, detail),
+        classifier: text(detail, 'classifier'),
+        output: text(detail, 'output'),
+        before: text(detail, 'before'),
+        after: text(detail, 'after'),
+      };
+    }),
+  );
+
+  /**
+   * What a step decided, in one sentence.
+   *
+   * Written per step type rather than by dumping the detail map: the same key means different
+   * things in different steps (`model` is the model in use for a router and the model *asked* for
+   * a redactor — which is why the gateway now sends `classifier` for the latter), and a reader of
+   * a JSON blob has to know that. An unrecognised type falls back to the action word, so a step
+   * this build does not know about still renders as itself instead of vanishing.
+   */
+  private describe(type: string, action: string, detail: Record<string, unknown>): string {
+    const why = text(detail, 'why');
+    if (type === 'injection_filter') {
+      const verdict = text(detail, 'verdict') ?? 'no verdict';
+      const mode = text(detail, 'mode') ?? 'heuristic';
+      return action === 'blocked'
+        ? `Verdict ${verdict} — the request stops here (${mode}).`
+        : `Verdict ${verdict} (${mode}).`;
+    }
+    if (type === 'model_route') {
+      if (action === 'rerouted') {
+        return `Classified as “${text(detail, 'category')}” → ${text(detail, 'to')}.`;
+      }
+      if (action === 'not_asked') return `Not asked: ${why ?? 'the classifier did not answer'}.`;
+      const category = text(detail, 'category');
+      return category
+        ? `Classified as “${category}”, which is the model already in use.`
+        : 'No category matched — the request keeps the model it named.';
+    }
+    if (type === 'pii_filter') {
+      if (action === 'redacted') return 'Personal data replaced in the user’s text.';
+      if (action === 'unchanged') return 'Nothing to replace.';
+      return action === 'allowed'
+        ? `Could not redact (${why ?? 'unknown'}) — configured to serve anyway.`
+        : `Could not redact (${why ?? 'unknown'}) — the request stops here.`;
+    }
+    return action;
   }
 
   protected summarize(step: PipelineStep): string {
@@ -341,6 +449,7 @@ export class PipelineEditor implements OnInit {
     // that appears to reload makes somebody wonder what else it just did.
     this.dryRunError.set(null);
     this.dryRunning.set(true);
+    this.dryRunOf.set(this.dryRunSubject());
     this.service
       .dryRunPipeline({
         // A dry run spends real tokens, so the gateway wants to know whose they are and refuses a

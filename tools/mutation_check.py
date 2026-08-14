@@ -3844,6 +3844,33 @@ MUTATIONS = [
         "        return ThinkingMode(raw)",
         MODE_PARSE,
     ),
+    # -- the dry run explains itself. The trace used to be a badge and a word, which says what
+    #    happened and never why — and for the three LLM-backed steps the why is a model's own
+    #    answer that nothing carried. These are what make the screen an explanation.
+    Mutation(
+        "QA34",
+        "the dry run shows what the step's model actually replied",
+        "gateway/src/aira_gateway/pipeline/engine.py",
+        '        **({"output": _shown(reply)} if reply.strip() else {}),',
+        "",
+        CLASSIFIERS,
+    ),
+    Mutation(
+        "QA35",
+        "a redaction is shown as what it did to the caller's sentence, not as a badge",
+        "gateway/src/aira_gateway/pipeline/engine.py",
+        '                "before": _shown(original),',
+        '                "before": "",',
+        CLASSIFIERS,
+    ),
+    Mutation(
+        "QA36",
+        "a router's answer names the model that gave it, not the one routed to",
+        "gateway/src/aira_gateway/pipeline/engine.py",
+        "                        routing.reply,\n                        model,",
+        "                        routing.reply,",
+        CLASSIFIERS,
+    ),
 ]
 
 

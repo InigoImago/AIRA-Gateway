@@ -71,6 +71,45 @@ def _rejection(verdict: Verdict) -> str:
     return "Request rejected by the prompt-injection filter."
 
 
+#: How much of a model's reply the dry run shows. A reasoning model asked for one word can return
+#: several hundred tokens of deliberation, and a trace entry is a box on a screen next to five
+#: others. Cut rather than hidden behind a toggle: the interesting part of a classifier's answer is
+#: at the front, and the ellipsis says the rest exists.
+_SHOWN = 600
+
+
+def _shown(text: str) -> str:
+    text = text.strip()
+    return text if len(text) <= _SHOWN else text[:_SHOWN] + "…"
+
+
+def _said(reply: str, model: str | None) -> dict[str, Any]:
+    """What a step's model replied, for the dry run's trace — **screen only, never persisted**.
+
+    One function for both LLM steps, because the two consumers of a trace entry are a template and
+    a reader, and a key that means `output` in one step and something else in another is how a
+    screen comes to explain the wrong thing. `FRD-122` §5.3 keeps this off the audit row.
+    """
+    return {
+        **({"output": _shown(reply)} if reply.strip() else {}),
+        **({"classifier": model} if model else {}),
+    }
+
+
+@dataclass(frozen=True, slots=True)
+class _Routed:
+    """What `_route` worked out: the category, the model to send to, the cost, and the reply."""
+
+    category: str | None
+    target: str | None
+    call: ModelCall | None = None
+    reply: str = ""
+    #: Which model was asked to classify — not the one the request is routed *to*. A screen showing
+    #: a router's answer has to name who gave it, or the reader reads the routed model's name and
+    #: concludes the wrong model made the decision.
+    classifier: str | None = None
+
+
 @dataclass
 class StepEvaluation:
     """What one step did, in the vocabulary **both** consumers need.
@@ -321,6 +360,12 @@ class PipelineEngine:
     ) -> StepEvaluation:
         classification = await self._classify(config, request, declaration_of)
         verdict = classification.verdict
+        # Screen only, and only where a model was asked. A box captioned "the model replied" over
+        # nothing reads as a rendering fault rather than as the fact that no model was involved,
+        # so an empty reply stays out of the dict entirely.
+        said = _said(
+            classification.reply, classification.call.model if classification.call else None
+        )
         action = config.get("action", "block")
         blocking = _blocks(verdict, config)
         return StepEvaluation(
@@ -330,6 +375,7 @@ class PipelineEngine:
                 "mode": config.get("mode", "heuristic"),
                 "action": action,
                 "verdict": str(verdict),
+                **said,
             },
             # Recorded on **every** outcome, not only a flagged one. "The filter ran and passed"
             # and "no filter was configured" are different facts, and after the fact an empty
@@ -350,7 +396,10 @@ class PipelineEngine:
         request: CanonicalRequest,
         declaration_of: DeclarationOf | None,
     ) -> StepEvaluation:
-        category, target, call = await self._route(config, request, declaration_of)
+        routed = await self._route(config, request, declaration_of)
+        category, target, call = routed.category, routed.target, routed.call
+        # What the router's own model said, for the dry run's screen. Never persisted.
+        said = _said(routed.reply, routed.classifier)
         if call is None and config.get("categories"):
             # **A router that could not be asked says so.** It used to return quietly, and after
             # `FRD-125` closed the same hole for the injection filter this was the one left: a
@@ -392,7 +441,7 @@ class PipelineEngine:
             return StepEvaluation(
                 type="model_route",
                 action="rerouted",
-                detail={"category": category, "from": request.model, "to": target},
+                detail={"category": category, "from": request.model, "to": target, **said},
                 decision={
                     "step": "model_route",
                     "category": category,
@@ -415,7 +464,7 @@ class PipelineEngine:
         return StepEvaluation(
             type="model_route",
             action="unchanged",
-            detail={"category": category, "model": request.model},
+            detail={"category": category, "model": request.model, **said},
             decision={
                 "step": "model_route",
                 "action": "unchanged",
@@ -467,7 +516,16 @@ class PipelineEngine:
         return StepEvaluation(
             type="pii_filter",
             action="redacted" if changed else "unchanged",
-            detail={"model": model, "changed": changed},
+            # `before`/`after` are the dry run's whole point for this step: "redacted" is a badge,
+            # and what somebody testing a redaction instruction needs to see is *what it did to
+            # their sentence*. Both halves are the sample text they typed into the box on the same
+            # screen — screen only, like every other `output` here.
+            detail={
+                "classifier": model,
+                "changed": changed,
+                "before": _shown(original),
+                "after": _shown(result.text),
+            },
             # **`changed`, not a count.** How many things were replaced is not knowable here: the
             # placeholder shape is whatever the operator's own instruction asks for, so counting
             # would mean dictating it. Recording a number nobody measured is the failure this
@@ -570,29 +628,36 @@ class PipelineEngine:
         config: dict[str, Any],
         request: CanonicalRequest,
         declaration_of: DeclarationOf | None = None,
-    ) -> tuple[str | None, str | None, ModelCall | None]:
-        """The category, the model to use, and what asking cost — the third is new (`FRD-125`).
+    ) -> _Routed:
+        """The category, the model to use, what asking cost, and what the model said.
 
-        A router that reached no category still made the call, and a use case running one over
-        traffic it then routes nowhere is paying for exactly those.
+        The third exists because a router that reached no category still made the call, and a use
+        case running one over traffic it then routes nowhere is paying for exactly those
+        (`FRD-125`). The fourth is for the dry run's screen only.
         """
         categories: list[dict[str, str]] = config.get("categories", [])
         default_model = config.get("default_model")
         if not categories:
-            return None, default_model, None
+            return _Routed(None, default_model)
         model = config.get("model") or self._default_model()
         provider = await self._provider_for(model, declaration_of)
         if provider is None or model is None:
-            return None, default_model, None
+            return _Routed(None, default_model)
         router = LlmCategoryRouter(
             provider, model, categories, await self._thinking_for(model, declaration_of)
         )
-        name, call = await router.classify_text(self._route_text(request))
-        if name:
+        routing = await router.classify_text(self._route_text(request))
+        if routing.category:
             for category in categories:
-                if category.get("name") == name:
-                    return name, category.get("model") or default_model, call
-        return None, default_model, call
+                if category.get("name") == routing.category:
+                    return _Routed(
+                        routing.category,
+                        category.get("model") or default_model,
+                        routing.call,
+                        routing.reply,
+                        model,
+                    )
+        return _Routed(None, default_model, routing.call, routing.reply, model)
 
     # -- helpers --------------------------------------------------------------------------
 

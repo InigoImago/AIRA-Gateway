@@ -128,11 +128,20 @@ test.describe('Layout', () => {
     await expectNoHorizontalOverflow(page, 'keys table @ phone');
   });
 
-  test('the pipeline inspector stays reachable when it is taller than the viewport', async ({
+  test('the pipeline builder scrolls as one page, with nothing scrolling inside it', async ({
     page,
   }) => {
-    // The bug this guards: a sticky element taller than the viewport pinned its top and left
-    // its lower fields permanently unreachable.
+    // Two bugs, and the second is the fix for the first.
+    //
+    // The inspector was `position: sticky` with `overflow-y: auto` and a height cap, because the
+    // left column was short and the right one long. That cap had its own failure — a sticky
+    // element taller than the viewport pins its top and leaves its lower half unreachable, which
+    // is what the routing step's "Default model" field used to do with enough categories.
+    //
+    // Reported by the owner: *no scrollable areas.* A scroll container inside a document that
+    // already scrolls gives a reader two scrollbars and one of them appears only sometimes. So the
+    // panel scrolls with the page, and the property to hold is that the field is still reachable —
+    // which is what the old test was really about.
     await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('inspector');
     await createUseCase(page, slug, 'Inspector probe');
@@ -149,12 +158,19 @@ test.describe('Layout', () => {
     await defaultModel.scrollIntoViewIfNeeded();
     await expect(defaultModel).toBeInViewport();
 
-    const inspector = page.locator('.pipe__inspector');
-    const capped = await inspector.evaluate((el) => {
-      const style = getComputedStyle(el);
-      return style.overflowY === 'auto' && el.clientHeight <= window.innerHeight;
-    });
-    expect(capped, 'the sticky inspector must cap its height and scroll').toBe(true);
+    // Nothing on this page is its own scroll container. Asserted over every element rather than
+    // over the inspector by name: the complaint is about the page, and naming one element is how a
+    // rule comes back on the next panel somebody adds.
+    const scrollers = await page.evaluate(() =>
+      [...document.querySelectorAll('.pipe *')]
+        .filter((el) => {
+          const style = getComputedStyle(el);
+          const scrolls = ['auto', 'scroll'].includes(style.overflowY);
+          return scrolls && el.scrollHeight > el.clientHeight + 1;
+        })
+        .map((el) => el.className),
+    );
+    expect(scrollers, 'nothing inside the builder may scroll on its own').toEqual([]);
     await expectNoHorizontalOverflow(page, 'pipeline builder with many categories');
   });
 });
