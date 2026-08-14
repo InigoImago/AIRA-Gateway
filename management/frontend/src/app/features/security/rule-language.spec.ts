@@ -108,7 +108,7 @@ describe('describeEvent', () => {
   });
 
   it('reads a spike finding as a multiple too', () => {
-    expect(describeEvent(event({ kind: 'token_spike', observed: 450, threshold: 200 }))).toContain(
+    expect(describeEvent(event({ kind: 'spend_spike', observed: 450, threshold: 200 }))).toContain(
       '4.5× the previous window',
     );
   });
@@ -143,12 +143,20 @@ describe('unitOf', () => {
 });
 
 describe('rule-language — every kind has words', () => {
+  // **A fourth hand-written copy of a closed vocabulary**, and it was wrong in the same two ways
+  // as the other three: it listed `token_spike`, which does not exist, and omitted
+  // `blocked_prompt_rate`, which does. So this test asserted that every kind has words by checking
+  // a list that was missing the kind without any — a guard agreeing with the thing it guards.
+  //
+  // Kept explicit, because TypeScript cannot import the Python enum; held to it by
+  // `tools/tests/test_the_console_speaks_the_closed_vocabulary.py`, which compares every copy
+  // against `aira_common.anomalies` in both directions.
   const KINDS = [
     'refusal_rate',
     'error_rate',
     'spend_spike',
     'request_spike',
-    'token_spike',
+    'blocked_prompt_rate',
     'payload_size',
     'new_source_ip',
   ];

@@ -5,6 +5,50 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## A closed vocabulary, restated four times, wrong in both directions (`FRD-500`)
+
+Asked: *"check the same for anomaly rules and incidents."* The same question again — which paths
+does the rule reach — and this time the answer was in the console rather than the gateway.
+
+`aira_common.anomalies` defines seven rule kinds and calls itself closed. Django derives its
+choices from the enum and cannot drift. The console cannot import Python, so it restates the list,
+and the list had drifted **both ways at once**: it offered `token_spike`, which does not exist, and
+omitted `blocked_prompt_rate`, which does.
+
+Measured in the browser before changing anything: picking *"Token use jumped against the previous
+window"* and pressing **Create rule** answers `kind: "token_spike" is not a valid choice.` And
+`blocked_prompt_rate` — measured by the gateway, seeded by the showcase, **listed on the very
+screen** — could not be created from the form on that screen. The one kind that reports the
+injection filter earning its keep was unreachable.
+
+**Four copies, and the fourth was the guard.** The dropdown, the units table and the sentence
+writer all carried the drift; the fourth was a test named *"every kind has words"* iterating a
+hand-written list with the same ghost and the same omission. It asserted completeness against a
+list that was itself incomplete — a guard agreeing with the thing it guards, which is a shape this
+repository has named often and had not yet seen in a *test's own fixture*.
+
+The comparison now lives in the one language that can read both sides, and runs in both directions
+over kinds, targets and actions. One direction would have caught `token_spike` and left
+`blocked_prompt_rate` missing for as long as nobody asked. A second guard closes the other end:
+every kind in the vocabulary has a branch in `evaluate_rule`, and each evaluates against a real
+schema — because that function's final `return []` for an unknown kind is deliberate forward
+compatibility, and it makes a same-version gap look exactly like a rule that found nothing.
+
+Verified live afterwards: the corrected dropdown creates a `blocked_prompt_rate` rule, no error,
+and the row arrives in the gateway's read model over Kafka.
+
+**What the audit did not find**, recorded as checked: all thirteen rule fields on both planes, in
+the payload and in the consumer; `upserted`/`deleted` emitted, routed and applied; all three
+suspension targets matched and all three actions handled; a throttle without an rpm refused by both
+planes rather than created and ignored; suspensions expired on read rather than by a sweeper; and
+incidents needing no read model at all, because the console posts them to the gateway's own API —
+there is no second copy to diverge. Two bounded behaviours stated rather than changed: the
+touched-scope cap (4096 per tick) and the in-process cooldown.
+
+`QA41`, `QA42`, each shown to fail first.
+
+---
+
 ## The dry run had the permission controls and not the spending ones (`FRD-401`, `FRD-405`, `FRD-503`)
 
 Asked: *"can you check the same for budgets and rate limits?"* — the same question as the access

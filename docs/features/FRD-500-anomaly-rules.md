@@ -144,3 +144,49 @@ IT Security's to author, and the API says so rather than the UI.
   radius.
 - `new_source_ip` needs a reference period longer than the window, and its first evaluation after
   deployment sees every address as new. `FRD-501` handles the warm-up; the rule only declares it.
+
+
+## The console's copy of a closed vocabulary had drifted, in both directions
+
+Asked after the budget round: *"check the same for anomaly rules and incidents."* Same question:
+**which paths does the rule reach.**
+
+`aira_common.anomalies` defines seven kinds and calls itself closed. Django derives its choices
+from the enum, so it cannot drift. The **console** cannot import Python, so it restates the list —
+and had drifted both ways at once:
+
+- it offered `token_spike`, which does not exist. Measured in the browser: picking *"Token use
+  jumped against the previous window"* and pressing **Create rule** answers `kind: "token_spike" is
+  not a valid choice.`
+- it omitted `blocked_prompt_rate`, which does exist, is measured by the gateway, is seeded by the
+  showcase, and is **listed on the very screen** whose form could not create it. The one kind that
+  reports the injection filter earning its keep was unreachable from the console.
+
+Three copies carried the drift — the dropdown, the units table and the sentence writer — and the
+fourth was a test named *"every kind has words"* iterating a hand-written list with the same ghost
+and the same omission. It asserted completeness against a list that was itself incomplete.
+
+Both are corrected and compared from the one language that can read both sides
+(`tools/tests/test_the_console_speaks_the_closed_vocabulary.py`), in **both directions**, over
+kinds, targets and actions. One direction would have caught `token_spike` and left
+`blocked_prompt_rate` missing for as long as nobody asked for it.
+
+`gateway/tests/test_every_rule_kind_is_measured.py` closes the other end: every kind in the
+vocabulary has a branch in `evaluate_rule`, and each one evaluates against a real schema. The
+engine's final `return []` for an unknown kind is deliberate — a newer Management may publish one,
+and measuring nothing is the only safe answer — but it makes a **same-version** gap look identical
+to a rule that found nothing.
+
+### What the audit did not find
+
+Checked in the same pass, and recorded as checked: all thirteen rule fields exist on both planes,
+travel in the payload and are applied by the consumer; `upserted` and `deleted` are emitted, routed
+and applied, already guarded in both directions; all three targets are matched by a suspension and
+all three actions are handled; a throttle without an rpm is refused by **both** planes rather than
+created and ignored; suspensions expire on read rather than by a sweeper, so an expired one stops
+refusing the moment it runs out; and incidents need no read model at all — the console posts them
+to the gateway's own API, so there is no second copy to diverge.
+
+Two bounded behaviours worth stating rather than changing: the touched-scope set is capped at 4096
+per tick, which delays a finding rather than losing it *provided the scope sees traffic again*; and
+the fired-rule cooldown lives in process, so a restart or a second replica can repeat a finding.

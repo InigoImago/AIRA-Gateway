@@ -23,8 +23,8 @@ const UNITS: Record<string, string> = {
   error_rate: '% of requests',
   spend_spike: '× the previous window',
   request_spike: '× the previous window',
-  token_spike: '× the previous window',
   payload_size: '% of requests',
+  blocked_prompt_rate: '% of requests',
   new_source_ip: 'address(es)',
 };
 
@@ -39,8 +39,8 @@ function subject(rule: AnomalyRule): string {
       return 'how much more was spent than in the window before';
     case 'request_spike':
       return 'how many more requests arrived than in the window before';
-    case 'token_spike':
-      return 'how many more tokens were used than in the window before';
+    case 'blocked_prompt_rate':
+      return 'the share of requests the pipeline blocked';
     case 'payload_size':
       return `the share of requests whose body was larger than ${rule.parameter ?? '—'} bytes`;
     case 'new_source_ip':

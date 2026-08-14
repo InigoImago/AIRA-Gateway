@@ -3890,6 +3890,25 @@ MUTATIONS = [
         '                "before": "",',
         CLASSIFIERS,
     ),
+    # -- the closed vocabulary, restated four times in a console that cannot import it. Three of
+    #    the copies offered a kind that does not exist and omitted one that does; the fourth was a
+    #    test asserting completeness against a list with the same two errors.
+    Mutation(
+        "QA41",
+        "the console offers exactly the rule kinds that exist",
+        "management/frontend/src/app/features/security/rule-form.ts",
+        "  { value: 'blocked_prompt_rate', label: 'Too many prompts are being blocked by the pipeline' },",  # noqa: E501
+        "  { value: 'token_spike', label: 'Token use jumped against the previous window' },",
+        "tools/tests/test_the_console_speaks_the_closed_vocabulary.py",
+    ),
+    Mutation(
+        "QA42",
+        "every rule kind the vocabulary defines is one the engine measures",
+        "gateway/src/aira_gateway/anomalies/evaluator.py",
+        "    RuleKind.BLOCKED_PROMPT_RATE: frozenset({Outcome.BLOCKED_BY_PIPELINE.value}),",
+        "",
+        "gateway/tests/test_every_rule_kind_is_measured.py",
+    ),
     Mutation(
         "QA40",
         "an endpoint that spends without dispatching still takes the controls that stop spending",

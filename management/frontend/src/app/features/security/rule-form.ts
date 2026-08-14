@@ -23,13 +23,22 @@ export const NEW_RULE: AnomalyRule = {
   enabled: true,
 };
 
-/** The seven kinds, as a person would pick them. Closed — see `aira_common.anomalies`. */
+/**
+ * The seven kinds, as a person would pick them. Closed — see `aira_common.anomalies`.
+ *
+ * **Compared against that enum by a test**, in both directions, because this list said "closed"
+ * and had drifted from it in both: it offered `token_spike`, which the server answers
+ * `"token_spike" is not a valid choice` to, and it omitted `blocked_prompt_rate` — implemented in
+ * the gateway, seeded by the showcase, listed on this very screen, and impossible to create from
+ * it. A hand-written copy of a closed vocabulary is a copy that drifts; the comment saying so was
+ * not enough, twice over.
+ */
 export const RULE_KINDS: { value: string; label: string }[] = [
   { value: 'refusal_rate', label: 'Too many requests are being refused' },
   { value: 'error_rate', label: 'Too many requests are failing upstream' },
   { value: 'spend_spike', label: 'Spend jumped against the previous window' },
   { value: 'request_spike', label: 'Request count jumped against the previous window' },
-  { value: 'token_spike', label: 'Token use jumped against the previous window' },
+  { value: 'blocked_prompt_rate', label: 'Too many prompts are being blocked by the pipeline' },
   { value: 'payload_size', label: 'Too many unusually large requests' },
   { value: 'new_source_ip', label: 'Requests from an address never seen before' },
 ];
