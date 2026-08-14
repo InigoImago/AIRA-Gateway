@@ -650,11 +650,28 @@ export class ModelCatalog implements OnInit {
     this.offerings.set(null);
     this.offeringsError.set(null);
     this.loadProviders(() => {
+      const askable = this.askable();
+      const remembered = this.browseProvider();
+
+      // **The selection survives a cancelled import, so the listing has to follow it.**
+      // `catalogueOffered` closes this dialog without clearing the provider — it needs it
+      // afterwards, to record where the model came from — and reopening then skipped the fetch,
+      // because the only path to it was guarded on *no* provider being chosen. Half the state was
+      // kept and half was dropped: the select said AI Studio and there was nothing under it, with
+      // no error and no way forward but picking a different provider and picking back.
+      //
+      // A provider this gateway no longer offers is forgotten rather than asked for, or the select
+      // would show a name it cannot resolve — the same half-state one step along.
+      if (remembered) {
+        if (askable.some((provider) => provider.name === remembered))
+          this.chooseBrowseProvider(remembered);
+        else this.browseProvider.set('');
+        return;
+      }
+
       // One provider that can be asked is not a choice, and a select with a single option is a
       // click that teaches nothing. Two or more, and the reader picks.
-      const askable = this.askable();
-      if (askable.length === 1 && !this.browseProvider())
-        this.chooseBrowseProvider(askable[0].name);
+      if (askable.length === 1) this.chooseBrowseProvider(askable[0].name);
     });
   }
 

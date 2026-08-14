@@ -1188,6 +1188,48 @@ describe('ModelCatalog — browsing what a provider offers (`FRD-507` stage C)',
     expect(two.asked).toEqual([]);
   });
 
+  /**
+   * Reported from the console: open the listing, click *Catalogue…*, cancel, open it again — the
+   * provider is still selected and nothing loads.
+   *
+   * `catalogueOffered` closes the dialog **without** clearing the provider, deliberately: it needs
+   * it afterwards to record where the model came from. `openBrowse` then asked for the offerings
+   * only where no provider was chosen, so a remembered one skipped the fetch. Half the state kept
+   * and half dropped — the select said AI Studio and there was nothing under it, with no error.
+   *
+   * Asserted on **what was asked of the gateway**, not on what is on screen: an empty list and a
+   * list that was never requested render identically, which is exactly why nobody caught this.
+   */
+  it('asks again for a provider that is still selected when the picker reopens', () => {
+    const harness = setup({
+      providers: of([STUDIO, { ...STUDIO, name: 'ollama', label: 'ollama' }]),
+    });
+    harness.component.openBrowse();
+    harness.component.chooseBrowseProvider('generative-language');
+    expect(harness.asked).toEqual(['generative-language']);
+
+    // Catalogue something, which closes the window and keeps the provider, then cancel and reopen.
+    harness.component.catalogueOffered(OFFERED_FLASH);
+    harness.component.openBrowse();
+
+    expect(harness.component.browseProvider()).toBe('generative-language');
+    expect(harness.asked).toEqual(['generative-language', 'generative-language']);
+  });
+
+  /**
+   * The same half-state one step along. A remembered provider this gateway no longer offers would
+   * leave the select showing a name it cannot resolve — and the fetch would be for a provider that
+   * is not in the list the reader can choose from.
+   */
+  it('forgets a remembered provider the gateway no longer offers', () => {
+    const harness = setup({ providers: of([STUDIO]) });
+    harness.component.openBrowse();
+    harness.component.chooseBrowseProvider('gone-away');
+    harness.component.openBrowse();
+
+    expect(harness.component.browseProvider()).toBe('');
+  });
+
   it('lists what the vendor offers, searchably, and marks what the catalog already has', () => {
     const { component, fixture, html, text } = setup({
       offerings: of([OFFERED_FLASH, OFFERED_EMBED, { ...OFFERED_FLASH, name: 'gemini-2.0-flash' }]),

@@ -119,4 +119,42 @@ test.describe('Catalog import', () => {
     const idBox = await page.locator('#model-name').boundingBox();
     expect(idBox?.width ?? 0).toBeGreaterThan(180);
   });
+
+  /**
+   * Reopening the picker after a cancelled import.
+   *
+   * Reported: open the AI Studio listing, click *Catalogue…*, cancel the editor, click *Add from
+   * provider* again — the provider is still selected and **the list never loads**. `openBrowse`
+   * clears the offerings and then asks for them only `if (askable.length === 1 && !browseProvider())`,
+   * so a remembered provider skips the fetch. Half the state was kept and half was dropped: the
+   * select says AI Studio, and there is nothing under it, forever.
+   *
+   * The remembered provider is deliberate — `catalogueOffered` needs it after the dialog closes —
+   * so the fix is to make the list follow the selection rather than to forget it.
+   */
+  test('reopening the picker after a cancelled import loads the listing again', async ({
+    page,
+  }) => {
+    await login(page, USERS.globalAdmin);
+    await page.goto('/models');
+
+    await page.getByTestId('browse-provider-models').click();
+    await page.getByTestId('browse-provider').selectOption({ index: 1 });
+    const chosen = await page.getByTestId('browse-provider').inputValue();
+    await expect(page.locator('[data-testid^="offered-"]').first()).toBeVisible({
+      timeout: 20_000,
+    });
+
+    await page.locator('[data-testid^="offered-"]').first().click();
+    await page.getByRole('button', { name: /^cancel$/i }).click();
+
+    await page.getByTestId('browse-provider-models').click();
+
+    // The selection survives — that is the convenience, and it is not the bug.
+    await expect(page.getByTestId('browse-provider')).toHaveValue(chosen);
+    // And the list under it is there, which is what "still selected but nothing loads" was about.
+    await expect(page.locator('[data-testid^="offered-"]').first()).toBeVisible({
+      timeout: 20_000,
+    });
+  });
 });

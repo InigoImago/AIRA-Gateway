@@ -5,6 +5,29 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Half the state kept, half dropped
+
+Reported from the console: open the AI Studio listing, click *Catalogue…*, cancel the editor, open
+the picker again — the provider is still selected and **the list never loads**.
+
+`catalogueOffered` closes the window without clearing the provider, and that is deliberate: it
+needs it afterwards, to record where the model came from. `openBrowse` then asked the gateway for
+the offerings only `if (askable.length === 1 && !browseProvider())` — the single-provider
+convenience — so a *remembered* provider skipped the fetch entirely. The select said AI Studio,
+there was nothing under it, no error, and no way forward except picking a different provider and
+picking back.
+
+The selection surviving is the feature; the list not following it is the bug. It follows now, and
+a remembered provider the gateway no longer offers is **forgotten** rather than asked for — the
+same half-state one step along, where the select would show a name it cannot resolve.
+
+**Asserted on what was asked of the gateway, not on what is on screen.** An empty listing and a
+listing that was never requested render identically, which is exactly why no test had an opinion.
+Both halves of the fix were broken in turn: reverting it fails two cases, and dropping only the
+forgetting fails one.
+
+---
+
 ## One paragraph became a column
 
 Reported from the console: importing a model from AI Studio and clicking *Catalogue…* leaves the
