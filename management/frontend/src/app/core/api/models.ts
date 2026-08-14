@@ -37,6 +37,16 @@ export interface UseCasePermissions {
   can_manage: boolean;
   /** Actually belongs to it — which is what issuing an API key requires, and seeing it is not. */
   is_member: boolean;
+  /**
+   * Whether the **gateway** would accept this person's token for this use case.
+   *
+   * A fourth answer, not a phrasing of `is_member`. Management counts a membership row and grants
+   * a global administrator everything; the gateway reads the Keycloak groups in a token and knows
+   * neither. Reported from the console: a use-case admin and a global admin both pressed *Run
+   * dry-run* on the showcase use case and were refused, because its members were rows and the
+   * realm had no group reaching it.
+   */
+  may_call?: boolean;
 }
 
 export interface UseCase {

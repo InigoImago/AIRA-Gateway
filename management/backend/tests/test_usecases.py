@@ -415,11 +415,26 @@ def test_the_detail_says_what_this_caller_may_do() -> None:
         f"{BASE}perm-uc/members/", {"username": "perm-user", "role": "user"}, format="json"
     )
 
+    # `may_call` is **False for both**, and that is not an oversight in the fixture: neither of
+    # them holds a Keycloak group reaching this use case, and that — not a Django row — is what the
+    # gateway reads. A global administrator may do everything *here* and call nothing there, which
+    # is the whole reason it is a fourth answer (`ADR-0007`, and the console report that a use-case
+    # admin and a global admin were both refused a dry run).
     as_admin = _client(admin).get(f"{BASE}perm-uc/").json()["permissions"]
-    assert as_admin == {"can_admin": True, "can_manage": True, "is_member": True}
+    assert as_admin == {
+        "can_admin": True,
+        "can_manage": True,
+        "is_member": True,
+        "may_call": False,
+    }
 
     as_member = _client(member).get(f"{BASE}perm-uc/").json()["permissions"]
-    assert as_member == {"can_admin": False, "can_manage": False, "is_member": True}
+    assert as_member == {
+        "can_admin": False,
+        "can_manage": False,
+        "is_member": True,
+        "may_call": False,
+    }
 
 
 def test_seeing_every_use_case_is_not_being_in_one() -> None:
@@ -436,7 +451,12 @@ def test_seeing_every_use_case_is_not_being_in_one() -> None:
 
     permissions = _client(steering).get(f"{BASE}scope-uc/").json()["permissions"]
 
-    assert permissions == {"can_admin": False, "can_manage": False, "is_member": False}
+    assert permissions == {
+        "can_admin": False,
+        "can_manage": False,
+        "is_member": False,
+        "may_call": False,
+    }
 
 
 def test_the_permissions_a_use_case_reports_are_the_ones_it_enforces() -> None:

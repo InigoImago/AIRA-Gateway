@@ -365,6 +365,15 @@ export class PipelineEditor implements OnInit {
    * becomes read-only and the test panel stays live, because a dry run changes nothing.
    */
   protected readonly canManage = signal(false);
+  /**
+   * Whether the gateway would accept this reader's token for this use case — which is what a dry
+   * run needs, and is **not** what the console's own membership answer says.
+   *
+   * `true` until told otherwise: an older control plane does not send the field, and a builder
+   * that greys out its own test panel because a server did not mention something would be worse
+   * than the defect it is here to prevent. Undefined means "no opinion", not "no".
+   */
+  protected readonly mayCall = signal(true);
 
   /**
    * The models this use case has been released (`FRD-308`).
@@ -390,6 +399,7 @@ export class PipelineEditor implements OnInit {
     this.service.get(this.slug).subscribe({
       next: (useCase) => {
         this.canManage.set(useCase.permissions?.can_manage ?? false);
+        this.mayCall.set(useCase.permissions?.may_call ?? true);
         // What this use case may call (`FRD-308`). Every model field below chooses from it: the
         // fields were free text, which offered exactly what the server refuses — `FRD-206`'s
         // complaint, and here it also invites naming a model the use case has no right to.

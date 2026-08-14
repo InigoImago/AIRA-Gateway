@@ -9,7 +9,12 @@ from django.db.models import Count
 from rest_framework import serializers
 
 from aira_management.apps.catalog.models import Model as CatalogModel
-from aira_management.apps.usecases.access import is_member, may_admin, may_manage
+from aira_management.apps.usecases.access import (
+    is_member,
+    may_admin,
+    may_call_queryset,
+    may_manage,
+)
 from aira_management.apps.usecases.models import (
     UseCase,
     UseCaseGroupGrant,
@@ -36,11 +41,27 @@ class UseCaseSerializer(serializers.ModelSerializer[UseCase]):
         request = self.context.get("request")
         user = getattr(request, "user", None)
         if user is None or not getattr(user, "is_authenticated", False):
-            return {"can_admin": False, "can_manage": False, "is_member": False}
+            return {
+                "can_admin": False,
+                "can_manage": False,
+                "is_member": False,
+                "may_call": False,
+            }
         return {
             "can_admin": may_admin(user, obj),
             "can_manage": may_manage(user, obj),
             "is_member": is_member(user, obj),
+            # **What the gateway will accept from this person's token**, which is a third question
+            # and not a stricter phrasing of `is_member` (`access.may_call_queryset`). Reported
+            # from the console: a use-case administrator and a global administrator both pressed
+            # *Run dry-run* on the showcase use case and were refused, because its members were
+            # Django rows and the gateway reads Keycloak groups. `is_member` said yes to both —
+            # it grants a global administrator everything, and it counts direct rows.
+            #
+            # Offering an action the server will refuse is the `FRD-206` defect: it reads as a
+            # broken system rather than as a boundary. The screen that spends tokens needs the
+            # answer of the system that spends them.
+            "may_call": may_call_queryset(user, UseCase.objects.filter(pk=obj.pk)).exists(),
         }
 
     #: The models released for this use case, by name (`FRD-308`).

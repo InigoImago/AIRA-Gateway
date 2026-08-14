@@ -129,8 +129,33 @@ def _missing(token: str, realm: dict) -> list[str]:
                 raise
             missing_groups.append(path)
 
+    # **And which groups those users are in**, which is the half that was missing and cost a
+    # working demo. `coding-assistant` had no `/use-cases/…` group at all, and `personalwesen` had
+    # one nobody was in — so the seed declared members the console showed and the gateway refused,
+    # for every account, on the use case the showcase is built around. A realm that carries every
+    # user and every group and puts nobody in them satisfies both checks above and serves nothing.
+    #
+    # Only what the file *names*: a person who added themselves to a group to try something keeps
+    # it, for the same reason the group check does not compare in the other direction.
+    missing_members: list[str] = []
+    by_name = {u["username"]: u for u in users}  # type: ignore[index]
+    for wanted in realm.get("users", []):
+        running = by_name.get(wanted["username"])
+        if running is None or not wanted.get("groups"):
+            continue
+        held = {
+            g["path"]  # type: ignore[index]
+            for g in _request("GET", f"/admin/realms/{name}/users/{running['id']}/groups", token)
+            or []
+        }
+        for path in wanted["groups"]:
+            if path not in held:
+                missing_members.append(f"{wanted['username']} in {path}")
+
     return sorted(
-        [f"user {u}" for u in wanted_users - present_users] + [f"group {g}" for g in missing_groups]
+        [f"user {u}" for u in wanted_users - present_users]
+        + [f"group {g}" for g in missing_groups]
+        + [f"membership {m}" for m in missing_members]
     )
 
 

@@ -5,6 +5,48 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The showcase's members were rows the gateway could not read (`FRD-209`, `ADR-0007`)
+
+Reported: *"I just tested with the use-case admin and the global admin on the Coding use case — the
+dry run works for neither."* Measured before changing anything, and every part of it was true:
+
+- `usecases_usecasemembership` held three rows for `coding-assistant`;
+- the gateway's `use_case_groups` held **none** for it, and the demo realm had no
+  `/use-cases/coding-assistant` group at all;
+- so the console — which asks Management's `is_member` — showed all three as members, and the
+  gateway, which reads the Keycloak groups in a token, refused every one of them.
+
+`personalwesen` carried the second version of it: the group existed and **nobody was in it**, while
+the seed named `admin` as its administrator. Neither had ever worked from the console for anybody.
+
+**The seed's `MEMBERSHIPS` and the realm's `users[].groups` are one list written twice**, and
+nothing compared them — this repository's most repeated shape. A test compares them now, in both
+directions: everybody the seed makes a member must be reachable from their token, and a
+`/use-cases/<slug>` group must name a use case the showcase creates. Breaking the realm entry
+reproduces the reported defect as a red test.
+
+**The realm reconciler could not have carried the fix either.** It checked that every user and
+every group in the file exists, and never that anybody is *in* one — a realm with all the users,
+all the groups and nobody in them satisfied it and serves nothing. It compares memberships now.
+
+**And the console offered the button.** `is_member` counts a database row and grants a global
+administrator everything; `may_call_queryset` — the gateway's own rule, already used by the
+smoke-test screen — is a third answer, and the use-case API now reports it as `may_call`. The
+builder says, before the button, that the gateway will refuse and why. The button stays enabled:
+this is the console's reading of a rule the gateway owns, and a disabled control that is wrong
+about it could not be argued with.
+
+Verified live afterwards: global admin and use-case admin both dry-run `coding-assistant`
+(dispatched to `qwen3:0.6b`), and a global admin on `kundenservice` — visible to them, not
+callable — sees the warning before pressing anything.
+
+Two harness traps on the way, both the same one: a spec that passed with `may_call ?? true` written
+in the *mock*, so `undefined` never reached the component and the "no opinion" case tested its own
+setup; and — the previous round — a checkbox asserted through its signal while absent from the
+template.
+
+---
+
 ## A refused dry run still has to say what it found (`FRD-309`)
 
 Reported: *"when I start a dry run and it was rejected, the warning or error doesn't go away, and I

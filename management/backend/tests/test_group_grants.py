@@ -374,3 +374,35 @@ def test_deleting_the_use_case_takes_its_grants_with_it() -> None:
 
     assert not UseCaseGroupGrant.objects.filter(use_case__slug="uc-a").exists()
     assert not UseCase.objects.filter(slug="uc-a").exists()
+
+
+def test_a_use_case_reports_whether_the_gateway_would_accept_this_caller() -> None:
+    """`may_call` is the **gateway's** answer, and the console needs it before it offers a button.
+
+    Reported: a use-case administrator and a global administrator both pressed *Run dry-run* on the
+    showcase use case and were refused. Both were members by Django row; neither held a Keycloak
+    group reaching it, and the gateway reads groups. `is_member` said yes to both — it counts
+    direct rows and grants a global administrator everything — so the console offered an action the
+    server would refuse, which reads as a broken system rather than as a boundary (`FRD-206`).
+
+    The three states here are the whole point: a global administrator who may do everything in
+    Management and call nothing; a person made a member by a Django row, same answer; and a person
+    who holds the granted group, who may.
+    """
+    admin = _user("call-admin", "global-admin")
+    client = _client(admin)
+    _create(client, "call-uc")
+
+    assert client.get(f"{BASE}call-uc/").json()["permissions"]["may_call"] is False
+
+    direct = _user("call-direct")
+    client.post(
+        f"{BASE}call-uc/members/", {"username": "call-direct", "role": "user"}, format="json"
+    )
+    permissions = _client(direct).get(f"{BASE}call-uc/").json()["permissions"]
+    assert permissions["is_member"] is True, "a direct row is membership in Management"
+    assert permissions["may_call"] is False, "…and it is not what the gateway reads"
+
+    grouped = _user("call-grouped", groups=(GROUP,))
+    client.post(f"{BASE}call-uc/groups/", {"group_path": GROUP, "role": "user"}, format="json")
+    assert _client(grouped).get(f"{BASE}call-uc/").json()["permissions"]["may_call"] is True

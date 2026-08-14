@@ -55,6 +55,15 @@ interface Options {
   confirm?: boolean;
   canManage?: boolean;
   useCaseFails?: boolean;
+  /**
+   * What the **gateway** would say about this caller — not the console's membership answer.
+   *
+   * `'absent'` leaves the field off the response entirely, which is what an older control plane
+   * sends. Written as `mayCall ?? true` in the harness first, so `undefined` became `true` *in the
+   * mock* and the component never saw a missing field — the test then passed with the component
+   * reading a missing answer as "no", which is the case it was named for.
+   */
+  mayCall?: boolean | 'absent';
   /** What the use case has been released (`FRD-308`). */
   released?: string[];
 }
@@ -87,6 +96,7 @@ function setup(initial: PipelineConfig, options: Options = {}) {
                     can_admin: true,
                     can_manage: options.canManage ?? true,
                     is_member: true,
+                    ...(options.mayCall === 'absent' ? {} : { may_call: options.mayCall ?? true }),
                   },
                   // What this use case may call (`FRD-308`). Every model field in the builder
                   // chooses from it, so a harness that released nothing would be testing a
@@ -550,6 +560,35 @@ describe('PipelineEditor', () => {
     component.runDryRun();
     fixture.detectChanges();
     expect(component.notReached()).toEqual([]);
+  });
+
+  it('says a dry run will be refused before offering the button', () => {
+    // Reported: a use-case administrator and a global administrator both pressed Run dry-run on
+    // the showcase use case and were refused. Both were members by database row; neither held a
+    // Keycloak group reaching it, and the gateway reads groups. The console's own membership
+    // answer said yes to both, so the screen invited a click the server would refuse — `FRD-206`.
+    const refused = setup({ steps: [], fallback_models: [] }, { mayCall: false });
+    refused.fixture.detectChanges();
+    expect(refused.text()).toContain('not in a group that reaches this use case');
+    // The button stays live: this is the console's reading of a rule the gateway owns, and a
+    // disabled control that is wrong about it could not be argued with.
+    const button = [
+      ...(refused.fixture.nativeElement as HTMLElement).querySelectorAll<HTMLButtonElement>(
+        'button',
+      ),
+    ].find((candidate) => candidate.textContent?.includes('Run dry-run'));
+    expect(button?.disabled).toBe(false);
+
+    const allowed = setup({ steps: [], fallback_models: [] }, { mayCall: true });
+    expect(allowed.text()).not.toContain('not in a group that reaches this use case');
+  });
+
+  it('says nothing when the control plane has no opinion', () => {
+    // An older control plane does not send the field. Reading a missing answer as "no" would grey
+    // out the panel over something the server never claimed — worse than the defect above, because
+    // it is wrong in the direction that stops work.
+    const { text } = setup({ steps: [], fallback_models: [] }, { mayCall: 'absent' });
+    expect(text()).not.toContain('not in a group that reaches this use case');
   });
 
   it('asks the gateway to keep going past a block only when told to', () => {

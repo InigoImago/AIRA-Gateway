@@ -198,6 +198,27 @@
             ></textarea>
           </div>
 
+          <!--
+            Said **before** the button, not after the 403. Reported: a use-case administrator and a
+            global administrator both pressed Run dry-run on the showcase use case and were refused
+            — they were members by database row, and the gateway reads the Keycloak groups in a
+            token. The console's own membership answer says yes to both, so the screen offered an
+            action the server would refuse, which reads as a broken system rather than as a
+            boundary (`FRD-206`).
+
+            The button stays enabled: this is the console's reading of a rule the gateway owns, and
+            a disabled control that is wrong about it would be unarguable. A sentence that is wrong
+            can at least be ignored by somebody who presses the button and finds it works.
+          -->
+          @if (!mayCall()) {
+            <p class="callout callout--warning" style="margin: 0" data-testid="dry-run-not-member">
+              A dry run calls real models and is charged to this use case, so the gateway applies
+              the same membership rule a request does — and it reads the groups in your Keycloak
+              token, not this console's member list. You are not in a group that reaches this use
+              case, so it will refuse. Grant one of your groups access on the use case, or ask
+              somebody who is in one to test it.
+            </p>
+          }
           <div class="spread">
             <span class="muted" style="font-weight: 600">Dry-run (runs the real steps)</span>
             <button

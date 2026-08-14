@@ -52,6 +52,11 @@
           "name": "smoke-test",
           "path": "/use-cases/smoke-test",
           "id": "b0c81389-4ce2-5cd4-8292-d1ea2d631c4a"
+        },
+        {
+          "name": "coding-assistant",
+          "path": "/use-cases/coding-assistant",
+          "id": "66d502cd-ccf0-5e73-9a9a-8af97f2f8d06"
         }
       ],
       "id": "190868a1-2761-5e9e-8087-53d7f05f9e58"
@@ -236,7 +241,9 @@
       "realmRoles": [],
       "groups": [
         "/use-cases/smoke-test",
-        "/aira/global-admins"
+        "/aira/global-admins",
+        "/use-cases/personalwesen",
+        "/use-cases/coding-assistant"
       ],
       "id": "89c50878-2be6-5126-9b96-004b13bba3ee"
     },
@@ -300,7 +307,8 @@
         "/use-cases/kundenservice",
         "/use-cases/entwicklung",
         "/use-cases/demo-uc",
-        "/use-cases/smoke-test"
+        "/use-cases/smoke-test",
+        "/use-cases/coding-assistant"
       ],
       "id": "dca4ff6f-f85e-51c8-9dfc-9f5dd0893850"
     },
@@ -322,7 +330,8 @@
       "groups": [
         "/use-cases/kundenservice",
         "/use-cases/demo-uc",
-        "/abteilungen/kundendienst"
+        "/abteilungen/kundendienst",
+        "/use-cases/coding-assistant"
       ],
       "id": "5f17b99d-43bd-5df9-a8e0-88e538babcbb"
     },
