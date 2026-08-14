@@ -410,6 +410,18 @@
       [members]="members()"
       (changed)="reloadMembers()"
     />
+    <!--
+      Under the access list, because the two answer the same reader's two questions in order: who
+      may call this, and what did they call. Access is the thing you change here; consumption is
+      the thing you look at — so the editable panel keeps the top (`FRD-606`).
+    -->
+    <app-people-panel
+      [month]="peopleMonth()"
+      [today]="peopleToday()"
+      [budgets]="budgets()"
+      [unavailable]="consumption().unavailable"
+      [reason]="consumption().reason"
+    />
   }
 
   <!-- API keys -->

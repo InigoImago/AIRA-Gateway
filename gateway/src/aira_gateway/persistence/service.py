@@ -52,6 +52,9 @@ class RequestLogService:
         *,
         subject: str,
         auth_method: str,
+        #: Descriptive only (`FRD-606`); `subject` is the identity. Defaulted so a caller that
+        #: knows no name still writes a valid row — a refusal often knows nothing else.
+        username: str | None = None,
         use_case: str | None,
         source_ip: str | None,
         operation: str,
@@ -79,6 +82,7 @@ class RequestLogService:
     ) -> RequestLog:
         entry = RequestLog(
             subject=subject,
+            username=username,
             auth_method=auth_method,
             use_case=use_case,
             source_ip=source_ip,

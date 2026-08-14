@@ -57,12 +57,15 @@ async def _log(
     latency: int | None = 40,
     outcome: str | None = None,
     operation: str = "generateContent",
+    username: str | None = None,
+    auth: str = "api_key",
 ) -> None:
     async with sessionmaker() as session:
         session.add(
             RequestLog(
                 subject=subject,
-                auth_method="api_key",
+                username=username,
+                auth_method=auth,
                 use_case=use_case,
                 api="gemini",
                 operation=operation,
@@ -548,3 +551,53 @@ async def test_every_breakdown_counts_the_same_way(sessionmaker) -> None:
     assert sum(row["requests"] for row in report["by_outcome"]) == 1
     # …and the model that only ever classified is still listed, with its spend.
     assert {row["key"] for row in report["by_model"]} == {"chat-1", "guard-1"}
+
+
+# ---- one person, two credentials (`FRD-606`) ------------------------------------------------
+
+
+async def test_one_person_using_two_credentials_is_one_row(sessionmaker) -> None:
+    """The join that did not exist. An OIDC token's subject is the directory's user id and an API
+    key's is its owner's username, so the same person appeared twice in every per-member figure and
+    neither row said who it was. `username` is written beside the subject for exactly this, and it
+    is a **display** key: `by_member` still groups by subject, because that is what every counter
+    and every budget is keyed on."""
+    await _log(sessionmaker, subject="kc-uuid-1", username="erika", auth="oidc", cost=1000)
+    await _log(sessionmaker, subject="erika", username="erika", auth="api_key", cost=500)
+
+    report = await ReportingService(sessionmaker).report(None, AUGUST, SEPTEMBER)
+
+    people = {row["key"]: row for row in report["by_person"]}
+    assert set(people) == {"erika"}
+    assert people["erika"]["cost_nanos"] == 1500
+    assert people["erika"]["requests"] == 2
+    # …and `by_member` is unchanged, still two rows keyed the way enforcement keys them.
+    assert {row["key"] for row in report["by_member"]} == {"kc-uuid-1", "erika"}
+
+
+async def test_the_split_says_which_half_came_from_where(sessionmaker) -> None:
+    """`FR-3`: the question is "what did this person use", and the answer an administrator acts on
+    is usually "almost all of it through one key"."""
+    await _log(sessionmaker, subject="kc-uuid-1", username="erika", auth="oidc", cost=1000)
+    await _log(sessionmaker, subject="erika", username="erika", auth="api_key", cost=500)
+    await _log(sessionmaker, subject="erika", username="erika", auth="api_key", cost=500)
+
+    report = await ReportingService(sessionmaker).report(None, AUGUST, SEPTEMBER)
+    person = next(row for row in report["by_person"] if row["key"] == "erika")
+
+    assert person["by_method"]["oidc"]["cost_nanos"] == 1000
+    assert person["by_method"]["api_key"]["cost_nanos"] == 1000
+    assert person["by_method"]["api_key"]["requests"] == 2
+    # The parts add up to the whole, which is why the whole is queried rather than summed here.
+    assert sum(part["cost_nanos"] for part in person["by_method"].values()) == person["cost_nanos"]
+
+
+async def test_a_row_with_no_name_stands_alone(sessionmaker) -> None:
+    """Rows written before the column existed, and credentials that name nobody. Folding them into
+    somebody would be inventing the name a subject *probably* had — the one thing an audit row
+    must not do. They appear as themselves."""
+    await _log(sessionmaker, subject="kc-uuid-9", username=None, auth="oidc", cost=700)
+
+    report = await ReportingService(sessionmaker).report(None, AUGUST, SEPTEMBER)
+
+    assert {row["key"] for row in report["by_person"]} == {"kc-uuid-9"}

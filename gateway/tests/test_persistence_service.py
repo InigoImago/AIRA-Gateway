@@ -70,3 +70,59 @@ async def test_record_without_usage(make_session) -> None:
     assert row.total_tokens is None
     assert row.use_case is None
     assert row.request_payload is None
+
+
+async def test_the_name_is_persisted_beside_the_subject(make_session) -> None:
+    """`FRD-606`: the column that lets one person be one figure.
+
+    The mutation harness asked for this one. Deleting `username=username` from the row survived
+    every test in the suite — the column existed, the grouping used it, the panel rendered it, and
+    nothing checked the one step that fills it. The layer above (attribution → pending row) is
+    covered in `test_persistence_recorder.py`; this is the step that actually persists.
+    """
+    async with make_session() as session:
+        await RequestLogService(session).record(
+            subject="kc-uuid-1",
+            username="erika",
+            auth_method="oidc",
+            use_case="demo-uc",
+            source_ip=None,
+            operation="generateContent",
+            model="mock-1",
+            status=200,
+            usage=None,
+            latency_ms=1,
+            trace_id=None,
+            request_payload=None,
+            response_payload=None,
+        )
+
+    async with make_session() as session:
+        row = (await session.execute(select(RequestLog))).scalar_one()
+
+    assert (row.subject, row.username) == ("kc-uuid-1", "erika")
+
+
+async def test_a_row_without_a_name_keeps_null(make_session) -> None:
+    """Null, not an empty string: the grouping falls back to the subject on null, and `''` would
+    make every nameless row one imaginary person called nothing."""
+    async with make_session() as session:
+        await RequestLogService(session).record(
+            subject="svc-1",
+            auth_method="api_key",
+            use_case="demo-uc",
+            source_ip=None,
+            operation="generateContent",
+            model="mock-1",
+            status=200,
+            usage=None,
+            latency_ms=1,
+            trace_id=None,
+            request_payload=None,
+            response_payload=None,
+        )
+
+    async with make_session() as session:
+        row = (await session.execute(select(RequestLog))).scalar_one()
+
+    assert row.username is None

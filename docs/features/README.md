@@ -7,7 +7,7 @@ each FRD's own header is the single source** — this index is generated from th
 and a test fails when they disagree, because feature status kept in two places is feature
 status that goes stale in the copy nobody opens.
 
-**66 of 69 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
+**67 of 70 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
 
 | FRD | Feature | Phase | Status |
 | --- | ------- | ----- | ------ |
@@ -80,3 +80,4 @@ status that goes stale in the copy nobody opens.
 | [603](FRD-603-use-case-consumption.md) | What a use case consumed, with or without a budget | 6 (Governance & Analytics) | ✅ Done |
 | [604](FRD-604-credential-accountability.md) | Who answers for a credential | 5 (IT Security) | ✅ Both stages done |
 | [605](FRD-605-roles-from-groups.md) | Roles from groups | 2 (Management Foundation, revisited) | ✅ Built |
+| [606](FRD-606-per-person-consumption.md) | What one person consumed in a use case | 6 (Governance & Analytics) | ✅ Done |

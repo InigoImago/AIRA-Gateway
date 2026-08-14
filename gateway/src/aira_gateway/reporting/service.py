@@ -188,7 +188,44 @@ class ReportingService:
                     row.as_dict()
                     for row in await self._grouped(session, scope, start, end, RequestLog.outcome)
                 ],
+                # One person, and how they authenticated (`FRD-606` FR-2/FR-3). `by_member` above
+                # stays as it is: it groups by `subject`, which is what every counter and every
+                # budget is keyed on, and a report that quietly changed that key would answer a
+                # different question than the one enforcement asks.
+                "by_person": await self._by_person(session, scope, start, end),
             }
+
+    async def _by_person(
+        self, session: AsyncSession, scope: Scope, start: datetime, end: datetime
+    ) -> list[dict[str, Any]]:
+        """Each person's figures, with the two credentials shown apart and together.
+
+        Two queries rather than one grouped by both columns and folded in Python: the totals must
+        come from the database for the same reason every other figure does — a sum assembled from
+        parts is a sum that disagrees with the parts the first time one of them is filtered out.
+        """
+        totals = {
+            row.key: row for row in await self._grouped(session, scope, start, end, self._PERSON)
+        }
+        statement = self._window(
+            select(
+                self._PERSON.label("key"),
+                RequestLog.auth_method.label("method"),
+                *_measures(),
+            ),
+            scope,
+            start,
+            end,
+        )
+        split: dict[str, dict[str, Any]] = {}
+        for row in await session.execute(statement.group_by(self._PERSON, RequestLog.auth_method)):
+            key = row.key or "(none)"
+            split.setdefault(key, {})[row.method or "(none)"] = _figures(key, row).as_dict()
+
+        return [
+            {**figures.as_dict(), "by_method": split.get(key, {})}
+            for key, figures in totals.items()
+        ]
 
     def _window(self, statement: Any, scope: Scope, start: datetime, end: datetime) -> Any:
         statement = statement.where(RequestLog.created_at >= start, RequestLog.created_at < end)
@@ -205,6 +242,17 @@ class ReportingService:
     ) -> Figures:
         row = (await session.execute(self._window(select(*_measures()), scope, start, end))).one()
         return _figures("total", row)
+
+    #: How a **person** is grouped (`FRD-606`).
+    #:
+    #: The name where the credential carried one, the subject otherwise. That is the only join
+    #: there is: an OIDC token's subject is the directory's user id and an API key's is its
+    #: owner's username, so grouping by subject alone reports one person as two rows and labels
+    #: neither. `subject` remains the identity everywhere it matters — this is a display.
+    #:
+    #: A row written before the column existed has no name and stands alone, which is the honest
+    #: answer for it: the join genuinely was not recorded.
+    _PERSON = func.coalesce(RequestLog.username, RequestLog.subject)
 
     async def _grouped(
         self,

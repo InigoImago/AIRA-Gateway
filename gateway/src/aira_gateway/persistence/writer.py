@@ -57,6 +57,10 @@ class PendingLog:
     # FRD-122. Defaulted so a caller that only knows the old facts still produces a valid row —
     # which matters because a *refusal* often knows nothing else.
     credential: str | None = None
+    #: See `RequestLog.username`: a name for grouping a display, not an identity (`FRD-606`).
+    #: Defaulted for the same reason the fields around it are — a refusal often knows no name,
+    #: and the middleware's own row knows nothing at all.
+    username: str | None = None
     outcome: str | None = None
     requested_model: str | None = None
     model_selection: str | None = None
@@ -226,6 +230,7 @@ class RequestLogWriter:
 
             await RequestLogService(session).record(
                 subject=entry.subject,
+                username=entry.username,
                 auth_method=entry.auth_method,
                 use_case=entry.use_case,
                 source_ip=entry.source_ip,

@@ -11,6 +11,7 @@ import {
   IssuedApiKey,
   Membership,
   RateLimit,
+  PersonRow,
   ReportRow,
   UseCase,
   UseCaseConsumption,
@@ -25,6 +26,7 @@ import { windowFor } from '../../core/ui/periods';
 import { BudgetsTab } from './budgets-tab';
 import { ConnectionPanel } from './connection-panel';
 import { ConsumptionPanel } from './consumption-panel';
+import { PeoplePanel } from './people-panel';
 import { ModelReleasePanel } from './model-release-panel';
 import { AccessPanel } from './access-panel';
 import { RulesTab } from './rules-tab';
@@ -59,6 +61,7 @@ const TABS: readonly Tab[] = [
     InfoHint,
     Modal,
     ConsumptionPanel,
+    PeoplePanel,
     ModelReleasePanel,
     RateLimitsTab,
     RulesTab,
@@ -98,6 +101,15 @@ export class UseCaseDetail implements OnInit {
    */
   protected readonly consumptionMonth = signal<ReportRow | null>(null);
   protected readonly consumptionToday = signal<ReportRow | null>(null);
+  /**
+   * Who consumed what, over each of the two windows (`FRD-606`).
+   *
+   * Two windows because a budget's period decides which one answers *"how much is left"*: a `day`
+   * budget is measured against today and a `month` budget against the month. Both are already
+   * being fetched for the totals above, so this costs no extra request.
+   */
+  protected readonly peopleMonth = signal<PersonRow[]>([]);
+  protected readonly peopleToday = signal<PersonRow[]>([]);
   /**
    * How many of the two windows did not arrive — a **count**, not a flag.
    *
@@ -323,6 +335,8 @@ export class UseCaseDetail implements OnInit {
           // made — the gateway said only that it would not answer.
           this.consumptionOutOfScope.set(report.in_scope === false);
           into(report.in_scope === false ? null : report.totals);
+          const people = report.in_scope === false ? [] : (report.by_person ?? []);
+          (preset === 'today' ? this.peopleToday : this.peopleMonth).set(people);
         },
         error: (response: unknown) => {
           into(null);

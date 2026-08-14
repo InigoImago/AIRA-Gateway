@@ -557,6 +557,12 @@ export interface ReportRow {
   max_latency_ms: number | null;
 }
 
+/** One person's consumption, and which credential produced which part of it (`FRD-606`). */
+export interface PersonRow extends ReportRow {
+  /** Keyed by auth method — `oidc`, `api_key`. Absent methods simply did not call. */
+  by_method?: Record<string, ReportRow>;
+}
+
 export interface Report {
   from: string;
   to: string;
@@ -568,6 +574,15 @@ export interface Report {
   by_member: ReportRow[];
   /** Why requests ended the way they did — `served`, `rate_limited`, … (FRD-122). */
   by_outcome: ReportRow[];
+  /**
+   * One **person**, both ways they can authenticate (`FRD-606`).
+   *
+   * Not a rename of `by_member`, which stays keyed on `subject` — the identity every counter and
+   * every budget uses. This one is keyed on the name the credential carried, so a person who
+   * calls with a key and signs in to the console is one figure instead of two rows that nothing
+   * says are the same human. A row whose credential named nobody stands alone under its subject.
+   */
+  by_person?: PersonRow[];
   /** The single use case this report was narrowed to, or `null` for all of them (FRD-603). */
   use_case?: string | null;
   /**

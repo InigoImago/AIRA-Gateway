@@ -271,6 +271,26 @@
             }
           </div>
         }
+
+        <!--
+          **What this scope consumed, whether or not the budget limits it** (`FRD-606` FR-1).
+          Reported from the console: *"I am missing a display of how much money was used up — at
+          the moment it is only the requests."* A budget that limits requests showed `0 / 500` and
+          nothing else, while the same period's tokens and money were in the very object rendering
+          the bar. `FRD-603` fixed this exact shape one level up: consumption used to be visible
+          only as a fraction of a limit, so whatever had no limit had no figure.
+
+          No bar, because there is no denominator — and inventing one would turn "what this cost"
+          into "how close to a limit nobody set".
+        -->
+        @if (measured(budget) && alsoUsed(budget).length) {
+          <p class="muted" style="margin: 0.6rem 0 0; font-size: 0.82rem">
+            Also used this {{ budget.period }}:
+            @for (figure of alsoUsed(budget); track figure.label) {
+              <span>{{ figure.value }} {{ figure.label }}{{ $last ? '' : ' · ' }}</span>
+            }
+          </p>
+        }
       </div>
     } @empty {
       <p class="empty">No budgets yet — requests are unlimited for this use case.</p>

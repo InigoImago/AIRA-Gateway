@@ -5,6 +5,51 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## What one person used, and the column that made it answerable (`FRD-606`)
+
+Asked: *"in reporting I am missing a display of how much money was used up — at the moment it is
+only the requests. And an overview of what a person in the use case has used up, in tokens and in
+money, for both the API key and the Keycloak sign-in, even when there is no budget limit; where
+there is one, how much is left."*
+
+Two of the three needed no new figures at all, which is `FRD-603`'s finding one level down:
+`BudgetUsage` already carries the period's tokens, requests **and** money, and the budget card
+rendered only the metric that budget happened to limit. A request budget answered "how much money"
+with silence while holding the answer.
+
+**The third needed a column.** A subject is not the same alphabet for the two credentials — an
+OIDC token's is the directory's user id, an API key's is its owner's username — so one person was
+two rows and nothing could join them. `Attribution` had carried the name all along, with a
+docstring saying it is *never* written to the row, because a name can be reassigned and a subject
+cannot. That reasoning holds, so the name is added as a **descriptive** column: `by_member` still
+groups by subject, which is what every counter and every budget key uses; `by_person` groups by the
+name. Rows written before the column stand alone under their subject — the join genuinely was not
+recorded, and inventing the name a subject *probably* had is the one thing an audit row must not do.
+
+Verified on the live stack with one person calling both ways: a key request and a console dry run,
+landing in one row — `ucadmin · signed in: 0.0001 / 0 req · API key: 0.0002 / 14 req`.
+
+**Three things the running stack found that the tests had not.**
+
+- A half with money and **no requests** was hidden: the panel asked `requests > 0` to decide
+  whether a credential had called, and a pipeline step's model call is recorded with no request
+  against it (`FRD-125` FR-9). Somebody whose month went entirely through a classifier had a half
+  with real spend and no line saying so.
+- Two decimals hid the whole answer: an allowance of `0.01` against a spend of `0.0003` read
+  `0.01 of 0.01`. The remainder is computed in nano-units and rendered in the significant precision
+  of the figures beside it, with the limit's storage zeros trimmed first.
+- `.table th` shouts, which is right for a column heading and wrong for a person's name.
+
+**And the harness found the wire in my own change.** Deleting `username=username` from the write
+survived every test: the column existed, the grouping used it, the panel rendered it, and nothing
+checked the one step that fills it. Two correct halves and no wire — the shape I have spent four
+rounds finding in other people's code. Covered now at both layers, attribution → pending row and
+pending row → database.
+
+`QA46`, `QA47`.
+
+---
+
 ## Two clocks, and the one nobody wound (`FRD-404`, `FRD-601`)
 
 Asked: *"check the same for reporting and retention."* Two findings, and both are a rule stated

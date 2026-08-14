@@ -110,3 +110,79 @@ def test_client_ip_none_when_unknown() -> None:
 def test_client_ip_blank_forwarded_falls_back() -> None:
     request = _request({"x-forwarded-for": "  "}, client=("1.1.1.1", 1), trust_forwarded_for=True)
     assert client_ip(request) == "1.1.1.1"
+
+
+# ---- the wire from the attribution to the row (`FRD-606`) -----------------------------------
+
+
+async def test_the_name_on_the_attribution_reaches_the_row() -> None:
+    """`request_logs.username` is what lets one person be one figure instead of two rows nothing
+    joins — an OIDC subject is a directory id, an API key's is a username, and neither recognises
+    the other.
+
+    Asserted **through the recorder**, not by inserting a row: the reporting tests build rows
+    directly, so the column, the grouping and the display were all covered while the one step that
+    fills the column was not. The mutation harness said so — deleting `username=username` from the
+    write survived every test in the suite. Two correct halves and no wire, in my own change.
+    """
+    from aira_gateway.persistence.recorder import record_request
+
+    written: dict[str, object] = {}
+
+    class _Writer:
+        async def submit(self, entry: object) -> None:
+            written["entry"] = entry
+
+    request = _request(client=("10.0.0.1", 1234))
+    request.state.attribution = SimpleNamespace(
+        subject="kc-uuid-1", method="oidc", username="erika", use_case="uc", credential="console"
+    )
+    request.app.state.log_writer = _Writer()
+
+    await record_request(
+        request,
+        operation="generateContent",
+        model="mock-1",
+        status=200,
+        usage=None,
+        latency_ms=1,
+        request_payload=None,
+        response_payload=None,
+        api="gemini",
+    )
+
+    entry = written["entry"]
+    assert entry.subject == "kc-uuid-1", "the identity is unchanged"
+    assert entry.username == "erika", "the name did not reach the row"
+
+
+async def test_a_credential_that_names_nobody_writes_no_name() -> None:
+    """Null rather than an empty string: "no name was carried" and "the name is blank" are
+    different facts, and the grouping falls back to the subject for exactly the first one."""
+    from aira_gateway.persistence.recorder import record_request
+
+    written: dict[str, object] = {}
+
+    class _Writer:
+        async def submit(self, entry: object) -> None:
+            written["entry"] = entry
+
+    request = _request(client=("10.0.0.1", 1234))
+    request.state.attribution = SimpleNamespace(
+        subject="svc-1", method="api_key", username=None, use_case="uc", credential="aira_abc"
+    )
+    request.app.state.log_writer = _Writer()
+
+    await record_request(
+        request,
+        operation="generateContent",
+        model="mock-1",
+        status=200,
+        usage=None,
+        latency_ms=1,
+        request_payload=None,
+        response_payload=None,
+        api="gemini",
+    )
+
+    assert written["entry"].username is None

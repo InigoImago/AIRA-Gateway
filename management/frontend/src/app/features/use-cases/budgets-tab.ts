@@ -112,6 +112,29 @@ export class BudgetsTab {
     });
   }
 
+  /**
+   * The figures this budget's scope consumed that it does **not** limit.
+   *
+   * A budget is a limit on one metric or two; the period's other figures are measured all the
+   * same and were simply not rendered, so a request budget answered "how much money" with
+   * silence. Only what is actually known appears — a null is unknown, and `FRD-603`'s rule is
+   * that unknown is never shown as zero.
+   */
+  protected alsoUsed(budget: Budget): { label: string; value: string }[] {
+    const used = this.usedFor(budget);
+    const out: { label: string; value: string }[] = [];
+    if (!budget.limit_cost && used.used_cost != null) {
+      out.push({ label: 'spent ($)', value: used.used_cost });
+    }
+    if (budget.limit_tokens == null && used.used_tokens != null) {
+      out.push({ label: 'tokens', value: `${used.used_tokens}` });
+    }
+    if (budget.limit_requests == null && used.used_requests != null) {
+      out.push({ label: 'request(s)', value: `${used.used_requests}` });
+    }
+    return out;
+  }
+
   protected usedFor(budget: Budget): BudgetUsage {
     return (budget.id != null ? this.usage()[budget.id] : undefined) ?? NO_USAGE;
   }

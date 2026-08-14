@@ -68,6 +68,14 @@ class RequestLog(Base):
 
     # attribution (FRD-102)
     subject: Mapped[str] = mapped_column(String(255), index=True)
+    #: What that subject was **called** at the time — descriptive, never an identity (`FRD-606`).
+    #:
+    #: `subject` is what this row is about and what every counter is keyed on; a name can be
+    #: reassigned and a subject cannot. This exists because the two credentials answer "who is
+    #: this" in different alphabets — an OIDC token's subject is the directory's user id, an API
+    #: key's is its owner's username — so one person was two rows in every per-member figure.
+    #: Null where the credential names nobody, and on every row written before it existed.
+    username: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     auth_method: Mapped[str] = mapped_column(String(32))
     use_case: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     source_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)

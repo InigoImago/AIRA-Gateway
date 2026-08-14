@@ -3898,6 +3898,23 @@ MUTATIONS = [
     #    the copies offered a kind that does not exist and omitted one that does; the fourth was a
     #    test asserting completeness against a list with the same two errors.
     # -- reporting and retention, audited with the same question as the three rounds before it.
+    # -- `FRD-606`: what one person consumed, across both credentials.
+    Mutation(
+        "QA46",
+        "one person using two credentials is one figure, not two rows nothing joins",
+        "gateway/src/aira_gateway/reporting/service.py",
+        "    _PERSON = func.coalesce(RequestLog.username, RequestLog.subject)",
+        "    _PERSON = RequestLog.subject",
+        "gateway/tests/test_reporting.py",
+    ),
+    Mutation(
+        "QA47",
+        "the name is written beside the subject, or nothing can join a person to themselves",
+        "gateway/src/aira_gateway/persistence/service.py",
+        "            username=username,",
+        "",
+        "gateway/tests/test_persistence_service.py gateway/tests/test_persistence_recorder.py",
+    ),
     Mutation(
         "QA43",
         "a payload whose use case no longer exists is still swept",

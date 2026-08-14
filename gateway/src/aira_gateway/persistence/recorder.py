@@ -139,6 +139,8 @@ async def record_request(
     await writer_of(request).submit(
         PendingLog(
             subject=attribution.subject,
+            # A name for grouping a display, never the identity (`FRD-606`).
+            username=attribution.username,
             auth_method=attribution.method,
             use_case=attribution.use_case,
             source_ip=source_ip,
