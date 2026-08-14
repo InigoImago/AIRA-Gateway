@@ -50,3 +50,37 @@
 Authenticated dry-run — **done** in ADR-0007 (the SPA sends its Keycloak bearer to `/gw`, so the
 gateway needs `AIRA_OIDC_ENABLED` pointed at the same realm). Remaining: parallel branches;
 category routing cache; richer live simulation (model-aware allow-check preview).
+
+
+## The dry run had the permission controls and not the spending ones
+
+Asked after the access round: *"can you check the same for budgets and rate limits?"* — the same
+question, of a different rule: **which paths does it actually reach.**
+
+`pipeline:dryRun` was rewritten once already, because a caller could post a pipeline naming any
+model and have the gateway call it — *"no use case, no release check, no approval check, no budget,
+no rate limit, and no audit row."* The rewrite restored authorisation, the release check and the
+audit row. It did not restore the other two, and nothing noticed: the two it fixed are about
+**permission**, the two it left are about **spending**, and the module's own docstring lists all
+four while the code implemented half.
+
+Measured by removing the fix again: a use case with `limit_requests: 0`, a rate limit of one per
+minute, and an outright suspension by IT Security each let a dry run through and call a model.
+
+`guard_before_work` — a suspension, the rate limits, and whether the budget is already exhausted —
+is taken before the engine runs. One call rather than three: the bundle exists so that the order is
+not a call site's to assemble (`FRD-126`), and it is the same bundle the served path takes before
+its pipeline for the same reason (`FRD-405`: refusing *after* the classifier ran cost 72 400 tokens
+across seven refusals in one measurement).
+
+The guard is structural as well as behavioural. `test_every_spender_takes_the_gate.py` reads every
+module under `api/` and fails any that reaches a provider without taking the gate — over the
+category rather than over the file that was wrong, with three exemptions named and reasoned
+(`serving.py` **is** the layer; `providers.py` reads an in-process property; `incidents.py` is
+`FRD-506`'s reachability check, which is never a generation and has no use case to charge).
+
+What the audit did **not** find, checked in the same pass: budgets and rate limits carry the same
+fields on both planes; `upserted` and `deleted` are emitted, routed and applied for both, in both
+directions (`test_outbox_routing.py`); both scopes are evaluated together on every verb, because
+the gate is taken once before the verb branch; and `each_member` needs no membership list at all —
+the caller is the key — so it behaves identically whether somebody is a member by group or by name.

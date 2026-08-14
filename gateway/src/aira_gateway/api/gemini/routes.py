@@ -131,7 +131,15 @@ async def get_model(model: str, request: Request) -> Response:
 #: table, not a reason to record nothing — see ``_refusal_outcome``.
 
 
-def _refusal_response(exc: Exception) -> JSONResponse:
+def refusal_response(exc: Exception) -> JSONResponse:
+    """Every refusal in `REFUSALS`, in this surface's envelope.
+
+    **Public because a second endpoint speaks this envelope.** `pipeline:dryRun` is not a surface —
+    it parses its own small body and answers in Gemini's shape — and it needs the same three
+    statuses for the same three refusals. Restating them there would be a second definition of a
+    mapping that already exists, which is how a control comes to answer 403 on one endpoint and 429
+    on another for the same reason.
+    """
     if isinstance(exc, AttachmentRejected | SchemaRejected):
         return _error(400, str(exc), "INVALID_ARGUMENT")
     if isinstance(exc, ThinkingRejected | EmbeddingRejected):
@@ -181,7 +189,7 @@ async def generate(resource: str, request: Request) -> Response:
     try:
         return await _generate(resource, request, trail)
     except REFUSALS as exc:
-        response = _refusal_response(exc)
+        response = refusal_response(exc)
         await _record_refusal(request, trail, exc, status=response.status_code, started=started)
         return response
 

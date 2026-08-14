@@ -5,6 +5,46 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The dry run had the permission controls and not the spending ones (`FRD-401`, `FRD-405`, `FRD-503`)
+
+Asked: *"can you check the same for budgets and rate limits?"* — the same question as the access
+round, of a different rule: **which paths does it actually reach.**
+
+`pipeline:dryRun` was rewritten once already, because a caller could post a pipeline naming any
+model and have the gateway call it — its docstring lists the finding as *"no use case, no release
+check, no approval check, no budget, no rate limit, and no audit row."* The rewrite restored
+authorisation, the release check and the audit row. **It did not restore the other two**, and the
+split is not random: the two it fixed are about *permission*, the two it left are about *spending*.
+The docstring went on listing all four while the code implemented half.
+
+Measured by removing the fix again — a use case with `limit_requests: 0`, a rate limit of one per
+minute, and an outright suspension by IT Security each let a dry run through and call a model.
+Audited and billed, so visible after the fact and stopped by nothing.
+
+`guard_before_work` is taken before the engine runs: one call, not three, because the bundle exists
+so an order is not a call site's to assemble (`FRD-126`). Live afterwards: first dry run served,
+second and third *"Request rate limit exceeded for use case."* The first attempt at that
+measurement passed twice and was **my probe, not the fix** — the limit had been created five
+seconds earlier and the gateway's config cache had not expired.
+
+The guard is structural too. `test_every_spender_takes_the_gate.py` reads every module under `api/`
+and fails one that reaches a provider without taking the gate — over the **category**, not over the
+file that was wrong, with three exemptions named and reasoned. Removing the fix makes it print
+`pipeline.py` on its own.
+
+**What the audit did not find**, checked in the same pass and worth recording as checked: budgets
+and rate limits carry the same fields on both planes; `upserted` and `deleted` are emitted, routed
+and applied for both, already guarded in both directions by `test_outbox_routing.py`; both scopes
+are evaluated together on every verb, because the gate is taken once before the verb branch; and
+`each_member` needs no membership list at all — the caller is the key — so it behaves identically
+whether somebody is a member by group or by name. The one known limit stands and is stated in the
+console: a person's API key and their Keycloak sign-in are two per-head allowances, because the two
+credentials answer "who is this" in different alphabets.
+
+`QA40`, shown to fail first.
+
+---
+
 ## A grant naming a person was specified, replicated, and read by nobody (`FRD-209` FR-6)
 
 Asked, after the previous round: *"I want to add any group from Keycloak and any user as well, and

@@ -461,3 +461,145 @@ async def test_the_wire_carries_the_keep_going_flag_and_marks_what_it_ran() -> N
     # The refusal is still the one production would give.
     assert keeps.json()["blocked"] is True
     assert keeps.json()["block_reason"] == stops.json()["block_reason"]
+
+
+# == and the controls that are about spending (`FRD-401`, `FRD-405`, `FRD-503`) ==================
+#
+# The rewrite this module's docstring describes restored the two controls that are about
+# **permission** — authorisation and release — and left the two that are about **spending**. So a
+# caller over budget, or rate-limited, or stopped outright by IT Security could still make the
+# gateway call real models here, as often as they liked: audited and billed, and refused by
+# nothing. Found by asking of budgets and rate limits the question that had just been asked of
+# membership — which paths does the rule actually reach.
+
+
+async def _budget(app, *, limit_requests: int = 1, use_case: str = "uc") -> None:  # noqa: ANN001
+    from aira_gateway.db.models import BudgetRead
+
+    async with app.state.db_sessionmaker() as session:
+        session.add(
+            BudgetRead(
+                id=1,
+                use_case=use_case,
+                scope="use_case",
+                period="day",
+                limit_requests=limit_requests,
+                enabled=True,
+            )
+        )
+        await session.commit()
+
+
+async def _limit(app, *, rpm: int = 1, use_case: str = "uc") -> None:  # noqa: ANN001
+    from aira_gateway.db.models import RateLimitRead
+
+    async with app.state.db_sessionmaker() as session:
+        session.add(
+            RateLimitRead(id=1, use_case=use_case, scope="use_case", limit_rpm=rpm, enabled=True)
+        )
+        await session.commit()
+
+
+def _body() -> dict:
+    return {
+        "use_case": "uc",
+        "user": "hi",
+        "pipeline": {"steps": [{"type": "injection_filter", "config": {"mode": "heuristic"}}]},
+    }
+
+
+async def test_a_dry_run_is_refused_when_the_budget_is_exhausted() -> None:
+    """A dry run spends real tokens against the use case's budget, so a budget that is already
+    spent stops it — the same answer, with the same status, that a request gets."""
+    app = _app(_Classifier("allowed-1", "x"))
+    with TestClient(app, headers={"x-goog-api-key": DEMO_API_KEY}) as client:
+        await _release(app, "uc", ["allowed-1"])
+        await _budget(app, limit_requests=0)
+
+        resp = client.post(_URL, json=_body())
+
+    assert resp.status_code == 429, resp.text
+    assert "budget" in resp.text.lower()
+
+
+async def test_a_dry_run_takes_the_rate_limit_like_any_other_request() -> None:
+    """One per minute means the second is refused. Without this the endpoint was an unmetered way
+    to make the gateway call a model in a loop."""
+    app = _app(_Classifier("allowed-1", "x"))
+    with TestClient(app, headers={"x-goog-api-key": DEMO_API_KEY}) as client:
+        await _release(app, "uc", ["allowed-1"])
+        await _limit(app, rpm=1)
+
+        first = client.post(_URL, json=_body())
+        second = client.post(_URL, json=_body())
+
+    assert first.status_code == 200, first.text
+    assert second.status_code == 429, second.text
+
+
+async def test_a_suspended_caller_cannot_dry_run_either() -> None:
+    """`FRD-503`'s whole point is that traffic stops. An endpoint that keeps calling models for a
+    suspended use case is the badge-wearing absent control again — the console shows the
+    suspension as active while the models keep being asked."""
+    from datetime import UTC, datetime, timedelta
+
+    from aira_gateway.db.models import AccessSuspension
+
+    app = _app(_Classifier("allowed-1", "x"))
+    with TestClient(app, headers={"x-goog-api-key": DEMO_API_KEY}) as client:
+        await _release(app, "uc", ["allowed-1"])
+        async with app.state.db_sessionmaker() as session:
+            session.add(
+                AccessSuspension(
+                    use_case="uc",
+                    target="use_case",
+                    target_value="uc",
+                    action="block",
+                    expires_at=datetime.now(UTC) + timedelta(hours=1),
+                    author="user:itsec",
+                    reason="under investigation",
+                )
+            )
+            await session.commit()
+        app.state.suspensions.invalidate()
+
+        resp = client.post(_URL, json=_body())
+
+    assert resp.status_code == 429, resp.text
+
+
+async def test_a_refused_dry_run_never_reaches_a_model() -> None:
+    """The property that makes the three above worth having. Refusing *after* the classifier ran is
+    the failure `guard_before_work` was extracted for: measured on the served path at 20 000 cost
+    limit — one served request, seven refused, 72 400 spent, the refusals costing more than the
+    answer."""
+    called: list[str] = []
+
+    class _Spy(_Classifier):
+        async def generate(self, request: CanonicalRequest) -> CanonicalResponse:
+            called.append(request.model)
+            return await super().generate(request)
+
+    app = _app(_Spy("allowed-1", "x"))
+    with TestClient(app, headers={"x-goog-api-key": DEMO_API_KEY}) as client:
+        await _release(app, "uc", ["allowed-1"])
+        await _budget(app, limit_requests=0)
+
+        resp = client.post(
+            _URL,
+            json={
+                "use_case": "uc",
+                "user": "hi",
+                "pipeline": {
+                    "steps": [
+                        {
+                            "type": "injection_filter",
+                            "config": {"mode": "llm", "model": "allowed-1"},
+                        }
+                    ]
+                },
+            },
+        )
+
+    assert resp.status_code == 429, resp.text
+    assert called == [], f"a refused dry run called {called}"

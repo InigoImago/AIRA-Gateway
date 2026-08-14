@@ -3891,6 +3891,14 @@ MUTATIONS = [
         CLASSIFIERS,
     ),
     Mutation(
+        "QA40",
+        "an endpoint that spends without dispatching still takes the controls that stop spending",
+        "gateway/src/aira_gateway/api/pipeline.py",
+        "        await guard_before_work(request)",
+        "        pass",
+        "gateway/tests/test_pipeline_dryrun.py gateway/tests/test_every_spender_takes_the_gate.py",
+    ),
+    Mutation(
         "QA37",
         "the dry run stops where production stops unless it was asked not to",
         "gateway/src/aira_gateway/pipeline/engine.py",

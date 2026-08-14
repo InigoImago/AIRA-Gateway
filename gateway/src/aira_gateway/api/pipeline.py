@@ -31,7 +31,14 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, ValidationError
 
 from aira_gateway.api.gemini.errors import gemini_error_response as _error
-from aira_gateway.api.serving import declared_model, record_pipeline_calls, released_for
+from aira_gateway.api.gemini.routes import refusal_response as _refusal
+from aira_gateway.api.serving import (
+    REFUSALS,
+    declared_model,
+    guard_before_work,
+    record_pipeline_calls,
+    released_for,
+)
 from aira_gateway.audit import AuditTrail
 from aira_gateway.auth.attribution import Attribution
 from aira_gateway.auth.dependencies import require_principal, use_case_refusal
@@ -198,6 +205,24 @@ async def dry_run(
         use_case=payload.use_case,
         credential=principal.credential,
     )
+    # **The controls that do not need to know a model**, which is the same three the served path
+    # takes before anything is spent: a suspension, the rate limits, and whether the budget is
+    # already exhausted (`guard_before_work`).
+    #
+    # This endpoint had none of them. The module docstring above names *"no budget, no rate limit"*
+    # as part of the defect this file was rewritten for — and the rewrite restored the two that
+    # were about **permission** (authorisation and release) and left the two that are about
+    # **spending**. So a caller over budget, or rate-limited, or stopped outright by IT Security
+    # could still make the gateway call real models here, as often as they liked. Audited and
+    # billed, which is why it was visible after the fact and stopped by nothing.
+    #
+    # One call, not three: `guard_before_work` is the bundle, and assembling the order at a call
+    # site is what `FRD-126` exists to prevent. It reads the attribution set just above.
+    try:
+        await guard_before_work(request)
+    except REFUSALS as exc:
+        return _refusal(exc)
+
     # The list is ours, so what the run spent survives whatever the run does — the same shape
     # `run` uses, and the reason it takes a caller-supplied list at all.
     trail = AuditTrail(operation="pipeline:dryRun", api="gemini")
