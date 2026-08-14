@@ -3,7 +3,7 @@ import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { InfoHint } from '../../core/ui/info-hint';
 import { Modal } from '../../core/ui/modal';
-import { Budget, BudgetUsage } from '../../core/api/models';
+import { Budget, BudgetUsage, Membership } from '../../core/api/models';
 import { LimitScope } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { ConfirmService } from '../../core/ui/confirm.service';
@@ -42,6 +42,17 @@ export class BudgetsTab {
    * server — an object-level permission is not in the token, and a panel that assumes yes offers
    * buttons that answer 403. */
   readonly canManage = input(false);
+  /**
+   * The people this use case already has, for the "one named person" field.
+   *
+   * A **suggestion, never a restriction**, and that distinction is one this project has already
+   * paid for: a rule names a *subject*, and access can come through a Keycloak group, so a
+   * group-granted service account belongs to **no membership row at all** (`FRD-209`). A picker
+   * over this list is therefore narrower than the rule it fills in — `FRD-604` recorded the same
+   * conclusion for a key's owner and typed it rather than picking. So the list assists and the
+   * field still accepts anything.
+   */
+  readonly members = input<Membership[]>([]);
   readonly changed = output<void>();
 
   private readonly service = inject(UseCaseService);

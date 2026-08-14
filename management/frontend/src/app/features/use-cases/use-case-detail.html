@@ -666,6 +666,7 @@
     <app-budgets-tab
       [slug]="slug"
       [budgets]="budgets()"
+      [members]="members()"
       [usage]="usage()"
       [usageUnavailable]="usageUnavailable()"
       [usageRefused]="usageRefused()"
@@ -693,6 +694,7 @@
     <app-rate-limits-tab
       [slug]="slug"
       [limits]="rateLimits()"
+      [members]="members()"
       [canManage]="canManage()"
       (changed)="loadRateLimits()"
     />

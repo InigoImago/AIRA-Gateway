@@ -61,14 +61,30 @@
             <input
               id="rl-subject"
               name="rl-subject"
+              list="rl-members"
               [ngModel]="rlSubject()"
               (ngModelChange)="rlSubject.set($event)"
               placeholder="username"
               autocomplete="off"
+              data-testid="rl-subject"
             />
+            <!--
+              A `datalist`, deliberately, and not a select: it **suggests** the people this use case
+              has while still accepting anything typed. A rule names a *subject*, and access can
+              come through a Keycloak group — somebody granted that way belongs to no membership row
+              at all (`FRD-209`), so a picker over this list would be narrower than the rule it
+              fills in. `FRD-604` reached the same conclusion for a key's owner and typed it.
+            -->
+            <datalist id="rl-members">
+              @for (member of members(); track member.username) {
+                <option [value]="member.username"></option>
+              }
+            </datalist>
             <span class="field__hint">
-              The name they sign in with. It matches their browser traffic and any API key they own
-              — but nobody else's key, even one used on their behalf.
+              The name they sign in with — it matches their browser traffic and any API key they
+              own, but nobody else's key even when used on their behalf. Start typing to pick from
+              this use case's people; a name that is not in the list is accepted too, because access
+              can come through a group and nobody granted that way appears in it.
             </span>
           </div>
         }

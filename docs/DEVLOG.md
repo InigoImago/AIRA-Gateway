@@ -5,6 +5,36 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Two buttons at zero, and a name nobody could look up
+
+Both reported while adding a rate limit, and both larger than the screen they were noticed on.
+
+**"Save and Cancel are too close together" — they were at 0 px, in every window.**
+`<ng-content select="[modal-foot]">` projects **one** element, the caller's `<div modal-foot>`, so
+`.modal__foot` had a single flex item: the `gap` declared on it applied to the wrapper and never
+reached the buttons, which sat in a plain block touching each other. Measured before it was
+touched. `display: contents` on the wrapper hands the buttons to the footer as flex items, so the
+alignment, wrapping and gap that were always declared there are the ones that act — and the gap is
+wider than the console's ordinary inline one, because these two are **opposite decisions**:
+mis-clicking Cancel loses what somebody typed and mis-clicking the primary commits it.
+
+**"One named person" was a bare text box.** The reader had to know the username, spelled exactly,
+with nothing on the page to check it against. It offers this use case's people now — and still
+accepts anything typed, which is the part worth stating: a rule names a *subject*, and access can
+come through a Keycloak group, so somebody granted that way belongs to **no membership row at all**
+(`FRD-209`). A picker would be narrower than the rule it fills in, which is the conclusion
+`FRD-604` already reached for a key's owner and wrote down as a deviation. Hence a `datalist`:
+suggests, never restricts.
+
+The same field exists on **budgets**, with the same gap, so it was fixed there too — the report was
+about one tab and the defect was about a shape.
+
+The footer test asserts a **minimum distance** rather than a CSS rule, and walks three windows
+rather than the reported one: naming only the rate-limit window would have gone green the day
+somebody fixed that one by hand. Both properties broken and rebuilt.
+
+---
+
 ## The last creator that was not a window
 
 Reported: *"Issue key in the use-case overview is not in a window, not consistent with the other

@@ -60,11 +60,19 @@
             <input
               id="budget-subject"
               name="subject"
+              list="budget-members"
               [ngModel]="budgetSubject()"
               (ngModelChange)="budgetSubject.set($event)"
               placeholder="username"
               autocomplete="off"
+              data-testid="budget-subject"
             />
+            <!-- Suggests, never restricts — see the rate-limit tab for why (`FRD-209`). -->
+            <datalist id="budget-members">
+              @for (member of members(); track member.username) {
+                <option [value]="member.username"></option>
+              }
+            </datalist>
             <span class="field__hint">
               The name they sign in with. It matches their browser traffic and any API key they own
               — but nobody else's key, even one used on their behalf.

@@ -367,3 +367,36 @@ export async function expectNoSqueezedControls(page: Page, context: string) {
     `${context}: a control is far taller than it is wide, which is text wrapping one word per line`,
   ).toEqual([]);
 }
+
+/**
+ * The two decisions at the foot of a window do not touch.
+ *
+ * Reported on one window — "Save and Cancel are too close together" — and true of every window in
+ * the console. `<ng-content select="[modal-foot]">` projects **one** element, the caller's
+ * wrapper, so `.modal__foot` had a single flex item, the `gap` declared on it applied to nothing,
+ * and the buttons inside a plain block sat at **0 px apart**. Measured, not guessed.
+ *
+ * Asserted as a minimum distance rather than as a CSS rule, because the rule is not the property:
+ * mis-clicking Cancel loses what somebody typed and mis-clicking the primary commits it, and the
+ * next arrangement that puts them a thumb-width apart should fail too.
+ */
+export async function expectFooterActionsApart(page: Page, testid: string, minimum = 8) {
+  const buttons = page.locator(`[data-testid="${testid}"] .modal__foot button`);
+  await buttons.first().waitFor({ timeout: 20_000 });
+
+  const boxes = await buttons.evaluateAll((els) =>
+    els.map((e) => {
+      const r = e.getBoundingClientRect();
+      return { text: (e.textContent ?? '').trim(), left: r.x, right: r.x + r.width };
+    }),
+  );
+
+  expect(boxes.length, `${testid}: no footer buttons to compare`).toBeGreaterThan(1);
+  for (let i = 1; i < boxes.length; i += 1) {
+    const gap = boxes[i].left - boxes[i - 1].right;
+    expect(
+      gap,
+      `${testid}: "${boxes[i - 1].text}" and "${boxes[i].text}" are ${Math.round(gap)} px apart`,
+    ).toBeGreaterThanOrEqual(minimum);
+  }
+}

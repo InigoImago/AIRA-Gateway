@@ -802,6 +802,21 @@ $field-label-gap: 0.3rem;
   gap: 0.6rem;
   padding: 1rem 1.25rem;
 }
+/* The footer's own layout has to reach the **buttons**, not the wrapper they arrive in.
+ *
+ * `<ng-content select="[modal-foot]">` projects one element — the caller's `<div modal-foot>` — so
+ * `.modal__foot` had exactly one flex item, its `gap` applied to nothing, and the buttons inside a
+ * plain block sat at **0 px apart**. Measured in the browser after "Save and Cancel are too close
+ * together" was reported on one window; it was true of every window in the console, and the gap
+ * that was supposed to prevent it had never applied.
+ *
+ * `display: contents` rather than restyling the wrapper: it removes the box, so the caller's
+ * buttons become flex items of the footer itself and the alignment, wrapping and gap declared here
+ * are the ones that act. A caller that wants a different arrangement styles its own children. */
+.modal__foot > [modal-foot] {
+  display: contents;
+}
+
 .modal__head {
   justify-content: space-between;
   border-bottom: 1px solid var(--aira-border);
@@ -810,6 +825,10 @@ $field-label-gap: 0.3rem;
   justify-content: flex-end;
   border-top: 1px solid var(--aira-border);
   flex-wrap: wrap;
+  /* Wider than the console's ordinary inline gap, because these two are **opposite decisions**.
+   * Mis-clicking Cancel loses what somebody typed and mis-clicking the primary commits it, and a
+   * pair of buttons a thumb-width apart is where that happens. */
+  gap: 1rem;
 }
 /* The only scrolling part, so the title stays visible and Save stays reachable however long the
  * declaration gets. */
