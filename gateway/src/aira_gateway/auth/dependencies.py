@@ -57,17 +57,27 @@ async def resolve_principal(request: Request) -> Principal | None:
 
 
 async def _with_group_grants(request: Request, principal: Principal) -> Principal:
-    """Add the use cases this caller's Keycloak groups have been *granted* (`FRD-209`).
+    """Add the use cases this caller has been *granted* — by group or by name (`FRD-209` §2.1).
 
-    The union of two routes: the `/use-cases/<slug>` convention the token resolves on its own, and
-    the explicit grants in the read-model. A caller who is a member twice over is a member; where
-    the roles differ the stronger wins, because an access decision that depends on which row was
-    read first is not a decision anybody can review.
+    The union of three routes: the `/use-cases/<slug>` convention the token resolves on its own,
+    the group grants in the read-model, and the grants naming this person. A caller who is a member
+    twice over is a member; where the roles differ the stronger wins, because an access decision
+    that depends on which row was read first is not a decision anybody can review.
+
+    **The early return used to say `not principal.groups`**, and that was the whole defect for a
+    person granted access by name: somebody in no relevant Keycloak group left before the lookup
+    that would have found their membership. Reported as a use-case administrator being refused a
+    dry run on a use case the console listed them as an administrator of — Management counted the
+    row, this side never read it.
     """
     resolver: GroupGrantResolver | None = getattr(request.app.state, "group_grants", None)
-    if resolver is None or not principal.groups:
+    if resolver is None:
         return principal
-    granted = await resolver.use_cases(principal.groups)
+    if not principal.groups and not principal.username:
+        # Nothing to look anything up *by*. Not the same as "no groups": a token with a username
+        # can still be named by a grant.
+        return principal
+    granted = await resolver.use_cases(principal.groups, principal.username)
     if not granted:
         return principal
     merged = tuple(dict.fromkeys([*principal.use_cases, *granted]))

@@ -415,17 +415,18 @@ def test_the_detail_says_what_this_caller_may_do() -> None:
         f"{BASE}perm-uc/members/", {"username": "perm-user", "role": "user"}, format="json"
     )
 
-    # `may_call` is **False for both**, and that is not an oversight in the fixture: neither of
-    # them holds a Keycloak group reaching this use case, and that — not a Django row — is what the
-    # gateway reads. A global administrator may do everything *here* and call nothing there, which
-    # is the whole reason it is a fourth answer (`ADR-0007`, and the console report that a use-case
-    # admin and a global admin were both refused a dry run).
+    # `may_call` is the **gateway's** answer, and it is `True` here because both of them are named
+    # by a grant: the creator as its administrator, the other by the membership just added. It is
+    # still a fourth answer and not a synonym for `is_member` — a global administrator who is a
+    # member of nothing may do everything on this screen and call nothing (`ADR-0007`), which
+    # `test_seeing_every_use_case_is_not_being_in_one` holds and the group-grant suite pins from
+    # both directions.
     as_admin = _client(admin).get(f"{BASE}perm-uc/").json()["permissions"]
     assert as_admin == {
         "can_admin": True,
         "can_manage": True,
         "is_member": True,
-        "may_call": False,
+        "may_call": True,
     }
 
     as_member = _client(member).get(f"{BASE}perm-uc/").json()["permissions"]
@@ -433,7 +434,7 @@ def test_the_detail_says_what_this_caller_may_do() -> None:
         "can_admin": False,
         "can_manage": False,
         "is_member": True,
-        "may_call": False,
+        "may_call": True,
     }
 
 

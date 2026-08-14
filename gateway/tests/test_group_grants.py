@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from aira_gateway.auth.grants import CACHE_TTL_SECONDS, GroupGrantResolver
 from aira_gateway.db.base import build_engine, build_sessionmaker, create_all
-from aira_gateway.db.models import UseCaseGroupRead
+from aira_gateway.db.models import UseCaseGroupRead, UseCaseMemberRead
 
 
 @pytest_asyncio.fixture
@@ -31,6 +31,13 @@ async def sessions() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
 async def _grant(sessions, use_case: str, path: str, role: str = "user") -> None:
     async with sessions() as session:
         session.add(UseCaseGroupRead(use_case_slug=use_case, group_path=path, role=role))
+        await session.commit()
+
+
+async def _member(sessions, use_case: str, username: str, role: str = "user") -> None:
+    """A grant naming one **person** — the other half of `FRD-209` §2.1."""
+    async with sessions() as session:
+        session.add(UseCaseMemberRead(use_case_slug=use_case, subject=username, role=role))
         await session.commit()
 
 
@@ -202,3 +209,117 @@ async def test_the_granted_role_is_carried_through(sessions, role: str) -> None:
     await _grant(sessions, "uc-a", "/ai/kundenservice", role)
 
     assert await GroupGrantResolver(sessions).use_cases(["/ai/kundenservice"]) == {"uc-a": role}
+
+
+# ---- what a name reaches ------------------------------------------------------------------
+
+
+async def test_a_grant_naming_a_person_reaches_its_use_case(sessions) -> None:
+    """The half that was missing, and it is `FR-6`: *the union of the convention, the group grants,
+    and the user grants naming them*.
+
+    Management wrote the row, Kafka carried it, `use_case_members` held it — and the resolver read
+    only the group table, so somebody added to a use case by name was refused by the gateway while
+    the console listed them as its administrator. Reported from the console exactly that way.
+    """
+    await _member(sessions, "uc-a", "erika", "admin")
+
+    assert await GroupGrantResolver(sessions).use_cases([], "erika") == {"uc-a": "admin"}
+
+
+async def test_a_name_that_matches_nobody_reaches_nothing(sessions) -> None:
+    await _member(sessions, "uc-a", "erika")
+
+    assert await GroupGrantResolver(sessions).use_cases([], "someone-else") == {}
+    assert await GroupGrantResolver(sessions).use_cases([], None) == {}
+
+
+async def test_a_person_named_and_grouped_takes_the_stronger_role(sessions) -> None:
+    """Union, not precedence — and which table was read first is not a thing access may depend on
+    (`FRD-209` §2.1). Asserted in **both** directions, because a rule that only holds one way round
+    is a rule about row order wearing a different hat."""
+    await _grant(sessions, "uc-a", "/ai/kundenservice", "user")
+    await _member(sessions, "uc-a", "erika", "admin")
+    await _grant(sessions, "uc-b", "/ai/kundenservice", "admin")
+    await _member(sessions, "uc-b", "erika", "user")
+
+    reached = await GroupGrantResolver(sessions).use_cases(["/ai/kundenservice"], "erika")
+
+    assert reached == {"uc-a": "admin", "uc-b": "admin"}
+
+
+async def test_a_person_reaches_a_use_case_no_group_of_theirs_does(sessions) -> None:
+    """The reported case in one line: no relevant group at all, and a membership by name."""
+    await _grant(sessions, "uc-a", "/ai/vertrieb")
+    await _member(sessions, "uc-b", "erika")
+
+    assert await GroupGrantResolver(sessions).use_cases(["/ai/kundenservice"], "erika") == {
+        "uc-b": "user"
+    }
+
+
+async def test_a_named_grant_is_dropped_rather_than_served_stale_when_the_read_fails(
+    sessions,
+) -> None:
+    """Same direction as the group half, and the same trap: failing on the **first** read proves
+    nothing, because there is nothing cached to serve.
+
+    Written that way first — a fresh resolver against a broken database — and the mutation that
+    deletes `self._members = ()` from the failure path left it green, because the list it was
+    supposed to notice being cleared had never been filled. A permission that can no longer be
+    verified is not still granted, and that has to hold *after* a good read."""
+    await _member(sessions, "uc-a", "erika")
+    resolver = GroupGrantResolver(sessions)
+    assert await resolver.use_cases([], "erika") == {"uc-a": "user"}
+
+    def broken():  # noqa: ANN202
+        raise RuntimeError("the database went away")
+
+    resolver._sessionmaker = broken  # type: ignore[assignment]
+    resolver._loaded_at = time.monotonic() - CACHE_TTL_SECONDS - 0.1
+
+    assert await resolver.use_cases([], "erika") == {}
+
+
+# ---- and the caller of all of it ----------------------------------------------------------
+
+
+async def test_a_token_with_no_groups_still_has_its_name_looked_up(sessions) -> None:
+    """The resolver being right is not enough if nothing asks it.
+
+    `_with_group_grants` returned early on `not principal.groups`, so the person this feature is
+    for — added to a use case **by name**, in no relevant Keycloak group — left before the lookup
+    that would have found them. The resolver tests above all passed while that was true: they call
+    the resolver directly, which is the trap of testing a component instead of the path.
+    """
+    from types import SimpleNamespace
+
+    from aira_gateway.auth.dependencies import _with_group_grants
+    from aira_gateway.auth.principal import Principal
+
+    await _member(sessions, "uc-a", "erika", "admin")
+    request = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(group_grants=GroupGrantResolver(sessions)))
+    )
+    principal = Principal(subject="kc-uuid-1", method="oidc", username="erika", groups=())
+
+    resolved = await _with_group_grants(request, principal)  # type: ignore[arg-type]
+
+    assert resolved.use_cases == ("uc-a",)
+
+
+async def test_a_token_naming_nobody_and_holding_nothing_is_left_alone(sessions) -> None:
+    """A guard on the guard: with neither groups nor a username there is nothing to look anything
+    up by, and the early return that remains must not have been removed wholesale."""
+    from types import SimpleNamespace
+
+    from aira_gateway.auth.dependencies import _with_group_grants
+    from aira_gateway.auth.principal import Principal
+
+    await _member(sessions, "uc-a", "erika")
+    request = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(group_grants=GroupGrantResolver(sessions)))
+    )
+    principal = Principal(subject="kc-uuid-2", method="oidc", username=None, groups=())
+
+    assert (await _with_group_grants(request, principal)).use_cases == ()  # type: ignore[arg-type]

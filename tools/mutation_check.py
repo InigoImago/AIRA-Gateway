@@ -2930,6 +2930,33 @@ MUTATIONS = [
         '    "membership.upserted": "username",',
         "management/backend/tests/test_outbox_routing.py",
     ),
+    # -- `FRD-209` §2.1's third route, which was specified, replicated to the gateway, and read by
+    #    neither plane. A default argument is a silent one: `resolve()` has taken `direct` since the
+    #    vocabulary was written, and both callers passed two arguments.
+    Mutation(
+        "N57",
+        "a grant naming a person reaches the gateway, not only a grant naming their group",
+        "gateway/src/aira_gateway/auth/grants.py",
+        "        return resolve(held, grants, direct)",
+        "        return resolve(held, grants)",
+        "gateway/tests/test_group_grants.py",
+    ),
+    Mutation(
+        "N58",
+        "a caller with no groups still has their name looked up",
+        "gateway/src/aira_gateway/auth/dependencies.py",
+        "    if not principal.groups and not principal.username:",
+        "    if not principal.groups:",
+        "gateway/tests/test_group_grants.py",
+    ),
+    Mutation(
+        "N59",
+        "the console's answer about calling agrees with the gateway's",
+        "management/backend/src/aira_management/apps/usecases/access.py",
+        "    return queryset.filter(slug__in=list(resolve(held, grants, direct)))",
+        "    return queryset.filter(slug__in=list(resolve(held, grants)))",
+        "management/backend/tests/test_group_grants.py management/backend/tests/test_usecases.py",
+    ),
     Mutation(
         "N27",
         "a page says there is more only when there is",

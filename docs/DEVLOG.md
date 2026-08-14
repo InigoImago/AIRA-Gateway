@@ -5,6 +5,46 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## A grant naming a person was specified, replicated, and read by nobody (`FRD-209` FR-6)
+
+Asked, after the previous round: *"I want to add any group from Keycloak and any user as well, and
+give them admin or user rights — I do not want to have to make a separate group named after the use
+case. Is that how it is, or did I misunderstand you?"*
+
+Not a misunderstanding — the question found a defect, and my previous answer had described the
+symptom as the design. `FRD-209` §2.1 and FR-6 say a caller's use cases are **the union of** the
+`/use-cases/<slug>` groups their token carries, the group grants matching a group they carry, and
+**the user grants naming them**. Two thirds worked.
+
+The third existed everywhere except where it counts: `resolve()` has taken a `direct` argument since
+the vocabulary was written, with its own tests; Management emits `membership.upserted`, the outbox
+routes it, the consumer applies it, and `use_case_members` in the **gateway's** database held
+correct rows for every demo use case. Both resolvers called `resolve(held, grants)` — no third
+argument, on either plane. So a person added by name was a member in the console, a member in the
+gateway's own database, and refused by the gateway.
+
+**A default argument is a silent one.** `FRD-209` had already been through this shape twice (§8.1's
+event with no topic, §8.2's), and both times there was a missing entry to notice. Here there was
+nothing missing — only an optional parameter nobody passed.
+
+`_with_group_grants` compounded it by returning early on `not principal.groups`, so the caller this
+route exists for left before the lookup. Fixing the resolver alone would have changed nothing.
+
+Both planes pass `direct` now and `may_call` agrees with the gateway. Verified live: `ucuser`, added
+**by name** to a use case created a minute earlier and holding no group that reaches it, runs a dry
+run — `Dispatched to qwen3:0.6b`.
+
+Two of my own tests could not fail, both found by the harness rather than by reading them: the
+resolver tests call the resolver directly, so restoring the early return in `_with_group_grants`
+broke nothing; and the stale-read test built a fresh resolver against a broken database, so it could
+not tell an emptied member cache from one that was never filled. Both rewritten to reach their own
+path — the same trap as the previous round's checkbox that was asserted through its signal and
+absent from the template.
+
+`N57`–`N59`, each shown to fail first.
+
+---
+
 ## The showcase's members were rows the gateway could not read (`FRD-209`, `ADR-0007`)
 
 Reported: *"I just tested with the use-case admin and the global admin on the Coding use case — the

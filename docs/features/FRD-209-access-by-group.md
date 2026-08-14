@@ -231,3 +231,36 @@ A grant on the bare realm root `/` was accepted. It can never match — every pa
 begins with a name — so it was permanently inert while reading to a person as "the whole realm". A
 grant that cannot match anything is precisely what the path validation exists to catch; it is
 refused now.
+
+### 8.4 The third route was specified, written down, replicated — and read by nobody
+
+Reported from the console, long after this document said **Done**: *"I want to add any group from
+Keycloak and any user as well, and give them admin or user rights — I do not want to have to make a
+separate group named after the use case."*
+
+That is `FR-6` and §2.1 word for word: *the union of the `/use-cases/<slug>` groups their token
+carries, the group grants matching a group their token carries, and **the user grants naming
+them***. Two thirds of it worked. The third did not, anywhere:
+
+- `resolve()` has taken a `direct` argument since the vocabulary was written, with two tests of its
+  own in `libs/tests/test_access.py`;
+- Management emits `membership.upserted`, the outbox routes it, the gateway's consumer applies it,
+  and `use_case_members` on the gateway side held correct rows for every demo use case;
+- and **both** resolvers called `resolve(held, grants)` — no third argument, on either plane.
+
+So a person added to a use case by name was a member in the console, a member in the gateway's own
+database, and refused by the gateway. `GroupGrantResolver` read one of the two tables it maintains.
+
+Two correct halves and no wire, for the third time in this feature — and this one was invisible for
+a different reason than §8.1's: there was no missing entry to notice, only an optional parameter
+nobody passed. A default argument is a silent one.
+
+**`_with_group_grants` compounded it.** It returned early on `not principal.groups`, so the caller
+this route exists for — somebody in no relevant Keycloak group — left before the lookup that would
+have found them. The resolver could have been fixed alone and changed nothing.
+
+Both planes pass `direct` now, `may_call` on the use-case API agrees with the gateway, and the
+gateway suite asserts the union from both directions, the stronger role across the two routes, and
+that a named grant is **dropped rather than served stale** when the read fails — the last one
+written twice, because the first version created a fresh resolver against a broken database and so
+could not tell an emptied cache from one that was never filled.

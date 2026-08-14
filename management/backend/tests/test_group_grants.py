@@ -385,15 +385,21 @@ def test_a_use_case_reports_whether_the_gateway_would_accept_this_caller() -> No
     direct rows and grants a global administrator everything — so the console offered an action the
     server would refuse, which reads as a broken system rather than as a boundary (`FRD-206`).
 
-    The three states here are the whole point: a global administrator who may do everything in
-    Management and call nothing; a person made a member by a Django row, same answer; and a person
-    who holds the granted group, who may.
+    The states here are the point. A global administrator who is a member of nothing may do
+    everything in Management and call nothing — the gateway has no such blanket. Named by a grant
+    — personally or through a group — they may, and both routes are `FRD-209` §2.1: *the union of
+    the convention, the group grants, and the user grants naming them*. The personal route was
+    specified, written into the shared vocabulary with tests, replicated to the gateway over
+    Kafka — and read by neither plane's resolver, which is what this fixes.
     """
     admin = _user("call-admin", "global-admin")
     client = _client(admin)
     _create(client, "call-uc")
 
-    assert client.get(f"{BASE}call-uc/").json()["permissions"]["may_call"] is False
+    # A global administrator who created it but is in no group and named by no grant: everything
+    # here, nothing there. This is the case `may_call` exists to tell apart from `is_member`.
+    outsider = _user("call-outsider", "global-admin")
+    assert _client(outsider).get(f"{BASE}call-uc/").json()["permissions"]["may_call"] is False
 
     direct = _user("call-direct")
     client.post(
@@ -401,7 +407,7 @@ def test_a_use_case_reports_whether_the_gateway_would_accept_this_caller() -> No
     )
     permissions = _client(direct).get(f"{BASE}call-uc/").json()["permissions"]
     assert permissions["is_member"] is True, "a direct row is membership in Management"
-    assert permissions["may_call"] is False, "…and it is not what the gateway reads"
+    assert permissions["may_call"] is True, "…and the gateway honours it too (`FR-6`)"
 
     grouped = _user("call-grouped", groups=(GROUP,))
     client.post(f"{BASE}call-uc/groups/", {"group_path": GROUP, "role": "user"}, format="json")

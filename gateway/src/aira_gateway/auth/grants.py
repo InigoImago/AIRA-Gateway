@@ -28,7 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from aira_common.access import resolve
 from aira_common.logging import get_logger
-from aira_gateway.db.models import UseCaseGroupRead
+from aira_gateway.db.models import UseCaseGroupRead, UseCaseMemberRead
 
 #: How long a loaded set of grants is trusted. Short enough that granting access feels immediate,
 #: long enough that a busy gateway reads the table once a period rather than once a request.
@@ -38,27 +38,51 @@ _log = get_logger("aira_gateway.grants")
 
 
 class GroupGrantResolver:
-    """Answers "which use cases does this set of group paths reach, and as what"."""
+    """Answers "which use cases does this caller reach, and as what".
+
+    **Both routes `FRD-209` §2.1 names**, and the second was missing. A grant to a Keycloak group
+    resolved; a grant naming a *person* did not — although Management writes it, Kafka carries it,
+    and `use_case_members` on this side holds it. `resolve()` has taken a `direct` argument since
+    the vocabulary was written, with tests, and nothing passed one: two correct halves and no wire.
+
+    Reported from the console as *"I want to add any group from Keycloak and any user as well, and
+    give them admin or user rights — I do not want to have to make a group named after the use
+    case."* That is `FR-6` word for word, and two thirds of it worked.
+    """
 
     def __init__(self, sessionmaker: async_sessionmaker[AsyncSession]) -> None:
         self._sessionmaker = sessionmaker
         self._grants: tuple[tuple[str, str, str], ...] = ()
+        self._members: tuple[tuple[str, str, str], ...] = ()
         self._loaded_at = 0.0
         #: False until the first successful load. Distinct from "loaded and empty": an
         #: installation with no group grants is a normal state, an unreadable table is not, and
         #: only one of the two should make anybody look at a log.
         self._ready = False
 
-    async def use_cases(self, group_paths: Iterable[str]) -> dict[str, str]:
-        """The use cases these group paths reach, mapped to the strongest role each grants."""
-        held = list(group_paths)
-        grants = await self._current()
-        return resolve(held, grants)
+    async def use_cases(
+        self, group_paths: Iterable[str], username: str | None = None
+    ) -> dict[str, str]:
+        """The use cases this caller reaches, mapped to the strongest role each grants.
 
-    async def _current(self) -> tuple[tuple[str, str, str], ...]:
+        ``username`` rather than a subject, because that is the alphabet the two planes share here:
+        Management keys a membership to a Django user, the event carries `username`, and the read
+        model stores it. An OIDC token's `sub` never appears in either. The same mismatch
+        `Principal.username` exists for, written down there.
+        """
+        held = list(group_paths)
+        grants, members = await self._current()
+        direct = [
+            (use_case, role) for name, use_case, role in members if username and name == username
+        ]
+        return resolve(held, grants, direct)
+
+    async def _current(
+        self,
+    ) -> tuple[tuple[tuple[str, str, str], ...], tuple[tuple[str, str, str], ...]]:
         now = time.monotonic()
         if self._ready and now - self._loaded_at < CACHE_TTL_SECONDS:
-            return self._grants
+            return self._grants, self._members
         try:
             async with self._sessionmaker() as session:
                 rows = (
@@ -70,7 +94,24 @@ class GroupGrantResolver:
                         )
                     )
                 ).all()
+                # **The whole table again, and this one can actually grow**: a row per person per
+                # use case, where grants are a row per *group* per use case. Loaded the same way
+                # regardless, because the alternative is a query per caller — one cache entry per
+                # person and a miss for everybody at once when it expires, which is the shape this
+                # cache exists to avoid. At an installation where this list reaches six figures the
+                # right answer is an indexed lookup on `subject` with its own short cache; the
+                # number to watch is rows, and it is one row per membership somebody typed.
+                member_rows = (
+                    await session.execute(
+                        select(
+                            UseCaseMemberRead.subject,
+                            UseCaseMemberRead.use_case_slug,
+                            UseCaseMemberRead.role,
+                        )
+                    )
+                ).all()
             self._grants = tuple((str(a), str(b), str(c)) for a, b, c in rows)
+            self._members = tuple((str(a), str(b), str(c)) for a, b, c in member_rows)
             self._loaded_at = now
             self._ready = True
         except Exception as exc:  # the database is not reachable, or the table is not there yet
@@ -91,4 +132,5 @@ class GroupGrantResolver:
             # verify is not still granted.
             _log.warning("group_grants_unavailable", error=str(exc), error_type=type(exc).__name__)
             self._grants = ()
-        return self._grants
+            self._members = ()
+        return self._grants, self._members

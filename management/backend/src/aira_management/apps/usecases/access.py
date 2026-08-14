@@ -91,7 +91,13 @@ def may_call_queryset(user: Any, queryset: QuerySet[UseCase]) -> QuerySet[UseCas
             "group_path", "use_case__slug", "role"
         )
     )
-    return queryset.filter(slug__in=list(resolve(held, grants)))
+    # **And the grants naming this person**, which is the third route `FRD-209` §2.1 describes and
+    # the one both planes were missing. The gateway keys a membership by username — that is the
+    # alphabet the event carries — so this passes the same thing, or the two answers to one
+    # question start to differ again in the direction that is hardest to see: the console would
+    # promise a dry run the gateway then refuses, which is the report this came from.
+    direct = list(UseCaseMembership.objects.filter(user=user).values_list("use_case__slug", "role"))
+    return queryset.filter(slug__in=list(resolve(held, grants, direct)))
 
 
 def held_group_paths(user: Any) -> list[str]:
