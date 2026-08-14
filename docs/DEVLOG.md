@@ -64,6 +64,30 @@ kept apart from *matched, model unchanged* — those send a reader to different 
 working router whose category maps to the model already in use, the other is a classifier or a
 category list to look at.
 
+**Then the objection that was right: testing each step alone is not testing the pipeline.** A step
+is a function; a pipeline is an ordered sequence in which each one sees what the last left, and
+almost everything interesting lives in that seam. 38 cases now, parametrised over **orders** rather
+than written per step:
+
+- **Order is a decision, not a preference.** The routing classifier is a model call like any other:
+  it reads the prompt. Redact *before* it and the personal data never reaches the second model;
+  redact *after* and it already has. Both are legitimate configurations — the classifier may be the
+  same trusted model — so both are asserted, and what must not happen is the two behaving alike.
+- A block stops the steps behind it and keeps what the ones in front recorded; every step that ran
+  reports what it spent, including when a later one refuses.
+- Notices accumulate in the order they happened to the caller; a repeated step is a chain, and the
+  second one owing no notice because it changed nothing is asserted rather than assumed.
+- **The rewrite survives a fallback hop.** A chain re-dispatches *the request*, so a redaction
+  living anywhere else would work until an upstream had a bad minute.
+- And `run` against `dry_run` across **all fifteen** combinations of one, two and three steps —
+  the property the single dispatch table exists for, now checked instead of hoped for.
+
+**Two of the six injections used to prove them were wrong before the tests were.** Reintroducing the
+old `run`/`dry_run` divergence produced *zero* red tests — because the edit sat one line below the
+statement it meant to break, so it changed nothing. Aimed properly it fails eleven. Second time in
+this session that an injection, not the code, was the thing at fault; the tell is the same both
+times — a suspiciously clean result from an edit nobody re-read.
+
 The step type now exists in three places — the gateway runs it, Management validates it, the
 console offers it — so the three lists are compared **in both directions**, each shown to fail
 alone. `P10`–`P14`; 411 mutation properties.
