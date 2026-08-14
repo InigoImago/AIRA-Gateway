@@ -232,3 +232,71 @@ async def test_a_use_case_event_without_a_period_defaults_to_a_week(sessionmaker
         await apply_event(session, "usecase.upserted", {"slug": "uc", "name": "UC"})
         stored = await session.get(UseCaseRead, "uc")
     assert stored is not None and stored.retention_days == DEFAULT_RETENTION_DAYS
+
+
+# ---- a use case that no longer exists ------------------------------------------------------
+
+
+async def test_payloads_of_a_deleted_use_case_are_removed_too(sessionmaker) -> None:
+    """The hole the sweep had, and the sentence that hid it.
+
+    `_delete_usecase` in the consumer keeps `request_logs` on purpose — the audit trail and the
+    spend history outlive the use case — and states *"their payloads still expire on the retention
+    clock."* They did not. The clock is built from the `use_cases` read-model: a period per slug it
+    knows, plus one pass for rows with no use case at all. A row whose slug is **neither** — which
+    is precisely what deleting a use case produces — matched no pass and was never cleared, for
+    ever, on an installation that has not switched the optional record retention on.
+
+    Measured on the running stack before this was written: **1509 rows** carrying stored prompts
+    for use cases that no longer exist. Deleting a use case is exactly the moment its prompts
+    should go, and it was the one moment they could not.
+    """
+    await _log(sessionmaker, use_case="deleted-uc", age_days=30)
+
+    result = await RetentionService(sessionmaker).prune(NOW)
+
+    assert result.payloads_cleared == 1, "an orphaned row's payloads were left in place"
+    rows = await _rows(sessionmaker)
+    assert rows[0].request_payload is None
+    assert rows[0].response_payload is None
+    # The row itself stays: the spend history is what a later question is answered from
+    # (`FRD-404` §4.1), and only the record retention deletes it.
+    assert rows[0].total_tokens == 30
+
+
+async def test_an_orphan_keeps_its_payload_until_the_default_period_is_up(sessionmaker) -> None:
+    """The other half, or the fix is "delete everything you do not recognise". A use case whose
+    read-model row has not arrived yet is indistinguishable from one that was deleted — Kafka
+    orders neither — so an orphan follows the **installation default**, exactly like traffic that
+    names no use case at all."""
+    await _log(sessionmaker, use_case="not-yet-known", age_days=1)
+
+    result = await RetentionService(sessionmaker).prune(NOW)
+
+    assert result.payloads_cleared == 0
+    assert (await _rows(sessionmaker))[0].request_payload is not None
+
+
+async def test_an_empty_read_model_still_sweeps(sessionmaker) -> None:
+    """A guard on the widening itself: with no use cases known at all, `NOT IN ()` is the shape
+    SQL is worst at. SQLAlchemy renders an empty `IN` as a constant rather than invalid SQL, and
+    the constant has to be the one that means *everything is unknown* — which it is, because
+    nothing is known."""
+    await _log(sessionmaker, use_case="anything", age_days=30)
+
+    result = await RetentionService(sessionmaker).prune(NOW)
+
+    assert result.payloads_cleared == 1
+
+
+async def test_a_known_use_case_is_not_swept_by_the_orphan_pass(sessionmaker) -> None:
+    """And the widening must not reach past its own edge. A use case with a **longer** period than
+    the installation default keeps its payloads for that period — if the orphan pass matched it
+    too, every long retention would silently become the default."""
+    await _use_case(sessionmaker, "long-uc", 30)
+    await _log(sessionmaker, use_case="long-uc", age_days=10)
+
+    result = await RetentionService(sessionmaker).prune(NOW)
+
+    assert result.payloads_cleared == 0
+    assert (await _rows(sessionmaker))[0].request_payload is not None

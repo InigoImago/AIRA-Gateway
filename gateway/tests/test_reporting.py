@@ -56,6 +56,7 @@ async def _log(
     status: int = 200,
     latency: int | None = 40,
     outcome: str | None = None,
+    operation: str = "generateContent",
 ) -> None:
     async with sessionmaker() as session:
         session.add(
@@ -64,7 +65,7 @@ async def _log(
                 auth_method="api_key",
                 use_case=use_case,
                 api="gemini",
-                operation="generateContent",
+                operation=operation,
                 model=model,
                 status=status,
                 prompt_tokens=prompt,
@@ -494,3 +495,56 @@ def test_a_malformed_use_case_filter_is_refused_by_name() -> None:
 
     assert response.status_code == 400
     assert response.json()["error"]["status"] == "INVALID_ARGUMENT"
+
+
+# ---- what counts as a request ---------------------------------------------------------------
+
+
+async def test_a_pipeline_step_is_not_counted_as_a_second_request(sessionmaker) -> None:
+    """`FRD-125` FR-9, in the words that decided it: a step's model call is booked *"with
+    `requests=0`, because the caller made **one** request and counting the classifier as a second
+    would inflate every request figure"*.
+
+    The budgets honoured that. Reporting counted rows — `func.count()` — so every use case running
+    an LLM filter and a router reported two to three times the traffic it received, in the figures
+    a governance role reads to decide whether a control is working. The rule was written once and
+    applied on one of the two paths that need it; the row's own comment says it is named for the
+    step *"so the reporting breakdown separates what the use case asked from what governing it
+    cost instead of blending them into one figure."*
+    """
+    await _log(sessionmaker)
+    await _log(sessionmaker, operation="pipeline:injection_filter", prompt=4, completion=1, cost=5)
+    await _log(sessionmaker, operation="pipeline:model_route", prompt=4, completion=1, cost=5)
+
+    report = await ReportingService(sessionmaker).report(None, AUGUST, SEPTEMBER)
+
+    assert report["totals"]["requests"] == 1, "the classifier calls were counted as traffic"
+
+
+async def test_what_the_step_spent_is_still_counted(sessionmaker) -> None:
+    """The half that must not have gone with it. The rows exist precisely so the money is visible
+    (`FR-8`); excluding them from the *spend* would trade one wrong figure for another."""
+    await _log(sessionmaker, cost=1000, prompt=10, completion=20)
+    await _log(sessionmaker, operation="pipeline:injection_filter", cost=5, prompt=4, completion=1)
+
+    report = await ReportingService(sessionmaker).report(None, AUGUST, SEPTEMBER)
+
+    assert report["totals"]["cost_nanos"] == 1005
+    assert report["totals"]["total_tokens"] == 35
+
+
+async def test_every_breakdown_counts_the_same_way(sessionmaker) -> None:
+    """One measure list feeds four breakdowns, so a fix in the totals that missed the groups would
+    make the same screen disagree with itself — the by-model table adding up to more than the
+    total above it."""
+    await _log(sessionmaker, model="chat-1")
+    await _log(sessionmaker, model="guard-1", operation="pipeline:injection_filter")
+
+    report = await ReportingService(sessionmaker).report(None, AUGUST, SEPTEMBER)
+
+    assert sum(row["requests"] for row in report["by_model"]) == 1
+    assert sum(row["requests"] for row in report["by_use_case"]) == 1
+    assert sum(row["requests"] for row in report["by_member"]) == 1
+    assert sum(row["requests"] for row in report["by_outcome"]) == 1
+    # …and the model that only ever classified is still listed, with its spend.
+    assert {row["key"] for row in report["by_model"]} == {"chat-1", "guard-1"}

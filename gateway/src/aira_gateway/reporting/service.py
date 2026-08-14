@@ -26,7 +26,7 @@ from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from aira_common.money import format_display
-from aira_gateway.audit import Outcome
+from aira_gateway.audit import PIPELINE_OPERATION_PREFIX, Outcome
 from aira_gateway.db.models import RequestLog
 
 # What a caller may see. ``None`` is "every use case" — governance — and is deliberately distinct
@@ -80,7 +80,23 @@ _EMPTY = Figures("", 0, 0, 0, 0, 0, 0, 0, 0, None, None)
 def _measures() -> list[Any]:
     """The columns every breakdown reports, in one place so the rows cannot diverge."""
     return [
-        func.count().label("requests"),
+        # **A caller's own requests**, which is not the same as rows. A pipeline step's model call
+        # is an audit row of its own (`FRD-125` FR-8) and is deliberately *not* a request: FR-9
+        # books it with `requests=0` because "the caller made one request and counting the
+        # classifier as a second would inflate every request figure". The budgets honoured that and
+        # this measure did not, so a use case running an LLM filter and a router reported two to
+        # three times the traffic it received — in the figures a governance role reads to decide
+        # whether a control is working.
+        #
+        # Only the **count** narrows. The tokens and the money below still sum every row, because
+        # those rows exist precisely so that what governing a use case costs is visible (FR-8);
+        # excluding them from the spend would trade one wrong figure for another.
+        func.count()
+        .filter(
+            (RequestLog.operation.is_(None))
+            | (RequestLog.operation.not_like(f"{PIPELINE_OPERATION_PREFIX}%"))
+        )
+        .label("requests"),
         func.coalesce(func.sum(RequestLog.prompt_tokens), 0).label("prompt_tokens"),
         func.coalesce(func.sum(RequestLog.completion_tokens), 0).label("completion_tokens"),
         func.coalesce(func.sum(RequestLog.cached_input_tokens), 0).label("cached_input_tokens"),

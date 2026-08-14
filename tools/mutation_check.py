@@ -514,8 +514,12 @@ MUTATIONS = [
         "R3",
         "unclaimed traffic follows the installation default, it is not exempt",
         "gateway/src/aira_gateway/retention.py",
-        "                session, None, now - timedelta(days=self._default_retention_days)",
-        "                session, None, now - timedelta(days=self._default_retention_days * 1000)",
+        # **Re-anchored** when the same pass grew to cover slugs the read-model does not name — a
+        # deleted use case's rows, which matched no pass at all and were never cleared. The call
+        # gained an argument and the mutation stopped applying, which the anchor test reported as
+        # STALE rather than green: exactly what `N2` is for.
+        "                now - timedelta(days=self._default_retention_days),",
+        "                now - timedelta(days=self._default_retention_days * 1000),",
         RETENTION,
     ),
     Mutation(
@@ -3893,6 +3897,31 @@ MUTATIONS = [
     # -- the closed vocabulary, restated four times in a console that cannot import it. Three of
     #    the copies offered a kind that does not exist and omitted one that does; the fourth was a
     #    test asserting completeness against a list with the same two errors.
+    # -- reporting and retention, audited with the same question as the three rounds before it.
+    Mutation(
+        "QA43",
+        "a payload whose use case no longer exists is still swept",
+        "gateway/src/aira_gateway/retention.py",
+        "                unknown=set(periods),",
+        "",
+        "gateway/tests/test_retention.py",
+    ),
+    Mutation(
+        "QA44",
+        "the orphan sweep does not shorten a use case's own retention",
+        "gateway/src/aira_gateway/retention.py",
+        "            criterion = criterion | RequestLog.use_case.not_in(unknown)",
+        "            criterion = criterion | RequestLog.use_case.is_not(None)",
+        "gateway/tests/test_retention.py",
+    ),
+    Mutation(
+        "QA45",
+        "a pipeline step's model call is not reported as a second request",
+        "gateway/src/aira_gateway/reporting/service.py",
+        "        func.count()\n        .filter(",
+        "        func.count().label('requests'),\n        func.count()\n        .filter(",
+        "gateway/tests/test_reporting.py",
+    ),
     Mutation(
         "QA41",
         "the console offers exactly the rule kinds that exist",

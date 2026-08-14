@@ -154,3 +154,28 @@ frontend specs under `features/reporting/`, `e2e/tests/reporting.spec.ts`):
   documented in `FRD-404` and is worth repeating where the horizon becomes visible.
 - **Follow-ups**: charts once the comparison people actually make is known; per-request browsing
   after `FRD-406`; export; threshold alerting.
+
+
+## A classifier is not a request, except in the figures
+
+`FRD-125` FR-9 books a pipeline step's model call with `requests=0`, and says why in the
+requirement itself: *"the caller made **one** request and counting the classifier as a second would
+inflate every request figure."* The budgets honoured it. This report counted rows.
+
+So a use case running an LLM injection filter and a router reported two to three times the traffic
+it received — in the figures a governance role reads to decide whether a control is working. On the
+stack this was found on: one use case showed **6 requests where 3 were made**, and another showed
+**1 where the caller made none at all** — the row was a dry run's classifier call.
+
+The row's own comment states the intent it was missing: it is named for the step *"so the reporting
+breakdown separates what the use case asked from what governing it cost instead of blending them
+into one figure."*
+
+Only the **count** narrows. The tokens and the money still sum every row, because those rows exist
+precisely so that what governing a use case costs is visible (`FR-8`); excluding them from the spend
+would trade one wrong figure for another. The prefix that tells the two apart is now one constant
+read by the writer and the reader, rather than a string each of them spelled.
+
+All four breakdowns share one measure list, so the fix could not land in the totals and miss the
+groups — which would have made a screen disagree with itself, the by-model table adding up to more
+than the total above it. A test asserts all four.

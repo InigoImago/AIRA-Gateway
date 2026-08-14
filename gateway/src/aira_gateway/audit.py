@@ -20,6 +20,20 @@ from typing import Any
 
 from aira_gateway.core.canonical import CanonicalUsage
 
+#: What names an audit row that is **not** a caller's own request: the model call a pipeline step
+#: made on its way to a decision (`FRD-125` FR-8, ``pipeline:<step>``).
+#:
+#: A constant because two places need the same answer and had different ones. `FR-9` books those
+#: calls with ``requests=0`` — *"the caller made one request and counting the classifier as a
+#: second would inflate every request figure"* — and reporting counted rows, so a use case running
+#: an LLM filter and a router reported two to three times the traffic it received.
+PIPELINE_OPERATION_PREFIX = "pipeline:"
+
+
+def is_pipeline_operation(operation: str | None) -> bool:
+    """Whether this row is a step's own model call rather than a request somebody made."""
+    return bool(operation) and str(operation).startswith(PIPELINE_OPERATION_PREFIX)
+
 
 class Outcome(StrEnum):
     """Why a request ended the way it did.

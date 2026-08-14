@@ -34,7 +34,13 @@ from aira_gateway.anomalies.suspensions import Suspended, SuspensionService
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.api.gemini.errors import gemini_error_response as _error
 from aira_gateway.attachments import AttachmentRejected
-from aira_gateway.audit import AuditTrail, Outcome, decision_summary, tool_summary
+from aira_gateway.audit import (
+    PIPELINE_OPERATION_PREFIX,
+    AuditTrail,
+    Outcome,
+    decision_summary,
+    tool_summary,
+)
 from aira_gateway.budgets.errors import BudgetExceeded
 from aira_gateway.budgets.ledger import Amounts
 from aira_gateway.budgets.service import BudgetService, Reservation
@@ -1117,7 +1123,7 @@ async def record_pipeline_calls(request: Request, trail: AuditTrail) -> None:
                 request,
                 # Named for the step, so the reporting breakdown separates "what the use case
                 # asked" from "what governing it cost" instead of blending them into one figure.
-                operation=f"pipeline:{call.step}",
+                operation=f"{PIPELINE_OPERATION_PREFIX}{call.step}",
                 model=call.model,
                 status=200,
                 usage=call.usage,

@@ -122,3 +122,40 @@ nothing is deleted** — the period configured in the UI is a promise that only 
   the management database's own records; exporting or archiving before deletion for use cases
   with a statutory retention duty; surfacing "payload removed" distinctly from "never stored" in
   a future request-log viewer.
+
+
+## The clock the deleted use case fell off
+
+Asked in the same audit as the rounds before it: *check the same for reporting and retention.*
+
+The sweep builds a period per use case from the `use_cases` read-model, then makes one more pass
+for rows carrying **no** use case. A row whose slug is *neither* — present, but not a use case this
+gateway knows — matched neither pass and was never cleared. On an installation that has not
+switched the optional record retention on, that is for ever.
+
+That is not an edge case. It is exactly what deleting a use case produces: `_delete_usecase` keeps
+`request_logs` on purpose — the audit trail and the spend history outlive the use case (§4.1) — and
+its comment states *"their payloads still expire on the retention clock."* They did not. Deleting a
+use case is the moment its stored prompts should go, and it was the one moment they could not.
+
+Measured on a running stack before the fix: **1509 rows** carrying stored prompts for use cases
+that no longer existed. After it, one pass cleared all 1509 and left the metadata standing.
+
+The unknown-slug pass follows the **installation default** rather than clearing on sight, because a
+slug the read-model does not name is ambiguous: Kafka orders the use-case topic against nothing, so
+a use case whose row has not arrived yet looks exactly like one that was deleted. Clearing on sight
+would strip the payloads of traffic a second old. Both edges are tested — a deleted use case's
+payloads go, and a use case with a *longer* period than the default keeps its own.
+
+### What the audit did not find
+
+Payloads live in `request_logs` and nowhere else: attachments are forwarded rather than stored, and
+travel inside the body that is already on the clock; `payload_access` records who read what and
+holds no content; `pipeline:<step>` rows never carry the prompt (`FRD-125` FR-11). Both clocks are
+applied on every pass, and repeated runs are cheap because only rows that still have a payload are
+touched.
+
+One bounded behaviour stated rather than changed: `anomaly_events`, `payload_access` and
+`budget_usage` have no clock of their own. None of them holds caller content, so this document's
+subject is unaffected — but they grow without bound, and an installation choosing a record-retention
+horizon should know that it does not reach them.

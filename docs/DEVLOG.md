@@ -5,6 +5,54 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Two clocks, and the one nobody wound (`FRD-404`, `FRD-601`)
+
+Asked: *"check the same for reporting and retention."* Two findings, and both are a rule stated
+once and applied on one of the two paths that need it.
+
+**A deleted use case's prompts were kept for ever.** Retention builds a period per use case from
+the `use_cases` read-model and makes one more pass for rows carrying no use case. A row whose slug
+is *neither* matched neither pass — and that is exactly what deleting a use case produces.
+`_delete_usecase` keeps `request_logs` on purpose and says *"their payloads still expire on the
+retention clock."* They did not. Measured on the running stack: **1509 rows** holding stored prompts
+for use cases that no longer existed. After the fix, one pass cleared all 1509 and left the metadata
+standing — verified live, 1509 → 0.
+
+The unknown-slug pass follows the installation default rather than clearing on sight, because Kafka
+orders the use-case topic against nothing: a use case whose row has not arrived yet looks exactly
+like one that was deleted, and clearing on sight would strip payloads a second old. Both edges are
+tested, and the older mutation on that call reported **STALE** rather than green when the signature
+changed — `N2` working as built.
+
+**A classifier was counted as a request.** `FRD-125` FR-9 books a pipeline step's model call with
+`requests=0` and gives the reason in the requirement: *"the caller made one request and counting the
+classifier as a second would inflate every request figure."* The budgets honoured it; the report
+counted rows. On this stack one use case showed **6 requests where 3 were made**, and another showed
+**1 where the caller made none** — that row was a dry run's classifier call. The row's own comment
+states the intent it was missing: named for the step *"so the reporting breakdown separates what the
+use case asked from what governing it cost."*
+
+Only the count narrows; tokens and money still sum every row, because those rows exist so the cost
+of governing a use case is visible. The prefix is one constant now, read by the writer and the
+reader. All four breakdowns share one measure list, so a fix landing in the totals and missing the
+groups would have made a screen disagree with itself — asserted for all four.
+
+**What the audit did not find**, recorded as checked: payloads live in `request_logs` and nowhere
+else (attachments are forwarded, not stored; `payload_access` holds no content; a step's row never
+carries the prompt); CSV is a *rendering of the same result* rather than a second endpoint, so the
+visibility rule cannot be forgotten on one of them; `visible_scope` is applied once, through the
+window helper every breakdown uses; the export dropdown offers the outcome breakdown and, when it
+is chosen, replaces the button with a sentence rather than answering 400; and the report already
+distinguishes *unpriced* from *refused*, which an earlier round had to fix.
+
+One bounded behaviour stated rather than changed: `anomaly_events`, `payload_access` and
+`budget_usage` have no clock of their own. None holds caller content, but they grow without bound,
+and an installation choosing a record-retention horizon should know it does not reach them.
+
+`QA43`–`QA45`, each shown to fail first.
+
+---
+
 ## A closed vocabulary, restated four times, wrong in both directions (`FRD-500`)
 
 Asked: *"check the same for anomaly rules and incidents."* The same question again — which paths

@@ -84,8 +84,24 @@ class RetentionService:
 
             # Requests that carry no use case (unbound break-glass keys, demo traffic) follow the
             # installation default — they are not exempt just because nobody claimed them.
+            #
+            # **And so does everything else the read-model does not name.** The loop above covers
+            # the use cases this gateway knows and the pass here covers rows with no use case at
+            # all; a row whose slug is *neither* matched nothing and was never cleared. That is not
+            # an edge case — it is what deleting a use case produces, and `_delete_usecase` keeps
+            # the rows on purpose while stating that "their payloads still expire on the retention
+            # clock". They did not. Measured on a running stack: 1509 rows carrying stored prompts
+            # for use cases that no longer existed, on the one clock nothing would ever wind.
+            #
+            # The default rather than zero, because a slug the read-model does not name is
+            # **ambiguous**: Kafka orders the use-case topic against nothing, so a use case whose
+            # row has not arrived yet looks exactly like one that was deleted. Clearing on sight
+            # would strip the payloads of traffic that is a second old.
             cleared += await self._clear_payloads(
-                session, None, now - timedelta(days=self._default_retention_days)
+                session,
+                None,
+                now - timedelta(days=self._default_retention_days),
+                unknown=set(periods),
             )
 
             deleted = 0
@@ -119,16 +135,26 @@ class RetentionService:
         }
 
     async def _clear_payloads(
-        self, session: AsyncSession, use_case: str | None, cutoff: datetime
+        self,
+        session: AsyncSession,
+        use_case: str | None,
+        cutoff: datetime,
+        *,
+        unknown: set[str] | None = None,
     ) -> int:
         """Strip the bodies of rows older than ``cutoff``, keeping their metadata.
 
         Only rows that still have a payload are touched, so repeated runs are cheap and the
         reported count is the number actually cleared rather than the number matched.
+
+        ``unknown`` widens the ``use_case is None`` pass to cover every slug **outside** that set —
+        the use cases the read-model does not name, which is what a deleted one becomes.
         """
         criterion = (
             RequestLog.use_case.is_(None) if use_case is None else RequestLog.use_case == use_case
         )
+        if use_case is None and unknown is not None:
+            criterion = criterion | RequestLog.use_case.not_in(unknown)
         result = await session.execute(
             update(RequestLog)
             .where(
