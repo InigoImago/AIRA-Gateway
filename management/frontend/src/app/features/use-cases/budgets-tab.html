@@ -51,25 +51,8 @@
             }
           </span>
         </div>
-        <!--
-        **Measured, not assumed** (2026-08-14, live stack, a limit of one per head): a person's
-        API keys share one allowance — a key's subject is its owner's name, so every key they own
-        counts to the same place — while the same person signed in through Keycloak gets a
-        *separate* one. The two credentials answer "who is this" in different alphabets: a key
-        with the owner's username, a token with the directory's user id, and nothing reconciles
-        them since the scope that named a person by hand was removed.
-
-        A warning rather than a footnote, and here rather than in a hint, because the figure
-        somebody types means something different depending on how their people reach the gateway
-        — an agent with a key plus its owner's own browser traffic is two allowances, not one.
-      -->
         @if (budgetScope() === 'each_member') {
-          <p class="callout callout--warning" data-testid="budget-two-pots" role="status">
-            <strong>Two allowances per person, not one.</strong> All of somebody's API keys share
-            one; signing in through Keycloak gives them a second, separate one. Somebody running an
-            agent with a key <em>and</em> working in the browser therefore has this budget twice
-            over.
-          </p>
+          <ng-container [ngTemplateOutlet]="twoPots" />
         }
         <div class="field">
           <label for="budget-period">Period</label>
@@ -166,6 +149,13 @@
         are still in force.
       }
     </p>
+  }
+
+  <!-- Where somebody *reading* the configuration meets it, rather than only somebody creating
+       one. The report was that there was nothing to find on either tab — which was true: the
+       warning lived in the window. -->
+  @if (hasPerHead()) {
+    <ng-container [ngTemplateOutlet]="twoPots" />
   }
 
   <div class="stack" style="margin-top: 1rem">
@@ -287,3 +277,33 @@
     }
   </div>
 </div>
+
+<!--
+  **Measured on the live stack** (2026-08-14, a limit of one per head): a person's API keys share
+  one allowance — a key's subject is its owner's name, so every key they own counts to the same
+  place — while the same person signed in through Keycloak gets a *separate* one. The two
+  credentials answer "who is this" in different alphabets, and nothing reconciles them since the
+  scope that named a person by hand was removed.
+
+  **And the qualifier is as important as the warning**, also measured: a budget or limit for the
+  whole use case binds **both** credentials. With a use-case cap of four requests exhausted, the
+  key and the bearer token were each refused. So the doubling is of the *per-head* allowance, not
+  of what the use case can spend — a reader who is told only the first half concludes the
+  governance is broken by a factor of two.
+
+  Rendered in two places from one definition: in the window while somebody is choosing the scope,
+  where it prevents the mistake, **and on the tab wherever such a row already exists**, which is
+  where anybody reading the configuration is looking. It was in the window only, and the report
+  was exactly that — "where do I find these notes? there is nothing in budgets or rate limits".
+  A warning nobody meets is a warning that was not given.
+-->
+<ng-template #twoPots>
+  <p class="callout callout--warning" data-testid="budget-two-pots" role="status">
+    <strong>Two allowances per person, not one.</strong> All of somebody's API keys share one;
+    signing in through Keycloak gives them a second, separate one — so somebody running an agent
+    with a key <em>and</em> working in the browser has this budget twice over.
+    <br />
+    A budget for the <strong>whole use case</strong> still bounds both of them together. Set one of
+    those as well if the total is what matters.
+  </p>
+</ng-template>

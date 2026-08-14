@@ -516,6 +516,40 @@ describe('BudgetsTab — a budget per person, and a window to make one in', () =
  * — and they have no way to know that from the form.
  */
 describe('BudgetsTab — the per-head warning', () => {
+  /**
+   * Reported: *"where do I find these notes? there is nothing in budgets or rate limits"* — and
+   * that was true. The warning lived in the creation window, so anybody **reading** the
+   * configuration never met it. A warning nobody meets is a warning that was not given.
+   */
+  it('shows the warning on the tab wherever such a row already exists', () => {
+    const empty = setup();
+    expect(empty.fixture.nativeElement.querySelector('[data-testid="budget-two-pots"]')).toBeNull();
+
+    const configured = setup({
+      budgets: [{ id: 1, scope: 'each_member', period: 'day', limit_requests: 10 }],
+    });
+
+    expect(
+      configured.fixture.nativeElement.querySelector('[data-testid="budget-two-pots"]'),
+    ).not.toBeNull();
+  });
+
+  /**
+   * The qualifier, and it matters as much as the warning: a use-case-wide budget or limit binds
+   * **both** credentials — measured with a cap of four requests exhausted, after which the key and
+   * the bearer token were each refused. A reader told only the first half concludes the governance
+   * is broken by a factor of two.
+   */
+  it('says that a use-case-wide figure still bounds both allowances', () => {
+    const harness = setup({
+      budgets: [{ id: 1, scope: 'each_member', period: 'day', limit_requests: 10 }],
+    });
+
+    const warning = harness.fixture.nativeElement.querySelector('[data-testid="budget-two-pots"]');
+
+    expect(warning?.textContent).toContain('whole use case');
+  });
+
   it('warns that a person has two allowances, and only for the per-head scope', () => {
     const harness = setup();
     harness.component.showForm.set(true);

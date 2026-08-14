@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { USERS, expectFooterActionsApart, login } from './support';
+import { USERS, createUseCase, expectFooterActionsApart, login, uniqueSlug } from './support';
 
 /**
  * What a window's foot and its "one named person" field owe the reader.
@@ -55,10 +55,41 @@ test.describe('Window actions', () => {
     await expect(warning).toContainText('Two allowances per person');
     await expect(warning).toContainText('Keycloak');
 
+    // The qualifier, which matters as much: a use-case-wide figure binds **both** allowances —
+    // measured with a cap of four requests exhausted, after which the key and the bearer token
+    // were each refused. Told only the first half, a reader concludes governance is broken by two.
+    await expect(warning).toContainText('whole use case');
+
     // And the same on budgets, where the figure is money rather than a rate.
     await page.goto('/use-cases/kundenservice?tab=budgets');
     await page.getByTestId('add-budget').click();
     await page.getByLabel('Applies to').selectOption('each_member');
     await expect(page.getByTestId('budget-two-pots')).toBeVisible();
+  });
+
+  /**
+   * Reported after the warning was added: *"where do I find these notes? there is nothing in
+   * budgets or rate limits"*. True — it lived in the creation window, so anybody **reading** the
+   * configuration never met it, which is most of the time somebody spends on those tabs.
+   */
+  test('the warning is on the tab too, wherever a per-head row exists', async ({ page }) => {
+    await login(page, USERS.globalAdmin);
+    // **Its own row, not the seed's.** A test that depends on which limits an installation happens
+    // to carry is asserting inventory — this suite has been caught by that three times, most
+    // recently naming a model only one machine had.
+    const slug = uniqueSlug('perhead');
+    await createUseCase(page, slug, 'Per-head warning probe');
+    await page.goto(`/use-cases/${slug}?tab=rate-limits`);
+
+    // Nothing configured yet, so nothing to warn about.
+    await expect(page.getByTestId('rl-two-pots')).toBeHidden();
+
+    await page.getByTestId('add-rate-limit').click();
+    await page.getByLabel('Applies to').selectOption('each_member');
+    await page.getByLabel('Requests per minute').fill('60');
+    await page.getByRole('button', { name: 'Add', exact: true }).click();
+
+    // And now a reader who creates nothing meets it, which is the whole report.
+    await expect(page.getByTestId('rl-two-pots')).toBeVisible({ timeout: 20_000 });
   });
 });

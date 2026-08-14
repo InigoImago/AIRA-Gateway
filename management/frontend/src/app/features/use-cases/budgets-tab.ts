@@ -1,4 +1,5 @@
 import { Component, computed, inject, input, output, signal } from '@angular/core';
+import { NgTemplateOutlet } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { InfoHint } from '../../core/ui/info-hint';
@@ -29,7 +30,7 @@ const NO_USAGE: BudgetUsage = {
  */
 @Component({
   selector: 'app-budgets-tab',
-  imports: [FormsModule, RouterLink, InfoHint, Modal],
+  imports: [NgTemplateOutlet, FormsModule, RouterLink, InfoHint, Modal],
   templateUrl: './budgets-tab.html',
 })
 export class BudgetsTab {
@@ -147,6 +148,11 @@ export class BudgetsTab {
 
   protected pct(used: number | null, limit: number | null | undefined): number {
     return limit ? Math.min(100, Math.round(((used ?? 0) / limit) * 100)) : 0;
+  }
+
+  /** True where a per-head row exists, which is what makes the two-allowance warning relevant. */
+  protected hasPerHead(): boolean {
+    return this.budgets().some((row) => row.scope === 'each_member');
   }
 
   protected labelFor(budget: Budget): string {

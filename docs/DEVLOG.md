@@ -54,6 +54,23 @@ also working in a browser is not a footnote, and the form gave the reader no way
 warning appears when the per-head scope is chosen, on budgets and on rate limits, because the
 property is identical and a warning on one of them would leave the other silently wrong.
 
+**Reported straight back: "where do I find these notes? there is nothing in budgets or rate
+limits."** True — it lived in the creation window, so anybody *reading* the configuration never met
+it, which is most of the time anybody spends on those tabs. **A warning nobody meets is a warning
+that was not given.** It is on the tab as well now, wherever such a row already exists, rendered
+from **one** definition through an `ng-template` so the two places cannot drift.
+
+**And the second half of that report was the more important one**: *global budgets and global rate
+limits come before the personal limit*. Measured — a use-case cap of four requests, exhausted, and
+then **both** credentials refused, key and bearer alike. So the doubling is of the *per-head*
+allowance and not of what the use case can spend, and a reader told only the first half concludes
+the governance is broken by a factor of two. The warning says both halves now.
+
+The browser test was first written against the showcase's seeded limit and passed for the wrong
+reason — the seed's per-head row is on a different use case, and after the scope change it had not
+been re-seeded. It creates its own row now: three times in two weeks a test in this suite has been
+caught asserting inventory rather than behaviour.
+
 Everything else followed: the option, the field and its suggestions, the validation, the labels,
 three mutation properties (`S1`, `S10`, `S11` — a mutation kept against a deleted rule reports green
 about nothing), the showcase seed's axes, and the tests that used `member` merely as a convenient

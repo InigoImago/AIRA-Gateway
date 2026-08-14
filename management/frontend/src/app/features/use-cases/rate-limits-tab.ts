@@ -1,4 +1,5 @@
 import { Component, inject, input, output } from '@angular/core';
+import { NgTemplateOutlet } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { signal } from '@angular/core';
 import { RateLimit } from '../../core/api/models';
@@ -22,7 +23,7 @@ import { PageFeedback } from '../../core/ui/page-feedback';
  */
 @Component({
   selector: 'app-rate-limits-tab',
-  imports: [FormsModule, InfoHint, Modal],
+  imports: [NgTemplateOutlet, FormsModule, InfoHint, Modal],
   templateUrl: './rate-limits-tab.html',
 })
 export class RateLimitsTab {
@@ -100,6 +101,11 @@ export class RateLimitsTab {
         this.changed.emit();
       },
     });
+  }
+
+  /** True where a per-head row exists, which is what makes the two-allowance warning relevant. */
+  protected hasPerHead(): boolean {
+    return this.limits().some((row) => row.scope === 'each_member');
   }
 
   protected labelFor(limit: RateLimit): string {
