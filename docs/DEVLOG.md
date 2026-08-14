@@ -33,6 +33,19 @@ The footer test asserts a **minimum distance** rather than a CSS rule, and walks
 rather than the reported one: naming only the rate-limit window would have gone green the day
 somebody fixed that one by hand. Both properties broken and rebuilt.
 
+**And the immediate objection to the suggestions was the right one**: *"now I can write any rubbish
+into the restriction and cover no member at all."* Exactly — and refusing what is not in the list
+still is not the answer, for the reason above. What was missing is that the console said **nothing**
+either way, so a typo produced a rule binding nobody, saving cleanly and sitting in the list looking
+exactly like a working one. That is this project's most repeated defect wearing a feature's clothes:
+configured, displayed as active, applying to nothing.
+
+It says what it **knows** now, at the two moments that matter — while the name is being typed, and
+on the saved rule, which is where a typo from last week is actually found. Careful to say *knows*:
+who is in a group is the identity provider's answer, which is why this cannot be an error and must
+not be silence. The same wording the access panel already uses for a grant that reaches nobody, and
+the same treatment on budgets, which carry the identical field.
+
 ---
 
 ## The last creator that was not a window

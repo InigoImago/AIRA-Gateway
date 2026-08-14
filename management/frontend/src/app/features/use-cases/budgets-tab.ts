@@ -82,6 +82,39 @@ export class BudgetsTab {
     return null;
   }
 
+  /**
+   * A name no member of this use case carries, typed into a rule that names one.
+   *
+   * **The field accepts anything on purpose** — a rule names a *subject*, access can come through a
+   * Keycloak group, and somebody granted that way belongs to no membership row (`FRD-209`). But a
+   * free field means a typo produces a rule that binds **nobody**, saves cleanly, and appears in
+   * the list looking exactly like a working one. That is this project's most repeated defect
+   * dressed as a feature: a control that is configured, displayed as active, and applies to
+   * nothing.
+   *
+   * So it is neither refused nor accepted silently. The console says what it **knows** — that no
+   * member of this use case has that name — and is careful to say *knows*, because who is in a
+   * group is the identity provider's answer, not ours. The same wording the access panel uses for
+   * a grant that reaches nobody.
+   */
+  protected knownMember(subject: string): boolean {
+    const name = subject.trim().toLowerCase();
+    return this.members().some((member) => member.username.trim().toLowerCase() === name);
+  }
+
+  protected unmatchedSubject(): boolean {
+    return (
+      this.budgetScope() === 'member' &&
+      this.budgetSubject().trim().length > 0 &&
+      !this.knownMember(this.budgetSubject())
+    );
+  }
+
+  /** True for a saved rule that names somebody this use case has no member row for. */
+  protected reachesNobodyKnown(scope: string, subject: string | null | undefined): boolean {
+    return scope === 'member' && !!subject && !this.knownMember(subject);
+  }
+
   protected canAdd(): boolean {
     return !this.validationError() && !this.feedback.busy();
   }

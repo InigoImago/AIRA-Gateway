@@ -86,6 +86,18 @@
               this use case's people; a name that is not in the list is accepted too, because access
               can come through a group and nobody granted that way appears in it.
             </span>
+            @if (unmatchedSubject()) {
+              <span
+                class="field__hint field__hint--error"
+                data-testid="rl-subject-unmatched"
+                role="status"
+              >
+                No member of this use case is called <strong>{{ rlSubject() }}</strong
+                >. That is correct for somebody who reaches it through a Keycloak group — they
+                appear in no membership row — and it is also what a typo looks like. A rule naming
+                nobody saves cleanly and applies to nothing.
+              </span>
+            }
           </div>
         }
         <div class="field">
@@ -163,7 +175,20 @@
       <tbody>
         @for (limit of limits(); track limit.id) {
           <tr>
-            <td class="break-anywhere">{{ labelFor(limit) }}</td>
+            <td class="break-anywhere">
+              {{ labelFor(limit) }}
+              <!--
+                A rule naming somebody this use case has no member row for is **inert until that
+                name turns up** — and a list that showed it identically to a working one could not
+                be audited. Said as what the console *knows*, since a group-granted caller
+                legitimately appears in no row (`FRD-209`); the access panel words it the same way.
+              -->
+              @if (reachesNobodyKnown(limit.scope, limit.subject)) {
+                <span class="badge badge--muted" [attr.data-testid]="'rl-unknown-' + limit.id">
+                  no member by that name
+                </span>
+              }
+            </td>
             <td>{{ limit.limit_rpm }}</td>
             <td>{{ effectiveBurst(limit) }}</td>
             <td>

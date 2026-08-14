@@ -77,6 +77,18 @@
               The name they sign in with. It matches their browser traffic and any API key they own
               — but nobody else's key, even one used on their behalf.
             </span>
+            @if (unmatchedSubject()) {
+              <span
+                class="field__hint field__hint--error"
+                data-testid="budget-subject-unmatched"
+                role="status"
+              >
+                No member of this use case is called <strong>{{ budgetSubject() }}</strong
+                >. That is correct for somebody who reaches it through a Keycloak group — they
+                appear in no membership row — and it is also what a typo looks like. A budget naming
+                nobody saves cleanly and applies to nothing.
+              </span>
+            }
           </div>
         }
         <div class="field">
@@ -182,6 +194,12 @@
         <div class="spread">
           <div class="row">
             <strong>{{ labelFor(budget) }}</strong>
+            <!-- Inert until that name turns up; said as what the console knows (`FRD-209`). -->
+            @if (reachesNobodyKnown(budget.scope, budget.subject)) {
+              <span class="badge badge--muted" [attr.data-testid]="'budget-unknown-' + budget.id">
+                no member by that name
+              </span>
+            }
             <span class="badge badge--muted">{{ budget.period }}</span>
           </div>
           @if (canManage()) {

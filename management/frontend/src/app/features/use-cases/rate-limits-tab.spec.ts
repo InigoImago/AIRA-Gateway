@@ -22,6 +22,8 @@ interface Tab {
   add: () => void;
   remove: (id: number | undefined) => void;
   labelFor: (l: RateLimit) => string;
+  unmatchedSubject: () => boolean;
+  reachesNobodyKnown: (scope: string, subject?: string | null) => boolean;
   effectiveBurst: (l: RateLimit) => number;
   feedback: PageFeedback;
 }
@@ -61,6 +63,7 @@ function setup(
   fixture.componentRef.setInput('slug', 'demo-uc');
   fixture.componentRef.setInput('limits', limits);
   fixture.componentRef.setInput('canManage', canManage);
+  fixture.componentRef.setInput('members', [{ username: 'anna', role: 'user' }]);
   const changes: number[] = [];
   fixture.componentInstance.changed.subscribe(() => changes.push(1));
   fixture.detectChanges();
@@ -266,5 +269,56 @@ describe('RateLimitsTab — a rate per person, a window, and what Burst means', 
     harness.fixture.detectChanges();
 
     expect(html.querySelector('[data-testid="rate-limit-editor"]')).not.toBeNull();
+  });
+});
+
+/**
+ * A rule that names nobody.
+ *
+ * The field accepts anything on purpose — access can come through a Keycloak group, and somebody
+ * granted that way belongs to no membership row (`FRD-209`), so a picker would be narrower than the
+ * rule it fills in. The cost is that a typo produces a rule which binds **nobody**, saves cleanly,
+ * and sits in the list looking exactly like a working one: this project's most repeated defect,
+ * a control that is configured, displayed as active, and applies to nothing.
+ *
+ * Neither refused nor accepted silently. The console says what it *knows*, and is careful to say
+ * knows — who is in a group is the identity provider's answer, which is why this cannot be an
+ * error and must not be silence either.
+ */
+describe('RateLimitsTab — a name that matches nobody', () => {
+  it('says so while it is being typed, without refusing it', () => {
+    const { component, fixture, text } = setup();
+    // The field lives in the window, so the window has to be open — which is also the only state
+    // in which this warning could help anybody.
+    component.showForm.set(true);
+    component.rlScope.set('member');
+    component.rlSubject.set('anna');
+    fixture.detectChanges();
+    expect(component.unmatchedSubject()).toBe(false);
+
+    component.rlSubject.set('ann');
+    fixture.detectChanges();
+
+    expect(component.unmatchedSubject()).toBe(true);
+    expect(text()).toContain('No member of this use case is called');
+    // Still saveable: the group case is legitimate and this is a warning, not a gate.
+    component.rlRpm.set(60);
+    expect(component.canAdd()).toBe(true);
+  });
+
+  it('marks a saved rule that names nobody it knows', () => {
+    const { component } = setup();
+
+    expect(component.reachesNobodyKnown('member', 'ann')).toBe(true);
+    expect(component.reachesNobodyKnown('member', 'anna')).toBe(false);
+    // Only the scope that names somebody — the other two bind by construction.
+    expect(component.reachesNobodyKnown('each_member', 'ann')).toBe(false);
+    expect(component.reachesNobodyKnown('use_case', '')).toBe(false);
+  });
+
+  it('compares names the way a person types them, not byte for byte', () => {
+    const { component } = setup();
+
+    expect(component.reachesNobodyKnown('member', ' Anna ')).toBe(false);
   });
 });

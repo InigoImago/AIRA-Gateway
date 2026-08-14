@@ -60,4 +60,40 @@ test.describe('Window actions', () => {
     await field.fill('service-account-from-a-group');
     await expect(field).toHaveValue('service-account-from-a-group');
   });
+
+  /**
+   * The cost of a field that accepts anything, made visible.
+   *
+   * Reported straight after the suggestions were added: *"now I can write any rubbish into the
+   * restriction and cover no member at all."* Exactly so — and refusing what is not in the list is
+   * not the answer, because access can come through a Keycloak group and somebody granted that way
+   * belongs to no membership row (`FRD-209`). A rule naming nobody would otherwise save cleanly and
+   * sit in the list looking exactly like a working one: a control that is configured, displayed as
+   * active, and applies to nothing.
+   *
+   * So the console says what it **knows**, at both moments that matter — while it is being typed,
+   * and afterwards on the saved rule, which is the one a typo from last week is found in.
+   */
+  test('a name that matches no member is called out, and still allowed', async ({ page }) => {
+    await login(page, USERS.globalAdmin);
+    await page.goto('/use-cases/kundenservice?tab=rate-limits');
+    await page.getByTestId('add-rate-limit').click();
+    await page.getByLabel('Applies to').selectOption('member');
+
+    const field = page.getByTestId('rl-subject');
+    const warning = page.getByTestId('rl-subject-unmatched');
+    await expect(warning).toBeHidden();
+
+    await field.fill('nobody-by-this-name');
+    await expect(warning).toBeVisible();
+    await expect(warning).toContainText('No member of this use case is called');
+
+    // Still saveable — the warning is information, not a gate, and the group case is legitimate.
+    await page.getByLabel('Requests per minute').fill('60');
+    await expect(page.getByRole('button', { name: 'Add', exact: true })).toBeEnabled();
+
+    // And a real member clears it, which is what makes the warning mean something.
+    await field.fill('ucadmin');
+    await expect(warning).toBeHidden();
+  });
 });
