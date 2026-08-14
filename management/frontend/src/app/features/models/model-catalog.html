@@ -629,6 +629,212 @@
         </fieldset>
 
         <!--
+          The three declaration blocks the API has always accepted and the console could not write.
+          `all-minilm` listed with a batch flag and no width for exactly that reason: the seed was
+          the only way in, so a Global Administrator could tick "embed" and had nowhere to say how
+          wide the vectors are. `FRD-206` inverted — a capability with no way in, which announces
+          itself through nothing because an absent control reads as a design decision.
+
+          Each appears **only when its capability is ticked**, because a thinking budget on a model
+          that does not reason is a declaration the validator refuses and a reader has to guess the
+          meaning of. Nothing appears for a model with no capabilities at all, which is the
+          undeclared baseline.
+        -->
+        @if (hasCapability('thinking')) {
+          <fieldset
+            class="field"
+            style="border: 0; padding: 0; margin: 0"
+            data-testid="thinking-block"
+          >
+            <legend class="field__legend">Thinking</legend>
+            <span class="field__hint">
+              Declare the modes you have <strong>measured</strong>, not the ones a model card
+              claims. A mode declared here is a mode the gateway will send; a request asking for one
+              that is not here is refused by name.
+            </span>
+            @for (mode of allThinkingModes; track mode) {
+              <label class="checkline">
+                <input
+                  type="checkbox"
+                  [name]="'mode-' + mode"
+                  [ngModel]="hasThinkingMode(mode)"
+                  (ngModelChange)="toggleThinkingMode(mode, $event)"
+                  [attr.data-testid]="'mode-' + mode"
+                />
+                {{ mode }}
+                @if (hasThinkingMode(mode) && mode !== 'disabled') {
+                  <input
+                    class="input input--narrow"
+                    type="number"
+                    min="1"
+                    [name]="'level-' + mode"
+                    [ngModel]="thinkingLevel(mode)"
+                    (ngModelChange)="setThinkingLevel(mode, $event)"
+                    [attr.data-testid]="'level-' + mode"
+                    placeholder="budget"
+                  />
+                }
+              </label>
+            }
+            <div class="form-inline">
+              <div class="field">
+                <label class="field__label" for="think-min">Minimum tokens</label>
+                <input
+                  id="think-min"
+                  class="input"
+                  type="number"
+                  min="1"
+                  name="think_min"
+                  [ngModel]="thinkingMin()"
+                  (ngModelChange)="thinkingMin.set($event)"
+                  placeholder="—"
+                />
+              </div>
+              <div class="field">
+                <label class="field__label" for="think-max">Maximum tokens</label>
+                <input
+                  id="think-max"
+                  class="input"
+                  type="number"
+                  min="1"
+                  name="think_max"
+                  [ngModel]="thinkingMax()"
+                  (ngModelChange)="thinkingMax.set($event)"
+                  data-testid="thinking-max"
+                  placeholder="—"
+                />
+                <span class="field__hint">
+                  Must stay <strong>below</strong> the output cap: the thinking budget is drawn from
+                  the output allowance, so a model at this budget could never answer. Required when
+                  <code>limited</code> is offered.
+                </span>
+              </div>
+              <div class="field">
+                <label class="field__label" for="think-default">Default mode</label>
+                <select
+                  id="think-default"
+                  class="input"
+                  name="think_default"
+                  [ngModel]="thinkingDefault()"
+                  (ngModelChange)="thinkingDefault.set($event)"
+                  data-testid="thinking-default"
+                >
+                  <option value="">no default</option>
+                  @for (mode of thinkingModes(); track mode) {
+                    <option [value]="mode">{{ mode }}</option>
+                  }
+                </select>
+                <span class="field__hint">
+                  What a request that says nothing gets. Absent is not "off" — a model that reasons
+                  by default still will.
+                </span>
+              </div>
+            </div>
+          </fieldset>
+        }
+
+        @if (hasCapability('embed')) {
+          <fieldset
+            class="field"
+            style="border: 0; padding: 0; margin: 0"
+            data-testid="embedding-block"
+          >
+            <legend class="field__legend">Embedding</legend>
+            <div class="form-inline">
+              <div class="field">
+                <label class="field__label" for="embed-dims">Dimensions</label>
+                <input
+                  id="embed-dims"
+                  class="input"
+                  name="embed_dims"
+                  [ngModel]="dimensions()"
+                  (ngModelChange)="dimensions.set($event)"
+                  data-testid="embedding-dimensions"
+                  placeholder="e.g. 384, 768"
+                />
+                <span class="field__hint">
+                  The widths this model can return, comma-separated. No vendor listing publishes
+                  this — embed one short text and count the values.
+                </span>
+              </div>
+              <div class="field">
+                <label class="field__label" for="embed-default">Default width</label>
+                <select
+                  id="embed-default"
+                  class="input"
+                  name="embed_default"
+                  [ngModel]="defaultDimension()"
+                  (ngModelChange)="defaultDimension.set($event)"
+                  data-testid="embedding-default"
+                >
+                  <option value="">none</option>
+                  @for (value of declaredDimensions(); track value) {
+                    <option [value]="value">{{ value }}</option>
+                  }
+                </select>
+                <span class="field__hint">What a caller who asks for no width gets.</span>
+              </div>
+              <div class="field">
+                <label class="field__label" for="embed-tasks">Task types</label>
+                <input
+                  id="embed-tasks"
+                  class="input"
+                  name="embed_tasks"
+                  [ngModel]="taskTypes()"
+                  (ngModelChange)="taskTypes.set($event)"
+                  data-testid="embedding-task-types"
+                  placeholder="e.g. RETRIEVAL_QUERY, RETRIEVAL_DOCUMENT"
+                />
+                <span class="field__hint">
+                  Comma-separated, exactly as the provider spells them. Leave empty where the
+                  dialect has none — an undeclared type is refused rather than sent and ignored.
+                </span>
+              </div>
+            </div>
+            <label class="checkline">
+              <input
+                type="checkbox"
+                name="embed_batch"
+                [ngModel]="supportsBatch()"
+                (ngModelChange)="supportsBatch.set($event)"
+                data-testid="embedding-batch"
+              />
+              Accepts several texts in one call
+            </label>
+          </fieldset>
+        }
+
+        @if (hasCapability('attachments')) {
+          <fieldset
+            class="field"
+            style="border: 0; padding: 0; margin: 0"
+            data-testid="attachments-block"
+          >
+            <legend class="field__legend">Documents and images</legend>
+            <span class="field__hint">
+              What this model can <strong>read</strong>. A request carrying a type that is not
+              ticked is refused by name rather than sent without the attachment — a model that never
+              saw the document answers confidently about it.
+            </span>
+            @for (mediaType of allMediaTypes; track mediaType) {
+              <label class="checkline">
+                <input
+                  type="checkbox"
+                  [name]="'media-' + mediaType"
+                  [ngModel]="hasMediaType(mediaType)"
+                  (ngModelChange)="toggleMediaType(mediaType, $event)"
+                  [attr.data-testid]="'media-' + mediaType"
+                />
+                <code>{{ mediaType }}</code>
+                @if (mediaTypeTokens(mediaType); as tokens) {
+                  <span class="muted">· {{ tokens }} tokens</span>
+                }
+              </label>
+            }
+          </fieldset>
+        }
+
+        <!--
           Approval, and it starts **off**. A model appearing on an upstream is not the same event
           as somebody deciding it may be used here (`FRD-307`) — and the whole editor is already
           Global-Admin-only, which is who releases one.

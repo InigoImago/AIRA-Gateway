@@ -118,6 +118,15 @@ usable, and `FRD-113` cannot tell a supported task type from a typo.
   on the request path. This is the existing pattern and the reason the gateway survives a
   Management outage.
 
+> **The console can write all three blocks** (2026-08-14). `thinking`, `embedding` and
+> `attachments` were accepted by the API from the day they existed and had no field in the model
+> editor — it *showed* them in the opened row as JSON. So an embedding model could be ticked
+> `embed` with nowhere to say how wide its vectors are, and the seed was the only way in;
+> `all-minilm` listed in the compatibility surface with a batch flag and no width for exactly that
+> reason. Each block now appears when its capability is ticked. Nothing was ever lost by editing a
+> model without them — the API upserts and leaves omitted fields alone, measured before this was
+> built — which is why it was a gap rather than a defect.
+
 ## 5. Design & Architecture
 
 ### 5.1 The catalog row grows; the transport does not

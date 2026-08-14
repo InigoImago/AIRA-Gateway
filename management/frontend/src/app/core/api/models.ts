@@ -278,6 +278,74 @@ export const CAPABILITIES: readonly Capability[] = [
   'prompt_caching',
 ];
 
+/**
+ * The thinking vocabulary (`FRD-111`), restated for the same reason `CAPABILITIES` is: a checkbox
+ * list has to come from somewhere. `libs/tests/test_capability_vocabulary.py` compares it against
+ * the Python enum **in both directions** — the capability list was missing two members for days
+ * and nothing failed, because a value the console cannot express looks exactly like a design
+ * decision.
+ */
+export type ThinkingModeName =
+  'disabled' | 'limited' | 'auto' | 'high' | 'medium' | 'low' | 'minimal';
+
+export const THINKING_MODES: readonly ThinkingModeName[] = [
+  'disabled',
+  'limited',
+  'auto',
+  'high',
+  'medium',
+  'low',
+  'minimal',
+];
+
+/**
+ * What a model may be declared to read (`FRD-110`).
+ *
+ * The gateway's own `DEFAULT_MEDIA_TYPES` is the outer bound — a type outside it is refused before
+ * any model is consulted — so offering more here would be offering something that cannot work.
+ * Compared against that constant in both directions by `libs/tests/test_capability_vocabulary.py`.
+ */
+export const MEDIA_TYPES: readonly string[] = [
+  'application/pdf',
+  'application/x-javascript',
+  'text/javascript',
+  'text/plain',
+  'text/html',
+  'text/md',
+  'text/csv',
+  'text/xml',
+  'text/rtf',
+  'image/png',
+  'image/jpg',
+  'image/jpeg',
+  'image/webp',
+  'image/heic',
+  'image/heif',
+];
+
+/** A model's thinking declaration (`FRD-114` FR-3). */
+export interface ThinkingDeclaration {
+  modes: ThinkingModeName[];
+  min_tokens?: number | null;
+  max_tokens?: number | null;
+  default?: { mode: ThinkingModeName; tokens?: number | null } | null;
+  /** Mode → token budget, so an abstract level reserves the right amount (`FRD-111`). */
+  levels?: Record<string, number> | null;
+}
+
+/** An embedding model's shape (`FRD-113`). */
+export interface EmbeddingDeclaration {
+  task_types?: string[] | null;
+  supports_batch?: boolean | null;
+  dimensions?: number[] | null;
+  default?: number | null;
+}
+
+/** Which media types a model reads, and what each costs to send (`FRD-110`). */
+export interface AttachmentDeclaration {
+  media_types?: Record<string, { tokens?: number } | null> | null;
+}
+
 /** A model in the catalog: what it costs, what it can do, how it is reached (FRD-403, FRD-114). */
 export interface CatalogModel {
   name: string;
@@ -307,9 +375,9 @@ export interface CatalogModel {
   max_output_tokens?: number | null;
   /** Applied when the caller sets no cap — Anthropic requires one on every request. */
   default_max_output_tokens?: number | null;
-  thinking?: Record<string, unknown> | null;
-  embedding?: Record<string, unknown> | null;
-  attachments?: Record<string, unknown> | null;
+  thinking?: ThinkingDeclaration | null;
+  embedding?: EmbeddingDeclaration | null;
+  attachments?: AttachmentDeclaration | null;
   hosting?: '' | 'managed' | 'self_deployed';
   /** Warns, never blocks — blocking is what revocation is for. */
   deprecated?: boolean;

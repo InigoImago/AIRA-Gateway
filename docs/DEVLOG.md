@@ -5,6 +5,58 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The three declarations the console could not write
+
+Asked whether the Google import carries an embedding model's width. **It does not, and it cannot**
+— measured against the live listing: 53 models, 3 of them embedders, and no dimension field
+anywhere. `outputTokenLimit: 1` is a token limit; copying it would catalogue a one-dimensional
+embedding model. That is `FRD-507`'s rule holding — only what the vendor *states* may be copied —
+and the width would otherwise have to come from an embedding call, which `FRD-506` forbids for the
+same reason a health check never generates.
+
+Two more answers came out of the same question. **Capability gating already says exactly what it
+means**: *"No model could serve this request (qwen3:0.6b: declares no attachment support, so it
+cannot read the ['application/pdf'] this request carries)."* — model and reason, on both surfaces,
+and since yesterday the two cases differ by status as well (`422` unknown id, `400` known and
+incapable). So no new error code: inventing one would extend a closed vocabulary that clients
+switch on. **The Gemini surface** answers `400 FAILED_PRECONDITION` with the same sentence, which
+is the right vocabulary — operator-fixable, not an outage (`ADR-0012`).
+
+**And the gap underneath all of it.** The API has accepted `thinking`, `embedding` and
+`attachments` since they existed, and the console had a field for none of them — it *showed* them
+in the opened row as JSON. An administrator could tick "embed" and had nowhere to say how wide the
+vectors are; the seed was the only way in, which is why `all-minilm` listed with a batch flag and
+no width. `FRD-206` inverted: a capability with no way in announces itself through nothing, because
+an absent control reads as a design decision. Measured first — editing a model without those fields
+loses nothing, since the API upserts and leaves omitted ones alone — so this was a gap and not a
+defect.
+
+All three blocks are in the editor now, each shown only when its capability is ticked, with the
+validator's own rules mirrored where a form can hold them: a thinking budget must stay below the
+output cap, a default mode must be one of the declared ones, a default width must be one of the
+declared widths. Three details are the ones worth keeping:
+
+- **`null`, never `{}`.** Unticking a capability removes the block. An empty object would leave a
+  model declared to embed with nothing said about it — and a test that named only two of the three
+  stayed green when the third was made to send `{}`, found by breaking it.
+- **A per-type token estimate is carried, not rebuilt.** The form has no input for it, so writing
+  `media_types` from the checkboxes alone would silently drop a figure somebody measured.
+- **Two vocabularies had to be restated in TypeScript**, so both are compared against the Python
+  enum and the gateway constant **in both directions** — the capability list was missing two
+  members for days on exactly that omission.
+
+**The type caught a fixture describing a shape the server refuses**: `attachments.media_types` was
+a *list* in a spec, which the validator rejects, invisible while the field was typed
+`Record<string, unknown>`. And the browser test was written asserting the seed's own value — it
+passed alone and failed on the second run, because its first attempt had saved a different one and
+never reached its restore. It asserts the **round trip** now, and reloads rather than reopening,
+which is both steadier and the stronger claim: a reload fetches the catalog again.
+
+Verified end to end on the running stack — console payload → Management → Kafka → gateway
+read-model → the compatibility surface's `GET /models`.
+
+---
+
 ## The predecessor's own suite, run against this surface
 
 250 of the predecessor's tests against AIRA: 233 compatible, 17 differences. The owner went through

@@ -106,6 +106,22 @@ interface Catalog {
   maxOutput: { set: (v: number | null) => void; (): number | null };
   defaultOutput: { set: (v: number | null) => void; (): number | null };
   deprecated: { set: (v: boolean) => void; (): boolean };
+  thinkingModes: { set: (v: string[]) => void; (): string[] };
+  thinkingMin: { set: (v: number | null) => void; (): number | null };
+  thinkingMax: { set: (v: number | null) => void; (): number | null };
+  thinkingDefault: { set: (v: string) => void; (): string };
+  thinkingLevels: { set: (v: Record<string, number>) => void; (): Record<string, number> };
+  toggleThinkingMode: (mode: string, on: boolean) => void;
+  thinkingLevel: (mode: string) => number | null;
+  setThinkingLevel: (mode: string, value: number | null) => void;
+  dimensions: { set: (v: string) => void; (): string };
+  defaultDimension: { set: (v: string | number) => void; (): string | number };
+  taskTypes: { set: (v: string) => void; (): string };
+  supportsBatch: { set: (v: boolean) => void; (): boolean };
+  declaredDimensions: () => number[];
+  mediaTypes: { set: (v: string[]) => void; (): string[] };
+  toggleMediaType: (mediaType: string, on: boolean) => void;
+  mediaTypeTokens: (mediaType: string) => number | null;
   showAdd: { set: (v: boolean) => void; (): boolean };
   name: { set: (v: string) => void; (): string };
   inputPrice: { set: (v: string) => void; (): string };
@@ -849,7 +865,11 @@ describe('ModelCatalog — finding one among many', () => {
           default_max_output_tokens: 512,
           thinking: { modes: ['disabled'] },
           embedding: { supports_batch: true },
-          attachments: { media_types: ['application/pdf'] },
+          // An **object**, keyed by media type, with an optional per-type estimate. It was a
+          // list here, which the server refuses ("media_types must be a non-empty object") —
+          // invisible while the field was typed `Record<string, unknown>`, and named by the
+          // compiler the moment the declaration got a real type.
+          attachments: { media_types: { 'application/pdf': { tokens: 258 } } },
           is_priced: true,
           input_price_per_million: '1.2345',
           output_price_per_million: '6.7890',
@@ -1462,5 +1482,190 @@ describe('ModelCatalog — what a reader is looking for comes first', () => {
     });
 
     expect(component.unpriced().length).toBe(2);
+  });
+});
+
+/**
+ * The three declaration blocks (`FRD-114`).
+ *
+ * The API has accepted `thinking`, `embedding` and `attachments` since they existed and the
+ * console could not write any of them: it *showed* them in the opened row as JSON, and offered no
+ * field. So `all-minilm` listed with a batch flag and no width — a Global Administrator could tick
+ * "embed" and had nowhere to say how wide the vectors are, and the seed was the only way in.
+ * `FRD-206` inverted: a capability with no way in announces itself through nothing, because an
+ * absent control reads as a design decision.
+ *
+ * Nothing is lost by editing a model without them — measured against the running stack before this
+ * was built, since the API upserts and leaves omitted fields alone. That is why this was a gap
+ * rather than a defect, and why the tests below are about what the form can now *say*.
+ */
+describe('ModelCatalog — declaration blocks', () => {
+  const DECLARED: CatalogModel = {
+    name: 'declared-model',
+    capabilities: ['generate', 'embed', 'thinking', 'attachments'],
+    max_output_tokens: 40960,
+    thinking: {
+      modes: ['disabled', 'low', 'high'],
+      min_tokens: 128,
+      max_tokens: 8192,
+      default: { mode: 'disabled' },
+      levels: { low: 1024, high: 4096 },
+    },
+    embedding: {
+      dimensions: [384, 768],
+      default: 384,
+      task_types: ['RETRIEVAL_QUERY'],
+      supports_batch: true,
+    },
+    attachments: { media_types: { 'application/pdf': { tokens: 258 } } },
+  };
+
+  it('shows a block only where its capability is ticked', () => {
+    const harness = setup();
+    const catalog = harness.component;
+    catalog.showAdd.set(true);
+    catalog.capabilities.set([]);
+    harness.fixture.detectChanges();
+
+    expect(harness.html().querySelector('[data-testid="thinking-block"]')).toBeNull();
+    expect(harness.html().querySelector('[data-testid="embedding-block"]')).toBeNull();
+    expect(harness.html().querySelector('[data-testid="attachments-block"]')).toBeNull();
+
+    catalog.capabilities.set(['thinking', 'embed', 'attachments']);
+    harness.fixture.detectChanges();
+
+    expect(harness.html().querySelector('[data-testid="thinking-block"]')).not.toBeNull();
+    expect(harness.html().querySelector('[data-testid="embedding-block"]')).not.toBeNull();
+    expect(harness.html().querySelector('[data-testid="attachments-block"]')).not.toBeNull();
+  });
+
+  it('loads what a model already declares into the form', () => {
+    const harness = setup();
+    const catalog = harness.component;
+    catalog.edit(DECLARED);
+
+    expect(catalog.thinkingModes()).toEqual(['disabled', 'low', 'high']);
+    expect(catalog.thinkingMax()).toBe(8192);
+    expect(catalog.thinkingDefault()).toBe('disabled');
+    expect(catalog.thinkingLevel('low')).toBe(1024);
+    expect(catalog.dimensions()).toBe('384, 768');
+    expect(catalog.defaultDimension()).toBe(384);
+    expect(catalog.taskTypes()).toBe('RETRIEVAL_QUERY');
+    expect(catalog.supportsBatch()).toBe(true);
+    expect(catalog.mediaTypes()).toEqual(['application/pdf']);
+  });
+
+  it('sends all three blocks in the shape the validator takes', () => {
+    const harness = setup();
+    const catalog = harness.component;
+    catalog.edit(DECLARED);
+    catalog.save();
+
+    const sent = harness.saved[0];
+    expect(sent.thinking).toEqual({
+      modes: ['disabled', 'low', 'high'],
+      min_tokens: 128,
+      max_tokens: 8192,
+      default: { mode: 'disabled' },
+      levels: { low: 1024, high: 4096 },
+    });
+    expect(sent.embedding).toEqual({
+      dimensions: [384, 768],
+      default: 384,
+      task_types: ['RETRIEVAL_QUERY'],
+      supports_batch: true,
+    });
+    expect(sent.attachments).toEqual({
+      media_types: { 'application/pdf': { tokens: 258 } },
+    });
+  });
+
+  /**
+   * `null`, not `{}`. An empty object replaces a declaration with an empty one — which the
+   * validator would refuse for thinking (`modes` must be non-empty) and would silently accept for
+   * embedding, leaving a model declared to embed with nothing said about it. Removing the
+   * capability has to remove the block.
+   */
+  it('removes a block when its capability is unticked', () => {
+    const harness = setup();
+    const catalog = harness.component;
+    catalog.edit(DECLARED);
+    catalog.toggleCapability('embed', false);
+    catalog.toggleCapability('attachments', false);
+    catalog.toggleCapability('thinking', false);
+    catalog.save();
+
+    const sent = harness.saved[0];
+
+    // All three, and `null` rather than "falsy": replacing the thinking block with `{}` left this
+    // green when it named only two of them, and an empty object is precisely the wrong answer —
+    // it saves, the model keeps the capability, and nothing is declared about it.
+    expect(sent.embedding).toBeNull();
+    expect(sent.attachments).toBeNull();
+    expect(sent.thinking).toBeNull();
+  });
+
+  /**
+   * The validator refuses a default that is not among the declared modes, and a budget for a mode
+   * that is not declared is a number nothing will ever read. Both would be a save that fails for a
+   * reason the reader cannot see on screen — the form's own state is where it is visible.
+   */
+  it('drops a mode’s budget and a default naming it when the mode is unticked', () => {
+    const harness = setup();
+    const catalog = harness.component;
+    catalog.edit(DECLARED);
+    catalog.toggleThinkingMode('low', false);
+    catalog.thinkingDefault.set('high');
+    catalog.toggleThinkingMode('high', false);
+    catalog.save();
+
+    const thinking = harness.saved[0].thinking;
+    expect(thinking?.modes).toEqual(['disabled']);
+    expect(thinking?.levels).toBeNull();
+    expect(thinking?.default).toBeNull();
+  });
+
+  /**
+   * A width that is no longer offered must not be sent: the validator refuses it, and a stale one
+   * survives exactly the edit that shortened the list — which is the edit somebody makes when a
+   * model drops a width.
+   */
+  it('sends a default width only while it is one of the declared ones', () => {
+    const harness = setup();
+    const catalog = harness.component;
+    catalog.edit(DECLARED);
+    catalog.dimensions.set('768');
+    catalog.save();
+
+    expect(harness.saved[0].embedding?.dimensions).toEqual([768]);
+    expect(harness.saved[0].embedding?.default).toBeNull();
+  });
+
+  /**
+   * The form has no input for a per-type token estimate, so writing the block from the checkboxes
+   * alone would drop one somebody measured — a silent loss, in a figure that only shows up in a
+   * budget reservation (`FRD-110` §5.3).
+   */
+  it('carries a media type’s token estimate through an edit that never touched it', () => {
+    const harness = setup();
+    const catalog = harness.component;
+    catalog.edit(DECLARED);
+    catalog.toggleMediaType('image/png', true);
+    catalog.save();
+
+    expect(harness.saved[0].attachments?.media_types).toEqual({
+      'application/pdf': { tokens: 258 },
+      'image/png': null,
+    });
+  });
+
+  it('offers no width the form has not declared', () => {
+    const harness = setup();
+    const catalog = harness.component;
+    catalog.showAdd.set(true);
+    catalog.capabilities.set(['embed']);
+    catalog.dimensions.set('384, nonsense, 768, -1');
+
+    expect(catalog.declaredDimensions()).toEqual([384, 768]);
   });
 });

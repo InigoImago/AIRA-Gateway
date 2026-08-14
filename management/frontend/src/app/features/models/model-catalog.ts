@@ -12,13 +12,19 @@ import { FormsModule } from '@angular/forms';
 import { errorMessage } from '../../core/api/error-message';
 import {
   CAPABILITIES,
+  MEDIA_TYPES,
+  THINKING_MODES,
+  AttachmentDeclaration,
   Capability,
   CatalogModel,
+  EmbeddingDeclaration,
   GatewayProvider,
   Me,
   ModelCheck,
   OfferedModel,
   ServedModel,
+  ThinkingDeclaration,
+  ThinkingModeName,
 } from '../../core/api/models';
 import { MeService } from '../../core/api/me.service';
 import { UseCaseService } from '../../core/api/use-case.service';
@@ -117,6 +123,28 @@ export class ModelCatalog implements OnInit {
   protected readonly maxOutput = signal<number | null>(null);
   protected readonly defaultOutput = signal<number | null>(null);
   protected readonly deprecated = signal(false);
+
+  // The three declaration blocks. Held as flat signals rather than as the nested JSON the API
+  // takes, because a form edits fields and a validator reads a document — assembling it once on
+  // save is the only place the two shapes have to meet.
+  protected readonly allThinkingModes = THINKING_MODES;
+  protected readonly thinkingModes = signal<ThinkingModeName[]>([]);
+  protected readonly thinkingMin = signal<number | null>(null);
+  protected readonly thinkingMax = signal<number | null>(null);
+  protected readonly thinkingDefault = signal<'' | ThinkingModeName>('');
+  /** Mode → budget, so an abstract level reserves the right number of tokens (`FRD-111`). */
+  protected readonly thinkingLevels = signal<Record<string, number>>({});
+  /** Comma-separated, because a width list is short and typing it beats a repeater. */
+  protected readonly dimensions = signal('');
+  protected readonly defaultDimension = signal<'' | number>('');
+  protected readonly taskTypes = signal('');
+  protected readonly supportsBatch = signal(false);
+  protected readonly allMediaTypes = MEDIA_TYPES;
+  protected readonly mediaTypes = signal<string[]>([]);
+  /** Per-type token estimates that were already on file. **Carried, never rebuilt**: the form has
+   *  no input for them, and writing the block from the checkboxes alone would silently drop an
+   *  estimate somebody measured (`FRD-110` §5.3). */
+  private readonly mediaTypeSpecs = signal<Record<string, { tokens?: number } | null>>({});
   /** Released for use (`FRD-307`). New declarations start **off**: a model appearing on an
    *  upstream is not the same event as somebody deciding it may be used here. */
   protected readonly approved = signal(false);
@@ -173,6 +201,56 @@ export class ModelCatalog implements OnInit {
 
   protected hasCapability(capability: Capability): boolean {
     return this.capabilities().includes(capability);
+  }
+
+  protected hasThinkingMode(mode: ThinkingModeName): boolean {
+    return this.thinkingModes().includes(mode);
+  }
+
+  protected toggleThinkingMode(mode: ThinkingModeName, on: boolean): void {
+    const current = this.thinkingModes().filter((value) => value !== mode);
+    this.thinkingModes.set(on ? [...current, mode] : current);
+    if (!on) {
+      // Its budget goes with it, and so does a default naming it — the validator refuses a default
+      // that is not among the declared modes, and leaving either behind turns an untick into a
+      // save that fails for a reason the reader cannot see on screen.
+      const levels = { ...this.thinkingLevels() };
+      delete levels[mode];
+      this.thinkingLevels.set(levels);
+      if (this.thinkingDefault() === mode) this.thinkingDefault.set('');
+    }
+  }
+
+  protected thinkingLevel(mode: ThinkingModeName): number | null {
+    return this.thinkingLevels()[mode] ?? null;
+  }
+
+  protected setThinkingLevel(mode: ThinkingModeName, value: number | null): void {
+    const levels = { ...this.thinkingLevels() };
+    if (value === null || value === undefined || Number.isNaN(value)) delete levels[mode];
+    else levels[mode] = value;
+    this.thinkingLevels.set(levels);
+  }
+
+  /** The widths as numbers, for the default picker — so it can only offer a declared one. */
+  protected readonly declaredDimensions = computed(() =>
+    this.dimensions()
+      .split(',')
+      .map((value) => Number(value.trim()))
+      .filter((value) => Number.isInteger(value) && value > 0),
+  );
+
+  protected hasMediaType(mediaType: string): boolean {
+    return this.mediaTypes().includes(mediaType);
+  }
+
+  protected toggleMediaType(mediaType: string, on: boolean): void {
+    const current = this.mediaTypes().filter((value) => value !== mediaType);
+    this.mediaTypes.set(on ? [...current, mediaType] : current);
+  }
+
+  protected mediaTypeTokens(mediaType: string): number | null {
+    return this.mediaTypeSpecs()[mediaType]?.tokens ?? null;
   }
 
   /** Only a Global Administrator maintains prices — they follow the provider contract. */
@@ -282,6 +360,7 @@ export class ModelCatalog implements OnInit {
         default_max_output_tokens: this.defaultOutput(),
         deprecated: this.deprecated(),
         approved: this.approved(),
+        ...this.declarations(),
       })
       .subscribe({
         next: (model) => {
@@ -315,6 +394,7 @@ export class ModelCatalog implements OnInit {
     this.defaultOutput.set(null);
     this.deprecated.set(false);
     this.approved.set(false);
+    this.clearDeclarations();
     // The vendor's answers belong to the model that was open. Left standing, they describe the
     // previous one — a note saying "its output cap was filled in" beside a form where it was not.
     this.providerIsCustom.set(false);
@@ -803,8 +883,94 @@ export class ModelCatalog implements OnInit {
     this.defaultOutput.set(model.default_max_output_tokens ?? null);
     this.deprecated.set(model.deprecated ?? false);
     this.approved.set(model.approved ?? false);
+    this.loadDeclarations(model);
     this.editing.set(model.name);
     this.showAdd.set(true);
+  }
+
+  private clearDeclarations(): void {
+    this.thinkingModes.set([]);
+    this.thinkingMin.set(null);
+    this.thinkingMax.set(null);
+    this.thinkingDefault.set('');
+    this.thinkingLevels.set({});
+    this.dimensions.set('');
+    this.defaultDimension.set('');
+    this.taskTypes.set('');
+    this.supportsBatch.set(false);
+    this.mediaTypes.set([]);
+    this.mediaTypeSpecs.set({});
+  }
+
+  private loadDeclarations(model: CatalogModel): void {
+    const thinking = model.thinking ?? null;
+    this.thinkingModes.set([...(thinking?.modes ?? [])]);
+    this.thinkingMin.set(thinking?.min_tokens ?? null);
+    this.thinkingMax.set(thinking?.max_tokens ?? null);
+    this.thinkingDefault.set(thinking?.default?.mode ?? '');
+    this.thinkingLevels.set({ ...(thinking?.levels ?? {}) });
+
+    const embedding = model.embedding ?? null;
+    this.dimensions.set((embedding?.dimensions ?? []).join(', '));
+    this.defaultDimension.set(embedding?.default ?? '');
+    this.taskTypes.set((embedding?.task_types ?? []).join(', '));
+    this.supportsBatch.set(embedding?.supports_batch ?? false);
+
+    const specs = model.attachments?.media_types ?? {};
+    this.mediaTypes.set(Object.keys(specs));
+    this.mediaTypeSpecs.set({ ...specs });
+  }
+
+  /**
+   * The three blocks as the API takes them, or `null` where the capability is not declared.
+   *
+   * **`null` and an empty object are different answers.** Sending `{}` for a model with no
+   * thinking would replace a declaration with an empty one; sending `null` removes it, which is
+   * what unticking the capability means. And a block is only sent when its capability is ticked,
+   * so a model that stops embedding does not keep a width nobody can see.
+   */
+  private declarations(): Pick<CatalogModel, 'thinking' | 'embedding' | 'attachments'> {
+    const modes = this.thinkingModes();
+    const chosen = this.thinkingDefault();
+    const levels = this.thinkingLevels();
+    const thinking: ThinkingDeclaration | null = this.hasCapability('thinking')
+      ? {
+          modes,
+          min_tokens: this.thinkingMin(),
+          max_tokens: this.thinkingMax(),
+          default: chosen ? { mode: chosen } : null,
+          levels: Object.keys(levels).length ? levels : null,
+        }
+      : null;
+
+    const widths = this.declaredDimensions();
+    const tasks = this.taskTypes()
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean);
+    const fallback = Number(this.defaultDimension());
+    const embedding: EmbeddingDeclaration | null = this.hasCapability('embed')
+      ? {
+          dimensions: widths.length ? widths : null,
+          // Only where it is one of the declared widths — the validator refuses anything else, and
+          // a stale value can survive an edit that shortened the list.
+          default: widths.includes(fallback) ? fallback : null,
+          task_types: tasks.length ? tasks : null,
+          supports_batch: this.supportsBatch(),
+        }
+      : null;
+
+    const specs = this.mediaTypeSpecs();
+    const attachments: AttachmentDeclaration | null = this.hasCapability('attachments')
+      ? {
+          media_types: Object.fromEntries(
+            // The estimate on file is carried through, because the form has no input for it.
+            this.mediaTypes().map((mediaType) => [mediaType, specs[mediaType] ?? null]),
+          ),
+        }
+      : null;
+
+    return { thinking, embedding, attachments };
   }
 
   protected remove(model: CatalogModel): void {

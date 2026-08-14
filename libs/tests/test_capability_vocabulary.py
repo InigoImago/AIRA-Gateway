@@ -98,3 +98,47 @@ def test_the_realm_defines_exactly_the_roles_that_exist() -> None:
     assert defined == known, (
         f"realm-only: {sorted(defined - known)}, code-only: {sorted(known - defined)}"
     )
+
+
+def _console_list(name: str, pattern: str = r"'([a-z0-9_/.+-]+)'") -> set[str]:
+    """The values of one array literal in the SPA's model definitions."""
+    source = MODELS_TS.read_text()
+    match = re.search(rf"export const {name}[^=]*=\s*\[(.*?)\]", source, re.DOTALL)
+    assert match, f"{name} is no longer an array literal in models.ts"
+    return set(re.findall(pattern, match.group(1)))
+
+
+def test_the_console_can_declare_every_thinking_mode() -> None:
+    """The modes are a checkbox list, so they had to be restated — and a restated list drifts.
+
+    A mode the console cannot tick is a mode nobody can declare from the console, which reads as
+    "this model does not offer it" rather than as "there is no box". The capability list was
+    missing two members for days on exactly that logic.
+    """
+    from aira_common.models import ThinkingMode
+
+    console = _console_list("THINKING_MODES")
+    known = {member.value for member in ThinkingMode}
+
+    assert console == known, (
+        f"console-only: {sorted(console - known)}, gateway-only: {sorted(known - console)}"
+    )
+
+
+def test_the_console_offers_exactly_the_media_types_the_gateway_accepts() -> None:
+    """Both directions, and each fails differently.
+
+    A type the gateway accepts and the console cannot tick is a document nobody can declare a
+    model able to read — the model is then refused by name for a file it could have handled. A type
+    the console offers and the gateway does not accept is worse: the declaration saves, the model
+    looks capable, and the request is refused before any model is consulted, with a message about
+    the media type rather than about the box somebody ticked.
+    """
+    from aira_gateway.attachments import DEFAULT_MEDIA_TYPES
+
+    console = _console_list("MEDIA_TYPES")
+
+    assert console == set(DEFAULT_MEDIA_TYPES), (
+        f"console-only: {sorted(console - set(DEFAULT_MEDIA_TYPES))}, "
+        f"gateway-only: {sorted(set(DEFAULT_MEDIA_TYPES) - console)}"
+    )
