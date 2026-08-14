@@ -312,3 +312,103 @@ class LlmCategoryRouter:
         reached — which is how two copies of one rule start to disagree.
         """
         return (await self.classify_text(text))[0]
+
+
+#: What a redactor is told when the operator has not written their own instruction.
+#:
+#: Deliberately narrow: it names the job, forbids commentary, and says what to do when there is
+#: nothing to remove. An LLM asked to "clean this up" will also summarise, translate and improve —
+#: and every one of those is a silent change to what the caller asked, arriving as a 200.
+DEFAULT_REDACTION_INSTRUCTION = (
+    "Rewrite the user's text with personal data replaced by neutral placeholders such as "
+    "<PERSON>, <ADDRESS>, <EMAIL>, <PHONE> or <ID>. Keep everything else exactly as it is: same "
+    "language, same wording, same structure, same meaning. Do not summarise, translate, answer, "
+    "explain or add anything. Return only the rewritten text. If there is nothing to replace, "
+    "return the text unchanged."
+)
+
+#: How much room a redactor gets. A rewrite is roughly as long as its input, so an allowance sized
+#: for a classifier would truncate it — and a truncated rewrite is the dangerous failure: it looks
+#: like a successful redaction and silently drops the end of the caller's prompt.
+REDACTION_OUTPUT_HEADROOM = 512
+
+
+@dataclass(frozen=True, slots=True)
+class Redaction:
+    """What a redactor made of the text, and what asking cost."""
+
+    #: The rewritten text, or ``None`` where the redactor could not be trusted to have produced
+    #: one. `None` is **not** "nothing to change" — that is the text coming back equal.
+    text: str | None
+    call: ModelCall | None = None
+    #: Why there is no text, for the audit row and the dry run's screen.
+    failure: str | None = None
+
+
+class LlmRedactor:
+    """Asks a trusted model to rewrite the text with personal data removed.
+
+    **The failure mode this class is shaped around is not an error, it is a plausible answer.** A
+    model asked to redact can answer with a summary, a translation, a refusal, a preamble ("Sure,
+    here is the redacted text:"), or with the empty string — and each of those, applied, changes
+    what the caller asked while the request goes on to succeed with a 200. So a rewrite is checked
+    before it is trusted, and an unusable one is a failure rather than a redaction.
+    """
+
+    #: A rewrite shorter than this fraction of the original is treated as a failure rather than as
+    #: a very thorough redaction. Placeholders are shorter than what they replace, so some
+    #: shrinkage is expected; losing two thirds of a prompt is a summary.
+    MIN_KEPT = 0.34
+
+    def __init__(
+        self,
+        provider: Upstream,
+        model: str,
+        instruction: str | None = None,
+        thinking: Thinking | None = _OFF,
+    ) -> None:
+        self._provider = provider
+        self._model = model
+        self._instruction = instruction or DEFAULT_REDACTION_INSTRUCTION
+        self._thinking = thinking
+
+    async def rewrite(self, text: str) -> Redaction:
+        if not text.strip():
+            # Nothing to do, and nothing to pay for. A model call to redact an empty prompt is a
+            # cost with no possible finding.
+            return Redaction(text)
+        try:
+            response = await self._provider.generate(
+                CanonicalRequest(
+                    model=self._model,
+                    messages=[
+                        CanonicalMessage(role=Role.SYSTEM, text=self._instruction),
+                        CanonicalMessage(role=Role.USER, text=text),
+                    ],
+                    max_output_tokens=_redaction_allowance(text),
+                    temperature=0.0,
+                    thinking=self._thinking,
+                )
+            )
+        except UpstreamError as exc:
+            return Redaction(None, failure=f"the redactor could not be reached ({exc.message})")
+
+        call = ModelCall(step="pii_filter", model=self._model, usage=response.usage)
+        rewritten = response.text.strip()
+        if not rewritten:
+            return Redaction(None, call, "the redactor returned nothing")
+        if len(rewritten) < len(text.strip()) * self.MIN_KEPT:
+            # Not a judgement about quality — a length this far off is a summary or a refusal, and
+            # applying it would send the model a different question than the caller asked.
+            return Redaction(None, call, "the redactor returned far less text than it was given")
+        return Redaction(rewritten, call)
+
+
+def _redaction_allowance(text: str) -> int:
+    """Room for a rewrite of roughly this length, plus headroom.
+
+    Four characters per token is the usual rough figure and is deliberately generous here: the
+    cost of over-estimating is a slightly larger allowance, and the cost of under-estimating is a
+    silently truncated prompt.
+    """
+    return max(CLASSIFIER_OUTPUT_TOKENS, len(text) // 4 + REDACTION_OUTPUT_HEADROOM)

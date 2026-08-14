@@ -421,3 +421,26 @@ async def test_a_dry_run_says_the_router_could_not_be_asked() -> None:
     result = await engine.dry_run(pipeline, _request("hi", model="mock-1"))
 
     assert [(e.type, e.action) for e in result.trace] == [("model_route", "not_asked")]
+
+
+async def test_a_router_that_cannot_be_asked_previews_the_model_it_will_actually_use() -> None:
+    """The divergence the single dispatch table exposed.
+
+    `run` fell through to the re-target when the classifier could not be reached, applying the
+    configured `default_model`; `dry_run` did `continue` and reported **unchanged**. So the
+    builder's preview named the model the caller asked for while production sent the request
+    somewhere else — on the one screen whose entire job is to say what the pipeline will do.
+
+    Neither path was wrong on its own, which is why nothing failed: they were two hand-written
+    copies of one rule, and a divergence between those is invisible until something compares them.
+    """
+    pipeline = _router({"model": "absent", "categories": _CATEGORIES, "default_model": "d-1"})
+    engine = _engine(_Guard("mock-1"))
+
+    result = await engine.dry_run(pipeline, _request(model="mock-1"))
+    outcome = await engine.run(pipeline, _request(model="mock-1"))
+
+    assert result.effective_model == outcome.request.model == "d-1"
+    entry = next(e for e in result.trace if e.type == "model_route")
+    assert entry.action == "not_asked"
+    assert entry.detail["to"] == "d-1", entry.detail

@@ -16,7 +16,7 @@ from aira_management.apps.pipelines.models import PipelineConfig
 
 #: `allow_check` left on 2026-08-11: which models a use case may call is a property of the
 #: use case (`FRD-308`), enforced at every hop, not a stage that ran once before routing.
-STEP_TYPES = {"injection_filter", "model_route"}
+STEP_TYPES = {"injection_filter", "model_route", "pii_filter"}
 
 MAX_STEPS = 32
 MAX_FALLBACK_MODELS = 16
@@ -81,6 +81,19 @@ def _validate_step_config(step_type: str, config: dict[str, Any]) -> None:
         if policy is not None and policy not in UNDETERMINED_POLICIES:
             raise serializers.ValidationError(
                 f"step.config.on_undetermined must be one of {list(UNDETERMINED_POLICIES)}, "
+                f"not '{policy}'."
+            )
+    elif step_type == "pii_filter":
+        # The instruction is what the operator wants removed, the notice is what the caller is
+        # told about it. Both are free text and both are bounded like every other caller-supplied
+        # string here — the notice is put in front of a model's answer, so its length is somebody
+        # else's screen.
+        _check_text(config, "instruction")
+        _check_text(config, "notice")
+        policy = config.get("on_failure")
+        if policy is not None and policy not in UNDETERMINED_POLICIES:
+            raise serializers.ValidationError(
+                f"step.config.on_failure must be one of {list(UNDETERMINED_POLICIES)}, "
                 f"not '{policy}'."
             )
     elif step_type == "model_route":

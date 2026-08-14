@@ -255,6 +255,76 @@
                   ></textarea>
                 </div>
               }
+            } @else if (step.type === 'pii_filter') {
+              <div class="field">
+                <label for="insp-pii-model">Trusted model</label>
+                <select
+                  id="insp-pii-model"
+                  [ngModel]="step.config.model || ''"
+                  (ngModelChange)="setStepField(selectedIndex(), 'model', $event)"
+                  data-testid="pii-model"
+                >
+                  <option value="">— first released model —</option>
+                  @for (model of released(); track model) {
+                    <option [value]="model">{{ model }}</option>
+                  }
+                </select>
+                <span class="field__hint">
+                  Only models released to this use case. It sees the prompt in full — including the
+                  personal data it is being asked to remove — so it is the one model here that has
+                  to be trusted with the thing the step exists to protect.
+                </span>
+              </div>
+              <div class="field">
+                <label for="insp-pii-instruction">What to replace</label>
+                <textarea
+                  id="insp-pii-instruction"
+                  rows="4"
+                  [ngModel]="step.config.instruction || ''"
+                  (ngModelChange)="setStepField(selectedIndex(), 'instruction', $event)"
+                  data-testid="pii-instruction"
+                  placeholder="Replace names, addresses, customer numbers and phone numbers with placeholders. Keep everything else exactly as it is."
+                ></textarea>
+                <span class="field__hint">
+                  Left empty, a built-in instruction is used. Say what to replace and, just as
+                  importantly, that nothing else may change — a model asked to "clean this up" will
+                  also summarise and translate, and the caller gets an answer to a different
+                  question with no sign that it happened.
+                </span>
+              </div>
+              <div class="field">
+                <label for="insp-pii-notice">Note to the caller</label>
+                <input
+                  id="insp-pii-notice"
+                  [ngModel]="step.config.notice || ''"
+                  (ngModelChange)="setStepField(selectedIndex(), 'notice', $event)"
+                  data-testid="pii-notice"
+                  placeholder="Note: personal data was removed from the input before processing."
+                />
+                <span class="field__hint">
+                  Put in front of the answer, in your own words, and only where something was
+                  actually replaced. Left empty, nothing is added. It cannot be shown on an answer
+                  with no plain text — a JSON document or a function call — and that case is
+                  recorded rather than passed over.
+                </span>
+              </div>
+              <div class="field">
+                <label for="insp-pii-failure">If it cannot redact</label>
+                <select
+                  id="insp-pii-failure"
+                  [ngModel]="step.config.on_failure || 'block'"
+                  (ngModelChange)="setStepField(selectedIndex(), 'on_failure', $event)"
+                  data-testid="pii-on-failure"
+                >
+                  <option value="block">Refuse the request</option>
+                  <option value="allow">Send it unchanged</option>
+                </select>
+                <span class="field__hint">
+                  Unlike the other steps this one has no lesser version of itself: either the data
+                  was removed or it was not. <strong>Send it unchanged</strong> means the original
+                  prompt reaches the model — a legitimate choice, recorded on the audit row as one.
+                </span>
+              </div>
             } @else if (step.type === 'model_route') {
               <div class="field">
                 <label for="insp-route-model">Classifier model</label>

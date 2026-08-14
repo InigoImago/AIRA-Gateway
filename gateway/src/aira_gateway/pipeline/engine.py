@@ -18,16 +18,17 @@ from typing import Any
 from aira_common.models import ThinkingMode
 from aira_gateway.audit import ModelCall
 from aira_gateway.catalog import ModelDeclaration
-from aira_gateway.core.canonical import CanonicalRequest, Role, Thinking
+from aira_gateway.core.canonical import CanonicalRequest, Role, TextPart, Thinking
 from aira_gateway.pipeline.classifiers import (
     Classification,
     HeuristicInjectionClassifier,
     InjectionClassifier,
     LlmCategoryRouter,
     LlmInjectionClassifier,
+    LlmRedactor,
     Verdict,
 )
-from aira_gateway.pipeline.config import Pipeline, StepType
+from aira_gateway.pipeline.config import Pipeline, PipelineStep, StepType
 from aira_gateway.pipeline.errors import PipelineRejected
 from aira_gateway.thinking import for_a_classifier
 from aira_gateway.upstreams.base import ProviderRegistry
@@ -71,6 +72,62 @@ def _rejection(verdict: Verdict) -> str:
 
 
 @dataclass
+class StepEvaluation:
+    """What one step did, in the vocabulary **both** consumers need.
+
+    `run` and `dry_run` used to carry an `if/elif` chain each, over the same step types, differing
+    only in what they did with the result — one appended an audit decision and raised, the other
+    appended a trace entry and stopped. So every step was written twice and the two had to be kept
+    saying the same thing by hand. That is the shape this project has paid for repeatedly, most
+    expensively across the two API surfaces, and a third step would have made it permanent.
+
+    A step is now **one function** returning this, and the two loops interpret it. What differs
+    between them is exactly what should: `run` records for the audit and refuses; `dry_run` records
+    for a screen and reports.
+    """
+
+    type: str
+    #: passed · flagged · blocked · rerouted · unchanged · not_asked · redacted
+    action: str
+    #: For the dry run's trace, which is a screen and may say more.
+    detail: dict[str, Any] = field(default_factory=dict)
+    #: For the audit trail, or `None` where there is nothing to record. Deliberately separate from
+    #: `detail`: what a reader may see and what is kept durably are different questions
+    #: (`FRD-122` §5.3 — the allow-list exists because they are).
+    decision: dict[str, Any] | None = None
+    call: ModelCall | None = None
+    #: The request as this step leaves it. A step that changes nothing returns what it was given.
+    request: CanonicalRequest | None = None
+    #: Set where the step refuses; `run` raises it, `dry_run` reports it.
+    block_reason: str | None = None
+    #: A sentence the caller is owed about their own request having been changed. Carried out of
+    #: the pipeline rather than applied here: the pipeline runs **before** dispatch and there is no
+    #: answer yet to put it on.
+    notice: str | None = None
+    #: ``(before, after)`` where this step rewrote the caller's text, so the stored request can be
+    #: the rewritten one as well as the dispatched one.
+    rewrote: tuple[str, str] | None = None
+
+
+def _with_user_text(request: CanonicalRequest, text: str) -> CanonicalRequest:
+    """The request with the **last user message's text** replaced.
+
+    Attachments and tool parts on that message are kept: a redactor rewrites prose, and dropping a
+    document because its covering sentence was rewritten would be a silent loss of the thing the
+    request was about. Their contents are not scanned — a name inside a PDF survives this step, and
+    that is `FRD-110`'s stated blind spot rather than a new one.
+    """
+    messages = list(request.messages)
+    for index in range(len(messages) - 1, -1, -1):
+        if messages[index].role is Role.USER:
+            message = messages[index]
+            kept = [part for part in message.parts if not isinstance(part, TextPart)]
+            messages[index] = message.model_copy(update={"parts": [TextPart(text=text), *kept]})
+            break
+    return request.model_copy(update={"messages": messages})
+
+
+@dataclass
 class PipelineOutcome:
     request: CanonicalRequest
     fallback_models: tuple[str, ...]
@@ -78,6 +135,18 @@ class PipelineOutcome:
     #: Model calls the steps made. Collected here rather than reported by each step, so a step
     #: that then *blocks* still hands back what it spent deciding to (`FRD-125`).
     model_calls: list[ModelCall] = field(default_factory=list)
+    #: Sentences the caller is owed about their own request having been changed under them
+    #: (`FRD-309`). Applied to the answer, which does not exist yet when the pipeline runs.
+    notices: list[str] = field(default_factory=list)
+    #: ``(before, after)`` for every rewrite a step made, so the **stored** request can be the
+    #: rewritten one too.
+    #:
+    #: Measured on the running stack before this existed: the model was sent the redacted prompt
+    #: and the audit row kept the original, because the payload written to `request_logs` is the
+    #: *wire body* captured at the surface and the pipeline rewrites the *canonical* request. The
+    #: redaction protected the model and not the database — which is the one thing the design said
+    #: it must do. Found by reading a row, not by reading the code.
+    rewrites: list[tuple[str, str]] = field(default_factory=list)
 
 
 @dataclass
@@ -159,52 +228,19 @@ class PipelineEngine:
             model_calls=model_calls if model_calls is not None else [],
         )
         for step in pipeline.steps:
-            if step.type is StepType.INJECTION_FILTER:
-                classification = await self._classify(step.config, outcome.request, declaration_of)
-                if classification.call is not None:
-                    outcome.model_calls.append(classification.call)
-                verdict = classification.verdict
-                action = step.config.get("action", "block")
-                blocking = _blocks(verdict, step.config)
-                # Recorded on **every** outcome, not only a flagged one. "The filter ran and passed"
-                # and "no filter was configured" are different facts, and after the fact an empty
-                # decision list could not tell them apart (`FRD-122` FR-4, `FRD-125`).
-                outcome.decisions.append(
-                    {
-                        "step": "injection_filter",
-                        "flagged": verdict is not Verdict.CLEAN,
-                        "action": "blocked" if blocking else action,
-                        "why": str(verdict),
-                    }
-                )
-                if blocking:
-                    raise PipelineRejected(_rejection(verdict))
-            elif step.type is StepType.MODEL_ROUTE:
-                category, target, call = await self._route(
-                    step.config, outcome.request, declaration_of
-                )
-                if call is not None:
-                    outcome.model_calls.append(call)
-                elif step.config.get("categories"):
-                    # **A router that could not be asked says so.** It used to return quietly, and
-                    # after `FRD-125` closed the same hole for the injection filter this was the
-                    # one left: a configured router whose classifier is unreachable, or whose
-                    # provider refuses the request, routes nowhere and leaves nothing behind —
-                    # indistinguishable on the audit row from a router that ran and matched no
-                    # category. Measured live: a 400 from the provider produced exactly that.
-                    outcome.decisions.append(
-                        {"step": "model_route", "action": "not_asked", "why": "classifier_failed"}
-                    )
-                if target and target != outcome.request.model:
-                    outcome.decisions.append(
-                        {
-                            "step": "model_route",
-                            "category": category,
-                            "from": outcome.request.model,
-                            "to": target,
-                        }
-                    )
-                    outcome.request = outcome.request.model_copy(update={"model": target})
+            evaluation = await self._evaluate(step, outcome.request, declaration_of)
+            if evaluation.call is not None:
+                outcome.model_calls.append(evaluation.call)
+            if evaluation.decision is not None:
+                outcome.decisions.append(evaluation.decision)
+            if evaluation.request is not None:
+                outcome.request = evaluation.request
+            if evaluation.notice:
+                outcome.notices.append(evaluation.notice)
+            if evaluation.rewrote is not None:
+                outcome.rewrites.append(evaluation.rewrote)
+            if evaluation.block_reason is not None:
+                raise PipelineRejected(evaluation.block_reason)
         return outcome
 
     async def dry_run(
@@ -227,64 +263,198 @@ class PipelineEngine:
         blocked = False
         reason: str | None = None
         for step in pipeline.steps:
-            if step.type is StepType.INJECTION_FILTER:
-                classification = await self._classify(step.config, current, declaration_of)
-                if classification.call is not None:
-                    calls.append(classification.call)
-                verdict = classification.verdict
-                action = step.config.get("action", "block")
-                detail = {
-                    "mode": step.config.get("mode", "heuristic"),
-                    "action": action,
-                    "verdict": str(verdict),
-                }
-                if _blocks(verdict, step.config):
-                    trace.append(TraceEntry("injection_filter", "blocked", detail))
-                    blocked, reason = True, _rejection(verdict)
-                    break
-                # The dry run shows the operator what the builder would do, including the case
-                # they are least likely to have thought about: the classifier not answering.
-                trace.append(
-                    TraceEntry(
-                        "injection_filter",
-                        "passed" if verdict is Verdict.CLEAN else "flagged",
-                        detail,
-                    )
-                )
-            elif step.type is StepType.MODEL_ROUTE:
-                category, target, call = await self._route(step.config, current, declaration_of)
-                if call is not None:
-                    calls.append(call)
-                elif step.config.get("categories"):
-                    # The dry run is the screen somebody uses to find out whether their pipeline
-                    # works. "unchanged" for *could not be asked* is the wrong answer there twice
-                    # over: it is the same word a working router uses when nothing matched.
-                    trace.append(
-                        TraceEntry(
-                            "model_route",
-                            "not_asked",
-                            {"why": "the classifier could not be reached or refused the request"},
-                        )
-                    )
-                    continue
-                if target and target != current.model:
-                    trace.append(
-                        TraceEntry(
-                            "model_route",
-                            "rerouted",
-                            {"category": category, "from": current.model, "to": target},
-                        )
-                    )
-                    current = current.model_copy(update={"model": target})
-                else:
-                    trace.append(
-                        TraceEntry(
-                            "model_route",
-                            "unchanged",
-                            {"category": category, "model": current.model},
-                        )
-                    )
+            evaluation = await self._evaluate(step, current, declaration_of)
+            if evaluation.call is not None:
+                calls.append(evaluation.call)
+            if evaluation.request is not None:
+                current = evaluation.request
+            trace.append(TraceEntry(evaluation.type, evaluation.action, evaluation.detail))
+            if evaluation.block_reason is not None:
+                blocked, reason = True, evaluation.block_reason
+                break
         return DryRunResult(trace, blocked, reason, current.model, pipeline.fallback_models, calls)
+
+    # -- one step, one answer -------------------------------------------------------------
+
+    async def _evaluate(
+        self,
+        step: PipelineStep,
+        request: CanonicalRequest,
+        declaration_of: DeclarationOf | None,
+    ) -> StepEvaluation:
+        """Run one step and say what it did, without deciding what to do about it.
+
+        The single dispatch over step types. Adding one is a branch here and a function below,
+        rather than two branches that have to keep agreeing.
+        """
+        if step.type is StepType.INJECTION_FILTER:
+            return await self._evaluate_injection_filter(step.config, request, declaration_of)
+        if step.type is StepType.MODEL_ROUTE:
+            return await self._evaluate_model_route(step.config, request, declaration_of)
+        if step.type is StepType.PII_FILTER:
+            return await self._evaluate_pii_filter(step.config, request, declaration_of)
+        # Unreachable while `StepType` is exhaustive; a step this build does not know is dropped
+        # when the config is parsed, not here (`parse_pipeline`).
+        return StepEvaluation(type=str(step.type), action="unchanged")
+
+    async def _evaluate_injection_filter(
+        self,
+        config: dict[str, Any],
+        request: CanonicalRequest,
+        declaration_of: DeclarationOf | None,
+    ) -> StepEvaluation:
+        classification = await self._classify(config, request, declaration_of)
+        verdict = classification.verdict
+        action = config.get("action", "block")
+        blocking = _blocks(verdict, config)
+        return StepEvaluation(
+            type="injection_filter",
+            action="blocked" if blocking else ("passed" if verdict is Verdict.CLEAN else "flagged"),
+            detail={
+                "mode": config.get("mode", "heuristic"),
+                "action": action,
+                "verdict": str(verdict),
+            },
+            # Recorded on **every** outcome, not only a flagged one. "The filter ran and passed"
+            # and "no filter was configured" are different facts, and after the fact an empty
+            # decision list could not tell them apart (`FRD-122` FR-4, `FRD-125`).
+            decision={
+                "step": "injection_filter",
+                "flagged": verdict is not Verdict.CLEAN,
+                "action": "blocked" if blocking else action,
+                "why": str(verdict),
+            },
+            call=classification.call,
+            block_reason=_rejection(verdict) if blocking else None,
+        )
+
+    async def _evaluate_model_route(
+        self,
+        config: dict[str, Any],
+        request: CanonicalRequest,
+        declaration_of: DeclarationOf | None,
+    ) -> StepEvaluation:
+        category, target, call = await self._route(config, request, declaration_of)
+        if call is None and config.get("categories"):
+            # **A router that could not be asked says so.** It used to return quietly, and after
+            # `FRD-125` closed the same hole for the injection filter this was the one left: a
+            # configured router whose classifier is unreachable, or whose provider refuses the
+            # request, routes nowhere and leaves nothing behind — indistinguishable on the audit
+            # row from a router that ran and matched no category. And on the dry run's screen
+            # "unchanged" is the same word a working router uses when nothing matched.
+            #
+            # **The default still applies**, and that is the half the dry run used to get wrong.
+            # `run` fell through to the re-target below; `dry_run` did `continue` and reported
+            # "unchanged" — so the builder's preview named one model and production sent the
+            # request to another. Found by the refactor that made both paths read one answer,
+            # which is the whole reason for it: a divergence between two hand-written copies is
+            # invisible until something compares them.
+            fallback = config.get("default_model")
+            retarget = bool(fallback) and fallback != request.model
+            return StepEvaluation(
+                type="model_route",
+                action="not_asked",
+                detail={
+                    "why": "the classifier could not be reached or refused the request",
+                    **({"to": fallback} if retarget else {"model": request.model}),
+                },
+                decision={"step": "model_route", "action": "not_asked", "why": "classifier_failed"},
+                request=request.model_copy(update={"model": fallback}) if retarget else None,
+            )
+        if target and target != request.model:
+            return StepEvaluation(
+                type="model_route",
+                action="rerouted",
+                detail={"category": category, "from": request.model, "to": target},
+                decision={
+                    "step": "model_route",
+                    "category": category,
+                    "from": request.model,
+                    "to": target,
+                },
+                call=call,
+                request=request.model_copy(update={"model": target}),
+            )
+        return StepEvaluation(
+            type="model_route",
+            action="unchanged",
+            detail={"category": category, "model": request.model},
+            call=call,
+        )
+
+    async def _evaluate_pii_filter(
+        self,
+        config: dict[str, Any],
+        request: CanonicalRequest,
+        declaration_of: DeclarationOf | None,
+    ) -> StepEvaluation:
+        """Replace personal data in the prompt with a model the use case trusts.
+
+        **What a failure means here is the whole design.** The other two steps fail towards doing
+        less — a filter that cannot reach its classifier still has the heuristic, a router that
+        cannot be asked still has a default model. This one has no lesser version of itself: either
+        the personal data was removed or it was not, and passing the original through would send
+        exactly what the step exists to withhold, with a 200 and nothing to show for it. So it
+        **blocks by default** (`FRD-125`: the moment a control stops working is the worst moment to
+        stop applying it), and an operator who prefers availability says so and is recorded saying
+        it.
+
+        Only the **user's own text** is rewritten. A system instruction is written by the use case
+        rather than typed by a caller, so it is not where personal data arrives — and rewriting it
+        would let a redactor quietly edit the instructions the use case is built on.
+        """
+        model = config.get("model") or self._default_model()
+        provider = await self._provider_for(model, declaration_of)
+        if provider is None or not model:
+            return self._pii_failure(config, "no model is available to redact with", None)
+
+        original = request.last_user_text()
+        redactor = LlmRedactor(
+            provider,
+            model,
+            config.get("instruction"),
+            await self._thinking_for(model, declaration_of),
+        )
+        result = await redactor.rewrite(original)
+        if result.text is None:
+            return self._pii_failure(config, result.failure or "the redactor failed", result.call)
+
+        changed = result.text.strip() != original.strip()
+        return StepEvaluation(
+            type="pii_filter",
+            action="redacted" if changed else "unchanged",
+            detail={"model": model, "changed": changed},
+            # **`changed`, not a count.** How many things were replaced is not knowable here: the
+            # placeholder shape is whatever the operator's own instruction asks for, so counting
+            # would mean dictating it. Recording a number nobody measured is the failure this
+            # project keeps naming.
+            decision={
+                "step": "pii_filter",
+                "action": "redacted" if changed else "unchanged",
+                "why": model,
+            },
+            call=result.call,
+            request=_with_user_text(request, result.text) if changed else None,
+            notice=str(config.get("notice") or "").strip() if changed else None,
+            rewrote=(original, result.text) if changed else None,
+        )
+
+    @staticmethod
+    def _pii_failure(config: dict[str, Any], why: str, call: ModelCall | None) -> StepEvaluation:
+        """A redactor that did not produce a usable rewrite."""
+        allows = str(config.get("on_failure", UNDETERMINED_BLOCKS)) == UNDETERMINED_ALLOWS
+        return StepEvaluation(
+            type="pii_filter",
+            action="allowed" if allows else "blocked",
+            detail={"why": why, "on_failure": "allow" if allows else "block"},
+            decision={
+                "step": "pii_filter",
+                "action": "allowed" if allows else "blocked",
+                "why": why,
+            },
+            call=call,
+            block_reason=None if allows else f"Personal data could not be removed: {why}.",
+        )
 
     # -- step primitives (shared by run + dry_run) ----------------------------------------
 

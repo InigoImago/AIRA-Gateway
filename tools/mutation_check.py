@@ -106,6 +106,8 @@ COST = "gateway/tests/test_cost_budgets.py"
 CATALOG = "management/backend/tests/test_catalog.py"
 PIPELINE = "gateway/tests/test_pipeline_engine.py gateway/tests/test_pipeline_routes.py"
 CLASSIFIERS = "gateway/tests/test_pipeline_classifiers.py gateway/tests/test_pipeline_engine.py"
+PII = "gateway/tests/test_pipeline_pii_filter.py"
+NOTICE = "gateway/tests/test_response_notice.py"
 ACCOUNTING = "gateway/tests/test_pipeline_accounting.py"
 RETENTION = "gateway/tests/test_retention.py gateway/tests/test_store_payloads.py"
 MODEL_CATALOG = "gateway/tests/test_model_catalog.py"
@@ -974,8 +976,10 @@ MUTATIONS = [
         # sequence that owns their order. A mutation whose anchor has moved protects nothing.
         # `FRD-126` is what makes this one property rather than one per surface — which is the
         # change's whole claim, so the mutation now tests the claim instead of one copy of it.
-        "    return Prepared(canonical, embed, fallbacks, declaration, reservation)",
-        "    return Prepared(canonical, embed, fallbacks, declaration, Reservation())",
+        # Re-anchored again (2026-08-14) when `Prepared` gained the notices a step owes the
+        # caller (`FRD-309`). The property is unchanged: one sequence, both surfaces.
+        "    return Prepared(canonical, embed, fallbacks, declaration, reservation, notices)",
+        "    return Prepared(canonical, embed, fallbacks, declaration, Reservation(), notices)",
         # The selection widened with the anchor. This was one surface's property and is now every
         # surface's, so testing it with one surface's tests would check a third of the claim —
         # which is exactly how it survived the first run after the move.
@@ -2065,8 +2069,11 @@ MUTATIONS = [
         "Z5",
         "a filter that ran and passed is recorded, so it is distinguishable from no filter",
         "gateway/src/aira_gateway/pipeline/engine.py",
-        '                outcome.decisions.append(\n                    {\n                        "step": "injection_filter",',
-        '                if verdict is not Verdict.CLEAN:\n                    outcome.decisions.append(\n                    {\n                        "step": "injection_filter",',
+        # Re-anchored (2026-08-14): `run` and `dry_run` no longer carry a branch each, so the
+        # decision is built where the step is evaluated. The property is the one it always was —
+        # "the filter ran and passed" must be distinguishable from "no filter was configured".
+        '            decision={\n                "step": "injection_filter",\n                "flagged": verdict is not Verdict.CLEAN,',
+        '            decision=None if verdict is Verdict.CLEAN else {\n                "step": "injection_filter",\n                "flagged": verdict is not Verdict.CLEAN,',
         CLASSIFIERS,
     ),
     Mutation(
@@ -3438,8 +3445,12 @@ MUTATIONS = [
         "J17",
         "a router that could not be asked says so instead of reading as 'nothing matched'",
         "gateway/src/aira_gateway/pipeline/engine.py",
-        '                        {"step": "model_route", "action": "not_asked", "why": "classifier_failed"}',
-        '                        {"step": "model_route", "action": "unchanged"}',
+        # Re-anchored (2026-08-14) when the two step loops became one evaluation. Unchanged
+        # property, and the refactor that moved it also found that the *dry run* answered this
+        # case differently from `run` — which is what a second hand-written copy always ends up
+        # doing.
+        '                decision={"step": "model_route", "action": "not_asked", "why": "classifier_failed"},',
+        '                decision={"step": "model_route", "action": "unchanged"},',
         "gateway/tests/test_pipeline_engine.py",
     ),
     Mutation(
@@ -3760,6 +3771,46 @@ MUTATIONS = [
         "            record.revoked_at = datetime.now(UTC)",
         "",
         REVOCATION_TIME,
+    ),
+    Mutation(
+        "P10",
+        "a rewrite that cannot be trusted blocks instead of being applied",
+        "gateway/src/aira_gateway/pipeline/classifiers.py",
+        "        if len(rewritten) < len(text.strip()) * self.MIN_KEPT:",
+        "        if False:",
+        PII,
+    ),
+    Mutation(
+        "P11",
+        "the request that goes upstream is the rewritten one",
+        "gateway/src/aira_gateway/pipeline/engine.py",
+        "            request=_with_user_text(request, result.text) if changed else None,",
+        "            request=None,",
+        PII,
+    ),
+    Mutation(
+        "P12",
+        "the **stored** request is the rewritten one too",
+        "gateway/src/aira_gateway/api/serving.py",
+        "        if needle not in text:\n            return None",
+        "        if needle not in text:\n            return body",
+        PII,
+    ),
+    Mutation(
+        "P13",
+        "a redactor that failed refuses rather than passing the original through",
+        "gateway/src/aira_gateway/pipeline/engine.py",
+        '            block_reason=None if allows else f"Personal data could not be removed: {why}.",',
+        "            block_reason=None,",
+        PII,
+    ),
+    Mutation(
+        "P14",
+        "a notice is never put in front of an answer a client parses",
+        "gateway/src/aira_gateway/api/serving.py",
+        "    if not notices or not response.text.strip() or response.tool_calls:",
+        "    if not notices:",
+        NOTICE,
     ),
     Mutation(
         "QA31",

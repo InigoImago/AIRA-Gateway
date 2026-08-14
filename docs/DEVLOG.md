@@ -5,6 +5,54 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## A step that rewrites the prompt, and the two firsts it needed (`FRD-309`)
+
+Asked for: an LLM-based PII replacer — a trusted model from the use case's released list, an
+instruction saying what to remove, and a disclaimer on the answer in the operator's own words.
+Asked first whether the pipeline was modular enough. **For the two steps it had, yes; for this,
+no**, in three specific ways: `run` and `dry_run` each carried an `if/elif` chain over the step
+types, a step could change the *model* but never the *content*, and nothing in the pipeline could
+touch the response.
+
+**The refactor came first, and it paid immediately.** A step is one function returning a
+`StepEvaluation` now; the two loops interpret it. That exposed a divergence nothing had noticed: a
+router whose classifier could not be reached fell through to the configured `default_model` in
+`run` and reported *unchanged* in `dry_run` — the builder's preview named one model while
+production used another, on the one screen whose whole job is to say what the pipeline will do.
+Two hand-written copies of one rule, and the difference was invisible until something compared
+them.
+
+**Then the defect that only a database row could show.** The step worked end to end on the first
+live run — model sent the redacted prompt, notice on the answer — and `request_logs` held the
+original, in full. The payload written there is the *wire body* captured at the surface; the
+pipeline rewrites the *canonical* request. So the redaction protected the model and not the
+database, which is the one thing the accepted design said it must do. Underneath it: the body was
+**both** a parameter of `accounting`, passed by nine call sites, and `trail.body` — two places
+holding one fact, which stayed harmless exactly as long as nothing changed it. One now.
+
+Three rules the feature is built on:
+
+- **A rewrite that cannot be trusted is a failure, not a redaction.** Empty, a preamble, a summary
+  — each is a plausible answer that *applied* sends the model a different question than the caller
+  asked, with a 200. And this step has no lesser version of itself, so a failure **blocks** by
+  default (`FRD-125`), with `allow` recorded as the choice it is.
+- **The decision says it redacted, never what** — and no count, because the placeholder shape is
+  whatever the operator's instruction asks for, so counting would mean dictating it.
+- **The notice goes in front of plain text only.** A `responseSchema` document with a sentence
+  before it is unparseable, and a tool call has no text at all — the answer *is* the call. Both
+  cases are recorded (`withheld`) rather than passed over, since "no notice shown" and "nothing was
+  redacted" are different facts an answer alone cannot separate.
+
+Measured against `qwen3:0.6b`, which replaced one name and left another: **the control is exactly
+as good as the model behind it**, which is why the field says *trusted model*. Same finding
+`FRD-125` recorded for the LLM injection filter on the same model.
+
+The step type now exists in three places — the gateway runs it, Management validates it, the
+console offers it — so the three lists are compared **in both directions**, each shown to fail
+alone. `P10`–`P14`; 411 mutation properties.
+
+---
+
 ## The scope that named one person is gone
 
 Owner's decision, in both places it existed — budgets and rate limits: *"take the restriction to one

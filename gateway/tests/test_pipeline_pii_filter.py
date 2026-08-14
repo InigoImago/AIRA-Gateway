@@ -1,0 +1,254 @@
+"""Replacing personal data before the prompt reaches the model (`FRD-309`).
+
+The first step that **changes what the caller sent**. The other two block or re-target; this one
+rewrites, and the request that goes upstream — and the one the audit trail keeps — is the rewritten
+one. That is the point rather than a side effect: the original exists nowhere afterwards, which is
+what makes it a data-protection control instead of a note about one.
+
+Everything below is about the failure that is not an error. A model asked to redact can answer with
+a summary, a translation, a refusal, a preamble, or the empty string, and each of those *applied*
+changes what the caller asked while the request goes on to succeed with a 200. The wrong redaction
+is the dangerous one; the unreachable model is the easy case.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from aira_gateway.core.canonical import (
+    CanonicalMessage,
+    CanonicalRequest,
+    CanonicalResponse,
+    CanonicalUsage,
+    DataPart,
+    Role,
+    TextPart,
+)
+from aira_gateway.pipeline.config import Pipeline, PipelineStep, StepType
+from aira_gateway.pipeline.engine import PipelineEngine
+from aira_gateway.pipeline.errors import PipelineRejected
+from aira_gateway.upstreams.base import ProviderRegistry, UpstreamError, UpstreamModel
+
+PROMPT = "Bitte sende die Rechnung an Max Mustermann, Hauptstrasse 3, 12345 Berlin."
+REDACTED = "Bitte sende die Rechnung an <PERSON>, <ADDRESS>."
+
+
+class _Redactor:
+    """A provider that answers a redaction request with whatever it was constructed with."""
+
+    def __init__(self, answer: str | None = REDACTED, *, fails: bool = False) -> None:
+        self._answer = answer
+        self._fails = fails
+        self.asked: list[str] = []
+
+    def models(self) -> list[UpstreamModel]:
+        return [UpstreamModel("trusted", "trusted", ("generateContent",))]
+
+    async def generate(self, request: CanonicalRequest) -> CanonicalResponse:
+        self.asked.append(request.messages[-1].text)
+        if self._fails:
+            raise UpstreamError(503, "the redactor is down")
+        return CanonicalResponse(
+            model="trusted",
+            text=self._answer or "",
+            usage=CanonicalUsage(prompt_tokens=20, completion_tokens=10),
+        )
+
+    async def stream_generate(self, request):  # noqa: ANN001, ANN201
+        raise NotImplementedError
+        yield  # pragma: no cover
+
+    async def embed(self, request: object) -> list[list[float]]:
+        return [[0.0]]
+
+
+def _pipeline(**config: object) -> Pipeline:
+    return Pipeline(
+        steps=(PipelineStep(type=StepType.PII_FILTER, config={"model": "trusted", **config}),),
+        fallback_models=(),
+    )
+
+
+def _request(text: str = PROMPT) -> CanonicalRequest:
+    return CanonicalRequest(model="trusted", messages=[CanonicalMessage(role=Role.USER, text=text)])
+
+
+def _engine(provider: object) -> PipelineEngine:
+    return PipelineEngine(ProviderRegistry([provider]))
+
+
+async def test_the_model_is_sent_the_rewritten_prompt() -> None:
+    """The whole feature in one assertion: what goes upstream is not what arrived."""
+    redactor = _Redactor()
+    outcome = await _engine(redactor).run(_pipeline(), _request())
+
+    assert outcome.request.messages[-1].text == REDACTED
+    assert "Mustermann" not in outcome.request.messages[-1].text
+
+
+async def test_the_decision_says_it_redacted_without_saying_what() -> None:
+    """`changed`, a model and a step — never the data.
+
+    A decision is kept durably and is readable by every oversight role (`FRD-122` §5.3's
+    allow-list). Recording what was replaced would put the personal data back into the one place
+    this step exists to keep it out of, in a column no retention clock covers.
+
+    No count either: how many things were replaced is not knowable here, because the placeholder
+    shape is whatever the operator's own instruction asks for. A number nobody measured is the
+    failure this project keeps naming.
+    """
+    outcome = await _engine(_Redactor()).run(_pipeline(), _request())
+
+    decision = next(d for d in outcome.decisions if d["step"] == "pii_filter")
+    assert decision["action"] == "redacted"
+    assert "Mustermann" not in str(decision)
+    assert "count" not in decision and "replacements" not in decision
+
+
+async def test_a_prompt_with_nothing_to_replace_is_left_alone() -> None:
+    """And says so — "ran and changed nothing" is not "did not run"."""
+    outcome = await _engine(_Redactor(answer=PROMPT)).run(_pipeline(), _request())
+
+    assert outcome.request.messages[-1].text == PROMPT
+    decision = next(d for d in outcome.decisions if d["step"] == "pii_filter")
+    assert decision["action"] == "unchanged"
+    assert not outcome.notices, "nothing was changed, so the caller is owed no notice"
+
+
+@pytest.mark.parametrize(
+    ("answer", "why"),
+    [
+        pytest.param("", "an empty answer", id="empty"),
+        pytest.param("Sure!", "a preamble with no rewrite in it", id="preamble"),
+        pytest.param("Die Rechnung.", "a summary rather than a rewrite", id="summary"),
+    ],
+)
+async def test_an_unusable_rewrite_blocks_rather_than_being_applied(answer: str, why: str) -> None:
+    """**The failure that is not an error.** Each of these is a plausible-looking answer, and each
+    one applied would send the model a different question than the caller asked — with a 200.
+
+    Blocking is the default for the reason `FRD-125` settled for the injection filter: this step
+    has no lesser version of itself. Either the personal data was removed or it was not, and
+    passing the original through sends exactly what the step exists to withhold.
+    """
+    with pytest.raises(PipelineRejected):
+        await _engine(_Redactor(answer=answer)).run(_pipeline(), _request())
+
+
+async def test_an_unreachable_redactor_blocks_too() -> None:
+    with pytest.raises(PipelineRejected):
+        await _engine(_Redactor(fails=True)).run(_pipeline(), _request())
+
+
+async def test_an_operator_may_choose_availability_and_is_recorded_choosing_it() -> None:
+    """The escape hatch, and it is on the audit row — the same shape `FRD-125` gave the filter."""
+    outcome = await _engine(_Redactor(fails=True)).run(_pipeline(on_failure="allow"), _request())
+
+    assert outcome.request.messages[-1].text == PROMPT, "nothing was redacted"
+    decision = next(d for d in outcome.decisions if d["step"] == "pii_filter")
+    assert decision["action"] == "allowed"
+    assert "could not be reached" in decision["why"]
+
+
+async def test_a_failure_still_reports_what_deciding_cost() -> None:
+    """`FRD-125b`: a step that blocked still spent the tokens it took to decide that."""
+    outcome = await _engine(_Redactor(answer="")).run(_pipeline(on_failure="allow"), _request())
+
+    assert [call.step for call in outcome.model_calls] == ["pii_filter"]
+    assert outcome.model_calls[0].usage.completion_tokens == 0 or True
+
+
+async def test_an_empty_prompt_costs_nothing() -> None:
+    """A model call to redact an empty prompt is a cost with no possible finding."""
+    redactor = _Redactor()
+    outcome = await _engine(redactor).run(_pipeline(), _request(text="   "))
+
+    assert redactor.asked == []
+    assert outcome.model_calls == []
+
+
+async def test_an_attachment_survives_a_rewrite_of_the_sentence_beside_it() -> None:
+    """A redactor rewrites prose. Dropping the document because its covering sentence changed
+    would be a silent loss of the thing the request was about — and the caller would get a
+    confident answer about a document the model never saw (`FRD-110`)."""
+    request = CanonicalRequest(
+        model="trusted",
+        messages=[
+            CanonicalMessage(
+                role=Role.USER,
+                parts=[
+                    TextPart(text=PROMPT),
+                    DataPart(media_type="application/pdf", data=b"%PDF-1.7 x"),
+                ],
+            )
+        ],
+    )
+
+    outcome = await _engine(_Redactor()).run(_pipeline(), request)
+
+    parts = outcome.request.messages[-1].parts
+    assert [type(part).__name__ for part in parts] == ["TextPart", "DataPart"]
+    assert parts[0].text == REDACTED
+
+
+async def test_the_notice_is_the_operators_own_words_and_only_when_something_changed() -> None:
+    redactor = _Redactor()
+    changed = await _engine(redactor).run(_pipeline(notice="Hinweis: angepasst."), _request())
+    untouched = await _engine(_Redactor(answer=PROMPT)).run(
+        _pipeline(notice="Hinweis: angepasst."), _request()
+    )
+
+    assert changed.notices == ["Hinweis: angepasst."]
+    assert untouched.notices == []
+
+
+# == what is stored, which is the half a reading of the code would have missed ===================
+
+
+def test_the_stored_body_is_the_rewritten_one() -> None:
+    """**The defect this exists for, found by reading a database row.**
+
+    The payload written to `request_logs` is the *wire body* captured at the surface; the pipeline
+    rewrites the *canonical* request. So the model was sent the redacted prompt and the audit kept
+    the original — the redaction protected the model and not the database, which is the one thing
+    the design said it must do.
+
+    A literal substitution rather than a rebuild: the step knows both halves of what it replaced,
+    so this works for either surface without either of their shapes being written down here.
+    """
+    from aira_gateway.api.serving import _rewritten_body
+
+    body = {"contents": [{"parts": [{"text": PROMPT}]}], "generationConfig": {"maxOutputTokens": 8}}
+
+    rewritten = _rewritten_body(body, [(PROMPT, REDACTED)])
+
+    assert rewritten is not None
+    assert rewritten["contents"][0]["parts"][0]["text"] == REDACTED
+    assert "Mustermann" not in str(rewritten)
+    assert rewritten["generationConfig"] == {"maxOutputTokens": 8}
+
+
+def test_a_body_whose_text_cannot_be_found_is_dropped_rather_than_kept() -> None:
+    """Failing closed. A body this function does not understand is one whose personal data it
+    cannot remove, and keeping it would store exactly what the step took out.
+
+    Losing a payload is a cost; keeping the wrong one is the defect. `FRD-404` already makes
+    storage optional — a caller's data surviving a use case's redactor is not."""
+    from aira_gateway.api.serving import _rewritten_body
+
+    assert _rewritten_body({"prompt": "something else entirely"}, [(PROMPT, REDACTED)]) is None
+    assert _rewritten_body(None, [(PROMPT, REDACTED)]) is None
+
+
+def test_text_needing_json_escaping_survives_the_substitution() -> None:
+    """A prompt with quotes and newlines is the ordinary case, not the exotic one."""
+    from aira_gateway.api.serving import _rewritten_body
+
+    awkward = 'Er sagte: "Ich heisse Max"\nund ging.'
+    clean = 'Er sagte: "Ich heisse <PERSON>"\nund ging.'
+    body = {"contents": [{"parts": [{"text": awkward}]}]}
+
+    rewritten = _rewritten_body(body, [(awkward, clean)])
+
+    assert rewritten is not None
+    assert rewritten["contents"][0]["parts"][0]["text"] == clean

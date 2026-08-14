@@ -139,7 +139,15 @@ export interface IssuedApiKey {
   issued_by?: string;
 }
 
-export type StepType = 'injection_filter' | 'model_route';
+/**
+ * The pipeline steps this console can author.
+ *
+ * Mirrors `aira_gateway.pipeline.config.StepType` and the serializer's `STEP_TYPES`; the three
+ * lists are compared in both directions by `libs/tests/test_capability_vocabulary.py`, for the
+ * reason the capability list is — a step the console cannot offer looks exactly like a step that
+ * does not exist.
+ */
+export type StepType = 'injection_filter' | 'model_route' | 'pii_filter';
 
 export interface RouteCategory {
   name: string;
@@ -161,6 +169,13 @@ export interface StepConfig {
    * while still showing as active in the builder.
    */
   on_undetermined?: 'block' | 'allow';
+  // pii_filter (`FRD-309`)
+  /** What the caller is told, in the operator's own words, when something was actually replaced.
+   *  Empty means nothing is added. */
+  notice?: string;
+  /** No lesser version of this step exists: either the data was removed or it was not. Defaults
+   *  to refusing, and `allow` is recorded on the audit row as the choice it is. */
+  on_failure?: 'block' | 'allow';
   // model_route
   model?: string; // classifier model
   categories?: RouteCategory[];

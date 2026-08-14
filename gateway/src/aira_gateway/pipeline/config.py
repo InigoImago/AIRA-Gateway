@@ -34,6 +34,16 @@ class StepType(StrEnum):
 
     INJECTION_FILTER = "injection_filter"
     MODEL_ROUTE = "model_route"
+    #: Replace personal data in the prompt before it reaches the model, with a trusted model of
+    #: the use case's own choosing (2026-08-14).
+    #:
+    #: **The first step that changes what the caller sent.** The other two block or re-target; this
+    #: one rewrites, and the request that goes upstream — and the one the audit trail keeps — is
+    #: the rewritten one. That is the point: the original exists nowhere afterwards, which is what
+    #: makes it a data-protection control rather than a note about one. The consequence is stated
+    #: where it is decided (`FRD-122` holds that the log records what was *asked*, and this is the
+    #: one place that is relaxed, in favour of exactly the data the step exists to remove).
+    PII_FILTER = "pii_filter"
 
 
 @dataclass(frozen=True, slots=True)

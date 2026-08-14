@@ -508,13 +508,16 @@ describe('PipelineEditor interactions', () => {
   it('adds each step type from the toolbar', () => {
     const harness = setup({ steps: [], fallback_models: [] });
     const buttons = html(harness).querySelectorAll<HTMLButtonElement>('.pipe__add .btn');
-    // Two, since `allow_check` left: which models a use case may call is a property of the use
-    // case now (`FRD-308`), released on its own screen and enforced at every hop.
-    expect(buttons.length).toBe(2);
+    // Three: `allow_check` left (a use case's released models are a property of the use case
+    // now, `FRD-308`) and `pii_filter` arrived (`FRD-309`). The order is the order they are
+    // offered in, and the filter comes before the router on purpose — redacting after routing
+    // would mean the routing classifier had already read the personal data.
+    expect(buttons.length).toBe(3);
     buttons.forEach((button) => button.click());
     harness.fixture.detectChanges();
     expect(harness.component.config().steps.map((s) => s.type)).toEqual([
       'injection_filter',
+      'pii_filter',
       'model_route',
     ]);
   });
@@ -759,5 +762,42 @@ describe('PipelineEditor — only the models the use case may call (`FRD-308`)',
     harness.component.runDryRun();
 
     expect(harness.dryRunPayload()?.use_case).toBe('demo-uc');
+  });
+});
+
+/**
+ * The personal-data step (`FRD-309`), and the two fields a reader has to get right.
+ *
+ * The trusted model is chosen from the use case's release — it sees the prompt in full, including
+ * the data it is being asked to remove, so it is the one model here that has to be trusted with
+ * exactly what the step protects. And the failure policy starts at **block**, because this step
+ * has no lesser version of itself: "could not redact" and "sent it anyway" is the one combination
+ * nobody should reach by leaving a field alone.
+ */
+describe('PipelineEditor — the personal-data filter', () => {
+  it('starts a new step refusing rather than passing the original through', () => {
+    const harness = setup({ steps: [], fallback_models: [] });
+
+    harness.component.addStep('pii_filter');
+
+    const step = harness.component.config().steps[0];
+    expect(step.type).toBe('pii_filter');
+    expect(step.config.on_failure).toBe('block');
+  });
+
+  it('offers only models released to this use case as the trusted one', () => {
+    const harness = setup({
+      steps: [{ type: 'pii_filter', config: { model: '', on_failure: 'block' } }],
+      fallback_models: [],
+    });
+    harness.component.select(0);
+    harness.fixture.detectChanges();
+
+    const picker = (harness.fixture.nativeElement as HTMLElement).querySelector<HTMLSelectElement>(
+      '[data-testid="pii-model"]',
+    );
+    expect(picker).not.toBeNull();
+    const offered = [...(picker?.options ?? [])].map((o) => o.value).filter(Boolean);
+    expect(offered).toEqual(harness.component.released());
   });
 });

@@ -10,6 +10,7 @@ import { MultiSelect, MultiSelectOption } from '../../core/ui/multi-select';
 const STEP_LABELS: Record<StepType, string> = {
   injection_filter: 'Injection Filter',
   model_route: 'Model Routing (LLM)',
+  pii_filter: 'Personal data filter (LLM)',
 };
 
 const STEP_HELP: Record<StepType, string> = {
@@ -17,6 +18,8 @@ const STEP_HELP: Record<StepType, string> = {
     'Scans the prompt for prompt-injection / jailbreak attempts and blocks or flags them.',
   model_route:
     'An LLM reads system + user text, picks one of your categories, and routes to that category’s model.',
+  pii_filter:
+    'A model you trust rewrites the prompt with personal data replaced, before it reaches the model that answers. The rewritten prompt is what is sent and what is kept — the original is not stored.',
 };
 
 // Mirrors the gateway BUILTIN_INJECTION_PATTERNS so the live preview matches server behaviour.
@@ -51,6 +54,11 @@ function defaultConfig(type: StepType): PipelineStep['config'] {
       };
     case 'model_route':
       return { categories: [{ name: '', description: '', model: '' }], default_model: '' };
+    case 'pii_filter':
+      // `on_failure: 'block'` is the default in the gateway too, and the form starts there rather
+      // than empty: this step has no lesser version of itself, so "could not redact" and "sent it
+      // anyway" is the one combination nobody should reach by leaving a field alone.
+      return { model: '', instruction: '', notice: '', on_failure: 'block' };
   }
 }
 
@@ -101,7 +109,7 @@ export class PipelineEditor implements OnInit {
   // `allow_check` left on 2026-08-11. Which models a use case may call is a property of the use
   // case, released on its own screen and enforced at every hop (`FRD-308`) — the step ran once,
   // before routing, so a route or a fallback went straight past it.
-  protected readonly stepTypes: StepType[] = ['injection_filter', 'model_route'];
+  protected readonly stepTypes: StepType[] = ['injection_filter', 'pii_filter', 'model_route'];
   protected readonly label = (type: StepType): string => STEP_LABELS[type];
   protected readonly help = (type: StepType): string => STEP_HELP[type];
   protected readonly builtinLabels = BUILTIN_LABELS;
@@ -125,6 +133,8 @@ export class PipelineEditor implements OnInit {
         return `${step.config.mode ?? 'heuristic'} · ${step.config.action ?? 'block'}`;
       case 'model_route':
         return `${(step.config.categories ?? []).length} categor(ies)`;
+      case 'pii_filter':
+        return `${step.config.model || 'no model'} · ${step.config.on_failure ?? 'block'}`;
     }
   }
 

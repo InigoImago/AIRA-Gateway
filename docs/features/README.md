@@ -7,7 +7,7 @@ each FRD's own header is the single source** — this index is generated from th
 and a test fails when they disagree, because feature status kept in two places is feature
 status that goes stale in the copy nobody opens.
 
-**65 of 68 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
+**66 of 69 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
 
 | FRD | Feature | Phase | Status |
 | --- | ------- | ----- | ------ |
@@ -59,6 +59,7 @@ status that goes stale in the copy nobody opens.
 | [306](FRD-306-pipeline-usability.md) | Pipeline rework: LLM routing, explainable filter, dry-run | 3 | ✅ Done |
 | [307](FRD-307-model-catalog.md) | Approved-model catalog + model pickers | 3 | ○ Approval delivered; candidate lists and builder pickers still open |
 | [308](FRD-308-use-case-model-release.md) | Which models a use case may call | 3 | ✅ Built |
+| [309](FRD-309-pii-filter.md) | Replacing personal data before the prompt reaches the model | 3 (pipeline) | ✅ Built |
 | [400](FRD-400-budget-model.md) | Budget model & distribution | 4 | ✅ Done |
 | [401](FRD-401-budget-enforcement.md) | Budget enforcement & usage accounting | 4 | ✅ Done |
 | [402](FRD-402-budget-ui.md) | Budget UI (set limits + view consumption) | 4 | ✅ Done |

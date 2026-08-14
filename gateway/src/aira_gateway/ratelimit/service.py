@@ -75,9 +75,7 @@ class RateLimitService:
         if not self._enforce:
             return
         configured = (
-            self._applicable(await self._config(use_case), use_case, subject)
-            if use_case
-            else []
+            self._applicable(await self._config(use_case), use_case, subject) if use_case else []
         )
         buckets = [*configured, *extra]
         if not buckets:

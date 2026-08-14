@@ -325,7 +325,9 @@ async def _record(
     operation: str,
     status: int,
     response: CanonicalResponse | None,
-    body: dict[str, Any],
+    # `None` where a redaction could not be applied to the stored copy — the payload is dropped
+    # rather than kept, since keeping it would store exactly what the step removed (`FRD-309`).
+    body: dict[str, Any] | None,
     payload: dict[str, Any] | None,
     started: float,
     cost: int | None = None,
@@ -367,7 +369,6 @@ async def chat(request: Request, principal: Principal = Depends(require_principa
             prepared,
             api="kira",
             operation="chat",
-            body=body,
             started=started,
         ) as acct:
             dispatched = await dispatch_with_fallback(
@@ -384,7 +385,7 @@ async def chat(request: Request, principal: Principal = Depends(require_principa
             acct.served(dispatched.response.model, dispatched.response.usage, payload)
         return JSONResponse(payload, headers=_sunset(request))
     except KIRA_REFUSALS as exc:
-        return await _refused(request, trail, exc, body=body, started=started, operation="chat")
+        return await _refused(request, trail, exc, started=started, operation="chat")
 
 
 @router.post("/streaming-chat")
@@ -428,9 +429,7 @@ async def streaming_chat(
         # gone out, and pretending otherwise would mean discovering it mid-answer.
         provider = await resolve_direct_target(request, canonical.model, canonical)
     except KIRA_REFUSALS as exc:
-        return await _refused(
-            request, trail, exc, body=body, started=started, operation="streaming-chat"
-        )
+        return await _refused(request, trail, exc, started=started, operation="streaming-chat")
 
     async def events() -> AsyncIterator[str]:
         async with accounting(
@@ -439,7 +438,6 @@ async def streaming_chat(
             prepared,
             api="kira",
             operation="streaming-chat",
-            body=body,
             started=started,
         ) as acct:
             parts: list[str] = []
@@ -542,7 +540,7 @@ async def embed(request: Request, principal: Principal = Depends(require_princip
                 "one at a time, or use a model whose catalog entry declares batch support.",
             )
         async with accounting(
-            request, trail, prepared, api="kira", operation="embed", body=body, started=started
+            request, trail, prepared, api="kira", operation="embed", started=started
         ) as acct:
             # The shared resolver, not a registry lookup: an embedding has no dispatch chain, so
             # asking the registry directly meant no condition was applied — an unapproved
@@ -559,7 +557,7 @@ async def embed(request: Request, principal: Principal = Depends(require_princip
             acct.embedded(model, payload, units=embed_request.size)
         return JSONResponse(payload, headers=_sunset(request))
     except KIRA_REFUSALS as exc:
-        return await _refused(request, trail, exc, body=body, started=started, operation="embed")
+        return await _refused(request, trail, exc, started=started, operation="embed")
 
 
 @router.get("/models")
@@ -804,7 +802,6 @@ async def _refused(
     trail: AuditTrail,
     exc: Exception,
     *,
-    body: dict[str, Any],
     started: float,
     operation: str,
 ) -> JSONResponse:
@@ -819,7 +816,7 @@ async def _refused(
                 operation=operation,
                 status=response.status_code,
                 response=None,
-                body=body,
+                body=trail.body,
                 payload=None,
                 started=started,
                 outcome=refusal_outcome(exc),

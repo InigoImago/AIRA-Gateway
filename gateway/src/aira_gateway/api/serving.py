@@ -16,6 +16,7 @@ its own routes. Everything here is about the request, not about how it was spell
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
@@ -632,10 +633,12 @@ def deprecation_headers(declaration: ModelDeclaration) -> dict[str, str]:
 
 async def run_pipeline(
     request: Request, canonical: CanonicalRequest, trail: AuditTrail
-) -> tuple[CanonicalRequest, tuple[str, ...]]:
+) -> tuple[CanonicalRequest, tuple[str, ...], tuple[str, ...]]:
     """Apply the use case's pre-dispatch pipeline (FRD-300). Pass-through when none is configured.
 
-    Returns the effective request (possibly re-routed) and the dispatch fallback chain. May raise
+    Returns the effective request (possibly re-routed **or rewritten**), the dispatch fallback
+    chain, and any notices the caller is owed about their own request having been changed under
+    them (`FRD-309`). May raise
     ``PipelineRejected`` when a filter/allow-check blocks the request — and the decisions taken up
     to that point are on the trail by then, so a blocked request records *why* rather than only
     *that* (FRD-122 FR-4).
@@ -645,7 +648,7 @@ async def run_pipeline(
     use_case = getattr(getattr(request.state, "attribution", None), "use_case", None)
     pipeline = await store.get(use_case)
     if pipeline is None:
-        return canonical, ()
+        return canonical, (), ()
     # The engine appends into the trail's list, so a step that blocks still leaves behind the
     # decisions taken before it — including the routing that sent the request to the step that
     # refused it.
@@ -681,7 +684,48 @@ async def run_pipeline(
             model=outcome.request.model,
             decisions=outcome.decisions,
         )
-    return outcome.request, outcome.fallback_models
+    if outcome.rewrites:
+        # **The stored request is the rewritten one.** Measured before this existed: the model was
+        # sent the redacted prompt and `request_logs` kept the original, because the payload comes
+        # from the wire body captured at the surface while the pipeline rewrites the canonical
+        # request. The redaction protected the model and not the database, which is the one thing
+        # it was for.
+        trail.body = _rewritten_body(trail.body, outcome.rewrites)
+    return outcome.request, outcome.fallback_models, tuple(outcome.notices)
+
+
+def _rewritten_body(
+    body: dict[str, Any] | None, rewrites: list[tuple[str, str]]
+) -> dict[str, Any] | None:
+    """The wire body with what a step rewrote replaced — or **nothing at all**.
+
+    A literal substitution rather than a rebuild, because the exact string that was replaced is
+    known: the step has both halves. That works for either surface without either of their shapes
+    being written down here.
+
+    **If it does not match, the payload is dropped.** A body whose text could not be found is one
+    this function does not understand, and storing it would store precisely the personal data the
+    step removed — so the failure is losing a payload, not keeping the wrong one. `FRD-404`'s
+    storage is already optional; a caller's data being kept when a use case configured a redactor
+    is not.
+    """
+    if body is None:
+        return None
+    text = json.dumps(body, ensure_ascii=False)
+    for before, after in rewrites:
+        # **Escaped on both sides.** The prompt is looked for inside serialised JSON, so a quote or
+        # a newline in it is `\"` or `\n` there rather than itself — checking the raw form and
+        # substituting the escaped one dropped every prompt containing a quotation mark, which is
+        # an ordinary prompt and not an exotic one.
+        needle = json.dumps(before, ensure_ascii=False)[1:-1]
+        if needle not in text:
+            return None
+        text = text.replace(needle, json.dumps(after, ensure_ascii=False)[1:-1])
+    try:
+        rewritten: dict[str, Any] = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    return rewritten
 
 
 @dataclass(slots=True)
@@ -693,6 +737,11 @@ class Prepared:
     fallbacks: tuple[str, ...]
     declaration: ModelDeclaration
     reservation: Reservation
+    #: What the caller is told about their own request having been changed (`FRD-309`). Carried
+    #: here rather than applied in the pipeline, because the pipeline runs before there is an
+    #: answer to put it on — and applied in one place afterwards, so both surfaces and both exits
+    #: get it by calling the same thing rather than by remembering to.
+    notices: tuple[str, ...] = ()
 
     @property
     def model(self) -> str:
@@ -756,8 +805,9 @@ async def prepare_for_dispatch(
     await guard_before_work(request, units=units)
 
     fallbacks: tuple[str, ...] = ()
+    notices: tuple[str, ...] = ()
     if canonical is not None:
-        canonical, fallbacks = await run_pipeline(request, canonical, trail)
+        canonical, fallbacks, notices = await run_pipeline(request, canonical, trail)
         # The catalog's provider too (`FRD-507`): a model catalogued for an adapter is served by
         # it even when nobody also named it in configuration. Asking the registry alone would have
         # reported "not found" for a model an administrator had just released, which reads as a
@@ -800,7 +850,7 @@ async def prepare_for_dispatch(
             else 0
         ),
     )
-    return Prepared(canonical, embed, fallbacks, declaration, reservation)
+    return Prepared(canonical, embed, fallbacks, declaration, reservation, notices)
 
 
 async def resolve_direct_target(
@@ -925,10 +975,15 @@ async def accounting(
     *,
     api: str,
     operation: str,
-    body: dict[str, Any] | None,
     started: float,
 ) -> AsyncIterator[Accounting]:
     """Hold the reservation, and account for the request **however it ends**.
+
+    **The body is read off the trail rather than passed in.** It was a parameter, handed over by
+    nine call sites, while `trail.body` held the same fact — and the moment a pipeline step began
+    *rewriting* the request (`FRD-309`), the two disagreed: the rewrite reached the trail and the
+    parameter kept the original, so the model was sent a redacted prompt and the audit row stored
+    the personal data the step had removed. Measured on the running stack by reading a row.
 
     The companion to `prepare_for_dispatch`, and it exists for the same reason: the post-dispatch
     steps — hold, dispatch, price, settle, record — were written out once per verb per surface,
@@ -978,7 +1033,6 @@ async def accounting(
                     state,
                     api=api,
                     operation=operation,
-                    body=body,
                     started=started,
                     record=record,
                 )
@@ -993,7 +1047,6 @@ async def _settle_and_record(
     *,
     api: str,
     operation: str,
-    body: dict[str, Any] | None,
     started: float,
     record: bool = True,
 ) -> None:
@@ -1023,7 +1076,7 @@ async def _settle_and_record(
         status=state.status,
         usage=state.usage,
         latency_ms=elapsed_ms(started),
-        request_payload=body,
+        request_payload=trail.body,
         response_payload=state.payload,
         cost_nanos=cost,
         outcome=state.outcome or Outcome.CLIENT_GONE,
@@ -1121,3 +1174,33 @@ def refusal_outcome(exc: Exception) -> Outcome:
     if isinstance(exc, GeminiHTTPError):
         return _REFUSAL_OUTCOMES.get(exc.code, Outcome.INVALID_REQUEST)
     return Outcome.INVALID_REQUEST
+
+
+def with_notices(response: CanonicalResponse, notices: tuple[str, ...]) -> CanonicalResponse:
+    """Prepend what the caller is owed about their own request having been changed (`FRD-309`).
+
+    **Text only, and that is a rule rather than a shortcut.** A response carrying a
+    ``responseSchema`` document is parsed by the client, and a sentence in front of it makes the
+    document invalid — the caller would get a parse error instead of an answer, which is a worse
+    outcome than not being told. A tool call has no text at all: the answer *is* the call. Both
+    cases are recorded (`applied: false`) rather than skipped silently, because "no notice shown"
+    and "nothing was redacted" are different facts and a reader has no way to tell them apart.
+
+    One function, called from every exit, for the reason `FRD-128` gives: a fact applied at each
+    `return` is a fact eventually missing from one of them.
+    """
+    if not notices or not response.text.strip() or response.tool_calls:
+        return response
+    return response.model_copy(update={"text": "\n\n".join([*notices, response.text])})
+
+
+def notice_outcome(response: CanonicalResponse, notices: tuple[str, ...]) -> dict[str, Any] | None:
+    """What the audit row says about the notice — including that it was **not** shown."""
+    if not notices:
+        return None
+    shown = bool(response.text.strip()) and not response.tool_calls
+    return {
+        "step": "notice",
+        "action": "shown" if shown else "withheld",
+        "why": "" if shown else "the answer carries no plain text to put it in front of",
+    }

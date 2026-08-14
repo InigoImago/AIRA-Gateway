@@ -142,3 +142,44 @@ def test_the_console_offers_exactly_the_media_types_the_gateway_accepts() -> Non
         f"console-only: {sorted(console - set(DEFAULT_MEDIA_TYPES))}, "
         f"gateway-only: {sorted(set(DEFAULT_MEDIA_TYPES) - console)}"
     )
+
+
+def test_every_pipeline_step_exists_in_all_three_places() -> None:
+    """The gateway runs it, Management validates it, the console offers it — one vocabulary.
+
+    Three lists, so three chances to drift, and each absence fails differently: a step the console
+    cannot offer looks exactly like a step that does not exist; one Management refuses cannot be
+    saved after being built; one the gateway does not know is dropped from a stored config and the
+    use case quietly loses a control it can still see in the builder.
+
+    Compared in **both** directions, the answer this repository keeps arriving at.
+    """
+    import re
+
+    from aira_gateway.pipeline.config import StepType
+
+    gateway = {member.value for member in StepType}
+
+    serializer = (
+        pathlib.Path(__file__).resolve().parents[2]
+        / "management/backend/src/aira_management/apps/pipelines/serializers.py"
+    ).read_text()
+    match = re.search(r"STEP_TYPES = \{([^}]*)\}", serializer)
+    assert match, "STEP_TYPES is no longer a set literal in the pipeline serializer"
+    management = set(re.findall(r'"([a-z_]+)"', match.group(1)))
+
+    editor = (
+        pathlib.Path(__file__).resolve().parents[2]
+        / "management/frontend/src/app/features/pipelines/pipeline-editor.ts"
+    ).read_text()
+    offered = re.search(r"stepTypes: StepType\[\] = \[([^\]]*)\]", editor)
+    assert offered, "stepTypes is no longer an array literal in the pipeline editor"
+    console = set(re.findall(r"'([a-z_]+)'", offered.group(1)))
+
+    assert gateway == management, (
+        f"gateway-only: {sorted(gateway - management)}, "
+        f"management-only: {sorted(management - gateway)}"
+    )
+    assert gateway == console, (
+        f"gateway-only: {sorted(gateway - console)}, console-only: {sorted(console - gateway)}"
+    )

@@ -64,6 +64,15 @@ UNCONDITIONED: dict[str, str] = {
         "(`FRD-125b`), which is the accountability question, and the model it may use is bounded "
         "by the release the pipeline serializer validates against (`FRD-308`)."
     ),
+    "pipeline/classifiers.py:rewrite:generate": (
+        "The pipeline's redactor (`FRD-309`), and the same argument as the classifier above: it is "
+        "the gateway acting *on* the caller's request rather than serving it, on a model an "
+        "administrator named in the pipeline configuration. It is audited and billed as "
+        "`pipeline:pii_filter` with `requests=0` (`FRD-125b`), and the model it may use is bounded "
+        "by the release, which the pipeline serializer validates every named model against "
+        "(`FRD-308`) — `_models_named_in` reads `config.model`, so this step needed no separate "
+        "rule and gets no separate hole."
+    ),
     "pipeline/dispatch.py:dispatch_with_fallback:generate": (
         "The chain itself, which is where `permits` is asked. Named here because it is the "
         "definition rather than an exemption — the call is one line below the check."

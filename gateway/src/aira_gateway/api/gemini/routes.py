@@ -35,6 +35,7 @@ from aira_gateway.api.serving import (
     declared_provider,
     deprecation_headers,
     elapsed_ms,
+    notice_outcome,
     prepare_for_dispatch,
     provenance,
     refusal_outcome,
@@ -44,6 +45,7 @@ from aira_gateway.api.serving import (
     schema_bounds,
     upstream_error,
     upstream_status,
+    with_notices,
 )
 from aira_gateway.attachments import AttachmentRejected
 from aira_gateway.audit import AuditTrail, Outcome, decision_summary, tool_summary
@@ -338,7 +340,6 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
                 prepared,
                 api="gemini",
                 operation="generateContent",
-                body=body,
                 started=started,
             ) as acct:
                 dispatched = await dispatch_with_fallback(
@@ -349,6 +350,15 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
                     provider_of=await declared_provider(request),
                 )
                 canonical_response = dispatched.response
+                # What the caller is owed about their own prompt having been rewritten under them
+                # (`FRD-309`). Applied here, on the canonical answer, so the wire mapping and the
+                # audit payload below both carry it — and recorded even where it could not be
+                # shown, since a missing notice and an absent redaction look identical otherwise.
+                if prepared.notices:
+                    outcome_note = notice_outcome(canonical_response, prepared.notices)
+                    if outcome_note is not None:
+                        trail.decisions.append(outcome_note)
+                    canonical_response = with_notices(canonical_response, prepared.notices)
                 trail.served_by(canonical_response.model, dispatched.candidate_index)
                 trail.passed_over(dispatched.skipped)
                 # A truncated or unsatisfied document is not data (FRD-112 FR-6). Raised before
@@ -384,7 +394,7 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
     provider = await resolve_direct_target(request, str(embed_request.model))
     started = time.monotonic()
     async with accounting(
-        request, trail, prepared, api="gemini", operation=method, body=body, started=started
+        request, trail, prepared, api="gemini", operation=method, started=started
     ) as acct:
         vectors = await provider.embed(embed_request)
         payload = (
@@ -463,7 +473,6 @@ async def _stream_response(
             prepared,
             api="gemini",
             operation="streamGenerateContent",
-            body=body,
             started=started,
         ) as acct:
             parts: list[str] = []
