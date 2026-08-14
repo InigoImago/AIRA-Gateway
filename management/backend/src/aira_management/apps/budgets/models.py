@@ -21,21 +21,24 @@ from aira_management.apps.usecases.models import UseCase
 
 class Budget(models.Model):
     USE_CASE = "use_case"
-    MEMBER = "member"
     #: **Each member, individually** — one row, one counter per person (2026-08-11).
     #:
-    #: `MEMBER` names somebody; this is the answer to "everybody, but separately", which is what an
-    #: administrator wants far more often — a fair share per head without listing the heads, and it
-    #: keeps applying to people who join afterwards.
+    #: The answer to "everybody, but separately" — a fair share per head without listing the
+    #: heads, and it keeps applying to people who join afterwards.
     #:
     #: Not a variant of `USE_CASE`: that one is a **shared pot**, where the first caller to arrive
     #: can spend all of it. Two different governance decisions, and neither substitutes for the
     #: other.
     EACH_MEMBER = "each_member"
+    #: A ``member`` scope naming one person **was removed on the owner's decision (2026-08-14)**:
+    #: singling somebody out is not a governance decision this product wants to make easy. What is
+    #: left says everything an administrator needs — a shared pot, or the same allowance for
+    #: everybody — and neither substitutes for the other. Existing rows are deleted by migration
+    #: rather than left in place: a stored scope that no longer resolves is a rule enforced by
+    #: nothing and visible in nothing.
     SCOPE_CHOICES = [
         (USE_CASE, "Use case"),
         (EACH_MEMBER, "Each member"),
-        (MEMBER, "One member"),
     ]
 
     DAY = "day"

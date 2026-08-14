@@ -115,13 +115,17 @@ def test_the_roles_do_not_all_see_the_same_thing(seeded) -> None:
 
 
 def test_every_budget_axis_has_a_live_example(seeded) -> None:
-    """Cost, tokens and requests; use-case and member scope; day and month. A control with no
-    example on screen is a control somebody has to be told about."""
+    """Cost, tokens and requests; both scopes; day and month. A control with no example on screen
+    is a control somebody has to be told about.
+
+    Two scopes rather than three since 2026-08-14 — the one naming an individual was removed — and
+    `each_member` is the one an administrator wanted anyway: a fair share per head, no names to
+    keep up to date, and it keeps applying to whoever joins."""
     budgets = list(Budget.objects.all())
     assert any(b.limit_cost for b in budgets)
     assert any(b.limit_tokens for b in budgets)
     assert any(b.limit_requests for b in budgets)
-    assert {b.scope for b in budgets} == {Budget.USE_CASE, Budget.MEMBER}
+    assert {b.scope for b in budgets} == {Budget.USE_CASE, Budget.EACH_MEMBER}
     assert {b.period for b in budgets} == {Budget.DAY, Budget.MONTH}
 
 

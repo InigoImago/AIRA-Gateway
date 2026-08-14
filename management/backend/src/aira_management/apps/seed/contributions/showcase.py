@@ -179,11 +179,14 @@ def _budgets() -> list[dict[str, Any]]:
             # ~40% after one run of `tools/demo_traffic.py`; two more runs reach it.
             "limit_cost": Decimal("0.000300"),
         },
-        # A per-member cap under it: one person cannot spend the team's month.
+        # A per-head cap under it: nobody can spend the team's month on their own. `EACH_MEMBER`
+        # rather than a named person — the scope naming one was removed on 2026-08-14 — and this
+        # is the shape an administrator wanted anyway: it needs no names and keeps applying to
+        # whoever joins.
         {
             "use_case": "kundenservice",
-            "scope": Budget.MEMBER,
-            "subject": "ucuser",
+            "scope": Budget.EACH_MEMBER,
+            "subject": "",
             "period": Budget.DAY,
             "limit_cost": Decimal("0.000100"),
         },
@@ -234,8 +237,8 @@ def _rate_limits() -> list[dict[str, Any]]:
         },
         {
             "use_case": "entwicklung",
-            "scope": RateLimit.MEMBER,
-            "subject": "ucadmin",
+            "scope": RateLimit.EACH_MEMBER,
+            "subject": "",
             "limit_rpm": 20,
             "burst": 5,
         },

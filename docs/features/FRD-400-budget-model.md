@@ -9,64 +9,59 @@
 > FRD-202/204 (use-case CRUD + Kafka distribution). Companion: FRD-401 (enforcement), FRD-402 (UI).
 
 ## 1. Summary
-Define usage **budgets** per use case and per member, authored in Management and distributed to the
+Define usage **budgets** per use case and per head, authored in Management and distributed to the
 gateway (like use cases / pipelines). This FRD covers the **model + CRUD + distribution** only;
 enforcement (FRD-401) and UI (FRD-402) follow.
 
 ## 2. Concept
 - A **budget** caps usage for a **scope** over a **period**.
-  - **Scope**: `use_case` (the whole use case), `each_member` (every person in it, counted
-    separately) or `member` (one named person).
+  - **Scope**: `use_case` (the whole use case) or `each_member` (every person in it, counted
+    separately). A third naming one person was removed on 2026-08-14 — see §2.1.
   - **Period**: `day` or `month` (calendar; usage resets at the period boundary).
   - **Limits**: `limit_tokens` and/or `limit_requests` (either/both; null = unlimited on that axis).
 - Cost-based limits need per-model pricing (not yet available) → **tokens + request count first**;
   monetary budgets are a later extension.
 
-### 2.1 Why three scopes and not two (added 2026-08-11)
+### 2.1 Two scopes, and why the third was removed (2026-08-14)
 `use_case` is a **shared pot**: the first caller to arrive can spend all of it, which is the right
 shape for a cap on what the organisation is willing to spend and the wrong one for fairness.
-`member` bounds one named person, which only answers the question after somebody has already caused
-a problem — and it needs a row per person, kept up to date as people join and leave.
 
-`each_member` is the scope an administrator asks for most: *a fair share per head*. One configured
-row, one counter per person, applying to whoever turns up including people who join afterwards.
+`each_member` is *a fair share per head*: one configured row, one counter per person, applying to
+whoever turns up including people who join afterwards.
 
-It is not a shorthand for the other two, and neither substitutes for it. A per-person cap of 100
-does not cap the use case at 100 — with forty members it caps it at 4 000 — so an installation that
-wants both sets both, and the gateway takes them **all-or-nothing** the way it already does for
-rate limits (`FRD-405` FR-4).
+A third scope, `member`, bounded **one named person**. It is gone on the owner's decision:
+singling somebody out is not a governance decision this product should make easy, and it only ever
+answered the question after somebody had already caused a problem — while needing a row per person,
+kept up to date as people join and leave. Existing rows are deleted by a migration in each plane
+rather than left in place: a stored scope that no longer resolves is a rule enforced by nothing and
+visible in nothing.
+
+The two that remain are not shorthands for each other. A per-person cap of 100 does not cap the use
+case at 100 — with forty members it caps it at 4 000 — so an installation that wants both sets both,
+and the gateway takes them **all-or-nothing** the way it already does for rate limits (`FRD-405`
+FR-4).
 
 Three consequences worth writing down:
-- **The row names nobody.** A `subject` sent with it is dropped rather than refused: keeping it
+- **No row names anybody.** A `subject` sent with one is dropped rather than refused: keeping it
   would key the uniqueness constraint on a name the row does not honour, so a second edit would
-  create a second budget instead of replacing the first (the defect already recorded for
-  `use_case`).
-- **The counter key is the caller.** It is exactly the key a `member` row naming that person would
-  have used, so narrowing one individual later does not move their accumulated history to a
-  different key mid-period.
+  create a second budget instead of replacing the first.
+- **The counter key is the caller**, and its stored shape is unchanged by the removal — a figure
+  written before it keeps being found, which is the whole reason `usage_key` is not free to move.
 - **Consumption has no single figure.** `GET /v1beta/usage/{use_case}` therefore reports the
   *reader's own* number and says so (`measured_for`), and answers `null` — never zero — to a reader
   the row does not bind. Zero is what an untouched allowance looks like, and this is the one place
   where the two would be indistinguishable (`FRD-603`).
 
-### 2.2 Added 2026-08-11 — what a named member row matches
-A `member` row is written by an administrator **typing a name**, and the two credentials answer
-"who is this" in different alphabets: an API key's subject *is* its owner's username (`FRD-604`),
-an OIDC token's is the directory's user id. So the rule bound API-key traffic and bound **nothing
-at all** for the same person over OIDC — measured on the live stack as a request limit of one
-serving four calls, while the console showed the budget as active. `FRD-125`'s badge-wearing
-absent control, one identity system over.
+### 2.2 What the removal took with it
+The `member` scope was the only place the two alphabets a credential answers "who is this" in were
+ever reconciled: an API key's subject *is* its owner's username (`FRD-604`), an OIDC token's is the
+directory's user id, and a row written by typing a name matched either. Nothing reconciles them now,
+so **one person using both a browser and a key has two per-head allowances rather than one**.
 
-A member row now matches **either** the caller's subject or the name that caller is known by
-(`preferred_username`, carried on the `Principal` and the `Attribution`). Three properties:
-- **The name is never an identity.** `subject` remains what every audit row records and what every
-  counter is keyed on, because a username can be reassigned to somebody else and a subject cannot.
-- **The key is the row's own subject** whichever name matched, so a person is one counter rather
-  than two and every figure already in `budget_usage` keeps being found — that shape is stored.
-- **Matching a name is not matching anyone.** An empty subject binds nobody, and somebody else's
-  name is somebody else.
-
-`each_member` is unaffected: it never names anybody, which is one more reason to prefer it.
+That was already true of `each_member` before the removal — it has always keyed on the caller — and
+it is recorded here and in `aira_gateway.scopes` rather than lost with the tests that covered the
+named scope. The fix, if it is ever wanted, is a stable identity for a person across credentials,
+not a scope that names one.
 
 ## 3. Functional Requirements
 - **FR-1**: A use-case admin defines budgets for their use case: one `use_case`-scoped budget per

@@ -25,15 +25,12 @@ class RateLimitSerializer(serializers.ModelSerializer[RateLimit]):
         read_only_fields = ["id", "created_at", "updated_at"]
 
     def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
-        scope = attrs.get("scope")
-        subject = (attrs.get("subject") or "").strip()
-        if scope == RateLimit.MEMBER and not subject:
-            raise serializers.ValidationError({"subject": "Required for member-scoped limits."})
-        if scope in (RateLimit.USE_CASE, RateLimit.EACH_MEMBER):
-            # Neither names a person, so a subject sent with one is silently meaningless — cleared
-            # rather than stored, or the uniqueness constraint would let the same rule be created
-            # twice under two different empty-ish subjects.
-            subject = ""
+        # **No scope names a person any more** (2026-08-14), so a subject sent with one is
+        # meaningless — cleared rather than stored, or the uniqueness constraint would let the same
+        # rule be created twice under two different empty-ish subjects. Cleared rather than refused
+        # because a client that still sends the field is asking for something harmless, and an
+        # error would be about a word rather than about the rule.
+        subject = ""
         attrs["subject"] = subject
 
         # A burst below the sustained rate is almost certainly a mistake, and a quiet one: the

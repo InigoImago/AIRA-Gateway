@@ -14,7 +14,7 @@ interface Overrides {
 
 interface Tab {
   showForm: { set: (v: boolean) => void; (): boolean };
-  budgetScope: { set: (v: 'use_case' | 'each_member' | 'member') => void; (): string };
+  budgetScope: { set: (v: 'use_case' | 'each_member') => void; (): string };
   budgetSubject: { set: (v: string) => void; (): string };
   budgetTokens: { set: (v: number | null) => void; (): number | null };
   budgetRequests: { set: (v: number | null) => void; (): number | null };
@@ -92,26 +92,6 @@ function setup(options: Options = {}) {
 }
 
 describe('BudgetsTab', () => {
-  it('says what a username has to match, on the screen that asks for one', () => {
-    /** With two credentials answering "who is this" in two alphabets, the honest thing is to name
-     *  what the field reaches: the person's own sign-in and their own keys, and nobody else's. */
-    const harness = setup();
-    harness.component.showForm.set(true);
-    harness.component.budgetScope.set('member');
-    harness.fixture.detectChanges();
-
-    expect(harness.text()).toContain('The name they sign in with');
-    expect(harness.text()).toContain("nobody else's key");
-  });
-
-  it('requires a username for a member budget', () => {
-    const { component } = setup();
-    component.budgetScope.set('member');
-    component.budgetSubject.set('  ');
-    expect(component.validationError()).toBe('A member budget needs a username.');
-    expect(component.canAdd()).toBe(false);
-  });
-
   it('requires at least one limit', () => {
     expect(setup().component.validationError()).toBe(
       'Set a spend limit, a token limit, or a request limit.',
@@ -263,10 +243,6 @@ describe('BudgetsTab', () => {
   it('names who a budget applies to', () => {
     const { component } = setup();
     expect(component.labelFor({ scope: 'use_case', period: 'month' })).toBe('Whole use case');
-    expect(component.labelFor({ scope: 'member', subject: 'alice', period: 'month' })).toBe(
-      'alice',
-    );
-    expect(component.labelFor({ scope: 'member', period: 'month' })).toBe('member');
     expect(component.labelFor({ scope: 'each_member', period: 'month' })).toBe(
       'Each member, individually',
     );
@@ -419,19 +395,6 @@ describe('BudgetsTab rendering', () => {
     expect((full.fixture.nativeElement as HTMLElement).querySelector('.is-full')).toBeTruthy();
   });
 
-  it('shows the member-username field only for a member-scoped budget', () => {
-    const harness = setup();
-    harness.component.showForm.set(true);
-    harness.fixture.detectChanges();
-    const html = harness.fixture.nativeElement as HTMLElement;
-    expect(html.querySelector('#budget-subject')).toBeNull();
-    expect(html.querySelector('#budget-cost')).toBeTruthy();
-
-    harness.component.budgetScope.set('member');
-    harness.fixture.detectChanges();
-    expect(html.querySelector('#budget-subject')).toBeTruthy();
-  });
-
   it('shows the validation reason next to the form rather than only disabling the button', () => {
     const harness = setup();
     harness.component.showForm.set(true);
@@ -473,14 +436,6 @@ describe('BudgetsTab rendering', () => {
 
     expect(harness.calls).toContain('delete:4');
   });
-
-  it('names a member budget by its member', () => {
-    const harness = setup({
-      budgets: [{ id: 1, scope: 'member', subject: 'alice', period: 'day', limit_tokens: 100 }],
-      usage: usageFor(),
-    });
-    expect(harness.text()).toContain('alice');
-  });
 });
 
 describe('BudgetsTab — a reader', () => {
@@ -511,7 +466,7 @@ describe('BudgetsTab — a budget per person, and a window to make one in', () =
     const scope = (harness.fixture.nativeElement as HTMLElement).querySelector<HTMLSelectElement>(
       '#budget-scope',
     )!;
-    expect([...scope.options].map((o) => o.value)).toEqual(['use_case', 'each_member', 'member']);
+    expect([...scope.options].map((o) => o.value)).toEqual(['use_case', 'each_member']);
 
     harness.component.budgetScope.set('each_member');
     harness.fixture.detectChanges();

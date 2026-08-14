@@ -142,32 +142,9 @@ async def test_an_unset_burst_means_the_per_minute_figure_not_zero(governed: Gov
     assert (await governed.generate(_body(), model=MOCK_MODEL)).status_code == 200
 
 
-async def test_a_member_limit_binds_the_member_it_names(governed: Governed) -> None:
-    """The key's subject is `dev-round`; a rule about somebody else must not bind this caller."""
-    await governed.rate_limit(
-        limit_rpm=SLOW_REFILL, burst=1, scope="member", subject="somebody-else"
-    )
-    await governed.settle()
-
-    assert await _statuses(governed, 4) == [200] * 4
-
-
-async def test_a_member_limit_naming_this_caller_binds_it(governed: Governed) -> None:
-    await governed.rate_limit(limit_rpm=SLOW_REFILL, burst=1, scope="member", subject="dev-round")
-    await governed.settle()
-
-    statuses = await _statuses(governed, 3)
-
-    assert statuses[0] == 200, statuses
-    assert 429 in statuses, statuses
-    refused = await governed.generate(_body(), model=MOCK_MODEL)
-    assert "member" in _message(refused).lower()
-
-
 async def test_the_per_person_scope_needs_no_row_naming_anybody(governed: Governed) -> None:
     """`each_member`: one configured row, one counter per caller — a fair share per head without
-    listing the heads, which is what an administrator wants far more often than either of the
-    other two."""
+    listing the heads, and since 2026-08-14 the only scope that bounds an individual at all."""
     await governed.rate_limit(limit_rpm=SLOW_REFILL, burst=1, scope="each_member")
     await governed.settle()
 
@@ -178,11 +155,11 @@ async def test_the_per_person_scope_needs_no_row_naming_anybody(governed: Govern
 
 
 async def test_the_stricter_of_two_scopes_wins(governed: Governed) -> None:
-    """Both are checked where both exist, so one member cannot consume a whole use case's
-    allowance — and the *decision is all-or-nothing*: a refused member must not have drained the
+    """Both are checked where both exist, so one person cannot consume a whole use case's
+    allowance — and the *decision is all-or-nothing*: a refused caller must not have drained the
     use case's bucket on the way out (`FRD-405` FR-4)."""
     await governed.rate_limit(limit_rpm=600, burst=50)
-    await governed.rate_limit(limit_rpm=SLOW_REFILL, burst=1, scope="member", subject="dev-round")
+    await governed.rate_limit(limit_rpm=SLOW_REFILL, burst=1, scope="each_member")
     await governed.settle()
 
     statuses = await _statuses(governed, 3)
@@ -372,7 +349,7 @@ async def test_a_daily_and_a_monthly_budget_both_bind(governed: Governed) -> Non
 
 
 async def test_a_member_budget_binds_only_that_member(governed: Governed) -> None:
-    await governed.budget(requests=1, scope="member", subject="somebody-else")
+    await governed.budget(requests=1, scope="each_member")
 
     assert await _statuses(governed, 3) == [200] * 3
 

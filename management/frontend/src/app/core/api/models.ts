@@ -197,10 +197,14 @@ export interface DryRunResult {
  *
  * `each_member` is not a variant of `use_case`: that one is a **shared pot**, where the first
  * caller to arrive can spend all of it, while this bounds every person the same way without
- * naming any of them — and keeps applying to people who join later. `member` is the answer to
- * "this person in particular".
+ * naming any of them — and keeps applying to people who join later.
+ *
+ * A third scope naming one person was removed on the owner's decision (2026-08-14): singling
+ * somebody out is not a governance decision this product wants to make easy, and the two that
+ * remain say what an administrator needs. `subject` stays on the wire because rows still carry
+ * it while both planes' migrations run, and it is ignored.
  */
-export type LimitScope = 'use_case' | 'each_member' | 'member';
+export type LimitScope = 'use_case' | 'each_member';
 
 export interface Budget {
   id?: number;

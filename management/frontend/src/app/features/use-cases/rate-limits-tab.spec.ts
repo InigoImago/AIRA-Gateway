@@ -13,7 +13,7 @@ interface Overrides {
 
 interface Tab {
   showForm: { set: (v: boolean) => void; (): boolean };
-  rlScope: { set: (v: 'use_case' | 'each_member' | 'member') => void; (): string };
+  rlScope: { set: (v: 'use_case' | 'each_member') => void; (): string };
   rlSubject: { set: (v: string) => void; (): string };
   rlRpm: { set: (v: number | null) => void; (): number | null };
   rlBurst: { set: (v: number | null) => void; (): number | null };
@@ -63,7 +63,6 @@ function setup(
   fixture.componentRef.setInput('slug', 'demo-uc');
   fixture.componentRef.setInput('limits', limits);
   fixture.componentRef.setInput('canManage', canManage);
-  fixture.componentRef.setInput('members', [{ username: 'anna', role: 'user' }]);
   const changes: number[] = [];
   fixture.componentInstance.changed.subscribe(() => changes.push(1));
   fixture.detectChanges();
@@ -78,15 +77,6 @@ function setup(
 }
 
 describe('RateLimitsTab', () => {
-  it('requires a username for a member limit', () => {
-    const { component } = setup();
-    component.rlScope.set('member');
-    component.rlRpm.set(60);
-    component.rlSubject.set('  ');
-    expect(component.validationError()).toBe('A member limit needs a username.');
-    expect(component.canAdd()).toBe(false);
-  });
-
   it('requires a rate to be given at all', () => {
     expect(setup().component.validationError()).toBe(
       'Set how many requests per minute are allowed.',
@@ -162,8 +152,6 @@ describe('RateLimitsTab', () => {
   it('names who a limit applies to', () => {
     const { component } = setup();
     expect(component.labelFor({ scope: 'use_case', limit_rpm: 60 })).toBe('Whole use case');
-    expect(component.labelFor({ scope: 'member', subject: 'alice', limit_rpm: 60 })).toBe('alice');
-    expect(component.labelFor({ scope: 'member', limit_rpm: 60 })).toBe('member');
     // Not "Whole use case": a per-person row bounds each caller separately, and reading it as a
     // shared allowance is the one wrong conclusion the table could lead somebody to.
     expect(component.labelFor({ scope: 'each_member', limit_rpm: 60 })).toBe(
@@ -172,9 +160,12 @@ describe('RateLimitsTab', () => {
   });
 
   it('renders the configured limits', () => {
-    const harness = setup([{ id: 1, scope: 'member', subject: 'alice', limit_rpm: 90, burst: 9 }]);
+    const harness = setup([{ id: 1, scope: 'each_member', limit_rpm: 90, burst: 9 }]);
     const text = harness.text();
-    expect(text).toContain('alice');
+    // Named by its scope now that no scope names a person — and the wording matters: "Each
+    // member, individually" rather than "Whole use case", because the row bounds each of them
+    // separately and would otherwise read as a limit forty people share.
+    expect(text).toContain('Each member, individually');
     expect(text).toContain('90');
     expect(text).toContain('9');
   });
@@ -187,19 +178,6 @@ describe('RateLimitsTab', () => {
     const harness = setup([{ id: 2, scope: 'use_case', limit_rpm: 30, enabled: false }]);
     expect(harness.text()).toContain('Disabled');
     expect(harness.text()).not.toContain('Active');
-  });
-
-  it('reveals the member field and the validation hint when the form is opened', () => {
-    const harness = setup();
-    harness.component.showForm.set(true);
-    harness.component.rlScope.set('member');
-    harness.fixture.detectChanges();
-
-    const html = harness.fixture.nativeElement as HTMLElement;
-    expect(html.querySelector('#rl-subject')).toBeTruthy();
-    expect(html.querySelector('#rl-rpm')).toBeTruthy();
-    // The form must say why it will not submit rather than just disabling the button.
-    expect(harness.text()).toContain('A member limit needs a username.');
   });
 });
 
@@ -229,7 +207,7 @@ describe('RateLimitsTab — a rate per person, a window, and what Burst means', 
     const scope = (harness.fixture.nativeElement as HTMLElement).querySelector<HTMLSelectElement>(
       '#rl-scope',
     )!;
-    expect([...scope.options].map((o) => o.value)).toEqual(['use_case', 'each_member', 'member']);
+    expect([...scope.options].map((o) => o.value)).toEqual(['use_case', 'each_member']);
 
     harness.component.rlScope.set('each_member');
     harness.fixture.detectChanges();
@@ -285,40 +263,3 @@ describe('RateLimitsTab — a rate per person, a window, and what Burst means', 
  * knows — who is in a group is the identity provider's answer, which is why this cannot be an
  * error and must not be silence either.
  */
-describe('RateLimitsTab — a name that matches nobody', () => {
-  it('says so while it is being typed, without refusing it', () => {
-    const { component, fixture, text } = setup();
-    // The field lives in the window, so the window has to be open — which is also the only state
-    // in which this warning could help anybody.
-    component.showForm.set(true);
-    component.rlScope.set('member');
-    component.rlSubject.set('anna');
-    fixture.detectChanges();
-    expect(component.unmatchedSubject()).toBe(false);
-
-    component.rlSubject.set('ann');
-    fixture.detectChanges();
-
-    expect(component.unmatchedSubject()).toBe(true);
-    expect(text()).toContain('No member of this use case is called');
-    // Still saveable: the group case is legitimate and this is a warning, not a gate.
-    component.rlRpm.set(60);
-    expect(component.canAdd()).toBe(true);
-  });
-
-  it('marks a saved rule that names nobody it knows', () => {
-    const { component } = setup();
-
-    expect(component.reachesNobodyKnown('member', 'ann')).toBe(true);
-    expect(component.reachesNobodyKnown('member', 'anna')).toBe(false);
-    // Only the scope that names somebody — the other two bind by construction.
-    expect(component.reachesNobodyKnown('each_member', 'ann')).toBe(false);
-    expect(component.reachesNobodyKnown('use_case', '')).toBe(false);
-  });
-
-  it('compares names the way a person types them, not byte for byte', () => {
-    const { component } = setup();
-
-    expect(component.reachesNobodyKnown('member', ' Anna ')).toBe(false);
-  });
-});

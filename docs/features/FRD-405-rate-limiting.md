@@ -37,7 +37,7 @@ than better: per-process counters mean N instances permit N times the configured
 ## 2. Goals & Non-Goals
 
 **Goals**
-- A **rate limit per use case and per member**, enforced across all gateway instances.
+- A **rate limit per use case and per head**, enforced across all gateway instances.
 - Budget enforcement that **cannot be overshot by concurrency**.
 - The request log written **off the request path**, without ever losing a record.
 - Degradation that is decided, not accidental: a Redis outage must not become a product outage.
@@ -56,7 +56,8 @@ than better: per-process counters mean N instances permit N times the configured
   `embedContent`. They are enforced at one shared point rather than per method, because a control
   that applies to some verbs and not others is one a caller evades by picking another verb.
 - **FR-1 Definition**: a rate limit belongs to a use case, with `scope` = `use_case` |
-  `each_member` | `member` (mirroring budgets — see `FRD-400` §2.1 for why three), `limit_rpm`
+  `each_member` (mirroring budgets — see `FRD-400` §2.1, and why the third was removed),
+  `limit_rpm`
   (sustained requests per minute) and `burst` (how many may arrive at once). Authored in
   Management, distributed over Kafka, read by the gateway.
 
@@ -66,7 +67,7 @@ than better: per-process counters mean N instances permit N times the configured
   The budget path had to be repaired for the same scope, because there the key was read off the row
   long after the caller was out of scope — the same rule, two implementations, one of them wrong.
 
-  **A named member row matches the name it was written with** — see `FRD-400` §2.2. This service
+  **The scope naming one person was removed on 2026-08-14** — see `FRD-400` §2.1. This service
   needed no repair for it, only the name passed in: it resolves each row against the caller on
   every request. The budget service did, which is why both are asserted rather than one.
 
@@ -80,9 +81,9 @@ than better: per-process counters mean N instances permit N times the configured
   in seconds, so a well-behaved client backs off instead of retrying immediately.
 - **FR-3 Shared across instances**: two gateway processes behind a load balancer enforce **one**
   limit, not one each.
-- **FR-4 Both scopes apply**: where a use-case limit and a member limit exist, both are checked
-  and the stricter one wins. A member's own burst may not consume the whole use case — and,
-  equally, a member who is *refused* must cost the use case nothing, or one throttled member
+- **FR-4 Both scopes apply**: where a use-case limit and a per-head limit exist, both are checked
+  and the stricter one wins. One person's own burst may not consume the whole use case — and,
+  equally, somebody who is *refused* must cost the use case nothing, or one throttled caller
   becomes a denial of service for everyone else. The decision is therefore all-or-nothing across
   every bucket a request must pass.
 - **FR-5 Atomic budget reservation**: the budget check reserves before dispatch, so a concurrent

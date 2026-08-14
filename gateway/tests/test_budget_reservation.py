@@ -213,7 +213,7 @@ async def test_a_budget_that_refuses_releases_what_this_request_already_reserved
     """With two budgets, the first may pass and the second refuse. Leaving the first
     reservation in place would let a refused request permanently consume headroom."""
     await _budget(sessionmaker, id=1, limit_requests=100)
-    await _budget(sessionmaker, id=2, scope="member", subject="alice", limit_requests=1)
+    await _budget(sessionmaker, id=2, scope="each_member", limit_requests=1)
     service = BudgetService(sessionmaker, ledger=BudgetLedger(runner))
 
     await service.guard("uc", "alice", NOW, estimated=Amounts(requests=1))  # consumes the member
@@ -356,7 +356,7 @@ async def test_redis_failing_between_two_budgets_gives_back_what_it_already_took
     unreachable, because nothing downstream holds a reference to it any more.
     """
     await _budget(sessionmaker, id=1, limit_requests=10)
-    await _budget(sessionmaker, id=2, scope="member", subject="alice", limit_requests=10)
+    await _budget(sessionmaker, id=2, scope="each_member", limit_requests=10)
     # Reserve on the first budget, fail on the second, then let the rollback through.
     flaky = FlakyRunner(runner, ok_calls=1, recover_after=1)
     service = BudgetService(sessionmaker, ledger=BudgetLedger(flaky))

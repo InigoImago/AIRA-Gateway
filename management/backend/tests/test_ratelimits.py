@@ -76,16 +76,20 @@ def test_upsert_replaces_rather_than_duplicating(captured_events) -> None:
     assert limits.first().limit_rpm == 600
 
 
-def test_member_limit_requires_a_subject() -> None:
+def test_a_limit_naming_one_person_is_refused() -> None:
+    """See `test_budgets` — the same decision and the same reason it is the field's vocabulary
+    that refuses rather than a hand-written check."""
     admin = _user("admin1", "global-admin")
     _make_uc(admin, "demo-uc")
 
     resp = _client(admin).post(
-        f"{BASE}demo-uc/rate-limits/", {"scope": "member", "limit_rpm": 10}, format="json"
+        f"{BASE}demo-uc/rate-limits/",
+        {"scope": "member", "subject": "bob", "limit_rpm": 10},
+        format="json",
     )
 
-    assert resp.status_code == 400
-    assert "subject" in str(resp.json())
+    assert resp.status_code == 400, resp.content
+    assert "scope" in str(resp.json())
 
 
 def test_a_use_case_scoped_limit_drops_any_subject_sent_with_it() -> None:

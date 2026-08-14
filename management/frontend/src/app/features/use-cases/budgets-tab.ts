@@ -3,7 +3,7 @@ import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { InfoHint } from '../../core/ui/info-hint';
 import { Modal } from '../../core/ui/modal';
-import { Budget, BudgetUsage, Membership } from '../../core/api/models';
+import { Budget, BudgetUsage } from '../../core/api/models';
 import { LimitScope } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { ConfirmService } from '../../core/ui/confirm.service';
@@ -42,17 +42,6 @@ export class BudgetsTab {
    * server — an object-level permission is not in the token, and a panel that assumes yes offers
    * buttons that answer 403. */
   readonly canManage = input(false);
-  /**
-   * The people this use case already has, for the "one named person" field.
-   *
-   * A **suggestion, never a restriction**, and that distinction is one this project has already
-   * paid for: a rule names a *subject*, and access can come through a Keycloak group, so a
-   * group-granted service account belongs to **no membership row at all** (`FRD-209`). A picker
-   * over this list is therefore narrower than the rule it fills in — `FRD-604` recorded the same
-   * conclusion for a key's owner and typed it rather than picking. So the list assists and the
-   * field still accepts anything.
-   */
-  readonly members = input<Membership[]>([]);
   readonly changed = output<void>();
 
   private readonly service = inject(UseCaseService);
@@ -61,7 +50,6 @@ export class BudgetsTab {
 
   protected readonly showForm = signal(false);
   protected readonly budgetScope = signal<LimitScope>('use_case');
-  protected readonly budgetSubject = signal('');
   protected readonly budgetPeriod = signal<'day' | 'month'>('month');
   protected readonly budgetTokens = signal<number | null>(null);
   protected readonly budgetRequests = signal<number | null>(null);
@@ -69,9 +57,6 @@ export class BudgetsTab {
   protected readonly budgetCost = signal('');
 
   protected validationError(): string | null {
-    if (this.budgetScope() === 'member' && !this.budgetSubject().trim()) {
-      return 'A member budget needs a username.';
-    }
     const cost = this.budgetCost().trim();
     if (cost && !/^\d+([.,]\d{1,6})?$/.test(cost)) {
       return 'The spend limit must be an amount, e.g. 250 or 250.00.';
@@ -80,39 +65,6 @@ export class BudgetsTab {
       return 'Set a spend limit, a token limit, or a request limit.';
     }
     return null;
-  }
-
-  /**
-   * A name no member of this use case carries, typed into a rule that names one.
-   *
-   * **The field accepts anything on purpose** — a rule names a *subject*, access can come through a
-   * Keycloak group, and somebody granted that way belongs to no membership row (`FRD-209`). But a
-   * free field means a typo produces a rule that binds **nobody**, saves cleanly, and appears in
-   * the list looking exactly like a working one. That is this project's most repeated defect
-   * dressed as a feature: a control that is configured, displayed as active, and applies to
-   * nothing.
-   *
-   * So it is neither refused nor accepted silently. The console says what it **knows** — that no
-   * member of this use case has that name — and is careful to say *knows*, because who is in a
-   * group is the identity provider's answer, not ours. The same wording the access panel uses for
-   * a grant that reaches nobody.
-   */
-  protected knownMember(subject: string): boolean {
-    const name = subject.trim().toLowerCase();
-    return this.members().some((member) => member.username.trim().toLowerCase() === name);
-  }
-
-  protected unmatchedSubject(): boolean {
-    return (
-      this.budgetScope() === 'member' &&
-      this.budgetSubject().trim().length > 0 &&
-      !this.knownMember(this.budgetSubject())
-    );
-  }
-
-  /** True for a saved rule that names somebody this use case has no member row for. */
-  protected reachesNobodyKnown(scope: string, subject: string | null | undefined): boolean {
-    return scope === 'member' && !!subject && !this.knownMember(subject);
   }
 
   protected canAdd(): boolean {
@@ -126,7 +78,8 @@ export class BudgetsTab {
     const cost = this.budgetCost().trim().replace(',', '.');
     const budget: Budget = {
       scope: this.budgetScope(),
-      subject: this.budgetScope() === 'member' ? this.budgetSubject().trim() : '',
+      // No scope names a person any more (2026-08-14).
+      subject: '',
       period: this.budgetPeriod(),
       limit_cost: cost || null,
       limit_tokens: this.budgetTokens(),
@@ -136,7 +89,6 @@ export class BudgetsTab {
       failure: 'Could not save the budget.',
       success: () => {
         this.feedback.succeed('Budget saved.');
-        this.budgetSubject.set('');
         this.budgetCost.set('');
         this.budgetTokens.set(null);
         this.budgetRequests.set(null);
@@ -198,9 +150,6 @@ export class BudgetsTab {
   }
 
   protected labelFor(budget: Budget): string {
-    if (budget.scope === 'member') {
-      return budget.subject || 'member';
-    }
     return budget.scope === 'each_member' ? 'Each member, individually' : 'Whole use case';
   }
 }

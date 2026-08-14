@@ -240,37 +240,6 @@ async def _member_budget(sessionmaker, subject: str) -> None:
         await session.commit()
 
 
-async def test_a_member_budget_written_by_name_refuses_an_oidc_caller(sessionmaker) -> None:
-    """The defect, at the route rather than in the service — which is where it lived.
-
-    An administrator writes a budget about `alice`. Her API-key traffic bound, because a key's
-    subject *is* her username; her browser and service-account traffic did not, because an OIDC
-    subject is the directory's user id. Measured live before this was written: a limit of one
-    request, four calls, four 200s, with the console showing the budget as active.
-
-    Asserted here because the service can resolve the name perfectly and the **route** can still
-    fail to hand it over — the same shape as `FRD-124`'s export, and the reason that lesson is
-    written down twice.
-    """
-    await _member_budget(sessionmaker, "alice")
-    app, _ = _oidc_app("1361bd47-388d-554e-a6b4-93efdf9a6605", "alice", sessionmaker)
-
-    with TestClient(app) as client:
-        first = client.post(
-            "/v1beta/models/mock-1:generateContent",
-            json=_BODY,
-            headers={"X-AIRA-Use-Case": "uc"},
-        )
-        second = client.post(
-            "/v1beta/models/mock-1:generateContent",
-            json=_BODY,
-            headers={"X-AIRA-Use-Case": "uc"},
-        )
-
-    assert first.status_code == 200
-    assert second.status_code == 429, "the budget named her and did not find her"
-
-
 async def test_that_budget_still_binds_nobody_else(sessionmaker) -> None:
     """The half that must not have been widened: matching a *name* is not matching anyone."""
     await _member_budget(sessionmaker, "alice")

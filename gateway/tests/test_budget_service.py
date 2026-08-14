@@ -71,19 +71,6 @@ async def test_token_budget_blocks_once_exceeded(sessionmaker) -> None:
         await service.guard("uc", "bob", NOW)
 
 
-async def test_member_scope_only_applies_to_subject(sessionmaker) -> None:
-    await _add(sessionmaker, id=1, scope="member", subject="bob", limit_requests=1)
-    service = BudgetService(sessionmaker)
-
-    # alice is not the budget's subject → not applicable
-    assert (await service.guard("uc", "alice", NOW)).budgets == []
-
-    budgets = (await service.guard("uc", "bob", NOW)).budgets
-    await service.record(budgets, 5, now=NOW)
-    with pytest.raises(BudgetExceeded):
-        await service.guard("uc", "bob", NOW)
-
-
 async def test_period_rolls_over(sessionmaker) -> None:
     await _add(sessionmaker, id=1, limit_requests=1)
     service = BudgetService(sessionmaker)
@@ -268,43 +255,18 @@ async def test_a_pipeline_call_is_booked_against_the_caller_own_per_person_budge
 # == reading somebody else's allowance (found live, on the demo's own front page) =================
 
 
-async def test_a_member_budget_naming_somebody_else_is_readable(sessionmaker) -> None:
-    """Opening a use case must not depend on who its budgets are about.
-
-    Found on 2026-08-11 by logging into the console as `admin` and clicking the first use case:
-    **HTTP 500**, on the screen a stakeholder walkthrough opens with. `usage()` passed *the
-    reader* as the caller for every budget row, so a `member` row naming anybody else resolved to
-    no scope at all and `_scope_key`'s assertion fired.
-
-    Introduced with the per-head scope (`744337f`) the same day. The distinction it missed:
-    `each_member` is one row per reader and therefore depends on who is asking; a `member` row
-    **names its own subject** and does not. A reader may see how much the named member used —
-    which is what the panel has always shown, and what it went back to showing.
-
-    The assertion was right to be there. It is an invariant of the *reservation* path, where a row
-    that does not bind the caller is a programming error. Reading is a different question, and
-    asking it in the reservation's vocabulary is what produced a 500 out of a legitimate view.
-    """
-    await _add(sessionmaker, id=1, scope="member", subject="alice", limit_tokens=100)
-    service = BudgetService(sessionmaker)
-    await service.record((await service.guard("uc", "alice", NOW)).budgets, 30, now=NOW)
-
-    # `bob` is not `alice`, and looks at the same use case.
-    figures = await service.usage("uc", NOW, subject="bob", username="bob")
-
-    assert len(figures) == 1
-    assert figures[0]["measured_for"] == "alice"
-    # Alice's consumption, not zero and not an error: the row is about her, and it says so.
-    assert figures[0]["used_tokens"] == 30
-
-
 async def test_a_use_case_budget_is_readable_by_anyone_who_may_see_it(sessionmaker) -> None:
-    """The same shape one scope over, and the one an oversight role hits first: a `use_case` row
-    names nobody, so it cannot depend on the reader either."""
+    """A `use_case` row names nobody, so reading it cannot depend on who is asking.
+
+    The invariant behind this is `_scope_key`'s assertion, which is right for the *reservation*
+    path — a row that does not bind the caller there is a programming error — and produced a 500
+    out of a legitimate view when reading asked the question in the reservation's vocabulary.
+    `each_member` genuinely depends on the reader; this one must not.
+    """
     await _add(sessionmaker, id=1, limit_tokens=100)
     service = BudgetService(sessionmaker)
     await service.record((await service.guard("uc", "alice", NOW)).budgets, 12, now=NOW)
 
-    figures = await service.usage("uc", NOW, subject="somebody-else", username="somebody-else")
+    figures = await service.usage("uc", NOW, subject="somebody-else")
 
     assert figures[0]["used_tokens"] == 12

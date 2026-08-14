@@ -231,17 +231,6 @@ async def test_a_use_case_limit_is_shared_by_all_its_members(sessionmaker) -> No
         await service.check("uc", "carol")
 
 
-async def test_a_member_limit_only_binds_that_member(sessionmaker) -> None:
-    await _limit(sessionmaker, scope="member", subject="alice", limit_rpm=60, burst=1)
-    service = RateLimitService(sessionmaker, InMemoryTokenBucket(FakeClock()))
-
-    await service.check("uc", "alice")
-    with pytest.raises(RateLimited) as exc:
-        await service.check("uc", "alice")
-    assert "member" in exc.value.message
-    await service.check("uc", "bob")  # unaffected
-
-
 async def test_one_per_person_row_gives_every_caller_their_own_bucket(sessionmaker) -> None:
     """The per-head limit: one configured row, one bucket per caller, and nobody named in it.
 
@@ -263,15 +252,15 @@ async def test_one_per_person_row_gives_every_caller_their_own_bucket(sessionmak
     await service.check("uc", "bob")  # his own allowance, from that same single row
 
 
-async def test_a_throttled_member_does_not_drain_the_use_cases_allowance(sessionmaker) -> None:
+async def test_a_throttled_person_does_not_drain_the_use_cases_allowance(sessionmaker) -> None:
     """The guarantee in FR-4, stated the other way round.
 
-    A member being refused must cost the *use case* nothing. Debiting the wide bucket before
-    testing the narrow one turns one throttled member into a denial of service for everyone
-    else in the use case — the opposite of what a per-member limit is for.
+    Somebody being refused must cost the *use case* nothing. Debiting the wide bucket before
+    testing the narrow one turns one throttled caller into a denial of service for everyone else
+    in the use case — the opposite of what a per-head limit is for.
     """
     await _limit(sessionmaker, id=1, scope="use_case", limit_rpm=600, burst=5)
-    await _limit(sessionmaker, id=2, scope="member", subject="alice", limit_rpm=60, burst=1)
+    await _limit(sessionmaker, id=2, scope="each_member", limit_rpm=60, burst=1)
     service = RateLimitService(sessionmaker, InMemoryTokenBucket(FakeClock()))
 
     await service.check("uc", "alice")  # her one allowance
@@ -279,22 +268,25 @@ async def test_a_throttled_member_does_not_drain_the_use_cases_allowance(session
         with pytest.raises(RateLimited):
             await service.check("uc", "alice")  # refused, and must cost the use case nothing
 
-    # The use case had 5; alice legitimately used 1. Four must remain for everyone else.
-    for _ in range(4):
-        await service.check("uc", "bob")
-    with pytest.raises(RateLimited):
-        await service.check("uc", "bob")
+    # The use case had 5; alice legitimately used 1. Four must remain for everyone else — asked
+    # through **four different callers**, because with a per-head limit each of them has their own
+    # bucket, so the only thing that can refuse them here is the use case's.
+    for name in ("bob", "carol", "dan", "erin"):
+        await service.check("uc", name)
+    with pytest.raises(RateLimited) as exc:
+        await service.check("uc", "frank")
+    assert "use case" in exc.value.message
 
 
 async def test_nothing_is_debited_when_any_scope_refuses(sessionmaker) -> None:
     """The same property from the other direction: the narrow bucket must not be charged for a
     request the wide bucket is going to refuse anyway.
 
-    The use-case bucket is small and refills fast; the member bucket is large and refills so
+    The use-case bucket is small and refills fast; the per-head bucket is large and refills so
     slowly that advancing the clock cannot disguise a wrongful debit.
     """
     await _limit(sessionmaker, id=1, scope="use_case", limit_rpm=600, burst=1)  # 10/s, holds 1
-    await _limit(sessionmaker, id=2, scope="member", subject="alice", limit_rpm=6, burst=5)
+    await _limit(sessionmaker, id=2, scope="each_member", limit_rpm=6, burst=5)
     clock = FakeClock()
     service = RateLimitService(sessionmaker, InMemoryTokenBucket(clock))
 
@@ -316,9 +308,9 @@ async def test_nothing_is_debited_when_any_scope_refuses(sessionmaker) -> None:
 
 
 async def test_both_scopes_apply_and_the_stricter_one_wins(sessionmaker) -> None:
-    """FR-4: a member must not be able to spend the whole use case's allowance."""
+    """FR-4: one person must not be able to spend the whole use case's allowance."""
     await _limit(sessionmaker, id=1, scope="use_case", limit_rpm=600, burst=10)
-    await _limit(sessionmaker, id=2, scope="member", subject="alice", limit_rpm=60, burst=2)
+    await _limit(sessionmaker, id=2, scope="each_member", limit_rpm=60, burst=2)
     service = RateLimitService(sessionmaker, InMemoryTokenBucket(FakeClock()))
 
     await service.check("uc", "alice")
@@ -483,23 +475,3 @@ async def test_a_recovered_store_stops_reporting_the_fallback(sessionmaker) -> N
     assert bucket.degraded is False
     assert log.features == {}
     assert not log
-
-
-async def test_a_member_limit_written_by_name_binds_the_person_over_oidc(sessionmaker) -> None:
-    """The same repair as the budget's, in the other service — and it is the reason the rule lives
-    in one module: this needed no separate fix, only the name passed in.
-
-    An administrator types `alice`. Her API-key subject *is* `alice`; her OIDC subject is the
-    directory's user id, so the limit used to bind nothing at all for the traffic she generates
-    from a browser or a service account.
-    """
-    await _limit(sessionmaker, scope="member", subject="alice", limit_rpm=60, burst=1)
-    service = RateLimitService(sessionmaker, InMemoryTokenBucket(FakeClock()))
-    oidc_subject = "1361bd47-388d-554e-a6b4-93efdf9a6605"
-
-    await service.check("uc", oidc_subject, username="alice")
-    with pytest.raises(RateLimited):
-        await service.check("uc", oidc_subject, username="alice")
-
-    # And it is still a rule about one person: somebody else's name is somebody else.
-    await service.check("uc", "2fc398cc-717d-5350-a1db-c0d48a2bb4e1", username="bob")

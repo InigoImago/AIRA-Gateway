@@ -1,10 +1,17 @@
 """Who a limit or a budget applies to.
 
 Budgets (FRD-400) and rate limits (FRD-405) answer different questions — how much, and how fast —
-but they scope those answers identically: to a whole use case, or to one named member of it. That
-rule was written twice, in two slightly different shapes, and each stored its key in its own
-format. Adding a third scope (per API key, say) therefore meant finding and matching two places
-that had no reason to be discovered together.
+but they scope those answers identically: to a whole use case, or to every member of it
+separately. That rule was written twice, in two slightly different shapes, and each stored its key
+in its own format. Adding a scope therefore meant finding and matching two places that had no
+reason to be discovered together.
+
+**A third scope, `member`, named one person and was removed on the owner's decision (2026-08-14):**
+singling somebody out is not a governance decision this product wants to make easy. What remains
+says everything an administrator actually needs — a shared pot, or the same allowance for
+everybody — and neither substitutes for the other. Rows already carrying it are deleted by a
+migration in each plane rather than left in place, because a stored scope that no longer resolves
+is a rule that is enforced by nothing and visible in nothing.
 
 The rule lives here once. The two key formats stay separate and are documented below, because
 they differ for real reasons rather than by accident.
@@ -15,13 +22,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 USE_CASE = "use_case"
-MEMBER = "member"
 #: **Each member, individually** — one configured row, one counter per person.
 #:
-#: `MEMBER` names somebody: it is the answer to "this person in particular". `EACH_MEMBER` is the
-#: answer to "everybody, but separately", which is what an administrator wants far more often —
-#: a fair share per head, without listing the heads. Configured once, it applies to whoever turns
-#: up, including people who joined the use case afterwards.
+#: The answer to "everybody, but separately": a fair share per head, without listing the heads.
+#: Configured once, it applies to whoever turns up, including people who join afterwards.
 #:
 #: The distinction that makes it not merely a convenience: a `USE_CASE` budget is a **shared pot**
 #: — the first caller to arrive can spend all of it — while this one bounds every person the same
@@ -37,40 +41,32 @@ class Scope:
     member: str | None = None
 
     @classmethod
-    def applying(
-        cls,
-        *,
-        scope: str,
-        use_case: str,
-        subject: str,
-        caller: str | None,
-        caller_username: str | None = None,
-    ) -> Scope | None:
+    def applying(cls, *, scope: str, use_case: str, caller: str | None) -> Scope | None:
         """The scope a configured row describes — or ``None`` if it does not bind this caller.
 
-        ``subject`` is the member named in the configuration; ``caller`` is who is making the
-        request, and ``caller_username`` is the name that caller is known by where the credential
-        carries one. A use-case row binds everyone; a member row binds only its own subject, and
-        binds nobody at all when the request carries no subject.
+        ``caller`` is who is making the request. A use-case row binds everyone; an each-member row
+        binds the caller as an individual, and binds nobody at all when the request carries no
+        subject.
 
-        This is the single place a new scope is added: give it a branch here and both the budget
-        and the rate-limit path follow, instead of one of them being forgotten.
+        This is the single place a scope is added: give it a branch here and both the budget and
+        the rate-limit path follow, instead of one of them being forgotten.
 
-        **Why a member row matches two names.** The two credentials answer "who is this" in
-        different alphabets: an API key's subject is its owner's username, an OIDC token's is the
-        directory's user id. An administrator writing a rule about a person types the name — so
-        the rule bound API-key traffic and, for the same person over OIDC, silently bound nothing.
-        Measured on a live stack: a limit of one request, four calls, four 200s. A rule that is
-        configured, displayed and inert is worse than an absent one (`FRD-125`).
+        **A person using two credentials is two callers here, and that is a known limit.** An API
+        key's subject is its owner's username; an OIDC token's is the directory's user id. So the
+        same person browsing and calling with a key gets two per-head allowances rather than one.
+        The removed ``member`` scope was the only place the two alphabets were ever reconciled —
+        it matched a typed name against either — and nothing reconciles them now. Recorded here
+        rather than lost with the test that used to cover it: it is a property of `each_member`,
+        it was true before that scope was removed, and the fix (if it is ever wanted) is a stable
+        identity for a person across credentials rather than a scope that names one.
 
-        The **key stays the row's own subject** whichever name matched, so a person is one counter
-        rather than two, and every counter already in ``budget_usage`` keeps being found — that
-        shape is stored, and changing it would not lose the rows, it would stop finding them.
+        A row's ``subject`` and the name a caller is known by are **no longer parameters**: they
+        existed for the removed ``member`` scope, which matched a typed name against either of the
+        two alphabets a credential can answer "who is this" in. Nothing reads them now, and a
+        parameter nothing reads is a rule the code appears to have and does not.
         """
         if scope == USE_CASE:
             return cls(use_case)
-        if scope == MEMBER and subject and subject in (caller, caller_username):
-            return cls(use_case, subject)
         if scope == EACH_MEMBER and caller:
             # The row names nobody; the **caller** is the subject. So one configured row produces a
             # counter per person, under exactly the key a row naming that person would have used —

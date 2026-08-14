@@ -42,5 +42,5 @@ async def usage(
     # reader's own subject is the only one they may be shown: reporting somebody else's here would
     # make a consumption bar a way of watching a named colleague, which no role asked for and the
     # requests view (`FRD-505`) grants deliberately and records.
-    figures = await service.usage(use_case, subject=principal.subject, username=principal.username)
+    figures = await service.usage(use_case, subject=principal.subject)
     return JSONResponse({"use_case": use_case, "usage": figures})

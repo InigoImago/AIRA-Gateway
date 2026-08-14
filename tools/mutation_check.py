@@ -672,13 +672,12 @@ MUTATIONS = [
         "M15",
         "budgets are still enforced when Redis is unreachable",
         "gateway/src/aira_gateway/budgets/service.py",
-        # Re-anchored: both calls gained `username` when a member rule learned to match the name a
-        # caller is known by as well as their subject. The property is unchanged.
-        "            await self._check_only(session, budgets, now, subject, username)\n"
-        "        return Reservation(budgets=budgets, subject=subject, username=username,"
-        " atomic=False)",
-        "        return Reservation(budgets=budgets, subject=subject, username=username,"
-        " atomic=False)",
+        # Re-anchored twice: once when a member rule learned to match a caller's name, and again
+        # when that scope was removed (2026-08-14) and `username` went with it. The property is
+        # unchanged both times — without Redis the budget is still checked, just not atomically.
+        "            await self._check_only(session, budgets, now, subject)\n"
+        "        return Reservation(budgets=budgets, subject=subject, atomic=False)",
+        "        return Reservation(budgets=budgets, subject=subject, atomic=False)",
         f"{BUDGET_RESERVATION} {BUDGET_SERVICE}",
     ),
     Mutation(
@@ -790,14 +789,6 @@ MUTATIONS = [
         "gateway/tests/test_consumer_apply.py",
     ),
     Mutation(
-        "S1",
-        "a member-scoped row binds only its own subject",
-        "gateway/src/aira_gateway/scopes.py",
-        "        if scope == MEMBER and subject and subject in (caller, caller_username):",
-        "        if scope == MEMBER and subject:",
-        "gateway/tests/test_scopes.py gateway/tests/test_budget_service.py gateway/tests/test_ratelimit.py",
-    ),
-    Mutation(
         "S8",
         "a per-person row counts each caller separately, not everybody together",
         "gateway/src/aira_gateway/scopes.py",
@@ -818,27 +809,12 @@ MUTATIONS = [
         "S9",
         "a per-person budget is accounted under the caller, not under the row",
         "gateway/src/aira_gateway/budgets/service.py",
-        "        caller=caller or budget.subject,",
-        "        caller=budget.subject,",
+        # Re-anchored when the scope naming an individual was removed (2026-08-14): the fallback
+        # to the row's own subject went with it, and the property — `each_member` keys on **who is
+        # asking** — is what remains and what this still guards.
+        "        caller=caller,",
+        "        caller=None,",
         "gateway/tests/test_budget_service.py",
-    ),
-    Mutation(
-        "S10",
-        "a rule written about a person by name finds them whichever credential they used",
-        "gateway/src/aira_gateway/scopes.py",
-        "        if scope == MEMBER and subject and subject in (caller, caller_username):",
-        "        if scope == MEMBER and subject and subject == caller:",
-        "gateway/tests/test_scopes.py gateway/tests/test_budget_routes.py "
-        "gateway/tests/test_ratelimit.py",
-    ),
-    Mutation(
-        "S11",
-        "the name the caller is known by reaches the controls that were written about it",
-        "gateway/src/aira_gateway/auth/attribution.py",
-        "    username: str | None = None",
-        "    username: str | None = None\n\n    def __post_init__(self) -> None:\n"
-        "        object.__setattr__(self, 'username', None)",
-        "gateway/tests/test_budget_routes.py",
     ),
     Mutation(
         "S2",

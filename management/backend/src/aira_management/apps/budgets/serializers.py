@@ -27,15 +27,12 @@ class BudgetSerializer(serializers.ModelSerializer[Budget]):
         read_only_fields = ["id", "created_at", "updated_at"]
 
     def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
-        scope = attrs.get("scope")
-        subject = (attrs.get("subject") or "").strip()
-        if scope == Budget.MEMBER and not subject:
-            raise serializers.ValidationError({"subject": "Required for member-scoped budgets."})
-        if scope in (Budget.USE_CASE, Budget.EACH_MEMBER):
-            # Neither names a person, so a subject sent with one is silently meaningless — cleared
-            # rather than stored, or the uniqueness constraint would let the same rule be created
-            # twice under two different empty-ish subjects.
-            subject = ""
+        # **No scope names a person any more** (2026-08-14), so a subject sent with one is
+        # meaningless — cleared rather than stored, or the uniqueness constraint would let the same
+        # rule be created twice under two different empty-ish subjects. Cleared rather than refused
+        # because a client that still sends the field is asking for something harmless, and an
+        # error would be about a word rather than about the rule.
+        subject = ""
         attrs["subject"] = subject
         if (
             attrs.get("limit_cost") is None

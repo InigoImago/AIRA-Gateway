@@ -42,7 +42,6 @@
           >
             <option value="use_case">The whole use case — one shared rate</option>
             <option value="each_member">Each person — the same rate for everybody</option>
-            <option value="member">One named person</option>
           </select>
           <span class="field__hint">
             @if (rlScope() === 'use_case') {
@@ -55,51 +54,6 @@
             }
           </span>
         </div>
-        @if (rlScope() === 'member') {
-          <div class="field">
-            <label for="rl-subject">Username</label>
-            <input
-              id="rl-subject"
-              name="rl-subject"
-              list="rl-members"
-              [ngModel]="rlSubject()"
-              (ngModelChange)="rlSubject.set($event)"
-              placeholder="username"
-              autocomplete="off"
-              data-testid="rl-subject"
-            />
-            <!--
-              A `datalist`, deliberately, and not a select: it **suggests** the people this use case
-              has while still accepting anything typed. A rule names a *subject*, and access can
-              come through a Keycloak group — somebody granted that way belongs to no membership row
-              at all (`FRD-209`), so a picker over this list would be narrower than the rule it
-              fills in. `FRD-604` reached the same conclusion for a key's owner and typed it.
-            -->
-            <datalist id="rl-members">
-              @for (member of members(); track member.username) {
-                <option [value]="member.username"></option>
-              }
-            </datalist>
-            <span class="field__hint">
-              The name they sign in with — it matches their browser traffic and any API key they
-              own, but nobody else's key even when used on their behalf. Start typing to pick from
-              this use case's people; a name that is not in the list is accepted too, because access
-              can come through a group and nobody granted that way appears in it.
-            </span>
-            @if (unmatchedSubject()) {
-              <span
-                class="field__hint field__hint--error"
-                data-testid="rl-subject-unmatched"
-                role="status"
-              >
-                No member of this use case is called <strong>{{ rlSubject() }}</strong
-                >. That is correct for somebody who reaches it through a Keycloak group — they
-                appear in no membership row — and it is also what a typo looks like. A rule naming
-                nobody saves cleanly and applies to nothing.
-              </span>
-            }
-          </div>
-        }
         <div class="field">
           <label for="rl-rpm">Requests per minute</label>
           <input
@@ -177,17 +131,6 @@
           <tr>
             <td class="break-anywhere">
               {{ labelFor(limit) }}
-              <!--
-                A rule naming somebody this use case has no member row for is **inert until that
-                name turns up** — and a list that showed it identically to a working one could not
-                be audited. Said as what the console *knows*, since a group-granted caller
-                legitimately appears in no row (`FRD-209`); the access panel words it the same way.
-              -->
-              @if (reachesNobodyKnown(limit.scope, limit.subject)) {
-                <span class="badge badge--muted" [attr.data-testid]="'rl-unknown-' + limit.id">
-                  no member by that name
-                </span>
-              }
             </td>
             <td>{{ limit.limit_rpm }}</td>
             <td>{{ effectiveBurst(limit) }}</td>

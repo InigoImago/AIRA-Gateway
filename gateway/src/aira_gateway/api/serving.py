@@ -166,7 +166,6 @@ async def guard_before_work(request: Request, *, units: int = 1) -> None:
     use_case = getattr(attribution, "use_case", None)
     subject = getattr(attribution, "subject", None)
     credential = getattr(attribution, "credential", None)
-    username = getattr(attribution, "username", None)
 
     # First of all: a caller who has been stopped is stopped, and must not pay for a classifier
     # on the way to being told (`FRD-503` FR-3). Same argument that moved rate limiting here.
@@ -188,9 +187,8 @@ async def guard_before_work(request: Request, *, units: int = 1) -> None:
         subject,
         units,
         extra=[per_minute(t.key, t.limit_rpm, label=t.label) for t in throttles],
-        username=username,
     )
-    await budgets.refuse_if_exhausted(use_case, subject, username=username)
+    await budgets.refuse_if_exhausted(use_case, subject)
     request.state.early_gate_taken = True
 
 
@@ -246,7 +244,7 @@ async def enforce_pre_dispatch(
     )
     # `app.state` is untyped, so the annotation is what states the contract the route relies on.
     reservation: Reservation = await budgets_of(request).guard(
-        use_case, subject, estimated=expected, username=getattr(attribution, "username", None)
+        use_case, subject, estimated=expected
     )
     return reservation
 
@@ -1091,7 +1089,6 @@ async def record_pipeline_calls(request: Request, trail: AuditTrail) -> None:
                 getattr(attribution, "subject", None),
                 call.usage.total_tokens,
                 cost_nanos=cost,
-                username=getattr(attribution, "username", None),
             )
     except Exception:  # noqa: BLE001 — see above
         _log.error("pipeline_call_not_recorded", operation=trail.operation, exc_info=True)

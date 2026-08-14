@@ -63,29 +63,6 @@ test.describe('Rate limits', () => {
     // Zero would switch the use case off rather than configure it.
     await page.fill('#rl-rpm', '0');
     await expect(page.locator('.field__hint--error')).toContainText('At least 1');
-
-    await page.selectOption('#rl-scope', 'member');
-    await page.fill('#rl-rpm', '60');
-    await expect(page.locator('.field__hint--error')).toContainText('needs a username');
-  });
-
-  test('a member limit names the member it binds', async ({ page }) => {
-    await login(page, USERS.globalAdmin);
-    const slug = uniqueSlug('member-rate');
-    await createUseCase(page, slug, 'Member rate probe');
-
-    await page.goto(`/use-cases/${slug}?tab=rate-limits`);
-    await page.click('button:has-text("Add rate limit")');
-    await page.selectOption('#rl-scope', 'member');
-    await page.fill('#rl-subject', 'ucuser');
-    await page.fill('#rl-rpm', '30');
-    await page.fill('#rl-burst', '5');
-    await (await submitOfOpenForm(page)).click();
-
-    const row = page.locator('table tbody tr').first();
-    await expect(row).toContainText('ucuser');
-    await expect(row).toContainText('30');
-    await expect(row).toContainText('5');
   });
 
   test('a limit can be removed again', async ({ page }) => {

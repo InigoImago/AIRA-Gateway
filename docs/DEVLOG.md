@@ -5,6 +5,49 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The scope that named one person is gone
+
+Owner's decision, in both places it existed — budgets and rate limits: *"take the restriction to one
+person out entirely; it does not look tolerant or democratic. Just the whole use case, or everybody
+in it."* What is left says what an administrator actually needs — a **shared pot**, where the first
+caller to arrive can spend it, or **a fair share per head**, which needs no names and keeps applying
+to whoever joins.
+
+**The rows go with it, and that is the part worth arguing.** `Scope.applying` no longer resolves
+`member`, so a surviving row would be **enforced by nothing and visible in nothing** — it sits in
+the table, matches no caller, and the console has no option that could show it. This project has a
+name for that shape. So both planes delete: Management in a migration, which is where the decision
+lives, and the gateway in its own, so an installation whose relay has not run is not left enforcing
+something nobody can see. The gateway also drops the counters those budgets accumulated: a
+`budget_usage` row keyed to a scope nothing resolves can never be read again and would outlive
+every retention clock this system has.
+
+**Deleted rather than widened to `each_member`.** A cap somebody set for one person is not a cap
+for everybody, and converting would invent a governance decision nobody made. Measured before and
+after: 14 rows carried it, three of them in real demo use cases; afterwards, none in either plane
+and no orphaned counters.
+
+The removal took two parameters with it. `subject` and `caller_username` existed **only** for that
+scope — the second because a rule typed as a name had to match either of the two alphabets a
+credential answers "who is this" in — and with it gone they were read by nothing, threaded through
+two services and four call sites. A parameter nothing reads is a rule the code appears to have and
+does not, so they are gone too.
+
+**What that loses is written down rather than lost with the tests.** The named scope was the only
+place those two alphabets were ever reconciled, so one person using both a browser and an API key
+now has two per-head allowances instead of one. That was already true of `each_member` — it has
+always keyed on the caller — but it was covered by a test of the named scope, and deleting the test
+would have deleted the knowledge. It is in `aira_gateway.scopes` and `FRD-400` §2.2 now, with the
+honest fix named: a stable identity for a person across credentials, not a scope that names one.
+
+Everything else followed: the option, the field and its suggestions, the validation, the labels,
+three mutation properties (`S1`, `S10`, `S11` — a mutation kept against a deleted rule reports green
+about nothing), the showcase seed's axes, and the tests that used `member` merely as a convenient
+second scope, which were rewritten on `each_member` because the property they carry — FR-4's
+all-or-nothing decision across scopes — is untouched.
+
+---
+
 ## Two buttons at zero, and a name nobody could look up
 
 Both reported while adding a rate limit, and both larger than the screen they were noticed on.

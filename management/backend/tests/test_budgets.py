@@ -73,7 +73,14 @@ def test_member_budget_requires_subject() -> None:
     assert resp.status_code == 400
 
 
-def test_member_budget_created_with_subject() -> None:
+def test_a_budget_naming_one_person_is_refused() -> None:
+    """The `member` scope was removed on the owner's decision (2026-08-14): singling somebody out
+    is not a governance decision this product wants to make easy.
+
+    Refused rather than quietly stored, and refused **by the choices** rather than by a hand-written
+    check — a value outside the field's vocabulary is exactly what `choices` is for, and a second
+    validator would be a second place for the two to disagree.
+    """
     admin = _user("admin1", "global-admin")
     _make_uc(admin, "demo-uc")
     resp = _client(admin).post(
@@ -81,8 +88,9 @@ def test_member_budget_created_with_subject() -> None:
         {"scope": "member", "subject": "bob", "period": "day", "limit_requests": 10},
         format="json",
     )
-    assert resp.status_code == 201
-    assert Budget.objects.get(use_case__slug="demo-uc", subject="bob").limit_requests == 10
+    assert resp.status_code == 400, resp.content
+    assert "scope" in str(resp.json())
+    assert not Budget.objects.filter(use_case__slug="demo-uc").exists()
 
 
 def test_a_per_person_budget_names_nobody(captured_events) -> None:
