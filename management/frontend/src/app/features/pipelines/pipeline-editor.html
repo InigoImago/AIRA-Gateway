@@ -342,6 +342,23 @@
               <p class="muted">
                 The classifier reads system + user text and picks one category below.
               </p>
+              <div class="field">
+                <label for="insp-route-notice">Note to the caller</label>
+                <input
+                  id="insp-route-notice"
+                  [ngModel]="step.config.notice || ''"
+                  (ngModelChange)="setStepField(selectedIndex(), 'notice', $event)"
+                  data-testid="route-notice"
+                  placeholder="Classified as {category}; answered by {model}."
+                />
+                <span class="field__hint">
+                  Put in front of the answer, only when a category actually matched — nothing
+                  matched means there is nothing to say. Use <code>&#123;category&#125;</code> and
+                  <code>&#123;model&#125;</code>; anything else stays as you typed it, braces
+                  included. Left empty, nothing is added. It cannot be shown on an answer with no
+                  plain text — a JSON document or a function call — and that case is recorded.
+                </span>
+              </div>
 
               @for (cat of step.config.categories || []; track $index) {
                 <div class="category">

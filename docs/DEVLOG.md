@@ -47,6 +47,23 @@ Measured against `qwen3:0.6b`, which replaced one name and left another: **the c
 as good as the model behind it**, which is why the field says *trusted model*. Same finding
 `FRD-125` recorded for the LLM injection filter on the same model.
 
+**And then the same thing one step over**, asked immediately after: can routing say which model the
+classification chose? It is the same notice machinery, with one addition — the sentence has to name
+things the operator cannot know while writing it, so `{category}` and `{model}` are substituted.
+**Explicitly, not with `str.format`**: the template comes out of a text box, and a stray brace — a
+JSON example, an unclosed placeholder — makes `format` raise. A notice that crashes the request it
+describes is worse than one that prints a brace, and an unknown placeholder is left standing so a
+typo reads as one instead of vanishing. A notice is given only where a category actually matched:
+naming one the router did not choose would be a confident statement about a decision never taken.
+
+**Measuring that found an older gap.** A live request whose classifier matched no category left an
+**empty decision list** — identical to a row where no router was configured at all. That is the hole
+`FRD-125` closed for the filter ("ran and passed" is not "no filter") and `J17` for "could not be
+asked"; the third case, *asked and matched nothing*, still recorded nothing. It does now, and it is
+kept apart from *matched, model unchanged* — those send a reader to different places: one is a
+working router whose category maps to the model already in use, the other is a classifier or a
+category list to look at.
+
 The step type now exists in three places — the gateway runs it, Management validates it, the
 console offers it — so the three lists are compared **in both directions**, each shown to fail
 alone. `P10`–`P14`; 411 mutation properties.

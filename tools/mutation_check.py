@@ -3813,6 +3813,14 @@ MUTATIONS = [
         NOTICE,
     ),
     Mutation(
+        "P15",
+        "a routing notice is only given where a category actually matched",
+        "gateway/src/aira_gateway/pipeline/engine.py",
+        "            if template and category\n            else None",
+        "            if template\n            else None",
+        PII,
+    ),
+    Mutation(
         "QA31",
         "a pipeline's own model call is filed under the surface that caused it",
         "gateway/src/aira_gateway/api/serving.py",

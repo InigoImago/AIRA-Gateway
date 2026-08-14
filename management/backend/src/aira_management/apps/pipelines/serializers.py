@@ -97,6 +97,9 @@ def _validate_step_config(step_type: str, config: dict[str, Any]) -> None:
                 f"not '{policy}'."
             )
     elif step_type == "model_route":
+        # The sentence the caller is told about the classification (`FRD-309`). Bounded like every
+        # other operator-authored string here — it is put in front of somebody else's answer.
+        _check_text(config, "notice")
         categories = config.get("categories", [])
         if not isinstance(categories, list) or len(categories) > MAX_CATEGORIES:
             raise serializers.ValidationError(

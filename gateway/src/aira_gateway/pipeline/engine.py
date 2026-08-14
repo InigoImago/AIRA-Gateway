@@ -109,6 +109,22 @@ class StepEvaluation:
     rewrote: tuple[str, str] | None = None
 
 
+def _filled(template: str, **values: str) -> str:
+    """A notice with ``{model}`` / ``{category}`` filled in.
+
+    An explicit replacement rather than `str.format`: the template is written by an operator in a
+    text box, and a stray brace — a JSON example, a smiley, an unclosed placeholder — makes
+    `format` raise. A notice that crashes the request it is describing is worse than one that
+    prints a brace, and an operator has no way to know they wrote a format string.
+
+    An unknown placeholder is left standing rather than blanked, so `{modl}` reads as the typo it
+    is instead of quietly disappearing.
+    """
+    for name, value in values.items():
+        template = template.replace("{" + name + "}", value)
+    return template
+
+
 def _with_user_text(request: CanonicalRequest, text: str) -> CanonicalRequest:
     """The request with the **last user message's text** replaced.
 
@@ -361,6 +377,17 @@ class PipelineEngine:
                 decision={"step": "model_route", "action": "not_asked", "why": "classifier_failed"},
                 request=request.model_copy(update={"model": fallback}) if retarget else None,
             )
+        # What the caller is told about the classification, in the operator's own words and only
+        # where a category was actually matched (`FRD-309`). Nothing matched means there is nothing
+        # to say — a sentence naming a category the router did not choose would be a confident
+        # statement about a decision that was never taken.
+        template = str(config.get("notice") or "").strip()
+        notice = (
+            _filled(template, category=category or "", model=target or request.model)
+            if template and category
+            else None
+        )
+
         if target and target != request.model:
             return StepEvaluation(
                 type="model_route",
@@ -374,12 +401,29 @@ class PipelineEngine:
                 },
                 call=call,
                 request=request.model_copy(update={"model": target}),
+                notice=notice,
             )
+        # **A router that ran leaves a decision, even when it changed nothing.** It did not, and
+        # the row was then identical to one where no router was configured at all — the same hole
+        # `FRD-125` closed for the filter ("ran and passed" vs "no filter") and `J17` closed for
+        # "could not be asked". Found by measuring: a live request whose classifier matched no
+        # category produced an empty decision list and nothing to say why.
+        #
+        # The two are kept apart, because they send a reader to different places: a category that
+        # matched and simply maps to the model already in use is a working router, and matching
+        # nothing is a classifier or a category list to look at.
         return StepEvaluation(
             type="model_route",
             action="unchanged",
             detail={"category": category, "model": request.model},
+            decision={
+                "step": "model_route",
+                "action": "unchanged",
+                "category": category or "",
+                "why": "matched" if category else "no_category_matched",
+            },
             call=call,
+            notice=notice,
         )
 
     async def _evaluate_pii_filter(

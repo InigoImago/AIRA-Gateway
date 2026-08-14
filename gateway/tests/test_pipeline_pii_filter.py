@@ -252,3 +252,89 @@ def test_text_needing_json_escaping_survives_the_substitution() -> None:
 
     assert rewritten is not None
     assert rewritten["contents"][0]["parts"][0]["text"] == clean
+
+
+# == the same mechanism, one step over: saying which model the classification chose ==============
+
+
+async def test_a_router_can_say_which_model_the_classification_chose() -> None:
+    """Asked for after the redactor: *"can routing also write at the end that this model was
+    chosen because of the classification, or that the request was rerouted?"*
+
+    The notice machinery is the same; what routing adds is that the sentence has to name things
+    the operator cannot know when writing it. Hence placeholders, and hence an explicit
+    substitution rather than `str.format`: the template comes out of a text box, and a stray brace
+    would make `format` raise — a notice that crashes the request it describes is worse than one
+    that prints a brace.
+    """
+    from aira_gateway.pipeline.config import Pipeline, PipelineStep, StepType
+
+    class _Router:
+        is_test_double = True
+
+        def models(self):  # noqa: ANN202
+            from aira_gateway.upstreams.base import UpstreamModel
+
+            return [UpstreamModel("judge", "judge", ("generateContent",))]
+
+        async def generate(self, request):  # noqa: ANN001, ANN202
+            from aira_gateway.core.canonical import CanonicalResponse, CanonicalUsage
+
+            return CanonicalResponse(
+                model="judge",
+                text="code",
+                usage=CanonicalUsage(prompt_tokens=1, completion_tokens=1),
+            )
+
+        async def stream_generate(self, request):  # noqa: ANN001, ANN201
+            raise NotImplementedError
+            yield  # pragma: no cover
+
+        async def embed(self, request: object) -> list[list[float]]:
+            return [[0.0]]
+
+    pipeline = Pipeline(
+        steps=(
+            PipelineStep(
+                type=StepType.MODEL_ROUTE,
+                config={
+                    "model": "judge",
+                    "categories": [{"name": "code", "model": "coder-1"}],
+                    "notice": "Angefragt als {category}, beantwortet von {model}.",
+                },
+            ),
+        ),
+        fallback_models=(),
+    )
+    outcome = await _engine(_Router()).run(pipeline, _request(text="write me a function"))
+
+    assert outcome.request.model == "coder-1"
+    assert outcome.notices == ["Angefragt als code, beantwortet von coder-1."]
+
+
+async def test_a_template_with_a_stray_brace_is_printed_rather_than_raised() -> None:
+    """The operator wrote a sentence, not a format string, and has no way to know the difference."""
+    from aira_gateway.pipeline.engine import _filled
+
+    assert _filled("Kosten { ca. 5 } für {model}", model="m-1") == "Kosten { ca. 5 } für m-1"
+    # An unknown placeholder stays visible, so a typo reads as one instead of vanishing.
+    assert _filled("von {modl}", model="m-1") == "von {modl}"
+
+
+async def test_no_routing_notice_where_nothing_matched() -> None:
+    """A sentence naming a category the router did not choose is a confident statement about a
+    decision that was never taken — and `{category}` would render empty, which reads as a bug."""
+    from aira_gateway.pipeline.config import Pipeline, PipelineStep, StepType
+
+    pipeline = Pipeline(
+        steps=(
+            PipelineStep(
+                type=StepType.MODEL_ROUTE,
+                config={"default_model": "d-1", "notice": "Klassifiziert als {category}."},
+            ),
+        ),
+        fallback_models=(),
+    )
+    outcome = await _engine(_Redactor()).run(pipeline, _request())
+
+    assert outcome.notices == []

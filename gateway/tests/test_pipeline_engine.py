@@ -156,10 +156,32 @@ async def test_router_missing_classifier_model_uses_default() -> None:
 
 
 async def test_router_no_change_when_category_maps_to_same_model() -> None:
+    """No re-route — and it still says it ran.
+
+    The decision list used to be **empty** here, which made this row identical to one where no
+    router was configured at all. That is the hole `FRD-125` closed for the filter and `J17` for
+    "could not be asked"; found in this branch by watching a live request whose classifier matched
+    a category and leave nothing behind.
+    """
     pipeline = _router({"model": "router", "categories": [{"name": "same", "model": "mock-1"}]})
     outcome = await _engine(_Guard("router", "same")).run(pipeline, _request(model="mock-1"))
     assert outcome.request.model == "mock-1"
-    assert outcome.decisions == []
+    assert outcome.decisions == [
+        {"step": "model_route", "action": "unchanged", "category": "same", "why": "matched"}
+    ]
+
+
+async def test_a_router_that_matched_nothing_is_distinguishable_from_one_that_matched() -> None:
+    """Two different things to look at: a working router whose category maps to the model already
+    in use, and a classifier or a category list that needs attention."""
+    pipeline = _router({"model": "router", "categories": [{"name": "code", "model": "c-1"}]})
+    outcome = await _engine(_Guard("router", "nothing-like-a-category")).run(
+        pipeline, _request(model="mock-1")
+    )
+
+    decision = next(d for d in outcome.decisions if d["step"] == "model_route")
+    assert decision["why"] == "no_category_matched"
+    assert decision["category"] == ""
 
 
 async def test_llm_filter_uses_default_model_when_unspecified() -> None:
