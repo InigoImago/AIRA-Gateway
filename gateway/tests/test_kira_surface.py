@@ -739,7 +739,13 @@ async def test_a_blank_embedding_text_is_refused(text: object, why: str) -> None
         response = client.post(f"{BASE}/embed", json={"text": text, "model_id": 1004})
 
     assert response.status_code == 422, f"{why}: {response.text[:200]}"
-    assert response.json()["code"], response.text[:200]
+
+    # **The contract's own code**, not the generic one. This was first written as a schema
+    # validator, which makes any refusal a `VALIDATION_ERROR` — and the contract has a code for
+    # exactly this case, which a migrating client's error handling switches on. Caught by the
+    # integration layer against the running stack, because the hermetic version of this assertion
+    # only asked whether *some* code was present.
+    assert response.json()["code"] == "EMPTY_EMBEDDING_INPUT", response.text[:200]
 
 
 async def test_a_list_of_real_texts_is_still_one_embedding() -> None:

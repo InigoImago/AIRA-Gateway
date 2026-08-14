@@ -5,6 +5,55 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The half of the group chain nobody had tested
+
+Asked whether the tests cover assigning a group to a use case, **adding people to that group**, and
+then checking their access with both an API key and a Keycloak bearer token. Checked rather than
+answered: the bearer half was covered and the other two were not.
+
+What existed used service accounts **already in** a department, written into the realm file. That
+cannot show the promise the feature is actually built on — AIRA never writes to a directory, so who
+is in a group stays the identity provider's answer, and a grant made today has to reach a person
+added tomorrow with nothing changing here. And nothing asserted that such a person can **issue an
+API key** at all, although `is_member` counts a group grant deliberately (`FRD-209`) — the key
+being what a client actually uses.
+
+Both are now one test that performs the sequence an administrator performs: grant a department that
+reaches nobody, put somebody in it, mint a fresh token, call with it, issue a key as that person,
+call with the key. Each step is asserted before the next, so a failure names the link that broke.
+The **new token** is itself the property — group claims are baked in at issue time, the mirror of
+the hermetic rule that leaving a group takes access away *on the next token*.
+
+The second test is the removal, and the two halves are deliberately **not symmetrical**: a bearer
+token stops working on the next token, and an API key keeps working, because it is bound to the use
+case rather than to the group. Losing the right to issue one is not the same event as the ones
+already issued becoming invalid. Written down because the opposite is the intuitive expectation —
+an administrator taking somebody out of a department will assume their keys went too — and because
+the trail names the key's owner (`FRD-604`), which is what makes that survivable.
+
+The test writes to the realm, which nothing in AIRA does, and removes the group again in a
+`finally`: a suite that leaves grants behind in somebody's directory is doing the thing this system
+refuses to do. Proved by deleting the group-grant branch of `is_member` and rebuilding Management —
+red, then green on restore.
+
+**Running the whole integration suite then found five failures, and one of them was a real defect
+of mine from the day before.** Yesterday's blank-embedding rule was written as a **schema**
+validator, and a schema violation becomes `VALIDATION_ERROR` — while the contract has a code for
+exactly this case, `EMPTY_EMBEDDING_INPUT`, which a migrating client's error handling switches on.
+Right behaviour, wrong vocabulary: the compatibility failure this surface exists to prevent, in the
+change that was meant to improve compatibility. It lives in the mapper now, raising the contract's
+own code. The hermetic test could not see it because it asserted that *some* code was present.
+
+The other four were stale expectations from the deliberate `404 → 422` change, in files I had not
+run — *a subset that passes is not a suite that passes*, again, and the integration layer is where
+that gets found. Moving the rule then tripped the mutation-anchor guard (`QA12` pointed at the line
+that moved), which is that check working as built. And re-reading my own edit caught something no
+test would have: the join had picked up `TEXT_PART_SEPARATOR` on the way, the **chat** rule — a
+newline between embedding parts would have changed every vector to a number that is nearly the same
+and answers a different question.
+
+---
+
 ## Half the state kept, half dropped
 
 Reported from the console: open the AI Studio listing, click *Catalogue…*, cancel the editor, open

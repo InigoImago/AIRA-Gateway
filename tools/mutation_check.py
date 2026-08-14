@@ -3571,8 +3571,12 @@ MUTATIONS = [
         "QA12",
         "a list of texts is one embedding, as the predecessor answers it",
         "gateway/src/aira_gateway/api/kira/mapping.py",
-        '    text = request.text if isinstance(request.text, str) else "".join(request.text)\n    return CanonicalEmbeddingRequest(model=model, texts=[text], task_type=request.task_type)',
-        "    texts = [request.text] if isinstance(request.text, str) else list(request.text)\n    return CanonicalEmbeddingRequest(model=model, texts=texts, task_type=request.task_type)",
+        # Re-anchored (2026-08-14): the blank-entry refusal moved into this mapper, so the join
+        # is now its last two lines rather than its first. The property is unchanged — a list is
+        # **one** embedding, and a mutation that returns one vector per element is the reading
+        # `FRD-113` §11 assumed and the contract disproved.
+        '        model=model, texts=["".join(entries)], task_type=request.task_type',
+        "        model=model, texts=entries, task_type=request.task_type",
         KIRA_COMPAT,
     ),
     Mutation(

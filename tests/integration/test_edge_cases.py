@@ -570,7 +570,10 @@ async def test_batch_embedding_bounds_hold(
         ({}, (422,)),
         ({"request": {"parts": [{"text": "hi"}]}}, (422,)),
         ({"model_id": 9999999}, (422,)),
-        ({"request": {"parts": [{"text": "hi"}]}, "model_id": 9999999}, (404,)),
+        # `422`, the contract's own status for a model that is not there — it was `404` here and
+        # written down as a deliberate deviation until the predecessor's suite was run against this
+        # surface (2026-08-13).
+        ({"request": {"parts": [{"text": "hi"}]}, "model_id": 9999999}, (422,)),
         ({"request": {"parts": [{"text": "hi"}]}, "model_id": "nine"}, (422,)),
         ({"request": {"parts": [{"text": "hi"}]}, "model_id": -1}, (404, 422)),
         ({"request": {"parts": []}, "model_id": 9001}, (400, 404)),

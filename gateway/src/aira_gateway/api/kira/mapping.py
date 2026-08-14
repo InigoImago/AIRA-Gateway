@@ -28,6 +28,7 @@ from aira_gateway.core.canonical import (
 )
 from aira_gateway.core.schema import SchemaBounds
 from aira_gateway.core.schema import parse as parse_schema
+from aira_gateway.embedding import EMPTY_EMBEDDING_INPUT, EmbeddingRejected
 from aira_gateway.thinking import mode_from
 
 #: What the predecessor puts between two text parts of one message.
@@ -185,5 +186,32 @@ def to_embedding(request: schemas.EmbeddingRequest, model: str) -> CanonicalEmbe
     # the wrong one. A caller who wants a centroid computes it from n separate calls — their
     # arithmetic to choose (`ADR-0013`), and the Gemini surface's `batchEmbedContents` is where it
     # is available.
-    text = request.text if isinstance(request.text, str) else "".join(request.text)
-    return CanonicalEmbeddingRequest(model=model, texts=[text], task_type=request.task_type)
+    entries = [request.text] if isinstance(request.text, str) else list(request.text)
+
+    # **A blank entry is refused, not joined away.** The parts become one text, and a join absorbs
+    # an empty element without trace: `["ok", ""]` embedded exactly like `["ok"]`, answered 200, and
+    # the caller had no way to learn that one of their chunks was empty. Whitespace counts — three
+    # spaces contribute nothing to a vector either.
+    #
+    # Refused **here** rather than in the request schema, which is where it was first written. A
+    # schema violation becomes `VALIDATION_ERROR`, and the contract has a code for precisely this
+    # case: a migrating client's error handling switches on `EMPTY_EMBEDDING_INPUT`, and replacing
+    # it with the generic one is the compatibility failure this surface exists to prevent. The
+    # canonical validator raises the same code — it simply never sees a blank, because the join
+    # happens first.
+    if not entries or any(not entry.strip() for entry in entries):
+        blanks = [index for index, entry in enumerate(entries) if not entry.strip()]
+        where = f" at position(s) {', '.join(str(i) for i in blanks)}" if blanks else ""
+        raise EmbeddingRejected(
+            EMPTY_EMBEDDING_INPUT,
+            f"Embedding input must be a non-empty text, or a list of them{where}.",
+        )
+
+    # Joined with **nothing** between them, and that is measured rather than chosen: against
+    # `gemini-embedding-001` a multi-part content's vector is cosine 1.000000 to the parts
+    # concatenated with no separator, 0.9936 with a space. `TEXT_PART_SEPARATOR` is the *chat*
+    # rule (`\n` between text parts of one message) and putting it here would quietly change every
+    # vector — nearly the same number, for a different question.
+    return CanonicalEmbeddingRequest(
+        model=model, texts=["".join(entries)], task_type=request.task_type
+    )

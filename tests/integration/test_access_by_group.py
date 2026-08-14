@@ -16,7 +16,14 @@ import uuid
 import httpx
 import pytest
 
-from .conftest import GATEWAY_URL, MANAGEMENT_URL
+from .conftest import (
+    GATEWAY_URL,
+    MANAGEMENT_URL,
+    MEMBER_CLIENT_ID,
+    MEMBER_CLIENT_SECRET,
+    REALM,
+    _token,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -351,3 +358,207 @@ async def test_the_directory_never_answers_a_one_letter_query_with_the_whole_rea
         )
 
     assert response.json()["results"] == []
+
+
+# == a group filled after the grant, and both kinds of credential =================================
+#
+# What the tests above establish is that a service account **already in** a department reaches a
+# use case granted to it, with a bearer token. Two halves of the promise were untested, and they
+# are the two an administrator actually performs:
+#
+#   1. **Somebody is added to the group afterwards.** AIRA never writes to the directory — who is
+#      in a group stays the identity provider's answer — so a grant made today has to reach a
+#      person added tomorrow, with nothing changing here. Every test above used a membership
+#      written into the realm file, which cannot show that.
+#   2. **That person issues an API key.** `is_member` counts a group grant deliberately
+#      (`FRD-209`), so a member with no row naming them may mint a key — and the key is what a
+#      client actually uses. Nothing asserted that the key then *works*.
+#
+# The realm is written to here, which nothing else in AIRA does. The group is removed again at the
+# end of the test for exactly that reason: a suite that leaves grants behind in somebody's
+# directory is doing the thing this system refuses to do.
+
+KEYCLOAK_ADMIN = "http://localhost:8080"
+
+
+async def _kc_admin_token() -> str:
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        response = await client.post(
+            f"{KEYCLOAK_ADMIN}/realms/master/protocol/openid-connect/token",
+            data={
+                "client_id": "admin-cli",
+                "username": "admin",
+                "password": "admin",
+                "grant_type": "password",
+            },
+        )
+    assert response.status_code == 200, response.text
+    return str(response.json()["access_token"])
+
+
+async def _child_group(admin: str, parent: str, name: str) -> str:
+    """Create (or find) `/<parent>/<name>` and return its id."""
+    headers = {"Authorization": f"Bearer {admin}"}
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        found = await client.get(
+            f"{KEYCLOAK_ADMIN}/admin/realms/{REALM}/groups",
+            headers=headers,
+            params={"search": parent},
+        )
+        parent_id = found.json()[0]["id"]
+        await client.post(
+            f"{KEYCLOAK_ADMIN}/admin/realms/{REALM}/groups/{parent_id}/children",
+            headers=headers,
+            json={"name": name},
+        )
+        children = await client.get(
+            f"{KEYCLOAK_ADMIN}/admin/realms/{REALM}/groups/{parent_id}/children", headers=headers
+        )
+    return str(next(g["id"] for g in children.json() if g["name"] == name))
+
+
+async def _member_of(admin: str, group_id: str, username: str, *, join: bool) -> None:
+    headers = {"Authorization": f"Bearer {admin}"}
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        users = await client.get(
+            f"{KEYCLOAK_ADMIN}/admin/realms/{REALM}/users",
+            headers=headers,
+            params={"username": username, "exact": "true"},
+        )
+        user_id = users.json()[0]["id"]
+        url = f"{KEYCLOAK_ADMIN}/admin/realms/{REALM}/users/{user_id}/groups/{group_id}"
+        response = await (
+            client.put(url, headers=headers) if join else client.delete(url, headers=headers)
+        )
+    assert response.status_code in (204, 200), response.text
+
+
+async def _delete_group(admin: str, group_id: str) -> None:
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        await client.delete(
+            f"{KEYCLOAK_ADMIN}/admin/realms/{REALM}/groups/{group_id}",
+            headers={"Authorization": f"Bearer {admin}"},
+        )
+
+
+async def _issue_key(token: str, slug: str, owner: str) -> httpx.Response:
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        return await client.post(
+            f"{MANAGEMENT_URL}/api/v1/use-cases/{slug}/api-keys/",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"label": "granted-by-group", "owner": owner},
+        )
+
+
+async def _call(credential: dict[str, str], slug: str) -> httpx.Response:
+    """One ordinary generation, however the caller authenticates."""
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        for _ in range(20):
+            response = await client.post(
+                f"{GATEWAY_URL}/uc/{slug}/v1beta/models/{MODEL}:generateContent",
+                headers={**credential, "content-type": "application/json"},
+                json={
+                    "contents": [{"parts": [{"text": "Say OK"}]}],
+                    "generationConfig": {"maxOutputTokens": 8},
+                },
+            )
+            # A grant travels over Kafka and a key is distributed the same way; being briefly
+            # behind is the deliberate cost (`FRD-204`), and a test that did not allow for it
+            # would be testing the clock.
+            if response.status_code not in (401, 403):
+                return response
+            await asyncio.sleep(1.0)
+        return response
+
+
+MEMBER_ACCOUNT = "service-account-aira-integration-tests-member"
+
+
+async def test_a_person_added_to_a_granted_group_reaches_it_with_both_credentials(
+    slug: str, admin_token: str
+) -> None:
+    """The whole chain an administrator actually performs, in order.
+
+    Grant a department that reaches nobody, **then** put somebody in it, then call — with a bearer
+    token and with an API key that person issued for themselves. Each step is asserted before the
+    next, so a failure says which link broke rather than that "access does not work".
+    """
+    admin = await _kc_admin_token()
+    name = f"vertrieb-{uuid.uuid4().hex[:6]}"
+    group_id = await _child_group(admin, "abteilungen", name)
+    group_path = f"/abteilungen/{name}"
+
+    try:
+        assert (await _grant(admin_token, slug, group_path)).status_code == 201
+
+        # Nobody is in it yet, so the grant reaches nobody — and a token minted now carries no
+        # such group. This is the "before" the rest of the test is measured against.
+        before = await _token(MEMBER_CLIENT_ID, MEMBER_CLIENT_SECRET)
+        assert slug not in await _visible(before)
+
+        await _member_of(admin, group_id, MEMBER_ACCOUNT, join=True)
+
+        # **A new token.** Group claims are baked in when a token is issued, so the one obtained
+        # above is still correct about the past — the mirror of the hermetic rule that leaving a
+        # group takes access away *on the next token*.
+        after = await _token(MEMBER_CLIENT_ID, MEMBER_CLIENT_SECRET)
+        assert slug in await _visible(after), "the grant did not reach a person added afterwards"
+
+        served = await _call({"Authorization": f"Bearer {after}"}, slug)
+        assert served.status_code == 200, served.text[:300]
+
+        # The second credential: a member by group and by nothing else mints a key for themselves.
+        issued = await _issue_key(after, slug, MEMBER_ACCOUNT)
+        assert issued.status_code == 201, issued.text[:300]
+        key = issued.json()["api_key"]
+
+        with_key = await _call({"x-goog-api-key": key}, slug)
+        assert with_key.status_code == 200, with_key.text[:300]
+    finally:
+        # The realm is left as it was found. AIRA never writes to a directory; this test does, and
+        # a suite that leaves grants behind in one is doing what the system refuses to.
+        await _member_of(admin, group_id, MEMBER_ACCOUNT, join=False)
+        await _delete_group(admin, group_id)
+
+
+async def test_taking_the_person_out_of_the_group_takes_both_credentials_with_it(
+    slug: str, admin_token: str
+) -> None:
+    """Removal, on both halves — and they are **not** symmetrical, which is the point.
+
+    A bearer token stops working on the next token, because the claim is gone. An API key is bound
+    to the use case rather than to the group, so it keeps working until somebody revokes it: the
+    key is a *credential of the use case*, issued by a member, and losing the right to issue one
+    is not the same event as the ones already issued becoming invalid.
+
+    Written down because the opposite is the intuitive expectation, and because an administrator
+    removing somebody from a department will assume their keys went too. `FRD-604` is where that
+    accountability lives: the key names its owner, so the trail says whose it was.
+    """
+    admin = await _kc_admin_token()
+    name = f"vertrieb-{uuid.uuid4().hex[:6]}"
+    group_id = await _child_group(admin, "abteilungen", name)
+    group_path = f"/abteilungen/{name}"
+
+    try:
+        assert (await _grant(admin_token, slug, group_path)).status_code == 201
+        await _member_of(admin, group_id, MEMBER_ACCOUNT, join=True)
+        token = await _token(MEMBER_CLIENT_ID, MEMBER_CLIENT_SECRET)
+        assert slug in await _visible(token)
+
+        issued = await _issue_key(token, slug, MEMBER_ACCOUNT)
+        assert issued.status_code == 201, issued.text[:300]
+        key = issued.json()["api_key"]
+
+        await _member_of(admin, group_id, MEMBER_ACCOUNT, join=False)
+        after = await _token(MEMBER_CLIENT_ID, MEMBER_CLIENT_SECRET)
+
+        assert slug not in await _visible(after)
+        refused = await _call({"Authorization": f"Bearer {after}"}, slug)
+        assert refused.status_code == 403, refused.text[:300]
+
+        # And the key, deliberately, still serves.
+        with_key = await _call({"x-goog-api-key": key}, slug)
+        assert with_key.status_code == 200, with_key.text[:300]
+    finally:
+        await _delete_group(admin, group_id)

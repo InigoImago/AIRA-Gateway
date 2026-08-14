@@ -506,12 +506,16 @@ async def test_asking_an_embedding_model_to_generate_is_refused_by_name(
 
 @pytest.mark.parametrize(
     ("surface", "expect"),
-    [pytest.param("gemini", 404, id="gemini"), pytest.param("kira", 404, id="kira")],
+    # **The two surfaces differ here on purpose.** A 404 sends the reader to the catalog and a 400
+    # would send them to their own request — but the compatibility contract answers `422
+    # MODEL_NOT_FOUND` for a model that is not there, and matching it is the whole point of that
+    # surface (`FRD-107`). A generated HTTP client switches on the status before the body.
+    [pytest.param("gemini", 404, id="gemini"), pytest.param("kira", 422, id="kira")],
 )
-async def test_a_model_nobody_serves_is_a_404_that_names_it(
+async def test_a_model_nobody_serves_is_named_in_each_surfaces_own_status(
     governed: Governed, surface: str, expect: int
 ) -> None:
-    """A 404 sends the reader to the catalog; a 400 would send them to their own request."""
+    """Either way the model is named, which is what sends somebody to the right place."""
     if surface == "gemini":
         response = await governed.generate(_gemini(), model="not-a-model-here")
         assert "not-a-model-here" in _envelope(response, surface)
