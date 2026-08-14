@@ -5,6 +5,36 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The last creator that was not a window
+
+Reported: *"Issue key in the use-case overview is not in a window, not consistent with the other
+elements in the UI."* Correct — it was a form that unfolded inside the panel, while budgets, rate
+limits, anomaly rules, global rules and model declarations all open one. The reader learns the
+pattern four times and meets the exception on the fifth, which is worse than either pattern used
+consistently.
+
+`core/ui/modal.ts` owns the three promises a hand-rolled panel forgets one of — Escape closes, the
+keyboard moves in, the backdrop closes — so the form moved into it, the trigger stopped being a
+toggle (a window has its own Cancel), and *Issue* became the window's primary action.
+
+**The guard is about behaviour, not about the component.** The model catalog hand-rolled two
+windows before `app-modal` existed and they *are* windows: `role="dialog"`, a backdrop, their own
+Escape. Requiring the shared control would fail them for being early rather than for being wrong.
+
+Two things came out of writing it. It first matched creators by **testid**, went green against the
+old template, and would have gone green forever — the reported button had no testid at all. Matching
+the **label** (`+ Something`, this console's convention) is what sees it, and that is also what a
+reader recognises. Widened, it immediately found a third control, `+ Add category` in the pipeline
+builder — which turned out to be a genuinely different thing: it appends an empty **row to a list
+already being edited in place**, where a window would take the reader away from the table they are
+filling in. Exempted with that reason rather than converted, in the list that is named for it.
+
+Not changed and worth stating: the security page's **kill switch** is still an inline form. It is an
+action rather than a creator, so the guard does not match it and the pattern does not obviously
+apply — but it is the same shape, and somebody should decide rather than discover it.
+
+---
+
 ## The half of the group chain nobody had tested
 
 Asked whether the tests cover assigning a group to a use case, **adding people to that group**, and

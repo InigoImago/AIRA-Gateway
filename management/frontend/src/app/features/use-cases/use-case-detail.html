@@ -421,10 +421,10 @@
           <button
             type="button"
             class="btn btn--sm btn--primary"
-            [attr.aria-expanded]="showIssueKey()"
-            (click)="showIssueKey.set(!showIssueKey())"
+            (click)="showIssueKey.set(true)"
+            data-testid="issue-key"
           >
-            {{ showIssueKey() ? 'Cancel' : '+ Issue key' }}
+            + Issue key
           </button>
         }
       </div>
@@ -440,84 +440,96 @@
         </p>
       }
 
-      @if (showIssueKey() && isMember()) {
-        <!--
-          Said before the button, not after the fact. Every request made with this key is recorded
-          under the name of whoever issues it, and the person clicking is the one who has to know
-          that — an agent that misbehaves is investigated by following the key back to a person
-          (`FRD-604`).
+      <!--
+        A window, like every other thing this console creates. It was a disclosure that expanded
+        inside the panel — the one creator that behaved differently from budgets, rate limits,
+        anomaly rules and model declarations, so the reader learned the pattern three times and
+        met an exception on the fourth. `core/ui/modal.ts` owns the three promises a hand-rolled
+        panel forgets one of: Escape closes it, the keyboard moves inside it, the backdrop closes.
+      -->
+      <app-modal
+        [open]="showIssueKey() && isMember()"
+        title="Issue an API key"
+        testid="key-editor"
+        (closed)="showIssueKey.set(false)"
+      >
+        <div modal-body>
+          <p class="callout" style="margin-top: 1rem" data-testid="key-responsibility">
+            Requests made with this key are recorded under <strong>your name</strong>, and it is you
+            who answers for how it is used — including by anything you hand it to. If it is meant
+            for a team or a service rather than for you personally, issue it under an account that
+            says so.
+          </p>
+          <form id="issue-key-form" class="form-inline" (ngSubmit)="issueKey()">
+            <div class="field grow">
+              <label for="key-label">Label (optional)</label>
+              <input
+                id="key-label"
+                name="label"
+                [ngModel]="keyLabel()"
+                (ngModelChange)="keyLabel.set($event)"
+                placeholder="e.g. opencode laptop"
+                autocomplete="off"
+              />
+              <span class="field__hint">Helps you tell keys apart later — it is not a secret.</span>
+            </div>
+            <div class="field">
+              <label for="key-expiry">Expires after (days)</label>
+              <input
+                id="key-expiry"
+                name="expires_in_days"
+                type="number"
+                min="1"
+                [attr.max]="maxKeyDays()"
+                [ngModel]="keyExpiresInDays()"
+                (ngModelChange)="keyExpiresInDays.set($event)"
+                [placeholder]="defaultKeyDays()"
+                autocomplete="off"
+              />
+              <span class="field__hint">
+                Leave empty for the standard {{ defaultKeyDays() }} days. Keys always expire; the
+                longest this installation allows is {{ maxKeyDays() }} days.
+              </span>
+            </div>
+            <div class="field">
+              <label for="key-owner">
+                Owned by (optional)
+                <app-info-hint label="Key owner" testid="key-owner" [wide]="true">
+                  Leave this empty and the key is yours: your name appears beside every request made
+                  with it, and you answer for how it is used. Name somebody else — a technical
+                  account for a team or a service — and <strong>they</strong> answer for it, while
+                  the console records that <strong>you</strong> created it. Both facts are kept,
+                  which is what signing in as the technical account would destroy. The account has
+                  to have access to this use case already.
+                </app-info-hint>
+              </label>
+              <input
+                id="key-owner"
+                name="owner"
+                [ngModel]="keyOwner()"
+                (ngModelChange)="keyOwner.set($event)"
+                placeholder="you"
+                autocomplete="off"
+              />
+              <span class="field__hint">
+                A username that already has access here. Anything else is refused by name.
+              </span>
+            </div>
+          </form>
+        </div>
 
-          Worded to be true of a shared credential as well: it claims responsibility for the key,
-          never that its owner typed the prompt. A team key is a legitimate arrangement; a console
-          that implies a human sat behind every request would mislead exactly the reader who came
-          to find one.
-        -->
-        <p class="callout" style="margin-top: 1rem" data-testid="key-responsibility">
-          Requests made with this key are recorded under <strong>your name</strong>, and it is you
-          who answers for how it is used — including by anything you hand it to. If it is meant for
-          a team or a service rather than for you personally, issue it under an account that says
-          so.
-        </p>
-        <form class="form-inline disclosure" (ngSubmit)="issueKey()">
-          <div class="field grow">
-            <label for="key-label">Label (optional)</label>
-            <input
-              id="key-label"
-              name="label"
-              [ngModel]="keyLabel()"
-              (ngModelChange)="keyLabel.set($event)"
-              placeholder="e.g. opencode laptop"
-              autocomplete="off"
-            />
-            <span class="field__hint">Helps you tell keys apart later — it is not a secret.</span>
-          </div>
-          <div class="field">
-            <label for="key-expiry">Expires after (days)</label>
-            <input
-              id="key-expiry"
-              name="expires_in_days"
-              type="number"
-              min="1"
-              [attr.max]="maxKeyDays()"
-              [ngModel]="keyExpiresInDays()"
-              (ngModelChange)="keyExpiresInDays.set($event)"
-              [placeholder]="defaultKeyDays()"
-              autocomplete="off"
-            />
-            <span class="field__hint">
-              Leave empty for the standard {{ defaultKeyDays() }} days. Keys always expire; the
-              longest this installation allows is {{ maxKeyDays() }} days.
-            </span>
-          </div>
-          <div class="field">
-            <label for="key-owner">
-              Owned by (optional)
-              <app-info-hint label="Key owner" testid="key-owner" [wide]="true">
-                Leave this empty and the key is yours: your name appears beside every request made
-                with it, and you answer for how it is used. Name somebody else — a technical account
-                for a team or a service — and <strong>they</strong> answer for it, while the console
-                records that <strong>you</strong> created it. Both facts are kept, which is what
-                signing in as the technical account would destroy. The account has to have access to
-                this use case already.
-              </app-info-hint>
-            </label>
-            <input
-              id="key-owner"
-              name="owner"
-              [ngModel]="keyOwner()"
-              (ngModelChange)="keyOwner.set($event)"
-              placeholder="you"
-              autocomplete="off"
-            />
-            <span class="field__hint">
-              A username that already has access here. Anything else is refused by name.
-            </span>
-          </div>
-          <button type="submit" class="btn btn--primary" [disabled]="feedback.busy()">
+        <div modal-foot>
+          <button type="button" class="btn" (click)="showIssueKey.set(false)">Cancel</button>
+          <button
+            type="submit"
+            form="issue-key-form"
+            class="btn btn--primary"
+            [disabled]="feedback.busy()"
+          >
             {{ feedback.busy() ? 'Issuing…' : 'Issue' }}
           </button>
-        </form>
-      }
+        </div>
+      </app-modal>
 
       @if (issued(); as key) {
         <div class="callout callout--warning stack" style="margin-top: 1rem" role="alert">

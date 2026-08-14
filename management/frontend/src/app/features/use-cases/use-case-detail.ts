@@ -19,6 +19,7 @@ import { errorMessage } from '../../core/api/error-message';
 import { MeService } from '../../core/api/me.service';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { InfoHint } from '../../core/ui/info-hint';
+import { Modal } from '../../core/ui/modal';
 import { PageFeedback } from '../../core/ui/page-feedback';
 import { windowFor } from '../../core/ui/periods';
 import { BudgetsTab } from './budgets-tab';
@@ -56,6 +57,7 @@ const TABS: readonly Tab[] = [
     AccessPanel,
     BudgetsTab,
     InfoHint,
+    Modal,
     ConsumptionPanel,
     ModelReleasePanel,
     RateLimitsTab,

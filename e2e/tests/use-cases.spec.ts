@@ -50,6 +50,19 @@ test.describe('Use-case management', () => {
 
     await page.goto(`/use-cases/${slug}?tab=keys`);
     await page.click('button:has-text("Issue key")');
+
+    // **A window, like every other creator in this console.** It was a form that unfolded inside
+    // the panel — reported as the one element that behaves differently, which is worse than either
+    // pattern used consistently. Asserted here rather than only in the template guard because the
+    // three promises a window makes are behaviour: Escape closes it, the keyboard moves in, the
+    // backdrop closes.
+    const keyWindow = page.getByTestId('key-editor');
+    await expect(keyWindow).toBeVisible();
+    await expect(keyWindow).toHaveAttribute('aria-modal', 'true');
+    await page.keyboard.press('Escape');
+    await expect(keyWindow).toBeHidden();
+    await page.click('button:has-text("Issue key")');
+    await expect(keyWindow).toBeVisible();
     // Said **before** the button (`FRD-604`): everything done with this key is recorded under the
     // issuer's name, and the person clicking is the one who has to know it. In an agentic use case
     // this is the whole accountability chain — an agent goes wrong, and the credential leads to a
