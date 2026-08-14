@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { USERS, login } from './support';
+import { USERS, expectNoSqueezedControls, login } from './support';
 
 /**
  * Importing what the adapters already serve, and asking the vendor what it offers (`FRD-507`).
@@ -88,5 +88,35 @@ test.describe('Catalog import', () => {
     await expect(page.getByTestId('add-model')).toHaveCount(0);
     await expect(page.getByTestId('browse-provider-models')).toHaveCount(0);
     await expect(page.getByTestId('discover-models')).toHaveCount(0);
+  });
+
+  /**
+   * The editor after an import, which is where the layout broke.
+   *
+   * Reported from the console: importing an AI Studio model and clicking "Catalogue…" packed the
+   * whole form into one row. It was the vendor's note — `flex: 1` gives it `flex-basis: 0`, so it
+   * never wrapped onto a line of its own and was squeezed to **67 px wide and 4818 px tall**
+   * instead, taking the model-id field down to 30 px with it.
+   *
+   * The import path is the only one that renders those notes, which is why every other screen
+   * looked fine and this one did not.
+   */
+  test('the editor is readable after taking a model from a listing', async ({ page }) => {
+    await login(page, USERS.globalAdmin);
+    await page.goto('/models');
+
+    await page.getByTestId('browse-provider-models').click();
+    await page.getByTestId('browse-provider').selectOption({ index: 1 });
+    const offer = page.locator('[data-testid^="offered-"]').first();
+    await expect(offer).toBeVisible({ timeout: 20_000 });
+    await offer.click();
+
+    // The note is on screen — this asserts the fixed layout, not a form that never showed one.
+    await expect(page.getByTestId('vendor-filled')).toBeVisible();
+    await expectNoSqueezedControls(page, 'model editor after an import');
+
+    // And the field that was crushed beside it is usable: the model id is the longest value here.
+    const idBox = await page.locator('#model-name').boundingBox();
+    expect(idBox?.width ?? 0).toBeGreaterThan(180);
   });
 });

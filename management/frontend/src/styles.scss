@@ -313,6 +313,39 @@ $field-label-gap: 0.3rem;
   margin-top: calc(#{$field-label-height} + #{$field-label-gap});
 }
 
+/* A note and a section are not fields, so they take the whole row.
+ *
+ * Measured after the catalog editor was reported as "everything packed into one row" when a model
+ * is imported: the vendor's note is a `<p class="callout grow">`, and `.grow` is `flex: 1` — which
+ * is `flex-basis: 0`. An item with no basis **contributes nothing to the wrap calculation**, so it
+ * never moves to a line of its own; it is squeezed instead, and `min-width: 0` lets that go all the
+ * way. The note came out **67 px wide and 4818 px tall** — a sentence wrapped to roughly one word
+ * per line — and it dragged the model-id field down to 30 px with it. That is the whole of the
+ * reported breakage: nothing was misplaced, one paragraph was allowed to become a column.
+ *
+ * `flex-basis: 100%` rather than a `min-width`, because these two are genuinely full-width things.
+ * A fieldset groups several controls (and one of them now contains a nested `.form-inline` of its
+ * own), and a note is prose. Only direct children, so a `.callout` inside a field keeps behaving
+ * like part of that field. */
+.form-inline > .callout,
+.form-inline > fieldset {
+  flex-basis: 100%;
+}
+
+/* A field that grows may not shrink to nothing.
+ *
+ * `.grow` is `flex: 1; min-width: 0` — the second half is the standard fix for a flex item that
+ * refuses to shrink below its content, and in a *wrapping* row it becomes the opposite problem:
+ * the growing field is the one that collapses. Measured at **30 px** beside the note above, and
+ * still 107 px once the note was given its own line — for the model id, which is the longest value
+ * on the form (`gemini-2.5-flash-preview-09-2025` is 32 characters).
+ *
+ * `min()` rather than a flat minimum so a phone-width container is not forced into a horizontal
+ * scroll by a rule meant to stop a field disappearing on a desktop. */
+.form-inline > .field.grow {
+  min-width: min(14rem, 100%);
+}
+
 /* ---- table ----------------------------------------------------------------------- */
 
 /* A table is the one element that genuinely cannot shrink past its content. Give it its own

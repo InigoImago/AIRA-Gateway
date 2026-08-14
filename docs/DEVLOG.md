@@ -5,6 +5,32 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## One paragraph became a column
+
+Reported from the console: importing a model from AI Studio and clicking *Catalogue…* leaves the
+editor "completely broken, everything packed into one row". Measured in the browser rather than
+read: the vendor's note came out **67 px wide and 4818 px tall**, and the model-id field beside it
+**30 px**.
+
+Nothing was misplaced. The note is a `<p class="callout grow">`, and `.grow` is `flex: 1` — which
+is `flex-basis: 0`. **An item with no basis contributes nothing to the wrap calculation**, so it
+never moves to a line of its own; it is squeezed instead, and `.grow`'s `min-width: 0` — the
+standard fix for a flex item that refuses to shrink below its content — lets that run all the way
+to one word per line. A note and a fieldset are full-width things, so they now say so.
+
+The field beside it was the same fault one size down, and the more annoying half: `.grow` means the
+*growing* field is the one that collapses, and here that is the model id, the longest value on the
+form. It has a minimum now, written with `min()` so a phone is not pushed into a horizontal scroll
+by a rule meant to stop a field disappearing on a desktop. **606 px, from 30.**
+
+Only the import path renders those notes, which is why every other screen looked fine — and why
+this was reported by somebody using the feature rather than by any suite. The guard is a **ratio,
+not an element**: any child of a form much taller than it is wide is text wrapping one word per
+line, whatever produced it. Eight to one is loose for an ordinary tall field and nowhere near the
+seventy-two this produced. Shown to fail by reverting the rule.
+
+---
+
 ## The three declarations the console could not write
 
 Asked whether the Google import carries an embedding model's width. **It does not, and it cannot**

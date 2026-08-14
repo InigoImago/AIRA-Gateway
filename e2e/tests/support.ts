@@ -324,3 +324,46 @@ export async function ensureUseCase(page: Page, slug: string, name: string) {
   }
   return slug;
 }
+
+/**
+ * No control in a form has been squeezed into a column of single words.
+ *
+ * The catalog editor was reported as "everything packed into one row" after importing a model.
+ * Nothing was misplaced: the vendor's note is a `<p class="callout grow">`, `.grow` is `flex: 1` —
+ * which means `flex-basis: 0` — and an item with no basis **contributes nothing to the wrap
+ * calculation**, so it never moves to a line of its own. It was squeezed instead, and `min-width:
+ * 0` let that run to the end: **67 px wide and 4818 px tall**, dragging the model-id field down to
+ * 30 px beside it.
+ *
+ * Asserted as a **ratio**, because that is the shape of the failure and not the identity of the
+ * element. Any element much taller than it is wide is text wrapping one word per line, whatever
+ * produced it — a note, a hint, a legend, the next thing somebody adds. A threshold of 8 is loose
+ * enough for an ordinary tall field (a select with a three-line hint is about 3) and nowhere near
+ * the 72 this produced.
+ */
+export async function expectNoSqueezedControls(page: Page, context: string) {
+  await page.locator('form.form-inline, .filter-row').first().waitFor({ timeout: 20_000 });
+
+  const squeezed = await page.evaluate(() => {
+    const bad: { text: string; width: number; height: number }[] = [];
+    document.querySelectorAll('form.form-inline, .filter-row').forEach((row) => {
+      for (const item of Array.from(row.children) as HTMLElement[]) {
+        const box = item.getBoundingClientRect();
+        if (box.width < 1 || box.height < 1) continue; // hidden
+        if (box.height > box.width * 8) {
+          bad.push({
+            text: (item.textContent ?? '').trim().slice(0, 60),
+            width: Math.round(box.width),
+            height: Math.round(box.height),
+          });
+        }
+      }
+    });
+    return bad;
+  });
+
+  expect(
+    squeezed,
+    `${context}: a control is far taller than it is wide, which is text wrapping one word per line`,
+  ).toEqual([]);
+}
