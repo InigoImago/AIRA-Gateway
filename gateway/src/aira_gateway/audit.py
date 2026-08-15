@@ -23,10 +23,11 @@ from aira_gateway.core.canonical import CanonicalUsage
 #: What names an audit row that is **not** a caller's own request: the model call a pipeline step
 #: made on its way to a decision (`FRD-125` FR-8, ``pipeline:<step>``).
 #:
-#: A constant because two places need the same answer and had different ones. `FR-9` books those
-#: calls with ``requests=0`` — *"the caller made one request and counting the classifier as a
-#: second would inflate every request figure"* — and reporting counted rows, so a use case running
-#: an LLM filter and a router reported two to three times the traffic it received.
+#: A constant because two places need the same answer and had different ones — briefly in each
+#: direction. `FR-9` booked those calls with ``requests=0`` while reporting counted rows; the owner
+#: then reversed the rule (`FR-9b`, 2026-08-15) and both sides count them. The prefix survives the
+#: reversal because it is what still tells the two kinds of row apart on a screen: `by_model` and
+#: the operation give a reader the split, and only the *total* is deliberately one number.
 PIPELINE_OPERATION_PREFIX = "pipeline:"
 
 

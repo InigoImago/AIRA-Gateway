@@ -441,10 +441,21 @@ class BudgetService:
         A pipeline's classifier call is real money against the same use case, and it was counted as
         nothing at all — which `FRD-403` names as the one thing worse than an unpriced request.
 
-        ``requests=0`` deliberately. The caller made one request; counting the classifier as a
-        second would inflate every request figure and could trip a *request* limit for traffic the
-        caller never sent. Tokens and money are consumption and are counted; a request is an event
-        and there was one.
+        **Counted as a request** — the owner's decision (2026-08-15), reversing this method's
+        original `requests=0`.
+
+        The argument for zero was that the caller made one request and counting the classifier as
+        a second inflates every request figure and can trip a *request* limit for traffic nobody
+        sent. That consequence is now accepted deliberately, and the reason given for accepting it
+        is the honest one: a step's call reaches a model and costs money, so a use case that runs
+        two of them per request is doing three times the work its request budget was sized for, and
+        a budget that cannot see that is a budget about something other than what is happening.
+
+        **Rate limits are untouched**, and that is the same decision read the other way. A bucket
+        measures how fast requests *arrive*; the gate is taken once, before the pipeline, on the
+        one request that did arrive (`guard_before_work`). Refusing a caller because the gateway
+        made calls on their behalf would slow down exactly the traffic they did send — which is
+        what the original reasoning was protecting against, and it still applies there.
 
         Not a reservation. These tokens are already spent by the time their size is known — the
         pipeline runs before the reservation, because routing has to choose the model the
@@ -467,12 +478,12 @@ class BudgetService:
             tokens,
             cost_nanos=cost_nanos,
             now=now,
-            requests=0,
+            requests=1,
             subject=subject,
         )
         if self._ledger is None:
             return  # degraded to the Postgres path, which the line above already wrote
-        amounts = Amounts(tokens=tokens, requests=0, cost_nanos=cost_nanos or 0)
+        amounts = Amounts(tokens=tokens, requests=1, cost_nanos=cost_nanos or 0)
         for budget in budgets:
             try:
                 await self._ledger.adjust(

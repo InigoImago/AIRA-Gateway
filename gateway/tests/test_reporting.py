@@ -503,17 +503,19 @@ def test_a_malformed_use_case_filter_is_refused_by_name() -> None:
 # ---- what counts as a request ---------------------------------------------------------------
 
 
-async def test_a_pipeline_step_is_not_counted_as_a_second_request(sessionmaker) -> None:
-    """`FRD-125` FR-9, in the words that decided it: a step's model call is booked *"with
-    `requests=0`, because the caller made **one** request and counting the classifier as a second
-    would inflate every request figure"*.
+async def test_a_pipeline_step_counts_as_a_request(sessionmaker) -> None:
+    """The owner's decision (2026-08-15), and the reverse of what this file asserted for a day.
 
-    The budgets honoured that. Reporting counted rows — `func.count()` — so every use case running
-    an LLM filter and a router reported two to three times the traffic it received, in the figures
-    a governance role reads to decide whether a control is working. The rule was written once and
-    applied on one of the two paths that need it; the row's own comment says it is named for the
-    step *"so the reporting breakdown separates what the use case asked from what governing it
-    cost instead of blending them into one figure."*
+    `FRD-125` FR-9 booked a step's model call with `requests=0` — *"the caller made one request and
+    counting the classifier as a second would inflate every request figure and could trip a request
+    limit for traffic nobody sent."* The report counted rows, so the two disagreed, and the report
+    was made to match the budget.
+
+    Then the owner chose the other side: a step's call reaches a model and costs money, so a use
+    case running two of them per request is doing three times the work its request budget was sized
+    for, and a budget that cannot see that is measuring something else. Both sides count them now —
+    and the consequence FR-9 warned about is accepted, **for budgets only**: rate limits still
+    measure arrivals, so a caller is never slowed for calls the gateway made on their behalf.
     """
     await _log(sessionmaker)
     await _log(sessionmaker, operation="pipeline:injection_filter", prompt=4, completion=1, cost=5)
@@ -521,12 +523,12 @@ async def test_a_pipeline_step_is_not_counted_as_a_second_request(sessionmaker) 
 
     report = await ReportingService(sessionmaker).report(None, AUGUST, SEPTEMBER)
 
-    assert report["totals"]["requests"] == 1, "the classifier calls were counted as traffic"
+    assert report["totals"]["requests"] == 3
 
 
 async def test_what_the_step_spent_is_still_counted(sessionmaker) -> None:
-    """The half that must not have gone with it. The rows exist precisely so the money is visible
-    (`FR-8`); excluding them from the *spend* would trade one wrong figure for another."""
+    """Unchanged by the reversal, and the half that was never in question: those rows exist so the
+    money is visible (`FR-8`)."""
     await _log(sessionmaker, cost=1000, prompt=10, completion=20)
     await _log(sessionmaker, operation="pipeline:injection_filter", cost=5, prompt=4, completion=1)
 
@@ -537,23 +539,20 @@ async def test_what_the_step_spent_is_still_counted(sessionmaker) -> None:
 
 
 async def test_every_breakdown_counts_the_same_way(sessionmaker) -> None:
-    """One measure list feeds four breakdowns, so a fix in the totals that missed the groups would
-    make the same screen disagree with itself — the by-model table adding up to more than the
-    total above it."""
+    """One measure list feeds four breakdowns, so a rule applied to the totals and not to the
+    groups would make the same screen disagree with itself — the by-model table adding up to more
+    than the total above it. That property survives whichever way the rule points."""
     await _log(sessionmaker, model="chat-1")
     await _log(sessionmaker, model="guard-1", operation="pipeline:injection_filter")
 
     report = await ReportingService(sessionmaker).report(None, AUGUST, SEPTEMBER)
 
-    assert sum(row["requests"] for row in report["by_model"]) == 1
-    assert sum(row["requests"] for row in report["by_use_case"]) == 1
-    assert sum(row["requests"] for row in report["by_member"]) == 1
-    assert sum(row["requests"] for row in report["by_outcome"]) == 1
-    # …and the model that only ever classified is still listed, with its spend.
+    assert report["totals"]["requests"] == 2
+    assert sum(row["requests"] for row in report["by_model"]) == 2
+    assert sum(row["requests"] for row in report["by_use_case"]) == 2
+    assert sum(row["requests"] for row in report["by_member"]) == 2
+    assert sum(row["requests"] for row in report["by_outcome"]) == 2
     assert {row["key"] for row in report["by_model"]} == {"chat-1", "guard-1"}
-
-
-# ---- one person, two credentials (`FRD-606`) ------------------------------------------------
 
 
 async def test_one_person_using_two_credentials_is_one_row(sessionmaker) -> None:

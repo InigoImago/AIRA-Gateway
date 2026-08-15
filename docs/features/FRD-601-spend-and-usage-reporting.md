@@ -156,26 +156,31 @@ frontend specs under `features/reporting/`, `e2e/tests/reporting.spec.ts`):
   after `FRD-406`; export; threshold alerting.
 
 
-## A classifier is not a request, except in the figures
+## A classifier and the request count: both answers, in order
 
-`FRD-125` FR-9 books a pipeline step's model call with `requests=0`, and says why in the
+`FRD-125` FR-9 booked a pipeline step's model call with `requests=0`, and said why in the
 requirement itself: *"the caller made **one** request and counting the classifier as a second would
 inflate every request figure."* The budgets honoured it. This report counted rows.
 
-So a use case running an LLM injection filter and a router reported two to three times the traffic
-it received — in the figures a governance role reads to decide whether a control is working. On the
-stack this was found on: one use case showed **6 requests where 3 were made**, and another showed
-**1 where the caller made none at all** — the row was a dry run's classifier call.
+So the two disagreed, and the report was the one out of step: a use case running an LLM injection
+filter and a router reported two to three times the traffic it received. On the stack this was
+found on, one use case showed **6 requests where 3 were made**, and another **1 where the caller
+made none at all** — that row was a dry run's classifier call. The report was narrowed to the
+caller's own requests, and both sides agreed again.
 
-The row's own comment states the intent it was missing: it is named for the step *"so the reporting
-breakdown separates what the use case asked from what governing it cost instead of blending them
-into one figure."*
+**Then the owner decided the other way** (2026-08-15): those calls reach a model and cost money, so
+they count. A use case running two steps per request is doing three times the work its request
+budget was sized for, and a budget that cannot see that is sized against something that is not
+happening. `FRD-125` FR-9 is superseded by FR-9b; `book_side_call` books one request; and this
+report counts every row again.
 
-Only the **count** narrows. The tokens and the money still sum every row, because those rows exist
-precisely so that what governing a use case costs is visible (`FR-8`); excluding them from the spend
-would trade one wrong figure for another. The prefix that tells the two apart is now one constant
-read by the writer and the reader, rather than a string each of them spelled.
+What did **not** change is the rate limit. A bucket measures how fast requests *arrive*, the gate
+is taken once before the pipeline on the one request that arrived, and refusing a caller for calls
+the gateway made on their behalf would throttle precisely the traffic they did send. Both halves
+are pinned by tests, in both directions, because the two rules now differ deliberately and a
+reader who finds only one of them would reasonably "fix" the other.
 
-All four breakdowns share one measure list, so the fix could not land in the totals and miss the
-groups — which would have made a screen disagree with itself, the by-model table adding up to more
-than the total above it. A test asserts all four.
+The `pipeline:<step>` operation still names those rows, so `by_model` and the operation give a
+reader the split. What is not on offer is a total that quietly means something different from the
+budget bar beside it — which is the property both reversals were about, and the only one that held
+throughout.

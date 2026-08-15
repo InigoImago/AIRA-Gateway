@@ -245,9 +245,16 @@ async def test_the_pipeline_call_is_booked_against_the_budget() -> None:
     assert usage[0].tokens == 38
 
 
-async def test_the_pipeline_call_is_not_counted_as_a_second_request() -> None:
-    """The caller made **one** request. Counting the classifier as a second would inflate every
-    request figure in reporting and could trip a *request* limit for traffic nobody sent."""
+async def test_the_pipeline_call_spends_the_request_budget_too() -> None:
+    """The owner's decision (2026-08-15), and the reverse of what this test asserted before it.
+
+    `FRD-125` FR-9 said the caller made **one** request, so the classifier was booked with none:
+    counting it would inflate every request figure and could trip a request limit for traffic
+    nobody sent. The owner chose the other side — a step's call reaches a model and costs money, so
+    a use case running two of them per request is doing three times the work its request budget was
+    sized for — and the warning is accepted **for budgets**. Rate limits still count arrivals; the
+    test above pins that half.
+    """
     from aira_gateway.db.models import BudgetRead, BudgetUsage
 
     app = _app(_filter(action="flag"), _Guard())
@@ -274,7 +281,8 @@ async def test_the_pipeline_call_is_not_counted_as_a_second_request() -> None:
         async with app.state.db_sessionmaker() as session:
             usage = list((await session.execute(select(BudgetUsage))).scalars())
 
-    assert usage[0].requests == 1
+    # One arriving request, one classifier call: two against the allowance.
+    assert usage[0].requests == 2
 
 
 # == a refusal must not be paid for (FRD-125c) ===================================================
@@ -398,4 +406,43 @@ async def test_the_pipeline_row_is_filed_under_the_surface_that_caused_it() -> N
     assert filed == {"chat": "kira", "pipeline:injection_filter": "kira"}, (
         "one caller request left rows on two surfaces; the classifier's row names a surface the "
         "caller never used"
+    )
+
+
+# == counted by the budget, not by the bucket (owner's decision, 2026-08-15) ======================
+
+
+async def test_a_classifier_call_never_takes_a_rate_limit_bucket() -> None:
+    """The half of the decision that did **not** change, pinned so it cannot drift with the half
+    that did.
+
+    A step's model call now spends the *request budget* — the owner accepted `FRD-125` FR-9's
+    warning as the price of a budget that sees what is happening. A **bucket** is a different
+    question: it measures how fast requests *arrive*, the gate is taken once before the pipeline
+    on the one request that did arrive, and refusing a caller for calls the gateway made on their
+    behalf would slow down precisely the traffic they did send.
+
+    Asserted on the bucket rather than on a refusal: one request through a pipeline that makes a
+    model call takes **one** token, not two.
+    """
+    from aira_gateway.ratelimit.service import RateLimitService
+
+    guard = _Guard()
+    app = _app(_filter(action="flag"), guard)
+    taken: list[tuple[str, int]] = []
+
+    with TestClient(app) as client:
+        limiter: RateLimitService = app.state.rate_limits
+        original = limiter.check
+
+        async def counting(use_case, subject, units, **rest):  # noqa: ANN001, ANN202
+            taken.append((use_case, units))
+            return await original(use_case, subject, units, **rest)
+
+        limiter.check = counting  # type: ignore[method-assign]
+        assert client.post("/v1beta/models/guard:generateContent", json=_BODY).status_code == 200
+
+    assert guard.calls == 2, "the classifier ran, or this test proves nothing"
+    assert [units for _, units in taken] == [1], (
+        "the bucket was asked more than once for a single arriving request"
     )

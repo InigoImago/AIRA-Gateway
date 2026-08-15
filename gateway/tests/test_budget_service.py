@@ -246,9 +246,10 @@ async def test_a_pipeline_call_is_booked_against_the_caller_own_per_person_budge
     await service.book_side_call("uc", "alice", tokens=40, cost_nanos=500, now=NOW)
 
     mine = (await service.usage("uc", NOW, subject="alice"))[0]
-    assert (mine["used_tokens"], mine["used_requests"]) == (40, 0), (
-        "the classifier's tokens are consumption; the caller still made one request, not two"
-    )
+    # **One request, not zero** — the owner's decision (2026-08-15), reversing `FRD-125` FR-9 for
+    # budgets. A step's call reaches a model and costs money, so a use case running two of them per
+    # request is doing three times the work its request budget was sized for.
+    assert (mine["used_tokens"], mine["used_requests"]) == (40, 1)
     assert (await service.usage("uc", NOW, subject="bob"))[0]["used_tokens"] == 0
 
 
@@ -270,3 +271,24 @@ async def test_a_use_case_budget_is_readable_by_anyone_who_may_see_it(sessionmak
     figures = await service.usage("uc", NOW, subject="somebody-else")
 
     assert figures[0]["used_tokens"] == 12
+
+
+# == counted by the budget, not by the bucket (owner's decision, 2026-08-15) ======================
+
+
+async def test_a_pipeline_call_spends_the_request_allowance(sessionmaker) -> None:
+    """A request budget of two is used up by one request that runs two classifiers.
+
+    That consequence is exactly what `FRD-125` FR-9 refused — *"could trip a request limit for
+    traffic the caller never sent"* — and it is now the point: the gateway did make those calls,
+    they cost money, and a budget that cannot see them is sized against something that is not
+    happening. Asserted as the arithmetic rather than as a refusal, because the refusal is
+    `refuse_if_exhausted`'s and it has tests of its own.
+    """
+    await _add(sessionmaker, id=1, scope="use_case", subject="", limit_requests=2)
+    service = BudgetService(sessionmaker)
+
+    await service.book_side_call("uc", "alice", tokens=10, cost_nanos=100, now=NOW)
+    await service.book_side_call("uc", "alice", tokens=10, cost_nanos=100, now=NOW)
+
+    assert (await service.usage("uc", NOW, subject="alice"))[0]["used_requests"] == 2

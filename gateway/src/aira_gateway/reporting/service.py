@@ -26,7 +26,7 @@ from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from aira_common.money import format_display
-from aira_gateway.audit import PIPELINE_OPERATION_PREFIX, Outcome
+from aira_gateway.audit import Outcome
 from aira_gateway.db.models import RequestLog
 
 # What a caller may see. ``None`` is "every use case" — governance — and is deliberately distinct
@@ -80,23 +80,22 @@ _EMPTY = Figures("", 0, 0, 0, 0, 0, 0, 0, 0, None, None)
 def _measures() -> list[Any]:
     """The columns every breakdown reports, in one place so the rows cannot diverge."""
     return [
-        # **A caller's own requests**, which is not the same as rows. A pipeline step's model call
-        # is an audit row of its own (`FRD-125` FR-8) and is deliberately *not* a request: FR-9
-        # books it with `requests=0` because "the caller made one request and counting the
-        # classifier as a second would inflate every request figure". The budgets honoured that and
-        # this measure did not, so a use case running an LLM filter and a router reported two to
-        # three times the traffic it received — in the figures a governance role reads to decide
-        # whether a control is working.
+        # **Every model call**, including the ones a pipeline step made on the caller's behalf.
         #
-        # Only the **count** narrows. The tokens and the money below still sum every row, because
-        # those rows exist precisely so that what governing a use case costs is visible (FR-8);
-        # excluding them from the spend would trade one wrong figure for another.
-        func.count()
-        .filter(
-            (RequestLog.operation.is_(None))
-            | (RequestLog.operation.not_like(f"{PIPELINE_OPERATION_PREFIX}%"))
-        )
-        .label("requests"),
+        # This narrowed to the caller's own requests for one day, because `FRD-125` FR-9 booked a
+        # step's call with `requests=0` and the report counted rows — two answers to one question,
+        # and the report was the one disagreeing with enforcement. The owner then decided the other
+        # way (2026-08-15): a step's call reaches a model and costs money, so it counts, and the
+        # budgets were changed to match. The two agree again, in the direction the owner chose.
+        #
+        # What did **not** change is the rate limit: a bucket measures how fast requests arrive,
+        # the gate is taken once on the request that arrived, and refusing a caller for calls the
+        # gateway made on their behalf would slow down the traffic they did send.
+        #
+        # The `pipeline:<step>` operation still names those rows, so a reader who wants the split
+        # has the `by_model` and the operation to get it — what is *not* on offer is a total that
+        # silently means something different from the budget bar beside it.
+        func.count().label("requests"),
         func.coalesce(func.sum(RequestLog.prompt_tokens), 0).label("prompt_tokens"),
         func.coalesce(func.sum(RequestLog.completion_tokens), 0).label("completion_tokens"),
         func.coalesce(func.sum(RequestLog.cached_input_tokens), 0).label("cached_input_tokens"),

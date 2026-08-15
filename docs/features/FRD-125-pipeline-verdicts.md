@@ -73,9 +73,23 @@ part (b) is the money it never mentioned.
 
 - **FR-8** Every model call a pipeline step makes is recorded as its own audit row, named
   `pipeline:<step>`, priced like any other.
-- **FR-9** Those tokens and that money are booked against the use case's budgets — with
+- **FR-9** ~~Those tokens and that money are booked against the use case's budgets — with
   `requests=0`, because the caller made **one** request and counting the classifier as a second
-  would inflate every request figure and could trip a *request* limit for traffic nobody sent.
+  would inflate every request figure and could trip a *request* limit for traffic nobody sent.~~
+  **Superseded 2026-08-15 — see FR-9b.**
+- **FR-9b** Those tokens, that money **and one request** are booked against the use case's
+  budgets. A step's call reaches a model and costs money, so a use case running two of them per
+  request is doing three times the work its request budget was sized for, and a budget that cannot
+  see that is sized against something that is not happening.
+
+  FR-9's warning is not withdrawn, it is **accepted**: a request budget can now be exhausted by
+  calls the caller did not make, and that is the owner's decision (2026-08-15). It is accepted for
+  budgets **only**. A **rate limit** still counts arrivals — the gate is taken once, before the
+  pipeline, on the one request that arrived (`guard_before_work`) — because slowing a caller down
+  for calls the gateway made on their behalf throttles precisely the traffic they did send.
+
+  Reporting counts the same way, for the reason it was briefly changed not to: the budget bar and
+  the request figure beside it must not mean two different things.
 - **FR-9a** Booked into **both** stores: the system of record *and* the shared counter the guard
   reads. Postgres alone makes the spend visible to reporting and invisible to enforcement.
 - **FR-10** The row is written for a blocked request too.

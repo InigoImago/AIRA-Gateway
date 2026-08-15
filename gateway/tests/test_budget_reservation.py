@@ -455,8 +455,11 @@ async def test_a_side_call_reaches_the_system_of_record_as_well(sessionmaker, ru
     assert usage is not None
     assert usage.tokens == 42
     assert usage.cost_nanos == 500
-    # The caller made one request; the classifier is not a second one.
-    assert usage.requests == 0
+    # **One**, since 2026-08-15: the owner's decision to count a step's model call against the
+    # request allowance, because it reaches a model and costs money. `FRD-125` FR-9's warning —
+    # that this can trip a request limit for traffic the caller never sent — is accepted for
+    # budgets and refused for rate limits, which still count arrivals.
+    assert usage.requests == 1
 
 
 async def test_a_side_call_with_an_unreachable_counter_still_reaches_postgres(

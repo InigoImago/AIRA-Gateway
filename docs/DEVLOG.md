@@ -5,6 +5,43 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## A classifier is a request after all — for budgets, not for buckets (`FRD-125` FR-9b)
+
+The owner's answer to the question left open two rounds ago: *"count them in request budgets, rate
+limits stay."*
+
+`FRD-125` FR-9 had booked a pipeline step's model call with `requests=0`, and its reasoning was the
+consequence: *"could trip a request limit for traffic the caller never sent."* That consequence is
+now **accepted**, and the reason is the one the owner gave — the call reaches a model and costs
+money, so a use case running two steps per request is doing three times the work its request budget
+was sized for, and a budget that cannot see that is sized against something that is not happening.
+
+Accepted **for budgets only**, which is the interesting half. A rate limit still counts arrivals:
+the gate is taken once, before the pipeline, on the one request that arrived. Slowing a caller for
+calls the gateway made on their behalf would throttle precisely the traffic they did send — FR-9's
+argument, still true where it applies. Both halves are pinned, in both directions, because the two
+rules now differ deliberately and a reader who finds one would reasonably "fix" the other.
+
+**And this reverses my own change from two rounds ago.** I had narrowed the report to the caller's
+own requests, because the report and the budgets disagreed and the report was the one out of step.
+The rule it was measured against has changed, so the fix goes with it: both sides count every model
+call now. What survived unchanged is the property both reversals were actually about — the budget
+bar and the request figure beside it must not mean two different things. `QA45` was re-aimed rather
+than re-anchored: it guards the booking now, since `requests=0` is the value a half-undone reversal
+would silently go back to.
+
+FR-9 is struck through in the FRD rather than edited away, with FR-9b beside it: what the rule was,
+what it is, and that the warning was accepted rather than overlooked.
+
+Verified live: one dry run with an LLM filter, and the counter for that day reads `requests 1,
+tokens 36` where it would have read zero requests. The rate-limit half was already visible in an
+earlier measurement — a use case limited to one per minute served the first dry run and refused the
+second, which it could not have done if the classifier had taken a token of its own.
+
+`QA45` (re-aimed), `QA48`.
+
+---
+
 ## What one person used, and the column that made it answerable (`FRD-606`)
 
 Asked: *"in reporting I am missing a display of how much money was used up — at the moment it is

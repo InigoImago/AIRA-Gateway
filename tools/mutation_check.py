@@ -3900,6 +3900,14 @@ MUTATIONS = [
     # -- reporting and retention, audited with the same question as the three rounds before it.
     # -- `FRD-606`: what one person consumed, across both credentials.
     Mutation(
+        "QA48",
+        "a classifier call is counted by the budget and never by the rate-limit bucket",
+        "gateway/src/aira_gateway/api/serving.py",
+        "        units,",
+        "        units + 1,",
+        "gateway/tests/test_pipeline_accounting.py gateway/tests/test_ratelimit_routes.py",
+    ),
+    Mutation(
         "QA46",
         "one person using two credentials is one figure, not two rows nothing joins",
         "gateway/src/aira_gateway/reporting/service.py",
@@ -3933,11 +3941,16 @@ MUTATIONS = [
     ),
     Mutation(
         "QA45",
-        "a pipeline step's model call is not reported as a second request",
-        "gateway/src/aira_gateway/reporting/service.py",
-        "        func.count()\n        .filter(",
-        "        func.count().label('requests'),\n        func.count()\n        .filter(",
-        "gateway/tests/test_reporting.py",
+        "a pipeline step's model call spends the request allowance",
+        "gateway/src/aira_gateway/budgets/service.py",
+        # **Re-aimed, not re-anchored.** It used to guard the opposite rule — that a step's call is
+        # *not* a request — on the reporting side, because the budgets already booked zero and the
+        # report counted rows. The owner reversed the rule on 2026-08-15 and both sides now count,
+        # so the property worth defending is the booking itself: `0` is the value this silently
+        # goes back to if the reversal is ever half-undone.
+        "            requests=1,\n            subject=subject,",
+        "            requests=0,\n            subject=subject,",
+        "gateway/tests/test_budget_service.py gateway/tests/test_pipeline_accounting.py",
     ),
     Mutation(
         "QA41",
