@@ -168,6 +168,23 @@
       <app-consumption-panel [slug]="slug" [consumption]="consumption()" />
 
       <!--
+        And the reader's own share of it, asked for by name: *"I want to see my consumption and
+        remaining budget in the overview of the use case."* The same panel the members tab uses,
+        narrowed to one person — the arithmetic of a remainder is the part worth not writing twice.
+      -->
+      @if (myName(); as me) {
+        <app-people-panel
+          [only]="me"
+          [month]="peopleMonth()"
+          [today]="peopleToday()"
+          [budgets]="budgets()"
+          [usage]="usage()"
+          [unavailable]="consumption().unavailable"
+          [reason]="consumption().reason"
+        />
+      }
+
+      <!--
         Which models this use case may call (`FRD-308`). On the overview beside the other
         configuration, because it is the most consequential setting a use case has: with nothing
         released it answers every request with a refusal.

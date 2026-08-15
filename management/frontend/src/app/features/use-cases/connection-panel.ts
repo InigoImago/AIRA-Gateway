@@ -48,6 +48,29 @@ interface Reachable {
   selector: 'app-connection-panel',
   imports: [InfoHint],
   templateUrl: './connection-panel.html',
+  styles: `
+    /* A card that happens to be a disclosure. The marker sits beside the heading rather than
+       above it, and the summary is a whole row so the entire strip is the target — a triangle is
+       a small thing to hit and this one is the only way back in. */
+    .connect__summary {
+      cursor: pointer;
+      list-style-position: outside;
+      padding-left: 0.4rem;
+    }
+    .connect__summary::marker {
+      color: var(--aira-text-muted);
+    }
+    .connect__hint {
+      display: block;
+      margin-top: 0.25rem;
+      font-size: 0.9rem;
+      font-weight: 400;
+    }
+    /* Only when open, so a shut card is exactly its summary and nothing pads it out. */
+    .connect[open] .connect__body {
+      margin-top: 0.5rem;
+    }
+  `,
 })
 export class ConnectionPanel {
   readonly slug = input.required<string>();

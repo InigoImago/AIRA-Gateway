@@ -110,6 +110,8 @@ export class UseCaseDetail implements OnInit {
    */
   protected readonly peopleMonth = signal<PersonRow[]>([]);
   protected readonly peopleToday = signal<PersonRow[]>([]);
+  /** The signed-in reader's name, for the overview's "what you used" card. */
+  protected readonly myName = signal<string | null>(null);
   /**
    * How many of the two windows did not arrive — a **count**, not a flag.
    *
@@ -249,6 +251,9 @@ export class UseCaseDetail implements OnInit {
     });
     this.meService.get().subscribe({
       next: (me) => {
+        // Who is reading, so the overview can show *their* consumption. The name rather than the
+        // subject, because that is what the gateway groups a person's figures under (`FRD-606`).
+        this.myName.set(me.username || null);
         if (me.api_key_default_days) {
           this.defaultKeyDays.set(me.api_key_default_days);
         }

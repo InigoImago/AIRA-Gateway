@@ -422,4 +422,46 @@ describe('ConnectionPanel', () => {
     // reader is most likely to paste unread.
     expect(testid('connection-uc-example')?.textContent).toContain('/uc/demo-uc/kira/api/external');
   });
+
+  // ---- folded shut -------------------------------------------------------------------
+  /**
+   * Reported: *"make the description of connections collapsible, it takes up too much space."*
+   *
+   * Measured on the showcase use case before the change: the overview was **3849 px** tall and
+   * this block was **3467** of them — 90% of a page whose job is to say where a use case stands.
+   * It is a reference, not a status: read once when a client is wired up, scrolled past every day
+   * after that.
+   */
+  it('is a disclosure that starts shut', () => {
+    build(['chat-model']);
+    answer();
+
+    const panel = testid('connection') as HTMLDetailsElement | null;
+    expect(panel?.tagName).toBe('DETAILS');
+    expect(panel?.open).toBe(false);
+  });
+
+  it('keeps the sentence that answers the question, outside the fold', () => {
+    // The panel exists because a caller went looking for a per-use-case URL that does not exist.
+    // Putting *that* behind the fold would hide the answer and leave the examples — the wrong way
+    // round. A reader decides whether to open a block from what the summary says.
+    build(['chat-model']);
+    answer();
+
+    const summary = (testid('connection') as HTMLElement | null)?.querySelector('summary');
+    expect(summary?.textContent).toContain('issued for one use case');
+    expect(summary?.textContent).toContain('no use case in the URL');
+  });
+
+  it('still has everything it had, once opened', () => {
+    // A fold that quietly lost content would be a worse defect than the height it fixed.
+    build(['chat-model']);
+    answer();
+    const panel = testid('connection') as HTMLDetailsElement;
+    panel.open = true;
+    fixture.detectChanges();
+
+    expect(text()).toContain('Base URL');
+    expect(text()).toContain('Credentials');
+  });
 });

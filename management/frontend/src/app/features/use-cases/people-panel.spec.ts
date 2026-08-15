@@ -1,6 +1,6 @@
 import { Component, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import { Budget, PersonRow } from '../../core/api/models';
+import { Budget, BudgetUsage, PersonRow } from '../../core/api/models';
 import { PeoplePanel } from './people-panel';
 
 function row(over: Partial<PersonRow> & { key: string }): PersonRow {
@@ -23,9 +23,11 @@ function row(over: Partial<PersonRow> & { key: string }): PersonRow {
 @Component({
   imports: [PeoplePanel],
   template: `<app-people-panel
+    [only]="only()"
     [month]="month()"
     [today]="today()"
     [budgets]="budgets()"
+    [usage]="usage()"
     [unavailable]="unavailable()"
     reason="The gateway could not be reached."
   />`,
@@ -35,6 +37,8 @@ class Host {
   readonly today = signal<PersonRow[]>([]);
   readonly budgets = signal<Budget[]>([]);
   readonly unavailable = signal(false);
+  readonly only = signal<string | null>(null);
+  readonly usage = signal<Record<number, BudgetUsage>>({});
 }
 
 function setup() {
@@ -195,5 +199,127 @@ describe('PeoplePanel', () => {
     harness.render();
 
     expect(harness.text()).toContain('Nobody has called this use case');
+  });
+});
+
+describe('PeoplePanel — narrowed to the reader', () => {
+  it('shows only my row, and says so', () => {
+    // Asked for by name: *"I want to see my consumption and remaining budget in the overview of
+    // the use case."* The same panel as the members tab, because the arithmetic of a remainder is
+    // the part worth not writing twice — a copy on the overview is a copy that disagrees with the
+    // members tab the first time either is touched.
+    const harness = setup();
+    harness.host.only.set('erika');
+    harness.host.month.set([
+      row({ key: 'erika', cost: '3.00' }),
+      row({ key: 'ahmed', cost: '9.00' }),
+    ]);
+    harness.render();
+
+    expect(harness.text()).toContain('What you used');
+    expect(harness.text()).toContain('3.00');
+    expect(harness.text()).not.toContain('ahmed');
+    expect(harness.text()).not.toContain('9.00');
+  });
+
+  it('tells "you did not call" apart from "nobody did"', () => {
+    // A reader looking at their own figures and told "nobody has called" would reasonably conclude
+    // the use case is idle — a statement about everybody, made from a row about one person.
+    const harness = setup();
+    harness.host.only.set('erika');
+    harness.host.month.set([row({ key: 'ahmed' })]);
+    harness.render();
+
+    expect(harness.text()).toContain('You have not called this use case');
+    expect(harness.text()).not.toContain('Nobody has called');
+  });
+
+  it("computes my remaining allowance exactly as it does everybody else's", () => {
+    const harness = setup();
+    harness.host.only.set('erika');
+    harness.host.budgets.set([{ scope: 'each_member', period: 'month', limit_cost: '20.00' }]);
+    harness.host.month.set([row({ key: 'erika', cost_nanos: 12_000_000_000, cost: '12.00' })]);
+    harness.render();
+
+    expect(harness.text()).toContain('8.00');
+    expect(harness.text()).toContain('of 20.00');
+  });
+});
+
+describe('PeoplePanel — the shared pot', () => {
+  it('says what is left of a use-case budget, as shared', () => {
+    // The other half of *"my consumption and remaining budget"*. A `use_case` budget is one pot the
+    // first caller to arrive may spend all of, so what remains is the use case's — dividing it by
+    // head would invent an allowance nobody configured.
+    const harness = setup();
+    harness.host.only.set('erika');
+    harness.host.budgets.set([
+      { id: 7, scope: 'use_case', period: 'day', limit_requests: 500, limit_cost: '2.00' },
+    ]);
+    harness.host.usage.set({
+      7: {
+        id: 7,
+        used_tokens: 800,
+        used_requests: 6,
+        used_cost_nanos: 500_000_000,
+        used_cost: '0.50',
+        unpriced_requests: 0,
+      },
+    });
+    harness.host.month.set([row({ key: 'erika' })]);
+    harness.render();
+
+    expect(harness.text()).toContain('494 of 500 requests');
+    expect(harness.text()).toContain('1.50 of 2.00 spend');
+    expect(harness.text()).toContain('shared with everybody');
+  });
+
+  it('says nothing about a pot whose figures have not arrived', () => {
+    // `FRD-603`'s rule: unknown is not zero. "500 of 500 left" for a budget nobody measured is a
+    // confident statement about an untouched allowance.
+    //
+    // Asserted on **the line's absence**, not on its wording: written as
+    // `not.toContain('of 500 requests')` first, and a mutation that renders a made-up remainder
+    // under a different label sailed straight past it. What must not appear is the statement.
+    const harness = setup();
+    harness.host.only.set('erika');
+    harness.host.budgets.set([{ id: 7, scope: 'use_case', period: 'day', limit_requests: 500 }]);
+    harness.host.month.set([row({ key: 'erika' })]);
+    harness.render();
+
+    const line = (harness.fixture.nativeElement as HTMLElement).querySelector(
+      '[data-testid="shared-left"]',
+    );
+    expect(line).toBeNull();
+  });
+
+  it('does not offer a shared remainder where the budget is per head', () => {
+    // **With its usage present**, or the test proves nothing: the first version left `usage` empty,
+    // so the line was absent because nothing had been measured rather than because the scope is
+    // wrong — and a mutation that treats any budget as the shared pot passed it.
+    const harness = setup();
+    harness.host.only.set('erika');
+    harness.host.budgets.set([
+      { id: 8, scope: 'each_member', period: 'month', limit_cost: '20.00' },
+    ]);
+    harness.host.usage.set({
+      8: {
+        id: 8,
+        used_tokens: 10,
+        used_requests: 1,
+        used_cost_nanos: 1_000_000_000,
+        used_cost: '1.00',
+        unpriced_requests: 0,
+      },
+    });
+    harness.host.month.set([row({ key: 'erika' })]);
+    harness.render();
+
+    const line = (harness.fixture.nativeElement as HTMLElement).querySelector(
+      '[data-testid="shared-left"]',
+    );
+    expect(line).toBeNull();
+    // …and the per-head column is the one that answers here.
+    expect(harness.text()).toContain('Left of allowance');
   });
 });

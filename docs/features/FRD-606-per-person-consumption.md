@@ -145,3 +145,37 @@ Two things the live stack showed that the tests had not:
   `0.01 of 0.01`. The remainder is computed in nano-units — integers, like every other money
   figure that is not being shown — and rendered in the significant precision of the numbers beside
   it, with the limit's storage zeros trimmed off first.
+
+
+## 9. On the overview, and out of the way
+
+Two more from the owner, in one sentence each.
+
+**"I want to see my consumption and remaining budget in the overview of the use case."** The
+members tab answers it for everybody; the overview now answers it for the reader. The **same
+panel**, narrowed by a name, because the arithmetic is the part worth not writing twice — which
+window a budget's period selects, how a remainder is computed in nano-units, in what precision it
+is shown, and that a negative one is not a debt. A copy of that on the overview is a copy that
+disagrees with the members tab the first time either is touched.
+
+Half of "remaining budget" has no personal answer: a `use_case` budget is one pot the first caller
+to arrive may spend all of. So it is said as the shared fact it is — *"Left of this use case's
+shared day budget: 499 of 500 requests — shared with everybody in it"* — rather than divided by
+head, which would invent an allowance nobody configured.
+
+**"Make the description of connections collapsible, it takes up too much space."** Measured: the
+overview was **3849 px** tall and that block was **3467** of them, 90% of a page whose job is to say
+where a use case stands. It is a reference, not a status: read once when a client is wired up and
+scrolled past every day after. A `<details>`, shut by default — 3467 px → **122**, page 3849 →
+2347.
+
+The **substantive sentence stays outside the fold**. It is the answer to the question that prompted
+the panel — a caller hunting for a per-use-case URL that does not exist — and a reader decides
+whether to open a block from what its summary says. Shortening it to "base URLs and examples" put
+the answer behind the fold that exists to hide the examples; a test holds it there.
+
+Two of the four tests written for this section could not fail, both found by the harness rather than
+by reading them: one asserted the *wording* of a line that must not appear, so a mutation rendering
+the same claim under a different label passed it; the other left the usage map empty, so the line
+was absent because nothing had been measured rather than because the scope was wrong. Both now
+assert the element and reach their own path.

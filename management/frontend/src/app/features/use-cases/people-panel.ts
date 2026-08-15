@@ -1,5 +1,5 @@
 import { Component, computed, input } from '@angular/core';
-import { Budget, PersonRow } from '../../core/api/models';
+import { Budget, BudgetUsage, PersonRow } from '../../core/api/models';
 import { InfoHint } from '../../core/ui/info-hint';
 
 /** One person's row, ready to render: their totals, the two halves, and what is left. */
@@ -49,13 +49,12 @@ interface PersonView {
     <div class="card">
       <div class="spread">
         <h3 class="section-title" style="margin: 0">
-          What each person used
+          {{ mine() ? 'What you used' : 'What each person used' }}
           <app-info-hint label="What each person used" testid="people-consumption" [wide]="true">
-            Recorded requests for this use case, grouped by person. Somebody who calls with an API
-            key and also signs in to the console is one row here, with the two halves shown — the
-            gateway records both under the name they were known by. A row with no name is a
-            credential that carried none; it is shown as its own subject rather than folded into
-            somebody else.
+            Recorded requests for this use case. Somebody who calls with an API key and also signs
+            in to the console is one row here, with the two halves shown — the gateway records both
+            under the name they were known by. Traffic from before that name was recorded is listed
+            under its own subject rather than folded into somebody it probably belonged to.
           </app-info-hint>
         </h3>
         <span class="muted" style="font-size: 0.85rem">{{ windowLabel() }}</span>
@@ -67,15 +66,24 @@ interface PersonView {
           {{ reason() }}
         </p>
       } @else if (people().length === 0) {
+        <!--
+          Two different facts, said differently: nobody called, or *you* did not. A reader looking
+          at their own figures and told "nobody has called" would reasonably conclude the use case
+          is idle, which is a statement about everybody made from a row about one person.
+        -->
         <p class="empty" data-testid="people-empty">
-          Nobody has called this use case in this period.
+          @if (mine()) {
+            You have not called this use case in this period.
+          } @else {
+            Nobody has called this use case in this period.
+          }
         </p>
       } @else {
         <div class="table-wrap" style="margin-top: 1rem">
           <table class="table">
             <thead>
               <tr>
-                <th scope="col">Person</th>
+                <th scope="col">{{ mine() ? 'You' : 'Person' }}</th>
                 <th scope="col">Requests</th>
                 <th scope="col">Tokens</th>
                 <th scope="col">Spend ($)</th>
@@ -134,6 +142,24 @@ interface PersonView {
           </table>
         </div>
       }
+
+      <!--
+        The other half of *"my consumption and remaining budget"*. A use-case budget is a shared
+        pot — the first caller to arrive may spend all of it — so what is left is the use case's
+        and saying otherwise would invent a per-head allowance nobody configured. Said plainly, and
+        only where such a budget exists.
+      -->
+      @if (sharedLeft().length) {
+        <p class="muted" style="margin: 0.75rem 0 0; font-size: 0.85rem" data-testid="shared-left">
+          Left of this use case's shared {{ sharedPeriod() }} budget:
+          @for (figure of sharedLeft(); track figure.label) {
+            <span
+              ><strong>{{ figure.value }}</strong> {{ figure.label }}{{ $last ? '' : ' · ' }}</span
+            >
+          }
+          — shared with everybody in it.
+        </p>
+      }
     </div>
   `,
   styles: `
@@ -163,6 +189,58 @@ export class PeoplePanel {
   readonly budgets = input<Budget[]>([]);
   readonly unavailable = input(false);
   readonly reason = input('');
+  /**
+   * Narrow the panel to one person — the signed-in reader, on the use-case overview.
+   *
+   * The same component rather than a second one, because the arithmetic is the part worth not
+   * writing twice: which window a budget's period selects, how a remainder is computed in
+   * nano-units, what precision it is shown in, and that a negative one is not a debt. A copy of
+   * that on the overview is a copy that disagrees with the members tab the first time either is
+   * touched.
+   */
+  readonly only = input<string | null>(null);
+  /**
+   * Current-period consumption per budget, so a **shared** pot can say what is left of it.
+   *
+   * Asked for as *"my consumption and remaining budget"*, and half of that question has no
+   * personal answer: a `use_case` budget is one pot the first caller to arrive may spend all of,
+   * so what remains is the use case's remainder and not the reader's. Said as the shared fact it
+   * is rather than divided by head, which would invent an allowance nobody configured.
+   */
+  readonly usage = input<Record<number, BudgetUsage>>({});
+
+  /** The shared pot, if there is one. Its remainder belongs to everybody, not to the reader. */
+  private readonly shared = computed(() =>
+    this.budgets().find((budget) => budget.scope === 'use_case' && budget.enabled !== false),
+  );
+
+  /** What is left of the shared pot, in the metrics it actually limits. */
+  protected readonly sharedLeft = computed<{ label: string; value: string }[]>(() => {
+    const budget = this.shared();
+    const used = budget?.id === undefined ? undefined : this.usage()[budget.id];
+    if (!budget || !used) return [];
+    const out: { label: string; value: string }[] = [];
+    if (budget.limit_cost && used.used_cost_nanos != null) {
+      const left = Math.round(Number(budget.limit_cost) * 1_000_000_000) - used.used_cost_nanos;
+      out.push({
+        label: `of ${this.trimmed(budget.limit_cost)} spend`,
+        value: this.money(Math.max(0, left), budget.limit_cost, used.used_cost ?? ''),
+      });
+    }
+    if (budget.limit_requests != null && used.used_requests != null) {
+      out.push({
+        label: `of ${budget.limit_requests} requests`,
+        value: `${Math.max(0, budget.limit_requests - used.used_requests)}`,
+      });
+    }
+    if (budget.limit_tokens != null && used.used_tokens != null) {
+      out.push({
+        label: `of ${budget.limit_tokens} tokens`,
+        value: `${Math.max(0, budget.limit_tokens - used.used_tokens)}`,
+      });
+    }
+    return out;
+  });
 
   /** The per-head budget this use case has, if any. Only that scope binds one person. */
   private readonly perHead = computed(() =>
@@ -178,9 +256,19 @@ export class PeoplePanel {
    * today's consumption rather than the month's — otherwise the column would say a person is over
    * an allowance that resets every night.
    */
-  protected readonly people = computed(() =>
+  private readonly window = computed(() =>
     this.perHead()?.period === 'day' ? this.today() : this.month(),
   );
+
+  protected readonly people = computed(() => {
+    const only = this.only();
+    return only === null ? this.window() : this.window().filter((row) => row.key === only);
+  });
+
+  /** Whether this panel is about the reader rather than about everybody. */
+  protected readonly mine = computed(() => this.only() !== null);
+
+  protected readonly sharedPeriod = computed(() => this.shared()?.period ?? 'month');
 
   protected readonly windowLabel = computed(() =>
     this.perHead()?.period === 'day' ? 'today' : 'this month',

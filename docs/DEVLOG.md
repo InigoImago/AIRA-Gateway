@@ -5,6 +5,37 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## My own figures on the overview, and 3467 px folded away (`FRD-606` §9)
+
+Two from the owner. *"I want to see my consumption and remaining budget in the overview of the use
+case"* — the members tab answered it for everybody and the overview for nobody. The same panel,
+narrowed by a name: the arithmetic of a remainder is the part worth not writing twice, and a copy
+on the overview is a copy that disagrees with the members tab the first time either is touched.
+
+Half of "remaining budget" has no personal answer, and saying so is the honest version: a
+`use_case` budget is one pot the first caller may spend all of, so it reads *"Left of this use
+case's shared day budget: 499 of 500 requests — shared with everybody in it"* rather than being
+divided by head into an allowance nobody configured.
+
+*"Make the description of connections collapsible, it takes up too much space."* Measured before
+touching it: the overview 3849 px, that block **3467** of them — 90% of a page whose job is to say
+where a use case stands. It is a reference, not a status. A `<details>`, shut: **3467 → 122 px**,
+page 3849 → 2347.
+
+The sentence that answers the question stays **outside** the fold. It is why the panel exists — a
+caller hunting for a per-use-case URL that does not exist — and a reader decides whether to open a
+block from its summary. My first attempt shortened it to "base URLs and examples", which put the
+answer behind the fold that exists to hide the examples; an existing test caught it, and a new one
+holds it there.
+
+**Two of my own new tests could not fail**, both found by the harness: one asserted the *wording* of
+a line that must not appear, so a mutation rendering the same claim under another label passed it;
+the other left the usage map empty, so the line was missing because nothing had been measured rather
+than because the scope was wrong — a setup that never reaches the path it is named after, twice in
+one file.
+
+---
+
 ## A classifier is a request after all — for budgets, not for buckets (`FRD-125` FR-9b)
 
 The owner's answer to the question left open two rounds ago: *"count them in request budgets, rate
