@@ -349,9 +349,26 @@ async def test_a_daily_and_a_monthly_budget_both_bind(governed: Governed) -> Non
 
 
 async def test_a_member_budget_binds_only_that_member(governed: Governed) -> None:
-    await governed.budget(requests=1, scope="each_member")
+    """One allowance **each**, which is not one allowance shared.
 
-    assert await _statuses(governed, 3) == [200] * 3
+    This asserted `[200, 200, 200]` from three requests by **one** caller and had been failing
+    since the `member` scope was removed: it used to configure a budget naming *somebody else*
+    (`scope="member", subject="somebody-else"`), which genuinely left this caller untouched, and
+    the mechanical rewrite to `each_member` kept the expectation. `each_member` binds everybody,
+    so the right answer for one caller became `[200, 429, 429]` — which is what the test directly
+    below already asserts. Two tests, one scenario, opposite expectations.
+
+    Its **property** is worth keeping and needs a second person to state, so it now issues a key
+    owned by somebody else: their allowance is untouched by this caller having spent theirs.
+    """
+    await governed.budget(requests=1, scope="each_member")
+    theirs = await governed.key_for("somebody-else")
+
+    mine = await _statuses(governed, 2)
+    first_of_theirs = await governed.generate_as(theirs, _body(), model=MOCK_MODEL)
+
+    assert mine == [200, 429], mine
+    assert first_of_theirs.status_code == 200, first_of_theirs.text
 
 
 async def test_a_per_person_budget_binds_whoever_turns_up(governed: Governed) -> None:

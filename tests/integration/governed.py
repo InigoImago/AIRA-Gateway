@@ -64,6 +64,41 @@ class Governed:
     def headers(self, **extra: str) -> dict[str, str]:
         return {"x-goog-api-key": self.key, "content-type": "application/json", **extra}
 
+    async def key_for(self, subject: str) -> str:
+        """A second key on this use case, owned by **somebody else**.
+
+        `each_member` means one counter per person, and a fixture with one credential cannot tell
+        that apart from one counter per use case — every request it makes is the same person. This
+        is the only way to ask, at this layer, whether a per-head allowance really binds per head.
+        """
+        full_key, prefix, key_hash = generate_api_key()
+        async with self.engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "INSERT INTO api_keys (id, prefix, key_hash, subject, use_case, label,"
+                    " is_active) VALUES (:id, :prefix, :hash, :subject, :slug, :subject, true)"
+                ),
+                {
+                    "id": str(uuid.uuid4()),
+                    "prefix": prefix,
+                    "hash": key_hash,
+                    "subject": subject,
+                    "slug": self.slug,
+                },
+            )
+        return full_key
+
+    async def generate_as(
+        self, key: str, body: dict[str, Any], *, model: str = CHAT_MODEL, timeout: float = 120.0
+    ) -> httpx.Response:
+        """One request with a credential of this test's choosing, rather than the fixture's."""
+        async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=timeout) as client:
+            return await client.post(
+                f"{GEMINI}/models/{model}:generateContent",
+                json=body,
+                headers={"x-goog-api-key": key, "content-type": "application/json"},
+            )
+
     async def generate(
         self, body: dict[str, Any], *, model: str = CHAT_MODEL, timeout: float = 120.0
     ) -> httpx.Response:

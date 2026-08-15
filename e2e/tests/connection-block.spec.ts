@@ -18,13 +18,30 @@ import { USERS, createUseCase, login, uniqueSlug } from './support';
  * has shipped inert twice — a `title` attribute that showed nothing, a `routerLinkActive` that
  * styled nothing — both invisible to every layer but this one.
  */
+/**
+ * The block is a **disclosure**, shut when the page loads.
+ *
+ * It was 3467 px of a 3849 px overview — a reference somebody reads once when wiring a client up
+ * and scrolls past every day after, so the owner asked for it folded. Every test below is about
+ * what is *inside* it, so every one opens it first; the summary is the control a reader clicks,
+ * so that is what these click too rather than setting `open` from script.
+ */
+async function openConnectionBlock(page: import('@playwright/test').Page) {
+  const block = page.getByTestId('connection');
+  await expect(block).toBeVisible({ timeout: 20_000 });
+  await block.locator('summary').click();
+  // The disclosure is what makes the contents queryable at all; asserting it is open here means a
+  // failure below is about the block's *contents* rather than about the click.
+  await expect(block).toHaveJSProperty('open', true);
+  return block;
+}
+
 test.describe('Connecting a client', () => {
   test('shows both surfaces, with a base URL and an example for each', async ({ page }) => {
     await login(page, USERS.globalAdmin);
     await page.goto('/use-cases/kundenservice');
 
-    const block = page.getByTestId('connection');
-    await expect(block).toBeVisible({ timeout: 20_000 });
+    const block = await openConnectionBlock(page);
     await block.scrollIntoViewIfNeeded();
 
     // Two surfaces, two tabs — alternatives rather than steps, so only one is on screen. A reader
@@ -46,7 +63,7 @@ test.describe('Connecting a client', () => {
   }) => {
     await login(page, USERS.globalAdmin);
     await page.goto('/use-cases/kundenservice');
-    await expect(page.getByTestId('connection')).toBeVisible({ timeout: 20_000 });
+    await openConnectionBlock(page);
 
     await page.getByTestId('conn-tab-kira').click();
     const table = page.getByTestId('connection-models');
@@ -65,7 +82,7 @@ test.describe('Connecting a client', () => {
   test('the examples name a model this use case is actually allowed to call', async ({ page }) => {
     await login(page, USERS.globalAdmin);
     await page.goto('/use-cases/kundenservice');
-    await expect(page.getByTestId('connection')).toBeVisible({ timeout: 20_000 });
+    await openConnectionBlock(page);
 
     // The property that matters. An example naming a model the gateway would refuse is an example
     // that fails when it is pasted — and the reader debugs their client rather than the release.
@@ -102,7 +119,7 @@ test.describe('Connecting a client', () => {
     await context.grantPermissions(['clipboard-read', 'clipboard-write']);
     await login(page, USERS.globalAdmin);
     await page.goto('/use-cases/kundenservice');
-    await expect(page.getByTestId('connection')).toBeVisible({ timeout: 20_000 });
+    await openConnectionBlock(page);
 
     await page.getByTestId('conn-tab-kira').click();
     const shown = await page.getByTestId('connection-kira-chat').textContent();
@@ -133,7 +150,7 @@ test.describe('Connecting a client', () => {
   }) => {
     await login(page, USERS.globalAdmin);
     await page.goto('/use-cases/kundenservice');
-    await expect(page.getByTestId('connection')).toBeVisible({ timeout: 20_000 });
+    await openConnectionBlock(page);
 
     // It was half a sentence in a hover hint. A caller whose client can only be given a base URL
     // does not go looking in a hint — they conclude the gateway has no way to do what they need.
@@ -170,7 +187,7 @@ test.describe('Connecting a client', () => {
     await login(page, USERS.globalAdmin);
     await page.goto('/use-cases/kundenservice');
 
-    const block = page.getByTestId('connection');
+    const block = await openConnectionBlock(page);
     await expect(block).toBeVisible({ timeout: 20_000 });
 
     await expect(block.getByRole('button', { name: /issue a key/i })).toHaveCount(0);
@@ -179,8 +196,13 @@ test.describe('Connecting a client', () => {
     // The route that does exist: the page's own tab bar, and it lands on the panel that issues.
     // Asserted on the panel, not on the tab's own `aria-selected` — a tab can mark itself active
     // while showing nothing, which is the defect this whole test replaced.
+    //
+    // **The page's panel by name.** A bare `getByRole('tabpanel')` matched exactly one element
+    // while the connection block was shut; opening it puts a second tab strip on the page — the
+    // two surfaces — and the assertion became a strict-mode violation that named the *overview*
+    // panel. An unqualified role query is a query about a page that has one of something.
     await page.getByRole('tab', { name: /API keys/i }).click();
-    await expect(page.getByRole('tabpanel')).toContainText('API keys');
+    await expect(page.getByRole('tabpanel', { name: /API keys/i })).toContainText('API keys');
   });
 
   /**
@@ -198,6 +220,7 @@ test.describe('Connecting a client', () => {
     await login(page, USERS.globalAdmin);
     await page.goto('/use-cases/kundenservice');
 
+    await openConnectionBlock(page);
     const credentials = page.getByTestId('connection-credentials');
     await expect(credentials).toBeVisible({ timeout: 20_000 });
     await credentials.scrollIntoViewIfNeeded();
@@ -214,6 +237,8 @@ test.describe('Connecting a client', () => {
 
     // And the tab it points at is real — the failure this block has already had twice.
     await page.getByRole('tab', { name: /API keys/i }).click();
-    await expect(page.getByRole('tabpanel')).toContainText('API keys');
+    // By name, for the reason given above: an open connection block puts a second tab strip
+    // on the page, so an unqualified `tabpanel` names two things.
+    await expect(page.getByRole('tabpanel', { name: /API keys/i })).toContainText('API keys');
   });
 });

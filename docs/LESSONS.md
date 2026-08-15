@@ -243,6 +243,13 @@ reading code.
   model and flakes.
 - **A test whose verdict turns on how fast something answered is measuring the machine.** A refill
   rate half a second wide is a coin toss under load.
+- **`count()` is a sample, not a wait.** Three instances: a helper that branched on it chose a
+  selector that could never match and waited 45 s for it; a panel asserted "says neither" while its
+  data was still arriving; a heading that renders before the list under it. Wait for the thing —
+  `expect(a.or(b)).toBeVisible()` — then count.
+- **An unqualified role query is a query about a page that has one of something.** Opening a
+  disclosure put a second tab strip on the page and `getByRole('tabpanel')` became ambiguous. Name
+  what you mean.
 - **A mutation anchor must exist exactly once**, be re-anchored when the code moves, and be
   removed when the rule is deleted — an anchor pointing at a grave reports green about nothing.
 - **A property guarded twice cannot be a mutation**, and that is not a reason to weaken the guard.

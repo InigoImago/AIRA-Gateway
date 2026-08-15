@@ -11,6 +11,24 @@
   find-in-page, and the disclosure state survives nothing that matters. The summary keeps the
   heading and the one sentence a reader needs to decide whether to open it.
 -->
+<!--
+  **Before the card, not inside it.** Everything after `</summary>` is hidden while a `<details>`
+  is shut — only the summary shows — so a callout placed there is a message nobody meets, which is
+  the opposite of what this one is for. It answers "why is there nothing here" (`FRD-308`: a use
+  case starts able to call nothing), and a reader must not have to open a block to be told why it
+  is empty.
+
+  Found by the browser test that asserts a reader *meets* it: it went red when the fold was added,
+  and red again when the callout was moved out of the fold but not out of the element.
+-->
+@if (!released().length) {
+  <p class="callout" style="margin-bottom: 0.75rem" data-testid="connection-nothing-released">
+    No model is released to this use case yet, so every request would be refused. Release one above
+    first — a connection example naming a model the gateway will not serve is an example that fails
+    when it is pasted.
+  </p>
+}
+
 <details class="card connect" data-testid="connection">
   <summary class="connect__summary">
     <span>
@@ -27,6 +45,7 @@
       </span>
     </span>
   </summary>
+
   <div class="connect__body">
     @if (failure()) {
       <p class="callout callout--warning" style="margin-top: 1rem" data-testid="connection-failure">
@@ -40,16 +59,7 @@
     }
 
     @if (!released().length) {
-      <!--
-      `FRD-308`: a use case starts able to call nothing, and until somebody releases a model every
-      request is refused. Leading with that is the difference between an empty block and a block
-      that says why it is empty — the whole reason this panel exists.
-    -->
-      <p class="callout" style="margin-top: 1rem" data-testid="connection-nothing-released">
-        No model is released to this use case yet, so every request would be refused. Release one
-        above first — a connection example naming a model the gateway will not serve is an example
-        that fails when it is pasted.
-      </p>
+      <!-- Said in the summary instead: see the block above. -->
     } @else {
       <!--
       Two surfaces, two tabs. They are alternatives rather than steps: a migrating KIRA client will

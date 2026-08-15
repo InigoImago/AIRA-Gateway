@@ -5,6 +5,52 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Both slow tiers, end to end — and what they found (828 + 142)
+
+Asked to run the integration and browser suites completely. Neither had been run in full this
+session, and both had something to say.
+
+**Integration: 828 tests, one failure — and not from this session.**
+`test_a_member_budget_binds_only_that_member` asserted `[200, 200, 200]` from three requests by one
+caller against an `each_member` budget of 1. It had been failing since the `member` scope was
+removed: the test used to configure a budget naming *somebody else*, which genuinely left this
+caller alone, and the mechanical rewrite to `each_member` kept the expectation. `each_member` binds
+everybody, so the right answer became `[200, 429, 429]` — which is exactly what the test **directly
+below it** already asserts. Two tests, one scenario, opposite expectations, and nothing noticed
+because nobody ran the tier.
+
+Its property is worth keeping and needs a second person to state, so the fixture can now issue a
+key owned by somebody else: this caller spends their allowance, and the other person's first
+request is still served. That is `ADR-0019`'s other half at the integration layer — one pot **per
+person**, which is not one pot.
+
+**Browser: 8 failures, and those were mine.** Folding the connection block shut hid the contents
+seven tests assert; they open it now, through the summary, the way a reader does. The eighth was
+`model-release`, which passes alone — collateral, and diagnosed below.
+
+Then two more on the second run, both real:
+
+- **A callout outside the fold is still inside the element.** The "no model is released" message
+  had been moved out of `connect__body` and left after `</summary>` — where a shut `<details>`
+  hides everything. So the one use case that most needs the explanation showed a folded card and
+  nothing else. It sits *before* the card now. The browser test caught it twice: once when the fold
+  was added, once when the fix was not far enough.
+- **An unqualified `getByRole('tabpanel')` is a query about a page that has one of something.**
+  Opening the block puts a second tab strip on the page, so the assertion resolved to two elements
+  and named the overview panel. Both call sites ask for the panel by name now.
+
+And one flake of the shape this session already fixed once: `model-release` sampled
+`await released.count() + await nothing.count()` immediately after the heading appeared. The
+heading renders before the release list arrives, so under the load of a 142-test run it asked
+during the gap and got zero — reporting *"the panel says neither"* about a panel that was still
+loading. It waits for whichever answer turns up, then checks it is exactly one. **`count()` is a
+sample, not a wait** — the third time that has cost something here.
+
+Final: **828 integration passed**, **141 browser passed, 1 skipped** (the hundred-question
+catalogue run, skipped deliberately and with its reason).
+
+---
+
 ## What this session left undocumented, checked rather than assumed
 
 Asked at the end of the round: *"is everything we did in this session documented?"* Checked

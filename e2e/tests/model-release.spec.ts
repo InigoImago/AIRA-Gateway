@@ -19,8 +19,14 @@ test.describe('Model release', () => {
     await panel.scrollIntoViewIfNeeded();
 
     // Either state is a real answer; what must never happen is neither being said.
+    //
+    // **Waited for, not sampled.** `count()` is one immediate poll: the heading renders before the
+    // release list arrives, so under load this asked the question during the gap and got zero —
+    // reporting "the panel says neither" about a panel that was still loading. `or()` waits for
+    // whichever answer turns up, and the sum below then checks that it is exactly one.
     const released = page.getByTestId('release-summary');
     const nothing = page.getByTestId('nothing-released');
+    await expect(released.or(nothing).first()).toBeVisible({ timeout: 20_000 });
     expect((await released.count()) + (await nothing.count())).toBe(1);
 
     if (await nothing.count()) {
