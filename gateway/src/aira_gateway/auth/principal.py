@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from aira_common.roles import has_oversight, is_governance, may_act_on_incidents
+from aira_gateway.scopes import person as person_key
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +48,16 @@ class Principal:
     #: validator is synchronous and has no database. The paths are the raw fact; which use cases
     #: they reach is a decision made one layer out, where the grants are.
     groups: tuple[str, ...] = ()
+
+    @property
+    def person(self) -> str | None:
+        """Who allowances are counted against — one human, whichever credential they used.
+
+        The same rule the attribution carries, because the two are read in different places: a
+        route has an `Attribution`, a read-only endpoint has only the `Principal`, and a person's
+        allowance must not depend on which of the two happened to be in scope.
+        """
+        return person_key(self.subject, self.username)
 
     @property
     def is_governance(self) -> bool:

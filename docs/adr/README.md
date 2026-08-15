@@ -29,3 +29,4 @@ Each ADR is immutable once **Accepted** — to change a decision, add a new ADR 
 | 0016 | [Stored prompts are readable, and every read is recorded](ADR-0016-content-is-readable-and-every-read-is-recorded.md) | Accepted | 2026-08-09 |
 | 0017 | [A role is held through a group, and only through a group](ADR-0017-a-role-is-held-through-a-group.md) | Accepted | 2026-08-09 |
 | 0018 | [Everything between the services is a trust boundary](ADR-0018-everything-between-the-services-is-a-trust-boundary.md) | Accepted | 2026-08-09 |
+| 0019 | [An allowance belongs to a person, not to a credential](ADR-0019-an-allowance-belongs-to-a-person.md) | Accepted | 2026-08-15 |

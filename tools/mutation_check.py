@@ -1562,11 +1562,12 @@ MUTATIONS = [
         "E1",
         "a batch of n weighs n against the rate limit, not one",
         "gateway/src/aira_gateway/api/serving.py",
-        # Re-anchored: the call was reformatted and the raw `app.state` read replaced by the typed
-        # accessor when `state.py` closed the untyped-seam hole. `units` is still the whole
-        # property, and it is still the argument this replaces.
-        "    await rate_limits.check(\n        use_case,\n        subject,\n        units,",
-        "    await rate_limits.check(\n        use_case,\n        subject,\n        1,",
+        # Re-anchored twice: once when the call was reformatted and the raw `app.state` read
+        # became the typed accessor, and again when the second argument became the **person**
+        # rather than the subject (`ADR-0019`). `units` is still the whole property, and it is
+        # still the argument this replaces.
+        "    await rate_limits.check(\n        use_case,\n        caller,\n        units,",
+        "    await rate_limits.check(\n        use_case,\n        caller,\n        1,",
         EMBEDDING,
     ),
     Mutation(
@@ -3906,6 +3907,31 @@ MUTATIONS = [
         "        units,",
         "        units + 1,",
         "gateway/tests/test_pipeline_accounting.py gateway/tests/test_ratelimit_routes.py",
+    ),
+    # -- `ADR-0019`: one human, one allowance, whichever credential.
+    Mutation(
+        "QA49",
+        "an allowance is counted against the person, not the credential",
+        "gateway/src/aira_gateway/scopes.py",
+        "    return username or subject",
+        "    return subject",
+        "gateway/tests/test_one_person_one_allowance.py",
+    ),
+    Mutation(
+        "QA50",
+        "a credential that names nobody keys on its own subject, never on nothing",
+        "gateway/src/aira_gateway/scopes.py",
+        "    return username or subject",
+        "    return username",
+        "gateway/tests/test_one_person_one_allowance.py",
+    ),
+    Mutation(
+        "QA51",
+        "the budget the gate checks is the one the reservation is made against",
+        "gateway/src/aira_gateway/api/serving.py",
+        '    caller = getattr(attribution, "person", None)\n\n    expected = await estimate(',
+        '    caller = getattr(attribution, "subject", None)\n\n    expected = await estimate(',
+        "gateway/tests/test_one_person_one_allowance.py",
     ),
     Mutation(
         "QA46",

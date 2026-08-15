@@ -5,6 +5,58 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## One human, one allowance — whichever credential, whichever surface (`ADR-0019`)
+
+Asked, straight after the per-person figures landed: *"if it was that easy to calculate a person's
+consumption, why not throw the API key and the Keycloak sign-in into one pot for limits, request
+limiting, budgets and so on — then we do not have to worry about double budgets."*
+
+Right, and the code had been waiting for it. `scopes.py` carried the two-pot problem as a *known
+limit* and named the fix in the same paragraph: *"a stable identity for a person across credentials
+rather than a scope that names one."* `FRD-606` built that identity a day earlier for a different
+reason — the name beside the subject, so a display could group one human — and using it for the
+decision was the smaller half of the same idea.
+
+`aira_gateway.scopes.person` is the whole rule: the name where the credential carries one, the
+subject where it does not. **The fallback is not a formality**: falling back to nothing would put
+every nameless caller — a service account, an older realm mapping — into one shared pot, which is
+the opposite failure and much worse, since it is the case nobody checks. A mutation that removes it
+is caught.
+
+**Two things deliberately unchanged.** `subject` stays what an audit row is about, so `FRD-604`'s
+question — who is accountable for this credential — still has its answer. And a **suspension** still
+reads the subject and the credential: stopping traffic aims at a person, a credential or a use case,
+and folding the first two would make "block this leaked key" stop the human holding it.
+
+**The counters were merged, not abandoned** (`0032_merge_member`). The mapping is *observed* — the
+audit row has carried subject and name side by side since `FRD-606` — so a subject that has called
+resolves to its name and one that has not is left keying nobody. Where both pots exist for a period
+they are summed. Verified on the running stack: `member:coding-assistant:dca4ff6f-…` became
+`member:coding-assistant:ucadmin`, carrying its 36 tokens. Without that step everybody who signs in
+appears to start the period at zero — under-counting a budget, which is the one direction a budget
+must not be wrong.
+
+**The matrix the owner asked for**, `{Gemini, KIRA} × {API key, bearer}`: seven hermetic cases in
+`test_one_person_one_allowance.py`, written as one *comparison* rather than four separate
+assertions, because a per-combination test passes just as happily against the defect — which is how
+it survived this long. Reverting the key to the subject fails four of them; removing the fallback
+fails the fifth. Plus one e2e, because only that layer has a token minted by real Keycloak whose
+subject genuinely looks nothing like a username: a key spends a request budget of one and the same
+person's dry run is refused by it. Shown to fail against the old gateway by rebuilding it.
+
+The console's two warnings said *"an API key and a Keycloak sign-in are two separate budgets for the
+same person"*. True when written, false the moment the key changed, and a caveat that has quietly
+become wrong is worse than none — somebody sizes a limit around it. They now say the opposite, and
+a test forbids the old wording.
+
+A note on the suite: these tests hit a **real Redis** where one is reachable, so the budget counter
+outlives the run. A fixed slug made the first assertion depend on how many times the file had been
+run — the kind of flake that gets a real finding dismissed. Each test now uses a use case of its own.
+
+`QA49`–`QA51`; `E1` re-anchored.
+
+---
+
 ## My own figures on the overview, and 3467 px folded away (`FRD-606` §9)
 
 Two from the owner. *"I want to see my consumption and remaining budget in the overview of the use

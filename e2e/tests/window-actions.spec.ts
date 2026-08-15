@@ -41,7 +41,7 @@ test.describe('Window actions', () => {
    * In a browser because it is a warning: a component test proves the template can render it, and
    * only this shows that somebody choosing the scope meets it.
    */
-  test('choosing a per-head limit warns that a person has two allowances', async ({ page }) => {
+  test('choosing a per-head limit says a person has one allowance', async ({ page }) => {
     await login(page, USERS.globalAdmin);
     await page.goto('/use-cases/kundenservice?tab=rate-limits');
     await page.getByTestId('add-rate-limit').click();
@@ -52,12 +52,15 @@ test.describe('Window actions', () => {
     await page.getByLabel('Applies to').selectOption('each_member');
 
     await expect(warning).toBeVisible();
-    await expect(warning).toContainText('Counted per credential');
+    // It said *"counted per credential — two separate limits for the same person"* until
+    // `ADR-0019` keyed the counter on the person, and it was true while it stood. A note that has
+    // become false is worse than none: somebody sizes a limit around it.
+    await expect(warning).toContainText('Counted per person');
     await expect(warning).toContainText('Keycloak');
+    await expect(warning).not.toContainText('two separate');
 
-    // The qualifier, which matters as much: a use-case-wide figure binds **both** allowances —
-    // measured with a cap of four requests exhausted, after which the key and the bearer token
-    // were each refused. Told only the first half, a reader concludes governance is broken by two.
+    // The qualifier, which matters as much: a use-case-wide figure binds everybody together, and a
+    // reader told only the first half concludes that per-head is all there is.
     await expect(warning).toContainText('whole use case');
 
     // And the same on budgets, where the figure is money rather than a rate.

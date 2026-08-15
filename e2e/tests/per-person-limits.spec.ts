@@ -1,7 +1,9 @@
 import { APIRequestContext, Page, expect, test } from '@playwright/test';
 import {
   USERS,
+  awaitGatewayMembership,
   createUseCase,
+  grantGroup,
   login,
   releaseAllModels,
   submitOfOpenForm,
@@ -165,5 +167,54 @@ test.describe('Per-person limits', () => {
     expect(refused.status()).toBe(429);
     // A well-behaved client is told when to come back, not merely that it was refused.
     expect(refused.headers()['retry-after']).toBeTruthy();
+  });
+
+  /**
+   * One human, both credentials, **one allowance** (`ADR-0019`).
+   *
+   * The unit matrix covers all four ways in — two surfaces × two credentials — against a stubbed
+   * validator. Only this layer can show the real thing: a token minted by Keycloak through the
+   * authorisation-code flow, whose subject is a directory id that looks nothing like the username
+   * an API key carries. That difference *was* the defect, and a stub is precisely where it can be
+   * made to disappear by accident.
+   *
+   * A request budget of one, spent by the key, and the console's own dry run — the same person's
+   * browser session — refused by it.
+   */
+  test('a key and a browser session share one allowance', async ({ page, request }) => {
+    test.slow();
+    await login(page, USERS.globalAdmin);
+    const slug = uniqueSlug('onepot');
+    await createUseCase(page, slug, 'One pot probe');
+    await releaseAllModels(page, slug);
+    // The gateway keys the counter on the person; this caller has to be a member for either
+    // credential to be accepted at all (`ADR-0007`).
+    await grantGroup(page, slug, '/aira/global-admins', 'admin');
+    await awaitGatewayMembership(page, slug);
+
+    await page.goto(`/use-cases/${slug}?tab=budgets`);
+    await page.click('button:has-text("Add budget")');
+    await page.selectOption('#budget-scope', 'each_member');
+    await page.fill('#budget-requests', '1');
+    await (await submitOfOpenForm(page)).click();
+    await expect(page.locator('[data-testid="budget-editor"]')).toBeHidden();
+
+    const key = await issueKey(page, slug);
+    await expect
+      .poll(async () => (await ask(request, key)).status(), {
+        timeout: 30_000,
+        message: 'the issued key never reached the gateway',
+      })
+      .toBe(200);
+
+    // …and now the same person, signed in rather than holding the key. Before `ADR-0019` this was
+    // served: the browser's subject is a Keycloak uuid and the key's is a username, so the two
+    // filled two counters and each had an allowance of its own.
+    await page.goto(`/use-cases/${slug}/pipeline`);
+    await page.waitForSelector('.pipe__graph', { timeout: 30_000 });
+    await page.fill('#sample-user', 'one pot probe');
+    await page.click('button:has-text("Run dry-run")');
+
+    await expect(page.locator('.callout--danger')).toContainText(/budget/i, { timeout: 30_000 });
   });
 });

@@ -194,9 +194,10 @@
   these notes?", which a warning living only in a creation window earns.
 -->
 <ng-template #twoPots>
+  <!-- Was "counted per credential", and true until `ADR-0019` keyed the counter on the person. -->
   <p class="callout" data-testid="rl-two-pots" role="status">
-    <strong>Counted per credential.</strong> An API key and a Keycloak sign-in are two separate
-    limits for the same person; all of their keys share one. A limit for the whole use case still
-    bounds both.
+    <strong>Counted per person.</strong> One limit per member, however they call: an API key and a
+    Keycloak sign-in by the same person share it, and so do all of their keys. A limit for the whole
+    use case still bounds everybody together.
   </p>
 </ng-template>

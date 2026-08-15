@@ -171,7 +171,15 @@ async def guard_before_work(request: Request, *, units: int = 1) -> None:
     """
     attribution = getattr(request.state, "attribution", None)
     use_case = getattr(attribution, "use_case", None)
+    # **The person, not the credential.** A key and a sign-in by the same human share one
+    # allowance (`aira_gateway.scopes.person`); the subject alone gave them two, because the two
+    # credentials answer "who is this" in different alphabets.
+    #
+    # A **suspension** still reads the subject and the credential: stopping traffic is aimed at
+    # exactly one of the three — a person, a credential, or a use case — and folding the first two
+    # together would make "block this leaked key" stop the person holding it.
     subject = getattr(attribution, "subject", None)
+    caller = getattr(attribution, "person", None)
     credential = getattr(attribution, "credential", None)
 
     # First of all: a caller who has been stopped is stopped, and must not pay for a classifier
@@ -191,11 +199,11 @@ async def guard_before_work(request: Request, *, units: int = 1) -> None:
     throttles = await suspensions.check(use_case, subject, credential)
     await rate_limits.check(
         use_case,
-        subject,
+        caller,
         units,
         extra=[per_minute(t.key, t.limit_rpm, label=t.label) for t in throttles],
     )
-    await budgets.refuse_if_exhausted(use_case, subject)
+    await budgets.refuse_if_exhausted(use_case, caller)
     request.state.early_gate_taken = True
 
 
@@ -239,7 +247,9 @@ async def enforce_pre_dispatch(
 
     attribution = getattr(request.state, "attribution", None)
     use_case = getattr(attribution, "use_case", None)
-    subject = getattr(attribution, "subject", None)
+    # The reservation is against the same pot the gate above checked, or a caller could be waved
+    # through one and refused by the other for the same traffic.
+    caller = getattr(attribution, "person", None)
 
     expected = await estimate(
         request,
@@ -250,9 +260,7 @@ async def enforce_pre_dispatch(
         extra_tokens=extra_tokens,
     )
     # `app.state` is untyped, so the annotation is what states the contract the route relies on.
-    reservation: Reservation = await budgets_of(request).guard(
-        use_case, subject, estimated=expected
-    )
+    reservation: Reservation = await budgets_of(request).guard(use_case, caller, estimated=expected)
     return reservation
 
 
@@ -1145,7 +1153,8 @@ async def record_pipeline_calls(request: Request, trail: AuditTrail) -> None:
             )
             await budgets_of(request).book_side_call(
                 getattr(attribution, "use_case", None),
-                getattr(attribution, "subject", None),
+                # The person, like every other booking against a per-head allowance.
+                getattr(attribution, "person", None),
                 call.usage.total_tokens,
                 cost_nanos=cost,
             )

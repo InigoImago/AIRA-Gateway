@@ -315,9 +315,16 @@
   these notes?", which a warning living only in a creation window earns.
 -->
 <ng-template #twoPots>
+  <!--
+    **It used to say the opposite**, and it was true: an API key and a Keycloak sign-in were two
+    separate budgets for the same person, because the two credentials answer "who is this" in
+    different alphabets and the counter was keyed on that answer. `ADR-0019` made the key the
+    person, so the warning became false — and a warning that is false is worse than none, because
+    somebody sizes a limit around it.
+  -->
   <p class="callout" data-testid="budget-two-pots" role="status">
-    <strong>Counted per credential.</strong> An API key and a Keycloak sign-in are two separate
-    budgets for the same person; all of their keys share one. A budget for the whole use case still
-    bounds both.
+    <strong>Counted per person.</strong> One budget per member, however they call: an API key and a
+    Keycloak sign-in by the same person share it, and so do all of their keys. A budget for the
+    whole use case still bounds everybody together.
   </p>
 </ng-template>

@@ -20,6 +20,8 @@ from dataclasses import dataclass
 
 from fastapi import Request
 
+from aira_gateway.scopes import person as person_key
+
 USE_CASE_HEADER = "x-aira-use-case"
 #: The same header, spelled the way a caller writes it.
 #:
@@ -52,11 +54,18 @@ class Attribution:
     use_case: str | None
     #: The calling system's credential identity, carried through to the audit row (FRD-122 FR-5).
     credential: str | None = None
-    #: The name this subject is known by, where the credential carries one. **Not** an identity
-    #: and never written to the audit row — `subject` is what a row describes. It exists so a
-    #: rule an administrator wrote about a person by name can find them whichever credential they
-    #: used; see :meth:`aira_gateway.scopes.Scope.applying`.
+    #: The name this subject is known by, where the credential carries one.
+    #:
+    #: **Not an identity**: `subject` is what this attribution is *about*, and it is what the audit
+    #: row's `subject` column keeps. The name is written beside it (`FRD-606`) and is what
+    #: allowances are counted against, because the two credentials disagree about the subject and
+    #: agree about the name — see :func:`aira_gateway.scopes.person`.
     username: str | None = None
+
+    @property
+    def person(self) -> str | None:
+        """Who allowances are counted against — one human, whichever credential they used."""
+        return person_key(self.subject, self.username)
 
 
 # `realm_roles(claims)` lived here until 2026-08-11 and had been unreachable since `ADR-0017`

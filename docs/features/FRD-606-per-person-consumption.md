@@ -179,3 +179,20 @@ by reading them: one asserted the *wording* of a line that must not appear, so a
 the same claim under a different label passed it; the other left the usage map empty, so the line
 was absent because nothing had been measured rather than because the scope was wrong. Both now
 assert the element and reach their own path.
+
+
+## 10. And then the allowance followed the figures (`ADR-0019`)
+
+The owner, on seeing the per-person figures: *"if it was that easy to calculate a person's
+consumption, why not throw the API key and the Keycloak sign-in into one pot for limits, request
+limiting, budgets and so on — then we do not have to worry about double budgets."*
+
+Right, and `scopes.py` had already named this as the fix it was waiting for: *"a stable identity
+for a person across credentials rather than a scope that names one."* This document built that
+identity for a **display**; using it for the **decision** was the smaller half of the same idea.
+`ADR-0019` records it, including the two things it deliberately does not change — `subject` stays
+what a row is about, and a suspension still aims at exactly what it names.
+
+The console's two warnings were true when written and became false the moment the key changed. They
+now say the opposite, and a test forbids the old wording: a caveat that has quietly become wrong is
+worse than none, because somebody sizes a limit around it.

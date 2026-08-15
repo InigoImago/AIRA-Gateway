@@ -42,5 +42,8 @@ async def usage(
     # reader's own subject is the only one they may be shown: reporting somebody else's here would
     # make a consumption bar a way of watching a named colleague, which no role asked for and the
     # requests view (`FRD-505`) grants deliberately and records.
-    figures = await service.usage(use_case, subject=principal.subject)
+    # The person, so the figure this endpoint reports is the one the gateway enforces
+    # against (`aira_gateway.scopes.person`). Reading it by subject would have shown a
+    # signed-in reader an empty allowance while their key's traffic filled the same pot.
+    figures = await service.usage(use_case, subject=principal.person)
     return JSONResponse({"use_case": use_case, "usage": figures})

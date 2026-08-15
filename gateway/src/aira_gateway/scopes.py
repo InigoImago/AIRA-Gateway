@@ -33,6 +33,29 @@ USE_CASE = "use_case"
 EACH_MEMBER = "each_member"
 
 
+def person(subject: str | None, username: str | None) -> str | None:
+    """Who an allowance is counted against: **one human, whichever credential they used**.
+
+    The name where the credential carries one, the subject otherwise.
+
+    Both credentials carry a name (`auth/service.py`, `auth/oidc.py`), and they disagree about the
+    subject: an API key's subject already *is* its owner's username, while an OIDC token's is the
+    directory's user id. Keying on the subject therefore gave one person two per-head budgets and
+    two rate-limit buckets — a limit of ten meant twenty to anybody holding both, and the console
+    had to warn about it in two places.
+
+    The fallback matters and is not a formality: a token with no ``preferred_username`` — a service
+    account, an older realm mapping — keys on its subject, which is stable and unique. Falling back
+    to nothing would put every nameless caller in **one shared pot**, which is the opposite failure
+    and a much worse one.
+
+    Written here, next to the keys it feeds, rather than as a property of the two credential types:
+    the rule is about what a *scope* means, and a copy on each of them is two copies to keep in
+    step (`Attribution.person` and `Principal.person` both call this).
+    """
+    return username or subject
+
+
 @dataclass(frozen=True, slots=True)
 class Scope:
     """A resolved scope: a use case, and optionally the one member it narrows to."""
@@ -51,18 +74,18 @@ class Scope:
         This is the single place a scope is added: give it a branch here and both the budget and
         the rate-limit path follow, instead of one of them being forgotten.
 
-        **A person using two credentials is two callers here, and that is a known limit.** An API
-        key's subject is its owner's username; an OIDC token's is the directory's user id. So the
-        same person browsing and calling with a key gets two per-head allowances rather than one.
-        The removed ``member`` scope was the only place the two alphabets were ever reconciled —
-        it matched a typed name against either — and nothing reconciles them now. Recorded here
-        rather than lost with the test that used to cover it: it is a property of `each_member`,
-        it was true before that scope was removed, and the fix (if it is ever wanted) is a stable
-        identity for a person across credentials rather than a scope that names one.
+        ``caller`` is **the person, not the credential** — see :func:`person`. A key and a sign-in
+        by the same human share one allowance.
 
-        A row's ``subject`` and the name a caller is known by are **no longer parameters**: they
-        existed for the removed ``member`` scope, which matched a typed name against either of the
-        two alphabets a credential can answer "who is this" in. Nothing reads them now, and a
+        That was a known limit for months and is written down here because the note it replaces
+        said what the fix would be: *"a stable identity for a person across credentials rather than
+        a scope that names one."* This is that identity. Until `FRD-606` there was nothing to build
+        it from — the audit row carried only a subject, and the two credentials answer "who is
+        this" in different alphabets — and once the name was recorded beside the subject for the
+        *display*, using it for the *decision* was the smaller half of the same idea.
+
+        A row's ``subject`` is **no longer a parameter**: it existed for the removed ``member``
+        scope, which matched a typed name against either alphabet. Nothing reads it now, and a
         parameter nothing reads is a rule the code appears to have and does not.
         """
         if scope == USE_CASE:

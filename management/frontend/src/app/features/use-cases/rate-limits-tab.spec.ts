@@ -308,7 +308,7 @@ describe('RateLimitsTab — the per-head warning', () => {
     expect(warning?.textContent).toContain('whole use case');
   });
 
-  it('warns that a person has two allowances, and only for the per-head scope', () => {
+  it('says a person has one allowance, and says it only for the per-head scope', () => {
     const harness = setup();
     harness.component.showForm.set(true);
     harness.component.rlScope.set('use_case');
@@ -320,7 +320,10 @@ describe('RateLimitsTab — the per-head warning', () => {
 
     const warning = harness.fixture.nativeElement.querySelector('[data-testid="rl-two-pots"]');
     expect(warning).not.toBeNull();
-    expect(warning?.textContent).toContain('Counted per credential');
+    // It said "counted per credential" until `ADR-0019` keyed the counter on the person. A
+    // note that is *false* is worse than none — somebody sizes a limit around it.
+    expect(warning?.textContent).toContain('Counted per person');
     expect(warning?.textContent).toContain('Keycloak');
+    expect(warning?.textContent).not.toContain('two separate');
   });
 });
