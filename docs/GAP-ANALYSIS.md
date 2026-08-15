@@ -30,7 +30,7 @@ Legend: done built and verified · partly partial, with the missing half named �
 | 12 | Self-service filter and routing pipeline | done | `FRD-303`, `FRD-306` |
 | 13 | Permitted models per use case | **done** | Two gates with two owners: a Global Administrator approves a model for the *installation* (`FRD-307`), an administrator of the use case releases it to *that* use case (`FRD-308`, 2026-08-11). Both are dispatch conditions at **every hop**, so neither `model_route` nor a fallback chain goes past them. Empty means **none**. The console picks from the catalog rather than taking free text, and the `allow_check` step — which checked only the name the caller sent, once, before routing — is gone |
 | 14 | Model smoke tests and jailbreak batteries | done | `FRD-504` (2026-08-09) — one flat catalogue of 100 questions, put to a model and judged by a person; a model's standing is its **latest run**, never a sum. Narrower than drafted: no repetition-as-a-rate, no two modes, no machine-checked expectations |
-| 15 | Budget overview and limits | done | `FRD-400`–`403`, `FRD-601`, `FRD-603` — a use case's consumption is shown **with or without a limit** |
+| 15 | Budget overview and limits | done | `FRD-400`–`403`, `FRD-601`, `FRD-603`, `FRD-606` — a use case's consumption is shown **with or without a limit**, and so is each **person's**, with the two credentials shown apart and counted together. A per-head allowance belongs to the person rather than to the credential (`ADR-0019`, 2026-08-15): a key and a browser session share one, where they used to be two |
 | 16 | Anomaly detection | done | `FRD-500`/`501` — seven kinds, evaluated against the audit trail |
 | 17 | Central overview of all use cases | partly | see 11 |
 

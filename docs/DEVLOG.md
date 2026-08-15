@@ -5,6 +5,41 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## What this session left undocumented, checked rather than assumed
+
+Asked at the end of the round: *"is everything we did in this session documented?"* Checked
+against the discipline in `CLAUDE.md` §4 rather than answered from memory — every commit against
+the DEVLOG, then the documents nothing mechanical guards.
+
+**Complete already:** nine commits, nine DEVLOG entries, in order. Every FRD touched carries its
+own *as built* section, the generated feature index matches the headers, `ADR-0019` is written and
+indexed, and the property count in `CLAUDE.md` is what the harness defines — the four tests that
+check those mechanically all pass.
+
+**Four gaps, all in the documents a reader opens rather than the ones a test reads:**
+
+- `REQUEST-LIFECYCLE.md` still said a pipeline step is *"booked against the budget with
+  `requests=0` — the caller made one request."* That was true until this session reversed it
+  (`FR-9b`). The one document whose whole subject is "one request, every control, in order" was
+  describing a control that had changed underneath it.
+- `INTEGRATIONS.md` described **two** ways into a use case where `FRD-209` §2.1 has three — the
+  third being the grant naming a person, which this session made work. It also said nothing about
+  `preferred_username`, which is now what decides whose allowance is whose (`ADR-0019`), and an
+  installation whose tokens omit it should know what it gets instead.
+- `GAP-ANALYSIS.md`'s budget row named the use-case figures and not the per-person ones.
+- `TESTING.md` described **two** tiers where `CLAUDE.md` promises four, and claimed the hermetic
+  tier is hermetic. It is, with the stack stopped; with a Redis reachable the **budget counter is
+  shared between runs**, which is how a test written this session refused a request it should have
+  served. Both are written down now.
+
+**LESSONS** gained one genuinely new rule and three merged instances. The new one is *"a default
+argument is a silent one"* — the wire shape's worst variant, because nothing is missing to notice:
+`resolve()`'s `direct` argument had tests of its own and two callers passing two arguments. The
+merged ones: the closed vocabulary restated four times where **the fourth copy was the test**, and
+two more setups that never reached the path they were named after.
+
+---
+
 ## One human, one allowance — whichever credential, whichever surface (`ADR-0019`)
 
 Asked, straight after the per-person figures landed: *"if it was that easy to calculate a person's

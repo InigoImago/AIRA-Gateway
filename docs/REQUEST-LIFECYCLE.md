@@ -133,6 +133,12 @@ graph TB
 `guard_before_work` checks, in order: **suspensions** (is this caller stopped?), **rate limits**
 (token bucket, all-or-nothing across use-case and member scopes), and **already over budget**.
 
+A per-head allowance is counted against the **person**, not the credential: an API key and a
+Keycloak sign-in by the same human share one budget and one bucket
+([`ADR-0019`](adr/ADR-0019-an-allowance-belongs-to-a-person.md)). A suspension is the exception and
+deliberately so — it aims at exactly what it names, so blocking a leaked key does not block the
+person holding it.
+
 It is called once, _before the verb branch_. Putting it inside the pipeline would have been tidier
 and would have left `:embedContent` unlimited — embeddings have no pipeline. That verb is the reason
 this project writes controls on the path every branch takes rather than inside one of them
@@ -163,9 +169,12 @@ dry run follows the same rule and the membership rule with it: it calls a real m
 to a use case exactly as a request does.
 
 Then a `fallback_models` chain. **A pipeline model call is a first-class request**: it leaves its own
-audit row named `pipeline:<step>`, priced, booked against the budget with `requests=0` — the caller
-made one request. Measured against a real model, the classifier costs roughly as much as the answer
-it guards ([`FRD-125`](features/FRD-125-pipeline-verdicts.md)).
+audit row named `pipeline:<step>`, priced, and booked against the budget **as a request** — it
+reached a model and cost money, so a use case running two steps per request is doing three times the
+work its request budget was sized for. It does **not** take a rate-limit token: a bucket measures how
+fast requests arrive, and the gate above is taken once, on the one request that did
+([`FRD-125` FR-9b](features/FRD-125-pipeline-verdicts.md), owner's decision 2026-08-15). Measured
+against a real model, the classifier costs roughly as much as the answer it guards.
 
 A filter that ran and **passed** records that it did: "found nothing" and "none configured" used to
 look identical.

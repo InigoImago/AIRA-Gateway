@@ -14,6 +14,20 @@ Run everywhere, no services required. This is what a CI unit stage runs on every
 
 Proof: with the **entire Compose stack stopped**, `uv run pytest` passes all tests.
 
+**With the stack _running_, the hermetic tier is not fully hermetic**, and it is worth knowing
+which way. The database is in memory per app, but the **budget counter** is not: `ADR-0008` keeps
+it in a shared store, so where a Redis is reachable — a developer's machine, a sandbox — a key
+written by one run is still there for the next. A test that fixes a use-case slug therefore depends
+on how many times it has been run. Measured, on a test written this way: the first assertion
+refused a request that should have been served. **Give a test its own slug**; the suite does.
+
+## Tier 1b — Mutation checks (hermetic, on demand)
+`make mutants` (`tools/mutation_check.py`) breaks one property at a time and requires a named test
+to notice. It is the answer to *"a green test proves only that the code and the test agree"*: a
+property nothing would notice losing is reported as a **survivor**, and a mutation whose anchor has
+moved as **stale** — never as a pass. Run it when adding a rule worth keeping, and add the mutation
+that reintroduces a bug you have just fixed.
+
 ## Tier 2 — Integration tests (need the live stack, opt-in)
 Marked `@pytest.mark.integration` and **excluded from the default run** (`-m 'not integration'` in
 `addopts`). They exercise the real Postgres/Keycloak/Kafka. Run them in a dedicated CI stage that
@@ -28,6 +42,13 @@ make test-integration   # uv run pytest -m integration --no-cov
 
 Codify the manual end-to-end checks (auth flows, use-case membership, persistence, SSE) as
 `integration`-marked tests under `*/tests/integration/` so they are repeatable in CI.
+
+## Tier 3 — Browser tests (`e2e/`, need the whole thing)
+Playwright against the running console, gateway and Keycloak (`make test-e2e`). This layer exists
+for what the ones above **structurally cannot see**: a real authorization-code flow, a control that
+renders and does nothing, a layout that only a viewport has an opinion about. Anything needing a
+*user token* belongs here — the dev realm has the password grant off, so a token only comes from
+the real flow.
 
 ## Jenkins pipeline (sketch)
 ```groovy

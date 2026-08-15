@@ -28,6 +28,14 @@ reading code.
   no event; a `throttle` produced a value the limiter could not consume; `FRD-116` shipped Vault
   and no container was given `VAULT_ADDR` for three days. **Test the wire, not the ends.**
 
+- **A default argument is a silent one** — the wire shape's worst variant, because there is nothing
+  *missing* to notice. `resolve()` had taken a `direct` argument since the vocabulary was written,
+  with tests of its own; both planes called it with two arguments, so a grant naming a person was
+  specified, replicated to the gateway and read by nobody (`FRD-209` FR-6). The same day, in the
+  fix for it: deleting `username=username` from the write survived the whole suite — the column,
+  the grouping and the panel were covered and the step that fills them was not. A missing map entry
+  at least leaves a gap somebody can see; an unpassed parameter looks exactly like a call.
+
 - **A hand-written list with no counterpart.** A set has no opinion about what it does not
   contain, so a missing entry announces itself through nothing. *Six instances:* Kafka topics
   (twice — `aira.rate-limits`, `aira.anomaly-rules`, created by nothing); `use_case_group.granted`
@@ -35,6 +43,13 @@ reading code.
   roles surviving in the realm file; `app.state` services. **The answer every time: compare the
   list against the constant in both directions** — a topic with no emitter is as wrong as an
   emitter with no topic.
+
+  *And the copy can be the guard.* `aira_common.anomalies` calls itself closed; the console
+  restated it **four** times — a dropdown, a units table, a sentence writer, and a test named
+  *"every kind has words"* iterating a hand-written list. All four offered `token_spike`, which
+  does not exist, and omitted `blocked_prompt_rate`, which does — so the test asserted completeness
+  against a list that was itself incomplete. When a vocabulary cannot be imported across a language
+  boundary, the comparison belongs in the language that can read **both** files.
 
 - **A rule restated on a second surface.** Identical the day it was written, and compared by
   nothing afterwards. *Many:* KIRA read an empty membership list as *"anything goes"* while Gemini
@@ -216,7 +231,11 @@ reading code.
 - **A test whose setup never reaches the path it is named after.** SQLite enforces no column
   lengths; `TestClient` buffers a streamed body before you can hang up; a *cold* budget counter
   seeds from Postgres and hides a missing write; a fixture whose use case may call nothing can only
-  ever exercise the exempt test double.
+  ever exercise the exempt test double; an assertion that a line is **absent** passed while a
+  mutation rendered the same claim under a different label — assert the element, not the wording;
+  a panel test that left the usage map empty proved the line was missing because nothing had been
+  *measured*, not because the scope was wrong. Four of these were found by the harness in one
+  session, two of them in tests written minutes earlier.
 - **A unit test that reads the developer's machine is a test about that machine** — a `.env` on
   disk, a stack that happens to be running, a Redis holding last run's bucket.
 - **A harness that configures a service differently from production tests a different service.**
@@ -229,4 +248,5 @@ reading code.
 - **A property guarded twice cannot be a mutation**, and that is not a reason to weaken the guard.
 - **Each layer sees what the one below structurally cannot.** A dropped socket *cancels* a task
   where an in-process close raises `GeneratorExit`; two credentials can only disagree where both
-  are real. Anything needing a user token belongs in `e2e/`.
+  are real — a stubbed validator is exactly where a subject that "looks nothing like a username"
+  can quietly come to look like one. Anything needing a user token belongs in `e2e/`.

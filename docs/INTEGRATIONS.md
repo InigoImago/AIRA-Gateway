@@ -107,8 +107,16 @@ A naming convention also still works, and needs no configuration at all:
 /use-cases/<slug>
 ```
 
-A user in `/use-cases/kundenservice` reaches that use case by the name alone. It is one route in,
-not the only one, and the two are a **union** — where the roles differ, the stronger wins.
+A user in `/use-cases/kundenservice` reaches that use case by the name alone. It is one route of
+**three**, and they are a **union** — where the roles differ, the stronger wins:
+
+1. this convention, resolvable from the token by itself;
+2. a grant to **any group path your realm already uses** — `/abteilungen/vertrieb/nord`, whatever
+   it is. AIRA imposes no naming convention on somebody else's directory;
+3. a grant naming **one person**, for the case where no group fits.
+
+You do not need a group per use case. Route 1 exists because it needs no configuration at all and
+is a perfectly good way to run a small installation.
 
 **AIRA never writes to your directory.** It does not create groups, add people to them or delete
 them. Group membership stays your system's answer.
@@ -131,6 +139,20 @@ to every client whose tokens AIRA sees, including service accounts:
 The dev realm has it on the SPA client and on the test service accounts. A realm that has it on
 only some of them produces a feature that works for some callers and not others, which is the
 hardest shape of all to diagnose.
+
+#### And one that decides whose allowance is whose
+
+> **`preferred_username` should be in the access token** — Keycloak puts it there by default.
+
+A per-head budget or rate limit is counted against the **person**, so that an API key and a browser
+session by the same human share one allowance rather than getting two
+([`ADR-0019`](adr/ADR-0019-an-allowance-belongs-to-a-person.md)). The name in the token is what
+joins them: an API key's identity already *is* its owner's username, and a token's subject is a
+directory id that resembles nothing.
+
+Without the claim nothing breaks and nothing is silently shared: that caller's allowance keys on
+their subject, which is stable and unique — they simply get a second one for their key. A service
+account, which has no person behind it, is exactly this case and is right to be.
 
 #### Searching your directory (optional)
 
