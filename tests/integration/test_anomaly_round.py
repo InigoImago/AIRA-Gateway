@@ -111,17 +111,34 @@ async def _seed_rows(engine: AsyncEngine, slug: str, count: int, **over) -> None
             )
 
 
+#: How far back a round in these tests looks for traffic.
+#:
+#: The evaluator reads which scopes saw traffic from `request_logs` rather than from a set this
+#: process filled — that is what makes it correct with more than one gateway instance
+#: (`FRD-127`). The rows here are seeded minutes into the past to sit inside a rule's window, so a
+#: round with the production one-minute lookback would see none of them and every case would pass
+#: for the wrong reason: nothing touched, nothing evaluated, no event.
+#:
+#: An hour covers any window these tests use. It also means a round evaluates every *other* scope
+#: with recent traffic in this shared database, which is exactly what production does — and is why
+#: `_by_rule` and `fixture.events()` have always scoped their assertions to this test's own rule
+#: and slug rather than to `events[0]`.
+LOOKBACK_SECONDS = 3600.0
+
+
 async def _tick(engine: AsyncEngine, slug: str) -> list:
     """Run one evaluation round against the live database, for the given scope."""
-    service = AnomalyService(build_sessionmaker(engine), suspensions=None)
-    service.touch(slug)
+    service = AnomalyService(
+        build_sessionmaker(engine), suspensions=None, interval_seconds=LOOKBACK_SECONDS
+    )
     return await service.tick()
 
 
 async def _tick_enforcing(engine: AsyncEngine, slug: str) -> list:
     sessions = build_sessionmaker(engine)
-    service = AnomalyService(sessions, suspensions=SuspensionService(sessions))
-    service.touch(slug)
+    service = AnomalyService(
+        sessions, suspensions=SuspensionService(sessions), interval_seconds=LOOKBACK_SECONDS
+    )
     return await service.tick()
 
 
@@ -711,10 +728,30 @@ async def test_d1_a_tick_with_no_touched_scope_does_nothing(fixture) -> None:
 
 
 async def test_d2_a_rule_whose_use_case_saw_no_traffic_is_not_evaluated(fixture) -> None:
-    await fixture.rule(kind="refusal_rate", threshold=50, min_sample=4)
-    await _seed_rows(fixture.engine, fixture.slug, 10, outcome="rate_limited", status=429)
+    """A quiet installation with 200 use cases should not run 200 queries a minute forever.
 
-    await _tick(fixture.engine, "somebody-else")
+    **Both halves of the setup are load-bearing.** The refusals below would fire this rule if it
+    were evaluated — they are inside its 60-minute window — and they sit *outside* the round's
+    lookback, which is what makes the scope untouched. Seeding no rows at all would leave the rule
+    with nothing to find, so deleting the filter would change nothing and this would pass against
+    a version that had lost it.
+
+    The old shape of this test asked for a scope by name (`touch("somebody-else")`). Touched scopes
+    are read from the audit rows now, so a use case with rows in the window is touched by
+    definition and naming a different one proves nothing (`FRD-127`).
+    """
+    await fixture.rule(kind="refusal_rate", threshold=50, min_sample=4)
+    await _seed_rows(
+        fixture.engine, fixture.slug, 10, outcome="rate_limited", status=429, minutes_ago=10
+    )
+    # Recent traffic elsewhere, so the round has a scope to evaluate and is not simply idle.
+    await _seed_rows(fixture.engine, f"anom-busy-{uuid.uuid4().hex[:6]}", 2)
+
+    # The production lookback, deliberately: one minute reaches the row above and not the rule's.
+    service = AnomalyService(
+        build_sessionmaker(fixture.engine), suspensions=None, interval_seconds=60.0
+    )
+    await service.tick()
 
     assert await fixture.events() == []
 
@@ -751,10 +788,8 @@ async def test_d4_the_same_finding_is_not_written_twice_inside_its_window(fixtur
     await _seed_rows(fixture.engine, fixture.slug, 10, outcome="rate_limited", status=429)
 
     sessions = build_sessionmaker(fixture.engine)
-    service = AnomalyService(sessions)
-    service.touch(fixture.slug)
+    service = AnomalyService(sessions, interval_seconds=LOOKBACK_SECONDS)
     await service.tick()
-    service.touch(fixture.slug)
     await service.tick()
 
     assert len(await fixture.events()) == 1
