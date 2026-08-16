@@ -521,8 +521,9 @@ Three consequences worth knowing before you look for a missing setting:
   with the `admin` role, both set in the console; the token carries no notion of it. Somebody who
   should be able to test their own pipeline and cannot is almost always a `user` where they should
   be an `admin`.
-- **A use case whose pipeline declares no start model cannot be run**, because there is nowhere for
-  the questions to enter. The console says exactly that rather than disabling the button silently.
+- **A use case with no model released to it cannot be run**, because there is nothing for the
+  questions to be put to. The console says exactly that rather than disabling the button silently.
+  A run is entered at a model the person starting it picks, from that release list.
 
 The seed creates one use case named `smoke-test` for IT Security's **model** evaluation — a
 released model and a pipeline that starts there. It is an ordinary use case in every respect and

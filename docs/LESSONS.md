@@ -245,6 +245,13 @@ reading code.
   difference; agreeing with the database should be free.
 - **An ambiguous routing table refuses to boot.** With three adapters, last-registration-wins is a
   silent choice of region and credential.
+- **A field that names one of something narrows a decision that deliberately allowed several.**
+  A pipeline briefly carried a `start_model` so the question catalogue had somewhere to begin. It
+  reads as *this is the model this use case uses* — and a use case releases several models on
+  purpose, so the field quietly contradicted the release. It also made the wrong thing the
+  precondition: un-runnable for want of a pipeline field rather than for want of a model. The
+  question the field answered belonged to the **run**, not to the configuration; ask it there, and
+  bound it by the permission that already existed.
 - **A feature that must edit a governance decision to work is fighting the model it is built on.**
   The question catalogue asked the caller for a model, `FRD-308` then refused it because the use
   case had never been released that model, so the runner wrote `allowed_models` on the way past
@@ -276,6 +283,18 @@ reading code.
   request.
 - **A control that starts a request must survive that request.** A search box inside the `@else` of
   `@if (loading())` tears itself down on the second keystroke.
+- **Read-only is a control, greyed — never prose.** The models released to a use case were shown
+  to a reader who may not change them as a paragraph of `<code>` chips. *"It does not look like a
+  control, so the developer will not even read it"* — the one piece of configuration they most
+  need, rendered as the one thing on the page that reads as decoration. Show the same control,
+  disabled: its greyed state says *you may look, not change* without a sentence having to. What is
+  removed is only what **acts** — a remove button, a list toggle — and a component that drops its
+  whole field when disabled is how a control becomes prose in the first place.
+- **A `<select>` is sized by its widest option, and `max-width: 100%` does not stop it.** That
+  percentage is measured against a parent which, as a flex item, is itself sizing to content —
+  flex items default to `min-width: auto`, which is exactly what carries an intrinsic width
+  upward. A long use-case name pushed the page past the window and onto a second monitor. Cap the
+  control **and** give the container `min-width: 0`; one without the other does nothing.
 - **Unknown is never rendered as zero**, and every figure says what it counts. The variety that
   costs most is a sentence about somebody's **access**: the Runs panel branched on an empty list
   that every load starts in, so until the answer arrived it told every reader *"there is no use

@@ -63,27 +63,6 @@
   color: #f9fafb;
 }
 
-/* Where a request enters (`ADR-0020`). Laid out like a step — text left, controls right — because
-   it sits in the same column and a reader tracing the path should not have to re-orient. Not
-   `node--step`: it is not one, it has no inspector, and giving it that class would make it look
-   selectable. */
-.node--start {
-  text-align: left;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  border-style: dashed;
-
-  .node__body {
-    flex: 1;
-    min-width: 0;
-  }
-
-  .node__controls {
-    flex: none;
-  }
-}
-
 .node--step {
   cursor: pointer;
   text-align: left;

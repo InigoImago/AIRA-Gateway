@@ -5,6 +5,65 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Four corrections from the owner, and two of them undo a decision from the same day
+
+Read in the console rather than in the code, which is why all four are things no test would have
+found.
+
+**A `<select>` is sized by its widest option, and nothing above capped that.** A use case with a
+long name stretched the picker past the window and took the page's layout with it — on a
+multi-monitor desktop the overflow ran onto the second screen. `max-width: 100%` was already on the
+control and did nothing, because it is measured against a `.field` that is itself a flex item
+sizing to *its* content: flex items default to `min-width: auto`, which is precisely what carries
+an intrinsic width upward. Both halves were needed, `min-width: 0` on the field and a real ceiling
+on the select.
+
+**"This use case has no pipeline" was a sentence that should never have been written.** The owner's
+question — *how can a use case have no pipeline?* — has no good answer. A request comes in and a
+request is dispatched; the steps are what happens in between, and none means nothing happens. That
+is a configuration, not an absence, and the message sent a reader off to build something that
+already existed. The refusal is gone; `PipelineConfig` now says so in its own docstring, because
+the code invited the mistake by treating a missing row as a missing pipeline.
+
+**The start model came off the pipeline again**, one day after it went on. The objection is the one
+that matters and I had missed it: a use case releases several models *on purpose*, and naming one
+on the pipeline reads as *this is the model this use case uses* — it narrows, in the reader's mind,
+a decision the release deliberately left open. It also made the wrong thing the precondition, so a
+use case was un-runnable for want of a pipeline field rather than for want of a model.
+
+A run now carries its own entry model, picked when it is started and **bounded by what is released
+to that use case**. That bound is what the pipeline field was really buying: without it a caller
+names a model the use case may not call, the gateway refuses at dispatch, and the run fills with
+403s that say nothing. Reading the release list answers that without taking the choice away — and
+without a run ever *writing* a release, which is what `_release_for_testing` did. Two runs of one
+use case may now enter at two different models, which is exactly the comparison somebody evaluating
+a model wants and the pipeline field made awkward. `start_model` is dropped from both planes
+(`0003`, `0035`); the dry run goes back to inferring, which is a known and documented gap rather
+than a new one.
+
+**And read-only was rendered as prose.** The models released to a use case were shown, to anybody
+who may not change them, as a paragraph of `<code>` chips. The owner's report is the whole finding:
+*it does not look like a control, so the developer will not even read it* — the one piece of
+configuration they most need, rendered as the one thing on the page that reads as decoration.
+It is the same picker now, disabled, in the browser's own greyed styling. Fixing it properly meant
+fixing the component underneath: `app-multi-select` **removed** its field when disabled, which is
+how a control turns into prose in the first place. Disabled now means greyed, not gone — what
+disappears is only what *acts*, the per-chip remove and the list toggle.
+
+**And then the same gap one screen over.** With `start_model` gone, the *dry run* was inferring
+again — and it is the caller with the strongest claim to be asked, because it is a builder testing
+a rule and reading `effective_model` as the answer. It now has the same picker over the same
+released models, defaulting to *let the gateway choose*, which keeps the inference as a deliberate
+choice rather than the only option. The two fixes are the same shape: **the question belongs at the
+point of use, bounded by the permission that already exists.**
+
+`ADR-0020` carries a `Superseded, same day` note rather than a rewrite, because what a decision got
+wrong is worth as much to the next reader as what it got right.
+
+Suites: 2340 hermetic Python at 95.99 %, 820 Angular at 92.13 % branches, 452 mutation properties.
+
+---
+
 ## The question catalogue stops being about models and starts being about pipelines
 
 The owner's answer to a finding from the review below, and it deleted the finding rather than

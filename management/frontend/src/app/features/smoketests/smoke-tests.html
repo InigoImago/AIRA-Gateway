@@ -186,11 +186,14 @@
                     Testing a <em>model</em> is a use case whose pipeline starts at that model.
                   </app-info-hint>
                 </label>
+                <!-- Bounded, because a `<select>` sizes itself to its widest option and a use
+                     case may be named anything at all. One with a long name stretched this control
+                     past the window and took the page's layout with it. -->
                 <select
                   id="smoke-use-case"
                   name="use_case"
                   [ngModel]="useCase()"
-                  (ngModelChange)="useCase.set($event)"
+                  (ngModelChange)="chooseUseCase($event)"
                   data-testid="smoke-use-case"
                 >
                   <option value="">choose a use case</option>
@@ -199,26 +202,38 @@
                   }
                 </select>
               </div>
+
+              @if (entryModels().length) {
+                <div class="field">
+                  <label for="smoke-model">
+                    Enter at
+                    <app-info-hint label="Which model a run starts at">
+                      The catalogue does not name a model, so a run has to say where it enters this
+                      use case's pipeline. Only what has been released to the use case is offered —
+                      anything else is refused at dispatch. What actually <em>answers</em> may be a
+                      different model: a routing step may send the question elsewhere, and that is
+                      the pipeline doing its job.
+                    </app-info-hint>
+                  </label>
+                  <select
+                    id="smoke-model"
+                    name="model"
+                    [ngModel]="startModel()"
+                    (ngModelChange)="startModel.set($event)"
+                    data-testid="smoke-model"
+                  >
+                    @for (model of entryModels(); track model) {
+                      <option [value]="model">{{ model }}</option>
+                    }
+                  </select>
+                </div>
+              }
             </div>
 
             @if (whyNot(); as reason) {
-              <!--
-              The server's own sentence, shown where Run would be. A use case with no pipeline and
-              one whose pipeline has no start model are two answers that send the reader to two
-              different places, and only the server knows which it is.
-            -->
+              <!-- The server's own sentence, shown where Run would be: the reader has to be told
+                   what to go and change, and only the server knows. -->
               <p class="empty" data-testid="smoke-why-not">{{ reason }}</p>
-            } @else if (startModel(); as start) {
-              <p class="muted" style="margin: 0.6rem 0 0" data-testid="smoke-attribution">
-                Enters the pipeline at <code>{{ start }}</code
-                >.
-                <app-info-hint label="Where a run starts">
-                  A request normally names its own model; the catalogue does not, so the pipeline
-                  says where a run enters. What answers may be a different model altogether — a
-                  routing step may send the question elsewhere, and that is the pipeline doing its
-                  job.
-                </app-info-hint>
-              </p>
             }
 
             <div class="form-actions">

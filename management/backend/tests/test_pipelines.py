@@ -77,7 +77,7 @@ def test_get_returns_empty_default() -> None:
     _make_uc(admin, "demo-uc")
     resp = _client(admin).get(f"{BASE}demo-uc/pipeline/")
     assert resp.status_code == 200
-    assert resp.json() == {"steps": [], "fallback_models": [], "start_model": ""}
+    assert resp.json() == {"steps": [], "fallback_models": []}
 
 
 def test_get_returns_saved_config() -> None:
@@ -114,8 +114,7 @@ def test_put_saves_and_emits(captured_events) -> None:
             "steps": _STEPS,
             "fallback_models": ["backup-1"],
             # Where a caller who names no model enters (`ADR-0020`). Blank here, which is a real
-            # state: this pipeline is only ever reached by a request that names its own model.
-            "start_model": "",
+            # state: this pipeline is only ever reached by a request that names its own model.,
         }
     ]
 

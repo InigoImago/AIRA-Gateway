@@ -61,12 +61,19 @@ class TestRunSerializer(serializers.ModelSerializer[TestRun]):
             "requested_by_name",
             "counts",
         ]
-        #: `model` is **read-only**, and that is the change `ADR-0020` makes here: a run enters
-        #: where the *pipeline* says it enters, so accepting one from the caller would be asking
-        #: them to predict a decision the pipeline makes — and a model the use case has not been
-        #: released is refused at dispatch anyway (`FRD-308`). The view fills it in from the use
-        #: case's `start_model`.
-        read_only_fields = ["model", "started_at", "requested_by_name", "counts"]
+        #: `model` is **writable**: it is where this run enters the pipeline, and the caller picks
+        #: it (owner's decision). It briefly came from a `start_model` on the pipeline, which took
+        #: away the point of releasing several models to a use case.
+        #:
+        #: Writable is not unbounded. `TestRunViewSet._entry_model` refuses a model that is not
+        #: **released** to the named use case — checked there rather than here because the answer
+        #: depends on the use case, which this serializer has no business resolving. Without that
+        #: bound the gateway refuses at dispatch and the run fills with 403s that say nothing.
+        read_only_fields = ["started_at", "requested_by_name", "counts"]
+        #: Optional on the wire, because "whichever" is a legitimate thing for a caller to mean and
+        #: the view then takes the first released model. The column itself is required — a run with
+        #: no recorded entry point is a result that cannot be compared with anything.
+        extra_kwargs = {"model": {"required": False, "allow_blank": True}}
 
     def get_requested_by_name(self, run: TestRun) -> str:
         return getattr(run.requested_by, "username", "") or ""

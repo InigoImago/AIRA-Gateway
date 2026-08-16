@@ -59,6 +59,23 @@ Nothing was missing except a decision about what a run is *about*.
 - A pipeline therefore declares a **start model**: the model a request enters it at when the caller
   names none. Without one a use case cannot be run, and the console says so rather than guessing.
 
+> **Superseded, same day.** The last clause did not survive the owner's reading, and the objection
+> is right: a use case releases several models *on purpose*, and naming one on the pipeline reads as
+> "this is the model this use case uses" — it narrows, in the reader's mind, a decision the release
+> deliberately left open. It also made the wrong thing the precondition: a use case became
+> un-runnable for want of a pipeline field rather than for want of a model.
+>
+> **A run is entered at a model the person starting it picks**, offered from what is released to
+> that use case and refused by name otherwise. `PipelineConfig.start_model` is gone from both
+> planes (`0003` and `0035`). Everything else in this ADR stands.
+>
+> Two things fall out of it, and both are improvements. Two runs of one use case may enter at two
+> different models — which is exactly the comparison somebody evaluating a model wants, and which
+> the pipeline field made awkward. And the *"this use case has no pipeline"* refusal disappears
+> with it: a use case always has a pipeline, because a request comes in and a request is
+> dispatched, and no steps means nothing happens in between. That message told a reader to go and
+> build something that already existed.
+
 `_release_for_testing` is deleted. Releasing a model to a use case is its administrator's decision
 (`FRD-308`), and it was never this feature's to make.
 
@@ -73,11 +90,12 @@ Nothing was missing except a decision about what a run is *about*.
   a model the use case has not been released is refused at dispatch, so either the run fails or
   something releases it silently. The model a run reaches is the pipeline's decision, and asking
   the caller for it is asking them to predict it.
-- **Infer the start model instead of declaring it.** The dry run already tried this
+- **Infer the entry model instead of asking for it.** The dry run already tried this
   (`_model_the_pipeline_is_about`), and its own comments record three wrong guesses in a row: the
   first registered model, the first released model, the first released model that can generate.
   Every one of them named a model the operator had not chosen, and reported it as `effective_model`
-  where it reads as a decision. A declared field replaces the guess for the dry run too.
+  where it reads as a decision. So the catalogue asks rather than infers — and the dry run, which
+  has no one to ask, keeps its guesses and its warning.
 
 ## Consequences
 
@@ -94,17 +112,15 @@ and bounded by the use case that asked for it, which is also where the cost belo
 
 **Lost.** A model's standing is no longer read directly off the screen: it is the standing of a use
 case whose pipeline starts at that model. For IT Security, that is one use case per model under
-evaluation, and the run list names the start model so nobody has to remember. Two runs of one use
-case whose start model changed in between are not comparable, and the screen shows the model on the
-row rather than pretending otherwise.
+evaluation, and the run list names the model each run entered at so nobody has to remember. Two
+runs that entered at different models are not comparable, and the screen shows the model on the row
+rather than pretending otherwise.
 
-**A pipeline gains a field that is not about a step.** `start_model` is where a request *enters*,
-which is configuration about the pipeline rather than a stage of it — the same shape `FRD-308`
-settled for `allowed_models`, which is a property of the use case rather than an `allow_check` step.
-It is validated like every other model a pipeline names: released to the use case, or refused when
-the pipeline is saved.
+**A pipeline gains no field.** An earlier version of this decision added `start_model` to it; see
+the note under *Decision* for why that was reversed the same day. What a run needs is a model, and
+what bounds it is the release — which already existed.
 
 **The seeded `smoke-test` use case survives as an ordinary one.** It is IT Security's
-model-evaluation use case, with a released model and a pipeline that starts there — a demonstration
-of the general mechanism rather than a place the code knows about. `SMOKE_TEST_USE_CASE` stops
-being a constant the application branches on.
+model-evaluation use case, with a released model — a demonstration of the general mechanism rather
+than a place the code knows about. `SMOKE_TEST_USE_CASE` stops being a constant the application
+branches on.

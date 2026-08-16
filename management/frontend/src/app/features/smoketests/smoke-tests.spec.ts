@@ -67,7 +67,7 @@ interface Options {
   attribution?: {
     use_case: string;
     name: string;
-    start_model: string;
+    models: string[];
     may_run: boolean;
     why_not: string;
   }[];
@@ -142,7 +142,7 @@ function setup(options: Options = {}) {
                     {
                       use_case: 'uc-a',
                       name: 'Kundenservice',
-                      start_model: 'qwen2.5:3b',
+                      models: ['qwen2.5:3b'],
                       may_run: true,
                       why_not: '',
                     },
@@ -276,14 +276,23 @@ describe('SmokeTests', () => {
     expect(harness.element.querySelector('[data-testid="no-use-case"]')).not.toBeNull();
   });
 
-  it('offers no model picker at all — the pipeline says where a run enters', () => {
-    /** There used to be one, listing every catalogued and approved model (`FRD-307`). A run now
-     *  enters where the **pipeline** says it enters (`ADR-0020`), so asking the caller for a model
-     *  would be asking them to predict a decision the pipeline makes — and a model the use case
-     *  has not been released is refused at dispatch anyway (`FRD-308`). */
-    const { element } = setup();
+  it('offers a model picker again, bounded by what the use case may call', () => {
+    /** There was one, listing every catalogued and approved model (`FRD-307`); it was removed when
+     *  a run took its model from the pipeline's `start_model`; and the owner's decision of
+     *  2026-08-16 brought it back — because pinning one model on the pipeline reads as *this is
+     *  the model this use case uses* and undoes the point of releasing several to it.
+     *
+     *  What is different from the first version is the **list**. It offers exactly what has been
+     *  released to the chosen use case, which is the server's answer (`FRD-308`); the original
+     *  offered every approved model, so it offered models the gateway then refused at dispatch. */
+    const { element } = setup({ tab: 'runs' });
 
-    expect(element.querySelector('#smoke-model')).toBeNull();
+    const models = Array.from(
+      element.querySelectorAll('#smoke-model option'),
+      (option) => option.textContent?.trim() ?? '',
+    );
+
+    expect(models).toEqual(['qwen2.5:3b']);
   });
 
   it('offers the use cases the server says can be run, and states where each enters', () => {
@@ -303,9 +312,14 @@ describe('SmokeTests', () => {
     );
 
     expect(options).toContain('Kundenservice (uc-a)');
-    // Preselected, because there is exactly one — choosing for somebody with several would be
-    // picking which pipeline they meant, and a run costs money.
-    expect(harness.testid('smoke-attribution')?.textContent).toContain('qwen2.5:3b');
+    // And a second picker for the model the run is **entered at**, offering exactly what is
+    // released to the chosen use case — the owner's decision of 2026-08-16, which took this
+    // choice off the pipeline and gave it to the run.
+    const models = Array.from(
+      harness.element.querySelectorAll('#smoke-model option'),
+      (option) => option.textContent?.trim() ?? '',
+    );
+    expect(models).toEqual(['qwen2.5:3b']);
   });
 
   it('withholds running from somebody the gateway would refuse', () => {
@@ -498,7 +512,7 @@ describe('SmokeTests', () => {
                 {
                   use_case: 'uc-a',
                   name: 'Kundenservice',
-                  start_model: 'qwen2.5:3b',
+                  models: ['qwen2.5:3b'],
                   may_run: true,
                   why_not: '',
                 },
@@ -527,8 +541,8 @@ describe('SmokeTests', () => {
      *  would be picking which pipeline they meant, and a run costs money. */
     const harness = setup({
       attribution: [
-        { use_case: 'uc-a', name: 'A', start_model: 'm', may_run: true, why_not: '' },
-        { use_case: 'uc-b', name: 'B', start_model: 'm', may_run: true, why_not: '' },
+        { use_case: 'uc-a', name: 'A', models: ['m'], may_run: true, why_not: '' },
+        { use_case: 'uc-b', name: 'B', models: ['m'], may_run: true, why_not: '' },
       ],
     });
     const component = harness.component as unknown as { run: () => Promise<void> };
@@ -714,7 +728,7 @@ describe('SmokeTests', () => {
                 {
                   use_case: 'uc-a',
                   name: 'Kundenservice',
-                  start_model: 'qwen2.5:3b',
+                  models: ['qwen2.5:3b'],
                   may_run: true,
                   why_not: '',
                 },
@@ -756,30 +770,30 @@ describe('SmokeTests', () => {
      *  gateway's own grant resolver calls. What is asserted here is that the screen uses it. */
     const harness = setup();
     const component = harness.component as unknown as {
-      useCase: { set: (v: string) => void; (): string };
+      useCase: () => string;
+      chooseUseCase: (v: string) => void;
       startModel: () => string;
     };
-    component.useCase.set('uc-a');
+    component.chooseUseCase('uc-a');
 
     expect(component.useCase()).toBe('uc-a');
-    // And the start model comes with it: the run enters where the **pipeline** says it enters,
-    // which the screen shows rather than asks for (`ADR-0020`).
+    // And an entry model is defaulted with it. Choosing the use case without choosing a model
+    // would leave the previous use case's model selected — one the new use case may not call,
+    // which the server then refuses.
     expect(component.startModel()).toBe('qwen2.5:3b');
   });
 
   it("says why a chosen use case cannot be run, in the server's own words", () => {
-    /** Two different reasons and two different fixes: a use case with no pipeline needs one built,
-     *  and a pipeline with no start model needs somewhere to enter. One message covering both
-     *  sends half the readers to the wrong screen — and only the server knows which it is, so the
+    /** The reader has to be told what to go and change, and only the server knows — so the
      *  sentence is the server's rather than this screen's (`FRD-206`). */
     const harness = setup({
       attribution: [
         {
           use_case: 'uc-a',
           name: 'Kundenservice',
-          start_model: '',
+          models: [],
           may_run: false,
-          why_not: "This use case's pipeline has no start model.",
+          why_not: 'No model is released to this use case.',
         },
       ],
     });
@@ -787,7 +801,7 @@ describe('SmokeTests', () => {
     component.useCase.set('uc-a');
     harness.fixture.detectChanges();
 
-    expect(harness.testid('smoke-why-not')?.textContent).toContain('no start model');
+    expect(harness.testid('smoke-why-not')?.textContent).toContain('No model is released');
     // And no button to press: the section explains rather than offering something that refuses.
     expect(harness.testid('smoke-run')?.hasAttribute('disabled')).toBe(true);
   });
@@ -799,9 +813,9 @@ describe('SmokeTests', () => {
         {
           use_case: 'uc-a',
           name: 'Kundenservice',
-          start_model: '',
+          models: [],
           may_run: false,
-          why_not: 'no start model',
+          why_not: 'nothing released',
         },
       ],
     });

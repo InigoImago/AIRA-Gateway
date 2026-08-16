@@ -298,6 +298,24 @@ $field-label-gap: 0.3rem;
   flex-wrap: wrap;
 }
 
+/* **A `<select>` is sized by its widest option, and nothing above caps that.** `max-width: 100%`
+ * on the control is measured against a `.field` that is itself a flex item sizing to its content,
+ * so a use case with a long name grew the field, grew the row, and pushed the page wider than the
+ * window — on a multi-monitor desktop the overflow ran onto the second screen.
+ *
+ * Both halves are needed: `min-width: 0` lets the flex item shrink below its content (flex items
+ * default to `min-width: auto`, which is what transmits the intrinsic width upward), and the
+ * `max-width` stops a long option from claiming the whole row. The text is then clipped with an
+ * ellipsis by the control itself, and the full value stays readable in the open dropdown.
+ */
+.field {
+  min-width: 0;
+}
+.field > select {
+  max-width: 22rem;
+  text-overflow: ellipsis;
+}
+
 /* Every label occupies the same single line, so the controls below them start at the same y. */
 .form-inline .field > label {
   display: flex;

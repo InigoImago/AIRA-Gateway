@@ -28,8 +28,24 @@
     </ul>
   }
 
-  @if (!disabled()) {
-    <div class="multiselect__field">
+  <!--
+    **Disabled means greyed, not gone.** The field used to disappear entirely when this component
+    was read-only, which left a paragraph of chips that a reader does not recognise as a control —
+    the owner's report, and the reason `FRD-206` says read-only means *inert*. A disabled input in
+    the same place, in the browser's own disabled styling, says "this is the control and it is not
+    yours to use" without a sentence having to.
+  -->
+  <div class="multiselect__field">
+    @if (disabled()) {
+      <input
+        type="text"
+        disabled
+        [attr.aria-label]="label()"
+        [value]="chosen().length ? '' : emptyHint()"
+        [placeholder]="chosen().length ? 'Read-only' : emptyHint()"
+        [attr.data-testid]="testid() + '-search'"
+      />
+    } @else {
       <input
         #field
         type="text"
@@ -56,8 +72,10 @@
       >
         {{ open() ? '▴' : '▾' }}
       </button>
-    </div>
+    }
+  </div>
 
+  @if (!disabled()) {
     @if (open()) {
       <!--
         `absolute` inside a wrapper this component owns, so the list floats over what follows

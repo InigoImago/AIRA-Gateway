@@ -140,17 +140,41 @@ export class SmokeTests implements OnInit {
   );
 
   /**
-   * Where a run would enter the pipeline. Shown rather than chosen: it is the pipeline's
-   * declaration, and a reader has to see which model their answers will have come from.
+   * Choose a use case, and default the entry model with it.
+   *
+   * One handler rather than two bindings, because the second choice is only meaningful inside the
+   * first: leaving a model selected from the previous use case would offer one the new use case
+   * may not call, which the server then refuses — `FRD-206` in miniature.
    */
-  protected readonly startModel = computed(() => this.chosen()?.start_model ?? '');
+  protected chooseUseCase(slug: string): void {
+    this.useCase.set(slug);
+    this.startModel.set(this.entryModels()[0] ?? '');
+  }
+
+  /**
+   * The models this run may be **entered at** — what the chosen use case has been released.
+   *
+   * The server's list, not one derived here: which models a use case may call is `FRD-308`'s
+   * answer and the gateway refuses anything else at dispatch, so a picker offering more would
+   * offer a run that fills with 403s.
+   */
+  protected readonly entryModels = computed(() => this.chosen()?.models ?? []);
+
+  /**
+   * Which of them this run enters at. **Chosen, not declared.**
+   *
+   * It came from a `start_model` on the pipeline until the owner pointed out what that costs: a
+   * use case releases several models on purpose, and pinning one on the pipeline reads as *this
+   * is the model this use case uses*. Two runs of one use case entering at two different models
+   * is the comparison somebody evaluating a model actually wants.
+   */
+  protected readonly startModel = signal('');
 
   /**
    * Why this use case cannot be run, in the server's own words — or empty.
    *
-   * Shown where Run would be, never as a disabled button with no explanation: a use case with no
-   * pipeline and one whose pipeline has no start model are two answers that send the reader to two
-   * different places, and only the server knows which it is (`FRD-206`).
+   * Shown where Run would be, never as a disabled button with no explanation — the reader has to
+   * be told what to go and change, and only the server knows (`FRD-206`).
    */
   protected readonly whyNot = computed(() => this.chosen()?.why_not ?? '');
 
@@ -237,7 +261,7 @@ export class SmokeTests implements OnInit {
         this.attributionKnown.set(true);
         // Preselect only when there is nothing to choose. Choosing for somebody who has several
         // would be picking which pipeline they meant, and a run costs money.
-        if (rows.length === 1) this.useCase.set(rows[0].use_case);
+        if (rows.length === 1) this.chooseUseCase(rows[0].use_case);
       },
       error: (response: unknown) => {
         // Known, and the answer is "none" — a failed question is still not an unasked one, and
@@ -273,7 +297,7 @@ export class SmokeTests implements OnInit {
     this.running.set(true);
     this.feedback.clear();
     try {
-      const run = await firstValueFrom(this.service.startRun(this.useCase()));
+      const run = await firstValueFrom(this.service.startRun(this.useCase(), this.startModel()));
       const results = await firstValueFrom(this.service.runResults(run.id));
 
       for (const [index, result] of results.entries()) {

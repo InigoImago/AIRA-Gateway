@@ -14,13 +14,6 @@ the gateway (FRD-300/303 backend).
   `savePipeline`.
 - Graph column: endpoint/step/dispatch/fallback nodes with connectors; selected-node highlight;
   per-step up/down/remove; add-step buttons per type.
-- **Start model** (`ADR-0020`, 2026-08-16): a dropdown over the released models, offered on the
-  `Request in` node because that is what it is about — where a request *enters* when the caller
-  names none. It is not a step, so it is not in the step list; it is drawn on the entry node so the
-  graph reads as the request's path rather than hiding a decision in a form below it. `— none —` is
-  a real choice and the one every pipeline written before today is in: it means only a caller who
-  names a model ever enters here. The consequence is stated where it bites — the question catalogue
-  (`FRD-504`) cannot run against the use case, and its screen says so.
 - Inspector (right, sticky) per step type:
   - `injection_filter`: mode (heuristic|llm), on-detection (block|flag), optional classifier model.
   - `model_route`: ordered rules (`under chars` + target model), add/remove.
@@ -28,6 +21,12 @@ the gateway (FRD-300/303 backend).
     It was free text, which offered exactly what the server refuses and invited naming a model the
     use case has no right to. The fallback chain is a multi-select, because it is several in order.
   - fallback node: fallback models (comma list, ordered).
+- **The dry run asks where to enter** (2026-08-16). It used to send no model, so the gateway
+  inferred one — and `_model_the_pipeline_is_about`'s own comments record three wrong guesses in a
+  row, each reported back as `effective_model` where a builder reads it as a decision somebody
+  made. A picker over the released models, defaulting to *let the gateway choose* because a
+  pipeline whose requests name their own model is the ordinary case. Blank omits the field rather
+  than sending an empty one, which the gateway would have to refuse as a model name.
 - Zoneless-safe: state in signals; edits are immutable `update()`s (`structuredClone` + `set`).
 - Entry point: “Edit pipeline →” from the use-case detail.
 

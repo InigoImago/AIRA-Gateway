@@ -54,19 +54,27 @@
 
     @if (!canManage()) {
       <!--
-        Read-only means **inert, not un-saveable** (`FRD-206`): the list is still worth reading, so
-        it is rendered as a list rather than as a picker nobody can use.
+        Read-only means **inert, not re-drawn**. This was a paragraph of `<code>` chips, and the
+        owner's objection is the one that matters: it does not look like a control, so a developer
+        scanning the page does not read it — the one piece of configuration they most need is the
+        one rendered as prose. The same picker, disabled, is unmistakably the same thing, in the
+        same place, showing the same selection, and its greyed state says *you may look, not
+        change* without a sentence having to say it.
+
+        The Save button is **absent** rather than disabled: hiding it alone was the earlier defect
+        (`FRD-206` — read-only means inert, not un-saveable), and with the picker itself inert
+        there is nothing left to save.
       -->
-      <p data-testid="release-readonly" style="margin: 0">
-        @if (count()) {
-          This use case may call
-          @for (model of chosenList(); track model) {
-            <code>{{ model }}</code>
-          }
-        } @else {
-          No model is released for this use case.
-        }
-        Only an administrator of this use case, or a Global Administrator, can change that.
+      <app-multi-select
+        label="Models released to this use case"
+        testid="release-picker"
+        [disabled]="true"
+        [options]="choices()"
+        [selected]="chosenList()"
+        emptyHint="No model is released for this use case."
+      />
+      <p class="field__hint" data-testid="release-readonly" style="margin-top: 0.5rem">
+        Only an administrator of this use case, or a Global Administrator, can change this.
       </p>
     } @else if (!releasable().length) {
       <p class="empty" data-testid="nothing-approved" style="margin: 0">

@@ -112,7 +112,7 @@ def _validate_step_config(step_type: str, config: dict[str, Any]) -> None:
                 _check_text(category, field)
 
 
-def _models_named_in(steps: list[Any], fallbacks: list[Any], start: str = "") -> list[str]:
+def _models_named_in(steps: list[Any], fallbacks: list[Any]) -> list[str]:
     """Every model a pipeline could reach, wherever it is written.
 
     Mirrored by `aira_gateway.api.pipeline.models_named_in`, which asks the same question of an
@@ -120,14 +120,8 @@ def _models_named_in(steps: list[Any], fallbacks: list[Any], start: str = "") ->
     and the alternative is worse here: this list is a *validation* concern in Management's own
     vocabulary, and the shared library would have to carry the pipeline schema to hold it. Both
     are one screenful, both are tested, and the pair is named in each so neither is edited alone.
-
-    ``start`` is where a caller who names no model enters (`ADR-0020`). It belongs in this list for
-    exactly the reason the others do: it is a model this pipeline will send a request to, so a use
-    case that has not been released it would save a configuration the gateway then refuses.
     """
     named: list[str] = []
-    if start:
-        named.append(str(start))
     for step in steps:
         config = (step.get("config") or {}) if isinstance(step, dict) else {}
         for key in ("model", "default_model"):
@@ -143,7 +137,7 @@ def _models_named_in(steps: list[Any], fallbacks: list[Any], start: str = "") ->
 class PipelineConfigSerializer(serializers.ModelSerializer[PipelineConfig]):
     class Meta:
         model = PipelineConfig
-        fields = ["steps", "fallback_models", "start_model", "updated_at"]
+        fields = ["steps", "fallback_models", "updated_at"]
         read_only_fields = ["updated_at"]
 
     def validate_steps(self, value: Any) -> list[dict[str, Any]]:
@@ -184,7 +178,6 @@ class PipelineConfigSerializer(serializers.ModelSerializer[PipelineConfig]):
         named = _models_named_in(
             attrs.get("steps", []) or [],
             attrs.get("fallback_models", []) or [],
-            str(attrs.get("start_model", "") or ""),
         )
         if not named:
             return attrs
@@ -201,21 +194,6 @@ class PipelineConfigSerializer(serializers.ModelSerializer[PipelineConfig]):
                 }
             )
         return attrs
-
-    def validate_start_model(self, value: Any) -> str:
-        """Where a caller who names no model enters this pipeline (`ADR-0020`).
-
-        Blank is valid and means *only a caller who names a model reaches this pipeline*, which is
-        every ordinary API request. The question catalogue then cannot run against this use case,
-        and the console says so — which is a better answer than a start model nobody chose.
-        """
-        if not isinstance(value, str):
-            raise serializers.ValidationError("start_model must be a model name.")
-        if len(value) > MAX_MODEL_LENGTH:
-            raise serializers.ValidationError(
-                f"Model names are limited to {MAX_MODEL_LENGTH} characters."
-            )
-        return value.strip()
 
     def validate_fallback_models(self, value: Any) -> list[str]:
         if not isinstance(value, list) or not all(isinstance(item, str) for item in value):

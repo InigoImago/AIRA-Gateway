@@ -96,13 +96,16 @@ class TestRun(models.Model):
     the use case being deleted. Deleting a declaration must not delete the finding.
     """
 
-    #: The model the pipeline was **entered at** — its `start_model` as it stood when the run was
-    #: made (`ADR-0020`).
+    #: The model this run **entered the pipeline at**, chosen when the run was started
+    #: (`ADR-0020`) and bounded by what is released to the use case (`FRD-308`).
     #:
-    #: Recorded rather than looked up, because a pipeline's start model can be changed between two
-    #: runs and the older run is still evidence about the configuration it actually met. It is not
-    #: necessarily the model that *answered*: a `model_route` step may send the request elsewhere,
-    #: and that is the pipeline doing its job.
+    #: Chosen per run rather than declared on the pipeline: a use case releases several models on
+    #: purpose, and two runs of one use case entering at two different models is exactly the
+    #: comparison somebody evaluating a model wants. Recorded here because a release can change
+    #: between two runs and the older run is still evidence about what it actually met.
+    #:
+    #: It is not necessarily the model that *answered*: a `model_route` step may send the request
+    #: elsewhere, and that is the pipeline doing its job.
     model = models.CharField(max_length=128)
     #: **What the run is about**: the use case whose pipeline was exercised.
     #:

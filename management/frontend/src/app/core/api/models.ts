@@ -218,7 +218,6 @@ export interface PipelineConfig {
    * ever reaches it, which is every ordinary API request; the question catalogue then cannot be run
    * against this use case, and the screen says so rather than picking one.
    */
-  start_model: string;
   updated_at?: string;
 }
 
@@ -477,8 +476,14 @@ export interface ModelCheck {
 export interface TestAttribution {
   use_case: string;
   name: string;
-  /** Where a run would enter the pipeline. Empty exactly when `may_run` is false. */
-  start_model: string;
+  /**
+   * The models a run may be **entered at**: exactly what is released to this use case.
+   *
+   * Chosen per run rather than declared on the pipeline — a use case releases several models on
+   * purpose, and two runs entering at two different models is the comparison somebody evaluating
+   * one actually wants. Empty exactly when `may_run` is false.
+   */
+  models: string[];
   may_run: boolean;
   /** Why not, in a sentence naming the fix. Empty when `may_run` is true. */
   why_not: string;

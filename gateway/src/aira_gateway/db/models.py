@@ -373,13 +373,6 @@ class PipelineConfigRead(Base):
     use_case: Mapped[str] = mapped_column(String(64), primary_key=True)
     steps: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     fallback_models: Mapped[list[str]] = mapped_column(JSON, default=list)
-    #: Where a request **enters** this pipeline when the caller names no model (`ADR-0020`).
-    #:
-    #: Read by the dry run, which used to guess — `_model_the_pipeline_is_about` records three
-    #: wrong guesses in a row, each reported back as `effective_model` where a reader takes it for
-    #: a decision somebody made. Empty means nobody declared one, which is a different answer from
-    #: "the first model I found" and is why this is a column rather than a fallback.
-    start_model: Mapped[str] = mapped_column(String(128), default="")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

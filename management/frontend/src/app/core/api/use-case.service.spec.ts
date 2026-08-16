@@ -89,7 +89,7 @@ describe('UseCaseService', () => {
         use_case: 'uc',
         system: '',
         user: 'hi',
-        pipeline: { steps: [], fallback_models: [], start_model: '' },
+        pipeline: { steps: [], fallback_models: [] },
       })
       .subscribe((result) => expect(result.blocked).toBe(false));
     const req = http.expectOne('/gw/v1beta/pipeline:dryRun');
@@ -173,9 +173,7 @@ describe('UseCaseService', () => {
 
   it('gets the pipeline config', () => {
     service.getPipeline('uc').subscribe((c) => expect(c.steps.length).toBe(0));
-    http
-      .expectOne('/api/v1/use-cases/uc/pipeline/')
-      .flush({ steps: [], fallback_models: [], start_model: '' });
+    http.expectOne('/api/v1/use-cases/uc/pipeline/').flush({ steps: [], fallback_models: [] });
   });
 
   it('saves the pipeline with PUT', () => {
@@ -184,7 +182,7 @@ describe('UseCaseService', () => {
       fallback_models: ['b'],
       // Where a caller who names no model enters (`ADR-0020`). Sent on every save, because the
       // editor holds the whole configuration and a PUT that omitted it would clear it.
-      start_model: 'start-1',
+      models: ['start-1'],
     };
     service.savePipeline('uc', config).subscribe();
     const req = http.expectOne('/api/v1/use-cases/uc/pipeline/');
@@ -200,7 +198,7 @@ describe('UseCaseService', () => {
       use_case: 'uc',
       system: 'sys',
       user: 'hi',
-      pipeline: { steps: [], fallback_models: [], start_model: '' },
+      pipeline: { steps: [], fallback_models: [] },
     };
     service.dryRunPipeline(payload).subscribe((r) => expect(r.blocked).toBe(false));
     const req = http.expectOne('/gw/v1beta/pipeline:dryRun');

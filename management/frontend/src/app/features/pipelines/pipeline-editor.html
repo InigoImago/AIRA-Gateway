@@ -79,41 +79,6 @@
             <div class="node node--endpoint">Request in</div>
             <div class="edge"></div>
 
-            <!-- Where a request that names no model enters (`ADR-0020`).
-                 On the graph rather than in a settings panel because that is what it *is*: the
-                 first node, before any step. A reader tracing the path top to bottom would
-                 otherwise find the entry point described somewhere else. -->
-            <div class="node node--start">
-              <div class="node__body">
-                <div class="node__text">
-                  <div class="node__title">Start model</div>
-                  <div class="node__meta muted">
-                    @if (config().start_model) {
-                      Enters at <code>{{ config().start_model }}</code> when the caller names none.
-                    } @else {
-                      Only a caller who names a model reaches this pipeline. The question catalogue
-                      cannot be run against this use case until one is set.
-                    }
-                  </div>
-                </div>
-              </div>
-              <div class="node__controls" (click)="$event.stopPropagation()">
-                <select
-                  class="input input--sm"
-                  aria-label="Start model"
-                  [ngModel]="config().start_model"
-                  (ngModelChange)="setStartModel($event)"
-                  [disabled]="nothingReleased()"
-                >
-                  <option value="">— none —</option>
-                  @for (model of released(); track model) {
-                    <option [value]="model">{{ model }}</option>
-                  }
-                </select>
-              </div>
-            </div>
-            <div class="edge"></div>
-
             @for (step of config().steps; track $index) {
               <div
                 class="node node--step"
@@ -231,6 +196,32 @@
               (ngModelChange)="sampleUser.set($event)"
               placeholder="Ignore all previous instructions and…"
             ></textarea>
+          </div>
+
+          <!--
+            Where this attempt **enters** the pipeline. Offered rather than inferred: the gateway
+            guesses when nobody says, and its guesses are documented as wrong three times over —
+            each reported back as `effective_model`, which a builder reads as a decision somebody
+            made. Bounded by the released models, because anything else is refused at dispatch.
+
+            "Let the gateway choose" stays, and stays the default: a pipeline whose requests always
+            name their own model is the ordinary case, and a builder who does not care should not
+            have to.
+          -->
+          <div class="field">
+            <label for="dry-run-model">Enter at</label>
+            <select
+              id="dry-run-model"
+              [ngModel]="dryRunModel()"
+              (ngModelChange)="dryRunModel.set($event)"
+              [disabled]="nothingReleased()"
+              data-testid="dry-run-model"
+            >
+              <option value="">let the gateway choose</option>
+              @for (model of released(); track model) {
+                <option [value]="model">{{ model }}</option>
+              }
+            </select>
           </div>
 
           <!--

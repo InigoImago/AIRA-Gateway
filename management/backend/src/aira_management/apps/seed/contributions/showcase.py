@@ -340,13 +340,6 @@ def _pipelines() -> dict[str, dict[str, Any]]:
                 }
             ],
             "fallback_models": [],
-            # Where a request enters when the caller names no model (`ADR-0020`). Seeded on the
-            # one use case that has a filter, and that is the whole point of seeding it: the
-            # question catalogue can only be run against a pipeline that declares one, and the
-            # reader `ADR-0020` was built for is `ucadmin`, who administers this use case. Without
-            # it the demo shows the new feature only from IT Security's chair — which is the chair
-            # it already worked from, and the one the redesign was not about.
-            "start_model": CHAT_MODEL,
         },
         # `entwicklung` used to carry an `allow_check` step here. That step is gone (`FRD-308`),
         # and leaving it would have been the worst of both: the gateway drops an unknown step

@@ -6,8 +6,8 @@ name whoever made it, and the export must survive a topic containing a comma.
 
 **A run is about a use case since `ADR-0020`**, not about a model. It travels that use case's own
 pipeline — which is what makes the questions exercise a filter, a router or a redactor at all — and
-it enters at the model the pipeline declares. Testing a model is then a use case whose pipeline
-starts there, which is what the seeded one is.
+it is **entered at a model the person starting it picks**, bounded by what is released to that use
+case. Testing a model is then a use case that model is released to.
 """
 
 from __future__ import annotations
@@ -20,7 +20,6 @@ import pytest
 # the Django models by their own names makes it try to instantiate them as test classes and warn
 # about it on every run. Warnings that are always there are warnings nobody reads.
 from aira_management.apps.catalog.models import Model
-from aira_management.apps.pipelines.models import PipelineConfig
 from aira_management.apps.smoketests.models import DEMO_MODEL_TEST_USE_CASE
 from aira_management.apps.smoketests.models import TestCase as Case
 from aira_management.apps.smoketests.models import TestResult as Result
@@ -41,7 +40,7 @@ RUNS = "/api/v1/test-runs/"
 RESULTS = "/api/v1/test-results/"
 STATS = "/api/v1/test-stats/"
 
-#: The use case the tests run against, and the model its pipeline starts at.
+#: The use case the tests run against, and a model released to it.
 UC = "uc-a"
 START = "qwen2.5:3b"
 
@@ -58,16 +57,18 @@ def _client(user) -> APIClient:
     return client
 
 
-def _runnable(slug: str = UC, *, start: str = START, member: Any = None) -> UseCase:
-    """A use case somebody may run the catalogue in: released a model, and a pipeline that starts
-    there. Both halves are required and both are the **administrator's** — a run may not release
-    anything (`ADR-0020`)."""
+def _runnable(slug: str = UC, *, models: tuple[str, ...] = (START,), member: Any = None) -> UseCase:
+    """A use case somebody may run the catalogue in: **a model released to it**, and nothing else.
+
+    That is the whole precondition since the owner's decision of 2026-08-16. There is deliberately
+    no pipeline here: a use case always has one — a request comes in and a request is dispatched —
+    and a row with no steps says nothing a missing row does not. A run is entered at a model the
+    person starting it picks from what is released, which is the administrator's decision and never
+    the feature's.
+    """
     use_case, _ = UseCase.objects.update_or_create(slug=slug, defaults={"name": slug})
-    if start:
-        use_case.allowed_models.add(Model.objects.get_or_create(name=start, approved=True)[0])
-    PipelineConfig.objects.update_or_create(
-        use_case=use_case, defaults={"steps": [], "fallback_models": [], "start_model": start}
-    )
+    for name in models:
+        use_case.allowed_models.add(Model.objects.get_or_create(name=name, approved=True)[0])
     if member is not None:
         UseCaseMembership.objects.get_or_create(use_case=use_case, user=member)
     return use_case
@@ -114,8 +115,8 @@ def _administrator(username: str = "uca", slug: str = UC) -> APIClient:
     return _client(user)
 
 
-def _start(client: APIClient, slug: str = UC) -> Any:
-    return client.post(RUNS, {"use_case": slug}, format="json")
+def _start(client: APIClient, slug: str = UC, model: str = START) -> Any:
+    return client.post(RUNS, {"use_case": slug, "model": model}, format="json")
 
 
 @pytest.fixture
@@ -487,7 +488,7 @@ def test_the_catalogue_can_be_run_in_every_use_case_this_caller_may_run() -> Non
 
     assert [row["use_case"] for row in rows] == ["also-mine", "mine"], "ordered, and only theirs"
     assert all(row["may_run"] for row in rows)
-    assert {row["start_model"] for row in rows} == {START}
+    assert all(row["models"] == [START] for row in rows), "the models released to each"
 
 
 def test_may_call_is_the_gateways_answer_and_not_managements() -> None:
@@ -508,44 +509,70 @@ def test_may_call_is_the_gateways_answer_and_not_managements() -> None:
     assert rows == [], "a blanket in Management is not a blanket at the gateway"
 
 
-def test_a_use_case_with_no_start_model_says_so_rather_than_offering_a_run() -> None:
+def test_a_use_case_with_nothing_released_says_so_rather_than_offering_a_run() -> None:
     """`FRD-206`'s rule: a screen that decides for itself offers a button the server refuses.
 
-    A use case with no pipeline and one whose pipeline has no start model are **two** answers, and
-    they send the reader to two different places — build a pipeline, or set where it starts.
+    **And the refusal that went away.** There used to be a second one — *"this use case has no
+    pipeline"* — and it should never have existed. A use case always has a pipeline: a request
+    comes in and a request is dispatched, and no steps means nothing happens in between. That is a
+    configuration, not an absence, and the message sent a reader off to build something that was
+    already there. What can genuinely be missing is a **model to enter at**, which is the release.
     """
-    _runnable("no-start", start="")
-    UseCase.objects.update_or_create(slug="no-pipeline", defaults={"name": "np"})
-    client = _runner("uca", slug="no-start")
-    Group.objects.get_or_create(name=f"{KEYCLOAK_GROUP_PREFIX}/use-cases/no-pipeline")
+    _runnable("nothing-released", models=())
+    _runnable("has-one")
+    client = _runner("uca", slug="nothing-released")
+    Group.objects.get_or_create(name=f"{KEYCLOAK_GROUP_PREFIX}/use-cases/has-one")
     get_user_model().objects.get(username="uca").groups.add(
-        Group.objects.get(name=f"{KEYCLOAK_GROUP_PREFIX}/use-cases/no-pipeline")
+        Group.objects.get(name=f"{KEYCLOAK_GROUP_PREFIX}/use-cases/has-one")
     )
 
     rows = {row["use_case"]: row for row in client.get(ATTRIBUTION).json()}
 
-    assert rows["no-start"]["may_run"] is False
-    assert "start model" in rows["no-start"]["why_not"]
-    assert rows["no-pipeline"]["may_run"] is False
-    assert "no pipeline" in rows["no-pipeline"]["why_not"]
-    assert rows["no-start"]["why_not"] != rows["no-pipeline"]["why_not"], "two answers, two fixes"
+    assert rows["nothing-released"]["may_run"] is False
+    assert "No model is released" in rows["nothing-released"]["why_not"]
+    assert rows["nothing-released"]["models"] == []
+    # A use case with no pipeline row at all is still runnable, which is the point.
+    assert rows["has-one"]["may_run"] is True
+    assert rows["has-one"]["models"] == [START]
 
 
-def test_a_run_enters_at_the_pipelines_start_model_and_never_at_the_callers() -> None:
-    """A run enters where the **pipeline** says it enters (`ADR-0020`).
+def test_a_run_is_entered_at_the_model_the_caller_picked() -> None:
+    """**The owner's decision of 2026-08-16**, and the reason it is right.
 
-    Accepting a model from the caller would ask them to predict a decision the pipeline makes — and
-    a model the use case has not been released is refused at dispatch anyway (`FRD-308`). Recorded
-    on the row because a start model can change between two runs, and the older one is still
-    evidence about the configuration it actually met.
+    A run took its model from a `start_model` on the pipeline. That reads as *this is the model
+    this use case uses*, which quietly undoes the point of releasing several models to one use
+    case — and two runs of one use case entering at two different models is precisely the
+    comparison somebody evaluating a model wants.
+    """
+    _runnable(models=(START, "other-1"))
+    client = _runner()
+
+    first = _start(client, model=START)
+    second = _start(client, model="other-1")
+
+    assert [first.status_code, second.status_code] == [201, 201], (first.data, second.data)
+    assert sorted(Run.objects.values_list("model", flat=True)) == ["other-1", START]
+
+
+def test_a_run_may_not_be_entered_at_a_model_the_use_case_may_not_call() -> None:
+    """Writable is not unbounded.
+
+    The old design took the model from the pipeline *specifically* to stop a caller naming one the
+    use case has no right to — the gateway refuses it at dispatch and the run fills with 403s that
+    say nothing about anything. Reading the release list answers that without taking the choice
+    away, and without a run ever writing a release the way `_release_for_testing` did.
     """
     _runnable()
     client = _runner()
 
-    created = client.post(RUNS, {"use_case": UC, "model": "something-else"}, format="json")
+    refused = _start(client, model="never-released")
 
-    assert created.status_code == 201, created.data
-    assert Run.objects.get().model == START
+    assert refused.status_code == 400
+    said = refused.data["error"]["details"]["model"][0]
+    assert "not released" in said
+    # And it names what *is* available, so the refusal is actionable rather than merely correct.
+    assert START in said
+    assert not Run.objects.exists()
 
 
 def test_a_run_may_not_be_started_in_a_use_case_this_caller_cannot_call() -> None:
@@ -570,16 +597,16 @@ def test_a_run_may_not_be_started_in_a_use_case_this_caller_cannot_call() -> Non
     assert said[0].startswith(" is not a use case you may run the catalogue in.")
 
 
-def test_a_run_in_a_use_case_with_no_start_model_is_refused_by_name() -> None:
+def test_a_run_in_a_use_case_with_nothing_released_is_refused_by_name() -> None:
     """The same sentence the listing gives, because it is the same rule — a second wording here
     would be a second explanation of one refusal."""
-    _runnable(start="")
+    _runnable(models=())
     client = _runner()
 
-    refused = _start(client)
+    refused = client.post(RUNS, {"use_case": UC}, format="json")
 
     assert refused.status_code == 400
-    assert "start model" in refused.data["error"]["details"]["use_case"][0]
+    assert "No model is released" in refused.data["error"]["details"]["use_case"][0]
 
 
 def test_a_run_releases_nothing(catalogue) -> None:
@@ -642,8 +669,13 @@ def test_seeding_the_use_case_announces_it_to_the_gateway() -> None:
 
 def test_the_seeded_evaluation_use_case_is_runnable_out_of_the_box() -> None:
     """It is an ordinary use case now — so the seed has to do what an administrator would: release
-    a model and point the pipeline at it. A seeded use case nobody can run is a demonstration of
-    nothing."""
+    a model to it. A seeded use case nobody can run is a demonstration of nothing.
+
+    **No `start_model` to check any more.** The run picks its entry model from what is released,
+    so the release is the whole precondition — and the empty pipeline below is not an omission but
+    the point: a model test wants the model's own answer, and a filter in the way would make it a
+    test of the filter.
+    """
     from aira_management.apps.seed.contributions.test_catalogue import seed_test_catalogue
 
     Model.objects.create(name="qwen3:0.6b", approved=True)
@@ -651,7 +683,6 @@ def test_the_seeded_evaluation_use_case_is_runnable_out_of_the_box() -> None:
 
     use_case = UseCase.objects.get(slug=DEMO_MODEL_TEST_USE_CASE)
     assert [m.name for m in use_case.allowed_models.all()] == ["qwen3:0.6b"]
-    assert use_case.pipeline.start_model == "qwen3:0.6b"
     assert use_case.pipeline.steps == [], "a model test wants the model's own answer"
 
 

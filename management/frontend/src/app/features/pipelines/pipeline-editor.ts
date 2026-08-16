@@ -133,7 +133,6 @@ export class PipelineEditor implements OnInit {
   protected readonly config = signal<PipelineConfig>({
     steps: [],
     fallback_models: [],
-    start_model: '',
   });
   protected readonly selected = signal<number | 'fallback' | null>(null);
   protected readonly saved = signal(false);
@@ -398,6 +397,22 @@ export class PipelineEditor implements OnInit {
    *  says so once, at the top, rather than showing five empty dropdowns with no explanation. */
   protected readonly nothingReleased = computed(() => this.released().length === 0);
 
+  /**
+   * The model a dry run **enters the pipeline at** — chosen, not inferred.
+   *
+   * The gateway will infer one when nobody says (`_model_the_pipeline_is_about`), and its own
+   * comments record three wrong guesses in a row: the first registered model, the first released
+   * one, the first released one that can generate. Each was reported back as `effective_model`,
+   * where a builder reads it as a decision somebody made — so a filter permitting `qwen3:0.6b`
+   * answered *"Blocked: Model 'mock-1' is not allowed"* on a rule that was working correctly, and
+   * an injection filter was simulated against an **embedding** model.
+   *
+   * Asking is the answer, and it belongs here rather than on the pipeline: a use case releases
+   * several models on purpose, and a request that names its own model is the ordinary case. Blank
+   * keeps the old behaviour, because a builder who does not care should not have to choose.
+   */
+  protected readonly dryRunModel = signal('');
+
   ngOnInit(): void {
     this.slug = this.route.snapshot.paramMap.get('slug') ?? '';
     this.service.get(this.slug).subscribe({
@@ -493,21 +508,6 @@ export class PipelineEditor implements OnInit {
     });
   }
 
-  /**
-   * Where a request **enters** this pipeline when the caller names none (`ADR-0020`).
-   *
-   * Offered from the released models rather than typed, like the fallback chain and every category
-   * target: a name that is not released is refused when the pipeline is saved, and a picker that
-   * offers only what will be accepted is `FRD-206`'s rule applied to a text box.
-   *
-   * Blank is a real choice and stays available — most pipelines are only ever entered by a caller
-   * who names their own model, which is every ordinary API request. What it costs is the question
-   * catalogue: a use case with no start model cannot be run, and the smoke-test screen says so.
-   */
-  protected setStartModel(model: string): void {
-    this.update((c) => (c.start_model = model));
-  }
-
   protected setFallback(csv: string): void {
     this.update((c) => (c.fallback_models = this.parseList(csv)));
   }
@@ -552,6 +552,9 @@ export class PipelineEditor implements OnInit {
         use_case: this.slug,
         system: this.sampleSystem(),
         user: this.sampleUser(),
+        // Omitted rather than sent empty when nobody chose: the gateway's inference is the
+        // documented fallback, and an empty string would be a model name it has to refuse.
+        ...(this.dryRunModel() ? { model: this.dryRunModel() } : {}),
         pipeline: this.config(),
         past_blocks: this.pastBlocks(),
       })

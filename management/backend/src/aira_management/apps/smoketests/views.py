@@ -47,32 +47,45 @@ from .serializers import (
     TestRunSerializer,
 )
 
-#: Why a use case cannot be run, in the words the console shows. One place, because the same three
-#: sentences are the API's refusal and the screen's explanation, and a second copy is a second
+#: Why a use case cannot be run, in the words the console shows. One place, because the same
+#: sentence is the API's refusal and the screen's explanation, and a second copy is a second
 #: wording for one rule.
-NO_PIPELINE = (
-    "This use case has no pipeline, so there is nothing to put the questions to. Build one on the "
-    "use case's Pipeline tab and give it a start model."
-)
-NO_START_MODEL = (
-    "This use case's pipeline has no start model, so a run has nowhere to begin. A request "
-    "normally names its own model; the catalogue does not, so the pipeline has to say where it "
-    "enters. Set it on the use case's Pipeline tab."
+#:
+#: **There is no "this use case has no pipeline" refusal, and there never should have been.** A use
+#: case always has a pipeline: a request comes in and a request is dispatched, and a pipeline with
+#: no steps is a pipeline that does nothing in between — which is a configuration, not an absence.
+#: The old message told a reader to go and build something that already existed.
+NOTHING_RELEASED = (
+    "No model is released to this use case, so there is nothing to put the questions to. An "
+    "administrator of the use case releases models on its Models tab; the run is then entered at "
+    "whichever of them you choose."
 )
 
 
-def _runnable(use_case: UseCase) -> tuple[str, str]:
-    """``(start_model, why_not)`` for one use case — exactly one of the two is set.
+def _entry_models(use_case: UseCase) -> list[str]:
+    """The models a run may be entered at: exactly what this use case has been released.
+
+    **Not a field on the pipeline** (owner's decision). A use case releases several models on
+    purpose, and naming one on the pipeline reads as *this is the model this use case uses* — it
+    narrows, in the reader's mind, a decision the release deliberately left open. Which model a run
+    enters at is a property of the *run*: two runs of one use case may enter at two different
+    models, and that comparison is the whole point for somebody evaluating one.
+
+    Sorted, because this is a picker and alphabetical is what a reader scans fastest — unlike a
+    fallback chain, which is tried in the order it is written and therefore keeps its own.
+    """
+    return sorted(use_case.allowed_models.values_list("name", flat=True))
+
+
+def _runnable(use_case: UseCase) -> tuple[list[str], str]:
+    """``(models, why_not)`` for one use case — exactly one of the two is set.
 
     Asked here rather than in the console, for the reason `FRD-206` keeps arriving at: a screen
     that decides for itself offers a button the server refuses. The console shows `why_not` where
     it would otherwise show Run.
     """
-    config = getattr(use_case, "pipeline", None)
-    if config is None:
-        return "", NO_PIPELINE
-    start = str(config.start_model or "").strip()
-    return (start, "") if start else ("", NO_START_MODEL)
+    models = _entry_models(use_case)
+    return (models, "") if models else ([], NOTHING_RELEASED)
 
 
 class TestAttributionViewSet(viewsets.ViewSet):
@@ -87,8 +100,8 @@ class TestAttributionViewSet(viewsets.ViewSet):
       — not Management's visibility, a distinction that cost every question of a run a
       `Not a member of use case …` on 2026-08-09 — *and* do they administer it or answer for the
       installation;
-    - does it have a pipeline with a **start model**, which is where a run begins;
-    - if not, **why not**, in a sentence naming what to do about it.
+    - **which models** a run may be entered at, which is what has been released to it;
+    - if none, **why not**, in a sentence naming what to do about it.
 
     A console that worked any of these out for itself would offer a Run button the server refuses,
     which is `FRD-206`'s defect and the reason this endpoint exists at all.
@@ -97,17 +110,17 @@ class TestAttributionViewSet(viewsets.ViewSet):
     permission_classes = [IsAuthenticated, MayRunTests]
 
     def list(self, request: Request) -> Response:
-        callable_ones = may_run_tests_queryset(request.user, UseCase.objects.all()).select_related(
-            "pipeline"
-        )
+        callable_ones = may_run_tests_queryset(
+            request.user, UseCase.objects.all()
+        ).prefetch_related("allowed_models")
         rows = []
         for use_case in callable_ones.order_by("name", "slug"):
-            start, why_not = _runnable(use_case)
+            models, why_not = _runnable(use_case)
             rows.append(
                 {
                     "use_case": use_case.slug,
                     "name": use_case.name,
-                    "start_model": start,
+                    "models": models,
                     "may_run": not why_not,
                     "why_not": why_not,
                 }
@@ -173,18 +186,47 @@ class TestRunViewSet(viewsets.ModelViewSet[TestRun]):
         shows what it did not get to rather than looking complete and short.
         """
         use_case = self._use_case_the_caller_may_run(serializer.validated_data.get("use_case", ""))
-        start, why_not = _runnable(use_case)
+        released, why_not = _runnable(use_case)
         if why_not:
             raise ValidationError({"use_case": [why_not]})
-        # **The pipeline's start model, never the caller's.** A run enters where the pipeline says
-        # it enters; asking the caller would be asking them to predict a decision the pipeline
-        # makes, and a model the use case has not been released is refused at dispatch anyway
-        # (`FRD-308`). Recorded on the row because a start model can change between two runs and
-        # the older one is still evidence about the configuration it actually met.
-        run = serializer.save(requested_by=self.request.user, model=start)
+        run = serializer.save(
+            requested_by=self.request.user,
+            model=self._entry_model(serializer.validated_data.get("model", ""), use_case, released),
+        )
         TestResult.objects.bulk_create(
             TestResult(run=run, case=case) for case in TestCase.objects.filter(retired=False)
         )
+
+    def _entry_model(self, wanted: str, use_case: UseCase, released: list[str]) -> str:
+        """Which model this run enters the pipeline at — **the caller's choice, bounded**.
+
+        Chosen per run rather than declared on the pipeline (owner's decision, `FRD-504` §5.8): a
+        use case releases several models on purpose, and two runs of one use case entering at two
+        different models is the comparison somebody evaluating a model actually wants.
+
+        Bounded by what has been *released* to the use case, and refused by name otherwise. The
+        earlier design took the model from the pipeline precisely to avoid a caller naming one the
+        use case may not call — which the gateway would refuse at dispatch, producing a run full of
+        403s that says nothing. Reading the release list here answers that without taking the
+        choice away, and without a run ever writing a release the way `_release_for_testing` did.
+
+        Empty means "whichever" and takes the first released model. A run has to record *some*
+        entry point or its results cannot be compared with anything, so this is a default rather
+        than a refusal — and the console always sends one.
+        """
+        chosen = str(wanted or "").strip()
+        if not chosen:
+            return released[0]
+        if chosen not in released:
+            raise ValidationError(
+                {
+                    "model": [
+                        f"'{chosen}' is not released to '{use_case.slug}'. A run may only be "
+                        f"entered at a model the use case may call: {', '.join(released)}."
+                    ]
+                }
+            )
+        return chosen
 
     def _use_case_the_caller_may_run(self, slug: str) -> UseCase:
         """The use case this run is about, or a refusal.

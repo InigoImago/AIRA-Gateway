@@ -391,10 +391,13 @@ export class UseCaseService {
    *
    * **No model.** A run enters where the pipeline says it enters, and asking the caller for one
    * would be asking them to predict a decision the pipeline makes — the server fills it in from
-   * the use case's `start_model` and records it on the run.
+   * the model this run is entered at and records it on the run.
    */
-  startRun(useCase: string): Observable<TestRun> {
-    return this.http.post<TestRun>('/api/v1/test-runs/', { use_case: useCase });
+  startRun(useCase: string, model: string): Observable<TestRun> {
+    // The model the run is **entered at**, picked by the person starting it and bounded by the
+    // server to what is released to that use case. It used to come from the pipeline, which took
+    // away the point of releasing several models to one use case.
+    return this.http.post<TestRun>('/api/v1/test-runs/', { use_case: useCase, model });
   }
 
   runResults(runId: number): Observable<TestResult[]> {

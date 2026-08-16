@@ -626,11 +626,11 @@ def seed_test_catalogue(fresh: bool) -> SeedResult:
 
 
 def _point_it_at_a_model(use_case: UseCase) -> None:
-    """Release a model to the evaluation use case and start its pipeline there (`ADR-0020`).
+    """Release a model to the evaluation use case, so a run has somewhere to enter (`ADR-0020`).
 
-    Two halves of one decision, and both are now the **administrator's** rather than the feature's.
-    A run enters the pipeline at its `start_model`, and a use case may only call what has been
-    released to it (`FRD-308`) — so a use case with neither cannot be run, and the console says so.
+    The **administrator's** decision rather than the feature's. A run is entered at a model the
+    person starting it picks, bounded by what has been released to the use case (`FRD-308`) — so a
+    use case with nothing released cannot be run, and the console says so.
 
     This used to be done at run time by `_release_for_testing`, which wrote `allowed_models` every
     time somebody pressed Run. A feature that has to edit a governance decision in order to work is
@@ -657,7 +657,7 @@ def _point_it_at_a_model(use_case: UseCase) -> None:
         # **No steps.** A model test wants the model's own answer; a filter in the way would make
         # it a test of the filter, which is a different question and is what every *other* use
         # case's run asks.
-        defaults={"steps": [], "fallback_models": [], "start_model": chosen.name},
+        defaults={"steps": [], "fallback_models": []},
     )
     events.emit(
         "pipeline.upserted",
@@ -665,6 +665,5 @@ def _point_it_at_a_model(use_case: UseCase) -> None:
             "use_case": use_case.slug,
             "steps": config.steps,
             "fallback_models": config.fallback_models,
-            "start_model": config.start_model,
         },
     )

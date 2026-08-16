@@ -17,7 +17,7 @@
 >   as "the catalogue".
 > - **Subject.** The draft is about **models**, and so was the built feature at first. A run is now
 >   about a **use case**, and travels that use case's own pipeline (`ADR-0020`, §5.8).
->   Testing a model is then an ordinary use case whose pipeline starts at it. Everything sections 1
+>   Testing a model is then an ordinary use case that model is released to. Everything sections 1
 >   to 5.6 want from a model is still obtainable that way; what they could not express is the
 >   question a use-case administrator actually has, which is whether their *pipeline* holds.
 
@@ -255,25 +255,32 @@ a sentence naming who runs the catalogue instead of three tabs of controls that 
 `FRD-206` again.
 
 **The pipeline decides which model answers.** A run names no model. It names a use case, and the
-request enters that use case's pipeline at the pipeline's declared **start model**; a `model_route`
-step may then send it somewhere else, and that is the pipeline doing its job. This is what deleted
-`_release_for_testing`: the old shape asked the caller for a model, which `FRD-308` then refused
-because the use case had never been released it, so the runner quietly wrote `allowed_models` to
-make its own run work. Releasing a model is the use case administrator's decision, and it was never
-this feature's to make.
+request enters that use case's pipeline at a model **the person starting the run picks**; a
+`model_route` step may then send it somewhere else, and that is the pipeline doing its job.
 
-**Which is why a pipeline now declares a start model.** It is where a request enters when the caller
-names none — configuration *about* the pipeline rather than a step in it, the same shape `FRD-308`
-settled for `allowed_models`. It is validated like every other model a pipeline names: released to
-the use case, or the save is refused. Blank is a real state and means *this pipeline is only ever
-entered by a caller who names a model*, which is every pipeline written before today; the console
-then says the use case cannot be run **and why**, rather than guessing one. The dry run reads the
-same field first, ahead of the three guesses whose own comments record each being wrong in
-production (`ADR-0020`, options considered).
+**The choice is the run's, and it is bounded by the release.** A first version put a `start_model`
+on the pipeline. The owner's objection is the one that matters: a use case releases several models
+*on purpose*, and naming one on the pipeline reads as *this is the model this use case uses* — it
+narrows, in the reader's mind, a decision the release deliberately left open. It also made the
+wrong thing the precondition, so a use case was un-runnable for want of a pipeline field rather
+than for want of a model.
+
+So the run carries its own entry model, offered from exactly what has been released to that use
+case (`FRD-308`) and refused **by name** otherwise. That bound is what the pipeline field was
+really buying: without it a caller names a model the use case may not call, the gateway refuses at
+dispatch, and the run fills with 403s that say nothing about anything. Reading the release list
+answers that without taking the choice away — and without a run ever *writing* a release, which is
+what `_release_for_testing` did and why it is deleted. Two runs of one use case may enter at two
+different models, which is precisely the comparison somebody evaluating a model wants.
+
+**There is no "this use case has no pipeline" refusal.** A use case always has one: a request comes
+in and a request is dispatched, and a pipeline with no steps is one that does nothing in between —
+a configuration, not an absence. The message that said otherwise sent a reader off to build
+something that already existed. What can genuinely be missing is a model to enter at.
 
 **Testing a model is a use case.** IT Security creates one, releases the models under evaluation to
-it, and points its pipeline's start model at one of them. There is no special path, no internal use
-case the code branches on, and no invisible attribution: the spend lands on the use case that asked
+it, and enters each run at whichever one is under evaluation. There is no special path, no internal
+use case the code branches on, and no invisible attribution: the spend lands on the use case that asked
 for the evidence, which is where it belongs. The seeded `smoke-test` use case survives as an
 ordinary demonstration of this — a released model, a pipeline that starts there — and the constant
 naming it is used by the seed alone.
@@ -283,10 +290,10 @@ useless; under this one it *is* the finding. The two modes of §5.3 collapse int
 the catalogue against a use case whose pipeline filters to measure the filter, and against one whose
 pipeline is bare to measure the model.
 
-**A standing is per use case, not per model.** Two runs of one use case whose start model changed in
-between are not comparable, so the run and the statistics row both carry the start model as it stood
-at the time — recorded on the run rather than looked up, because the older run is evidence about the
-configuration it actually met.
+**A standing is per use case, not per model.** Two runs of one use case that entered at different
+models are not comparable, so the run and the statistics row both carry the model that run was
+entered at — recorded on the run rather than looked up, because a release can change and the older
+run is still evidence about what it actually met.
 
 ## 6. Data Model
 
@@ -297,14 +304,13 @@ originally proposed:
   no battery, no category and no expectation *type*, because nothing matches against an expectation
   (§5.2) and nothing groups the catalogue (§5.7).
 - `TestRun` — `use_case` (**what the run is about**, and required since `ADR-0020`), `model` (the
-  start model the pipeline was *entered at*, as it stood then), `started_at`, `finished_at`,
+  model this run *entered the pipeline at*, chosen when it was started), `started_at`,
+  `finished_at`,
   `requested_by`. Both identifiers are **strings**, not foreign keys, and for one reason: a run is
   evidence about what happened on a day, and deleting a use case or a model declaration must not
   delete the finding.
 - `TestResult` — `run`, `case`, `response`, `error` (a failed *request* is not a bad *answer* and
   they are stored apart), `latency_ms`, `verdict`, `note`, `rated_by`, `rated_at`.
-- `PipelineConfig.start_model` — on the pipeline, not here (§5.8). Distributed to the gateway on
-  `pipeline.upserted` like the rest of the configuration (`FRD-204`).
 
 Runs execute against the gateway; results live in Management, because this is a governance artefact
 that outlives any individual gateway instance.
@@ -320,11 +326,14 @@ writes, and none was needed to answer the question this feature exists for.
   Administrators and IT Security only**, because it states what this installation considers an
   acceptable answer.
 - `GET /api/v1/test-attribution/` — the use cases this caller may run the catalogue against, each
-  with its `start_model`, `may_run` and, when it cannot be run, `why_not` in words. `FRD-206`: the
+  with the **models released to it**, `may_run` and, when it cannot be run, `why_not` in words.
+  `FRD-206`: the
   console offers no button the server would refuse, and says why rather than disabling silently.
-- `POST /api/v1/test-runs/` `{use_case}` — creates the run and one empty result per question. The
-  **model is not a field a caller may set**: it is read from the use case's pipeline and stored on
-  the run (§5.8), and a use case with no start model is refused by name. The prompts are then sent
+- `POST /api/v1/test-runs/` `{use_case, model}` — creates the run and one empty result per
+  question. `model` is where this run **enters** the pipeline; it is optional (absent means
+  "whichever", and the first released model is taken) and is refused **by name** when it is not
+  released to that use case. A use case with nothing released is refused by name too. The prompts
+  are then sent
   by the console **one at a time**: a run is ordinary traffic, and firing a hundred at once would
   trip the use case's own rate limit and produce a run full of 429s that says nothing about
   anything.
@@ -332,8 +341,8 @@ writes, and none was needed to answer the question this feature exists for.
   answer or records a verdict; the rating's author is whoever is signed in and is never a field a
   caller may set.
 - `GET /api/v1/test-runs/{id}/export/` — CSV, BOM and CRLF, every field quoted (`FRD-602`'s rules).
-- `GET /api/v1/test-stats/` — **one row per use case**: its latest run, the start model that run
-  entered at, that run's counts, and how many questions the catalogue asks today.
+- `GET /api/v1/test-stats/` — **one row per use case**: its latest run, the model that run entered
+  at, that run's counts, and how many questions the catalogue asks today.
 - Every list is scoped by `may_call_queryset`, so a caller sees the runs of the use cases they may
   run and no others.
 - `GET /api/v1/me/` carries `may_test`, so the SPA shows the screen to exactly whoever the server
@@ -390,8 +399,9 @@ volume are visible in reporting without a second mechanism.
 - **Mutation** — `Q1f` removes the administration half of the rule, `Q1g` the gateway half. Each
   must make a test fail on its own: a composition guarded only as a whole is a composition that can
   quietly lose a half.
-- **Unit** — a run stores the pipeline's start model rather than anything the caller sent, and a use
-  case whose pipeline declares none is refused by name instead of run against nothing.
+- **Unit** — a run is entered at the model the caller picked and refuses one that is not released
+  to that use case, naming what is; a use case with nothing released is refused by name instead of
+  run against nothing.
 - **Frontend** — rates rendered as rates; the "this is not a safety statement" text present on every
   result view (§5.5); comparison against the previous run highlights changes.
 - **Integration** — a run against the mock provider completes, produces results, and appears in

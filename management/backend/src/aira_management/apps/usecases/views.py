@@ -484,9 +484,13 @@ class UseCaseViewSet(viewsets.ModelViewSet[UseCase]):
         if request.method == "GET":
             if config is None:
                 # The same shape the serializer produces, field for field. A default that is
-                # *missing* a key the saved form has is a default the console has to special-case,
-                # and `start_model` is the key the question catalogue asks for (`ADR-0020`).
-                return Response({"steps": [], "fallback_models": [], "start_model": ""})
+                # *missing* a key the saved form has is a default the console has to special-case.
+                #
+                # **A use case with no row here still has a pipeline** — a request comes in and a
+                # request is dispatched, and no steps means nothing happens in between. That is a
+                # configuration, not an absence, which is why this answers a pipeline rather than
+                # a 404.
+                return Response({"steps": [], "fallback_models": []})
             return Response(PipelineConfigSerializer(config).data)
 
         if not self._may_manage(usecase):
@@ -510,7 +514,6 @@ class UseCaseViewSet(viewsets.ModelViewSet[UseCase]):
                     # Where a caller who names no model enters (`ADR-0020`). Carried to the gateway
                     # because the **dry run** needs it there — it used to guess, and its own
                     # comments record three wrong guesses in a row.
-                    "start_model": config.start_model,
                 },
             )
         return Response(PipelineConfigSerializer(config).data)

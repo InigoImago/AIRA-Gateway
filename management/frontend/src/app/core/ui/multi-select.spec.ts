@@ -233,25 +233,35 @@ describe('MultiSelect', () => {
     );
   });
 
-  it('offers no controls at all when it is read-only', () => {
-    /** Inert, not un-saveable (`FRD-206`): a row of disabled controls is a row of things that do
-     *  nothing. The chips stay, because what is chosen is still worth reading. */
+  it('stays recognisably a control when it is read-only, greyed rather than gone', () => {
+    /** **Inert, not re-drawn** (`FRD-206`). This used to remove the field entirely, leaving a row
+     *  of chips — and the owner's report is what that costs: a paragraph does not look like a
+     *  control, so a developer scanning the page does not read it, and the one piece of
+     *  configuration they most need is the one rendered as prose.
+     *
+     *  A disabled input in the same place, in the browser's own disabled styling, says "this is
+     *  the control and it is not yours to use" without a sentence having to. What must still be
+     *  gone is anything that *acts*: the per-chip remove, and the list toggle. */
     const { host, fixture, q, text } = setup(['gemini-2.5-flash']);
 
     host.disabled.set(true);
     fixture.detectChanges();
 
     expect(text()).toContain('gemini-2.5-flash');
-    expect(q('[data-testid="pick-search"]')).toBeNull();
+    const field = q('[data-testid="pick-search"]') as HTMLInputElement | null;
+    expect(field).not.toBeNull();
+    expect(field?.disabled).toBe(true);
+    // Nothing that acts survives.
     expect(q('[data-testid="pick-remove-gemini-2.5-flash"]')).toBeNull();
+    expect(q('[data-testid="pick-toggle"]')).toBeNull();
   });
 
   it('changes nothing when a read-only picker is driven from code', () => {
-    /** The controls are gone from the DOM, which is the visible half. This is the other half: a
-     *  picker that is only *visually* read-only is one a stale reference, a keyboard event on a
-     *  chip that outlived its render, or a future template can still change — and `FRD-206`'s rule
-     *  is that read-only means inert. Asserted through the component because that is the only way
-     *  to reach a control the template no longer draws. */
+    /** The acting controls are gone from the DOM, which is the visible half. This is the other
+     *  half, and it matters more now that the field itself stays on screen: a picker that is only
+     *  *visually* read-only is one a stale reference, a keyboard event on a chip that outlived its
+     *  render, or a future template can still change — and `FRD-206`'s rule is that read-only
+     *  means inert. Asserted through the component, which is the only way to reach it. */
     const { host, fixture } = setup(['gemini-2.5-flash']);
     host.disabled.set(true);
     fixture.detectChanges();

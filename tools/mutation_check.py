@@ -3273,10 +3273,14 @@ MUTATIONS = [
     ),
     Mutation(
         "Q1b",
-        "a run enters where the pipeline says, never where the caller says",
+        "a run may only be entered at a model the use case has been released",
         "management/backend/src/aira_management/apps/smoketests/views.py",
-        "        run = serializer.save(requested_by=self.request.user, model=start)",
-        "        run = serializer.save(requested_by=self.request.user)",
+        # Re-anchored 2026-08-16. The property was "a run enters where the *pipeline* says"; the
+        # owner removed `start_model` because pinning one model on a pipeline undoes the point of
+        # releasing several to a use case. The caller picks again — and the bound is what stops
+        # the picking from producing a run full of 403s, which is the half worth guarding.
+        "        if chosen not in released:",
+        "        if False:",
         "management/backend/tests/test_smoketests.py",
     ),
     Mutation(
@@ -3291,21 +3295,11 @@ MUTATIONS = [
     ),
     Mutation(
         "Q1d",
-        "a use case with no start model is refused by name rather than run against nothing",
+        "a use case with nothing released is refused by name rather than run against nothing",
         "management/backend/src/aira_management/apps/smoketests/views.py",
         '        if why_not:\n            raise ValidationError({"use_case": [why_not]})',
         '        if False:\n            raise ValidationError({"use_case": [why_not]})',
         "management/backend/tests/test_smoketests.py",
-    ),
-    Mutation(
-        "Q1e",
-        "a pipeline's declared start model is preferred over any guess",
-        "gateway/src/aira_gateway/api/pipeline.py",
-        '    declared = str(pipeline.get("start_model", "") or "").strip()\n'
-        "    if declared:\n"
-        "        return declared",
-        '    declared = ""',
-        "gateway/tests/test_pipeline_routes.py",
     ),
     Mutation(
         "Q1f",

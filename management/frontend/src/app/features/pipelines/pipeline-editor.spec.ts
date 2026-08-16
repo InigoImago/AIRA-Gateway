@@ -71,13 +71,13 @@ interface Options {
 }
 
 /**
- * The pipeline as the server sends it. `start_model` is filled in here rather than at every call
+ * The pipeline as the server sends it, filled in here rather than at every call
  * site because it is **always present on the wire** — the GET returns it even for a use case with
  * no saved pipeline (`ADR-0020`) — so making it optional in the interface would be a lie about the
  * response, and repeating it in forty literals would be forty places to forget it.
  */
 function config(initial: Partial<PipelineConfig>): PipelineConfig {
-  return { steps: [], fallback_models: [], start_model: '', ...initial };
+  return { steps: [], fallback_models: [], ...initial };
 }
 
 function setup(given: Partial<PipelineConfig>, options: Options = {}) {
@@ -282,47 +282,6 @@ describe('PipelineEditor', () => {
 
   // ---- inspector editing -----------------------------------------------------------
 
-  it('offers the released models as the start model, and saves the choice', () => {
-    /** Where a request **enters** this pipeline when the caller names none (`ADR-0020`).
-     *
-     *  Offered from the released models rather than typed, like the fallback chain and every
-     *  category target: a name that is not released is refused when the pipeline is saved, and a
-     *  picker that offers only what will be accepted is `FRD-206`'s rule applied to a text box. */
-    const { component, fixture, getSaved } = setup({}, { released: ['strong-1', 'cheap-1'] });
-
-    const options = Array.from(
-      (fixture.nativeElement as HTMLElement).querySelectorAll('.node--start option'),
-      (option) => option.textContent?.trim() ?? '',
-    );
-    component.setStartModel('strong-1');
-    component.save();
-
-    // Sorted, unlike the fallback chain — a chain is tried in the order it is written, so its
-    // picker preserves order; this one chooses a single model and alphabetical is what a reader
-    // scans fastest.
-    expect(options).toEqual(['— none —', 'cheap-1', 'strong-1']);
-    expect(getSaved()?.start_model).toBe('strong-1');
-  });
-
-  it('says what an empty start model costs, rather than only leaving it blank', () => {
-    /** Blank is a real choice — most pipelines are only entered by a caller who names their own
-     *  model, which is every ordinary API request. What it costs is the question catalogue, and a
-     *  reader has no way to know that unless the screen says so. */
-    const { fixture } = setup({ start_model: '' });
-    const text = (fixture.nativeElement as HTMLElement).textContent ?? '';
-
-    expect(text).toContain('question');
-    expect(text).toContain('cannot be run');
-  });
-
-  it('shows where a request enters once one is set', () => {
-    const { fixture } = setup({ start_model: 'strong-1' }, { released: ['strong-1'] });
-    const started = (fixture.nativeElement as HTMLElement).querySelector('.node--start');
-
-    expect(started?.textContent).toContain('Enters at');
-    expect(started?.textContent).toContain('strong-1');
-  });
-
   it('edits the fallback chain and a step list from comma-separated input', () => {
     const { component } = setup({
       steps: [{ type: 'injection_filter', config: {} }],
@@ -419,6 +378,43 @@ describe('PipelineEditor', () => {
     });
     component.sampleUser.set('this is unbalanced( text');
     expect(component.preview()[0].action).toBe('flagged');
+  });
+
+  it('lets a builder say where a dry run enters, and offers only released models', () => {
+    /** The gateway infers one when nobody says, and `_model_the_pipeline_is_about`'s own comments
+     *  record three wrong guesses in a row — each reported back as `effective_model`, where a
+     *  builder reads it as a decision somebody made. A filter permitting `qwen3:0.6b` answered
+     *  *"Blocked: Model 'mock-1' is not allowed"* on a rule that was working correctly.
+     *
+     *  Bounded by the release for the same reason every other model field on this page is: the
+     *  gateway refuses anything else at dispatch (`FRD-308`), so offering more offers a refusal. */
+    const { component, fixture, dryRunPayload } = setup(
+      { steps: [], fallback_models: [] },
+      { released: ['cheap-1', 'strong-1'] },
+    );
+
+    const options = Array.from(
+      (fixture.nativeElement as HTMLElement).querySelectorAll('#dry-run-model option'),
+      (option) => option.textContent?.trim() ?? '',
+    );
+    expect(options).toEqual(['let the gateway choose', 'cheap-1', 'strong-1']);
+
+    (component as unknown as { dryRunModel: { set: (v: string) => void } }).dryRunModel.set(
+      'strong-1',
+    );
+    component.runDryRun();
+
+    expect((dryRunPayload() as { model?: string }).model).toBe('strong-1');
+  });
+
+  it('omits the model rather than sending an empty one when nobody chose', () => {
+    /** Blank is the default and means *let the gateway choose*. Sending `model: ''` would be a
+     *  model name the gateway has to refuse, turning a deliberate non-choice into an error. */
+    const { component, dryRunPayload } = setup({ steps: [], fallback_models: [] });
+
+    component.runDryRun();
+
+    expect('model' in (dryRunPayload() as object)).toBe(false);
   });
 
   it('runs a dry-run and renders its trace', () => {

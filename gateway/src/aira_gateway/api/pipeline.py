@@ -70,14 +70,11 @@ class DryRunRequest(BaseModel):
 def models_named_in(pipeline: dict[str, Any]) -> list[str]:
     """Every model this pipeline could reach, wherever it is written.
 
-    Collected in one place because the release check has to see **all** of them: where a request
-    enters (`ADR-0020`), the classifier a filter runs, the classifier a router runs, each
-    category's target, the default target, and the fallback chain. A check that read one of those
-    would refuse the obvious escape and leave five.
+    Collected in one place because the release check has to see **all** of them: the classifier a
+    filter runs, the classifier a router runs, each category's target, the default target, and the
+    fallback chain. A check that read one of those would refuse the obvious escape and leave four.
     """
     named: list[str] = []
-    if pipeline.get("start_model"):
-        named.append(str(pipeline["start_model"]))
     for step in pipeline.get("steps") or []:
         config = (step.get("config") or {}) if isinstance(step, dict) else {}
         if config.get("model"):
@@ -96,11 +93,13 @@ def _model_the_pipeline_is_about(
 ) -> str:
     """Which model to simulate when the caller named none.
 
-    **Declared first, since `ADR-0020`.** A pipeline now says where a request enters it, and
-    everything below this line is a guess — three of them, each wrong in production and each
-    reported back as `effective_model`, where a builder reads it as a decision somebody made. The
-    guesses stay for a pipeline that declares nothing, because a wrong model named is more use to
-    a builder than none at all, but they are no longer the first answer.
+    **Everything here is a guess**, and that is worth saying at the top because the answer is
+    reported back as `effective_model`, where a builder reads it as a decision somebody made. A
+    pipeline briefly carried a declared `start_model` and this preferred it; the field is gone
+    (owner's decision — a use case releases several models on purpose and naming one on the
+    pipeline narrowed that in the reader's mind), so the guesses are the answer again. The
+    question catalogue, the other caller, no longer needs this at all: a run carries the model it
+    was started with.
 
     The first *registered* model was the obvious choice and the wrong one: a builder testing a
     rule about `qwen3:0.6b` was answered with a refusal about `mock-1`, a model the operator never
@@ -115,9 +114,6 @@ def _model_the_pipeline_is_about(
     never match is a rule the code claims and does not have — the same unreachable guard
     `parse_role_groups` had to lose.
     """
-    declared = str(pipeline.get("start_model", "") or "").strip()
-    if declared:
-        return declared
     steps = pipeline.get("steps") or []
     for step in steps:
         config = step.get("config") or {}

@@ -57,3 +57,4 @@ Thumbs.db
 kira_api.md
 test-results/
 opencode.showcase.json
+deploy/compose/docker-compose.sandbox.yml
