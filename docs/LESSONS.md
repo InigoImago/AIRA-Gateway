@@ -240,6 +240,13 @@ reading code.
   request the answer must not change anyway — the pre-dispatch checks and the dispatch that follows
   are supposed to be deciding about the same declaration, and re-reading was how they could quietly
   disagree.
+- **Per-process state is correct until there are two processes.** The anomaly evaluator held its
+  touched scopes, its cooldown and its right to run in memory; at N=1 every one of those is right,
+  and at N=2 they produce duplicate findings, duplicate suspensions, and an evaluator that measures
+  only the traffic it happened to serve — *while each instance is individually inside its own
+  cooldown*, so the mechanism against repeat firing is the one thing that cannot see the repeat.
+  The same state made a **restart** re-fire everything, which a rolling update turns from rare into
+  routine. **Ask of any in-memory field: what does a second copy of this process believe?**
 - **A read path that writes is a read path that cannot scale.** Reconciling a caller's groups on
   every request wrote eight rows in the steady state, for a `GET`. Compare first and write only the
   difference; agreeing with the database should be free.

@@ -2340,9 +2340,33 @@ MUTATIONS = [
         "N10",
         "the same finding is not written again inside its own window",
         "gateway/src/aira_gateway/anomalies/service.py",
-        "        if last is not None and now - last < timedelta(minutes=rule.window_minutes):\n            return None",
+        # Re-anchored 2026-08-16: the cooldown moved from an in-process dict to the
+        # `anomaly_events` table, so it survives a restart and holds across instances (`FRD-127`).
+        # The property is unchanged — the same finding is not written twice inside its window.
+        "        if await self._fired_recently(session, rule, finding.target_value, now):\n            return None",
         "        if False:\n            return None",
         ANOMALY_ENGINE,
+    ),
+    Mutation(
+        "N10b",
+        "the cooldown is shared, so a second evaluator does not write the finding again",
+        "gateway/src/aira_gateway/anomalies/service.py",
+        # The multi-instance defect (`FRD-127`). Reading the cooldown from a per-process map is
+        # exactly what let N instances each fire once while each sat inside its own window.
+        "                AnomalyEvent.rule_id == rule.id,",
+        "                AnomalyEvent.rule_id == -1,",
+        "gateway/tests/test_anomaly_engine.py",
+    ),
+    Mutation(
+        "N10c",
+        "which scopes saw traffic is read from the audit rows, not from this process",
+        "gateway/src/aira_gateway/anomalies/service.py",
+        # Narrowing the lookback to nothing is what a per-process touched set amounted to for an
+        # instance that had served none of the traffic: it evaluated, found nothing, and looked
+        # exactly like a quiet minute.
+        "        since = self._since or (moment - timedelta(seconds=self.interval_seconds))",
+        "        since = moment",
+        "gateway/tests/test_anomaly_engine.py",
     ),
     Mutation(
         "N11",
@@ -3880,8 +3904,17 @@ MUTATIONS = [
         "QA29",
         "a detection round that fails gives its window back",
         "gateway/src/aira_gateway/anomalies/service.py",
-        "            self._touched |= touched\n            raise",
-        "            raise",
+        # Re-anchored 2026-08-16. The window was a set taken away at the top of `tick` and merged
+        # back on failure; it is a watermark now, so keeping it means *not advancing* it — the
+        # mutation moves it before the round instead of after (`FRD-127`).
+        "            written = await self._evaluate(session, touched, moment)\n"
+        "            if written:\n"
+        "                await session.commit()\n"
+        "        self._since = moment",
+        "            self._since = moment\n"
+        "            written = await self._evaluate(session, touched, moment)\n"
+        "            if written:\n"
+        "                await session.commit()",
         DETECTION_WINDOW,
     ),
     Mutation(

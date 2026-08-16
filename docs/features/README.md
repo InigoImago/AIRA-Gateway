@@ -38,7 +38,7 @@ status that goes stale in the copy nobody opens.
 | [124](FRD-124-no-silently-dropped-fields.md) | Nothing a request asks for is silently dropped | 8 | ✅ Done |
 | [125](FRD-125-pipeline-verdicts.md) | The pipeline's own model calls are first class | 3 (correction) | ✅ Done |
 | [126](FRD-126-one-pre-dispatch-sequence.md) | A surface parses; the layer decides | 8 (structural) | ✅ Done |
-| [127](FRD-127-several-gateway-instances.md) | Several gateway instances | 9 (operability) | ○ Draft — most of it already holds; two real gaps |
+| [127](FRD-127-several-gateway-instances.md) | Several gateway instances | 9 (operability) | ○ Draft — the evaluator defect is fixed; the rest is a gap |
 | [128](FRD-128-one-post-dispatch-sequence.md) | A request the caller abandoned is still a request that happened | 8 (structural) | ✅ Done |
 | [130](FRD-130-demo-showcase.md) | A demo somebody can walk through | 0 (extension) | ✅ Done |
 | [131](FRD-131-tool-calling.md) | Tool calling: carried, never executed, and off until somebody turns it on | 9 | ✅ Done |

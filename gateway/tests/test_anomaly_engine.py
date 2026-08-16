@@ -336,7 +336,6 @@ async def test_a_tick_writes_what_it_found(sessions) -> None:
     await _rule_row(sessions)
     await _seed(sessions, *[_log(outcome=Outcome.RATE_LIMITED.value) for _ in range(10)])
     service = AnomalyService(sessions)
-    service.touch("demo-uc")
 
     await service.tick(NOW)
 
@@ -357,9 +356,7 @@ async def test_the_same_finding_is_not_written_again_inside_its_window(sessions)
     await _seed(sessions, *[_log(outcome=Outcome.RATE_LIMITED.value) for _ in range(10)])
     service = AnomalyService(sessions)
 
-    service.touch("demo-uc")
     await service.tick(NOW)
-    service.touch("demo-uc")
     await service.tick(NOW + timedelta(minutes=1))
 
     assert len(await _events(sessions)) == 1
@@ -370,7 +367,6 @@ async def test_the_finding_is_written_again_once_the_window_has_passed(sessions)
     await _seed(sessions, *[_log(outcome=Outcome.RATE_LIMITED.value) for _ in range(10)])
     service = AnomalyService(sessions)
 
-    service.touch("demo-uc")
     await service.tick(NOW)
 
     # The condition is still there a window later — fresh traffic, not the rows already reported.
@@ -382,18 +378,32 @@ async def test_the_finding_is_written_again_once_the_window_has_passed(sessions)
             for _ in range(10)
         ],
     )
-    service.touch("demo-uc")
     await service.tick(later)
 
     assert len(await _events(sessions)) == 2
 
 
 async def test_a_rule_for_an_untouched_use_case_is_not_evaluated(sessions) -> None:
+    """A quiet installation with 200 use cases should not run 200 queries a minute forever.
+
+    The traffic below belongs to a **different** use case. That is the whole setup now: "touched"
+    is read from the audit rows, so a use case with rows in the window is touched by definition —
+    the old version of this test seeded rows *for* `quiet-uc` and then relied on nobody having
+    called `touch`, which under the new mechanism asserts the opposite of what it says.
+    """
     await _rule_row(sessions, use_case="quiet-uc")
-    await _seed(sessions, *[_log(use_case="quiet-uc", outcome="rate_limited") for _ in range(10)])
+    await _seed(
+        # Enough refusals for `quiet-uc`'s rule to fire **if it were evaluated** — five minutes
+        # ago, so inside the rule's 15-minute window but outside the one-interval lookback that
+        # decides what counts as touched. Without traffic it would find nothing either way, and
+        # the test would pass against a filter that had been deleted.
+        sessions,
+        *[_log(use_case="quiet-uc", outcome="rate_limited", minutes_ago=5) for _ in range(10)],
+        # And something recent, so the round has a scope to evaluate at all.
+        *[_log(use_case="busy-uc", outcome="rate_limited") for _ in range(10)],
+    )
     service = AnomalyService(sessions)
 
-    service.touch("busy-uc")
     await service.tick(NOW)
 
     assert await _events(sessions) == []
@@ -404,7 +414,6 @@ async def test_a_disabled_rule_is_not_evaluated(sessions) -> None:
     await _seed(sessions, *[_log(outcome=Outcome.RATE_LIMITED.value) for _ in range(10)])
     service = AnomalyService(sessions)
 
-    service.touch("demo-uc")
     await service.tick(NOW)
 
     assert await _events(sessions) == []
@@ -417,71 +426,67 @@ async def test_a_rule_asking_for_more_than_this_stage_can_do_says_so_in_the_row(
     await _seed(sessions, *[_log(outcome=Outcome.RATE_LIMITED.value) for _ in range(10)])
     service = AnomalyService(sessions)
 
-    service.touch("demo-uc")
     await service.tick(NOW)
 
     assert (await _events(sessions))[0].action_taken == NOT_ENFORCED
 
 
-async def test_the_touched_set_is_bounded(sessions) -> None:
-    """A bounded loss delays a finding by one tick; an unbounded set is a memory leak in the
-    component whose job is to still be running when something goes wrong."""
-    from aira_gateway.anomalies.service import MAX_TOUCHED
+async def test_the_scopes_come_from_the_audit_rows_not_from_this_process(sessions) -> None:
+    """**The multi-instance defect, at the layer where it starts** (`FRD-127`).
 
-    service = AnomalyService(sessions)
-    for index in range(MAX_TOUCHED + 50):
-        service.touch(f"uc-{index}")
+    The touched set used to be filled by *this* process's audit writer, so behind a load balancer
+    the instance that evaluated knew about the fraction of traffic it happened to serve and the
+    rest was measured by no rule at all. Nothing told it: it evaluated, found nothing, and looked
+    exactly like a quiet minute.
 
-    assert len(service._touched) == MAX_TOUCHED
-
-
-async def test_the_cooldown_map_is_bounded_too(sessions) -> None:
-    """**The same argument as above, and it had been made for one of the two sets only.**
-
-    A cooldown is keyed by `(rule, target)`, and a `subject`-targeted rule has one target per
-    caller — so this grew by a row per person per rule, for the life of the process, two lines
-    below the set that is explicitly bounded with the reason written on it.
-
-    Expired entries go first, and dropping one changes no decision: an entry older than its own
-    rule's window suppresses nothing. What is left is trimmed oldest-first, which costs at worst a
-    duplicate finding.
+    Read from `request_logs`, an instance that served none of it still sees the scope — which is
+    what this asserts, since the service here is freshly constructed and has served nothing.
     """
-    from aira_gateway.anomalies.service import MAX_COOLDOWNS
+    await _rule_row(sessions)
+    await _seed(sessions, *[_log(outcome=Outcome.RATE_LIMITED.value) for _ in range(10)])
 
-    service = AnomalyService(sessions)
-    stale = NOW - timedelta(hours=2)
-    for index in range(MAX_COOLDOWNS + 100):
-        service._last_fired[(1, f"caller-{index}")] = stale
+    fresh = AnomalyService(sessions)
+    written = await fresh.tick(NOW)
 
-    service._forget_stale_cooldowns(NOW, window_minutes=15)
-
-    assert service._last_fired == {}, "everything older than its window suppresses nothing"
+    assert [event.rule_name for event in written] == ["rule"]
 
 
-async def test_a_live_cooldown_survives_the_pruning(sessions) -> None:
-    """The half that must not be lost: a rule that fired a moment ago still suppresses the same
-    finding, or a 15-minute window fires fifteen times about the same fifteen minutes."""
-    from aira_gateway.anomalies.service import MAX_COOLDOWNS
+async def test_a_second_evaluator_does_not_write_the_same_finding_again(sessions) -> None:
+    """**The defect this change exists for.** Two instances evaluate the same shared rows, reach
+    the same verdict, and used to write an event each — each sitting inside its own in-memory
+    cooldown, so the mechanism meant to stop repeat firing was the one thing that could not see
+    the repeat. With enforcement on it was one suspension per instance for one finding.
 
-    service = AnomalyService(sessions)
-    for index in range(MAX_COOLDOWNS + 100):
-        service._last_fired[(1, f"caller-{index}")] = NOW
+    The cooldown is the `anomaly_events` table now, so the second evaluator sees the first one's
+    row. On Postgres an advisory lock stops them overlapping at all; this asserts the property that
+    holds even when they do.
+    """
+    await _rule_row(sessions)
+    await _seed(sessions, *[_log(outcome=Outcome.RATE_LIMITED.value) for _ in range(10)])
 
-    service._forget_stale_cooldowns(NOW, window_minutes=15)
+    first = AnomalyService(sessions)
+    second = AnomalyService(sessions)
+    await first.tick(NOW)
+    await second.tick(NOW)
 
-    assert len(service._last_fired) == MAX_COOLDOWNS
-    assert all(fired == NOW for fired in service._last_fired.values())
+    assert len(await _events(sessions)) == 1, "one finding, one event, however many evaluators"
 
 
-async def test_pruning_does_nothing_while_the_map_is_small(sessions) -> None:
-    """The ordinary path stays a dict write. A prune on every finding would be a sort on every
-    finding, which is the cost this bound exists to avoid rather than to introduce."""
-    service = AnomalyService(sessions)
-    service._last_fired[(1, "caller")] = NOW - timedelta(days=1)
+async def test_a_restart_does_not_re_fire_everything(sessions) -> None:
+    """The same defect wearing the clothes of a rolling update.
 
-    service._forget_stale_cooldowns(NOW, window_minutes=15)
+    A restarted instance began with an empty cooldown map, so every rule fired again the moment it
+    started — describing traffic the instance it replaced had already reported. Rolling updates
+    make that the normal case rather than the rare one.
+    """
+    await _rule_row(sessions)
+    await _seed(sessions, *[_log(outcome=Outcome.RATE_LIMITED.value) for _ in range(10)])
+    await AnomalyService(sessions).tick(NOW)
 
-    assert service._last_fired == {(1, "caller"): NOW - timedelta(days=1)}
+    # A new process, one minute later, well inside the rule's 15-minute window.
+    await AnomalyService(sessions).tick(NOW + timedelta(minutes=1))
+
+    assert len(await _events(sessions)) == 1
 
 
 @pytest.mark.anyio

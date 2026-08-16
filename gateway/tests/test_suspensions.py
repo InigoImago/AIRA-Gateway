@@ -224,7 +224,6 @@ async def test_a_rule_that_blocks_writes_a_decision_with_an_author_and_an_expiry
         await session.commit()
 
     service = AnomalyService(sessions, suspensions=SuspensionService(sessions))
-    service.touch("demo-uc")
     events = await service.tick(NOW)
 
     assert events[0].action_taken == "blocked"
@@ -246,7 +245,6 @@ async def test_a_rule_that_only_alerts_writes_no_decision(sessions) -> None:
         await session.commit()
 
     service = AnomalyService(sessions, suspensions=SuspensionService(sessions))
-    service.touch("demo-uc")
     events = await service.tick(NOW)
 
     assert events[0].action_taken == "alert"
@@ -261,7 +259,6 @@ async def test_a_throttling_rule_carries_its_rate_onto_the_decision(sessions) ->
         await session.commit()
 
     service = AnomalyService(sessions, suspensions=SuspensionService(sessions))
-    service.touch("demo-uc")
     events = await service.tick(NOW)
 
     assert events[0].action_taken == "throttled"

@@ -5,6 +5,54 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The anomaly evaluator was wrong for every instance after the first
+
+Asked to fix the defect `FRD-127` turned up while it was being written. It is the kind that cannot
+be found by reading one process: everything about the evaluator is correct at N=1.
+
+Every gateway instance runs the evaluation loop, and three things about it were **per-process** —
+the set of scopes that saw traffic, the cooldown map, and the decision to evaluate at all. So two
+instances read the same shared `request_logs`, reached the same verdict, and wrote an event each,
+while both sat inside their own cooldowns: the mechanism meant to stop repeat firing was the one
+thing that could not see the repeat. With enforcement on, one finding became one suspension per
+instance — one decision, several authors.
+
+All three are shared facts now. **Which scopes saw traffic** is read from `request_logs` rather
+than from a set the audit writer filled, because that set held only the requests *this* instance
+served — behind a load balancer the evaluator knew about its own fraction and the rest was measured
+by no rule at all, silently: it evaluated, found nothing, and looked exactly like a quiet minute.
+**The cooldown** is the `anomaly_events` table. **One evaluator per tick** is a transaction-scoped
+Postgres advisory lock — released however the transaction ends, where a session-scoped one survives
+a crashed process and would leave the fleet with *no* evaluator, which is the worse failure.
+
+**A second defect was hiding inside the first**, and it is the one that would have bitten every
+deploy rather than only a scaled one: the cooldown was in memory, so a restarted instance began
+with an empty map and re-fired every rule the moment it started, describing traffic its predecessor
+had already reported. A rolling update makes that the normal case.
+
+**The plan changed while implementing it, and the FRD says so.** It recommended moving the
+evaluator to its own container — structurally the better answer, and it would have meant every
+existing deployment silently stopped detecting anything until an operator added the container. A
+capability that disappears on upgrade unless somebody reads the release notes is worse than one
+that needs a lock. Worth recording that the lock *alone* would have been wrong too: the instance
+that wins it has to see the whole fleet's traffic, so the touched set had to leave the process
+first. Either half without the other is a fix that looks like one.
+
+**The harness caught two survivors, and one of them was my own new test.** `QA29` — a failed round
+gives its window back — survived after being re-anchored, because its stand-in sessionmaker raises
+when it is *called*: the round never opened a session, so where the watermark is written was never
+exercised. The test that fails during the evaluation, which is what a database blink actually looks
+like, exists now. `N11` survived for a neighbouring reason: the rule for the untouched use case had
+no traffic to find, so deleting the filter changed nothing. Its traffic now sits inside the rule's
+window and outside the lookback, which is the only arrangement that can tell the two apart.
+
+`on_written` went with the touched set — a hook that told the evaluator something it can now read
+for itself, about one instance's share of the traffic. 454 properties.
+
+Suites: 2337 hermetic Python at 95.94 %, `ruff`, `mypy` clean.
+
+---
+
 ## Four corrections from the owner, and two of them undo a decision from the same day
 
 Read in the console rather than in the code, which is why all four are things no test would have

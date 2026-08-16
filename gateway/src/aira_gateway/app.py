@@ -215,12 +215,15 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
         enabled=settings.detect_anomalies,
         suspensions=app.state.suspensions,
     )
+    # No `on_written` hook any more. It fed the anomaly evaluator's touched set, which is now read
+    # from `request_logs` instead — the audit writer's own output — so the hook was telling the
+    # evaluator something it can see for itself, and telling it only about *this* instance's share
+    # of the traffic (`FRD-127`).
     app.state.log_writer = RequestLogWriter(
         sessionmaker,
         settings,
         app.state.redactor,
         max_queue=settings.log_queue_size,
-        on_written=app.state.anomalies.touch,
     )
 
     if otel_enabled:
