@@ -132,36 +132,98 @@ curl -s http://localhost:8001/kira/api/external/models \
 A key is bound to its use case, so nothing else has to be configured: attribution, budget, rate
 limit and audit row all follow from the key.
 
+### Or make a use case of your own
+
+Reusing `kundenservice` works and is the quickest thing, but a use case you create yourself is the
+better test — it exercises the console, and it shows that **membership added in the console is
+enough**: the gateway resolves a person by name from the read-model, so nobody has to be put into a
+Keycloak group named after the use case (`FRD-209` §2.1).
+
+As `admin` or `ucadmin`:
+
+1. **Use cases → New use case.** A slug and a name; the slug is what appears in `/uc/<slug>`.
+2. **Overview → Models this use case may call.** Release at least one — `qwen3:0.6b` is the local
+   model the showcase pulled. A use case with nothing released refuses every request by name, which
+   is the rule rather than a bug.
+3. **Members.** Add `ucadmin` as an administrator and `ucuser` as a user. If your client
+   authenticates as a machine (below), add its service-account user here too — the username is
+   `service-account-<clientId>`.
+4. **Keys**, if the client will use an API key: issue one and copy it. Shown once.
+5. Optionally give it a **Budget** and a **Rate limit** small enough to watch them bite, and a
+   **Pipeline** with an injection filter — that is what makes the traffic interesting afterwards.
+
+Nothing else is needed. Members reach the new use case immediately (the membership travels to the
+gateway over Kafka, which takes a moment on a busy machine — a first call that says *"not a member"*
+is worth retrying once).
+
 ### With its existing Keycloak identity
 
-If the point is to test the client's *own* login rather than a key, register it in the showcase
-realm. Keycloak is at `http://localhost:8080` (`admin` / `admin`), realm **`aira`**.
+If the point is to test the client's *own* login rather than a key. Keycloak is at
+`http://localhost:8080`, sign in with **`admin` / `admin`**, and switch the realm selector at the
+top left from `master` to **`aira`** — everything below is in that realm, and doing it in `master`
+is the commonest way to spend twenty minutes on a client that AIRA will never see.
 
-Which flow depends on what the client is, and the realm is deliberately strict about it:
+#### Making the client, screen by screen
 
-- **A machine client** (a bot with no human at the keyboard) uses the **client-credentials** grant.
-  The realm already contains four such clients for the integration tests — copy the shape of
-  `aira-integration-tests`: confidential, service accounts on.
-- **A client with a user in front of it** uses **authorization code + PKCE**, like `aira-gateway`.
-  The **password grant is switched off on purpose** (`ADR-0007`), so a client that only knows how to
-  exchange a username and password for a token cannot be used here, and that is the realm telling
-  you something true about the product rather than a gap in the demo.
+**Clients → Create client.**
 
-Then give it a use case, which is the step people miss. AIRA never writes to your directory: it
-reads the **groups** in the token. For a machine client the groups belong to the service-account
-user (`service-account-<clientId>`), not to the client — putting the *client* in a group does
-nothing, and the request is refused with a message about membership.
+1. *General settings*: **Client type** `OpenID Connect`; **Client ID** whatever your client calls
+   itself, e.g. `my-chatbot`. → **Next**
+2. *Capability config* — this is the screen that decides everything:
+   - **Client authentication**: **On**. This is what makes the client *confidential*, and it is
+     what produces a client secret at all. Left off, the client is public and there is no secret to
+     copy — the usual reason people cannot find one.
+   - **Authentication flow**: tick **Service accounts roles** for a bot with nobody at the keyboard
+     (that is the client-credentials grant). Tick **Standard flow** instead for a client with a
+     human in front of it. **Direct access grants** is the username-and-password flow and is
+     **switched off in this realm on purpose** (`ADR-0007`) — a client that only knows that flow
+     cannot be used here.
+   - → **Next**
+3. *Login settings*: a service-account client needs none of it — leave the redirect URIs empty. A
+   standard-flow client needs **Valid redirect URIs** and **Web origins** matching where it runs.
+   → **Save**
 
-Two ways to do it, both real:
+**The secret: Credentials tab → Client Secret → copy.** The tab only exists when client
+authentication is on. *Regenerate* replaces it and invalidates the old one immediately.
 
-1. **The convention.** Put the user in `/use-cases/kundenservice`. Nothing else to configure —
-   the gateway resolves that path to the use case by name (`FRD-102`).
-2. **Your own group.** Put the user in any group you like — the realm ships
-   `/abteilungen/kundendienst` — and grant that group to a use case on its **Members** tab. This
-   is what a real installation does, because it does not require the directory to be renamed
-   around AIRA (`FRD-209`).
+**The use case — the step people miss.** A machine client's groups and memberships belong to its
+**service-account user**, not to the client. Putting the *client* somewhere does nothing.
 
-Point the client at the issuer `http://localhost:8080/realms/aira` and one of the base URLs above.
+- In Keycloak: **Service accounts roles** tab → the link to the service account user → **Groups** →
+  **Join Group** → `/use-cases/<slug>`, or any group you have granted to a use case in the console.
+- Or, simpler and with no Keycloak work at all: add **`service-account-<clientId>`** as a member of
+  the use case in the AIRA console, exactly as you would add a person.
+
+#### Getting a token and calling with it
+
+```bash
+TOKEN=$(curl -s -X POST \
+  http://localhost:8080/realms/aira/protocol/openid-connect/token \
+  -d grant_type=client_credentials \
+  -d client_id=my-chatbot -d client_secret=… | jq -r .access_token)
+
+curl -s -X POST http://localhost:8001/uc/<slug>/kira/api/external/chat \
+  -H "Authorization: Bearer $TOKEN" -H "content-type: application/json" \
+  -d '{"model_id": 9001, "request": {"parts": [{"text": "say hi"}]}}'
+```
+
+`model_id` is the numeric id from `GET /kira/api/external/models`, which is the KIRA contract —
+that surface identifies models by id, not by name.
+
+**Fetch the token from `localhost`, not `127.0.0.1`.** The issuer is baked into the token, the
+gateway is configured for `http://localhost:8080/realms/aira`, and a token minted through any other
+hostname is rejected with `401 INVALID_TOKEN` — which reads exactly like a wrong secret and is not.
+
+#### If it is refused
+
+The message names the control, and each of these means something different:
+
+| Answer | Means |
+|---|---|
+| `401 INVALID_TOKEN` | the token is not valid *for this gateway* — usually the issuer above, or an expired token |
+| `403 STANDARD_USER_PERMISSION_REQUIRED`, *"cannot be attributed to a use case"* | authenticated fine; you named no use case. Use `/uc/<slug>` or the `X-AIRA-Use-Case` header |
+| `403 Not a member of use case …` | the use case is named but this caller does not reach it — the group or membership step above |
+| `429` / over budget | it worked, and the demo's deliberately small limits did their job |
 
 ### What to look at afterwards
 
