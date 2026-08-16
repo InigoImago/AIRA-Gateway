@@ -169,9 +169,15 @@ here** — that is what grew this section to 1667 lines and left twenty-two FRD 
 `make test-integration` · browser `make test-e2e` · `make mutants`, which breaks a property and
 requires a test to notice.
 
-**Open, deliberately** — the three features the index marks unfinished, plus two decisions:
+**Open, deliberately** — the features the index marks unfinished, plus two decisions:
 
-- `FRD-118` (several Keycloak backends) — requirement not confirmed.
+- `FRD-127` (**several gateway instances**) — the owner's requirement: availability, and a rolling
+  update that takes one instance at a time. Management stays a single instance. Most of what it
+  needs already holds; the two real gaps are named in the FRD.
+- `FRD-118` (several **Keycloak** issuers) — requirement not confirmed, and **not** the
+  multi-instance requirement above. It came from reading the predecessor's code rather than from
+  the owner, and this line said "several Keycloak backends" while the owner's open item was
+  `FRD-127`. A planner reads this section first, so the two are now named apart.
 - `FRD-121` (document normalisation for models that cannot read documents) — specified so the
   option exists; the recommendation is not to build it first (`ADR-0012` §4, `ADR-0013`).
 - `FRD-307` — approval is delivered; candidate lists and builder pickers are not.
