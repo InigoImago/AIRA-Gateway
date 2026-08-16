@@ -452,12 +452,15 @@ test.describe('Pipeline tests', () => {
     await expect(page.getByTestId('catalogue-add')).toBeVisible();
   });
 
-  test('a run names a use case, and the screen says where it enters', async ({ page }) => {
+  test('a run names a use case and a model to enter it at', async ({ page }) => {
     /**
-     * `ADR-0020`: a run is the catalogue put to a **use case's pipeline**, so what is chosen is a
-     * use case and the model is the pipeline's declaration rather than the tester's guess.
+     * `ADR-0020`: a run is the catalogue put to a **use case's pipeline**, so a use case is what is
+     * chosen. The **model** came back as a second choice after the owner's decision of 2026-08-16 —
+     * a use case releases several models on purpose, and pinning one on the pipeline read as *this
+     * is the model this use case uses*. So there are two pickers, and the model one offers exactly
+     * what is released to whichever use case is selected.
      *
-     * Asserted for a global administrator, because that is the account the previous version failed
+     * Asserted for a global administrator, because that is the account the first version failed
      * for: it was offered the alphabetically first of nine hundred use cases and the gateway
      * refused every question of the run. The list is the gateway's answer now, so an admin whose
      * token reaches nothing sees nothing to choose — which the branch below covers.
@@ -466,10 +469,8 @@ test.describe('Pipeline tests', () => {
     await page.goto('/pipeline-tests');
     await page.getByTestId('tab-runs').click();
 
-    // There is no model picker at all any more: the pipeline says where a run enters.
-    await expect(page.locator('#smoke-model')).toHaveCount(0);
-
     const nothingToRun = page.getByTestId('no-use-case');
+    await expect(page.locator('#smoke-use-case').or(nothingToRun)).toBeVisible();
     if (await nothingToRun.isVisible()) {
       // The gateway accepts this token for nothing. A directory question, said in words rather
       // than offered as a control that fails when pressed.
@@ -478,16 +479,20 @@ test.describe('Pipeline tests', () => {
       return;
     }
 
-    await expect(page.locator('#smoke-use-case')).toBeVisible();
     await page.locator('#smoke-use-case').selectOption({ index: 1 });
 
-    // Either it can be run and says where it enters, or it says why not — never a bare disabled
-    // button, which is the `FRD-206` defect this screen has already had once.
+    // Either it can be run — and then a model to enter at is offered and Run is live — or it says
+    // why not. Never a bare disabled button, which is the `FRD-206` defect this screen has had
+    // once already.
     const why = page.getByTestId('smoke-why-not');
     if (await why.isVisible()) {
-      await expect(why).toContainText(/pipeline|start model/);
+      await expect(why).toContainText(/No model is released/);
     } else {
-      await expect(page.getByTestId('smoke-attribution')).toContainText('Enters the pipeline at');
+      const models = page.locator('#smoke-model');
+      await expect(models).toBeVisible();
+      // Offered from the release, so there is at least one and the first is preselected.
+      expect(await models.locator('option').count()).toBeGreaterThan(0);
+      await expect(models).not.toHaveValue('');
       await expect(page.getByTestId('smoke-run')).toBeEnabled();
     }
   });
