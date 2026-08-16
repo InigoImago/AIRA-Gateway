@@ -379,7 +379,10 @@ services:
     container_name: aira-gateway
     environment: *gateway-env
     ports:
-      - "${AIRA_GATEWAY_PORT:-8001}:8001"
+      # Loopback by default, like the infrastructure stack — see `docker-compose.yml`. This one
+      # is the port that serves models, and the demo profile seeds a key whose plaintext is in
+      # this repository.
+      - "${AIRA_BIND_HOST:-127.0.0.1}:${AIRA_GATEWAY_PORT:-8001}:8001"
     depends_on:
       gateway-migrate:
         condition: service_completed_successfully
@@ -417,7 +420,7 @@ services:
     container_name: aira-management
     environment: *management-env
     ports:
-      - "${AIRA_MANAGEMENT_PORT:-8002}:8002"
+      - "${AIRA_BIND_HOST:-127.0.0.1}:${AIRA_MANAGEMENT_PORT:-8002}:8002"
     depends_on:
       management-migrate:
         condition: service_completed_successfully
@@ -477,6 +480,10 @@ services:
     environment:
       AIRA_MANAGEMENT_UPSTREAM: http://management:8002
       AIRA_GATEWAY_UPSTREAM: http://gateway:8001
+      # What the console's content policy lets it call. Its own origin for `/api` and `/gw`, plus
+      # the Keycloak the token is fetched from — which is deployment configuration, exactly like
+      # `public/runtime-config.js`, and has to agree with it. Set both or neither.
+      AIRA_CSP_CONNECT_SRC: ${AIRA_CSP_CONNECT_SRC:-'self' http://localhost:8080}
       # Docker's embedded DNS. nginx re-resolves the upstreams through it on every request, so a
       # redeploy of the gateway or of management does not leave this proxy talking to a stale
       # address. Override where the platform provides a different resolver.
@@ -484,7 +491,7 @@ services:
     # 4200 on the host because the Keycloak realm pins its redirect URIs to
     # http://localhost:4200 — see deploy/compose/keycloak/realms/aira-realm.json.
     ports:
-      - "${AIRA_FRONTEND_PORT:-4200}:8080"
+      - "${AIRA_BIND_HOST:-127.0.0.1}:${AIRA_FRONTEND_PORT:-4200}:8080"
     depends_on:
       - management
       - gateway

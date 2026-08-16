@@ -24,23 +24,32 @@ DEFAULT_TIMEOUT_SECONDS = 300.0
 
 
 class OpenAITransport:
-    """One base URL, optionally one bearer token."""
+    """One base URL, and no credential of its own.
 
-    def __init__(
-        self, *, client: httpx.AsyncClient, api_key: str = "", timeout: float | None = None
-    ) -> None:
+    **`api_key` was a parameter nothing ever set**, and it read as a capability this transport has.
+    `parse_servers` has no field for a credential, `_legacy_server` sets none, and the one subclass
+    that authenticates — `FoundryTransport` — overrides `headers` entirely, because Azure's key goes
+    in `api-key` rather than in `Authorization`. So the bearer branch was unreachable from every
+    call site, while suggesting that `AIRA_OPENAI_SERVERS` could carry a secret.
+
+    Removed rather than wired, because the absence is `FRD-123` §8's decision and not an omission:
+    *"What differs from `VertexTransport` is mostly what is **absent**. No credential, no project,
+    no region in the URL. That is not a simplification to be proud of; it is what makes a local
+    endpoint a development and verification tool rather than a deployment target."* A dead
+    parameter that contradicts a written decision is the shape this project keeps removing — an
+    unreachable helper, a code nothing raises, a comment claiming a rule the system does not have.
+
+    A platform that *does* authenticate subclasses this and says how, exactly as Foundry does.
+    """
+
+    def __init__(self, *, client: httpx.AsyncClient, timeout: float | None = None) -> None:
         self._client = client
-        self._api_key = api_key
         self._timeout = timeout or DEFAULT_TIMEOUT_SECONDS
 
     async def headers(self) -> dict[str, str]:
-        """The credential, if there is one.
-
-        Async because a subclass may have to *fetch* it — an Entra token is minted and refreshed,
-        not read off an attribute (`FRD-120`). A local endpoint needs none, and none is sent rather
-        than a placeholder, which would look like a credential in a log.
-        """
-        return {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
+        """No credential. Async because a subclass may have to *fetch* one — an Entra token is
+        minted and refreshed, not read off an attribute (`FRD-120`)."""
+        return {}
 
     async def post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
         try:
@@ -67,6 +76,10 @@ class OpenAITransport:
 
     def stream(self, path: str, body: dict[str, Any]) -> Any:
         return _StreamContext(self, path, body)
+
+    async def aclose(self) -> None:
+        """Close the connection pool. Called once, from the application lifespan."""
+        await self._client.aclose()
 
     def _raise_for_status(self, response: httpx.Response) -> None:
         if response.status_code == httpx.codes.OK:

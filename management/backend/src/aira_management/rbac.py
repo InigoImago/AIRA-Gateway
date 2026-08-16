@@ -63,14 +63,20 @@ def sync_user_roles(user: Any, claims: dict[str, Any]) -> None:
     Every role is removed as well as added. A role that is only ever granted is one nobody can
     take away, and the whole point of reading this from the directory is that the directory
     decides.
+
+    **Only what actually differs is written.** This ran `get_or_create` per role and then
+    `add`/`remove` per role on *every* authenticated request — measured on 2026-08-15 together with
+    `sync_user_groups` at **17 statements, 8 of them writes**, in the steady state where nothing had
+    changed, for a plain `GET`. That is a read path that writes: it rules out a read replica, takes
+    row locks on `auth_user_groups` for every request, and multiplies by the five panels a console
+    screen loads at once. The token is still read on every request and the answer is still the
+    directory's — what changed is that agreeing with the database is now free.
     """
     held = roles_from_groups(_token_groups(claims), role_groups())
-    for role in ALL_ROLES:
-        group, _created = Group.objects.get_or_create(name=str(role))
-        if str(role) in held:
-            user.groups.add(group)
-        else:
-            user.groups.remove(group)
+    known = {str(role) for role in ALL_ROLES}
+    wanted = {name for name in known if name in held}
+    current = set(user.groups.filter(name__in=known).values_list("name", flat=True))
+    _reconcile(user, current=current, wanted=wanted)
 
 
 def _token_groups(claims: dict[str, Any]) -> list[str]:
@@ -107,15 +113,34 @@ def sync_user_groups(user: Any, claims: dict[str, Any]) -> None:
     paths = {path for path in (raw if isinstance(raw, list) else []) if isinstance(path, str)}
     wanted = {django_group_name(path) for path in paths}
 
-    for name in wanted:
-        group, _created = Group.objects.get_or_create(name=name)
-        user.groups.add(group)
-
     # Removed as well as added. A membership that only ever grows is an access list that survives
     # somebody leaving the department, which is the failure this feature exists to prevent.
-    stale = user.groups.filter(name__startswith=KEYCLOAK_GROUP_PREFIX).exclude(name__in=wanted)
-    for group in stale:
-        user.groups.remove(group)
+    #
+    # Written only where it differs — see `sync_user_roles` for what doing it unconditionally cost.
+    current = set(
+        user.groups.filter(name__startswith=KEYCLOAK_GROUP_PREFIX).values_list("name", flat=True)
+    )
+    _reconcile(user, current=current, wanted=wanted)
+
+
+def _reconcile(user: Any, *, current: set[str], wanted: set[str]) -> None:
+    """Add what is missing and remove what is stale, and touch nothing when they already agree.
+
+    One function for both syncs, because they are one rule about two sets of group names and a
+    second copy is a second place for "only writes on a change" to stop being true.
+    """
+    add = wanted - current
+    drop = current - wanted
+    if not add and not drop:
+        return
+    # `get_or_create` only for a group that has to be added. The role groups are created by the
+    # seed (`roles_and_users`); a Keycloak mirror group is created the first time somebody in it
+    # signs in, which is the moment it starts to mean something.
+    for name in sorted(add):
+        group, _created = Group.objects.get_or_create(name=name)
+        user.groups.add(group)
+    if drop:
+        user.groups.remove(*Group.objects.filter(name__in=drop))
 
 
 def role_slugs(user: Any) -> set[str]:

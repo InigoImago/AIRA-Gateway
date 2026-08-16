@@ -239,6 +239,26 @@ class ModelCatalog:
     def __init__(self, sessionmaker: async_sessionmaker[AsyncSession]) -> None:
         self._sessionmaker = sessionmaker
 
+    def per_request(self) -> ModelCatalog:
+        """A view of this catalog that answers each model **once**, for the life of one request.
+
+        Every reader here opens its own session, and one request asks the same question five times:
+        the pipeline's `declaration_of`, the routed model's provider, `check_declaration`, the
+        reservation's `estimate`, `provenance`, and once per candidate inside `requirements_for`.
+        Measured on 2026-08-15 against the hermetic app: **15 sessions for one served request**, of
+        which five were `declaration()` for the same model — each a connection checked out of the
+        pool for a row that had already been read.
+
+        A cache with a **request's** lifetime rather than the app's, deliberately. The catalog is a
+        runtime authority: what it says decides whether a request is accepted, and configuration
+        arrives over Kafka at any moment. An app-scoped cache would mean a model stayed approved
+        after a Global Administrator revoked it, for as long as the entry lived — which is the
+        opposite of what `FRD-307` is for. Within one request the answer must not change anyway:
+        the pre-dispatch checks and the dispatch that follows are supposed to be deciding about the
+        same declaration, and re-reading was how they could quietly disagree.
+        """
+        return _MemoisedCatalog(self)
+
     async def declaration(self, model: str) -> ModelDeclaration:
         if not is_lookupable(model):
             # Undeclared, which is what it is: no such row can exist. The caller then meets the
@@ -292,6 +312,30 @@ class ModelCatalog:
         declaration = await self.declaration(model)
         cap = declaration.max_output_tokens
         return cap if cap is not None and requested > cap else None
+
+
+class _MemoisedCatalog(ModelCatalog):
+    """One request's view: the same model is read from the database once.
+
+    A subclass so that everything typed against `ModelCatalog` — the requirements, the dispatch
+    resolver, both surfaces — is handed one without knowing. `by_numeric_id` is **not** memoised:
+    it happens once per KIRA request by construction, and caching a lookup that raises on an
+    ambiguous id would cache the raise as well.
+    """
+
+    def __init__(self, source: ModelCatalog) -> None:
+        self._source = source
+        self._seen: dict[str, ModelDeclaration] = {}
+
+    async def declaration(self, model: str) -> ModelDeclaration:
+        cached = self._seen.get(model)
+        if cached is None:
+            cached = await self._source.declaration(model)
+            self._seen[model] = cached
+        return cached
+
+    async def by_numeric_id(self, numeric_id: int) -> str | None:
+        return await self._source.by_numeric_id(numeric_id)
 
 
 def _from_record(model: str, record: ModelRead) -> ModelDeclaration:

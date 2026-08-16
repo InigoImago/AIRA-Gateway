@@ -28,6 +28,17 @@ _log = structlog.get_logger(__name__)
 #: something goes wrong.
 MAX_TOUCHED = 4096
 
+#: How many `(rule, target)` cooldowns to remember. **The same argument as `MAX_TOUCHED`, and it
+#: was made for one of the two sets only.** A cooldown is keyed by the target a rule fired on, and
+#: a `subject`-targeted rule has one target per caller — so this grew by a row per person per rule,
+#: for the life of the process, in the component that exists to still be running when something
+#: goes wrong. Found beside its own precedent on 2026-08-15.
+#:
+#: Pruned by dropping what has already expired, and only when the map is over its bound: an entry
+#: older than its own rule's window no longer suppresses anything, so forgetting it changes no
+#: decision. If everything is still live the oldest go, which costs at worst a duplicate finding.
+MAX_COOLDOWNS = 8192
+
 #: What an event records when a rule asked for an action that could not be carried out. `FRD-503`
 #: made the ordinary case possible; this remains for the one that is not — a `block` rule whose
 #: `action_minutes` never arrived, say. Said in the row rather than left to inference: a control
@@ -133,6 +144,22 @@ class AnomalyService:
         rules = list((await session.execute(stmt)).scalars().all())
         return [r for r in rules if r.use_case is None or r.use_case in touched]
 
+    def _forget_stale_cooldowns(self, now: datetime, window_minutes: int) -> None:
+        """Keep the cooldown map bounded, the same way `touch` keeps the touched set bounded.
+
+        Only when it is over `MAX_COOLDOWNS`, so the ordinary path stays a dict write. Expired
+        entries first — one older than its window suppresses nothing, so dropping it changes no
+        decision — and the oldest after that, which at worst costs one duplicate finding.
+        """
+        if len(self._last_fired) <= MAX_COOLDOWNS:
+            return
+        cutoff = now - timedelta(minutes=max(window_minutes, 1))
+        self._last_fired = {key: fired for key, fired in self._last_fired.items() if fired > cutoff}
+        if len(self._last_fired) <= MAX_COOLDOWNS:
+            return
+        keep = sorted(self._last_fired.items(), key=lambda item: item[1], reverse=True)
+        self._last_fired = dict(keep[:MAX_COOLDOWNS])
+
     def _enforce(
         self,
         session: AsyncSession,
@@ -187,6 +214,7 @@ class AnomalyService:
         if last is not None and now - last < timedelta(minutes=rule.window_minutes):
             return None
         self._last_fired[key] = now
+        self._forget_stale_cooldowns(now, rule.window_minutes)
 
         action = RuleAction(rule.action)
         taken = self._enforce(session, rule, finding, action, now)

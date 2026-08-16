@@ -291,6 +291,37 @@ def test_an_administrator_of_a_restricted_use_case_still_sees_every_row() -> Non
     assert len(rows) == 1
 
 
+def test_an_administrator_is_recognised_when_the_token_carries_a_username() -> None:
+    """**The alphabet `use_case_members` is keyed in** (2026-08-15).
+
+    Management emits `{"username": …}` on `membership.upserted` and the consumer writes it into
+    `UseCaseMemberRead.subject` — so the column called `subject` holds a **name**. `auth/grants.py`
+    reads it against `principal.username`; `payloads.py` read it against `principal.subject`, which
+    for an OIDC token is the directory's user id. The two never matched, so every console user was
+    resolved as a plain member: an administrator of a restricted use case could not see their own
+    use case's traffic, contradicting the test above and the switch's own help text.
+
+    It survived because the principals above carry **no username**, which makes `person()` fall
+    back to the subject and the two coincide — the fixture never reached the path it was named
+    after. A real Keycloak token looks like this one.
+    """
+    signed_in = Principal(
+        subject="3f7c1a20-0f2b-4a1e-9a11-b3c0d5e6f701",  # what Keycloak actually puts in `sub`
+        method="oidc",
+        username="boss",  # and the name the membership was written with
+        use_cases=("uc-a",),
+    )
+
+    with _client(signed_in) as client:
+        _fill(client, restricted=True)
+        rows = client.get("/v1beta/traces").json()["traces"]
+
+    assert len(rows) == 1, (
+        "an administrator was read as a plain member, so the use case's own restriction was "
+        "applied to the person who administers it"
+    )
+
+
 def test_an_incident_role_is_never_restricted() -> None:
     with _client(IT_SECURITY) as client:
         _fill(client, restricted=True)

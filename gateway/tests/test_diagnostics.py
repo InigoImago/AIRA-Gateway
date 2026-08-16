@@ -39,6 +39,22 @@ class _Clock:
         self.now += seconds
 
 
+class _WorkingCounters:
+    """A counter store that answers, so `degraded` can only come from the thing under test.
+
+    Not `fakeredis`: `/readyz` asks one question — does `run` return without raising — and a real
+    server would make this test depend on a fixture that is about something else. What it must not
+    be is *absent*, which is what it was.
+    """
+
+    async def run(self, script: str, keys: Any, args: Any) -> int:
+        del script, keys, args
+        return 1
+
+    async def close(self) -> None:
+        return None
+
+
 class _Provider:
     #: A test double, like `MockProvider` (`FRD-307`): it serves invented models, so the
     #: catalogue-and-approve requirement does not apply to it.
@@ -206,6 +222,14 @@ async def test_an_unreachable_upstream_degrades_rather_than_failing_readiness() 
     on any machine with the Compose stack running and failed in CI — a unit test whose green was
     about the developer's laptop. Stubbing `check_tcp` was the other option and the worse one: the
     probe stays real, and only the dependency this test is *not* about is held up by construction.
+
+    **The counter store is held up for the same reason, and it had not been** (2026-08-15). Without
+    it `AIRA_REDIS_URL` points at a Redis that is not running under test, `counters_ok` is `False`,
+    and `degraded` is therefore `True` **whatever the upstream says** — so this assertion was about
+    the absent Redis and not about the probe it is named after. `make mutants` said so: deleting
+    `probe.degraded` from the expression changed nothing and `D1a` survived, on a machine where the
+    test was green. The third instance in this file of "a setup that never reaches the path it is
+    named after", and the reason the harness exists.
     """
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
@@ -222,6 +246,7 @@ async def test_an_unreachable_upstream_degrades_rather_than_failing_readiness() 
         )
         app.state.providers = ProviderRegistry([_Broken("x")])
         app.state.upstream_probe = _probe(_Broken("x"))
+        app.state.counters = _WorkingCounters()
         await app.state.upstream_probe.probe_once()
 
         with TestClient(app) as client:
@@ -230,6 +255,10 @@ async def test_an_unreachable_upstream_degrades_rather_than_failing_readiness() 
     assert response.status_code == 200, "an upstream outage must not evict a serving instance"
     body = response.json()
     assert body["status"] == "ready"
+    assert body["checks"]["counters"]["ok"] is True, (
+        "the counter store has to be *working* here, or `degraded` is true for a reason that has "
+        "nothing to do with the upstream this test is about"
+    )
     assert body["degraded"] is True
     assert body["upstreams"]["broken"]["ok"] is False
 

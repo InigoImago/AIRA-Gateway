@@ -682,6 +682,19 @@ class PipelineEngine:
     # -- helpers --------------------------------------------------------------------------
 
     def _scanned_text(self, request: CanonicalRequest, scope: str) -> str:
+        """What the injection filter reads, and — in the default scope — what it does not.
+
+        `user` is **the last user message**, not the conversation. That is the right default for
+        the single-turn traffic this filter was written for, and it is a stated blind spot rather
+        than an oversight for the multi-turn kind: an injection planted in an earlier turn is not
+        scanned again when the caller sends the next one. `system_user` widens it to every system
+        and user message, which is what a conversational use case should configure.
+
+        Written down for the same reason `FRD-110` §8 writes down that attachments are not scanned:
+        a control's *reach* is part of what it is, and a reader who assumes "the filter runs" means
+        "the prompt is checked" has been misled by omission. `docs/REQUEST-LIFECYCLE.md` says it
+        where an operator will meet it.
+        """
         if scope == "system_user":
             return "\n".join(m.text for m in request.messages if m.role in (Role.SYSTEM, Role.USER))
         return request.last_user_text()

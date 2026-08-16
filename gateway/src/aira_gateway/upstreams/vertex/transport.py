@@ -92,6 +92,10 @@ class VertexTransport:
     def stream(self, url: str, body: dict[str, Any]) -> _StreamContext:
         return _StreamContext(self, url, body)
 
+    async def aclose(self) -> None:
+        """Close the connection pool. Called once, from the application lifespan."""
+        await self._client.aclose()
+
 
 class _StreamContext:
     """A streamed POST that resolves its Authorization header on entry."""

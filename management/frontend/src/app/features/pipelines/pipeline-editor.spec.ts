@@ -42,6 +42,7 @@ interface Editor {
   traceCards: () => {
     step: number;
     title: string;
+    summary: string;
     output: string | null;
     classifier: string | null;
     simulated: boolean;
@@ -385,6 +386,79 @@ describe('PipelineEditor', () => {
     expect(component.dryRunning()).toBe(false);
     expect(component.dryRun()?.blocked).toBe(true);
     expect(text()).toContain('Prompt-injection filter blocked the request.');
+  });
+
+  it('explains every outcome a step can reach, in that step\'s own vocabulary', () => {
+    // One sentence per (type, action), and they are **not** interchangeable: `model` means the
+    // model in use for a router and the model *asked* for a redactor, so a screen that dumped the
+    // detail map would make a reader learn which. This is the whole reason `describe` is written
+    // per step type — and each branch is a sentence somebody tunes a pipeline by reading.
+    const { component, fixture } = setup(
+      { steps: [], fallback_models: [] },
+      {
+        dryRun: of({
+          blocked: false,
+          block_reason: null,
+          effective_model: 'm',
+          fallback_models: [],
+          trace: [
+            { type: 'injection_filter', action: 'passed', detail: {} },
+            { type: 'model_route', action: 'rerouted', detail: { category: 'code', to: 'coder' } },
+            { type: 'model_route', action: 'not_asked', detail: {} },
+            { type: 'model_route', action: 'unchanged', detail: { category: 'code' } },
+            { type: 'model_route', action: 'unchanged', detail: {} },
+            { type: 'pii_filter', action: 'redacted', detail: {} },
+            { type: 'pii_filter', action: 'unchanged', detail: {} },
+            { type: 'pii_filter', action: 'allowed', detail: { why: 'no model' } },
+            { type: 'pii_filter', action: 'blocked', detail: {} },
+            { type: 'something_new', action: 'did_a_thing', detail: {} },
+          ],
+        }),
+      },
+    );
+    component.runDryRun();
+    fixture.detectChanges();
+
+    const said = component.traceCards().map((card) => card.summary);
+    expect(said[0]).toBe('Verdict no verdict (heuristic).');
+    expect(said[1]).toContain('“code” → coder');
+    expect(said[2]).toContain('the classifier did not answer');
+    expect(said[3]).toContain('the model already in use');
+    expect(said[4]).toContain('No category matched');
+    expect(said[5]).toContain('Personal data replaced');
+    expect(said[6]).toBe('Nothing to replace.');
+    expect(said[7]).toContain('configured to serve anyway');
+    expect(said[8]).toContain('the request stops here');
+    // A step this build has never heard of renders as itself rather than vanishing — the same
+    // forward-compatibility the gateway's own parser keeps.
+    expect(said[9]).toBe('did_a_thing');
+  });
+
+  it('says that a blocking filter stops the request, and names the mode that decided', () => {
+    const { component, fixture } = setup(
+      { steps: [], fallback_models: [] },
+      {
+        dryRun: of({
+          blocked: true,
+          block_reason: 'blocked',
+          effective_model: 'm',
+          fallback_models: [],
+          trace: [
+            {
+              type: 'injection_filter',
+              action: 'blocked',
+              detail: { verdict: 'injection', mode: 'llm' },
+            },
+          ],
+        }),
+      },
+    );
+    component.runDryRun();
+    fixture.detectChanges();
+
+    expect(component.traceCards()[0].summary).toBe(
+      'Verdict injection — the request stops here (llm).',
+    );
   });
 
   it('shows what each model replied, step by step', () => {

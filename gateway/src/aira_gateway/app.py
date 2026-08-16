@@ -134,6 +134,10 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
         # Drained, not dropped: a redeploy must not discard audit rows still in the queue.
         await app_.state.log_writer.stop()
         await counters.close()
+        # The upstream connection pools. `create_app` opens one `httpx.AsyncClient` per configured
+        # provider and this closed the engine, the counters, the writer and the probe — every
+        # resource except those. Found by listing what is opened above against what is closed here.
+        await app_.state.providers.aclose()
         await engine.dispose()
 
     app = FastAPI(title=settings.app_name, version=__version__, lifespan=lifespan)
@@ -444,6 +448,18 @@ def _register_exception_handlers(app: FastAPI) -> None:
         headers are therefore applied here, from that middleware's own tuple rather than from a
         second list — a defence restated is a defence that drifts, and this is the response class
         least likely to be looked at again.
+
+        **And it speaks the compatibility surface's envelope too**, which it did not. `_kira` is
+        defined a few lines above and used by four handlers; this one branched on `/v1beta` alone,
+        so an ordinary bug inside a KIRA route answered
+        ``{"error":{"code":"internal_error",…}}`` — the AIRA envelope, on the surface whose entire
+        contract is its error shape. Measured on 2026-08-15 by raising a `RuntimeError` inside
+        `/kira/api/external/chat`.
+
+        That is the **fourth** instance of the shape `_handle_kira_error` documents three times:
+        a refusal class that never reaches the route that could name it. The routes' own `except`
+        clauses cannot help here by construction — an unexpected exception is precisely the one no
+        `except KIRA_REFUSALS` matches.
         """
         attribution = getattr(request.state, "attribution", None)
         _log.error(
@@ -456,8 +472,10 @@ def _register_exception_handlers(app: FastAPI) -> None:
             use_case=getattr(attribution, "use_case", None),
             **trace_context_fields(),
         )
-        # API routes get a Gemini-shaped error; other routes get the AIRA envelope.
-        if request.url.path.startswith("/v1beta"):
+        # Each surface in its own envelope; anything else gets the AIRA one.
+        if _kira(request):
+            response = kira_error_response(500, kira_code_for_status(500), "Internal server error.")
+        elif request.url.path.startswith("/v1beta"):
             response = gemini_error_response(
                 500, "Internal error while processing the request.", "INTERNAL"
             )

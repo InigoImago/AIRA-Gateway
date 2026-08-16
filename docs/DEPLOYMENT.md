@@ -302,17 +302,27 @@ AIRA_TRUST_FORWARDED_FOR=true    # ONLY if your proxy overwrites X-Forwarded-For
 Left at `false` (the default), the socket peer is recorded. Turn it on only when the header cannot
 be forged by clients — otherwise the audit trail becomes client-controlled (ADR-0007).
 
-### 3.8 The SPA is configured at build time
+### 3.8 The SPA is configured at deployment time
 
-`management/frontend/src/app/core/auth/auth.config.ts` **hardcodes** the issuer and client id:
+`management/frontend/public/runtime-config.js` ships beside the bundle and is loaded before the
+app, so one image serves any realm:
 
-```ts
-issuer: 'http://localhost:8080/realms/aira',
-clientId: 'aira-gateway',
+```js
+window.__AIRA_CONFIG__ = {
+  issuer: 'https://sso.example.com/realms/aira',
+  clientId: 'aira-gateway',
+};
 ```
 
-To deploy against your own Keycloak you currently have to edit that file and rebuild
-(`ng build`). There is no runtime configuration file yet — see [Known gaps](#7-known-gaps).
+Replace that one file — a volume mount, a `ConfigMap`, a `sed` in an entrypoint — and set
+`AIRA_CSP_CONNECT_SRC` on the container to the same issuer's origin. **Both, or neither:** the
+console's content policy allows its own origin plus the one host named there, and the token request
+goes to Keycloak cross-origin, so an issuer the policy does not name produces a login that fails in
+the browser and nowhere else.
+
+This section said the opposite until 2026-08-15, describing the state before the runtime file
+existed. A build instruction naming a file nobody edits any more sends the next person to rebuild
+an image for a change that needs no build.
 
 The `redirectUri` derives from `window.location.origin`, so it follows wherever you host the
 bundle — but that origin must be registered in the Keycloak client (§5).

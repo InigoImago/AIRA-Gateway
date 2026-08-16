@@ -112,6 +112,28 @@ class PayloadVerdict:
         return MESSAGES[self.refusal] if self.refusal else ""
 
 
+#: The alphabet `use_case_members` is keyed in.
+#:
+#: **The column is called `subject` and holds a *username*.** Management emits
+#: ``{"username": user.get_username()}`` on `membership.upserted` and the consumer writes it
+#: straight into `UseCaseMemberRead.subject` (`consumer/apply.py`), so the name is what is stored.
+#: `auth/grants.py` reads it correctly — against `principal.username` — and this module read it
+#: against `principal.subject`, which for an OIDC caller is the directory's user id.
+#:
+#: The two never matched, so for every console user `grant_role_in` answered `user` even for an
+#: administrator, and `restricted_use_cases` could never take an administrator out of the
+#: restriction — contradicting the rule stated at the top of this module and the help text on
+#: `restrict_members_to_own_requests` ("An administrator of the use case still sees all of them").
+#: It went unnoticed because an **API key's** subject already *is* its owner's username, so the
+#: comparison worked for exactly the credential the tests use.
+#:
+#: `Principal.person` is the one definition of "which name is this human known by, whichever
+#: credential they used" (`aira_gateway.scopes.person`), and it is the right key here for the same
+#: reason a per-head budget uses it.
+def _member_key(principal: Principal) -> str | None:
+    return principal.person
+
+
 async def grant_role_in(session: AsyncSession, principal: Principal, use_case: str) -> str | None:
     """This caller's role **inside** ``use_case``, or ``None`` if they hold no grant there.
 
@@ -130,7 +152,7 @@ async def grant_role_in(session: AsyncSession, principal: Principal, use_case: s
         await session.execute(
             select(UseCaseMemberRead.role).where(
                 UseCaseMemberRead.use_case_slug == use_case,
-                UseCaseMemberRead.subject == principal.subject,
+                UseCaseMemberRead.subject == _member_key(principal),
             )
         )
     ).scalar_one_or_none()
@@ -245,7 +267,8 @@ async def restricted_use_cases(session: AsyncSession, principal: Principal) -> l
         for row in (
             await session.execute(
                 select(UseCaseMemberRead.use_case_slug).where(
-                    UseCaseMemberRead.subject == principal.subject,
+                    # The username, like every other read of this column — see `_member_key`.
+                    UseCaseMemberRead.subject == _member_key(principal),
                     UseCaseMemberRead.use_case_slug.in_(list(restricted_slugs)),
                     UseCaseMemberRead.role == GrantRole.ADMIN.value,
                 )

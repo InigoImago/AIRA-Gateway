@@ -35,7 +35,15 @@ async def usage(
     require_valid_use_case(use_case)
     # Oversight reads; everybody else has to be a member. The same split `FRD-601` makes for the
     # spend report, applied to the figure that report is made of.
-    if not principal.is_governance:
+    #
+    # **`is_oversight`, not `is_governance`.** The two differ by exactly one role, IT Security, and
+    # this asked the narrower one while the docstring above and `reporting.visible_scope` both say
+    # oversight — so the role whose job is investigating an incident was refused the per-use-case
+    # figure it is shown in full on the reporting screen next door. `visible_scope` records the
+    # same correction being made on 2026-08-08; this call site and `kira ki_usage` were not carried
+    # with it. IT Security is deliberately a member of nothing (`ADR-0007`), so `authorize_use_case`
+    # refuses them every time.
+    if not principal.is_oversight:
         authorize_use_case(principal, use_case)
     service: BudgetService = budgets_of(request)
     # A per-person budget has one figure per person, so the answer depends on who is asking. The

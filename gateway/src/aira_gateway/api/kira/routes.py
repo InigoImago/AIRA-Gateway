@@ -42,7 +42,9 @@ from aira_gateway.api.kira.mapping import (
 from aira_gateway.api.serving import (
     REFUSALS,
     Prepared,
+    StreamedNotice,
     accounting,
+    annotate,
     catalog_of,
     check_structured_result,
     declared_provider,
@@ -378,11 +380,17 @@ async def chat(request: Request, principal: Principal = Depends(require_principa
                 permits=await requirements_for(request, canonical),
                 provider_of=await declared_provider(request),
             )
-            trail.served_by(dispatched.response.model, dispatched.candidate_index)
+            # What the caller is owed about their own prompt having been rewritten under them
+            # (`FRD-309`). This surface applied nothing at all: a use case running a `pii_filter`
+            # rewrote its callers' prompts and told them nothing, on the surface a migrating
+            # client uses. One shared function with the Gemini routes, because the alternative is
+            # what was here — the same fact applied at one `return` out of four.
+            answer = annotate(canonical, dispatched.response, prepared, trail)
+            trail.served_by(answer.model, dispatched.candidate_index)
             trail.passed_over(dispatched.skipped)
-            check_structured_result(canonical, dispatched.response)
-            payload = to_chat_response(dispatched.response).model_dump()
-            acct.served(dispatched.response.model, dispatched.response.usage, payload)
+            check_structured_result(canonical, answer)
+            payload = to_chat_response(answer).model_dump()
+            acct.served(answer.model, answer.usage, payload)
         return JSONResponse(payload, headers=_sunset(request))
     except KIRA_REFUSALS as exc:
         return await _refused(request, trail, exc, started=started, operation="chat")
@@ -443,6 +451,13 @@ async def streaming_chat(
             parts: list[str] = []
             usage: CanonicalUsage | None = None
             finish_reason = "stop"
+            # `FRD-309`'s notice, in front of the first text that arrives — the same rule the
+            # buffered exits apply through `annotate`, one chunk earlier because a stream has no
+            # finished answer to prefix. Accumulated into `parts` as well, so the terminal
+            # `completed` event carries exactly what was streamed.
+            notice = StreamedNotice(
+                prepared.notices, structured=canonical.response_schema is not None
+            )
             try:
                 async for chunk in provider.stream_generate(canonical):
                     if chunk.usage is not None:
@@ -454,13 +469,20 @@ async def streaming_chat(
                         # the synthetic heartbeat `FRD-111` §5.4 refused, and a chunk that only
                         # reports usage is one of these.
                         continue
-                    parts.append(chunk.text_delta)
-                    yield f"data: {json.dumps(update_event(chunk.text_delta))}\n\n"
+                    led = notice.lead(chunk.text_delta)
+                    parts.append(led)
+                    yield f"data: {json.dumps(update_event(led))}\n\n"
             except KIRA_REFUSALS as exc:
                 # Headers are already sent, so the failure cannot change the status. Reported into
                 # the accounting rather than recorded here, so that one exit covers every way out.
                 acct.failed(502, refusal_outcome(exc))
                 return
+            finally:
+                # In the `finally`, so a stream that failed half way still records what became of
+                # the notice — "no notice shown" and "nothing was redacted" are different facts.
+                outcome_note = notice.outcome()
+                if outcome_note is not None:
+                    trail.decisions.append(outcome_note)
 
             # The terminal event still carries the **whole** answer and the usage, so a client
             # that reads only `completed` — which is what a conservative predecessor client does —
@@ -719,10 +741,16 @@ async def version_info(request: Request) -> Response:
 async def ki_usage(request: Request, principal: Principal = Depends(require_principal)) -> Response:
     """Token consumption per user and model, from `FRD-601`'s report.
 
-    Governance-only, reusing the same visibility rule rather than a second decision — a second
+    Oversight-only, reusing the same visibility rule rather than a second decision — a second
     entry point to the same data is a second chance to forget the scope (`FRD-602` §5.3).
+
+    **`is_oversight`, not `is_governance`**, which is what the refusal below has always said and
+    what `reporting.visible_scope` settled on 2026-08-08. The check asked the narrower predicate,
+    so IT Security — the role that reads this to investigate — was told it needed a role it holds.
+    A message that names one rule while the code applies another is the worst of the two failures,
+    because the reader concludes their directory is wrong.
     """
-    if not principal.is_governance:
+    if not principal.is_oversight:
         raise errors.KiraError(
             403, errors.ADMIN_PERMISSION_REQUIRED, "This endpoint requires an oversight role."
         )
@@ -743,32 +771,31 @@ async def ki_usage(request: Request, principal: Principal = Depends(require_prin
         )
 
     service: ReportingService = request.app.state.reporting
-    catalog = catalog_of(request)
     report = await service.report(
         None,
         start if start.tzinfo else start.replace(tzinfo=UTC),
         end if end.tzinfo else end.replace(tzinfo=UTC),
     )
 
-    rows: list[dict[str, Any]] = []
-    for member in report["by_member"]:
-        for model_row in report["by_model"]:
-            del model_row  # the report does not cross-tabulate; see the note below
-            break
-        rows.append(
-            schemas.KiUsageRow(
-                user_id=member["key"],
-                # The predecessor keys usage by (user, model); `FRD-601` aggregates them
-                # separately. Reporting them per user with a model id of 0 would be a fabricated
-                # cross-tabulation, so the model dimension is carried by its own rows instead and
-                # this one is honest about being per-user.
-                model_id=0,
-                entry_count=member["requests"],
-                token_input_sum=member["prompt_tokens"],
-                token_output_sum=member["completion_tokens"],
-            ).model_dump()
-        )
-    _ = catalog
+    # The predecessor keys usage by (user, model); `FRD-601` aggregates them separately. Reporting
+    # them per user with a model id of 0 would be a fabricated cross-tabulation, so the model
+    # dimension is carried by its own rows instead and this one is honest about being per-user.
+    #
+    # A loop over `report["by_model"]` stood here, deleting its own variable and breaking on the
+    # first iteration — it read as a cross-tabulation being prepared and did nothing at all, beside
+    # a `catalog` that was fetched only to be discarded by `_ = catalog`. Both removed for the
+    # reason this project removes an unreachable helper: code that looks like a rule the system does
+    # not have is worse than no code, because the next reader believes it.
+    rows: list[dict[str, Any]] = [
+        schemas.KiUsageRow(
+            user_id=member["key"],
+            model_id=0,
+            entry_count=member["requests"],
+            token_input_sum=member["prompt_tokens"],
+            token_output_sum=member["completion_tokens"],
+        ).model_dump()
+        for member in report["by_member"]
+    ]
     return JSONResponse(rows, headers=_sunset(request))
 
 

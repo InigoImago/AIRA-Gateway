@@ -154,6 +154,31 @@ Without the claim nothing breaks and nothing is silently shared: that caller's a
 their subject, which is stable and unique — they simply get a second one for their key. A service
 account, which has no person behind it, is exactly this case and is right to be.
 
+#### The username has to be one Keycloak does not let people change
+
+> **Leave *Edit username* off in the realm** (Realm settings → Login). It is off by default.
+
+This is the one assumption AIRA makes about your directory that it cannot check for you, so it is
+written down rather than left implied. The name in the token is not only a label:
+
+| What it decides | Where |
+| --- | --- |
+| which use cases a caller reaches, where a grant names a **person** rather than a group | `FRD-209` §2.1 |
+| whose per-head budget and rate limit the request counts against | [`ADR-0019`](adr/ADR-0019-an-allowance-belongs-to-a-person.md) |
+| whether the payload view treats somebody as an administrator of their use case | `FRD-505` |
+| which Django account a new `sub` binds to on first sign-in | `ADR-0007` |
+
+With *Edit username* on, a user can rename themselves to a colleague's name and inherit each of
+those. Everything else AIRA reads from a token — the subject, the groups — is Keycloak's to set and
+nobody else's, and the username is the exception because a realm can be configured to hand it to
+the user.
+
+AIRA does not check the setting: reading it needs the optional admin client below, so a check
+would pass silently on every installation that has not configured one — a control that is present
+on paper and absent in practice, which this project refuses to ship. If your realm must allow
+username editing, grant access by **group** only and expect one person's allowances to follow the
+name rather than the human.
+
 #### Searching your directory (optional)
 
 To let the console **search** your groups and users when granting access, give AIRA a read-only
@@ -374,31 +399,46 @@ response including failures, which are the ones most worth correlating.
 
 ---
 
-## 7. The SPA is configured at build time
+## 7. The SPA is configured at deployment time
 
-The Angular bundle contains its OIDC issuer and client id. There is no run-time configuration file,
-so **deploying the SPA means building it** for your realm:
+**One image, any realm.** `public/runtime-config.js` ships beside the bundle and is loaded before
+the app, so pointing the console at your Keycloak is replacing one file — a volume mount, a
+`ConfigMap`, a `sed` in an entrypoint — and never a rebuild:
 
-```bash
-# management/frontend/src/environments/  (or the equivalent in your pipeline)
-issuer:   https://sso.example.com/realms/aira
-clientId: aira-gateway
+```js
+window.__AIRA_CONFIG__ = {
+  issuer: 'https://sso.example.com/realms/aira',
+  clientId: 'aira-gateway',
+};
 ```
 
-At run time nginx needs the two proxy targets:
+The issuer used to be compiled in, which meant one build per environment and, in practice, one
+*published* build pointing at whichever Keycloak the person who ran it had in mind. A misdirected
+console does not fail — it sends people to a real login page at the wrong realm.
 
-| Path | Goes to |
+At run time nginx needs the two proxy targets and one policy value:
+
+| Setting | Is |
 |---|---|
-| `/api` | Management |
-| `/gw` | Gateway |
+| `AIRA_MANAGEMENT_UPSTREAM` | where `/api` goes |
+| `AIRA_GATEWAY_UPSTREAM` | where `/gw` goes |
+| `AIRA_CSP_CONNECT_SRC` | `'self'` plus your Keycloak's origin |
+
+**Set `AIRA_CSP_CONNECT_SRC` together with the issuer, or not at all.** The console's content
+policy allows its own origin and the one host named here; the token request goes to Keycloak
+cross-origin, so an issuer the policy does not name produces a login that fails in the browser and
+nowhere else.
 
 Its resolver must **re-resolve** upstreams. With a name resolved once at start-up, a gateway
 container restarting behind a new IP produces a 502 that outlives the restart.
 
-The bundle sets a CSP and uses `requireHttps: 'remoteOnly'`, so it works on `localhost` over HTTP
-and demands HTTPS everywhere else.
+nginx sets the console's security headers — a content policy, `nosniff`, `DENY` framing, a referrer
+policy — from `deploy/aira-headers.inc.template`. The bundle itself sets none: it is a static file,
+and the headers belong to whatever serves it. `requireHttps: 'remoteOnly'` in the OIDC client keeps
+`localhost` working over HTTP and demands HTTPS everywhere else.
 
-> done build per environment · both proxies · a resolver that re-resolves · TLS in front
+> done runtime-config per environment · both proxies · `AIRA_CSP_CONNECT_SRC` · a resolver that
+> re-resolves · TLS in front
 
 ---
 
@@ -409,8 +449,15 @@ Terminate TLS in front of both APIs. Two things AIRA needs from the proxy:
 - **`X-Forwarded-For`**, if you want real client addresses in the audit trail — and then set
   `AIRA_TRUST_FORWARDED_FOR=true`. Leave it off otherwise: with it on and no trusted proxy, any
   caller can write any address into your audit trail.
-- **No buffering on streaming responses.** `:streamGenerateContent` is SSE; a proxy that buffers it
-  turns a stream into a single late response.
+- **No buffering on streaming responses.** `:streamGenerateContent` and
+  `/kira/api/external/streaming-chat` are SSE; a proxy that buffers them turns a stream into a
+  single late response. In nginx that is `proxy_buffering off` — the shipped SPA proxy sets it, and
+  it is the default that bites, not an exotic setting.
+- **Keep the query string out of your access log**, or turn the log off for the gateway. Every
+  Gemini client may authenticate with `?key=<api key>`: that is the wire protocol, not a choice
+  AIRA makes. The gateway redacts it from its own logs and from exported spans, and sends
+  `Referrer-Policy: no-referrer` so it does not leak onward — but a proxy in front logs the request
+  line by default, and that line contains the credential.
 
 Timeouts should exceed your slowest model. A self-deployed model cold-starting can take minutes,
 which is why its own timeout defaults to 300 seconds.

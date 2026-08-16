@@ -130,6 +130,10 @@ class VertexGeminiAdapter:
             )
         return embedding_values(data)
 
+    async def aclose(self) -> None:
+        """Close the connection pool this adapter owns (`ProviderRegistry.aclose`)."""
+        await self._transport.aclose()
+
 
 class VertexAnthropicAdapter:
     """Anthropic models on Vertex: `:rawPredict`, and a different body in both directions."""
@@ -206,3 +210,7 @@ class VertexAnthropicAdapter:
         # a model that does not declare the capability. This is a backstop for a misconfigured
         # catalog, not the mechanism.
         raise UpstreamError(f"Model '{request.model}' has no embedding endpoint.", 400)
+
+    async def aclose(self) -> None:
+        """Close the connection pool this adapter owns (`ProviderRegistry.aclose`)."""
+        await self._transport.aclose()

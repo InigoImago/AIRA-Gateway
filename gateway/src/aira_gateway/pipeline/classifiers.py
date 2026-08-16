@@ -356,6 +356,14 @@ DEFAULT_REDACTION_INSTRUCTION = (
 #: like a successful redaction and silently drops the end of the caller's prompt.
 REDACTION_OUTPUT_HEADROOM = 512
 
+#: And a ceiling on it. The allowance grows with the prompt, and nothing bounded it above: a body
+#: at the 8 MiB request ceiling asked a provider for roughly 1.5 million output tokens. Every real
+#: vendor refuses that with a `400`, so the step failed and blocked (the safe direction) — but the
+#: caller was told a provider error where the honest answer is that the prompt is larger than this
+#: gateway will redact. Well above any model's own output cap, so a prompt this only clips is one
+#: no model could rewrite whole anyway.
+MAX_REDACTION_OUTPUT_TOKENS = 32_768
+
 
 @dataclass(frozen=True, slots=True)
 class Redaction:
@@ -429,10 +437,13 @@ class LlmRedactor:
 
 
 def _redaction_allowance(text: str) -> int:
-    """Room for a rewrite of roughly this length, plus headroom.
+    """Room for a rewrite of roughly this length, plus headroom, up to a ceiling.
 
     Four characters per token is the usual rough figure and is deliberately generous here: the
     cost of over-estimating is a slightly larger allowance, and the cost of under-estimating is a
-    silently truncated prompt.
+    silently truncated prompt. The ceiling is `MAX_REDACTION_OUTPUT_TOKENS`, which the docstring
+    there argues for: unbounded, this asked a provider for a number no provider accepts, and the
+    refusal arrived as somebody else's error message.
     """
-    return max(CLASSIFIER_OUTPUT_TOKENS, len(text) // 4 + REDACTION_OUTPUT_HEADROOM)
+    wanted = max(CLASSIFIER_OUTPUT_TOKENS, len(text) // 4 + REDACTION_OUTPUT_HEADROOM)
+    return min(wanted, MAX_REDACTION_OUTPUT_TOKENS)

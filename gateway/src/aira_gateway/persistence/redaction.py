@@ -36,6 +36,8 @@ from __future__ import annotations
 import re
 from typing import Any, Protocol, runtime_checkable
 
+from aira_common.patterns import is_catastrophic
+
 #: What replaces a match. Fixed-length and obviously not data, so a reader can tell "this was
 #: removed" from "the caller wrote that" — and so a redacted value cannot be confused for a short
 #: credential and tried.
@@ -57,9 +59,17 @@ BUILTIN_PATTERNS: tuple[str, ...] = (
     r"(?s)-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----",
 )
 
-#: A quantified group that is itself quantified — the shape that backtracks exponentially. Refused
-#: rather than accepted, because these patterns run over caller-supplied text on the write path.
-_NESTED_QUANTIFIER = re.compile(r"\([^)]*[+*][^)]*\)\s*[+*]")
+#: Whether a pattern backtracks catastrophically — **the shared definition**, not a second one.
+#:
+#: This module carried its own copy: `\([^)]*[+*][^)]*\)\s*[+*]`, which is `aira_common.patterns`'
+#: rule minus the `{n,m}` form and minus alternation. The two had already drifted, so
+#: `AIRA_REDACT_PATTERNS="(a|b)+"` was refused by the pipeline filter and accepted here — and this
+#: one runs over every stored payload on the write path, which is caller-supplied text by
+#: definition.
+#:
+#: `aira_common.patterns` exists because "the protection sat at one end of a link and the other end
+#: trusted it" is the shape of three of the four findings in `ADR-0018`. A private copy of that
+#: protection is the same defect with the link inside one repository.
 
 
 class RedactionMisconfigured(Exception):
@@ -88,7 +98,7 @@ class PatternRedactor:
     def __init__(self, patterns: tuple[str, ...] = BUILTIN_PATTERNS) -> None:
         compiled: list[re.Pattern[str]] = []
         for pattern in patterns:
-            if _NESTED_QUANTIFIER.search(pattern):
+            if is_catastrophic(pattern):
                 raise RedactionMisconfigured(
                     f"Redaction pattern {pattern!r} nests a quantifier inside a quantified group; "
                     "that backtracks exponentially on caller-supplied text."

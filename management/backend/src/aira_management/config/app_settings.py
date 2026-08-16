@@ -39,6 +39,33 @@ class ManagementSettings(BaseAiraSettings):
     # Use an in-memory SQLite DB (set by the test harness) instead of Postgres.
     test_database: bool = False
 
+    #: How fast one caller may ask, in DRF's `<n>/<period>` notation (2026-08-15).
+    #:
+    #: There was no bound at all. Every request here verifies a token against a JWKS and then
+    #: reconciles the caller's groups, so an unauthenticated probe is not free — and the gateway
+    #: has bounded exactly that since `ADR-0015`, on the argument that a limit keyed by use case or
+    #: member cannot bound somebody who has neither. This plane had the same gap and not the
+    #: reasoning.
+    #:
+    #: `user` is deliberately generous: a console screen loads five panels at once and paging
+    #: through traces is what the product is *for*, so this is sized to stop a script rather than
+    #: to shape ordinary use.
+    #:
+    #: `throttle_auth_failures` bounds **refusals**, keyed by source address, and is not a DRF
+    #: throttle: DRF checks permissions before throttles, so on an API where every view requires
+    #: authentication an `AnonRateThrottle` never runs at all. It is applied in the authentication
+    #: class instead (`apps.api.attempts`), which is where the expensive part — a JWKS verification
+    #: of a token that turns out to be invalid — actually happens. `0` switches it off.
+    #:
+    #: **Per process, and stated rather than implied.** DRF counts through Django's cache, and no
+    #: `CACHES` is configured, so this is `LocMemCache`: N workers admit N × the rate. That is the
+    #: same degradation `FallbackTokenBucket` documents on the other plane — *"imprecise across
+    #: instances and still prevents that"* — and the same reason it is worth having anyway: the
+    #: thing being stopped is one client looping, and a bound that is off by the worker count still
+    #: stops it. A deployment that wants it exact points `CACHES` at the Redis it already runs.
+    throttle_auth_failures: str = "60/minute"
+    throttle_user: str = "600/minute"
+
     # OIDC (Keycloak) — the Angular SPA sends a bearer JWT that the API validates.
     oidc_issuer: str = ""
     oidc_audience: str = ""

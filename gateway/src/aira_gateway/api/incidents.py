@@ -24,6 +24,7 @@ from sqlalchemy import select
 from aira_common.anomalies import RuleAction, RuleTarget
 from aira_gateway.anomalies.suspensions import AccessSuspension, as_dict
 from aira_gateway.api.gemini.errors import GeminiHTTPError
+from aira_gateway.auth.attribution import is_valid_use_case
 from aira_gateway.auth.dependencies import require_principal
 from aira_gateway.auth.principal import Principal
 from aira_gateway.catalog import ModelCatalog
@@ -32,6 +33,11 @@ from aira_gateway.upstreams.base import ProviderRegistry
 
 #: A check must be quick enough that somebody presses the button and waits for it.
 MODEL_CHECK_TIMEOUT_SECONDS = 5.0
+
+#: What a suspension may name, matching `AccessSuspension.target_value`'s column. Kept beside the
+#: check rather than read off the model: a bound the caller is told about is a decision, and one
+#: derived from a column is a coincidence that changes when somebody widens the column.
+MAX_TARGET_VALUE = 255
 
 router = APIRouter(tags=["incidents"])
 
@@ -99,6 +105,25 @@ async def create_suspension(
     value = str(body.get("target_value") or "").strip()
     if not value:
         raise GeminiHTTPError(400, "'target_value' is required.", "INVALID_ARGUMENT")
+    # Bounded here, where the caller can still be told which field is wrong. `reason` two lines
+    # below has been truncated since it was written; this one was not, so a value longer than the
+    # column turned a caller's mistake into a `StringDataRightTruncation` on Postgres and a **500**
+    # — on the endpoint somebody reaches for during an incident. Refused rather than truncated: a
+    # silently shortened target matches nobody, which is a kill switch that reports success and
+    # stops nothing.
+    if len(value) > MAX_TARGET_VALUE:
+        raise GeminiHTTPError(
+            400,
+            f"'target_value' is limited to {MAX_TARGET_VALUE} characters.",
+            "INVALID_ARGUMENT",
+        )
+    scope = str(body.get("use_case") or "").strip()
+    if scope and not is_valid_use_case(scope):
+        # Same charset as everywhere else a slug arrives from a caller (`ADR-0007`). An unchecked
+        # one reaches the audit trail, the console's filters and `_matches`, where it can only ever
+        # fail to match — a suspension scoped to a use case that cannot exist stops nothing and
+        # looks active.
+        raise GeminiHTTPError(400, "Invalid use case identifier.", "INVALID_ARGUMENT")
     action = str(body.get("action") or RuleAction.BLOCK.value)
     if action not in {RuleAction.BLOCK.value, RuleAction.THROTTLE.value}:
         raise GeminiHTTPError(400, "'action' must be 'block' or 'throttle'.", "INVALID_ARGUMENT")
@@ -108,7 +133,7 @@ async def create_suspension(
 
     minutes = body.get("minutes")
     row = AccessSuspension(
-        use_case=body.get("use_case") or None,
+        use_case=scope or None,
         target=target,
         target_value=value,
         action=action,

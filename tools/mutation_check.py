@@ -270,8 +270,12 @@ MUTATIONS = [
         "G2",
         "a role removed from the token is removed in Django",
         "management/backend/src/aira_management/rbac.py",
-        "            user.groups.remove(group)",
-        "            pass",
+        # Re-anchored 2026-08-15: adding and removing are one function now (`_reconcile`), because
+        # both syncs ran unconditionally on every request — 17 statements and 8 writes for a plain
+        # `GET`. The property is unchanged, and it is the half that is easy to lose while making
+        # something cheaper: a sync that only ever adds is an access list nobody can shrink.
+        "    if drop:\n        user.groups.remove(*Group.objects.filter(name__in=drop))",
+        "    if False:\n        user.groups.remove(*Group.objects.filter(name__in=drop))",
         MGMT_RBAC,
     ),
     Mutation(
@@ -2747,8 +2751,11 @@ MUTATIONS = [
         "W4",
         "an unauthenticated event bus stops a deployment",
         "gateway/src/aira_gateway/security.py",
-        "    if settings.kafka_bootstrap_servers.strip() and settings.kafka_security().is_plaintext:",
-        "    if False:",
+        # Re-anchored 2026-08-15: each check now also asks whether a demo waives it
+        # (`WAIVED_BY_A_DEMO`), because the demo used to waive all of them at once.
+        "        and settings.kafka_bootstrap_servers.strip()\n"
+        "        and settings.kafka_security().is_plaintext",
+        "        and False",
         "gateway/tests/test_deployment_safety.py",
     ),
     Mutation(
@@ -2778,8 +2785,16 @@ MUTATIONS = [
         "R21",
         "a role the caller no longer holds is removed, not merely never added",
         "management/backend/src/aira_management/rbac.py",
-        "        else:\n            user.groups.remove(group)",
-        "        else:\n            pass",
+        # Re-anchored 2026-08-15, and **moved off the line G2 now also guards**. Adding and removing
+        # became one function (`_reconcile`) when both syncs stopped writing unconditionally, so
+        # this and G2 would otherwise be two claims about one `if drop:` — the redundancy this
+        # harness's own notes call a defect in the making rather than a second defence.
+        #
+        # What is still this mutation's own is the **roles'** side of the comparison: read nothing
+        # back and every role looks new, so nothing is ever dropped — for roles only, while the
+        # Keycloak mirror groups G2 covers keep working.
+        '    current = set(user.groups.filter(name__in=known).values_list("name", flat=True))',
+        "    current = set()",
         "management/backend/tests/test_rbac.py",
     ),
     Mutation(
@@ -2893,8 +2908,15 @@ MUTATIONS = [
         "N35",
         "leaving a group in Keycloak takes the access away on the next token",
         "management/backend/src/aira_management/rbac.py",
-        "    for group in stale:\n        user.groups.remove(group)",
-        "    for group in stale:\n        pass",
+        # Re-anchored 2026-08-15 onto the **groups'** side of the comparison, for the reason R21
+        # records: adding and removing are one function now, so the removal line itself is G2's.
+        # Reading nothing back makes every mirror group look new and none of them stale, which is
+        # this property's own defect and leaves the roles R21 covers alone.
+        "    current = set(\n"
+        "        user.groups.filter(name__startswith=KEYCLOAK_GROUP_PREFIX)"
+        '.values_list("name", flat=True)\n'
+        "    )",
+        "    current = set()",
         "management/backend/tests/test_group_grants.py",
     ),
     Mutation(
@@ -3005,24 +3027,39 @@ MUTATIONS = [
         "H4",
         "the published development database password refuses to start",
         "gateway/src/aira_gateway/security.py",
-        "    if settings.postgres_password == DEV_POSTGRES_PASSWORD:",
-        "    if False:",
+        # Re-anchored 2026-08-15: each check now also asks whether a demo waives it.
+        "        and settings.postgres_password == DEV_POSTGRES_PASSWORD",
+        "        and False",
         DEPLOYMENT_SAFETY,
     ),
     Mutation(
         "H5",
         "OIDC without a named audience refuses to start",
         "gateway/src/aira_gateway/security.py",
-        "    if settings.oidc_enabled and not settings.oidc_audience.strip():",
-        "    if False:",
+        # Re-anchored 2026-08-15 with H4.
+        "        and settings.oidc_enabled\n        and not settings.oidc_audience.strip()",
+        "        and False",
         DEPLOYMENT_SAFETY,
     ),
     Mutation(
         "H6",
-        "a laptop, and a declared demo, still start with the convenience defaults",
+        "a laptop still starts with the convenience defaults",
         "gateway/src/aira_gateway/security.py",
-        "    if is_local(settings):\n        return []",
+        # Re-anchored 2026-08-15, and **narrowed on purpose**. It read "a laptop, *and a declared
+        # demo*" and pointed at `if is_local(settings): return []` — the blanket that let one
+        # environment variable switch off every check below, including authentication. A demo is a
+        # deployment; what it waives is `WAIVED_BY_A_DEMO`, and H6b guards that it is a list rather
+        # than a `return []` again.
+        "    if is_local_environment(settings):\n        return []",
         "    if False:\n        return []",
+        DEPLOYMENT_SAFETY,
+    ),
+    Mutation(
+        "H6b",
+        "a declared demo waives what a demo needs, and never authentication",
+        "gateway/src/aira_gateway/security.py",
+        "    waived = WAIVED_BY_A_DEMO if settings.demo_mode else frozenset[str]()",
+        "    if settings.demo_mode:\n        return []\n    waived = frozenset[str]()",
         DEPLOYMENT_SAFETY,
     ),
     Mutation(
@@ -3602,7 +3639,10 @@ MUTATIONS = [
         "QA13",
         "the stream streams — updates carry the answer as it arrives, not after it",
         "gateway/src/aira_gateway/api/kira/routes.py",
-        '                    yield f"data: {json.dumps(update_event(chunk.text_delta))}\\n\\n"',
+        # Re-anchored 2026-08-15: the delta a caller receives now passes through
+        # `StreamedNotice.lead`, which puts `FRD-309`'s notice in front of the first piece of text.
+        # The property is unchanged — an `update` carries the answer as it is produced.
+        '                    yield f"data: {json.dumps(update_event(led))}\\n\\n"',
         "                    pass  # the answer arrives only in the terminal event",
         KIRA_COMPAT,
     ),
@@ -3670,9 +3710,10 @@ MUTATIONS = [
         "QA15",
         "a stream hands each piece over as it is produced, not the lot at the end",
         "gateway/src/aira_gateway/api/kira/routes.py",
-        "                    parts.append(chunk.text_delta)\n"
-        '                    yield f"data: {json.dumps(update_event(chunk.text_delta))}\\n\\n"',
-        "                    parts.append(chunk.text_delta)\n"
+        # Re-anchored 2026-08-15 with QA13, for the same reason.
+        "                    parts.append(led)\n"
+        '                    yield f"data: {json.dumps(update_event(led))}\\n\\n"',
+        "                    parts.append(led)\n"
         "                for piece in parts:\n"
         '                    yield f"data: {json.dumps(update_event(piece))}\\n\\n"',
         REALLY_STREAMS,
@@ -3840,9 +3881,126 @@ MUTATIONS = [
         "P14",
         "a notice is never put in front of an answer a client parses",
         "gateway/src/aira_gateway/api/serving.py",
-        "    if not notices or not response.text.strip() or response.tool_calls:",
-        "    if not notices:",
+        # Re-anchored 2026-08-15, and the property it claimed was **not the one the code had**.
+        # The old anchor tested `not response.text.strip() or response.tool_calls`, and a
+        # schema-constrained answer is neither of those — it is a non-empty JSON document with no
+        # tool call, so the notice went in front of it and the document stopped parsing. The
+        # mutation passed because the two cases it *could* reach were guarded; the case the
+        # property is named after had no check at all. It needs a fact about the request, which is
+        # why `structured` is now a parameter.
+        "    if structured:\n"
+        '        return "the answer is a document the caller parses, and a sentence would '
+        'invalidate it"\n',
+        "",
         NOTICE,
+    ),
+    Mutation(
+        "P14b",
+        "a streamed answer is led by the notice, and only the first piece of text is",
+        "gateway/src/aira_gateway/api/serving.py",
+        '        led = "\\n\\n".join([*self._notices, text_delta])\n        self._notices = ()',
+        '        led = "\\n\\n".join([*self._notices, text_delta])',
+        NOTICE,
+    ),
+    Mutation(
+        "P14c",
+        "the compatibility surface applies the notice too, rather than only Google's",
+        "gateway/src/aira_gateway/api/kira/routes.py",
+        "            answer = annotate(canonical, dispatched.response, prepared, trail)",
+        "            answer = dispatched.response",
+        f"{NOTICE} gateway/tests/test_notice_reaches_every_exit.py",
+    ),
+    Mutation(
+        "RV1",
+        "a query parameter widens the list, and never which object a route resolves",
+        "management/backend/src/aira_management/apps/usecases/views.py",
+        '        if getattr(self, "action", None) != "list":\n            return False',
+        "        if False:\n            return False",
+        "management/backend/tests/test_may_call_never_widens_a_detail_route.py",
+    ),
+    Mutation(
+        "RV2",
+        "a findings restriction is written over the findings, not over unrelated rows",
+        "gateway/src/aira_gateway/api/reporting.py",
+        "    return or_(AnomalyEvent.use_case.notin_(restricted), or_(*own))",
+        "    return or_(RequestLog.use_case.notin_(restricted), or_(*own))",
+        "gateway/tests/test_scoped_reads_stay_on_their_table.py",
+    ),
+    Mutation(
+        "RV3",
+        "membership is read in the alphabet it was written in — the username, not the subject",
+        "gateway/src/aira_gateway/payloads.py",
+        "def _member_key(principal: Principal) -> str | None:\n    return principal.person",
+        "def _member_key(principal: Principal) -> str | None:\n    return principal.subject",
+        "gateway/tests/test_payload_access.py",
+    ),
+    Mutation(
+        "RV4",
+        "IT Security is not refused a per-use-case figure",
+        "gateway/src/aira_gateway/api/usage.py",
+        "    if not principal.is_oversight:",
+        "    if not principal.is_governance:",
+        "gateway/tests/test_oversight_reads_every_figure.py",
+    ),
+    Mutation(
+        "RV5",
+        "IT Security is not refused the predecessor's usage report either",
+        "gateway/src/aira_gateway/api/kira/routes.py",
+        "    if not principal.is_oversight:",
+        "    if not principal.is_governance:",
+        "gateway/tests/test_oversight_reads_every_figure.py",
+    ),
+    Mutation(
+        "RV6",
+        "an unexpected failure answers in the surface's own envelope",
+        "gateway/src/aira_gateway/app.py",
+        "        if _kira(request):\n"
+        "            response = kira_error_response(500, kira_code_for_status(500), "
+        '"Internal server error.")',
+        "        if False:\n"
+        "            response = kira_error_response(500, kira_code_for_status(500), "
+        '"Internal server error.")',
+        "gateway/tests/test_kira_envelope_everywhere.py",
+    ),
+    Mutation(
+        "RV7",
+        "the deployment's topology is shown to an operator, not to any credential",
+        "gateway/src/aira_gateway/routes/health.py",
+        "    return principal is not None and _is_operator(principal)",
+        "    return principal is not None",
+        "gateway/tests/test_readyz_diagnosis_is_for_operators.py",
+    ),
+    Mutation(
+        "RV8",
+        "a break-glass key is still an operator's credential",
+        "gateway/src/aira_gateway/routes/health.py",
+        '    return principal.method == "api_key" and not principal.use_cases',
+        "    return False",
+        "gateway/tests/test_readyz_diagnosis_is_for_operators.py",
+    ),
+    Mutation(
+        "RV9",
+        "one request reads a model's declaration once, however many controls ask",
+        "gateway/src/aira_gateway/api/serving.py",
+        "        memoised = source.per_request()\n        request.state.catalog = memoised",
+        "        memoised = source.per_request()",
+        "gateway/tests/test_a_request_costs_a_bounded_number_of_reads.py",
+    ),
+    Mutation(
+        "RV10",
+        "a budget counter always carries an expiry, including the one that refused",
+        "gateway/src/aira_gateway/budgets/ledger.py",
+        "redis.call('EXPIRE', key, ARGV[10])\n\nlocal current = redis.call('HMGET'",
+        "\nlocal current = redis.call('HMGET'",
+        "gateway/tests/test_budget_reservation.py",
+    ),
+    Mutation(
+        "RV11",
+        "operator-authored pipeline text is bounded by the gateway too, not only by Management",
+        "gateway/src/aira_gateway/pipeline/config.py",
+        "    bounded = {key: _clipped(value, where=key, step=step) for key, value in config.items()}",
+        "    bounded = dict(config)",
+        "gateway/tests/test_pipeline_store.py gateway/tests/test_pipeline_bounds.py",
     ),
     Mutation(
         "P15",

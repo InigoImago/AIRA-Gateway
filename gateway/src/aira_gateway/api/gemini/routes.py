@@ -29,13 +29,14 @@ from aira_gateway.api.gemini.mapping import (
 from aira_gateway.api.serving import (
     REFUSALS,
     Prepared,
+    StreamedNotice,
     accounting,
+    annotate,
     catalog_of,
     check_structured_result,
     declared_provider,
     deprecation_headers,
     elapsed_ms,
-    notice_outcome,
     prepare_for_dispatch,
     provenance,
     refusal_outcome,
@@ -45,7 +46,6 @@ from aira_gateway.api.serving import (
     schema_bounds,
     upstream_error,
     upstream_status,
-    with_notices,
 )
 from aira_gateway.attachments import AttachmentRejected
 from aira_gateway.audit import AuditTrail, Outcome, decision_summary, tool_summary
@@ -357,16 +357,12 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
                     permits=await requirements_for(request, canonical),
                     provider_of=await declared_provider(request),
                 )
-                canonical_response = dispatched.response
                 # What the caller is owed about their own prompt having been rewritten under them
-                # (`FRD-309`). Applied here, on the canonical answer, so the wire mapping and the
-                # audit payload below both carry it — and recorded even where it could not be
-                # shown, since a missing notice and an absent redaction look identical otherwise.
-                if prepared.notices:
-                    outcome_note = notice_outcome(canonical_response, prepared.notices)
-                    if outcome_note is not None:
-                        trail.decisions.append(outcome_note)
-                    canonical_response = with_notices(canonical_response, prepared.notices)
+                # (`FRD-309`). Applied on the canonical answer, so the wire mapping and the audit
+                # payload below both carry it — and recorded even where it could not be shown,
+                # since a missing notice and an absent redaction look identical otherwise. One
+                # shared function, because three of the four exits had none.
+                canonical_response = annotate(canonical, dispatched.response, prepared, trail)
                 trail.served_by(canonical_response.model, dispatched.candidate_index)
                 trail.passed_over(dispatched.skipped)
                 # A truncated or unsatisfied document is not data (FRD-112 FR-6). Raised before
@@ -511,6 +507,12 @@ async def _stream_response(
             #: `google/rpc/code.proto` maps `CANCELLED` — *"the operation was cancelled, typically
             #: by the caller"* — to **499 Client Closed Request**.
             status = 200
+            # `FRD-309`'s notice, in front of the first text that arrives. A stream has no
+            # finished answer to prefix, so it leads rather than follows — see `StreamedNotice`,
+            # which keeps the same rule `annotate` applies to a buffered answer.
+            notice = StreamedNotice(
+                prepared.notices, structured=canonical.response_schema is not None
+            )
             try:
                 if not sse:
                     yield "["
@@ -519,14 +521,19 @@ async def _stream_response(
                         if chunk.usage is not None:
                             final_usage = chunk.usage
                         streamed_calls.extend(call.name for call in chunk.tool_calls)
-                        parts.append(chunk.text_delta)
+                        # The delta the caller actually receives, which is what the audit row has
+                        # to accumulate as well — otherwise the stored answer differs from the one
+                        # that was sent, which is the defect `_rewritten_body` exists to prevent
+                        # one layer down.
+                        led = notice.lead(chunk.text_delta)
+                        parts.append(led)
                         # `exclude_none`, so an unfinished chunk carries no `finishReason`
                         # at all rather than
                         # a null or an empty string — which is what Google sends and what the SDK
                         # parses without complaint.
-                        payload = _chunk_to_gemini(chunk, canonical.model).model_dump_json(
-                            exclude_none=True
-                        )
+                        payload = _chunk_to_gemini(
+                            chunk.model_copy(update={"text_delta": led}), canonical.model
+                        ).model_dump_json(exclude_none=True)
                         if sse:
                             yield f"data: {payload}\n\n"
                         else:
@@ -544,6 +551,11 @@ async def _stream_response(
                 if not sse:
                     yield "]"
             finally:
+                # Recorded whether or not it could be shown: "no notice shown" and "nothing was
+                # redacted" are different facts (`FRD-309`).
+                outcome_note = notice.outcome()
+                if outcome_note is not None:
+                    trail.decisions.append(outcome_note)
                 # Reported into the shared sequence, which owns the shielded settle-and-record for
                 # every path — this one included. A stream that reported no usage produced nothing
                 # chargeable and is *released*: settling would still book one request, and a use

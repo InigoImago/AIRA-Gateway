@@ -28,6 +28,7 @@ from aira_common.counters import CountersUnavailable
 from aira_common.health import check_tcp
 from aira_common.secrets import secrets_state
 from aira_gateway.auth.dependencies import resolve_principal
+from aira_gateway.auth.principal import Principal
 from aira_gateway.config import GatewaySettings
 from aira_gateway.diagnostics import UpstreamProbe
 from aira_gateway.security import is_local
@@ -69,6 +70,26 @@ async def version_info(request: Request) -> dict[str, object]:
     }
 
 
+def _is_operator(principal: Principal) -> bool:
+    """Whether this credential is an **operator's**, in this system's own vocabulary.
+
+    Two, and no third:
+
+    - an **incident role** — Global Administrator or IT Security (`INCIDENT_ROLES`), the same set
+      that may stop traffic and ask whether a model is reachable (`api/incidents.py`). Deliberately
+      not `is_oversight`: IT Steuerung is given every *figure* and no write anywhere (PRD §154),
+      and a deployment's topology is not a figure.
+    - the **unbound break-glass key** (`ADR-0015`), minted by an operator with database access for
+      the moment the control plane is unavailable. That moment is exactly when somebody needs to
+      read this body, and it is the one credential in the system that means "an operator". A key
+      **bound** to a use case is the opposite — it is issued by Management to a team, and it is the
+      weakest credential here.
+    """
+    if principal.may_act_on_incidents:
+        return True
+    return principal.method == "api_key" and not principal.use_cases
+
+
 async def _may_see_detail(request: Request) -> bool:
     """Whether this caller gets the diagnosis as well as the verdict.
 
@@ -82,6 +103,13 @@ async def _may_see_detail(request: Request) -> bool:
     code, which is all it has ever used; an operator debugging one presents the credential they
     already have. Locally everything is shown, because a laptop has no topology to protect and an
     endpoint that is less useful in development is one people stop looking at.
+
+    **"An operator", not "anybody who authenticated".** This asked only `principal is not None`,
+    while the paragraph above says *operator* — so a use-case-scoped API key, which is the weakest
+    credential this system issues and belongs to whichever team asked for one, was handed the
+    database host, the Kafka host, the full upstream list, the current fallback state and the names
+    of every secret loaded (`secrets_state()`). The gate now asks the question the docstring always
+    described; see :func:`_is_operator`.
     """
     settings: GatewaySettings = request.app.state.settings
     if is_local(settings):
@@ -90,7 +118,7 @@ async def _may_see_detail(request: Request) -> bool:
         principal = await resolve_principal(request)
     except Exception:  # noqa: BLE001 - a broken credential must not break the readiness probe
         return False
-    return principal is not None
+    return principal is not None and _is_operator(principal)
 
 
 @router.get("/readyz")

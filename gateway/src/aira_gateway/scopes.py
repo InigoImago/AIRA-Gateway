@@ -52,6 +52,16 @@ def person(subject: str | None, username: str | None) -> str | None:
     Written here, next to the keys it feeds, rather than as a property of the two credential types:
     the rule is about what a *scope* means, and a copy on each of them is two copies to keep in
     step (`Attribution.person` and `Principal.person` both call this).
+
+    **The assumption this rests on, stated where it is relied on.** The name comes from a token's
+    `preferred_username`, so it is only an identity if the directory does not let a person change
+    it. Keycloak leaves *Edit username* off by default; with it on, renaming yourself to a
+    colleague moves your consumption onto their allowance — and the same claim also resolves grants
+    written to a person (`auth/grants.py`) and decides who administers a use case
+    (`payloads._member_key`). It is a deployment requirement rather than a check, because reading
+    the realm setting needs the optional admin client and a check that silently passes wherever
+    that is unconfigured is a control this project would not ship. `docs/INTEGRATIONS.md` §2 is
+    where an integrator is told.
     """
     return username or subject
 

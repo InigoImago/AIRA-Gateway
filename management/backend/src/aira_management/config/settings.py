@@ -114,4 +114,29 @@ REST_FRAMEWORK = {
     ],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
     "EXCEPTION_HANDLER": "aira_management.apps.api.exceptions.exception_handler",
+    # A bound on how fast one caller may ask (2026-08-15). There was none at all: the gateway has
+    # had one on **failed authentications** since `ADR-0015` — because *"every limit `FRD-405`
+    # built is keyed by use case or member, so it needs a verified identity and cannot bound the
+    # traffic of somebody who has none"* — and this plane, whose every request verifies a token
+    # against a JWKS and then reconciles the caller's groups, had nothing.
+    #
+    # `user` only, and **deliberately not `AnonRateThrottle`**: DRF runs `check_permissions` before
+    # `check_throttles`, and every view here requires authentication — so an anonymous request is
+    # refused at the permission check and an anon throttle never runs. Measured: two anonymous
+    # requests against a rate of one per minute, both `401`, the second never counted. A throttle
+    # that cannot fire is the badge-wearing absent control this project keeps naming.
+    #
+    # The unauthenticated half is bounded where the failure actually is — in the authentication
+    # class, counting **refusals only** (`apps.api.attempts`, `AIRA_THROTTLE_AUTH_FAILURES`), which
+    # is the shape the gateway settled on in `ADR-0015` for the same reason.
+    #
+    # `user` is generous: a console screen loads five panels at once and a person walking a paged
+    # list is doing exactly what the product is for, so this is sized to stop a script rather than
+    # to shape ordinary use.
+    #
+    # Throttled requests answer `429` through the same envelope as everything else
+    # (`_STATUS_CODES` maps it to `rate_limited`), so a console reader is told to wait rather than
+    # shown "Request failed."
+    "DEFAULT_THROTTLE_CLASSES": ["rest_framework.throttling.UserRateThrottle"],
+    "DEFAULT_THROTTLE_RATES": {"user": _settings.throttle_user},
 }

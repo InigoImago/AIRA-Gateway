@@ -19,6 +19,19 @@ hardening pass that removes the demo is a hardening pass nobody runs.
 `AIRA_DEMO_MODE` is an accepted escape hatch, because "this deployment is a demo" is a deliberate,
 loud declaration — the same door `seed_demo` already uses, and refusing it would mean a hosted
 demo could not exist.
+
+**It is not a blanket one, and it was.** `is_local()` returned true for a demo and
+`unsafe_settings` began with `if is_local(settings): return []`, so one environment variable
+switched off *every* check below at once — including the first line of this docstring. A demo needs
+the published Compose password and a realm with no audience mapper; it does not need its port
+served to anybody who can reach it. Those two are not the same kind of concession, and collapsing
+them meant a typo in one deployment variable produced a production gateway with a published
+credential and no authentication at all.
+
+So the waiver is a **list** now, per check, and each entry says what a demo actually needs. The two
+that are never waived are the two the demo itself does not use: the shipped stack runs with
+`AIRA_AUTH_REQUIRED` at its default (on) and attributes every request to one of the use cases it
+seeds. A concession nobody asked for is not a concession, it is a hole.
 """
 
 from __future__ import annotations
@@ -40,26 +53,70 @@ class UnsafeDeployment(Exception):
 
 
 def is_local(settings: GatewaySettings) -> bool:
-    """True locally, or in a deployment that has declared itself a demo."""
+    """True locally, or in a deployment that has declared itself a demo.
+
+    Read by `/readyz` to decide whether to show the whole body, and by `unsafe_settings` below to
+    decide which checks a demo waives — **which ones, not whether any**. See `WAIVED_BY_A_DEMO`.
+    """
     return settings.environment.strip().lower() == LOCAL_ENVIRONMENT or settings.demo_mode
 
 
+def is_local_environment(settings: GatewaySettings) -> bool:
+    """True only for `environment=local`. A demo is a *deployment*, however it is seeded."""
+    return settings.environment.strip().lower() == LOCAL_ENVIRONMENT
+
+
+#: What declaring `AIRA_DEMO_MODE` waives, named one by one.
+#:
+#: Each of these is something a demo genuinely needs: it runs the shipped Compose stack, whose
+#: Postgres password is published in this repository, against a dev realm that has no audience
+#: mapper, over a broker and a Keycloak on a private network with no TLS in front of them.
+#:
+#: **`auth_required` and `require_use_case` are not on this list, and that is the point.** The
+#: shipped demo does not use either concession — it runs with authentication on and a published API
+#: key, and it seeds the use cases its traffic is attributed to. A demo that switched them off would
+#: not be demonstrating this product. Waiving them anyway turned one environment variable into an
+#: open port serving models to anybody who found it.
+WAIVED_BY_A_DEMO = frozenset(
+    {
+        "AIRA_POSTGRES_PASSWORD",
+        "AIRA_OIDC_AUDIENCE",
+        "AIRA_KAFKA_SECURITY_PROTOCOL",
+        "AIRA_OIDC_ISSUER",
+        "AIRA_OIDC_JWKS_URI",
+        "VAULT_ADDR",
+    }
+)
+
+
 def unsafe_settings(settings: GatewaySettings) -> list[str]:
-    """Why ``settings`` must not be used in their declared environment. Empty means fine."""
-    if is_local(settings):
+    """Why ``settings`` must not be used in their declared environment. Empty means fine.
+
+    Local development waives everything. A **demo** waives `WAIVED_BY_A_DEMO`, which is a list and
+    not a `return []` — see this module's docstring for what the blanket cost.
+    """
+    if is_local_environment(settings):
         return []
+    waived = WAIVED_BY_A_DEMO if settings.demo_mode else frozenset[str]()
     problems: list[str] = []
     if not settings.auth_required:
         problems.append(
             "AIRA_AUTH_REQUIRED is off — every route is served to anyone who can reach the port. "
             "Leave it on outside local development."
         )
-    if settings.postgres_password == DEV_POSTGRES_PASSWORD:
+    if (
+        "AIRA_POSTGRES_PASSWORD" not in waived
+        and settings.postgres_password == DEV_POSTGRES_PASSWORD
+    ):
         problems.append(
             "AIRA_POSTGRES_PASSWORD is still the published development default — "
             "set a unique value (from Vault) per deployment."
         )
-    if settings.oidc_enabled and not settings.oidc_audience.strip():
+    if (
+        "AIRA_OIDC_AUDIENCE" not in waived
+        and settings.oidc_enabled
+        and not settings.oidc_audience.strip()
+    ):
         problems.append(
             "AIRA_OIDC_AUDIENCE is unset — any token this issuer minted would be accepted, "
             "including one issued to a different client. Name the audience this gateway answers to."
@@ -72,7 +129,11 @@ def unsafe_settings(settings: GatewaySettings) -> list[str]:
             "audit row names nobody. Measured: 200, 200 tokens, `use_case = NULL`. Every model "
             "call belongs to a use case or to a key issued for one."
         )
-    if settings.kafka_bootstrap_servers.strip() and settings.kafka_security().is_plaintext:
+    if (
+        "AIRA_KAFKA_SECURITY_PROTOCOL" not in waived
+        and settings.kafka_bootstrap_servers.strip()
+        and settings.kafka_security().is_plaintext
+    ):
         problems.append(
             "AIRA_KAFKA_SECURITY_PROTOCOL is PLAINTEXT — the config topics are applied straight "
             "into the read-model this gateway's authorization is derived from, so anyone who can "
@@ -85,9 +146,16 @@ def unsafe_settings(settings: GatewaySettings) -> list[str]:
     problems.extend(
         plaintext_problems(
             {
-                "AIRA_OIDC_ISSUER": settings.oidc_issuer,
-                "AIRA_OIDC_JWKS_URI": settings.jwks_uri() if settings.oidc_issuer else "",
-                "VAULT_ADDR": os.environ.get("VAULT_ADDR", ""),
+                name: value
+                for name, value in (
+                    ("AIRA_OIDC_ISSUER", settings.oidc_issuer),
+                    (
+                        "AIRA_OIDC_JWKS_URI",
+                        settings.jwks_uri() if settings.oidc_issuer else "",
+                    ),
+                    ("VAULT_ADDR", os.environ.get("VAULT_ADDR", "")),
+                )
+                if name not in waived
             }
         )
     )

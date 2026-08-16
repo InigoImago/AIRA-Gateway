@@ -100,10 +100,38 @@ def test_a_laptop_starts_with_no_configuration_at_all() -> None:
 
 def test_demo_mode_is_an_accepted_declaration_not_an_oversight() -> None:
     """A hosted demo has to be able to exist. `AIRA_DEMO_MODE` is loud and deliberate — the same
-    door `seed_demo` already opens — so it exempts, rather than being refused as unsafe."""
-    settings = _production(demo_mode=True, auth_required=False)
+    door `seed_demo` already opens — so it exempts what a demo genuinely needs: the published
+    Compose password, a realm with no audience mapper, and a broker and Keycloak with no TLS in
+    front of them on a private network."""
+    settings = _production(demo_mode=True)
 
     assert unsafe_settings(settings) == []
+
+
+def test_a_demo_still_may_not_switch_authentication_off() -> None:
+    """**The waiver is a list, not a blanket**, and this is the entry that is not on it.
+
+    `unsafe_settings` began with `if is_local(settings): return []`, and `is_local` was true for a
+    demo — so one environment variable switched off every check at once. `AIRA_DEMO_MODE=true` plus
+    `AIRA_AUTH_REQUIRED=false` was a production gateway serving every route to anybody who could
+    reach the port, holding an API key whose plaintext is published in this repository.
+
+    The shipped demo uses neither concession: it runs with authentication on (the Compose stack
+    never sets `AIRA_AUTH_REQUIRED`) and attributes its traffic to the use cases it seeds. A
+    concession the demo does not use is not a concession, it is a hole.
+    """
+    problems = unsafe_settings(_production(demo_mode=True, auth_required=False))
+
+    assert any("AIRA_AUTH_REQUIRED" in problem for problem in problems), problems
+
+
+def test_a_demo_still_may_not_serve_unattributed_traffic() -> None:
+    """The other entry that is not waived, for the same reason: the demo seeds use cases and every
+    request it makes names one. Off, a caller belonging to nothing is charged to no budget, bounded
+    by no use-case rate limit and outside the model release entirely."""
+    problems = unsafe_settings(_production(demo_mode=True, require_use_case=False))
+
+    assert any("AIRA_REQUIRE_USE_CASE" in problem for problem in problems), problems
 
 
 def test_staging_is_not_local() -> None:

@@ -312,6 +312,16 @@ def test_lifting_something_that_is_not_there_says_so() -> None:
         ({"target": "subject", "target_value": "  "}, "target_value"),
         ({"target": "subject", "target_value": "x", "action": "ponder"}, "action"),
         ({"target": "subject", "target_value": "x", "action": "throttle"}, "throttle_rpm"),
+        # A value longer than the column. Refused rather than truncated: a silently shortened
+        # target matches nobody, which is a kill switch that reports success and stops nothing.
+        # Unbounded it reached Postgres as a `StringDataRightTruncation` — a caller's mistake as
+        # our 500, on the endpoint somebody reaches for during an incident. SQLite enforces no
+        # column lengths, which is why nothing here noticed (`CLAUDE.md`, the second trap).
+        ({"target": "subject", "target_value": "x" * 300}, "target_value"),
+        # And the use case is a slug like every other one a caller sends. An unchecked value
+        # reaches the audit trail and `_matches`, where it can only ever fail to match — a
+        # suspension scoped to a use case that cannot exist stops nothing and looks active.
+        ({"target": "subject", "target_value": "x", "use_case": "Not A Slug"}, "use case"),
     ],
 )
 def test_a_malformed_suspension_is_refused_by_name(body: dict, expected: str) -> None:

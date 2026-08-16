@@ -38,8 +38,19 @@ server {
     }
 
     # index.html must never be cached: it names the current hashed bundles.
+    #
+    # And it is the one response a browser *executes*, so it is the one that needs the headers
+    # below. They were absent entirely: the gateway sets its own (`SecurityHeadersMiddleware`) and
+    # Django sets its own (`SECURE_*`), and the document those two are read from had none — no
+    # content policy, no `nosniff`, no framing rule, no referrer rule, on a governance console.
+    #
+    # Repeated in `location /` rather than declared once at server level, because nginx's
+    # `add_header` **replaces** the inherited set as soon as a location declares one of its own.
+    # A single server-level block would silently vanish here, which is the failure mode that makes
+    # this worth stating.
     location = /index.html {
-        add_header Cache-Control "no-store";
+        add_header Cache-Control "no-store" always;
+        include /etc/nginx/conf.d/aira-headers.inc;
         try_files $uri =404;
     }
 
@@ -66,12 +77,32 @@ server {
         proxy_set_header X-Real-IP         $remote_addr;
         proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        # Dry-runs can reach an upstream LLM; give them more than the 60s default.
-        proxy_read_timeout 120s;
+
+        # **Nothing here may be buffered.** The gateway serves SSE on two verbs —
+        # `:streamGenerateContent?alt=sse` and `/kira/api/external/streaming-chat` — and nginx
+        # buffers proxied responses by default, so every one of them arrived as a single lump at
+        # the end. That is exactly the defect `streaming_chat` documents having fixed inside the
+        # gateway ("a caller saw a blank view for the length of the whole answer and then all of it
+        # at once — no error, no message, just worse"), reintroduced one layer further out where
+        # no gateway test can see it.
+        proxy_buffering    off;
+        proxy_cache        off;
+        # HTTP/1.1 with no `Connection: close`, or the upstream cannot stream at all.
+        proxy_http_version 1.1;
+        proxy_set_header   Connection "";
+
+        # Longer than the gateway's own patience, never shorter. `AIRA_OLLAMA_TIMEOUT_SECONDS`
+        # defaults to 300 because a cold self-deployed model loads for a minute or more
+        # (`ADR-0012` §5) — at 120s the proxy gave up first, so a cold start reached the reader as
+        # a `504` from nginx instead of the gateway's own diagnosis. A stream that is still
+        # producing resets this timer per chunk; a stalled upstream still ends.
+        proxy_read_timeout 310s;
+        proxy_send_timeout 310s;
     }
 
     # Angular owns the routing: anything else is a client-side route.
     location / {
+        include /etc/nginx/conf.d/aira-headers.inc;
         try_files $uri $uri/ /index.html;
     }
 }

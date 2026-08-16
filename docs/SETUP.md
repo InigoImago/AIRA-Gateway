@@ -224,9 +224,10 @@ each model platform needs, TLS, and the SPA's build-time configuration — is in
 make build-images      # aira-gateway:dev, aira-management:dev, aira-frontend:dev
 ```
 
-The SPA is configured **at build time**, not at run time: the OIDC issuer and client id are compiled
-into the bundle. Building your own image is therefore part of deploying it —
-[`INTEGRATIONS.md` §7](INTEGRATIONS.md#7-the-spa-is-configured-at-build-time).
+The SPA is configured **at deployment time**: `public/runtime-config.js` ships beside the bundle
+and names the OIDC issuer and client id, so one image serves any realm — replace that one file and
+set `AIRA_CSP_CONNECT_SRC` to the same issuer's origin.
+[`INTEGRATIONS.md` §7](INTEGRATIONS.md#7-the-spa-is-configured-at-deployment-time).
 
 ---
 

@@ -1,0 +1,49 @@
+# Response headers for the document a browser executes — the console's own HTML.
+#
+# `included` from every location that serves HTML rather than declared once at server level: nginx's
+# `add_header` **replaces** the inherited set the moment a location declares one of its own, and
+# `location = /index.html` declares `Cache-Control`. A single server-level block would therefore be
+# silently dropped on exactly the response that needs it, which is why this is a file and not four
+# copies somebody keeps in step by hand.
+#
+# `always`, so they are present on error responses too. A 404 from this server is still HTML the
+# browser renders.
+#
+# The gateway states its own reasoning for the equivalent set in `SecurityHeadersMiddleware`; this
+# is the SPA's half, and it had none at all.
+
+# Stops a browser second-guessing a declared type. The one header on this list that has ever
+# mattered here in practice.
+add_header X-Content-Type-Options "nosniff" always;
+
+# Nothing served here is meant to be embedded. Stated twice on purpose — the header for browsers
+# that do not implement `frame-ancestors`, the directive for those that ignore the header.
+add_header X-Frame-Options "DENY" always;
+
+# The console's URLs carry use-case slugs and request ids. `strict-origin-when-cross-origin` keeps
+# the path off any outbound request while leaving same-origin navigation intact.
+add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+# The console asks for no camera, microphone or location, so it says so.
+add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()" always;
+
+# The content policy.
+#
+# Every directive here is what the application actually needs, and the two that are looser than
+# `'self'` say why:
+#
+#   style-src  'unsafe-inline'  Angular emits component styles as inline <style> elements at
+#                               runtime. Removing it does not harden anything and does break the
+#                               console's rendering entirely.
+#   img/font   data:            inline SVG marks and the icon font.
+#
+# `connect-src` is the one a deployment has to set. The SPA calls its own origin for `/api` and
+# `/gw`, and Keycloak's token endpoint cross-origin — and the issuer is deployment configuration
+# (`public/runtime-config.js`), so it cannot be baked in here. `AIRA_CSP_CONNECT_SRC` defaults to
+# the local Compose stack's Keycloak, exactly as `runtime-config.js` does, so a laptop needs no
+# configuration and a deployment sets the two together.
+#
+# `frame-src 'self'` is the silent-refresh iframe (`useSilentRefresh`), which is same-origin.
+# `frame-ancestors 'none'`, `object-src 'none'` and `base-uri 'self'` cost nothing and close the
+# three tricks that need no script of their own.
+add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src ${AIRA_CSP_CONNECT_SRC}; frame-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'" always;

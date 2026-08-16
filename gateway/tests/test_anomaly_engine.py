@@ -435,6 +435,55 @@ async def test_the_touched_set_is_bounded(sessions) -> None:
     assert len(service._touched) == MAX_TOUCHED
 
 
+async def test_the_cooldown_map_is_bounded_too(sessions) -> None:
+    """**The same argument as above, and it had been made for one of the two sets only.**
+
+    A cooldown is keyed by `(rule, target)`, and a `subject`-targeted rule has one target per
+    caller — so this grew by a row per person per rule, for the life of the process, two lines
+    below the set that is explicitly bounded with the reason written on it.
+
+    Expired entries go first, and dropping one changes no decision: an entry older than its own
+    rule's window suppresses nothing. What is left is trimmed oldest-first, which costs at worst a
+    duplicate finding.
+    """
+    from aira_gateway.anomalies.service import MAX_COOLDOWNS
+
+    service = AnomalyService(sessions)
+    stale = NOW - timedelta(hours=2)
+    for index in range(MAX_COOLDOWNS + 100):
+        service._last_fired[(1, f"caller-{index}")] = stale
+
+    service._forget_stale_cooldowns(NOW, window_minutes=15)
+
+    assert service._last_fired == {}, "everything older than its window suppresses nothing"
+
+
+async def test_a_live_cooldown_survives_the_pruning(sessions) -> None:
+    """The half that must not be lost: a rule that fired a moment ago still suppresses the same
+    finding, or a 15-minute window fires fifteen times about the same fifteen minutes."""
+    from aira_gateway.anomalies.service import MAX_COOLDOWNS
+
+    service = AnomalyService(sessions)
+    for index in range(MAX_COOLDOWNS + 100):
+        service._last_fired[(1, f"caller-{index}")] = NOW
+
+    service._forget_stale_cooldowns(NOW, window_minutes=15)
+
+    assert len(service._last_fired) == MAX_COOLDOWNS
+    assert all(fired == NOW for fired in service._last_fired.values())
+
+
+async def test_pruning_does_nothing_while_the_map_is_small(sessions) -> None:
+    """The ordinary path stays a dict write. A prune on every finding would be a sort on every
+    finding, which is the cost this bound exists to avoid rather than to introduce."""
+    service = AnomalyService(sessions)
+    service._last_fired[(1, "caller")] = NOW - timedelta(days=1)
+
+    service._forget_stale_cooldowns(NOW, window_minutes=15)
+
+    assert service._last_fired == {(1, "caller"): NOW - timedelta(days=1)}
+
+
 @pytest.mark.anyio
 async def test_the_loop_starts_and_stops_cleanly(sessions) -> None:
     service = AnomalyService(sessions, interval_seconds=0.01)

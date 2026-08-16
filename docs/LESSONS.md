@@ -57,7 +57,19 @@ reading code.
   verb bypassed the dispatch conditions, then embedding did again — three times, which is what
   makes it a class; a kill switch guarded by a *visibility* predicate on one plane and an
   *authority* predicate on the other; the thinking-mode parse written out twice; `api` defaulted so
-  one surface was right by accident. **Extract the rule, or write the comparison test.**
+  one surface was right by accident; `is_governance` left on two call sites after `visible_scope`
+  was corrected to `is_oversight`, on both of which the *message* already said "oversight";
+  `is_catastrophic` copied privately into the redactor and left behind when the shared one grew.
+  **Extract the rule, or write the comparison test.**
+
+- **The same column read in two alphabets.** A narrower relative of the above, and it survives every
+  test whose fixture makes the two coincide. `use_case_members.subject` holds a **username** —
+  Management emits one and the consumer writes it — and `auth/grants.py` read it against
+  `principal.username` while `payloads.py` read it against `principal.subject`, which for an OIDC
+  token is a directory id. No console user was ever recognised as an administrator of their own use
+  case. It passed for months because the test principals carried no `preferred_username`, so
+  `person()` fell back to the subject: **a fixture that makes two things equal is a fixture that
+  cannot tell them apart.** Give the stand-in the shape production has.
 
 - **Returns silently for something unknown.** *Three instances:* `record_to_outbox` for an
   unmapped event type; a seed loop's `continue` past a rule naming a use case it does not create;
@@ -88,6 +100,23 @@ reading code.
   reached a fresh machine and no other; a `node_modules` copied over a fresh `npm ci`; tests
   naming `gpu-b`, `qwen2.5:3b`, `gemini-flash-latest` — inventory only one machine has. **The tell
   is identical: the assertion is about behaviour and the failure is about inventory.**
+
+- **A copied block whose subject changed.** The block is correct; what it is *about* is not.
+  `/v1beta/anomalies` restricted `select(AnomalyEvent)` with the trace view's condition over
+  `RequestLog`, so SQLAlchemy added a second table to the FROM clause with no join predicate — a
+  cartesian product **and** a filter about unrelated rows, failing open. `?may_call=true` was
+  decided in `get_queryset`, which DRF also calls from `get_object`, so a list filter widened every
+  detail route. Neither is visible in the source: one needs the rendered SQL, the other needs the
+  framework's call graph. **When a block moves, ask what it now names** — and prefer a guard that
+  reads the artefact (`stmt.get_final_froms()`, the route table) over one that reads the code.
+
+- **A fact applied at each `return` is missing from one of them.** Written down under `FRD-126` and
+  `FRD-128`, and then true again: `FRD-309`'s notice reached one of four exits while its own
+  docstring said *"called from every exit"*. Fixing it exposed the variant that is worse — the
+  condition guarding it tested two of the three cases the docstring named, and the third
+  (a `responseSchema` document) was the one it was written for, because that check needs a fact
+  about the **request** and the function was only ever handed the response. **A docstring naming
+  three cases and a condition testing two is a claim, not a control.**
 
 - **A guard that cannot fail.** *Three, each caught only by breaking it deliberately:* an Angular
   spec using `import.meta.glob` failed to *load* and Vitest reported "0 tests" inside a green run;
@@ -129,6 +158,18 @@ reading code.
 - **A convenience default is a production default, one variable away.** Open routes, a published
   password, OIDC with no audience: refusals are *environment-shaped* rather than uniformly
   stricter, because a hardening pass that breaks the demo gets reverted (`ADR-0015`).
+- **An exemption is a list, never a `return []`.** The environment shape above was implemented as
+  `if is_local(settings): return []`, and `is_local` was true for a declared demo — so one variable
+  waived *every* check at once, including authentication. A demo needs the published Compose
+  password and a realm with no audience mapper; it does not need its port open to anybody who finds
+  it, and the shipped demo uses neither concession. **Waive what the exempt case actually uses,
+  named one by one** — a concession nobody asked for is a hole, and a blanket cannot say which is
+  which. The same applies to what a *port* exempts: the dev stack published Postgres, Redis, Kafka
+  and a dev-mode Vault on `0.0.0.0` because Compose's `"5432:5432"` means that, and nobody chose it.
+- **A ceiling nobody can account for is a number somebody raises.** Every bound written here says
+  what it is made of — the two use-case reads name their two readers, the session ceiling names
+  what it was before. A guard whose figure has no derivation is edited the first time it fails
+  rather than investigated.
 - **Absent and empty are different answers.** `${VAR:-}` overrode a working default with an empty
   string; Vault ranks above the environment, so writing an unset secret made the empty string win;
   `None` (nothing has said) is not `[]` (somebody released nothing) is not a list — folding the
@@ -189,8 +230,19 @@ reading code.
 - **One definition both planes read.** Role sets, access rules and money live in `aira_common`
   precisely so neither plane restates them.
 - **An unreachable helper is a rule the code claims and does not have** — a reader concludes the
-  system still honours it. Same for a comment describing a rule the code does not implement: both
+  system still honours it. Same for a comment describing a rule the code does not implement, and
+  for a **parameter nothing passes**: `OpenAITransport.api_key` offered a credential every call
+  site left empty, contradicting `FRD-123` §8's decision that this transport has none. All three
   have cost real defects here.
+- **The reader is not the request path.** A cache that decides what a request *may do* has a
+  request's lifetime, never the application's: an application-scoped catalog would keep answering
+  an old declaration after somebody replaced it, invisibly, which is `FRD-307` inverted. Within one
+  request the answer must not change anyway — the pre-dispatch checks and the dispatch that follows
+  are supposed to be deciding about the same declaration, and re-reading was how they could quietly
+  disagree.
+- **A read path that writes is a read path that cannot scale.** Reconciling a caller's groups on
+  every request wrote eight rows in the steady state, for a `GET`. Compare first and write only the
+  difference; agreeing with the database should be free.
 - **An ambiguous routing table refuses to boot.** With three adapters, last-registration-wins is a
   silent choice of region and credential.
 
@@ -224,6 +276,11 @@ reading code.
   watch it go red, restore. `make mutants` does this for the properties worth keeping.
 - **A test that skips when the data is inconvenient reports green about nothing.**
 - **A subset that passes is not a suite that passes.**
+- **A gate nobody runs is a gate that is already red.** The Angular branch-coverage threshold had
+  been failing on `main` at 91.37 % against 92 — so `make ci` was red before any change, and every
+  local run since had been reading the tail of the output rather than its exit code. Fixed by
+  covering the thing that was uncovered, never by moving the threshold: `describe()`, which writes
+  the sentence an operator reads for every step outcome, had ten branches and two tests.
 - **A test asserting an *absence* is defended by the mutation that *adds*, never the one that
   removes.**
 - **A stand-in more permissive than the thing it replaces** proves the permission, not the rule —

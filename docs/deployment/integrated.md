@@ -149,9 +149,10 @@ Two hostnames, because the console and the API are separate origins:
 | `aira.example.com` | the console container | It also proxies `/api` to the control plane and `/gw` to the gateway |
 | `gateway.example.com` | the gateway | This is what callers use |
 
-The console is built with its issuer and API URLs **at build time** — see
-[`../INTEGRATIONS.md` §7](../INTEGRATIONS.md#7-the-spa-is-configured-at-build-time). Changing them
-later means rebuilding the image, not editing a file in the container.
+The console takes its issuer and its content policy **at deployment time** — see
+[`../INTEGRATIONS.md` §7](../INTEGRATIONS.md#7-the-spa-is-configured-at-deployment-time). Changing
+them means replacing `runtime-config.js` and setting `AIRA_CSP_CONNECT_SRC`, not rebuilding the
+image.
 
 ---
 

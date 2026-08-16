@@ -421,8 +421,40 @@ async def provenance(request: Request, model: str) -> tuple[str, str, str] | Non
 
 
 def catalog_of(request: Request) -> ModelCatalog:
-    catalog: ModelCatalog = request.app.state.catalog
-    return catalog
+    """The catalog, as **this request's** view of it — see `ModelCatalog.per_request`.
+
+    Held on `request.state` so every caller in the request shares one, which is the whole point:
+    five readers asking about the same model used to be five sessions and five round trips.
+    """
+    memoised: ModelCatalog | None = getattr(request.state, "catalog", None)
+    if memoised is None:
+        source: ModelCatalog = request.app.state.catalog
+        memoised = source.per_request()
+        request.state.catalog = memoised
+    return memoised
+
+
+async def use_case_record(request: Request, slug: str | None) -> UseCaseRead | None:
+    """This request's use case from the read-model, read **once**.
+
+    Four callers wanted the same row and each opened its own session for it — the release
+    (`FRD-308`), the tool-calling switch (`FRD-131`), and both halves of prompt caching
+    (`FRD-133`). Same argument as `catalog_of`, same lifetime, and the same reason it is a
+    request's and not the app's: this row carries a use case's release and its storage switch, and
+    a stale copy of either is a control that keeps applying after somebody changed it.
+
+    ``None`` is cached too. "Not in the read-model" is an answer the callers read differently from
+    each other — `released_for` reads it as *nobody has told us* — and re-asking would make the
+    same request able to get two of them.
+    """
+    if not slug:
+        return None
+    seen: dict[str, UseCaseRead | None] = getattr(request.state, "use_cases", None) or {}
+    if slug not in seen:
+        async with sessionmaker_of(request)() as session:
+            seen[slug] = await session.get(UseCaseRead, slug)
+        request.state.use_cases = seen
+    return seen[slug]
 
 
 def check_not_empty(canonical: CanonicalRequest) -> None:
@@ -460,9 +492,7 @@ async def check_tools_permitted(request: Request, canonical: CanonicalRequest) -
             "use case that has tool calling enabled.",
             "FAILED_PRECONDITION",
         )
-    sessionmaker = sessionmaker_of(request)
-    async with sessionmaker() as session:
-        record = await session.get(UseCaseRead, use_case)
+    record = await use_case_record(request, use_case)
     if record is None or not record.tools_enabled:
         raise GeminiHTTPError(
             400,
@@ -496,11 +526,7 @@ async def released_for(request: Request, slug: str | None) -> list[str] | None:
     answer about a use case named in a body rather than resolved by attribution — and a second
     lookup written there is a second place for the three states to be collapsed into two.
     """
-    if not slug:
-        return None
-    sessionmaker = sessionmaker_of(request)
-    async with sessionmaker() as session:
-        record = await session.get(UseCaseRead, slug)
+    record = await use_case_record(request, slug)
     if record is None:
         # The use case is not in the read-model at all. Attribution already refused an unknown one
         # where it matters; here it is the same "nothing has told us" as an older event.
@@ -536,11 +562,7 @@ async def cache_prefix_wanted(request: Request, declaration: ModelDeclaration) -
         return False
     use_case = getattr(request.state, "attribution", None)
     slug = getattr(use_case, "use_case", None)
-    if not slug:
-        return False
-    sessionmaker = sessionmaker_of(request)
-    async with sessionmaker() as session:
-        record = await session.get(UseCaseRead, slug)
+    record = await use_case_record(request, slug)
     return bool(record is not None and record.prompt_caching_enabled)
 
 
@@ -549,11 +571,7 @@ async def cache_ttl_for(request: Request) -> str:
     must not be able to double a bill."""
     use_case = getattr(request.state, "attribution", None)
     slug = getattr(use_case, "use_case", None)
-    if not slug:
-        return "5m"
-    sessionmaker = sessionmaker_of(request)
-    async with sessionmaker() as session:
-        record = await session.get(UseCaseRead, slug)
+    record = await use_case_record(request, slug)
     chosen = getattr(record, "prompt_cache_ttl", "5m") if record is not None else "5m"
     return "1h" if chosen == "1h" else "5m"
 
@@ -1191,31 +1209,130 @@ def refusal_outcome(exc: Exception) -> Outcome:
     return Outcome.INVALID_REQUEST
 
 
-def with_notices(response: CanonicalResponse, notices: tuple[str, ...]) -> CanonicalResponse:
+def withheld_because(response: CanonicalResponse, *, structured: bool) -> str:
+    """Why the notice cannot go in front of this answer, or ``""`` when it can (`FRD-309`).
+
+    **Text only, and that is a rule rather than a shortcut.** Three ways an answer is not text to
+    put a sentence in front of, and each was written into `with_notices`' docstring from the
+    beginning. Only two of them were ever implemented.
+
+    - **A structured answer.** A response constrained by a ``responseSchema`` is a document the
+      caller parses, and a sentence in front of it makes the document invalid — they get a parse
+      error instead of an answer, which is worse than not being told. The condition read
+      ``not response.text.strip() or response.tool_calls``, and a JSON document is neither of
+      those: it is non-empty text with no tool call, so the notice **was** prepended and the
+      document **was** broken. The docstring said the opposite, which is why it was not noticed —
+      the check needs a fact about the *request*, and the function was only ever handed the
+      response.
+    - **A tool call.** The answer *is* the call; there is no prose.
+    - **No text at all.**
+
+    Returning the reason rather than a boolean is what lets the audit row say *which* of the three
+    happened, instead of one message for all of them.
+    """
+    if structured:
+        return "the answer is a document the caller parses, and a sentence would invalidate it"
+    if response.tool_calls:
+        return "the answer is a tool call, which carries no text"
+    if not response.text.strip():
+        return "the answer carries no plain text to put it in front of"
+    return ""
+
+
+def with_notices(
+    response: CanonicalResponse, notices: tuple[str, ...], *, structured: bool = False
+) -> CanonicalResponse:
     """Prepend what the caller is owed about their own request having been changed (`FRD-309`).
 
-    **Text only, and that is a rule rather than a shortcut.** A response carrying a
-    ``responseSchema`` document is parsed by the client, and a sentence in front of it makes the
-    document invalid — the caller would get a parse error instead of an answer, which is a worse
-    outcome than not being told. A tool call has no text at all: the answer *is* the call. Both
-    cases are recorded (`applied: false`) rather than skipped silently, because "no notice shown"
-    and "nothing was redacted" are different facts and a reader has no way to tell them apart.
-
-    One function, called from every exit, for the reason `FRD-128` gives: a fact applied at each
-    `return` is a fact eventually missing from one of them.
+    ``structured`` says whether the caller constrained the answer to a schema — see
+    :func:`withheld_because`, which owns the rule.
     """
-    if not notices or not response.text.strip() or response.tool_calls:
+    if not notices or withheld_because(response, structured=structured):
         return response
     return response.model_copy(update={"text": "\n\n".join([*notices, response.text])})
 
 
-def notice_outcome(response: CanonicalResponse, notices: tuple[str, ...]) -> dict[str, Any] | None:
-    """What the audit row says about the notice — including that it was **not** shown."""
+def notice_outcome(
+    response: CanonicalResponse, notices: tuple[str, ...], *, structured: bool = False
+) -> dict[str, Any] | None:
+    """What the audit row says about the notice — including that it was **not** shown, and why."""
     if not notices:
         return None
-    shown = bool(response.text.strip()) and not response.tool_calls
-    return {
-        "step": "notice",
-        "action": "shown" if shown else "withheld",
-        "why": "" if shown else "the answer carries no plain text to put it in front of",
-    }
+    why = withheld_because(response, structured=structured)
+    return {"step": "notice", "action": "withheld" if why else "shown", "why": why}
+
+
+def annotate(
+    canonical: CanonicalRequest | None,
+    response: CanonicalResponse,
+    prepared: Prepared,
+    trail: AuditTrail,
+) -> CanonicalResponse:
+    """Apply `FRD-309`'s notice to a finished answer and record what became of it.
+
+    **One site, every non-streamed exit**, which is what `with_notices` claimed in its own docstring
+    — *"called from every exit, for the reason `FRD-128` gives: a fact applied at each `return` is a
+    fact eventually missing from one of them"* — and was not: a grep on 2026-08-15 found exactly one
+    production caller, Gemini's `:generateContent`. The KIRA surface's `/chat` and both streams
+    applied nothing, so a use case running a `pii_filter` rewrote its callers' prompts and told
+    three quarters of them nothing, while the builder showed the notice as configured. The audit
+    row was silent about it too, so "no notice shown" and "nothing was redacted" were
+    indistinguishable — the exact pair `notice_outcome` exists to keep apart.
+
+    Streams cannot use this: by the time there is a finished answer their first chunk is on the
+    wire. They use :class:`StreamedNotice`, which applies the same rule one chunk earlier.
+    """
+    if not prepared.notices:
+        return response
+    structured = canonical is not None and canonical.response_schema is not None
+    note = notice_outcome(response, prepared.notices, structured=structured)
+    if note is not None:
+        trail.decisions.append(note)
+    return with_notices(response, prepared.notices, structured=structured)
+
+
+class StreamedNotice:
+    """`FRD-309`'s notice on a **streamed** answer: in front of the first text that arrives.
+
+    A stream has no finished answer to prefix — by the time one exists, the first chunk has been
+    sent — so the notice leads the answer instead of following it. That is also the better reading
+    order: the caller is told their prompt was changed *before* they read what it produced.
+
+    The rule :func:`withheld_because` states is preserved exactly, and two thirds of it are
+    preserved by construction rather than by a second condition:
+
+    - a **structured** answer is refused up front, because the caller will parse it;
+    - a **tool call** produces no text delta, so :meth:`lead` is never asked and nothing is shown;
+    - an answer with **no text at all** is the same case.
+
+    :meth:`outcome` says afterwards which of those happened, so the audit row of a streamed request
+    carries the same fact as a buffered one.
+    """
+
+    def __init__(self, notices: tuple[str, ...], *, structured: bool = False) -> None:
+        self._notices = () if structured else tuple(notices)
+        self._configured = tuple(notices)
+        self._structured = structured
+        self._shown = False
+
+    def lead(self, text_delta: str) -> str:
+        """The delta to send: the first non-empty one carries the notice, the rest are unchanged."""
+        if not self._notices or not text_delta:
+            return text_delta
+        led = "\n\n".join([*self._notices, text_delta])
+        self._notices = ()
+        self._shown = True
+        return led
+
+    def outcome(self) -> dict[str, Any] | None:
+        """What the audit row says about it, or ``None`` when there was no notice to show."""
+        if not self._configured:
+            return None
+        if self._shown:
+            return {"step": "notice", "action": "shown", "why": ""}
+        why = (
+            "the answer is a document the caller parses, and a sentence would invalidate it"
+            if self._structured
+            else "the answer carries no plain text to put it in front of"
+        )
+        return {"step": "notice", "action": "withheld", "why": why}

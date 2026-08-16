@@ -35,6 +35,15 @@ if redis.call('EXISTS', key) == 0 then
   redis.call('HSET', key, 'tokens', ARGV[1], 'requests', ARGV[2], 'cost', ARGV[3])
 end
 
+-- **Before the limit checks, not after the debit.** The expiry used to be set on the last line,
+-- which every *refused* reservation returns before reaching: a counter first created by a request
+-- that immediately breached was left with no TTL at all, so it was never rebuilt from Postgres
+-- and kept refusing on a figure the system of record did not share — for the rest of the period,
+-- or until a request happened to pass. That is precisely the "permanent over-count nobody can
+-- clear" `COUNTER_TTL_SECONDS` exists to make impossible, arriving through the one path that
+-- skipped it. Refreshed on every touch, which is what a cache TTL means.
+redis.call('EXPIRE', key, ARGV[10])
+
 local current = redis.call('HMGET', key, 'tokens', 'requests', 'cost')
 local tokens = tonumber(current[1]) or 0
 local requests = tonumber(current[2]) or 0
@@ -54,7 +63,6 @@ if limit_tokens >= 0 and tokens >= limit_tokens then return 'tokens' end
 redis.call('HINCRBY', key, 'tokens', ARGV[4])
 redis.call('HINCRBY', key, 'requests', ARGV[5])
 redis.call('HINCRBY', key, 'cost', ARGV[6])
-redis.call('EXPIRE', key, ARGV[10])
 return ''
 """
 

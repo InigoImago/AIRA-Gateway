@@ -219,6 +219,10 @@ class OpenAIAdapter:
         data = await self._transport.post(self._routes.embed(request.model), body)
         return embedding_values(data)
 
+    async def aclose(self) -> None:
+        """Close the connection pool this adapter owns (`ProviderRegistry.aclose`)."""
+        await self._transport.aclose()
+
 
 def _tool_call_deltas(payload: dict[str, Any]) -> Any:
     """The `delta.tool_calls` of one SSE payload, or nothing.

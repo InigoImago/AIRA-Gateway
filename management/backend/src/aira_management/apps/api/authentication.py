@@ -17,10 +17,11 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.models import AbstractBaseUser
 from django.db import IntegrityError, transaction
 from rest_framework.authentication import BaseAuthentication
-from rest_framework.exceptions import AuthenticationFailed
+from rest_framework.exceptions import AuthenticationFailed, Throttled
 from rest_framework.request import Request
 
 from aira_common.oidc import JwtVerifier, build_jwks_client
+from aira_management.apps.api.attempts import FailedAuthentications
 from aira_management.apps.api.models import OidcIdentity
 from aira_management.config.runtime import get_settings
 from aira_management.rbac import sync_user_groups, sync_user_roles
@@ -39,6 +40,12 @@ def build_management_verifier() -> JwtVerifier | None:
     )
 
 
+@lru_cache(maxsize=1)
+def build_attempt_bound() -> FailedAuthentications:
+    """The bound on refused authentications. Built once; the counting is in the cache."""
+    return FailedAuthentications(get_settings().throttle_auth_failures)
+
+
 class KeycloakJWTAuthentication(BaseAuthentication):
     def authenticate(self, request: Request) -> tuple[AbstractBaseUser, dict[str, Any]] | None:
         header = request.headers.get("Authorization", "")
@@ -49,11 +56,22 @@ class KeycloakJWTAuthentication(BaseAuthentication):
         if verifier is None:
             return None
 
+        # **Before the verification, because the verification is the cost.** A presented token is
+        # checked against the issuer's JWKS before anything decides it is invalid, so an address
+        # probing credentials pays nothing and this service pays for every attempt. Counted as
+        # refusals only (`apps.api.attempts`), so a working credential never touches this bucket
+        # however busy its holder is — the rule `ADR-0015` settled on the other plane.
+        bound = build_attempt_bound()
+        if bound.over_the_bound(request):
+            raise Throttled(wait=bound.retry_after(request))
+
         claims = verifier.verify(header[len(_BEARER) :].strip())
         if claims is None:
+            bound.record_failure(request)
             raise AuthenticationFailed("Invalid or expired token.")
         subject = claims.get("sub")
         if not subject:
+            bound.record_failure(request)
             raise AuthenticationFailed("Token has no subject.")
         user = self._provision_user(str(subject), claims)
         # Keycloak is the source of truth for both: which roles this person holds, and which

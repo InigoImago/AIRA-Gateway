@@ -41,14 +41,35 @@ async def _publish(producer: Producer, pending: list[OutboxEvent]) -> list[int]:
     return published_ids
 
 
+#: How many events one run publishes.
+#:
+#: The query had no bound, so a relay coming back after an outage — a Kafka restart, a broker
+#: rebalance, a container that could not start for an hour — loaded **every** pending row into
+#: memory at once, each carrying a full JSON payload. That is the failure this project already
+#: reasoned about for the audit queue (`RequestLogWriter`: *"An unbounded one would only move the
+#: exhaustion it is meant to prevent from the connection pool to memory"*), on the other plane and
+#: without the reasoning.
+#:
+#: A backlog is not lost by this: the relay runs on a loop (`docker-compose.apps.yml`, and a
+#: CronJob in Kubernetes), so what does not fit goes out on the next pass, in order. The ordering
+#: is `Meta.ordering` — `(created_at, id)` — which is why taking a prefix is safe: an outbox's
+#: order is its meaning, and a slice of an ordered queryset is the oldest events, never a sample.
+BATCH = 500
+
+
 class Command(BaseCommand):
     help = "Publish unsent outbox events to Kafka."
 
     def handle(self, *args: Any, **options: Any) -> None:
-        pending = list(OutboxEvent.objects.filter(published_at__isnull=True))
+        pending = list(OutboxEvent.objects.filter(published_at__isnull=True)[:BATCH])
         if not pending:
             self.stdout.write("no pending events")
             return
         published_ids = asyncio.run(_publish(build_producer(), pending))
         OutboxEvent.objects.filter(pk__in=published_ids).update(published_at=timezone.now())
-        self.stdout.write(self.style.SUCCESS(f"published {len(published_ids)} events"))
+        remaining = OutboxEvent.objects.filter(published_at__isnull=True).count()
+        # Said out loud, because a bounded run that stays silent about what it left is the "silent
+        # cap" this project refuses elsewhere: a reader would see "published 500 events" and
+        # conclude the outbox is empty.
+        note = f" ({remaining} still pending)" if remaining else ""
+        self.stdout.write(self.style.SUCCESS(f"published {len(published_ids)} events{note}"))

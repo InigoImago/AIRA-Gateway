@@ -16,9 +16,13 @@
 # Two stages: the Angular bundle is compiled with Node and then served by nginx, which also
 # takes over the /api and /gw proxying that the dev server does in development.
 #
-# NOTE: the OIDC issuer and client id are compiled into the bundle
-# (src/app/core/auth/auth.config.ts). Targeting a different Keycloak means editing that file and
-# rebuilding this image — see docs/DEPLOYMENT.md §3.7.
+# NOTE: the OIDC issuer and client id are **deployment** configuration, not build configuration:
+# `public/runtime-config.js` ships beside the bundle and is loaded before the app, so a deployment
+# replaces that one file (a volume mount, a ConfigMap, a `sed` in an entrypoint) and never rebuilds
+# this image. The note here used to say the opposite, describing the state before 2026-08-08 — and
+# a build instruction that names a file nobody edits any more sends the next person to rebuild an
+# image for a change that needs no build. Set `AIRA_CSP_CONNECT_SRC` to the same issuer origin, or
+# the content policy refuses the token request the console makes to it.
 
 # ---- build ---------------------------------------------------------------------------------
 FROM node:26-alpine AS builder
@@ -38,10 +42,17 @@ RUN npm run build
 FROM nginx:1.27-alpine AS runtime
 
 ENV AIRA_MANAGEMENT_UPSTREAM=http://management:8002 \
-    AIRA_GATEWAY_UPSTREAM=http://gateway:8001
+    AIRA_GATEWAY_UPSTREAM=http://gateway:8001 \
+    AIRA_CSP_CONNECT_SRC="'self' http://localhost:8080"
 
 COPY --from=builder /src/dist/frontend/browser /usr/share/nginx/html
 COPY management/frontend/deploy/default.conf.template /etc/nginx/templates/default.conf.template
+# Named `.inc`, not `.conf`, and that is load-bearing. The official image renders every template
+# in `templates/` into `/etc/nginx/conf.d/`, and nginx's own configuration ends with
+# `include /etc/nginx/conf.d/*.conf` at the **http** level — so a `.conf` here would be loaded
+# twice: once http-wide, where it would attach a content policy to the JSON API responses too,
+# and once by the `include` in each HTML location. `.inc` is rendered and not auto-loaded.
+COPY management/frontend/deploy/aira-headers.inc.template /etc/nginx/templates/aira-headers.inc.template
 
 EXPOSE 8080
 

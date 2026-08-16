@@ -24,7 +24,9 @@ import structlog
 from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy import and_, or_, select
+from sqlalchemy.sql.elements import ColumnElement
 
+from aira_common.anomalies import RuleTarget
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.audit import Outcome
 from aira_gateway.auth.dependencies import require_principal, require_valid_use_case
@@ -193,6 +195,50 @@ async def reporting(
     )
 
 
+def _about_this_caller(restricted: list[str], principal: Principal) -> ColumnElement[bool]:
+    """Findings a caller may see inside a use case that restricts members to their own traffic.
+
+    **Written over `AnomalyEvent`, and that is the whole correction.** This condition was a copy of
+    the trace view's, which is written over `RequestLog` — pasted onto a `select(AnomalyEvent)`
+    without its subject changing with it. SQLAlchemy resolved the foreign columns by adding
+    `request_logs` to the FROM clause with no join predicate, so the statement rendered as
+    ``FROM anomaly_events, request_logs``: a cartesian product, and a filter that asked a question
+    about *unrelated rows*. Both halves were wrong in the same line — the restriction did not
+    apply to a single finding (any one matching request log let every finding through), and one
+    page of fifty cost the database *findings × request logs* rows. Found on 2026-08-15 by
+    rendering the statement.
+
+    A finding is not a request, so the rule has to be translated rather than copied. What the
+    restriction withholds is **other people's activity**, and a finding says who it is about in
+    two columns:
+
+    - ``target = use_case`` — about the use case, naming nobody. Kept: withholding it would blind
+      a use case's own members to its health while hiding nothing the restriction is about.
+    - ``target = subject`` — kept only where it is this caller. `AnomalyEvent.target_value` is
+      grouped from `RequestLog.subject`, which is written from the same attribution
+      `principal.subject` carries, so the two are the same alphabet (unlike `use_case_members`,
+      which keys on the username — see `payloads.grant_role_in`).
+    - ``target = credential`` — kept only where it is this caller's own credential. A key prefix
+      belongs to its owner, so somebody else's is exactly what is being withheld.
+    """
+    own: list[ColumnElement[bool]] = [AnomalyEvent.target == RuleTarget.USE_CASE.value]
+    if principal.subject:
+        own.append(
+            and_(
+                AnomalyEvent.target == RuleTarget.SUBJECT.value,
+                AnomalyEvent.target_value == principal.subject,
+            )
+        )
+    if principal.credential:
+        own.append(
+            and_(
+                AnomalyEvent.target == RuleTarget.CREDENTIAL.value,
+                AnomalyEvent.target_value == principal.credential,
+            )
+        )
+    return or_(AnomalyEvent.use_case.notin_(restricted), or_(*own))
+
+
 @router.get("/v1beta/anomalies")
 async def anomalies(
     request: Request,
@@ -227,11 +273,6 @@ async def anomalies(
     if use_case:
         stmt = stmt.where(AnomalyEvent.use_case == use_case)
 
-    # Paged by cursor, for the same reason the trace view is (`FRD-502` §4.2) and not the one the
-    # use-case list is: findings are an **append-only log**. A detector firing while somebody reads
-    # page two of an offset-paged list pushes rows across the boundary, so they see one row twice
-    # and never see another — invisibly. The cursor is `(created_at, id)` because two findings can
-    # share a millisecond, written out because SQLite has no tuple comparison.
     # A use case may show its **users** their own requests only (`FRD-505` FR-4). Applied to the
     # list and not only to the payload: leaving the rows visible would still disclose who else
     # calls, how often and at what cost, which is the interesting half of what is being withheld.
@@ -239,10 +280,13 @@ async def anomalies(
     async with sessionmaker() as session:
         restricted = await restricted_use_cases(session, principal)
     if restricted:
-        stmt = stmt.where(
-            or_(RequestLog.use_case.notin_(restricted), RequestLog.subject == principal.subject)
-        )
+        stmt = stmt.where(_about_this_caller(restricted, principal))
 
+    # Paged by cursor, for the same reason the trace view is (`FRD-502` §4.2) and not the one the
+    # use-case list is: findings are an **append-only log**. A detector firing while somebody reads
+    # page two of an offset-paged list pushes rows across the boundary, so they see one row twice
+    # and never see another — invisibly. The cursor is `(created_at, id)` because two findings can
+    # share a millisecond, written out because SQLite has no tuple comparison.
     if cursor:
         at, row_id = _parse_cursor(cursor)
         stmt = stmt.where(

@@ -157,6 +157,16 @@ Per use case, config-driven, authored in the SPA's graph builder
 | ------------------ | ------------------------------------------ | ----------------------------------------------------------------- |
 | `injection_filter` | heuristic patterns, or an LLM classifier   | verdict is **three-valued**; `undetermined` **blocks** by default |
 | `model_route`      | an LLM classifier picks a category → model |                                                                   |
+| `pii_filter`       | a trusted model rewrites the user's text   | **blocks** by default when it cannot; the caller is told ([`FRD-309`](features/FRD-309-pii-filter.md)) |
+
+**What the filter reads — twice worth stating, because both are limits of *reach* rather than of
+verdict.** Its `scope` defaults to `user`, which is **the last user message**: an injection planted
+in an earlier turn of a conversation is not re-scanned when the next one arrives. A conversational
+use case should set `system_user`, which reads every system and user message. And no scope reads
+**attachments** — the text view of a message excludes them ([`FRD-110` §8](features/FRD-110-multimodal-content.md)),
+so an injection inside a PDF is invisible to every step here. Neither is a bug; both are the
+difference between "the filter ran" and "the prompt was checked", and a reader who assumes the
+second has been misled by omission.
 
 There is no `allow_check` step: which models a use case may call is a property of the use case
 ([`FRD-308`](features/FRD-308-use-case-model-release.md)), checked as a dispatch condition at every

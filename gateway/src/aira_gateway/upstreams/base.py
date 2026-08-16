@@ -11,12 +11,15 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Protocol, TypeIs, runtime_checkable
 
+from aira_common.logging import get_logger
 from aira_gateway.core.canonical import (
     CanonicalChunk,
     CanonicalEmbeddingRequest,
     CanonicalRequest,
     CanonicalResponse,
 )
+
+_log = get_logger("aira_gateway.upstreams")
 
 
 class UpstreamError(Exception):
@@ -200,6 +203,35 @@ class ProviderRegistry:
     def each(self) -> list[Upstream]:
         """Every registered adapter, whatever it serves and however it is addressed."""
         return list(self._all)
+
+    async def aclose(self) -> None:
+        """Close every adapter's HTTP connection pool.
+
+        `create_app` builds one `httpx.AsyncClient` per configured upstream — Vertex, Google AI
+        Studio, Foundry and one per OpenAI-dialect server — and the lifespan closed the database
+        engine, the counter store, the writer and the probe, and none of these. Each holds a
+        connection pool and, under TLS, its own SSL context; leaking them means a redeploy leaves
+        sockets open until the process dies, and the hermetic suite, which builds an application
+        per test, accumulates them by the hundred.
+
+        Found by asking what `create_app` opens and `lifespan` closes, and listing the difference.
+
+        Never raises. This runs during shutdown, where the useful outcome is that the *rest* of the
+        teardown still happens — the same reasoning `RequestLogWriter._write_remaining` records.
+        """
+        for provider in self._all:
+            close = getattr(provider, "aclose", None)
+            if close is None:
+                continue
+            try:
+                await close()
+            except Exception as exc:  # noqa: BLE001 — see the docstring
+                _log.warning(
+                    "upstream_not_closed",
+                    adapter=type(provider).__name__,
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                )
 
     def by_name(self) -> dict[str, Upstream]:
         """Every adapter that owns a **provider name**, keyed by it (`FRD-507` stage C).

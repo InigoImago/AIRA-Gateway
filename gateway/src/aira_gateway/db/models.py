@@ -11,6 +11,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     DateTime,
+    Index,
     Integer,
     String,
     UniqueConstraint,
@@ -60,6 +61,20 @@ class RequestLog(Base):
     """A persisted API request + response with its attribution (FRD-103)."""
 
     __tablename__ = "request_logs"
+    __table_args__ = (
+        # The trace view's page, as one index (`0033`). It filters `use_case IN (…)` and orders by
+        # `(created_at DESC, id DESC)`; with single-column indexes only one of the two can be used
+        # and the rest is a sort — over a table that grows with every request. The keyset page is
+        # the whole reason `FRD-502` chose a cursor over an offset, and it needs an index shaped
+        # like the cursor to be worth anything.
+        Index(
+            "ix_request_logs_use_case_page",
+            "use_case",
+            "created_at",
+            "id",
+            postgresql_ops={"created_at": "DESC", "id": "DESC"},
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     created_at: Mapped[datetime] = mapped_column(
@@ -78,7 +93,10 @@ class RequestLog(Base):
     username: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     auth_method: Mapped[str] = mapped_column(String(32))
     use_case: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
-    source_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: Indexed since `0033`: `/v1beta/traces?source_ip=` filters on it, and "which machine is
+    #: doing this" is the first question of an incident — asked against the largest table here, by
+    #: the one role that cannot wait for a sequential scan.
+    source_ip: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     # Which *system* called (FRD-122 FR-5): an API key's prefix, or an OIDC client id. Distinct
     # from `subject`, which is who the credential belongs to. Without it, five keys issued for one
     # use case by one administrator are one identity in the log — and a leaked key can be revoked

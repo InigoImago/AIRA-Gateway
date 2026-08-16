@@ -58,7 +58,8 @@ class OpenAIServer:
     models: tuple[str, ...] = ()
     embedding_models: tuple[str, ...] = ()
     region: str = ""
-    api_key: str = ""
+    #: No credential, and that is `FRD-123` §8 rather than an omission — see `OpenAITransport`,
+    #: which used to take one that nothing ever passed.
     timeout: float = 300.0
 
     @property
@@ -179,7 +180,7 @@ def build_openai_upstreams(settings: GatewaySettings) -> list[Upstream]:
         if server.region:
             check_region(server.region, allowed)
         client = httpx.AsyncClient(base_url=server.url, verify=True)
-        transport = OpenAITransport(client=client, api_key=server.api_key, timeout=server.timeout)
+        transport = OpenAITransport(client=client, timeout=server.timeout)
         upstreams.append(
             OpenAIAdapter(
                 transport,

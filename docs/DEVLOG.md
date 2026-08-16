@@ -5,6 +5,88 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## A security and correctness review of the whole codebase — 26 findings, all fixed
+
+Asked to read the whole thing as a reviewer and write down what was wrong. The four suites were
+green, `ruff` and `mypy` clean, and coverage at 95.7 % — which is the condition this project already
+says proves nothing on its own, so the review was done by reading each control against the sentence
+that describes it and by measuring the ones that could be measured.
+
+**Two were serious, and both were a correct block of code in the wrong place.**
+
+- `?may_call=true` widened the queryset in `get_queryset`, and DRF resolves every detail route and
+  every `@action(detail=True)` through it. Measured: a caller holding nothing but the Keycloak
+  group `/use-cases/secret-uc` got `404` without the parameter and `200` with it — plus the member
+  list, the budgets, the rate limits, the pipeline configuration and the API-key metadata. The
+  mutations were never reachable (`_may_manage`/`_is_member` ask independently), so it was
+  disclosure rather than escalation. It belongs to `list`, and it is asked there.
+- `/v1beta/anomalies` restricted `select(AnomalyEvent)` with a condition over `RequestLog` —
+  the trace view's block, pasted onto a different statement. SQLAlchemy resolved the foreign
+  columns by adding the table to the FROM clause with no join predicate, so it rendered as
+  `FROM anomaly_events, request_logs`: a cartesian product **and** a filter that asked about
+  unrelated rows, so the per-user restriction did not apply to a single finding. Two failures in
+  one line, pointing opposite ways.
+
+**Three were a rule written twice that had drifted on one copy.** `payloads.py` compared
+`use_case_members.subject` — which holds a *username* — against `principal.subject`, which for an
+OIDC token is a directory id, so no console user was ever recognised as an administrator of their
+own use case. `api/usage.py` and `ki_usage` asked `is_governance` while their docstring and their
+own refusal message said *oversight*, so IT Security was refused every per-use-case figure — the
+correction `visible_scope` documents making on 2026-08-08, on two call sites that were not carried
+with it. And `persistence/redaction.py` carried a private copy of `is_catastrophic` that had lost
+the `{n,m}` form and alternation.
+
+**Two were a fact applied at one `return` out of four.** `FRD-309`'s notice reached Gemini's
+`:generateContent` and neither stream nor the KIRA surface — a `pii_filter` rewrote callers'
+prompts and told three quarters of them nothing. Fixing it surfaced a third: `with_notices` refused
+an empty answer and a tool call and called that "text only", while its own docstring said the case
+it exists for is a `responseSchema` **document** — which is non-empty text with no tool call, so
+the sentence went in front of it and the document stopped parsing. The check needs a fact about the
+*request*, which the function was never handed. And an unexpected exception on the KIRA surface
+answered in the AIRA envelope: `_kira()` was defined four lines above `_handle_unexpected` and used
+by four of the five handlers.
+
+**Two were measured rather than argued.** One served request opened **15 database sessions**
+against an empty read-model, five of them the same `ModelCatalog.declaration()`; and *every*
+authenticated Management request ran **17 statements, 8 of them writes**, in the steady state where
+nothing had changed — a read path that writes, which rules out a read replica and takes row locks
+on `auth_user_groups` for a `GET`. Now 10 and 2/0, through a memo with a **request's** lifetime
+(never the application's: the catalog decides what a request may ask for) and a reconcile that
+writes only what differs.
+
+**One was two lines of nginx.** `proxy_buffering` is on by default, so both SSE verbs arrived as a
+single lump through the console's own proxy — exactly what `streaming_chat` documents having fixed
+*inside* the gateway, reintroduced one layer out where no gateway test can see it. Proved both
+ways against the real image: 0.0/0.4/0.8/1.2 s with it off, all four chunks at 1.61 s with it on.
+Its `proxy_read_timeout 120s` also sat below the gateway's own 300 s for a cold self-deployed
+model, so the proxy gave up first and the reader got somebody else's 504.
+
+The rest: a budget counter created by a *refused* reservation never got its `EXPIRE`, so the one
+key that most needs rebuilding from Postgres was the one that never was; `AnomalyService`'s
+cooldown map was unbounded two lines below the one that is explicitly bounded, with the same
+argument written on it; `AIRA_DEMO_MODE` waived **every** deployment check at once rather than the
+ones a demo needs, so one variable turned a production gateway into an open port with a published
+key; `/readyz` handed the topology and the loaded secret names to any credential, including the
+weakest one this system issues; the gateway did not re-apply the pipeline text bounds Management
+applies, which is `ADR-0018`'s shape and was closed for regexes only; `OpenAIServer.api_key` was a
+parameter nothing set, contradicting `FRD-123` §8 in code; the SPA was served with no security
+headers at all; the console could not read the compatibility surface's error envelope, so the
+server's own wording was replaced by "Something went wrong"; the dev stack published Postgres,
+Redis, Kafka and a dev-mode Vault on every interface; and `source_ip` — the first column an
+incident filters on — had no index.
+
+**And one the review found by running what it had changed:** the Angular branch-coverage gate was
+already red on `main` at 91.37 % against a threshold of 92. `make ci` had been failing before any
+of this. Fixed by covering `describe()` — the sentence an operator reads for every step outcome,
+which had ten branches and two tests — never by moving the threshold.
+
+Every fix carries a mutation (`RV1`–`RV11`, plus `P14b`/`P14c`/`H6b`), and all of them were
+observed to be caught. Four anchors had to be re-pointed, and two of those — `G2`/`R21` and
+`N35` — had become two claims about one line after the syntax they guarded was consolidated;
+they were re-aimed at what is still distinct rather than left as duplicates.
+
+---
+
 ## Both slow tiers, end to end — and what they found (828 + 142)
 
 Asked to run the integration and browser suites completely. Neither had been run in full this

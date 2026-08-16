@@ -169,6 +169,8 @@ credential.
 | `AIRA_DEBUG`                                   | `true`        | Forced off outside `local`.                                                                                 |
 | `AIRA_ALLOWED_HOSTS`                           | `*`           | Comma-separated. `*` **refuses to boot** outside `local`.                                                   |
 | `AIRA_OIDC_ISSUER` / `_AUDIENCE` / `_JWKS_URI` | —             | Same shape as the gateway's. Management **requires** OIDC: there is no API-key path into the control plane. |
+| `AIRA_THROTTLE_AUTH_FAILURES`                  | `60/minute`   | Failed authentications one source address may collect. A presented token is verified against the issuer's JWKS **before** anything decides it is invalid, so probing is not free. Counts **refusals only**, so a working credential never touches it. `0` disables it. Not a DRF throttle — an `AnonRateThrottle` never fires here, because permissions are checked before throttles and every view requires authentication. |
+| `AIRA_THROTTLE_USER`                           | `600/minute`  | The same for a signed-in caller, sized to stop a script rather than to shape ordinary use — a console screen loads five panels at once. **Per process** (Django's `LocMemCache`), so N workers admit N × the rate; point `CACHES` at Redis to make it exact. |
 
 Management has no `AUTH_REQUIRED` switch on purpose — a control plane that can be opened is a
 control plane somebody opens.
@@ -177,13 +179,25 @@ control plane somebody opens.
 
 ## 5. Frontend
 
-The SPA is configured **at build time**, not at run time: the OIDC issuer and client id are compiled
-into the bundle. Deploying it means building it —
-[`INTEGRATIONS.md` §7](INTEGRATIONS.md#7-the-spa-is-configured-at-build-time).
+The SPA is configured **at deployment time**: `public/runtime-config.js` ships beside the bundle and
+names the OIDC issuer and client id, so one image serves any realm —
+[`INTEGRATIONS.md` §7](INTEGRATIONS.md#7-the-spa-is-configured-at-deployment-time).
 
-At run time nginx needs only the two proxy targets, `/api` → Management and `/gw` → gateway. Its
-resolver must **re-resolve** upstreams, or a container restart behind a changed IP is a 502 that
-outlives the restart.
+nginx takes three values:
+
+| Variable                    | Default                        | What it does                                                                    |
+| --------------------------- | ------------------------------ | ------------------------------------------------------------------------------- |
+| `AIRA_MANAGEMENT_UPSTREAM`  | `http://management:8002`       | Where `/api` goes.                                                              |
+| `AIRA_GATEWAY_UPSTREAM`     | `http://gateway:8001`          | Where `/gw` goes.                                                               |
+| `AIRA_CSP_CONNECT_SRC`      | `'self' http://localhost:8080` | What the console's content policy lets it call. **Set it with the issuer**: the token request goes to Keycloak cross-origin, and a policy that does not name it produces a login that fails in the browser and nowhere else. |
+
+Its resolver must **re-resolve** upstreams, or a container restart behind a changed IP is a 502 that
+outlives the restart. And `/gw` must not buffer: two verbs are SSE, and nginx buffers by default —
+the shipped configuration sets `proxy_buffering off` and a read timeout above the gateway's own.
+
+The local Compose stack publishes every port on `AIRA_BIND_HOST` (default `127.0.0.1`). It runs
+Postgres, Redis, Kafka and a dev-mode Vault with the credentials printed in `.env.example`, and
+Compose's plain `"5432:5432"` would put all of them on every interface of the machine.
 
 ---
 

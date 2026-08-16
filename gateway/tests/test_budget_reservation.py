@@ -388,6 +388,47 @@ async def test_a_counter_expires_long_before_its_budget_period_does(sessionmaker
     assert COUNTER_TTL_SECONDS < 24 * 3600, "a day-long counter would outlive a daily budget"
 
 
+async def test_the_counter_that_refused_a_request_still_expires(sessionmaker, runner) -> None:
+    """**The path that skipped the expiry**, and the one every subsequent request takes.
+
+    `EXPIRE` was the last line of the reserve script, after the debit — so a refusal returned
+    before reaching it. A counter first *created* by a request that immediately breached therefore
+    had no lifetime at all: never rebuilt from Postgres, refusing on a figure the system of record
+    does not share, for the rest of the period or until a request happened to pass. That is exactly
+    the "permanent over-count nobody can clear" `COUNTER_TTL_SECONDS` exists to prevent, arriving
+    through the one branch that skipped it.
+
+    The reasoning fails in the direction that matters: a raised limit, a corrected price, a period
+    whose Postgres figure was fixed by hand — none of them would take effect while the key lived.
+    """
+    await _budget(sessionmaker, limit_cost_nanos=to_nanos("1.00"))
+    service = BudgetService(sessionmaker, ledger=BudgetLedger(runner))
+    # Already at the limit in Postgres, so the very first reservation seeds the counter and is
+    # refused by it — the key is created and the request never reaches the debit.
+    async with sessionmaker() as session:
+        session.add(
+            BudgetUsage(
+                scope_key="uc:uc",
+                period_key="2026-08",
+                tokens=0,
+                requests=0,
+                cost_nanos=to_nanos("5.00"),
+                unpriced_requests=0,
+            )
+        )
+        await session.commit()
+
+    with pytest.raises(BudgetExceeded):
+        await service.guard("uc", "alice", NOW, estimated=Amounts(requests=1))
+
+    ttl = await runner._client.ttl("budget:uc:uc:2026-08")
+    assert ttl > 0, (
+        "the counter that refused has no expiry, so it will never be rebuilt from Postgres and "
+        "will go on refusing whatever the system of record says"
+    )
+    assert ttl <= COUNTER_TTL_SECONDS
+
+
 async def test_a_rebuilt_counter_takes_the_settled_figure_from_postgres(
     sessionmaker, runner
 ) -> None:

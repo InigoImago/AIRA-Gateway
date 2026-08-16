@@ -25,8 +25,12 @@ envelope would satisfy every assertion about KIRA and quietly break the other co
 
 from __future__ import annotations
 
+from unittest import mock
+
 from fastapi.testclient import TestClient
 
+from aira_gateway.api.gemini import routes as gemini_routes
+from aira_gateway.api.kira import routes as kira_routes
 from aira_gateway.app import create_app
 from aira_gateway.config import GatewaySettings
 
@@ -132,6 +136,56 @@ def test_ki_usage_refuses_in_the_kira_envelope_rather_than_failing() -> None:
     # internal_error`. The caller lacks a role and was told the server had failed.
     assert body["code"] == "ADMIN_PERMISSION_REQUIRED"
     assert body["message"]
+
+
+def test_an_unexpected_failure_answers_in_this_surfaces_envelope_too() -> None:
+    """**The fourth instance of the shape this file records three of.**
+
+    `_handle_kira_error` catches what a *route* raises without catching. What no route and no
+    handler can catch is an ordinary bug — by definition it matches no `except KIRA_REFUSALS` —
+    and that fell through to `_handle_unexpected`, which branched on `/v1beta` alone and answered
+    the AIRA envelope: `{"error": {"code": "internal_error", …}}`, on the surface whose entire
+    contract is its error shape.
+
+    `_kira()` was defined four lines above it and used by four of the five handlers. Measured on
+    2026-08-15 by raising a `RuntimeError` inside `/chat`, which is what this does.
+    """
+    app = create_app(GatewaySettings(auth_required=False, environment="local", log_queue_size=0))
+
+    async def boom(*args: object, **kwargs: object) -> str:
+        raise RuntimeError("an ordinary bug")
+
+    with (
+        mock.patch.object(kira_routes, "_resolve_model", boom),
+        TestClient(app, raise_server_exceptions=False) as client,
+    ):
+        response = client.post(
+            f"{KIRA}/chat",
+            json={"model_id": 1, "request": {"parts": [{"text": "hallo"}]}},
+        )
+
+    assert response.status_code == 500
+    body = response.json()
+    assert "error" not in body, "Google's envelope on the compatibility surface"
+    assert body["code"] == "INTERNAL_SERVER_ERROR"
+    assert body["message"]
+
+
+def test_a_gemini_failure_still_answers_in_googles_envelope() -> None:
+    """The other half of the same branch, so a fix on one surface cannot quietly move the other."""
+    app = create_app(GatewaySettings(auth_required=False, environment="local", log_queue_size=0))
+
+    async def boom(*args: object, **kwargs: object) -> str:
+        raise RuntimeError("an ordinary bug")
+
+    with (
+        mock.patch.object(gemini_routes, "_generate", boom),
+        TestClient(app, raise_server_exceptions=False) as client,
+    ):
+        response = client.post("/v1beta/models/mock-1:generateContent", json={})
+
+    assert response.status_code == 500
+    assert response.json()["error"]["status"] == "INTERNAL"
 
 
 def test_every_kira_route_renders_this_surfaces_envelope() -> None:

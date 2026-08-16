@@ -135,6 +135,27 @@ async def test_an_unusable_rewrite_blocks_rather_than_being_applied(answer: str,
         await _engine(_Redactor(answer=answer)).run(_pipeline(), _request())
 
 
+def test_the_allowance_grows_with_the_prompt_and_stops_somewhere() -> None:
+    """A rewrite is about as long as its input, so the allowance follows the prompt — and nothing
+    bounded it above.
+
+    At the 8 MiB request ceiling that asked a provider for roughly 1.5 million output tokens. Every
+    real vendor refuses that with a `400`, so the step failed and blocked, which is the safe
+    direction — but the caller was told a *provider* error where the honest answer is that the
+    prompt is larger than this gateway will redact. `MAX_REDACTION_OUTPUT_TOKENS` is well above any
+    model's own output cap, so a prompt this clips is one no model could rewrite whole anyway.
+    """
+    from aira_gateway.pipeline.classifiers import (
+        MAX_REDACTION_OUTPUT_TOKENS,
+        REDACTION_OUTPUT_HEADROOM,
+        _redaction_allowance,
+    )
+
+    assert _redaction_allowance("") == REDACTION_OUTPUT_HEADROOM, "headroom, so a short text fits"
+    assert _redaction_allowance("x" * 40_000) > REDACTION_OUTPUT_HEADROOM, "and it grows"
+    assert _redaction_allowance("x" * 8 * 1024 * 1024) == MAX_REDACTION_OUTPUT_TOKENS
+
+
 async def test_an_unreachable_redactor_blocks_too() -> None:
     with pytest.raises(PipelineRejected):
         await _engine(_Redactor(fails=True)).run(_pipeline(), _request())

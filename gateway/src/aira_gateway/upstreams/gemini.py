@@ -245,6 +245,10 @@ class GeminiUpstream:
         result: dict[str, Any] = response.json()
         return result
 
+    async def aclose(self) -> None:
+        """Close the connection pool this adapter owns (`ProviderRegistry.aclose`)."""
+        await self._client.aclose()
+
 
 def build_gemini_upstream(settings: GatewaySettings) -> GeminiUpstream | None:
     """Build the Gemini provider from settings, or None when no API key is configured.

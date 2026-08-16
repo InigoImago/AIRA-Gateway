@@ -12,6 +12,7 @@ An error is recoverable. A confident wrong answer is not.
 from __future__ import annotations
 
 import base64
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -382,10 +383,11 @@ async def test_the_reservation_counts_the_attachment() -> None:
         del client
         await _declare(app, "mock-1", **_READS_PDF)
 
-        class _Request:
-            app_ = app
-
-        request = type("R", (), {"app": app})()
+        # `app` **and** `state`: since 2026-08-15 the catalog is memoised for the life of one
+        # request and lives on `request.state` (`serving.catalog_of`), so a stand-in with only an
+        # `app` is a stand-in more limited than the thing it replaces — the trap `CLAUDE.md` names
+        # in the other direction. `SimpleNamespace` is the smallest thing that is not.
+        request = SimpleNamespace(app=app, state=SimpleNamespace())
         without = await estimate(request, model="mock-1", max_output_tokens=100)
         with_pdf = await estimate(
             request, model="mock-1", max_output_tokens=100, attachments=["application/pdf"]
