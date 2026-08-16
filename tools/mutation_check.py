@@ -3261,12 +3261,66 @@ MUTATIONS = [
     ),
     Mutation(
         "Q1",
-        "a model's standing is its latest run, never a total across every run",
+        "a standing is the latest run, never a total across every run",
         "management/backend/src/aira_management/apps/smoketests/views.py",
-        # Re-anchored 2026-08-09: the battery axis went away, so the ordering this points at is
-        # now over the model alone. A mutation whose anchor has moved protects nothing.
-        'order_by("model", "-started_at")',
-        'order_by("model", "started_at")',
+        # Re-anchored twice. 2026-08-09: the battery axis went away, so the ordering was over the
+        # model alone. 2026-08-16: `ADR-0020` made a run about a **use case**, so that is the axis
+        # a standing is per. The property has never changed — summing every run makes an old,
+        # since-corrected result drag the current one down forever.
+        'order_by("use_case", "-started_at")',
+        'order_by("use_case", "started_at")',
+        "management/backend/tests/test_smoketests.py",
+    ),
+    Mutation(
+        "Q1b",
+        "a run enters where the pipeline says, never where the caller says",
+        "management/backend/src/aira_management/apps/smoketests/views.py",
+        "        run = serializer.save(requested_by=self.request.user, model=start)",
+        "        run = serializer.save(requested_by=self.request.user)",
+        "management/backend/tests/test_smoketests.py",
+    ),
+    Mutation(
+        "Q1c",
+        "a run may only be started in a use case this caller may run, asked per object",
+        "management/backend/src/aira_management/apps/smoketests/views.py",
+        "        use_case = may_run_tests_queryset(\n"
+        "            self.request.user, UseCase.objects.filter(slug=slug)\n"
+        "        ).first()",
+        "        use_case = UseCase.objects.filter(slug=slug).first()",
+        "management/backend/tests/test_smoketests.py",
+    ),
+    Mutation(
+        "Q1d",
+        "a use case with no start model is refused by name rather than run against nothing",
+        "management/backend/src/aira_management/apps/smoketests/views.py",
+        '        if why_not:\n            raise ValidationError({"use_case": [why_not]})',
+        '        if False:\n            raise ValidationError({"use_case": [why_not]})',
+        "management/backend/tests/test_smoketests.py",
+    ),
+    Mutation(
+        "Q1e",
+        "a pipeline's declared start model is preferred over any guess",
+        "gateway/src/aira_gateway/api/pipeline.py",
+        '    declared = str(pipeline.get("start_model", "") or "").strip()\n'
+        "    if declared:\n"
+        "        return declared",
+        '    declared = ""',
+        "gateway/tests/test_pipeline_routes.py",
+    ),
+    Mutation(
+        "Q1f",
+        "running the catalogue takes administration of a use case, not membership of it",
+        "management/backend/src/aira_management/apps/usecases/access.py",
+        "    return get_objects_for_user(user, MANAGE, klass=reachable)",
+        "    return reachable",
+        "management/backend/tests/test_smoketests.py",
+    ),
+    Mutation(
+        "Q1g",
+        "an installation role is not a bypass of the gateway's acceptance",
+        "management/backend/src/aira_management/apps/usecases/access.py",
+        "    reachable = may_call_queryset(user, queryset)",
+        "    reachable = queryset",
         "management/backend/tests/test_smoketests.py",
     ),
     Mutation(

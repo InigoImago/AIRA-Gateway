@@ -71,7 +71,7 @@ status that goes stale in the copy nobody opens.
 | [501](FRD-501-anomaly-detection-engine.md) | The detection engine | 5 | ✅ Done |
 | [502](FRD-502-security-console-and-traces.md) | The IT Security console, own warnings, and per-use-case traces | 5 | ✅ Done |
 | [503](FRD-503-incident-response.md) | Incident response | 5 | ✅ Done |
-| [504](FRD-504-model-smoke-tests.md) | Model smoke tests for IT Security | 5 (IT Security) | ✅ Built |
+| [504](FRD-504-model-smoke-tests.md) | The question catalogue, put to a pipeline | 5 (IT Security) | ✅ Built |
 | [505](FRD-505-requests-and-prompts.md) | The requests view, and reading what was actually sent | 5 (IT Security) | ✅ Done |
 | [506](FRD-506-model-reachability.md) | Is this model reachable, or only written down? | 3 (catalog) | ✅ Done |
 | [507](FRD-507-catalog-import.md) | Importing what the adapters already serve | 6 | ✅ Built |

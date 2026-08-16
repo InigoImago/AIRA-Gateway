@@ -1,14 +1,23 @@
-"""The smoke-test API (`FRD-504`).
+"""The question-catalogue API (`FRD-504`, `ADR-0020`).
 
-Bounded by **role, not by use case**: the catalogue is a statement about a model, and a model is the
-installation's, not one team's. IT Security and Global Administrators — the same `INCIDENT_ROLES`
-that may stop traffic and author a global rule, because this is the same job.
+**Two different questions, asked separately, and conflating them is this file's oldest defect.**
+
+*Writing* the catalogue is bounded by role: it states what this installation considers an
+acceptable answer, which is the installation's statement and not one team's — Global Administrators
+and IT Security, the same people who author a global anomaly rule, because it is the same job.
+
+*Running* it is bounded per use case, by `access.may_run_tests_queryset`: the gateway would accept
+this caller for that use case **and** they administer it, or they hold one of the two installation
+roles. A normal use-case user may not (owner's rule, 2026-08-16) — a run spends the use case's
+budget a hundred prompts at a time and reads prompts §8 calls sensitive, which is a decision about
+the use case rather than work inside it.
 
 The run itself is driven by the **console**, which sends each prompt through the gateway with the
 signed-in person's own credentials and posts the answer back here. That is deliberate and it is
-`FRD-504` §5: a smoke test must travel the ordinary request path, or it measures a path nobody
-uses. It is priced, budgeted, rate-limited and audited exactly like any other traffic — which also
-means an installation can see what its own testing costs.
+`FRD-504` §5: a run must travel the ordinary request path, or it measures a path nobody uses. It is
+priced, budgeted, rate-limited and audited exactly like any other traffic, against the use case it
+is about — which also means an installation can see what its own testing costs, and see it in the
+place the cost belongs.
 """
 
 from __future__ import annotations
@@ -22,83 +31,88 @@ from django.http import HttpResponse
 from django.utils import timezone
 from rest_framework import viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 
-from aira_management.apps.catalog.models import Model
-from aira_management.apps.usecases.access import may_call_queryset
-from aira_management.apps.usecases.events import emit
+from aira_management.apps.usecases.access import may_run_tests_queryset
 from aira_management.apps.usecases.models import UseCase
-from aira_management.apps.usecases.views import _snapshot as usecase_snapshot
-from aira_management.rbac import IsITSecurity, MayTestModels
+from aira_management.rbac import IsITSecurity, MayRunTests
 
-from .models import SMOKE_TEST_USE_CASE, TestCase, TestResult, TestRun, Verdict
+from .models import TestCase, TestResult, TestRun, Verdict
 from .serializers import (
     TestCaseSerializer,
     TestResultSerializer,
     TestRunSerializer,
 )
 
+#: Why a use case cannot be run, in the words the console shows. One place, because the same three
+#: sentences are the API's refusal and the screen's explanation, and a second copy is a second
+#: wording for one rule.
+NO_PIPELINE = (
+    "This use case has no pipeline, so there is nothing to put the questions to. Build one on the "
+    "use case's Pipeline tab and give it a start model."
+)
+NO_START_MODEL = (
+    "This use case's pipeline has no start model, so a run has nowhere to begin. A request "
+    "normally names its own model; the catalogue does not, so the pipeline has to say where it "
+    "enters. Set it on the use case's Pipeline tab."
+)
+
+
+def _runnable(use_case: UseCase) -> tuple[str, str]:
+    """``(start_model, why_not)`` for one use case — exactly one of the two is set.
+
+    Asked here rather than in the console, for the reason `FRD-206` keeps arriving at: a screen
+    that decides for itself offers a button the server refuses. The console shows `why_not` where
+    it would otherwise show Run.
+    """
+    config = getattr(use_case, "pipeline", None)
+    if config is None:
+        return "", NO_PIPELINE
+    start = str(config.start_model or "").strip()
+    return (start, "") if start else ("", NO_START_MODEL)
+
 
 class TestAttributionViewSet(viewsets.ViewSet):
-    """Where a run is booked, and whether this caller may book one.
+    """**Where the catalogue can be run**, and where it cannot and why (`ADR-0020`).
 
-    **One server answer, so the slug is written once.** The console needs three facts before it can
-    offer a Run button — which use case, whether it exists, and whether the gateway will accept this
-    caller for it — and all three are the server's to know. A console that held the slug itself
-    would go silently wrong the day the seed renamed it, and a console that decided the third fact
-    from a membership list would repeat the defect this endpoint exists because of: on 2026-08-09 it
-    asked Management's `is_member`, which grants a global admin everything, and every question of a
-    run came back `Not a member of use case 'addr-1nn4ss'`.
+    This used to answer one question about one seeded use case, because there was one place every
+    run was attributed to. A run now names the use case whose pipeline it exercises, so the
+    question became "which of my use cases can I put this to" — and the three facts the console
+    needs per use case are all the server's:
 
-    `may_call` is the **gateway's** rule (`may_call_queryset` → `aira_common.access.resolve`), not
-    visibility and not administration.
+    - may this caller **run** it (`may_run_tests_queryset`): would the gateway accept them for it
+      — not Management's visibility, a distinction that cost every question of a run a
+      `Not a member of use case …` on 2026-08-09 — *and* do they administer it or answer for the
+      installation;
+    - does it have a pipeline with a **start model**, which is where a run begins;
+    - if not, **why not**, in a sentence naming what to do about it.
+
+    A console that worked any of these out for itself would offer a Run button the server refuses,
+    which is `FRD-206`'s defect and the reason this endpoint exists at all.
     """
 
-    permission_classes = [IsAuthenticated, MayTestModels]
+    permission_classes = [IsAuthenticated, MayRunTests]
 
     def list(self, request: Request) -> Response:
-        use_case = UseCase.objects.filter(slug=SMOKE_TEST_USE_CASE).first()
-        may_call = (
-            use_case is not None
-            and may_call_queryset(request.user, UseCase.objects.filter(pk=use_case.pk)).exists()
+        callable_ones = may_run_tests_queryset(request.user, UseCase.objects.all()).select_related(
+            "pipeline"
         )
-        return Response(
-            {
-                "use_case": SMOKE_TEST_USE_CASE,
-                "name": use_case.name if use_case else "",
-                "exists": use_case is not None,
-                "may_call": may_call,
-            }
-        )
-
-
-def _release_for_testing(model: str) -> None:
-    """Let the smoke-test use case call the model somebody just asked it to test (`FRD-308`).
-
-    Since a use case may only call the models released to it, the testing use case would otherwise
-    be refused every model that was approved after it was seeded — and the refusal would arrive as
-    a run of failures that read as the *model* being broken, which is the opposite of what a smoke
-    test is for.
-
-    Written as a release rather than exempting this use case from the rule, and the difference
-    matters: an exemption is a hole that no longer shows up anywhere, while this leaves a row, an
-    event and a visible entry on the use case's own panel. Starting a smoke test **is** a decision
-    to let that model be called there, taken by somebody `MayTestModels` has already checked.
-
-    Only an approved model — the outer gate is not this function's to open — and silent when there
-    is nothing to release, because a run against an uncatalogued model is refused by name at the
-    gateway and that message is the better one.
-    """
-    use_case = UseCase.objects.filter(slug=SMOKE_TEST_USE_CASE).first()
-    declaration = Model.objects.filter(name=model, approved=True).first()
-    if use_case is None or declaration is None:
-        return
-    if use_case.allowed_models.filter(pk=declaration.pk).exists():
-        return
-    use_case.allowed_models.add(declaration)
-    emit("usecase.upserted", usecase_snapshot(use_case))
+        rows = []
+        for use_case in callable_ones.order_by("name", "slug"):
+            start, why_not = _runnable(use_case)
+            rows.append(
+                {
+                    "use_case": use_case.slug,
+                    "name": use_case.name,
+                    "start_model": start,
+                    "may_run": not why_not,
+                    "why_not": why_not,
+                }
+            )
+        return Response(rows)
 
 
 class TestCaseViewSet(viewsets.ModelViewSet[TestCase]):
@@ -111,26 +125,44 @@ class TestCaseViewSet(viewsets.ModelViewSet[TestCase]):
 
     def get_permissions(self) -> list[Any]:
         if self.request.method in ("GET", "HEAD", "OPTIONS"):
-            return [IsAuthenticated(), MayTestModels()]
+            return [IsAuthenticated(), MayRunTests()]
         return [IsAuthenticated(), IsITSecurity()]
 
 
 class TestRunViewSet(viewsets.ModelViewSet[TestRun]):
-    """Running the catalogue is **making requests**, so whoever may call a model may test one.
+    """Running the catalogue is **making requests**, in a use case one administers.
 
-    Narrowing this to the incident roles was the first design and it did not survive contact:
-    running a run needs an incident role *and* membership of a use case to attribute the traffic
-    to — and IT Security is deliberately a member of nothing (`ADR-0007`). No seeded user could do
-    both, which is the clearest possible sign that the two requirements were not the same
-    requirement. Authoring the **catalogue** stays with IT Security; running it is ordinary work.
+    Narrowing this to the incident roles *alone* was the first design and it did not survive
+    contact: a run needs a use case to attribute its traffic to, and IT Security is deliberately a
+    member of nothing (`ADR-0007`), so no seeded user could do both. Widening it to every member
+    was the correction and it went one step too far — it handed a hundred prompts and the budget
+    they spend to anybody who could send one. The rule that holds both facts is
+    `may_run_tests_queryset`: the gateway's acceptance **and** administration of that use case, or
+    an installation role.
+
+    **A run is somebody's traffic, so it is only readable by somebody who could have started it**
+    (`ADR-0020`). It used to be one shared use case and the list was unscoped, which was defensible
+    while every run was about a model the whole installation had approved. A run now carries a use
+    case's own answers — what its filter caught, what its redactor rewrote — and that is that use
+    case's business.
     """
 
     serializer_class = TestRunSerializer
-    permission_classes = [IsAuthenticated, MayTestModels]
+    permission_classes = [IsAuthenticated, MayRunTests]
     http_method_names = ["get", "post", "delete", "head", "options"]
 
     def get_queryset(self) -> QuerySet[TestRun]:
-        runs = TestRun.objects.prefetch_related("results")
+        runs = TestRun.objects.prefetch_related("results").filter(
+            use_case__in=may_run_tests_queryset(
+                self.request.user, UseCase.objects.all()
+            ).values_list("slug", flat=True)
+        )
+        use_case = self.request.query_params.get("use_case", "")
+        if use_case:
+            runs = runs.filter(use_case=use_case)
+        # `?model=` still narrows, and still means the model a run **entered** at. Kept because the
+        # question "how has this model behaved over time" is a real one and the answer is the runs
+        # of every use case whose pipeline started there.
         model = self.request.query_params.get("model", "")
         return runs.filter(model=model) if model else runs
 
@@ -140,11 +172,52 @@ class TestRunViewSet(viewsets.ModelViewSet[TestRun]):
         The rows exist **before** the first prompt is sent, so a run that is interrupted halfway
         shows what it did not get to rather than looking complete and short.
         """
-        run = serializer.save(requested_by=self.request.user)
-        _release_for_testing(run.model)
+        use_case = self._use_case_the_caller_may_run(serializer.validated_data.get("use_case", ""))
+        start, why_not = _runnable(use_case)
+        if why_not:
+            raise ValidationError({"use_case": [why_not]})
+        # **The pipeline's start model, never the caller's.** A run enters where the pipeline says
+        # it enters; asking the caller would be asking them to predict a decision the pipeline
+        # makes, and a model the use case has not been released is refused at dispatch anyway
+        # (`FRD-308`). Recorded on the row because a start model can change between two runs and
+        # the older one is still evidence about the configuration it actually met.
+        run = serializer.save(requested_by=self.request.user, model=start)
         TestResult.objects.bulk_create(
             TestResult(run=run, case=case) for case in TestCase.objects.filter(retired=False)
         )
+
+    def _use_case_the_caller_may_run(self, slug: str) -> UseCase:
+        """The use case this run is about, or a refusal.
+
+        Asked **per object**, not once at the door: `MayRunTests` answers "is there any use case
+        this person could run", which is the right question for showing a screen and the wrong one
+        for starting a run. A caller who administers one use case would otherwise pass the class
+        permission and then name somebody else's slug.
+
+        The rule includes the gateway's own — not Management's visibility — because the run's
+        traffic is sent with this caller's credentials. An oversight role sees every use case and
+        may call none (`ADR-0007`), and offering them a run that fails on its first question is the
+        `FRD-206` defect this endpoint's sibling exists to prevent.
+        """
+        if not slug:
+            raise ValidationError(
+                {"use_case": ["Name the use case whose pipeline to put the catalogue to."]}
+            )
+        use_case = may_run_tests_queryset(
+            self.request.user, UseCase.objects.filter(slug=slug)
+        ).first()
+        if use_case is None:
+            # One answer for "no such use case" and "not yours to call". Telling them apart would
+            # confirm a use case exists to somebody who may not reach it.
+            raise ValidationError(
+                {
+                    "use_case": [
+                        f"'{slug}' is not a use case you may run the catalogue in. Running it "
+                        "needs administration of the use case, not membership of it."
+                    ]
+                }
+            )
+        return use_case
 
     @action(detail=True, methods=["get"])
     def results(self, request: Request, pk: str | None = None) -> Response:
@@ -213,10 +286,23 @@ class TestRunViewSet(viewsets.ModelViewSet[TestRun]):
 
 
 class TestResultViewSet(viewsets.ModelViewSet[TestResult]):
-    queryset = TestResult.objects.select_related("case", "run", "rated_by").all()
+    """One answer, and the verdict somebody gave it.
+
+    Scoped to the runs this caller could have started, for the reason `TestRunViewSet` gives: a
+    result now carries a use case's own answers, including whatever its redactor rewrote — and the
+    question it answers, which §8 calls sensitive because it states what we test for.
+    """
+
     serializer_class = TestResultSerializer
-    permission_classes = [IsAuthenticated, MayTestModels]
+    permission_classes = [IsAuthenticated, MayRunTests]
     http_method_names = ["get", "patch", "head", "options"]
+
+    def get_queryset(self) -> QuerySet[TestResult]:
+        return TestResult.objects.select_related("case", "run", "rated_by").filter(
+            run__use_case__in=may_run_tests_queryset(
+                self.request.user, UseCase.objects.all()
+            ).values_list("slug", flat=True)
+        )
 
     def perform_update(self, serializer: Any) -> None:
         """Store an answer, or a verdict, or both.
@@ -232,30 +318,44 @@ class TestResultViewSet(viewsets.ModelViewSet[TestResult]):
 
 
 class TestStatsViewSet(viewsets.ViewSet):
-    """**The latest run per model**, and deliberately not a total across all of them.
+    """**The latest run per use case**, and deliberately not a total across all of them.
 
-    The point of a standardised catalogue is comparing models against the *same* questions — so the
-    figure that answers "how does this model do" is its **most recent** run, not an average over
-    every run it has ever had. Summing them makes an old, worse result drag a corrected one down
+    The point of a standardised catalogue is comparing things against the *same* questions — so the
+    figure that answers "how does this stand" is the **most recent** run, not an average over every
+    run there has ever been. Summing them makes an old, worse result drag a corrected one down
     forever, and makes the number move when somebody re-runs something unrelated. That was the
     first version and it was wrong: it answered a question nobody asked.
 
-    One row per model, because there is one catalogue. The first version grouped questions into
-    batteries and reported a row per model *and battery*, so "how does this model do" had
-    as many answers as there were groups and none of them compared to a model asked a different
-    group.
+    **Per use case since `ADR-0020`**, because that is what a run is now about: the standing of a
+    pipeline, not of a model. One row per use case, with the **start model that run entered at**
+    named on it — a pipeline's start model can be changed between two runs, and a row that hid it
+    would compare two configurations as though they were one.
+
+    A model's standing is then the standing of a use case whose pipeline starts there, which is
+    what IT Security's evaluation use case is for. That is a real loss of directness and it buys
+    the thing that was missing: a use-case administrator can ask the same question about their own
+    pipeline, and the two answers are comparable because the questions are the same.
     """
 
-    permission_classes = [IsAuthenticated, MayTestModels]
+    permission_classes = [IsAuthenticated, MayRunTests]
 
     def list(self, request: Request) -> Response:
+        # Only what this caller may actually run. A standing is about traffic somebody may send;
+        # showing a use case they cannot run would be an entry in a table with no action behind it,
+        # which is the shape `FRD-206` names.
+        visible = set(
+            may_run_tests_queryset(request.user, UseCase.objects.all()).values_list(
+                "slug", flat=True
+            )
+        )
         latest: dict[str, TestRun] = {}
-        for run in TestRun.objects.order_by("model", "-started_at"):
-            latest.setdefault(run.model, run)
+        for run in TestRun.objects.order_by("use_case", "-started_at"):
+            if run.use_case in visible:
+                latest.setdefault(run.use_case, run)
 
         rows = []
         asked = TestCase.objects.filter(retired=False).count()
-        for model, run in sorted(latest.items()):
+        for use_case, run in sorted(latest.items()):
             counts = {"total": 0, "unrated": 0, "pass": 0, "fail": 0, "unclear": 0, "errored": 0}
             for result in run.results.all():
                 counts["total"] += 1
@@ -264,14 +364,18 @@ class TestStatsViewSet(viewsets.ViewSet):
                     counts["errored"] += 1
             rows.append(
                 {
-                    "model": model,
+                    "use_case": use_case,
+                    # What that run entered the pipeline at. Named rather than implied: two runs of
+                    # one use case whose start model changed in between are not comparable, and the
+                    # row has to let a reader see that rather than average over it.
+                    "model": run.model,
                     "run": run.id,
                     "started_at": run.started_at.isoformat(),
                     "requested_by": getattr(run.requested_by, "username", "") or "",
                     # How many questions the catalogue asks *today*. A run made before questions
                     # were added answered fewer, and saying so is the difference between "this
-                    # model scored 40" and "this model scored 40 out of a catalogue that has since
-                    # grown to 100".
+                    # scored 40" and "this scored 40 out of a catalogue that has since grown to
+                    # 100".
                     "catalogue": asked,
                     **counts,
                 }

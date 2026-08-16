@@ -127,9 +127,13 @@ Complete, and honest about what is not there. Anything unbuilt is in
   a reason; it is read at the one pre-dispatch gate and kept after being lifted.
 - **Per-use-case retention** for stored prompts, seven days by default, with payload storage
   switchable per use case and a kill switch above it.
-- **Model tests.** A standing catalogue of 100 questions every model is asked, answers judged by a
-  person whose name the verdict carries, and a standing per model that is its **latest** run — not
-  an average that an old, since-corrected result drags down forever. CSV export for the numbers.
+- **Pipeline tests.** A standing catalogue of 100 questions, kept by Global Administrators and IT
+  Security and put to **a use case's own pipeline** by whoever administers it — so the answers say
+  whether the filter, the router and the redactor somebody configured hold up, and a blocked
+  question is a result rather than a broken run. Answers are judged by a person whose name the verdict carries, and a use
+  case's standing is its **latest** run, not an average an old, since-corrected result drags down
+  forever. Testing a *model* is simply a use case whose pipeline starts at it. CSV export for the
+  numbers.
 - **Tracing** with `aira.*` span attributes, and a trace id on every response.
 
 ---

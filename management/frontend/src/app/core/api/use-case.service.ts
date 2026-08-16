@@ -55,8 +55,9 @@ export class UseCaseService {
    * happening on every load, which is the part that actually takes seconds.
    */
   /** Where a smoke-test run is booked, and whether this caller may book one. */
-  testAttribution(): Observable<TestAttribution> {
-    return this.http.get<TestAttribution>('/api/v1/test-attribution/');
+  /** Which use cases this caller may put the catalogue to, and why not where they may not. */
+  testAttribution(): Observable<TestAttribution[]> {
+    return this.http.get<TestAttribution[]>('/api/v1/test-attribution/');
   }
 
   listPage(query: string, page: number): Observable<Page<UseCase>> {
@@ -379,17 +380,21 @@ export class UseCaseService {
     return this.http.get<TestCase[]>('/api/v1/test-cases/');
   }
 
-  testRuns(model?: string): Observable<TestRun[]> {
+  testRuns(useCase?: string): Observable<TestRun[]> {
     const params: Record<string, string> = {};
-    if (model) params['model'] = model;
+    if (useCase) params['use_case'] = useCase;
     return this.http.get<TestRun[]>('/api/v1/test-runs/', { params });
   }
 
-  startRun(model: string, useCase: string): Observable<TestRun> {
-    return this.http.post<TestRun>('/api/v1/test-runs/', {
-      model,
-      use_case: useCase,
-    });
+  /**
+   * Start a run against a use case's pipeline (`ADR-0020`).
+   *
+   * **No model.** A run enters where the pipeline says it enters, and asking the caller for one
+   * would be asking them to predict a decision the pipeline makes — the server fills it in from
+   * the use case's `start_model` and records it on the run.
+   */
+  startRun(useCase: string): Observable<TestRun> {
+    return this.http.post<TestRun>('/api/v1/test-runs/', { use_case: useCase });
   }
 
   runResults(runId: number): Observable<TestResult[]> {

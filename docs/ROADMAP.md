@@ -102,10 +102,13 @@ Deliverables:
   showing a payload still waits on `FRD-406`.
 - **Incident response** engine: configurable **throttle / alert / block** per rule.
 
-- **Model smoke tests and jailbreak batteries** — `FRD-504`, written 2026-08-06: evidence about how
-  the *models* behave, run through the gateway's own path in two modes (through the pipeline: does
-  our filter catch it; direct: does the model resist it). Reports a **rate over repeated attempts**,
-  never a verdict, because a model that refuses nine times out of ten is the finding.
+- **The question catalogue** — `FRD-504`, written 2026-08-06 as model smoke tests and jailbreak
+  batteries; **built**, and since `ADR-0020` (2026-08-16) a run is put to a **use case's own
+  pipeline** rather than to a model. The two modes the draft asked for are one mechanism: run it
+  against a filtering pipeline and you measure the filter, against a bare one and you measure the
+  model. Testing a model is a use case whose pipeline starts at it. Still outstanding from the
+  draft: a **rate over repeated attempts** rather than a single answer, because a model that
+  refuses nine times out of ten is the finding.
 
 FRDs: `FRD-500-anomaly-rules`, `FRD-501-anomaly-detection-engine`,
 [`FRD-502`](features/FRD-502-security-console-and-traces.md),

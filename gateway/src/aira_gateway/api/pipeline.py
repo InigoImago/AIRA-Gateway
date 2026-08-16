@@ -70,11 +70,14 @@ class DryRunRequest(BaseModel):
 def models_named_in(pipeline: dict[str, Any]) -> list[str]:
     """Every model this pipeline could reach, wherever it is written.
 
-    Collected in one place because the release check has to see **all** of them: the classifier a
-    filter runs, the classifier a router runs, each category's target, the default target, and the
-    fallback chain. A check that read one of those would refuse the obvious escape and leave four.
+    Collected in one place because the release check has to see **all** of them: where a request
+    enters (`ADR-0020`), the classifier a filter runs, the classifier a router runs, each
+    category's target, the default target, and the fallback chain. A check that read one of those
+    would refuse the obvious escape and leave five.
     """
     named: list[str] = []
+    if pipeline.get("start_model"):
+        named.append(str(pipeline["start_model"]))
     for step in pipeline.get("steps") or []:
         config = (step.get("config") or {}) if isinstance(step, dict) else {}
         if config.get("model"):
@@ -93,12 +96,18 @@ def _model_the_pipeline_is_about(
 ) -> str:
     """Which model to simulate when the caller named none.
 
+    **Declared first, since `ADR-0020`.** A pipeline now says where a request enters it, and
+    everything below this line is a guess — three of them, each wrong in production and each
+    reported back as `effective_model`, where a builder reads it as a decision somebody made. The
+    guesses stay for a pipeline that declares nothing, because a wrong model named is more use to
+    a builder than none at all, but they are no longer the first answer.
+
     The first *registered* model was the obvious choice and the wrong one: a builder testing a
     rule about `qwen3:0.6b` was answered with a refusal about `mock-1`, a model the operator never
     chose, on a rule that was working correctly. The dry run looked broken while the pipeline was
     fine.
 
-    So the pipeline's own configuration is asked first. A step that names a model is a step saying
+    So the pipeline's own configuration is asked next. A step that names a model is a step saying
     which models this pipeline is *for*.
 
     The `models` list of the old `allow_check` step used to be read here too. That branch went
@@ -106,6 +115,9 @@ def _model_the_pipeline_is_about(
     never match is a rule the code claims and does not have — the same unreachable guard
     `parse_role_groups` had to lose.
     """
+    declared = str(pipeline.get("start_model", "") or "").strip()
+    if declared:
+        return declared
     steps = pipeline.get("steps") or []
     for step in steps:
         config = step.get("config") or {}

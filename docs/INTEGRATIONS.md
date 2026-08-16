@@ -499,17 +499,32 @@ a rule is a hypothesis until somebody has watched it be right, and a detection s
 wrongly once is switched off forever. **`REQUIRE_USE_CASE` last** — turning it on before every
 caller is migrated refuses traffic that used to work.
 
-### A group for model testing
+### Groups for the question catalogue
 
-Model tests (`FRD-504`) are booked to a dedicated use case, `smoke-test`, which the seed creates.
-Because AIRA never writes to your directory, whoever may test a model must be able to *call* that
-use case, and the gateway decides that from the groups their token carries:
+The catalogue (`FRD-504`) is run **against a use case's own pipeline**, and a run is that use
+case's traffic. Two things have to be true of the person running it (`ADR-0020`), and the first is
+the one people look for a setting for:
 
-- Create a group whose path is **`/use-cases/smoke-test`** (or grant an existing group to that use
-  case in the console, which works the same way).
-- Put the people who may test models in it — by default Global Administrators, IT Security and
-  use-case administrators.
+1. **The gateway would accept them for the use case** — decided from the groups their token
+   carries, exactly as for an ordinary API request.
+2. **They administer that use case**, or they are a Global Administrator or IT Security. A plain
+   use-case *user* may call the use case all day and may not put a hundred questions to it: that
+   spends the use case's budget and reads a catalogue stating what this installation tests for.
 
-Without it the console does not offer a Run button and says why. Seeing every use case is
-deliberately not the same as being able to call one (`ADR-0007`), so an oversight role does **not**
-get this by virtue of its role.
+Three consequences worth knowing before you look for a missing setting:
+
+- **Seeing a use case is not calling one** (`ADR-0007`). An oversight role sees every use case and
+  is offered a Run button for none of them, by design — create a group whose path is
+  `/use-cases/<slug>`, or grant an existing group to that use case in the console, which works the
+  same way.
+- **Calling one is not administering one.** Administration comes from a group grant or a membership
+  with the `admin` role, both set in the console; the token carries no notion of it. Somebody who
+  should be able to test their own pipeline and cannot is almost always a `user` where they should
+  be an `admin`.
+- **A use case whose pipeline declares no start model cannot be run**, because there is nowhere for
+  the questions to enter. The console says exactly that rather than disabling the button silently.
+
+The seed creates one use case named `smoke-test` for IT Security's **model** evaluation — a
+released model and a pipeline that starts there. It is an ordinary use case in every respect and
+the application does not branch on it; to evaluate another model, make another use case the same
+way. Its group is `/use-cases/smoke-test`.

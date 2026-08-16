@@ -46,7 +46,12 @@ test.describe('Window actions', () => {
     await page.goto('/use-cases/kundenservice?tab=rate-limits');
     await page.getByTestId('add-rate-limit').click();
 
-    const warning = page.getByTestId('rl-two-pots');
+    // Scoped to the window that was just opened, not to the page. The same note is printed beside
+    // an **existing** per-head limit (that is the point of the sibling test below), so on a use
+    // case that already has one an unqualified locator resolves to two elements and Playwright's
+    // strict mode fails on the ambiguity rather than on the behaviour. `LESSONS.md` §7: an
+    // unqualified role query is a query about a page that has one of something.
+    const warning = page.getByTestId('rate-limit-editor').getByTestId('rl-two-pots');
     await expect(warning).toBeHidden();
 
     await page.getByLabel('Applies to').selectOption('each_member');
@@ -67,7 +72,7 @@ test.describe('Window actions', () => {
     await page.goto('/use-cases/kundenservice?tab=budgets');
     await page.getByTestId('add-budget').click();
     await page.getByLabel('Applies to').selectOption('each_member');
-    await expect(page.getByTestId('budget-two-pots')).toBeVisible();
+    await expect(page.getByTestId('budget-editor').getByTestId('budget-two-pots')).toBeVisible();
   });
 
   /**

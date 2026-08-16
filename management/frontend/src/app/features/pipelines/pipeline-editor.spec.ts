@@ -24,6 +24,7 @@ interface Editor {
   selectedIndex: () => number;
   summarize: (step: { type: string; config: Record<string, unknown> }) => string;
   actionClass: (action: string) => string;
+  setStartModel: (model: string) => void;
   setFallback: (csv: string) => void;
   setListField: (index: number, key: string, value: string) => void;
   addCategory: (index: number) => void;
@@ -69,7 +70,18 @@ interface Options {
   released?: string[];
 }
 
-function setup(initial: PipelineConfig, options: Options = {}) {
+/**
+ * The pipeline as the server sends it. `start_model` is filled in here rather than at every call
+ * site because it is **always present on the wire** — the GET returns it even for a use case with
+ * no saved pipeline (`ADR-0020`) — so making it optional in the interface would be a lie about the
+ * response, and repeating it in forty literals would be forty places to forget it.
+ */
+function config(initial: Partial<PipelineConfig>): PipelineConfig {
+  return { steps: [], fallback_models: [], start_model: '', ...initial };
+}
+
+function setup(given: Partial<PipelineConfig>, options: Options = {}) {
+  const initial = config(given);
   TestBed.resetTestingModule();
   let saved: PipelineConfig | null = null;
   let dryRunPayload: { use_case: string } | null = null;
@@ -270,6 +282,47 @@ describe('PipelineEditor', () => {
 
   // ---- inspector editing -----------------------------------------------------------
 
+  it('offers the released models as the start model, and saves the choice', () => {
+    /** Where a request **enters** this pipeline when the caller names none (`ADR-0020`).
+     *
+     *  Offered from the released models rather than typed, like the fallback chain and every
+     *  category target: a name that is not released is refused when the pipeline is saved, and a
+     *  picker that offers only what will be accepted is `FRD-206`'s rule applied to a text box. */
+    const { component, fixture, getSaved } = setup({}, { released: ['strong-1', 'cheap-1'] });
+
+    const options = Array.from(
+      (fixture.nativeElement as HTMLElement).querySelectorAll('.node--start option'),
+      (option) => option.textContent?.trim() ?? '',
+    );
+    component.setStartModel('strong-1');
+    component.save();
+
+    // Sorted, unlike the fallback chain — a chain is tried in the order it is written, so its
+    // picker preserves order; this one chooses a single model and alphabetical is what a reader
+    // scans fastest.
+    expect(options).toEqual(['— none —', 'cheap-1', 'strong-1']);
+    expect(getSaved()?.start_model).toBe('strong-1');
+  });
+
+  it('says what an empty start model costs, rather than only leaving it blank', () => {
+    /** Blank is a real choice — most pipelines are only entered by a caller who names their own
+     *  model, which is every ordinary API request. What it costs is the question catalogue, and a
+     *  reader has no way to know that unless the screen says so. */
+    const { fixture } = setup({ start_model: '' });
+    const text = (fixture.nativeElement as HTMLElement).textContent ?? '';
+
+    expect(text).toContain('question');
+    expect(text).toContain('cannot be run');
+  });
+
+  it('shows where a request enters once one is set', () => {
+    const { fixture } = setup({ start_model: 'strong-1' }, { released: ['strong-1'] });
+    const started = (fixture.nativeElement as HTMLElement).querySelector('.node--start');
+
+    expect(started?.textContent).toContain('Enters at');
+    expect(started?.textContent).toContain('strong-1');
+  });
+
   it('edits the fallback chain and a step list from comma-separated input', () => {
     const { component } = setup({
       steps: [{ type: 'injection_filter', config: {} }],
@@ -388,7 +441,7 @@ describe('PipelineEditor', () => {
     expect(text()).toContain('Prompt-injection filter blocked the request.');
   });
 
-  it('explains every outcome a step can reach, in that step\'s own vocabulary', () => {
+  it("explains every outcome a step can reach, in that step's own vocabulary", () => {
     // One sentence per (type, action), and they are **not** interchangeable: `model` means the
     // model in use for a router and the model *asked* for a redactor, so a screen that dumped the
     // detail map would make a reader learn which. This is the whole reason `describe` is written

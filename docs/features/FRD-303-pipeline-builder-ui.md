@@ -14,6 +14,13 @@ the gateway (FRD-300/303 backend).
   `savePipeline`.
 - Graph column: endpoint/step/dispatch/fallback nodes with connectors; selected-node highlight;
   per-step up/down/remove; add-step buttons per type.
+- **Start model** (`ADR-0020`, 2026-08-16): a dropdown over the released models, offered on the
+  `Request in` node because that is what it is about — where a request *enters* when the caller
+  names none. It is not a step, so it is not in the step list; it is drawn on the entry node so the
+  graph reads as the request's path rather than hiding a decision in a form below it. `— none —` is
+  a real choice and the one every pipeline written before today is in: it means only a caller who
+  names a model ever enters here. The consequence is stated where it bites — the question catalogue
+  (`FRD-504`) cannot run against the use case, and its screen says so.
 - Inspector (right, sticky) per step type:
   - `injection_filter`: mode (heuristic|llm), on-detection (block|flag), optional classifier model.
   - `model_route`: ordered rules (`under chars` + target model), add/remove.

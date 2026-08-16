@@ -30,10 +30,14 @@ export const routes: Routes = [
     loadComponent: () => import('./features/requests/requests-page').then((m) => m.RequestsPage),
   },
   {
-    path: 'model-tests',
+    path: 'pipeline-tests',
     canActivate: [authGuard],
     loadComponent: () => import('./features/smoketests/smoke-tests').then((m) => m.SmokeTests),
   },
+  // The screen was "model tests" until `ADR-0020` made a run about a use case's pipeline. The old
+  // path stays as a redirect rather than being deleted: it is in people's bookmarks and in the
+  // documentation, and a 404 for a screen that moved teaches a reader that the console is unstable.
+  { path: 'model-tests', redirectTo: 'pipeline-tests', pathMatch: 'full' },
   {
     path: 'security',
     canActivate: [authGuard],

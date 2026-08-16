@@ -245,6 +245,21 @@ reading code.
   difference; agreeing with the database should be free.
 - **An ambiguous routing table refuses to boot.** With three adapters, last-registration-wins is a
   silent choice of region and credential.
+- **A feature that must edit a governance decision to work is fighting the model it is built on.**
+  The question catalogue asked the caller for a model, `FRD-308` then refused it because the use
+  case had never been released that model, so the runner wrote `allowed_models` on the way past
+  (`_release_for_testing`). A review flagged the *role set* allowed to do it, which was never the
+  problem: the write itself was the defect, and it was a symptom of the feature owning the wrong
+  subject. The fix was not a narrower permission but asking what a run is *about* — a use case, whose
+  pipeline decides the model (`ADR-0020`) — after which nothing needed writing at all. When a
+  feature reaches around a rule another layer owns, suspect the feature's subject before its
+  permissions.
+- **A class permission guards the door; an object permission guards the room.** `MayRunTests`
+  answers *"is there any use case this person could run"* — the right question for offering a
+  screen, and the wrong one for starting a run, because an administrator of one use case passes it
+  and can then name somebody else's slug. Every endpoint asks again, per object. The composition is
+  also guarded per half (`Q1f`, `Q1g`): a rule made of two necessary conditions and tested only as
+  a whole is a rule that can quietly lose one.
 
 ---
 
@@ -261,7 +276,12 @@ reading code.
   request.
 - **A control that starts a request must survive that request.** A search box inside the `@else` of
   `@if (loading())` tears itself down on the second keystroke.
-- **Unknown is never rendered as zero**, and every figure says what it counts.
+- **Unknown is never rendered as zero**, and every figure says what it counts. The variety that
+  costs most is a sentence about somebody's **access**: the Runs panel branched on an empty list
+  that every load starts in, so until the answer arrived it told every reader *"there is no use
+  case you may send requests to"* — including the readers for whom that is false, who would go and
+  ask to be added to a group they are already in. A figure shown early is wrong for a moment; a
+  statement about permission shown early sends somebody somewhere.
 - **A live view must stop, be visible, and never stack** — those are the three ways a polling view
   fails.
 - **Cursor paging over an appending table.** An offset page shows one row twice and misses another
@@ -294,12 +314,27 @@ reading code.
   *measured*, not because the scope was wrong. Four of these were found by the harness in one
   session, two of them in tests written minutes earlier.
 - **A unit test that reads the developer's machine is a test about that machine** — a `.env` on
-  disk, a stack that happens to be running, a Redis holding last run's bucket.
+  disk, a stack that happens to be running, a Redis holding last run's bucket. *That last one is
+  not hypothetical:* `redis_url` defaults to the address `make up` publishes, so the hermetic
+  gateway suite shared a **durable** bucket store with the developer and with its own earlier runs,
+  and a rate-limit test was refused its first request. Green in CI, which has no Redis, and green
+  on a machine with the stack down — so it took the mutation harness's **red baseline** to report
+  it, which is the report that says nothing at all. **Make the hermetic layer hermetic by
+  construction**, in a fixture, and guard the fixture with a test: one that does nothing visible is
+  the kind that gets tidied away.
 - **A harness that configures a service differently from production tests a different service.**
 - **Assert behaviour, not wire bodies**, and never assert the *model's* answer — that tests the
   model and flakes.
 - **A test whose verdict turns on how fast something answered is measuring the machine.** A refill
   rate half a second wide is a coin toss under load.
+- **A comparison that answers the same for both sides proves neither.** A test written as *"the
+  administrator may, the plain member may not"* read "may not" for both — twice, and for two
+  different reasons: `option[value=…]` asks about the attribute where Angular's `[value]` binding
+  sets the property, and a `count()` after `goto` samples a page that has not rendered. Both look
+  exactly like the rule working. **Assert that the positive half is positive**, in the same test,
+  or a comparison degenerates into a tautology the moment its locator stops matching. And when the
+  two sides are two people, **log the first one out**: an SSO session hands the second login back
+  to the first user, and the test would pass the day the rule broke.
 - **`count()` is a sample, not a wait.** Three instances: a helper that branched on it chose a
   selector that could never match and waited 45 s for it; a panel asserted "says neither" while its
   data was still arriving; a heading that renders before the list under it. Wait for the thing —
@@ -307,8 +342,16 @@ reading code.
 - **An unqualified role query is a query about a page that has one of something.** Opening a
   disclosure put a second tab strip on the page and `getByRole('tabpanel')` became ambiguous. Name
   what you mean.
+- **An FRD that names its own gap is not a test.** `FRD-504` §5.3 specified two modes and called
+  the unbuilt one *"the first honest measurement we would have of whether the injection filter earns
+  its place"*. One mode shipped; it was the other one, and for a year the catalogue never exercised
+  a filter, a router or a redactor. The document had been accurate the whole time — nothing ever
+  read it against the code. A specification describes a gap; only something that runs reports one.
 - **A mutation anchor must exist exactly once**, be re-anchored when the code moves, and be
   removed when the rule is deleted — an anchor pointing at a grave reports green about nothing.
+  *And a rename is where they go stale in bulk*: changing what a run is *about* moved one anchor
+  from `order_by("model", …)` to `order_by("use_case", …)` while the property it guards —  a
+  standing is the latest run, never a total — did not change a word.
 - **A property guarded twice cannot be a mutation**, and that is not a reason to weaken the guard.
 - **Each layer sees what the one below structurally cannot.** A dropped socket *cancels* a task
   where an in-process close raises `GeneratorExit`; two credentials can only disagree where both

@@ -1,17 +1,25 @@
-# FRD-504 — Model smoke tests for IT Security
+# FRD-504 — The question catalogue, put to a pipeline
 
 > Phase: 5 (IT Security) · Status: **Built**, narrower than drafted · Owner: Vadim Scheibe
 >
 > Origin: the owner's feature definition (PRD §1.1, item 14).
-> Related: `FRD-300` (injection filter), `FRD-114` (model catalog), `FRD-403` (cost), `FRD-122`
-> (audit), `FRD-502` (IT Security console).
+> Related: `ADR-0020` (a run is about a use case), `FRD-300`/`FRD-303` (pipeline), `FRD-308`
+> (per-use-case model release), `FRD-114` (model catalog), `FRD-403` (cost), `FRD-122` (audit),
+> `FRD-502` (IT Security console).
 
-> **Read §5.7, §6 and §7 for what exists.** Sections 1 to 5.6 are the original draft and are kept
-> as the record of what was intended; several of their ideas were dropped on evidence and the
-> deviations are named where they occur. The largest is vocabulary: the draft speaks throughout of
-> **batteries**, plural and named. There is **one flat catalogue** of questions and no grouping —
-> the owner's decision, and §5.7 says why grouping was not merely unnecessary but
-> harmful to the thing the catalogue is for. Read "battery" below as "the catalogue".
+> **Read §5.7, §5.8, §6 and §7 for what exists.** Sections 1 to 5.6 are the original draft and are
+> kept as the record of what was intended; several of their ideas were dropped on evidence and the
+> deviations are named where they occur. Two are large enough to state up front:
+>
+> - **Vocabulary.** The draft speaks throughout of **batteries**, plural and named. There is **one
+>   flat catalogue** of questions and no grouping — the owner's decision, and §5.7 says why grouping
+>   was not merely unnecessary but harmful to the thing the catalogue is for. Read "battery" below
+>   as "the catalogue".
+> - **Subject.** The draft is about **models**, and so was the built feature at first. A run is now
+>   about a **use case**, and travels that use case's own pipeline (`ADR-0020`, §5.8).
+>   Testing a model is then an ordinary use case whose pipeline starts at it. Everything sections 1
+>   to 5.6 want from a model is still obtainable that way; what they could not express is the
+>   question a use-case administrator actually has, which is whether their *pipeline* holds.
 
 ## 1. Problem
 
@@ -211,18 +219,92 @@ happened, and the catalogue silently grew by two. Retiring rather than deleting 
 somebody gave against the old wording, which are the only evidence that anything has changed. A
 retired question is not listed and not asked.
 
+### 5.8 A run is about a use case, and the pipeline decides the rest
+
+Added 2026-08-16; the reasoning is `ADR-0020` and only the built shape is repeated here.
+
+**The catalogue is governed centrally and run by administrators.** Writing a question stays with
+Global Administrators and IT Security — it states what this installation considers an acceptable
+answer, which is the same kind of statement as a global anomaly rule.
+
+*Running* it takes two things, and both are separately necessary (`access.may_run_tests_queryset`):
+
+1. the **gateway** would accept this caller for the use case — its own rule, `may_call_queryset`,
+   rather than a second one that would eventually disagree with it, because the run's requests are
+   sent with the signed-in person's own credentials;
+2. **administration of that use case** (`MANAGE`, which group grants and direct memberships both
+   write), or one of the two installation roles.
+
+A use-case administrator can therefore put the same hundred questions to their own pipeline, which
+is the question §5.3 wanted answered and never could.
+
+**A normal use-case user cannot** — the owner's rule, added after this section was first written.
+The rule then was "anybody the gateway would accept", taken from this document's own sentence
+*whoever may call a model may test one*, which was written when a run was about a model the whole
+installation had approved. A run is now a hundred prompts through somebody's pipeline, spending
+that use case's budget, against a catalogue that states what this installation tests for (§8):
+a decision **about** the use case rather than work **inside** it. Reading the catalogue follows
+running it, for the same reason — the prompts say what to avoid, so somebody who reads them was
+told deliberately.
+
+The refusal is asked **per object at every endpoint**, not once at the door. `MayRunTests` answers
+"is there any use case this person could run", which is the right question for offering the screen
+and the wrong one for starting a run: an administrator of one use case passes it and must still be
+refused somebody else's. And a caller who reaches the screen by address rather than by the nav gets
+a sentence naming who runs the catalogue instead of three tabs of controls that all refuse —
+`FRD-206` again.
+
+**The pipeline decides which model answers.** A run names no model. It names a use case, and the
+request enters that use case's pipeline at the pipeline's declared **start model**; a `model_route`
+step may then send it somewhere else, and that is the pipeline doing its job. This is what deleted
+`_release_for_testing`: the old shape asked the caller for a model, which `FRD-308` then refused
+because the use case had never been released it, so the runner quietly wrote `allowed_models` to
+make its own run work. Releasing a model is the use case administrator's decision, and it was never
+this feature's to make.
+
+**Which is why a pipeline now declares a start model.** It is where a request enters when the caller
+names none — configuration *about* the pipeline rather than a step in it, the same shape `FRD-308`
+settled for `allowed_models`. It is validated like every other model a pipeline names: released to
+the use case, or the save is refused. Blank is a real state and means *this pipeline is only ever
+entered by a caller who names a model*, which is every pipeline written before today; the console
+then says the use case cannot be run **and why**, rather than guessing one. The dry run reads the
+same field first, ahead of the three guesses whose own comments record each being wrong in
+production (`ADR-0020`, options considered).
+
+**Testing a model is a use case.** IT Security creates one, releases the models under evaluation to
+it, and points its pipeline's start model at one of them. There is no special path, no internal use
+case the code branches on, and no invisible attribution: the spend lands on the use case that asked
+for the evidence, which is where it belongs. The seeded `smoke-test` use case survives as an
+ordinary demonstration of this — a released model, a pipeline that starts there — and the constant
+naming it is used by the seed alone.
+
+**A blocked question is a result.** Under the old shape a filter that refused a prompt made the run
+useless; under this one it *is* the finding. The two modes of §5.3 collapse into one mechanism: run
+the catalogue against a use case whose pipeline filters to measure the filter, and against one whose
+pipeline is bare to measure the model.
+
+**A standing is per use case, not per model.** Two runs of one use case whose start model changed in
+between are not comparable, so the run and the statistics row both carry the start model as it stood
+at the time — recorded on the run rather than looked up, because the older run is evidence about the
+configuration it actually met.
+
 ## 6. Data Model
 
-As built (2026-08-09), which is smaller than this section originally proposed:
+As built (2026-08-09; the subject of a run changed 2026-08-16), which is smaller than this section
+originally proposed:
 
 - `TestCase` — `topic`, `prompt`, `expectation`, `position`, `retired`. **One flat list**; there is
   no battery, no category and no expectation *type*, because nothing matches against an expectation
   (§5.2) and nothing groups the catalogue (§5.7).
-- `TestRun` — `model` (a **string**, not a foreign key: a run is evidence about what a model did on
-  a day, and it must survive that model leaving the catalog), `use_case`, `started_at`,
-  `finished_at`, `requested_by`.
+- `TestRun` — `use_case` (**what the run is about**, and required since `ADR-0020`), `model` (the
+  start model the pipeline was *entered at*, as it stood then), `started_at`, `finished_at`,
+  `requested_by`. Both identifiers are **strings**, not foreign keys, and for one reason: a run is
+  evidence about what happened on a day, and deleting a use case or a model declaration must not
+  delete the finding.
 - `TestResult` — `run`, `case`, `response`, `error` (a failed *request* is not a bad *answer* and
   they are stored apart), `latency_ms`, `verdict`, `note`, `rated_by`, `rated_at`.
+- `PipelineConfig.start_model` — on the pipeline, not here (§5.8). Distributed to the gateway on
+  `pipeline.upserted` like the rest of the configuration (`FRD-204`).
 
 Runs execute against the gateway; results live in Management, because this is a governance artefact
 that outlives any individual gateway instance.
@@ -234,30 +316,53 @@ writes, and none was needed to answer the question this feature exists for.
 ## 7. API / Interface Contract
 
 - `GET /api/v1/test-cases/` — the catalogue, retired questions excluded. Readable by anyone who may
-  test a model; **writable by IT Security only**, because it states what this installation
-  considers an acceptable answer.
-- `POST /api/v1/test-runs/` `{model, use_case}` — creates the run and one empty result per
-  question. The prompts are then sent by the console **one at a time**: a run is ordinary traffic,
-  and firing a hundred at once would trip the use case's own rate limit and produce a run full of
-  429s that says nothing about the model.
+  run it — which is **not** every member of a use case (§5.8) — and **writable by Global
+  Administrators and IT Security only**, because it states what this installation considers an
+  acceptable answer.
+- `GET /api/v1/test-attribution/` — the use cases this caller may run the catalogue against, each
+  with its `start_model`, `may_run` and, when it cannot be run, `why_not` in words. `FRD-206`: the
+  console offers no button the server would refuse, and says why rather than disabling silently.
+- `POST /api/v1/test-runs/` `{use_case}` — creates the run and one empty result per question. The
+  **model is not a field a caller may set**: it is read from the use case's pipeline and stored on
+  the run (§5.8), and a use case with no start model is refused by name. The prompts are then sent
+  by the console **one at a time**: a run is ordinary traffic, and firing a hundred at once would
+  trip the use case's own rate limit and produce a run full of 429s that says nothing about
+  anything.
 - `GET /api/v1/test-runs/{id}/results/` — the answers. `PATCH /api/v1/test-results/{id}/` stores an
   answer or records a verdict; the rating's author is whoever is signed in and is never a field a
   caller may set.
 - `GET /api/v1/test-runs/{id}/export/` — CSV, BOM and CRLF, every field quoted (`FRD-602`'s rules).
-- `GET /api/v1/test-stats/` — **one row per model**: its latest run, that run's counts, and how
-  many questions the catalogue asks today.
-- SPA screen **Model tests**, three sub-tabs.
+- `GET /api/v1/test-stats/` — **one row per use case**: its latest run, the start model that run
+  entered at, that run's counts, and how many questions the catalogue asks today.
+- Every list is scoped by `may_call_queryset`, so a caller sees the runs of the use cases they may
+  run and no others.
+- `GET /api/v1/me/` carries `may_test`, so the SPA shows the screen to exactly whoever the server
+  would let use it.
+- SPA screen **Pipeline tests**, three sub-tabs. `/model-tests` redirects to `/pipeline-tests` — a
+  bookmark is a link somebody saved, and breaking it teaches nothing.
 
 ## 8. Security & Privacy
 
-- **The batteries are themselves sensitive.** They state what we test for, so someone who reads them
-  knows what to avoid. Restricted to IT Security and Global Admin (FR-8); results visible more
-  widely than the prompts.
+- **The catalogue is itself sensitive.** It states what we test for, so someone who reads it knows
+  what to avoid. **Writing** is Global Administrator and IT Security only (FR-8, §5.8). **Reading**
+  is whoever may run it and no wider: a person putting a hundred prompts to their pipeline
+  necessarily sees them, so a screen that ran questions it would not show would be theatre — but a
+  plain use-case user runs nothing and therefore reads nothing.
 - Stored responses may contain harmful content (§5.6): own retention, restricted visibility, never
   exposed through use-case-scoped views.
-- Runs consume budget and quota like anything else (FR-5); the internal use case is bounded so a
-  misconfigured schedule cannot exhaust an organisation's quota.
-- The internal use case must not be reachable from outside — no API key may be issued for it.
+- **Starting a run includes the gateway's own check, not a substitute for it.** A run can only be
+  started where an ordinary API request from the same person would be accepted **and** where they
+  administer the use case — and the refusal does not distinguish "no such use case" from "not
+  yours", because telling them apart tells an outsider which slugs exist.
+- **An installation role is not a bypass of the gateway's rule.** IT Security reaches the use case
+  it evaluates models in because somebody put them in its group, exactly like everybody else. If a
+  role short-circuited that, the run would fail at dispatch and the console would have promised
+  something the server refuses.
+- Runs consume budget and quota like anything else (FR-5), on **the use case that asked for them**.
+  There is no exempt pot and no shared one, so a run that would exceed a budget stops the way any
+  other request would, and nobody's evidence is charged to somebody else.
+- Nothing releases a model as a side effect of a run (`ADR-0020`): `_release_for_testing` is
+  deleted, and a use case reaches only what its administrator released to it (`FRD-308`).
 
 ## 9. Observability
 
@@ -273,8 +378,20 @@ volume are visible in reporting without a second mechanism.
   direct-to-model is not, and the results are reported apart.
 - **Unit** — a run that would exceed its budget stops and reports partial results rather than being
   refused mid-way with nothing recorded.
-- **Unit (RBAC)** — a use-case administrator can neither read a battery nor start a run; IT
-  Steuerung can read results but not the prompts.
+- **Unit (RBAC), as built** — a use-case **administrator** may start a run in a use case they may
+  call, and may not in one they merely belong to or cannot reach; a plain use-case **user** is
+  refused the catalogue, the attribution list, the statistics and a run, all four, because a rule
+  enforced at one endpoint is a rule the other three do not have. The refusal reads the same for a
+  use case that does not exist. Writing a question stays Global Administrator and IT Security.
+  (The draft's version of this line said a use-case administrator could do neither; §5.8 is why it
+  changed, twice and in both directions.)
+- **Frontend** — a 403 on load withholds the screen and names who runs the catalogue; a 500 does
+  not, because "ask an administrator" would send that reader to somebody who cannot help.
+- **Mutation** — `Q1f` removes the administration half of the rule, `Q1g` the gateway half. Each
+  must make a test fail on its own: a composition guarded only as a whole is a composition that can
+  quietly lose a half.
+- **Unit** — a run stores the pipeline's start model rather than anything the caller sent, and a use
+  case whose pipeline declares none is refused by name instead of run against nothing.
 - **Frontend** — rates rendered as rates; the "this is not a safety statement" text present on every
   result view (§5.5); comparison against the previous run highlights changes.
 - **Integration** — a run against the mock provider completes, produces results, and appears in

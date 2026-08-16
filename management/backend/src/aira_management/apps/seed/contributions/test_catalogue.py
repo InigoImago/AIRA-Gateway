@@ -25,10 +25,14 @@ editing this file is one that stops being edited.
 
 from __future__ import annotations
 
+import os
+
 from django.db import transaction
 
+from aira_management.apps.catalog.models import Model
+from aira_management.apps.pipelines.models import PipelineConfig
 from aira_management.apps.seed.registry import SeedResult, register
-from aira_management.apps.smoketests.models import SMOKE_TEST_USE_CASE, TestCase
+from aira_management.apps.smoketests.models import DEMO_MODEL_TEST_USE_CASE, TestCase
 from aira_management.apps.usecases import events
 from aira_management.apps.usecases.models import UseCase
 from aira_management.apps.usecases.views import _snapshot
@@ -569,18 +573,25 @@ def seed_test_catalogue(fresh: bool) -> SeedResult:
     """
     added = 0
     with transaction.atomic():
-        # **One use case for all model testing**, always present. Owner's decision on 2026-08-09:
-        # test traffic is real traffic and has to be attributed and priced somewhere, and putting it
-        # on whichever use case the tester happens to belong to charges somebody else's budget for
-        # work that is not theirs and quietly pollutes their spend figures. One place, and reporting
-        # separates testing from production by construction.
+        # **IT Security's model-evaluation use case** — an ordinary one (`ADR-0020`).
+        #
+        # It used to be *the* place every run was attributed to, and the application branched on
+        # its slug. That is what made a pipeline untestable: every run went to a use case whose
+        # pipeline was empty, so the catalogue never once exercised a filter or a router — the very
+        # thing `FRD-504` §5.3 called "the first honest measurement we would have".
+        #
+        # Now it is seeded for the same reason the showcase use cases are: so a fresh installation
+        # has somewhere to demonstrate from. Any use case can be run, and a use-case administrator
+        # runs their own to ask whether *their* pipeline holds.
         use_case, _created = UseCase.objects.update_or_create(
-            slug=SMOKE_TEST_USE_CASE,
+            slug=DEMO_MODEL_TEST_USE_CASE,
             defaults={
-                "name": "Smoke tests",
+                "name": "Model evaluation",
                 "description": (
-                    "Model testing. Every smoke-test run is attributed here, so the cost of "
-                    "evaluating a model never lands on a use case that did not ask for it."
+                    "IT Security's use case for putting the question catalogue to a model. Its "
+                    "pipeline starts at the model under evaluation and does nothing else, so the "
+                    "answers are the model's own — which is what makes it a *model* test rather "
+                    "than a test of somebody's filter."
                 ),
                 "processing_notes": (
                     "No personal data: the catalogue is a fixed list of questions. Gateway payload "
@@ -592,6 +603,7 @@ def seed_test_catalogue(fresh: bool) -> SeedResult:
                 "retention_days": 1,
             },
         )
+        _point_it_at_a_model(use_case)
         # **The event, not just the row.** The gateway learns configuration over Kafka
         # (`FRD-204`); a seed that writes the table and emits nothing leaves the use case existing
         # in Management and unknown to the gateway, which then refuses every request for it. The
@@ -610,4 +622,49 @@ def seed_test_catalogue(fresh: bool) -> SeedResult:
         retired = TestCase.objects.filter(retired=False, position__gt=len(QUESTIONS)).update(
             retired=True
         )
-    return {"use_case": SMOKE_TEST_USE_CASE, "questions": added, "retired": retired}
+    return {"use_case": DEMO_MODEL_TEST_USE_CASE, "questions": added, "retired": retired}
+
+
+def _point_it_at_a_model(use_case: UseCase) -> None:
+    """Release a model to the evaluation use case and start its pipeline there (`ADR-0020`).
+
+    Two halves of one decision, and both are now the **administrator's** rather than the feature's.
+    A run enters the pipeline at its `start_model`, and a use case may only call what has been
+    released to it (`FRD-308`) — so a use case with neither cannot be run, and the console says so.
+
+    This used to be done at run time by `_release_for_testing`, which wrote `allowed_models` every
+    time somebody pressed Run. A feature that has to edit a governance decision in order to work is
+    a feature fighting the model it is built on; doing it in the seed makes it what it always was,
+    which is configuration.
+
+    **Silent when there is nothing to point at.** A fresh installation with no local endpoint has
+    no catalogued models at all, and inventing a release for a model that does not exist would
+    produce a use case that refuses every request — the failure mode `local_models` already prints
+    a line about. The console then reports that this use case has no start model, which is true.
+    """
+    chosen = (
+        Model.objects.filter(
+            name=os.environ.get("AIRA_SEED_LOCAL_CHAT_MODEL", ""), approved=True
+        ).first()
+        or Model.objects.filter(approved=True).order_by("name").first()
+    )
+    if chosen is None:
+        return
+
+    use_case.allowed_models.add(chosen)
+    config, _made = PipelineConfig.objects.update_or_create(
+        use_case=use_case,
+        # **No steps.** A model test wants the model's own answer; a filter in the way would make
+        # it a test of the filter, which is a different question and is what every *other* use
+        # case's run asks.
+        defaults={"steps": [], "fallback_models": [], "start_model": chosen.name},
+    )
+    events.emit(
+        "pipeline.upserted",
+        {
+            "use_case": use_case.slug,
+            "steps": config.steps,
+            "fallback_models": config.fallback_models,
+            "start_model": config.start_model,
+        },
+    )

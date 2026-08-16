@@ -47,7 +47,7 @@ describe('errorMessage', () => {
     expect(errorMessage({ status: 403, error: 'plain text' }, 'fallback')).toContain('permission');
   });
 
-  it('reads the compatibility surface\'s flat envelope too', () => {
+  it("reads the compatibility surface's flat envelope too", () => {
     // `/gw/kira/...` answers `{code, message}` rather than `{error: {…}}` (`FRD-107`). It was not
     // handled at all, so the server's own wording was replaced by the generic fallback on the one
     // surface whose entire contract is its error shape.
@@ -72,7 +72,7 @@ describe('errorMessage', () => {
     expect(errorMessage(response, 'fallback')).toBe('nested period: is required');
   });
 
-  it('reads the compatibility surface\'s validation list rather than stringifying it', () => {
+  it("reads the compatibility surface's validation list rather than stringifying it", () => {
     // `{loc, msg}` entries, not a field map. Run through the DRF loop they come out as
     // `0: [object Object]`, which is worse than the fallback it replaced.
     const response = {
@@ -89,7 +89,10 @@ describe('errorMessage', () => {
   });
 
   it('uses a compatibility detail alone when there is no message', () => {
-    const response = { status: 422, error: { code: 'VALIDATION_ERROR', details: [{ msg: 'nope' }] } };
+    const response = {
+      status: 422,
+      error: { code: 'VALIDATION_ERROR', details: [{ msg: 'nope' }] },
+    };
     expect(errorMessage(response, 'fallback')).toBe('nope');
   });
 

@@ -111,6 +111,22 @@ export class App implements OnInit {
   }
 
   /**
+   * Whether to offer the pipeline-tests screen (`ADR-0020`).
+   *
+   * **The server's answer, not a role list.** `MayTestModels` asks an object-level question — do
+   * you hold `view_usecase` on anything — and the only fields here that look like an answer are
+   * the roles and `use_cases`, which carries the `/use-cases/<slug>` group convention alone. A
+   * predicate written from those would hide the screen from everybody who reaches a use case
+   * through a *grant*, silently, which is `FRD-206`'s defect inverted.
+   *
+   * `?? false` rather than `?? true`: an older backend that does not send the field offers nothing
+   * rather than offering an entry that 403s.
+   */
+  protected mayTest(): boolean {
+    return this.me()?.may_test ?? false;
+  }
+
+  /**
    * Which hat the signed-in person is wearing, in words rather than in realm slugs.
    *
    * Half of what a role-based console has to answer is "why can I not do this", and the first step

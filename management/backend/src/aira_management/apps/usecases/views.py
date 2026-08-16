@@ -483,7 +483,10 @@ class UseCaseViewSet(viewsets.ModelViewSet[UseCase]):
         config = PipelineConfig.objects.filter(use_case=usecase).first()
         if request.method == "GET":
             if config is None:
-                return Response({"steps": [], "fallback_models": []})
+                # The same shape the serializer produces, field for field. A default that is
+                # *missing* a key the saved form has is a default the console has to special-case,
+                # and `start_model` is the key the question catalogue asks for (`ADR-0020`).
+                return Response({"steps": [], "fallback_models": [], "start_model": ""})
             return Response(PipelineConfigSerializer(config).data)
 
         if not self._may_manage(usecase):
@@ -504,6 +507,10 @@ class UseCaseViewSet(viewsets.ModelViewSet[UseCase]):
                     "use_case": usecase.slug,
                     "steps": config.steps,
                     "fallback_models": config.fallback_models,
+                    # Where a caller who names no model enters (`ADR-0020`). Carried to the gateway
+                    # because the **dry run** needs it there — it used to guess, and its own
+                    # comments record three wrong guesses in a row.
+                    "start_model": config.start_model,
                 },
             )
         return Response(PipelineConfigSerializer(config).data)

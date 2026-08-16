@@ -130,7 +130,11 @@ export class PipelineEditor implements OnInit {
   private readonly service = inject(UseCaseService);
   private readonly confirmService = inject(ConfirmService);
 
-  protected readonly config = signal<PipelineConfig>({ steps: [], fallback_models: [] });
+  protected readonly config = signal<PipelineConfig>({
+    steps: [],
+    fallback_models: [],
+    start_model: '',
+  });
   protected readonly selected = signal<number | 'fallback' | null>(null);
   protected readonly saved = signal(false);
   protected readonly saving = signal(false);
@@ -487,6 +491,21 @@ export class PipelineEditor implements OnInit {
       const category = c.steps[index].config.categories?.[catIndex];
       if (category) (category as unknown as Record<string, unknown>)[key] = value;
     });
+  }
+
+  /**
+   * Where a request **enters** this pipeline when the caller names none (`ADR-0020`).
+   *
+   * Offered from the released models rather than typed, like the fallback chain and every category
+   * target: a name that is not released is refused when the pipeline is saved, and a picker that
+   * offers only what will be accepted is `FRD-206`'s rule applied to a text box.
+   *
+   * Blank is a real choice and stays available — most pipelines are only ever entered by a caller
+   * who names their own model, which is every ordinary API request. What it costs is the question
+   * catalogue: a use case with no start model cannot be run, and the smoke-test screen says so.
+   */
+  protected setStartModel(model: string): void {
+    this.update((c) => (c.start_model = model));
   }
 
   protected setFallback(csv: string): void {

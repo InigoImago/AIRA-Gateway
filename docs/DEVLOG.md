@@ -5,6 +5,117 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The question catalogue stops being about models and starts being about pipelines
+
+The owner's answer to a finding from the review below, and it deleted the finding rather than
+fixing it. The review had flagged §3.7: `MayTestModels` let a broad set of roles start a run, and
+the runner then called `_release_for_testing`, which wrote `allowed_models` on the seeded use case
+so its own run would not be refused. I had left it as an explicit owner decision. The owner's
+reading was that the role set was never the problem — a feature that has to quietly edit a
+governance decision in order to work is a feature fighting the model it is built on.
+
+**So a run is now the catalogue put to a use case, through that use case's own pipeline**
+(`ADR-0020`). The catalogue itself is unchanged and still belongs to Global Administrators and IT
+Security. What changed is the subject: a run names a use case rather than a model, may be started by
+anybody the *gateway* would accept for it, and the pipeline decides which model answers. Testing a
+model is then an ordinary use case — IT Security makes one, releases the models to it, points its
+pipeline's start model at the one under evaluation. No special path, no internal attribution, no
+release written as a side effect: `_release_for_testing` is gone.
+
+Three things fell out of it that are worth recording separately.
+
+**`FRD-504` §5.3 had been asking for this since it was drafted**, and said so in its own words —
+*"the first honest measurement we would have of whether the injection filter earns its place"*. Two
+modes were specified, *through the pipeline* and *direct to the model*; one was built, and it was
+the other one. Every run went to a seeded use case whose pipeline was empty, so in a year the
+catalogue had never once exercised a filter, a router or a redactor. The document had described the
+gap accurately the whole time and nothing read it against the code. The two modes also collapse into
+one mechanism now: run it against a filtering pipeline to measure the filter, against a bare one to
+measure the model. A blocked question stops being a broken run and becomes the finding.
+
+**A pipeline now declares a start model**, which is the field this needed and which the dry run had
+been guessing at for months. `_model_the_pipeline_is_about`'s own comments record three guesses in a
+row — the first registered model, the first released one, the first released one that can generate —
+each documented as wrong in production and each reported back as `effective_model`, where a builder
+reads it as a decision somebody made. It now prefers the declaration and keeps the guesses only for a
+pipeline that declares nothing. Blank stays a real state rather than something to backfill: it means
+*only a caller who names a model enters here*, which is every pipeline written before today, and the
+console then says the use case cannot be run and **why** instead of inventing one. Deliberately not
+part of `Pipeline.is_empty` — a pipeline with a start model and no steps still runs nothing.
+
+**The mutation harness caught the rename before the tests did.** `Q1` — "a model's standing is its
+latest run, never a total across every run" — had been anchored on `order_by("model", ...)`, and the
+anchor check failed as soon as the axis became the use case. The property had not changed at all;
+summing every run still lets an old, since-corrected result drag the current one down forever. It
+was re-aimed at the same rule over the new axis, and four properties were added for the new
+behaviour: a run enters where the pipeline says rather than where the caller says, a run may only be
+started where the gateway would accept this caller, a use case with no start model is refused by
+name, and the dry run prefers a declaration to a guess. That last one **survived** on the first run —
+the field was read, and no test would have noticed if it stopped being.
+
+**And then the rule narrowed once more, the same day.** The first version said a run may be started
+by anybody the *gateway* would accept for the use case, taken from `FRD-504`'s own sentence —
+*whoever may call a model may test one*. The owner's rule is that a normal use-case **user** does
+not run it. That is right, and the sentence it replaced was written when a run was about a model the
+whole installation had approved: a run is now a hundred prompts through somebody's pipeline,
+spending that use case's budget, against a catalogue that states what this installation tests for.
+A decision *about* the use case rather than work *inside* it — a distinction this codebase already
+has a word for, `may_manage`.
+
+So `may_run_tests_queryset` is `may_call_queryset` narrowed by `MANAGE`, plus the two installation
+roles. A composition rather than a fourth access predicate, because both halves are separately
+necessary and `LESSONS.md` §5 is a list of rules restated once too often. Two mutations, one per
+half: a composition guarded only as a whole can quietly lose one.
+
+Three things the change had to reach that the permission class could not. It is asked **per object
+at every endpoint** — the class answers "is there *any* use case this person could run", which is
+right for offering the screen and wrong for starting a run, and an administrator of one use case
+passes it while naming somebody else's slug. Reading the catalogue follows running it, because the
+questions say what to avoid (§8). And the screen itself withholds: reached by address rather than
+by the nav, a 403 now takes the tab strip down and names who runs the catalogue, where a 500 still
+reports a broken page — "ask an administrator" would send that reader to somebody who cannot help.
+
+The suite was **green before any of this was tested**, because every runner in it was IT Security.
+That is the shape `LESSONS.md` §7 opens with, and it is why `_member` and `_administrator` now exist
+beside `_runner`.
+
+**Running all four layers then found three more things, none of them in the feature.**
+
+**The mutation harness refused to start**, reporting a **red baseline** — and it was right.
+`test_a_dry_run_takes_the_rate_limit_like_any_other_request` sets one request per minute and its
+*first* request came back `429`, `retry_after: 32`, a number nothing in the process could produce.
+`redis_url` defaults to `redis://localhost:6379/0` and `make up` publishes a Redis on exactly that
+address, so the **hermetic** suite had been sharing a durable bucket store with the developer and
+with its own earlier runs. Green in CI, which has no Redis; green on a machine with the stack down.
+`LESSONS.md` §7's *"a unit test that reads the developer's machine"*, and the stack coming back up
+is what exposed it. Fixed with a session fixture setting `AIRA_REDIS_URL=""` — this codebase's
+existing spelling for "no Redis" — plus `test_the_unit_layer_is_hermetic.py`, two tests guarding
+both halves, because a fixture that does nothing visible is the kind that gets tidied away.
+
+**A browser test read a sentence and believed it**, which is what a person would have done. The
+Runs panel branched on `runnableUseCases().length`, and that list starts empty on every load — so
+for as long as the request took, every reader was told *"there is no use case you may send requests
+to"*, including readers for whom it is false. `LESSONS.md` §6: **unknown is never rendered as
+zero**, and this is the variety that says something about somebody's *access*, which is exactly the
+kind a person acts on — they go and ask to be added to a group they are already in.
+
+**And my own new e2e test was wrong three times before it was right**, each time in a way that made
+it pass-shaped rather than correct. It asserted that `ucuser` is offered no screen at all; earlier
+suites had left group grants behind that made their Keycloak group an administrator of a throwaway
+use case, so the assertion measured the database's history. Rewritten as the *difference between
+two people on one use case* — `ucadmin` is `admin` of `kundenservice`, `ucuser` is `user` of it —
+it then read "not offered" for **both**, twice: `option[value=…]` asks about the attribute where
+Angular's `[value]` binding sets the property, and a `count()` after `goto` samples a page that has
+not rendered. A test that answers the same for both sides of a comparison agrees with itself and
+proves neither half. It also needed an explicit `logout` between the two sign-ins, or the SSO
+session hands the second login straight back to the first user — it would have passed the day the
+rule broke.
+
+Suites: 2348 hermetic Python at 95.85 %, 806 integration, 144 browser, 821 Angular at 92.1 %
+branches; `ruff`, `mypy`, `prettier`, ESLint and `tsc` clean; 453 mutation properties.
+
+---
+
 ## A security and correctness review of the whole codebase — 26 findings, all fixed
 
 Asked to read the whole thing as a reviewer and write down what was wrong. The four suites were

@@ -1,7 +1,13 @@
 import { TestBed } from '@angular/core/testing';
-import { Observable, of, throwError } from 'rxjs';
+import { Observable, Subject, of, throwError } from 'rxjs';
 import { MeService } from '../../core/api/me.service';
-import { TestCase, TestModelStats, TestResult, TestRun } from '../../core/api/models';
+import {
+  TestAttribution,
+  TestCase,
+  TestModelStats,
+  TestResult,
+  TestRun,
+} from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { ConfirmService } from '../../core/ui/confirm.service';
 import { SmokeTests } from './smoke-tests';
@@ -57,8 +63,14 @@ const RUN: TestRun = {
 
 interface Options {
   roles?: string[];
-  /** What the server says about where a run is booked. */
-  attribution?: { use_case: string; name: string; exists: boolean; may_call: boolean };
+  /** Which use cases the server says the catalogue can be run in, and why not where it cannot. */
+  attribution?: {
+    use_case: string;
+    name: string;
+    start_model: string;
+    may_run: boolean;
+    why_not: string;
+  }[];
   results?: TestResult[];
   stats?: TestModelStats[];
   askFails?: boolean;
@@ -66,6 +78,12 @@ interface Options {
   catalogueFails?: boolean;
   /** An empty catalogue, so the screen has to say that rather than showing nothing. */
   emptyCatalogue?: boolean;
+  /** The server refuses the screen itself — somebody reached it by address rather than by nav. */
+  refused?: boolean;
+  /** The catalogue load fails for an ordinary reason, which must not read as a refusal. */
+  loadBreaks?: boolean;
+  /** Hold the attribution answer back, so the panel has to say it does not know yet. */
+  attributionPending?: boolean;
   /** Whether the reader says yes to an irreversible question. */
   confirm?: boolean;
   /**
@@ -81,6 +99,10 @@ interface Options {
 function setup(options: Options = {}) {
   TestBed.resetTestingModule();
   const calls: string[] = [];
+  // An answer that has not arrived, so the "still asking" state is reachable at all. A stub that
+  // answers instantly cannot express the state every real load passes through.
+  const attribution = new Subject<TestAttribution[]>();
+  const pendingAttribution = attribution.asObservable();
   const patched: Record<string, unknown>[] = [];
   TestBed.configureTestingModule({
     imports: [SmokeTests],
@@ -93,30 +115,44 @@ function setup(options: Options = {}) {
       {
         provide: UseCaseService,
         useValue: {
-          testCases: () => of(options.emptyCatalogue ? [] : CATALOGUE),
-          // One server answer: which use case, whether it exists, and whether the **gateway** will
-          // accept this caller for it. The screen never decides the third from a membership list —
-          // visibility, administration and the right to call are three different answers, and
-          // asking the wrong one is what shipped a broken run.
+          testCases: () => {
+            if (options.refused) {
+              return throwError(() => ({
+                status: 403,
+                error: { error: { message: 'not yours' } },
+              }));
+            }
+            if (options.loadBreaks) {
+              return throwError(() => ({
+                status: 500,
+                error: { error: { message: 'the database is on fire' } },
+              }));
+            }
+            return of(options.emptyCatalogue ? [] : CATALOGUE);
+          },
+          // One server answer per use case: would the **gateway** accept this caller, does the
+          // pipeline declare a start model, and if not, why not. The screen never decides any of
+          // the three — visibility, administration and the right to call are different answers,
+          // and asking the wrong one is what shipped a broken run.
           testAttribution: () =>
-            of(
-              options.attribution ?? {
-                use_case: 'smoke-test',
-                name: 'Smoke tests',
-                exists: true,
-                may_call: true,
-              },
-            ),
-          models: () =>
-            of([
-              { name: 'qwen2.5:3b', approved: true },
-              { name: 'not-approved-1', approved: false },
-            ]),
+            options.attributionPending
+              ? pendingAttribution
+              : of(
+                  options.attribution ?? [
+                    {
+                      use_case: 'uc-a',
+                      name: 'Kundenservice',
+                      start_model: 'qwen2.5:3b',
+                      may_run: true,
+                      why_not: '',
+                    },
+                  ],
+                ),
           testRuns: () => of([RUN]),
           testStats: () => of(options.stats ?? []),
           runResults: () => of(options.results ?? [result(), result({ id: 11, topic: 'PII' })]),
-          startRun: (model: string) => {
-            calls.push(`startRun:${model}`);
+          startRun: (useCase: string) => {
+            calls.push(`startRun:${useCase}`);
             return of(RUN);
           },
           finishRun: () => {
@@ -173,53 +209,125 @@ function setup(options: Options = {}) {
       element.querySelector<HTMLElement>(`[data-testid="${id}"]`)?.click();
       fixture.detectChanges();
     },
+    /** Let the held-back attribution answer through, and re-render. */
+    resolveAttribution(rows: TestAttribution[]) {
+      attribution.next(rows);
+      attribution.complete();
+      fixture.detectChanges();
+    },
   };
 }
 
 describe('SmokeTests', () => {
-  it('offers only models that may actually be called', () => {
-    /** Only a catalogued, approved model can be used at all (`FRD-307`). Offering one that cannot
-     *  be would be a control that fails the moment it is used — `FRD-206`'s defect. */
-    const { element } = setup();
-    const options = [...element.querySelectorAll('#smoke-model option')].map((o) =>
-      o.textContent?.trim(),
-    );
+  it('names who runs the catalogue when the server refuses the screen', () => {
+    /** The owner's rule of 2026-08-16 seen from the wrong side of it. Running the catalogue takes
+     *  **administration** of a use case, not membership, so the nav withholds the entry — but the
+     *  nav is not the only way in: an address gets typed, a bookmark predates the rule.
+     *
+     *  A 403 here is an *answer*, not a failure, and the two have to look different. Rendering the
+     *  tab strip over a red banner would offer three tabs of controls that all refuse, which is
+     *  `FRD-206`'s defect exactly; and a bare "forbidden" would leave the reader with no idea who
+     *  to ask. So the tabs come down and the sentence names the performer. */
+    const { element } = setup({ refused: true });
 
-    expect(options).toContain('qwen2.5:3b');
-    expect(options).not.toContain('not-approved-1');
+    const said = element.querySelector('[data-testid="tests-withheld"]')?.textContent ?? '';
+    expect(said).toContain('administration of a use case');
+    expect(said).toContain('IT Security');
+    // Not merely disabled — absent. A disabled tab is still an invitation.
+    expect(element.querySelector('[data-testid="tab-runs"]')).toBeNull();
+    expect(element.querySelector('[data-testid="tab-catalogue"]')).toBeNull();
+    // And it is not reported as a broken page on top of it.
+    expect(element.querySelector('.callout--danger')).toBeNull();
   });
 
-  it('says where a run is booked, rather than asking', () => {
-    /** Reported as *"Attributed to hat endlose Menge der Column. Dieser Punkt ist überhaupt nicht
-     *  notwendig"* — and it was two defects in one control. It listed page one of a paged list, so
-     *  on an installation with hundreds of use cases it was an endless dropdown that frequently did
-     *  not contain the one somebody works in; and it asked a question a person running a model test
-     *  has no opinion about. A run must be attributed somewhere because it is ordinary traffic —
-     *  which one is not the tester's decision. So it is resolved and stated. */
-    const harness = setup({ tab: 'runs' });
+  it('reports a load that genuinely failed as a failure, not as a refusal', () => {
+    /** The other side of the branch above, and the reason it is a branch rather than a catch-all:
+     *  a 500 from the catalogue endpoint means the screen is broken, and telling that reader to
+     *  "ask an administrator" would send them to somebody who cannot help. */
+    const { element } = setup({ loadBreaks: true });
 
-    expect(harness.element.querySelector('#smoke-usecase')).toBeNull();
-    expect(harness.testid('smoke-attribution')?.textContent).toContain('Smoke tests');
+    expect(element.querySelector('[data-testid="tests-withheld"]')).toBeNull();
+    expect(element.querySelector('.callout--danger')?.textContent ?? '').toContain(
+      'the database is on fire',
+    );
+    // The screen is still a screen: the reader can retry, or read a tab that did load.
+    expect(element.querySelector('[data-testid="tab-runs"]')).not.toBeNull();
+  });
+
+  it('says it is still working out where a run may go, rather than that there is nowhere', () => {
+    /** `LESSONS.md` §6: **unknown is never rendered as zero.** The list of runnable use cases
+     *  starts empty on every load, and the panel branched on its length — so for as long as the
+     *  request took, every reader was told *"there is no use case you may send requests to"*,
+     *  including the readers for whom that is false. It is a sentence about somebody's access,
+     *  which is exactly the kind a person acts on: they go and ask to be added to a group they are
+     *  already in.
+     *
+     *  Found by a browser test that read the sentence and believed it, which is what a person
+     *  would have done. */
+    const harness = setup({ tab: 'runs', attributionPending: true });
+
+    expect(harness.element.querySelector('[data-testid="attribution-loading"]')).not.toBeNull();
+    expect(harness.element.querySelector('[data-testid="no-use-case"]')).toBeNull();
+
+    harness.resolveAttribution([]);
+
+    // And once the answer is in, "none" is stated as the answer it now is.
+    expect(harness.element.querySelector('[data-testid="attribution-loading"]')).toBeNull();
+    expect(harness.element.querySelector('[data-testid="no-use-case"]')).not.toBeNull();
+  });
+
+  it('offers no model picker at all — the pipeline says where a run enters', () => {
+    /** There used to be one, listing every catalogued and approved model (`FRD-307`). A run now
+     *  enters where the **pipeline** says it enters (`ADR-0020`), so asking the caller for a model
+     *  would be asking them to predict a decision the pipeline makes — and a model the use case
+     *  has not been released is refused at dispatch anyway (`FRD-308`). */
+    const { element } = setup();
+
+    expect(element.querySelector('#smoke-model')).toBeNull();
+  });
+
+  it('offers the use cases the server says can be run, and states where each enters', () => {
+    /** A picker again, and the reasons it was once removed are the reasons this one is correct.
+     *  It was removed because it listed page one of a paged list — an endless dropdown that often
+     *  did not hold the use case somebody works in — and because it asked a question the person
+     *  running a *model* test had no opinion about.
+     *
+     *  Two of those were the **list** being wrong. This one is the server's complete, already
+     *  narrowed answer to "which use cases would the gateway accept from you, and which of those
+     *  have a pipeline to run". The third is no longer true: a run is about a pipeline, so which
+     *  one is the whole question (`ADR-0020`). */
+    const harness = setup({ tab: 'runs' });
+    const options = Array.from(
+      harness.element.querySelectorAll('#smoke-use-case option'),
+      (option) => option.textContent?.trim() ?? '',
+    );
+
+    expect(options).toContain('Kundenservice (uc-a)');
+    // Preselected, because there is exactly one — choosing for somebody with several would be
+    // picking which pipeline they meant, and a run costs money.
+    expect(harness.testid('smoke-attribution')?.textContent).toContain('qwen2.5:3b');
   });
 
   it('withholds running from somebody the gateway would refuse', () => {
     /** Running is **making requests**, so what gates it is membership rather than a role. The
      *  first version asked for an incident role and the feature was unusable: IT Security is
-     *  deliberately a member of nothing, so nobody could satisfy both requirements at once. */
-    const { testid } = setup({
-      attribution: { use_case: 'smoke-test', name: 'Smoke tests', exists: true, may_call: false },
-    });
+     *  deliberately a member of nothing, so nobody could satisfy both requirements at once.
+     *
+     *  Since `ADR-0020` a caller the gateway accepts for nothing simply has nothing to choose, and
+     *  the section explains that rather than offering a control that refuses. */
+    const { testid } = setup({ attribution: [] });
 
     expect(testid('smoke-run')).toBeNull();
+    expect(testid('no-use-case')?.textContent).toContain('groups your token carries');
   });
 
   it('asks one prompt per case and stores each answer', async () => {
     const harness = setup();
     const component = harness.component as unknown as {
-      model: { set: (v: string) => void };
+      useCase: { set: (v: string) => void };
       run: () => Promise<void>;
     };
-    component.model.set('qwen2.5:3b');
+    component.useCase.set('uc-a');
 
     await component.run();
 
@@ -233,10 +341,10 @@ describe('SmokeTests', () => {
      *  statistics count them in different columns for exactly that reason. */
     const harness = setup({ askFails: true });
     const component = harness.component as unknown as {
-      model: { set: (v: string) => void };
+      useCase: { set: (v: string) => void };
       run: () => Promise<void>;
     };
-    component.model.set('qwen2.5:3b');
+    component.useCase.set('uc-a');
 
     await component.run();
 
@@ -330,6 +438,7 @@ describe('SmokeTests', () => {
       tab: 'results',
       stats: [
         {
+          use_case: 'uc-a',
           model: 'qwen2.5:3b',
           run: 5,
           catalogue: 10,
@@ -384,9 +493,16 @@ describe('SmokeTests', () => {
           provide: UseCaseService,
           useValue: {
             testCases: () => throwError(() => ({ status: 500 })),
-            models: () => of([]),
             testAttribution: () =>
-              of({ use_case: 'smoke-test', name: 'Smoke tests', exists: true, may_call: true }),
+              of([
+                {
+                  use_case: 'uc-a',
+                  name: 'Kundenservice',
+                  start_model: 'qwen2.5:3b',
+                  may_run: true,
+                  why_not: '',
+                },
+              ]),
             testRuns: () => of([]),
             testStats: () => of([]),
           },
@@ -403,10 +519,18 @@ describe('SmokeTests', () => {
     );
   });
 
-  it('will not run without a model chosen', () => {
+  it('will not run without a use case chosen', () => {
     /** The button is disabled, and the method refuses too — a guard that exists only in the
-     *  template is a guard a keyboard can walk past. */
-    const harness = setup();
+     *  template is a guard a keyboard can walk past.
+     *
+     *  Two runnable use cases, so nothing is preselected: choosing for somebody who has several
+     *  would be picking which pipeline they meant, and a run costs money. */
+    const harness = setup({
+      attribution: [
+        { use_case: 'uc-a', name: 'A', start_model: 'm', may_run: true, why_not: '' },
+        { use_case: 'uc-b', name: 'B', start_model: 'm', may_run: true, why_not: '' },
+      ],
+    });
     const component = harness.component as unknown as { run: () => Promise<void> };
 
     void component.run();
@@ -420,6 +544,7 @@ describe('SmokeTests', () => {
     const harness = setup({
       stats: [
         {
+          use_case: 'uc-a',
           model: 'm',
           run: 5,
           catalogue: 2,
@@ -512,10 +637,10 @@ describe('SmokeTests', () => {
   it('says how far a long battery has got', async () => {
     const harness = setup();
     const component = harness.component as unknown as {
-      model: { set: (v: string) => void };
+      useCase: { set: (v: string) => void };
       progress: { set: (v: string) => void };
     };
-    component.model.set('qwen2.5:3b');
+    component.useCase.set('uc-a');
     component.progress.set('1 of 2');
     harness.fixture.detectChanges();
 
@@ -527,10 +652,10 @@ describe('SmokeTests', () => {
      *  into nothing, and the run reports what it collected. */
     const harness = setup({ results: [result({ expectation: '' })] });
     const component = harness.component as unknown as {
-      model: { set: (v: string) => void };
+      useCase: { set: (v: string) => void };
       run: () => Promise<void>;
     };
-    component.model.set('qwen2.5:3b');
+    component.useCase.set('uc-a');
     await component.run();
     harness.fixture.detectChanges();
     expect(harness.text()).toContain('Nothing is rated yet');
@@ -584,9 +709,16 @@ describe('SmokeTests', () => {
           provide: UseCaseService,
           useValue: {
             testCases: () => of(CATALOGUE),
-            models: () => of([{ name: 'm', approved: true }]),
             testAttribution: () =>
-              of({ use_case: 'smoke-test', name: 'Smoke tests', exists: true, may_call: true }),
+              of([
+                {
+                  use_case: 'uc-a',
+                  name: 'Kundenservice',
+                  start_model: 'qwen2.5:3b',
+                  may_run: true,
+                  why_not: '',
+                },
+              ]),
             testRuns: () => of([]),
             testStats: () => of([]),
             runResults: () => of([result()]),
@@ -604,10 +736,10 @@ describe('SmokeTests', () => {
     const fixture = TestBed.createComponent(SmokeTests);
     fixture.detectChanges();
     const component = fixture.componentInstance as unknown as {
-      model: { set: (v: string) => void };
+      useCase: { set: (v: string) => void };
       run: () => Promise<void>;
     };
-    component.model.set('m');
+    component.useCase.set('uc-a');
 
     await component.run();
 
@@ -624,43 +756,60 @@ describe('SmokeTests', () => {
      *  gateway's own grant resolver calls. What is asserted here is that the screen uses it. */
     const harness = setup();
     const component = harness.component as unknown as {
-      model: { set: (v: string) => void };
-      useCase: () => string;
+      useCase: { set: (v: string) => void; (): string };
+      startModel: () => string;
     };
-    component.model.set('qwen2.5:3b');
+    component.useCase.set('uc-a');
 
-    expect(component.useCase()).toBe('smoke-test');
+    expect(component.useCase()).toBe('uc-a');
+    // And the start model comes with it: the run enters where the **pipeline** says it enters,
+    // which the screen shows rather than asks for (`ADR-0020`).
+    expect(component.startModel()).toBe('qwen2.5:3b');
   });
 
-  it('tells a missing use case apart from a refused one', () => {
-    /** Two different reasons and two different people to ask: a use case that has not been seeded
-     *  is an operator's job; a caller the gateway will not accept is a directory question. One
-     *  message covering both sends half the readers to the wrong person. */
-    const missing = setup({
-      attribution: { use_case: 'smoke-test', name: '', exists: false, may_call: false },
+  it("says why a chosen use case cannot be run, in the server's own words", () => {
+    /** Two different reasons and two different fixes: a use case with no pipeline needs one built,
+     *  and a pipeline with no start model needs somewhere to enter. One message covering both
+     *  sends half the readers to the wrong screen — and only the server knows which it is, so the
+     *  sentence is the server's rather than this screen's (`FRD-206`). */
+    const harness = setup({
+      attribution: [
+        {
+          use_case: 'uc-a',
+          name: 'Kundenservice',
+          start_model: '',
+          may_run: false,
+          why_not: "This use case's pipeline has no start model.",
+        },
+      ],
     });
-    const refused = setup({
-      attribution: { use_case: 'smoke-test', name: 'Smoke tests', exists: true, may_call: false },
-    });
+    const component = harness.component as unknown as { useCase: { set: (v: string) => void } };
+    component.useCase.set('uc-a');
+    harness.fixture.detectChanges();
 
-    expect(missing.testid('no-use-case')?.textContent).toContain('does not have one yet');
-    expect(refused.testid('no-use-case')?.textContent).toContain('may not call it');
-
-    const harness = missing;
+    expect(harness.testid('smoke-why-not')?.textContent).toContain('no start model');
     // And no button to press: the section explains rather than offering something that refuses.
-    expect(harness.testid('smoke-run')).toBeNull();
+    expect(harness.testid('smoke-run')?.hasAttribute('disabled')).toBe(true);
   });
 
   it('refuses to run without one, not only in the template', () => {
     /** A guard that exists only as a `disabled` attribute is a guard a keyboard walks past. */
     const harness = setup({
-      attribution: { use_case: 'smoke-test', name: 'Smoke tests', exists: true, may_call: false },
+      attribution: [
+        {
+          use_case: 'uc-a',
+          name: 'Kundenservice',
+          start_model: '',
+          may_run: false,
+          why_not: 'no start model',
+        },
+      ],
     });
     const component = harness.component as unknown as {
-      model: { set: (v: string) => void };
+      useCase: { set: (v: string) => void };
       run: () => Promise<void>;
     };
-    component.model.set('qwen2.5:3b');
+    component.useCase.set('uc-a');
 
     void component.run();
 
@@ -746,7 +895,6 @@ describe('SmokeTests', () => {
           provide: UseCaseService,
           useValue: {
             testCases: () => of(CATALOGUE),
-            models: () => of([]),
             testRuns: () => of([]),
             testStats: () => of([]),
             testAttribution: () =>
@@ -847,6 +995,7 @@ describe('SmokeTests', () => {
       tab: 'runs',
       stats: [
         {
+          use_case: 'uc-a',
           model: 'qwen2.5:3b',
           run: 5,
           catalogue: 10,
@@ -938,7 +1087,7 @@ describe('SmokeTests', () => {
     /** There is nothing to ask, so a run would produce a result with no answers in it and a model
      *  that looks untested rather than unasked. */
     const harness = setup({ tab: 'runs', emptyCatalogue: true });
-    (harness.component as unknown as { model: { set: (v: string) => void } }).model.set('m');
+    (harness.component as unknown as { useCase: { set: (v: string) => void } }).useCase.set('uc-a');
     harness.fixture.detectChanges();
 
     expect(harness.testid('smoke-run')?.hasAttribute('disabled')).toBe(true);

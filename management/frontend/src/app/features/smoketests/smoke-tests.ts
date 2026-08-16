@@ -5,7 +5,6 @@ import { firstValueFrom } from 'rxjs';
 import { MeService } from '../../core/api/me.service';
 import { maySetStandards } from '../../core/auth/roles';
 import {
-  CatalogModel,
   TestAttribution,
   TestCase,
   TestModelStats,
@@ -19,11 +18,18 @@ import { InfoHint } from '../../core/ui/info-hint';
 import { PageFeedback } from '../../core/ui/page-feedback';
 
 /**
- * Putting the question catalogue to a model, and reading what came back (`FRD-504`).
+ * Putting the question catalogue to a **use case's pipeline**, and reading what came back
+ * (`FRD-504`, `ADR-0020`).
  *
- * Every other control in AIRA governs *access*. None of them says anything about what the model
- * actually answers — and "is this model fit for this use case" is a question somebody has to be
- * able to answer with evidence rather than with a vendor's benchmark.
+ * Every other control in AIRA governs *access*. None of them says anything about what actually
+ * comes back — and "does my pipeline hold?" is a question somebody has to be able to answer with
+ * evidence rather than with a vendor's benchmark.
+ *
+ * **A run is about a use case.** It travels that use case's own pipeline, so the hundred questions
+ * exercise the filter, the router and the redactor somebody configured; a blocked question is a
+ * *result*, not a broken run. Testing a **model** is then a use case whose pipeline starts there,
+ * which is what IT Security's evaluation use case is — nothing about model testing is a special
+ * path any more.
  *
  * **The run travels the ordinary request path.** The console sends each prompt through the gateway
  * with the signed-in person's own credentials, so a smoke test is priced, budgeted, rate-limited
@@ -73,40 +79,80 @@ export class SmokeTests implements OnInit {
    * (`ADR-0007`). No user could satisfy both. Running the catalogue is making requests; whoever
    * may call a model may test one. Writing the catalogue stays with IT Security.
    *
-   * What decides it is whether the **gateway** will accept this caller for the smoke-test use
-   * case, which is the server's answer and not a list this screen filters.
+   * What decides it is whether the **gateway** will accept this caller for the use case they
+   * picked, and whether that use case's pipeline declares a start model — both the server's
+   * answers, not a list this screen filters.
    */
-  protected readonly mayRun = computed(() => this.attribution()?.may_call === true);
+  protected readonly mayRun = computed(() => this.chosen()?.may_run === true);
 
   /** Which of the three activities the reader is on. */
   protected readonly tab = signal<'results' | 'runs' | 'catalogue'>('results');
 
   /** The catalogue itself: one flat list of questions, in the order they are asked. */
   protected readonly cases = signal<TestCase[]>([]);
-  protected readonly models = signal<CatalogModel[]>([]);
   protected readonly runs = signal<TestRun[]>([]);
   protected readonly stats = signal<TestModelStats[]>([]);
   protected readonly loading = signal(true);
 
-  // What a new run will be.
-  protected readonly model = signal('');
-  protected readonly useCase = computed(() => this.attribution()?.use_case ?? '');
   /**
-   * Where a run is booked, answered by the server.
+   * The server refused the screen itself.
    *
-   * **Not a control, and no longer a choice.** It was a picker, and the picker was wrong three
-   * times over: it listed page one of a paged list (an endless dropdown that frequently did not
-   * hold the use case somebody works in); it asked a question the person running a model test has
-   * no opinion about; and it resolved membership with Management's rule rather than the gateway's,
-   * so a global admin was offered a use case their token has never reached and every question of a
-   * run came back `Not a member of use case 'addr-1nn4ss'`.
-   *
-   * There is **one use case for all model testing** (owner's decision, 2026-08-09). Test traffic is
-   * real traffic and has to be priced somewhere; booking it against whichever use case the tester
-   * belongs to charges somebody else's budget for work that is not theirs and mixes evaluation
-   * spend into their production figures. Reporting now separates the two by construction.
+   * Distinct from `loading` and from `feedback.error()`: those describe a request that went wrong,
+   * and this describes one that went right and said no. Running the catalogue needs administration
+   * of a use case (owner's rule, 2026-08-16), which the nav already knows from `me.may_test` — but
+   * the nav is not the only way in.
    */
-  protected readonly attribution = signal<TestAttribution | null>(null);
+  protected readonly withheld = signal(false);
+
+  // What a new run will be: a use case, and nothing else.
+  protected readonly useCase = signal('');
+
+  /**
+   * Which use cases this caller may put the catalogue to, answered by the server (`ADR-0020`).
+   *
+   * **A picker again, and the reasons it was removed are the reasons it is back correct.** It was
+   * removed because it listed page one of a paged list, asked a question the person running a
+   * *model* test had no opinion about, and resolved membership with Management's rule rather than
+   * the gateway's — so a global admin was offered a use case their token had never reached and
+   * every question of a run came back `Not a member of use case 'addr-1nn4ss'`.
+   *
+   * Two of those were the *list* being wrong, not the choice being wrong. This one is the server's
+   * answer to "which use cases would the gateway accept from you, and which of those have a
+   * pipeline to run", complete and already narrowed. The third — that nobody had an opinion — is
+   * no longer true: a run is about a use case's pipeline, so which one is the whole question.
+   */
+  protected readonly runnableUseCases = signal<TestAttribution[]>([]);
+
+  /**
+   * Whether the answer above has actually arrived.
+   *
+   * Without it the empty list — the state every load starts in — renders as *"there is no use case
+   * you may send requests to"*, so every reader is told something false for as long as the request
+   * takes, including readers for whom it is false. `LESSONS.md` §6: **unknown is never rendered as
+   * zero**. Found by an e2e test that read the sentence and believed it, which is what a person
+   * would have done.
+   */
+  protected readonly attributionKnown = signal(false);
+
+  /** The row for the use case the reader picked, or `null` while they have picked none. */
+  protected readonly chosen = computed(
+    () => this.runnableUseCases().find((row) => row.use_case === this.useCase()) ?? null,
+  );
+
+  /**
+   * Where a run would enter the pipeline. Shown rather than chosen: it is the pipeline's
+   * declaration, and a reader has to see which model their answers will have come from.
+   */
+  protected readonly startModel = computed(() => this.chosen()?.start_model ?? '');
+
+  /**
+   * Why this use case cannot be run, in the server's own words — or empty.
+   *
+   * Shown where Run would be, never as a disabled button with no explanation: a use case with no
+   * pipeline and one whose pipeline has no start model are two answers that send the reader to two
+   * different places, and only the server knows which it is (`FRD-206`).
+   */
+  protected readonly whyNot = computed(() => this.chosen()?.why_not ?? '');
 
   protected readonly running = signal(false);
   /** How far a run has got, so a hundred questions do not look frozen. */
@@ -118,11 +164,6 @@ export class SmokeTests implements OnInit {
   /** Index of the answer open in the rating window, or `null` when it is closed. */
   protected readonly rating = signal<number | null>(null);
   protected readonly note = signal('');
-
-  /** Only approved models can be called at all (`FRD-307`), so only those are offered. */
-  protected readonly runnable = computed(() =>
-    this.models().filter((m) => m.approved !== false && m.name),
-  );
 
   /**
    * Authoring the catalogue is IT Security's, matching the server's `IsITSecurity`.
@@ -179,17 +220,31 @@ export class SmokeTests implements OnInit {
       },
       error: (response: unknown) => {
         this.loading.set(false);
+        if ((response as { status?: number })?.status === 403) {
+          // Not an error: an answer. Somebody typed the address, or followed a bookmark from
+          // before the rule narrowed. The tab strip comes down and the page says who runs the
+          // catalogue — `FRD-206`'s rule that a withheld action names its performer, rather than
+          // three tabs of controls over a banner explaining that none of them work.
+          this.withheld.set(true);
+          return;
+        }
         this.feedback.fail(response, 'Could not load the question catalogue.');
       },
     });
-    this.service.models().subscribe({
-      next: (rows) => this.models.set(rows),
-      error: () => undefined,
-    });
     this.service.testAttribution().subscribe({
-      next: (where) => this.attribution.set(where),
-      error: (response: unknown) =>
-        this.feedback.fail(response, 'Could not work out where a run would be booked.'),
+      next: (rows) => {
+        this.runnableUseCases.set(rows);
+        this.attributionKnown.set(true);
+        // Preselect only when there is nothing to choose. Choosing for somebody who has several
+        // would be picking which pipeline they meant, and a run costs money.
+        if (rows.length === 1) this.useCase.set(rows[0].use_case);
+      },
+      error: (response: unknown) => {
+        // Known, and the answer is "none" — a failed question is still not an unasked one, and
+        // leaving the panel on its loading state forever would be the opposite defect.
+        this.attributionKnown.set(true);
+        this.feedback.fail(response, 'Could not work out where the catalogue could be run.');
+      },
     });
     this.refreshRuns();
   }
@@ -213,12 +268,12 @@ export class SmokeTests implements OnInit {
    * nothing about the model.
    */
   protected async run(): Promise<void> {
-    if (!this.model() || !this.mayRun() || this.running()) return;
+    if (!this.useCase() || !this.mayRun() || this.running()) return;
 
     this.running.set(true);
     this.feedback.clear();
     try {
-      const run = await firstValueFrom(this.service.startRun(this.model(), this.useCase()));
+      const run = await firstValueFrom(this.service.startRun(this.useCase()));
       const results = await firstValueFrom(this.service.runResults(run.id));
 
       for (const [index, result] of results.entries()) {
@@ -231,7 +286,8 @@ export class SmokeTests implements OnInit {
       this.refreshRuns();
       await this.open(run);
       this.feedback.succeed(
-        `${results.length} answer(s) from ${run.model}. Nothing is rated yet — that is the next step.`,
+        `${results.length} answer(s) through ${run.use_case}, entering at ${run.model}. ` +
+          'Nothing is rated yet — that is the next step.',
       );
     } catch (error) {
       this.feedback.fail(error, 'The run could not be completed.');
@@ -246,7 +302,7 @@ export class SmokeTests implements OnInit {
     const started = Date.now();
     try {
       const answer = await firstValueFrom(
-        this.service.askModel(this.model(), result.prompt, this.useCase()),
+        this.service.askModel(this.startModel(), result.prompt, this.useCase()),
       );
       await firstValueFrom(
         this.service.updateResult(result.id, {
@@ -416,7 +472,7 @@ export class SmokeTests implements OnInit {
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = url;
-        link.download = `aira-smoketest-${run.model.replace(/[^\w.-]/g, '_')}.csv`;
+        link.download = `aira-smoketest-${run.use_case.replace(/[^\w.-]/g, '_')}.csv`;
         link.click();
         URL.revokeObjectURL(url);
       },

@@ -42,6 +42,17 @@ so existing behavior is unchanged.
 - **FR-5 Fallback**: `generateContent` tries `[model, *fallback_models]` until one succeeds; streaming
   uses the routed model (no mid-stream fallback).
 - **FR-6**: The effective model + pipeline decisions are attributed on the request log and trace.
+- **FR-7 Start model** (`ADR-0020`, 2026-08-16): a pipeline may declare where a request **enters**
+  it when the caller names no model. Configuration about the pipeline rather than a step in it — the
+  same shape `FRD-308` settled for `allowed_models` — and validated like every other model a
+  pipeline names: released to the use case, or the save is refused. Blank is a real state, meaning
+  *only a caller who names a model enters here*, and is what every pipeline written before this
+  requirement is in. It is deliberately **not** part of `Pipeline.is_empty`: a pipeline with a start
+  model and no steps still runs nothing, and treating it as non-empty would put every request
+  through an engine with nothing to do. Two readers: the question catalogue (`FRD-504`), which
+  cannot run a use case without one, and the dry run, which now prefers a declaration to the three
+  guesses `_model_the_pipeline_is_about` had been making — each one wrong in production and each
+  reported back as `effective_model`, where a builder reads it as a decision somebody made.
 
 ## 4. Design
 - `pipeline/config.py` — `Pipeline`, `PipelineStep`, `StepType`; `Pipeline.from_dict` parses read-model JSON.

@@ -16,6 +16,7 @@ from __future__ import annotations
 from typing import Any
 
 from django.db.models import QuerySet
+from guardian.shortcuts import get_objects_for_user
 
 from aira_common.access import resolve
 from aira_management.apps.usecases.models import UseCase, UseCaseGroupGrant, UseCaseMembership
@@ -98,6 +99,46 @@ def may_call_queryset(user: Any, queryset: QuerySet[UseCase]) -> QuerySet[UseCas
     # promise a dry run the gateway then refuses, which is the report this came from.
     direct = list(UseCaseMembership.objects.filter(user=user).values_list("use_case__slug", "role"))
     return queryset.filter(slug__in=list(resolve(held, grants, direct)))
+
+
+def may_run_tests_queryset(user: Any, queryset: QuerySet[UseCase]) -> QuerySet[UseCase]:
+    """Narrow to the use cases this caller may put the question catalogue to (`FRD-504`).
+
+    **Two conditions, and both are necessary**, which is why this is a composition rather than a
+    fourth rule:
+
+    1. `may_call_queryset` — the *gateway* would accept this caller for it. A run is real traffic
+       sent with the signed-in person's own credentials, so a use case they cannot call is one
+       whose run would 403 on its first question.
+    2. **Administration, not membership.** A normal use-case *user* may not run the catalogue — the
+       owner's rule, 2026-08-16. Running it spends the use case's budget a hundred prompts at a
+       time and reads a catalogue that states what this installation tests for (§8), and both of
+       those are decisions about the use case rather than work inside it. So: an administrator of
+       *that* use case (`MANAGE`, which group grants and direct memberships both write), or one of
+       the two roles that answer for the installation.
+
+    IT Security is in the second clause by role because it is deliberately a member of nothing
+    (`ADR-0007`) — but note that clause 1 still applies to them: they reach the use case they
+    evaluate models in because somebody put them in its group, exactly like everybody else. A role
+    is not a bypass of the gateway's rule here, and if it were, the run would fail at dispatch and
+    the console would have promised something the server refuses.
+    """
+    reachable = may_call_queryset(user, queryset)
+    if has_role(user, Role.GLOBAL_ADMIN, Role.IT_SECURITY):
+        return reachable
+    if not getattr(user, "is_authenticated", False):
+        return reachable.none()
+    return get_objects_for_user(user, MANAGE, klass=reachable)
+
+
+def may_run_tests(user: Any, usecase: UseCase) -> bool:
+    """`may_run_tests_queryset` for one use case — asked through the queryset so there is one rule.
+
+    Written the other way round at first (the predicate, with the queryset filtering on it), and
+    that is the shape this project keeps paying for: two spellings of one rule, identical the day
+    they are written.
+    """
+    return may_run_tests_queryset(user, UseCase.objects.filter(pk=usecase.pk)).exists()
 
 
 def held_group_paths(user: Any) -> list[str]:

@@ -177,6 +177,39 @@ def test_a_dry_run_simulates_the_model_the_pipeline_is_about() -> None:
     assert _model_the_pipeline_is_about({"steps": []}, [_Model()]) == "mock-1"
 
 
+def test_a_dry_run_enters_where_the_pipeline_says_it_does() -> None:
+    """`ADR-0020` gave a pipeline a **declared** start model, and a declaration outranks every
+    guess below it.
+
+    The three guesses are each documented as wrong in production, and each was reported back as
+    `effective_model` where a builder read it as a decision somebody made. Here the pipeline names
+    a model in a `model_route` category *and* declares a different one to be entered at: the
+    declaration wins, because a routing table says where a request may end up and the start model
+    says where it comes in. This is also the field the question catalogue runs against, so a dry
+    run that disagreed with it would simulate a pipeline nobody can start.
+    """
+    from aira_gateway.api.pipeline import _model_the_pipeline_is_about
+
+    class _Model:
+        name = "mock-1"
+
+    route = {
+        "start_model": "declared-1",
+        "steps": [
+            {
+                "type": "model_route",
+                "config": {"categories": [{"name": "code", "model": "strong-1"}]},
+            }
+        ],
+        "fallback_models": ["fallback-1"],
+    }
+    assert _model_the_pipeline_is_about(route, [_Model()], ["released-1"]) == "declared-1"
+
+    # Blank is not a declaration — it is the state every pipeline written before `ADR-0020` is in,
+    # and it has to fall through to the guesses rather than simulate the empty string.
+    assert _model_the_pipeline_is_about({**route, "start_model": "   "}, [_Model()]) == "strong-1"
+
+
 def test_a_dry_run_simulates_a_model_that_can_actually_generate() -> None:
     """Found by dry-running an injection filter for `kundenservice`: the builder was told
     `effective_model: all-minilm` — the **embedding** model.

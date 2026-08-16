@@ -79,6 +79,41 @@
             <div class="node node--endpoint">Request in</div>
             <div class="edge"></div>
 
+            <!-- Where a request that names no model enters (`ADR-0020`).
+                 On the graph rather than in a settings panel because that is what it *is*: the
+                 first node, before any step. A reader tracing the path top to bottom would
+                 otherwise find the entry point described somewhere else. -->
+            <div class="node node--start">
+              <div class="node__body">
+                <div class="node__text">
+                  <div class="node__title">Start model</div>
+                  <div class="node__meta muted">
+                    @if (config().start_model) {
+                      Enters at <code>{{ config().start_model }}</code> when the caller names none.
+                    } @else {
+                      Only a caller who names a model reaches this pipeline. The question catalogue
+                      cannot be run against this use case until one is set.
+                    }
+                  </div>
+                </div>
+              </div>
+              <div class="node__controls" (click)="$event.stopPropagation()">
+                <select
+                  class="input input--sm"
+                  aria-label="Start model"
+                  [ngModel]="config().start_model"
+                  (ngModelChange)="setStartModel($event)"
+                  [disabled]="nothingReleased()"
+                >
+                  <option value="">— none —</option>
+                  @for (model of released(); track model) {
+                    <option [value]="model">{{ model }}</option>
+                  }
+                </select>
+              </div>
+            </div>
+            <div class="edge"></div>
+
             @for (step of config().steps; track $index) {
               <div
                 class="node node--step"

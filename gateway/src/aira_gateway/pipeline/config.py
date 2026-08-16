@@ -19,6 +19,8 @@ _log = get_logger("aira_gateway.pipeline")
 # refuses to build an unbounded pipeline out of whatever the read-model happens to contain.
 MAX_STEPS = 32
 MAX_FALLBACK_MODELS = 16
+#: The same ceiling Management's serializer applies to a model name.
+MAX_MODEL_LENGTH = 128
 
 #: The **same bounds the Management serializer applies**, asked again here.
 #:
@@ -120,9 +122,19 @@ class PipelineStep:
 class Pipeline:
     steps: tuple[PipelineStep, ...] = ()
     fallback_models: tuple[str, ...] = ()
+    #: Where a request enters when the caller names no model (`ADR-0020`). Empty means nobody
+    #: declared one — a different answer from a guess, and the only one the dry run may give.
+    start_model: str = ""
 
     @property
     def is_empty(self) -> bool:
+        """Whether running this changes nothing.
+
+        `start_model` is **not** part of it: a pipeline that only declares where a request enters
+        has no step to run and no chain to fall back through, so treating it as non-empty would
+        make `PipelineStore` hand the engine a pipeline with nothing in it on every request of
+        that use case.
+        """
         return not self.steps and not self.fallback_models
 
     @classmethod
@@ -143,4 +155,5 @@ class Pipeline:
         fallbacks = tuple(
             str(m) for m in list(data.get("fallback_models", []))[:MAX_FALLBACK_MODELS] if m
         )
-        return cls(steps=tuple(steps), fallback_models=fallbacks)
+        start = str(data.get("start_model", "") or "")[:MAX_MODEL_LENGTH]
+        return cls(steps=tuple(steps), fallback_models=fallbacks, start_model=start)

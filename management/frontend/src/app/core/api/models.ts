@@ -21,6 +21,16 @@ export interface Me {
   /** The installation's key policy, so a form states what the server enforces (`ADR-0015`). */
   api_key_default_days?: number;
   api_key_max_days?: number;
+  /**
+   * Whether to offer the pipeline-tests screen (`ADR-0020`).
+   *
+   * The server's own `MayRunTests`, because this is an object-level permission and `use_cases`
+   * above is the group convention only — deriving it here would hide the screen from anybody who
+   * reaches a use case through a grant. And since the owner's rule of 2026-08-16 it is narrower
+   * than membership: running the catalogue needs **administration** of a use case, which the token
+   * does not carry at all.
+   */
+  may_test?: boolean;
 }
 
 /**
@@ -200,6 +210,15 @@ export interface PipelineStep {
 export interface PipelineConfig {
   steps: PipelineStep[];
   fallback_models: string[];
+  /**
+   * Where a request **enters** this pipeline when the caller names no model (`ADR-0020`).
+   *
+   * Not a step: it is where the pipeline begins, and everything after it — a filter, a router, a
+   * fallback — is the pipeline's own decision. Empty means only a caller who names their own model
+   * ever reaches it, which is every ordinary API request; the question catalogue then cannot be run
+   * against this use case, and the screen says so rather than picking one.
+   */
+  start_model: string;
   updated_at?: string;
 }
 
@@ -449,12 +468,20 @@ export interface ModelCheck {
  * All three facts come from the server. The console holding the slug would go silently wrong the
  * day the seed renamed it, and the console deciding `may_call` from a membership list is the defect
  * this endpoint exists because of.
+ *
+ * **One row per use case since `ADR-0020`.** A run is about a use case's pipeline, so the question
+ * is no longer "may I reach the one testing use case" but "which of mine can I put this to" — and
+ * all three facts per row are the server's: would the gateway accept this caller, does the pipeline
+ * declare a start model, and if not, what to do about it.
  */
 export interface TestAttribution {
   use_case: string;
   name: string;
-  exists: boolean;
-  may_call: boolean;
+  /** Where a run would enter the pipeline. Empty exactly when `may_run` is false. */
+  start_model: string;
+  may_run: boolean;
+  /** Why not, in a sentence naming the fix. Empty when `may_run` is true. */
+  why_not: string;
 }
 
 export interface TestCase {
@@ -517,9 +544,13 @@ export interface TestResult {
  * that an old, since-corrected run drags down forever. Earlier runs are **history**, and they stay
  * readable under Runs.
  *
- * One row per model, because there is one catalogue.
+ * **One row per use case since `ADR-0020`**, with the start model that run entered at named on it:
+ * a pipeline's start model can be changed between two runs, and a row that hid it would compare two
+ * configurations as though they were one.
  */
 export interface TestModelStats {
+  use_case: string;
+  /** What that run entered the pipeline at. Not necessarily what answered — a router may reroute. */
   model: string;
   run: number;
   /** How many questions the catalogue asks today, which an older run may not have been asked. */

@@ -172,8 +172,16 @@ There is no `allow_check` step: which models a use case may call is a property o
 ([`FRD-308`](features/FRD-308-use-case-model-release.md)), checked as a dispatch condition at every
 hop. As a step it ran once, before routing — so a route or a fallback went straight past it.
 
-Every model a pipeline names — the classifier a filter runs, the classifier a router runs, each
-category's target, the default target, the fallback chain — must be **released to the use case**.
+A pipeline also names **where a request enters it when the caller names no model** — its
+`start_model` ([`ADR-0020`](adr/ADR-0020-the-catalogue-tests-a-pipeline.md)). Not a step, so it is
+not in the table above: it is the model the request arrives as, before the first step reads
+anything. Blank means only a caller who names a model ever enters here, which is every ordinary API
+request. Two things read it — the question catalogue ([`FRD-504`](features/FRD-504-model-smoke-tests.md)),
+which cannot run a use case without one, and the dry run, which prefers it to guessing.
+
+Every model a pipeline names — the start model, the classifier a filter runs, the classifier a
+router runs, each category's target, the default target, the fallback chain — must be **released to
+the use case**.
 Refused when the pipeline is saved and again at dispatch, and the builder offers only those. The
 dry run follows the same rule and the membership rule with it: it calls a real model, so it belongs
 to a use case exactly as a request does.

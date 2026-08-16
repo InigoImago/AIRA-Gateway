@@ -388,7 +388,7 @@ test.describe('Navigation that hides nothing', () => {
   });
 });
 
-test.describe('Model tests', () => {
+test.describe('Pipeline tests', () => {
   test('the tab is there for a role that may run one, and the logo is the mark', async ({
     page,
   }) => {
@@ -399,7 +399,7 @@ test.describe('Model tests', () => {
      */
     await login(page, USERS.security);
 
-    await expect(page.getByTestId('nav-model-tests')).toBeVisible();
+    await expect(page.getByTestId('nav-pipeline-tests')).toBeVisible();
 
     // The mark, not the two letters it replaced.
     const logo = page.locator('img.aira-logo');
@@ -411,25 +411,36 @@ test.describe('Model tests', () => {
     expect(loaded, 'the logo element is there and the file behind it is not').toBe(true);
   });
 
+  test('the old address still reaches the screen', async ({ page }) => {
+    /** It was `/model-tests` until `ADR-0020` made a run about a use case's pipeline. The path is
+     *  in bookmarks and in the documentation, and a 404 for a screen that moved teaches a reader
+     *  that the console is unstable. */
+    await login(page, USERS.security);
+    await page.goto('/model-tests');
+
+    await expect(page).toHaveURL(/\/pipeline-tests$/);
+    await expect(page.getByTestId('tab-runs')).toBeVisible();
+  });
+
   test('the three activities are three tabs, and the catalogue is one flat list', async ({
     page,
   }) => {
     /**
-     * The shape the owner asked for: one catalogue of questions defined once, runs that put it to a
-     * model, and a first view showing where each model stands. Two earlier versions were wrong in
-     * ways no unit test could call wrong, because the code and its test came from the same idea —
-     * one page that summed every run a model had ever had, and then a grouping into batteries that
-     * bought nothing and cost comparability.
+     * The shape the owner asked for: one catalogue of questions defined once, runs that put it to
+     * a use case's pipeline, and a first view showing where each stands. Two earlier versions were
+     * wrong in ways no unit test could call wrong, because the code and its test came from the same
+     * idea — one page that summed every run there had ever been, and then a grouping into batteries
+     * that bought nothing and cost comparability.
      */
     await login(page, USERS.security);
-    await page.goto('/model-tests');
+    await page.goto('/pipeline-tests');
 
     await expect(page.getByTestId('tab-results')).toBeVisible();
     await expect(page.getByTestId('tab-runs')).toBeVisible();
 
     await page.getByTestId('tab-catalogue').click();
 
-    // A hundred questions, in one list, every model asked all of them.
+    // A hundred questions, in one list, every use case asked all of them.
     await expect(page.locator('tbody tr')).toHaveCount(100);
 
     // The search reaches the wording, not only the keyword: a reader looking for "the one about
@@ -441,69 +452,74 @@ test.describe('Model tests', () => {
     await expect(page.getByTestId('catalogue-add')).toBeVisible();
   });
 
-  test('a run is booked to the dedicated smoke-test use case', async ({ page }) => {
+  test('a run names a use case, and the screen says where it enters', async ({ page }) => {
     /**
-     * Owner's decision, 2026-08-09: **all model testing lands on one use case**, seeded, and every
-     * run is priced there. Charging it to whichever use case the tester belongs to spends somebody
-     * else's budget on work that is not theirs and mixes evaluation cost into their production
-     * figures — reporting then cannot separate the two, because nothing distinguishes them.
+     * `ADR-0020`: a run is the catalogue put to a **use case's pipeline**, so what is chosen is a
+     * use case and the model is the pipeline's declaration rather than the tester's guess.
      *
-     * Asserted for a global administrator, because that is the account the previous version
-     * failed for: it was offered the alphabetically first of nine hundred use cases and the
-     * gateway refused every question of the run.
+     * Asserted for a global administrator, because that is the account the previous version failed
+     * for: it was offered the alphabetically first of nine hundred use cases and the gateway
+     * refused every question of the run. The list is the gateway's answer now, so an admin whose
+     * token reaches nothing sees nothing to choose — which the branch below covers.
      */
     await login(page, USERS.globalAdmin);
-    await page.goto('/model-tests');
+    await page.goto('/pipeline-tests');
     await page.getByTestId('tab-runs').click();
 
-    await expect(page.locator('#smoke-usecase')).toHaveCount(0);
-    await expect(page.getByTestId('smoke-attribution')).toContainText('Smoke tests');
+    // There is no model picker at all any more: the pipeline says where a run enters.
+    await expect(page.locator('#smoke-model')).toHaveCount(0);
 
-    // Enabled once a model is chosen — the only thing still asked for. Asserted rather than
-    // assumed: "the button is there" is what the version this replaces satisfied while every
-    // request behind it was refused.
-    await page.getByTestId('smoke-model').selectOption('qwen3:0.6b');
-    await expect(page.getByTestId('smoke-run')).toBeEnabled();
+    const nothingToRun = page.getByTestId('no-use-case');
+    if (await nothingToRun.isVisible()) {
+      // The gateway accepts this token for nothing. A directory question, said in words rather
+      // than offered as a control that fails when pressed.
+      await expect(nothingToRun).toContainText('groups your token carries');
+      await expect(page.getByTestId('smoke-run')).toHaveCount(0);
+      return;
+    }
+
+    await expect(page.locator('#smoke-use-case')).toBeVisible();
+    await page.locator('#smoke-use-case').selectOption({ index: 1 });
+
+    // Either it can be run and says where it enters, or it says why not — never a bare disabled
+    // button, which is the `FRD-206` defect this screen has already had once.
+    const why = page.getByTestId('smoke-why-not');
+    if (await why.isVisible()) {
+      await expect(why).toContainText(/pipeline|start model/);
+    } else {
+      await expect(page.getByTestId('smoke-attribution')).toContainText('Enters the pipeline at');
+      await expect(page.getByTestId('smoke-run')).toBeEnabled();
+    }
   });
 
-  test('a role that may not call it is told which of the two reasons applies', async ({ page }) => {
+  test('a use-case administrator can put the catalogue to their own pipeline', async ({ page }) => {
     /**
-     * The defect this exists for: attribution was resolved with Management's `is_member`, which
-     * grants a global administrator every use case. The console offered the alphabetically first
-     * of nine hundred, and every question of the run came back
-     * `Not a member of use case 'addr-1nn4ss'`.
-     *
-     * The gateway reads a token's groups and grants nobody a blanket, so a global admin — who sees
-     * everything and is in no use-case group — may call nothing. The screen says that in words
-     * instead of offering something that fails.
-     *
-     * This is the layer that would have caught it, and it is the layer I did not point at the
-     * question: the earlier version asserted that *a name was displayed*, never that the name was
-     * one the gateway accepts.
+     * The reader this feature gained (`ADR-0020`). Their question is not "how does Claude behave"
+     * but *"does my pipeline hold"* — does the injection filter catch these hundred prompts, does
+     * the redactor mangle them, does the router send them somewhere sane. There was no way to ask
+     * it: every run went to one seeded use case whose pipeline was empty.
      */
-    // `itgov` may not test models at all, so the tab is absent — asserted elsewhere. The reader
-    // this case is about is one who may test and whose token does not reach the use case; in the
-    // dev realm every testing role now holds `/use-cases/smoke-test`, so the *state* is what is
-    // asserted here rather than a role: whichever message shows, it names a reason and a person to
-    // ask, instead of a Run button that fails when pressed.
     await login(page, USERS.useCaseAdmin);
-    await page.goto('/model-tests');
+
+    await expect(page.getByTestId('nav-pipeline-tests')).toBeVisible();
+
+    await page.goto('/pipeline-tests');
     await page.getByTestId('tab-runs').click();
 
-    const blocked = page.getByTestId('no-use-case');
-    if (await blocked.isVisible()) {
-      await expect(blocked).toContainText(/does not have one yet|may not call it/);
-      await expect(page.getByTestId('smoke-run')).toHaveCount(0);
-    } else {
-      await expect(page.getByTestId('smoke-attribution')).toContainText('Smoke tests');
+    const nothingToRun = page.getByTestId('no-use-case');
+    if (await nothingToRun.isVisible()) {
+      await expect(nothingToRun).toContainText('groups your token carries');
+      return;
     }
+    // Their own use cases, and only those — the gateway's answer, not Management's visibility.
+    await expect(page.locator('#smoke-use-case option')).not.toHaveCount(1);
   });
 
   test('a member may read the standard and may not rewrite it', async ({ page }) => {
     /** `FRD-206`: a withheld action names who performs it, rather than being an absent control the
      *  reader has to guess at — and read-only stays *usable*. */
     await login(page, USERS.useCaseAdmin);
-    await page.goto('/model-tests');
+    await page.goto('/pipeline-tests');
     await page.getByTestId('tab-catalogue').click();
 
     await expect(page.locator('tbody tr').first()).toBeVisible();
@@ -511,10 +527,81 @@ test.describe('Model tests', () => {
     await expect(page.getByTestId('catalogue-readonly')).toContainText('IT Security');
   });
 
-  test('a role that may not act on an incident is not offered it', async ({ page }) => {
+  test('a role that belongs to no use case is not offered it', async ({ page }) => {
+    /** `MayRunTests` needs somewhere to run: a run is making requests. IT Steuerung sees every
+     *  figure and is a member of nothing (`ADR-0007`), so it has nothing to put the catalogue to —
+     *  and an entry that 403s is `FRD-206`'s defect. The predicate is the **server's**
+     *  (`me.may_test`), because it is an object-level permission the console cannot derive. */
     await login(page, USERS.governance);
 
-    await expect(page.getByTestId('nav-model-tests')).toHaveCount(0);
+    await expect(page.getByTestId('nav-pipeline-tests')).toHaveCount(0);
+  });
+
+  test('membership of a use case does not let you run the catalogue in it', async ({ page }) => {
+    /**
+     * The owner's rule of 2026-08-16, at the layer where a wrong answer is visible to a person.
+     * `ucuser` and `ucadmin` are both attached to `kundenservice`; one is a `user` and the other an
+     * `admin`, and that is the only difference between them here. A run is a hundred prompts
+     * through that pipeline spending that use case's budget, against a catalogue stating what this
+     * installation tests for — so it takes administration of the use case, not membership of it.
+     *
+     * **Stated as the difference between two people rather than as a fact about one.** The first
+     * version asserted that `ucuser` is offered no screen at all, and it failed on this machine
+     * for a reason worth keeping: earlier suites had left group grants behind, one of which made
+     * `ucuser`'s Keycloak group an *administrator* of a throwaway use case. So they legitimately
+     * administer something, the entry legitimately appears, and the assertion was measuring the
+     * database's history rather than the rule — `LESSONS.md` §1's *"works on a machine that has
+     * already done the thing by hand"*, inverted. The per-object comparison below is true on a
+     * fresh database and on a used one.
+     *
+     * In the browser rather than only in Django because the two answers come from different
+     * places: the server decides, and the console has to be reading the field it decides in. A
+     * console that derived this from the token's groups would offer it — the token carries no
+     * notion of who administers what.
+     */
+    const offered = async () => {
+      await page.goto('/pipeline-tests');
+      // **Wait for a terminal state, then branch.** Two earlier versions of this helper sampled
+      // instead: a `count()` taken straight after `goto` reads a page that has not rendered, and
+      // the panel's empty state was reachable *before* the answer arrived. Both returned "nothing
+      // offered" for both people, so the test agreed with itself and proved neither half — which
+      // is also how the loading-state defect this fixed was found. `LESSONS.md` §7.
+      const runs = page.getByTestId('tab-runs');
+      const withheld = page.getByTestId('tests-withheld');
+      await expect(runs.or(withheld)).toBeVisible();
+      if (await withheld.isVisible()) return [] as string[];
+
+      await runs.click();
+      const picker = page.getByTestId('smoke-use-case');
+      const none = page.getByTestId('no-use-case');
+      // `no-use-case` now means the server answered "none", never "not asked yet" — that is the
+      // whole of the fix, and it is what makes this an honest wait rather than a race.
+      await expect(picker.or(none)).toBeVisible();
+      if (!(await picker.isVisible())) return [] as string[];
+
+      // Read the option values **off the DOM**. Two selector forms were tried first and both
+      // silently matched nothing: `option[value=…]` asks about the attribute where Angular's
+      // `[value]` binding sets the property, and `hasText` asks about rendered text where an
+      // `<option>` inside a closed `<select>` renders none.
+      return picker.evaluate((select) =>
+        Array.from((select as HTMLSelectElement).options, (option) => option.value),
+      );
+    };
+
+    await login(page, USERS.useCaseAdmin);
+    expect(await offered(), 'the administrator of the use case may run it').toContain(
+      'kundenservice',
+    );
+
+    // Sign the first one **out** before signing the second one in. Without this the Keycloak SSO
+    // session is still the administrator's, so `login` returns straight to the app as them and the
+    // second half of the comparison silently re-measures the first — it would have passed the day
+    // the rule broke.
+    await logout(page);
+    await login(page, USERS.useCaseUser);
+    expect(await offered(), 'a plain member of the same use case may not').not.toContain(
+      'kundenservice',
+    );
   });
 
   // Still skipped, and the reason has changed. The picker defect is fixed — attribution is
@@ -539,13 +626,14 @@ test.describe('Model tests', () => {
     // unusable — IT Security is deliberately a member of nothing (`ADR-0007`), so no user could
     // satisfy both requirements at once.
     await login(page, USERS.useCaseAdmin);
-    await page.goto('/model-tests');
+    await page.goto('/pipeline-tests');
     await page.getByTestId('tab-runs').click();
-    await expect(page.getByRole('heading', { level: 2, name: 'Model tests' })).toBeVisible();
+    await expect(page.getByRole('heading', { level: 2, name: 'Pipeline tests' })).toBeVisible();
 
-    // The model the seed declares and approves in *Management's* catalog. Only what a Global
-    // Administrator has catalogued may be called, and the console offers exactly that set.
-    await page.getByTestId('smoke-model').selectOption('qwen3:0.6b');
+    // A **use case**, and its pipeline decides the rest — including which model answers
+    // (`ADR-0020`). The seeded evaluation use case starts at the model the seed declared.
+    await page.getByTestId('smoke-use-case').selectOption('smoke-test');
+    await expect(page.getByTestId('smoke-attribution')).toContainText('Enters the pipeline at');
     await page.getByTestId('smoke-run').click();
 
     // The run opens by itself when it finishes, and says nothing has been rated.

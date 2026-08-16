@@ -56,14 +56,23 @@
     offered to `it-steuerung`: that role sees every figure and no content, and this screen's whole
     point is the content behind the figures. Offering it and refusing on use is `FRD-206`'s defect.
   -->
-  @if (mayInvestigate()) {
+  <!--
+    Putting the question catalogue to a use case's pipeline (`ADR-0020`). Offered to whoever may
+    **run** it, which since that decision is anybody who belongs to a use case — a use-case
+    administrator asking whether their own filter holds is the reader this screen gained. It sat
+    inside the incident-role block below while a run was about a model and the whole installation
+    was the audience.
+  -->
+  @if (mayTest()) {
     <a
       class="aira-nav__item"
-      routerLink="/model-tests"
+      routerLink="/pipeline-tests"
       routerLinkActive="is-active"
-      data-testid="nav-model-tests"
-      >Model tests</a
+      data-testid="nav-pipeline-tests"
+      >Pipeline tests</a
     >
+  }
+  @if (mayInvestigate()) {
     <a
       class="aira-nav__item"
       routerLink="/requests"

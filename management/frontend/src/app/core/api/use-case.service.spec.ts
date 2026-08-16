@@ -89,7 +89,7 @@ describe('UseCaseService', () => {
         use_case: 'uc',
         system: '',
         user: 'hi',
-        pipeline: { steps: [], fallback_models: [] },
+        pipeline: { steps: [], fallback_models: [], start_model: '' },
       })
       .subscribe((result) => expect(result.blocked).toBe(false));
     const req = http.expectOne('/gw/v1beta/pipeline:dryRun');
@@ -173,13 +173,18 @@ describe('UseCaseService', () => {
 
   it('gets the pipeline config', () => {
     service.getPipeline('uc').subscribe((c) => expect(c.steps.length).toBe(0));
-    http.expectOne('/api/v1/use-cases/uc/pipeline/').flush({ steps: [], fallback_models: [] });
+    http
+      .expectOne('/api/v1/use-cases/uc/pipeline/')
+      .flush({ steps: [], fallback_models: [], start_model: '' });
   });
 
   it('saves the pipeline with PUT', () => {
     const config = {
       steps: [{ type: 'model_route' as const, config: {} }],
       fallback_models: ['b'],
+      // Where a caller who names no model enters (`ADR-0020`). Sent on every save, because the
+      // editor holds the whole configuration and a PUT that omitted it would clear it.
+      start_model: 'start-1',
     };
     service.savePipeline('uc', config).subscribe();
     const req = http.expectOne('/api/v1/use-cases/uc/pipeline/');
@@ -195,7 +200,7 @@ describe('UseCaseService', () => {
       use_case: 'uc',
       system: 'sys',
       user: 'hi',
-      pipeline: { steps: [], fallback_models: [] },
+      pipeline: { steps: [], fallback_models: [], start_model: '' },
     };
     service.dryRunPipeline(payload).subscribe((r) => expect(r.blocked).toBe(false));
     const req = http.expectOne('/gw/v1beta/pipeline:dryRun');
@@ -414,16 +419,17 @@ describe('UseCaseService', () => {
     request.flush({ candidates: [{}] });
   });
 
-  it('asks for the runs of one model when it is given one', () => {
-    service.testRuns('m-1').subscribe();
-    expect(http.expectOne((r) => r.url === '/api/v1/test-runs/').request.params.get('model')).toBe(
-      'm-1',
-    );
+  it('asks for the runs of one use case when it is given one', () => {
+    // A run is about a use case since `ADR-0020`, so that is what the list narrows by.
+    service.testRuns('uc-a').subscribe();
+    expect(
+      http.expectOne((r) => r.url === '/api/v1/test-runs/').request.params.get('use_case'),
+    ).toBe('uc-a');
 
     service.testRuns().subscribe();
-    expect(http.expectOne((r) => r.url === '/api/v1/test-runs/').request.params.has('model')).toBe(
-      false,
-    );
+    expect(
+      http.expectOne((r) => r.url === '/api/v1/test-runs/').request.params.has('use_case'),
+    ).toBe(false);
   });
 
   it('asks the server for the tool-call turns and the flagged ones separately', () => {

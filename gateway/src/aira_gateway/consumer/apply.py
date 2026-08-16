@@ -309,14 +309,23 @@ async def _upsert_pipeline(session: AsyncSession, payload: dict[str, Any]) -> No
     """Upsert a use case's pipeline config, keyed by use case (FRD-300)."""
     steps = payload.get("steps", [])
     fallback = payload.get("fallback_models", [])
+    # `.get`, because an older Management does not send it — and an absent field is "nobody
+    # declared one", which is exactly what the empty string means here (`ADR-0020`).
+    start = str(payload.get("start_model", "") or "")
     record = await session.get(PipelineConfigRead, payload["use_case"])
     if record is None:
         session.add(
-            PipelineConfigRead(use_case=payload["use_case"], steps=steps, fallback_models=fallback)
+            PipelineConfigRead(
+                use_case=payload["use_case"],
+                steps=steps,
+                fallback_models=fallback,
+                start_model=start,
+            )
         )
     else:
         record.steps = steps
         record.fallback_models = fallback
+        record.start_model = start
 
 
 async def _delete_pipeline(session: AsyncSession, use_case: str) -> None:

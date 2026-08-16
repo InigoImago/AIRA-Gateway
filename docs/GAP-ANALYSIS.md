@@ -29,7 +29,7 @@ Legend: done built and verified · partly partial, with the missing half named �
 | 11 | Overview of all use cases | partly | list and detail done — **no governance view of the processing logic** across use cases (`FRD-600`) |
 | 12 | Self-service filter and routing pipeline | done | `FRD-303`, `FRD-306` |
 | 13 | Permitted models per use case | **done** | Two gates with two owners: a Global Administrator approves a model for the *installation* (`FRD-307`), an administrator of the use case releases it to *that* use case (`FRD-308`, 2026-08-11). Both are dispatch conditions at **every hop**, so neither `model_route` nor a fallback chain goes past them. Empty means **none**. The console picks from the catalog rather than taking free text, and the `allow_check` step — which checked only the name the caller sent, once, before routing — is gone |
-| 14 | Model smoke tests and jailbreak batteries | done | `FRD-504` (2026-08-09) — one flat catalogue of 100 questions, put to a model and judged by a person; a model's standing is its **latest run**, never a sum. Narrower than drafted: no repetition-as-a-rate, no two modes, no machine-checked expectations |
+| 14 | Model smoke tests and jailbreak batteries | done | `FRD-504` — one flat catalogue of 100 questions, judged by a person; a standing is the **latest run**, never a sum. Since `ADR-0020` (2026-08-16) a run is put to a **use case's own pipeline** rather than to a model, so the filter, router and redactor are what is measured and a blocked question is a result; testing a model is a use case whose pipeline starts at it. Narrower than drafted: no repetition-as-a-rate, no machine-checked expectations (the two modes are now one mechanism — a filtering pipeline or a bare one) |
 | 15 | Budget overview and limits | done | `FRD-400`–`403`, `FRD-601`, `FRD-603`, `FRD-606` — a use case's consumption is shown **with or without a limit**, and so is each **person's**, with the two credentials shown apart and counted together. A per-head allowance belongs to the person rather than to the credential (`ADR-0019`, 2026-08-15): a key and a browser session share one, where they used to be two |
 | 16 | Anomaly detection | done | `FRD-500`/`501` — seven kinds, evaluated against the audit trail |
 | 17 | Central overview of all use cases | partly | see 11 |
@@ -153,12 +153,16 @@ three.
 
 ---
 
-### 3.5 Model smoke tests — `FRD-504`
+### 3.5 The question catalogue — `FRD-504`
 
-Written and not built. The gap it names: AIRA has extensive evidence about **itself** — every
-request measured, priced, bounded — and **none about the models it serves**. Whether a given model
-resists a jailbreak, and whether the pipeline catches what the model would not, is currently
-nobody's measurement.
+**Built**; this section is kept because the gap it named is a good statement of why. AIRA has
+extensive evidence about **itself** — every request measured, priced, bounded — and had none about
+what comes *back*. Both halves of that are now measurable and by one mechanism: the catalogue is put
+to a use case's pipeline, so running it against a filtering pipeline measures the filter and running
+it against a bare one measures the model (`ADR-0020`). What remains open is not the mechanism but
+§5.2 of the FRD — a case runs **once**, so the result is an anecdote where the specification asked
+for a rate over repeated attempts, and a model that refuses nine times in ten still reads as a
+refusal.
 
 ---
 
@@ -236,11 +240,12 @@ graph LR
     r --> payload["payload visibility in<br/>the trace view"]
     detect["FRD-500/501/503<br/><i>built</i>"] --> console["FRD-502 console<br/><i>built</i>"]
     console --> deliver["FRD-505?<br/>alert delivery"]
-    smoke["FRD-504<br/>smoke tests"] --> evidence["evidence about the<br/><i>models</i>, not just about us"]
+    smoke["FRD-504<br/>question catalogue"] --> evidence["evidence about what<br/>comes <i>back</i>, not just about us"]
 
     style r fill:#dc2626,color:#fff
     style console fill:#16a34a,color:#fff
     style detect fill:#16a34a,color:#fff
+    style smoke fill:#16a34a,color:#fff
 ```
 
 `FRD-406` is the only item that unblocks two others, and it is the only one where the product

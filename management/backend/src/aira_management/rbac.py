@@ -246,32 +246,36 @@ class IsGlobalAdminOrUseCaseAdministrator(BasePermission):
         return get_objects_for_user(user, MANAGE_PERM, klass=UseCase).exists()
 
 
-class MayTestModels(BasePermission):
-    """Who may put a battery of questions to a model (`FRD-504`).
+class MayRunTests(BasePermission):
+    """Who may reach the question catalogue at all (`FRD-504`, `ADR-0020`).
 
-    Three roles rather than one set already in use, and each is here for its own reason: a Global
-    Administrator runs the installation, IT Security asks whether a model is fit to be trusted, and
-    a **use-case administrator** asks whether it is fit for their use case — which is the person
-    who most often wants to know.
+    The **door**, not the decision: it answers "is there any use case this person could put the
+    catalogue to", so the screen is offered to somebody who can use it and withheld from somebody
+    who cannot. Which use case, and whether that one is runnable, is
+    `access.may_run_tests_queryset` — asked per object, by every endpoint, because a class-level
+    permission cannot see an object and a rule that only guards the door is a rule anybody can walk
+    around by naming a slug.
 
-    Not `IsITSecurity`: running a battery also needs *membership* of a use case to attribute the
-    traffic to, and IT Security is deliberately a member of nothing (`ADR-0007`). Requiring both
-    made the feature unusable by everybody, which is the clearest sign that the two requirements
-    were never the same requirement.
+    Three roles, each here for its own reason: a Global Administrator runs the installation, IT
+    Security asks whether a model is fit to be trusted, and a **use-case administrator** asks
+    whether their own pipeline holds — which is the person who most often wants to know, and the
+    person `ADR-0020` built this for.
 
-    **Re-derived for `ADR-0017`.** The third clause used to be the `use-case-admin` realm role.
-    That role no longer exists, and the honest replacement is not "administers a use case" but
-    `FRD-504`'s own sentence — *whoever may call a model may test one* — which is: belongs to at
-    least one use case. Narrowing it to administrators would have taken the feature away from
-    people the previous rule included, silently, while looking like a faithful translation.
+    **A normal use-case user is deliberately not among them** (owner's rule, 2026-08-16). This
+    class asked for *membership* of any use case until then, on `FRD-504`'s own sentence — *whoever
+    may call a model may test one*. That sentence was written when a run was about a model the whole
+    installation had approved. A run is now a hundred prompts through somebody's pipeline, spending
+    their budget and reading a catalogue that states what this installation tests for: a decision
+    about the use case rather than work inside it, and so an administrator's.
     """
 
     def has_permission(self, request: Any, view: Any) -> bool:  # noqa: ARG002
+        from aira_management.apps.usecases.access import may_run_tests_queryset
         from aira_management.apps.usecases.models import UseCase
 
         user = request.user
-        if has_role(user, Role.GLOBAL_ADMIN, Role.IT_SECURITY):
-            return True
         if not getattr(user, "is_authenticated", False):
             return False
-        return get_objects_for_user(user, VIEW_PERM, klass=UseCase).exists()
+        if has_role(user, Role.GLOBAL_ADMIN, Role.IT_SECURITY):
+            return True
+        return may_run_tests_queryset(user, UseCase.objects.all()).exists()

@@ -10,6 +10,7 @@ from rest_framework.views import APIView
 
 from aira_common.access import usecases_from_group_paths
 from aira_management.config.runtime import get_settings
+from aira_management.rbac import MayRunTests
 from aira_management.roles import ALL_ROLES
 
 
@@ -49,5 +50,15 @@ class MeView(APIView):
                 # refusal they cannot explain.
                 "api_key_default_days": settings.api_key_default_days,
                 "api_key_max_days": settings.api_key_max_days,
+                # Whether to offer the pipeline-tests screen at all, answered with **the permission
+                # class itself** (`ADR-0020`). It is an object-level question — "do you hold
+                # `view_usecase` on anything" — so the console cannot derive it from the roles and
+                # slugs above: `use_cases` here is the `/use-cases/<slug>` group convention only,
+                # and somebody reaching a use case through a *grant* would be offered nothing.
+                #
+                # A nav entry that 403s is `FRD-206`'s defect; one that is missing for somebody who
+                # may use it is the same defect inverted, and this had to be one or the other until
+                # the server was asked.
+                "may_test": MayRunTests().has_permission(request, None),
             }
         )

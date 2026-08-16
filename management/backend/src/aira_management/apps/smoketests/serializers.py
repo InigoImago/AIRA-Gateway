@@ -61,7 +61,12 @@ class TestRunSerializer(serializers.ModelSerializer[TestRun]):
             "requested_by_name",
             "counts",
         ]
-        read_only_fields = ["started_at", "requested_by_name", "counts"]
+        #: `model` is **read-only**, and that is the change `ADR-0020` makes here: a run enters
+        #: where the *pipeline* says it enters, so accepting one from the caller would be asking
+        #: them to predict a decision the pipeline makes — and a model the use case has not been
+        #: released is refused at dispatch anyway (`FRD-308`). The view fills it in from the use
+        #: case's `start_model`.
+        read_only_fields = ["model", "started_at", "requested_by_name", "counts"]
 
     def get_requested_by_name(self, run: TestRun) -> str:
         return getattr(run.requested_by, "username", "") or ""
