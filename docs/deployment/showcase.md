@@ -19,6 +19,8 @@ fixtures.
 - Five users, one per role.
 - Real traffic already through the gateway, **including a prompt injection the filter refused** —
   so the security console has something true in it rather than rows somebody inserted.
+- Somewhere to point a client you already have, over either API surface and with either an API key
+  or its own Keycloak identity (Step 5).
 
 ---
 
@@ -101,7 +103,82 @@ credential for reports that it is declared and nothing serves it.
 
 ---
 
-## Step 5: more traffic, and stopping
+## Step 5: point an existing client at it
+
+The showcase is a real gateway with a real Keycloak, so a client you already have — a
+KIRA-compatible chatbot, an SDK, anything that speaks one of the two surfaces — can be aimed at it
+without changing the client's code. Two ways in, and the first takes about a minute.
+
+**The two base URLs.** Both are on the gateway, and both are also reachable through the console's
+own proxy at `http://localhost:4200/gw/…` if that is easier to reach from where your client runs.
+
+| Surface | Base URL | Verbs |
+|---|---|---|
+| KIRA compatibility | `http://localhost:8001/kira/api/external` | `POST /chat`, `POST /streaming-chat`, `POST /embed`, `GET /models`, `GET /health` |
+| Gemini dialect | `http://localhost:8001/v1beta` | `POST /models/{model}:generateContent`, `:streamGenerateContent`, `:embedContent` |
+
+### With an API key — the quickest test
+
+`make showcase` prints one key per use case, and the console shows the same thing on a use case's
+**Overview** tab — base URL, the models it may call, and a ready-made example per surface. Credentials are read in one order:
+`Authorization: Bearer <token>` → `x-goog-api-key` → `?key=`, so a client that can set *either*
+header works unchanged.
+
+```bash
+curl -s http://localhost:8001/kira/api/external/models \
+  -H "x-goog-api-key: aira_…"      # the key printed for kundenservice
+```
+
+A key is bound to its use case, so nothing else has to be configured: attribution, budget, rate
+limit and audit row all follow from the key.
+
+### With its existing Keycloak identity
+
+If the point is to test the client's *own* login rather than a key, register it in the showcase
+realm. Keycloak is at `http://localhost:8080` (`admin` / `admin`), realm **`aira`**.
+
+Which flow depends on what the client is, and the realm is deliberately strict about it:
+
+- **A machine client** (a bot with no human at the keyboard) uses the **client-credentials** grant.
+  The realm already contains four such clients for the integration tests — copy the shape of
+  `aira-integration-tests`: confidential, service accounts on.
+- **A client with a user in front of it** uses **authorization code + PKCE**, like `aira-gateway`.
+  The **password grant is switched off on purpose** (`ADR-0007`), so a client that only knows how to
+  exchange a username and password for a token cannot be used here, and that is the realm telling
+  you something true about the product rather than a gap in the demo.
+
+Then give it a use case, which is the step people miss. AIRA never writes to your directory: it
+reads the **groups** in the token. For a machine client the groups belong to the service-account
+user (`service-account-<clientId>`), not to the client — putting the *client* in a group does
+nothing, and the request is refused with a message about membership.
+
+Two ways to do it, both real:
+
+1. **The convention.** Put the user in `/use-cases/kundenservice`. Nothing else to configure —
+   the gateway resolves that path to the use case by name (`FRD-102`).
+2. **Your own group.** Put the user in any group you like — the realm ships
+   `/abteilungen/kundendienst` — and grant that group to a use case on its **Members** tab. This
+   is what a real installation does, because it does not require the directory to be renamed
+   around AIRA (`FRD-209`).
+
+Point the client at the issuer `http://localhost:8080/realms/aira` and one of the base URLs above.
+
+### What to look at afterwards
+
+The interesting part is not that it answered. Open the console and find the client's own traffic:
+**Requests** shows which credential and which identity, the use case's **Overview** shows what it
+spent under Consumption, and if the client sent something the injection filter dislikes, the
+**Security** console has it as a refusal with the prompt attached. A client connected this way is subject to every control
+on this page — the same budget, the same rate limit, the same pipeline — which is the thing worth
+demonstrating.
+
+If it is refused, the message says which control did it. `Not a member of use case …` is the group
+question above; `over budget` and `rate limit exceeded` mean the demo's deliberately small limits
+did their job.
+
+---
+
+## Step 6: more traffic, and stopping
 
 ```bash
 make showcase-traffic   # send another round through the gateway
