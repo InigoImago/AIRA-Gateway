@@ -59,7 +59,7 @@ deliver business features — it delivers the ground everything stands on, runna
   standard error/response envelope, and a Kafka producer/consumer wrapper (thin; topics defined later).
 - **FR-5 Secrets via Vault**: a documented convention + helper for reading secrets from Vault; local
   bootstrap seeds required dev secrets into Vault on startup. `.env.example` documents non-secret config.
-- **FR-6 CI pipeline**: on push/PR — install, **lint** (ruff/black, eslint/prettier), **type-check**
+- **FR-6 CI pipeline**: on push/PR — install, **lint** (ruff check + ruff format; Prettier), **type-check**
   (mypy, tsc), **test** (pytest, ng test headless), **coverage gate** (fail under threshold).
 - **FR-7 Makefile / task runner**: `make up`, `make down`, `make test`, `make lint`, `make fmt`,
   `make seed` (stub → implemented in FRD-002) for a consistent developer UX.

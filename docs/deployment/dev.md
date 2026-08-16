@@ -146,8 +146,8 @@ work.
 ## Useful while developing
 
 ```bash
-make fmt            # ruff + black + prettier
-make lint           # ruff, mypy, eslint, prettier --check
+make fmt            # ruff format + ruff --fix + prettier --write
+make lint           # ruff check, ruff format --check, mypy, prettier --check, ng build
 make ps             # what is running and whether it is healthy
 make logs-apps      # tail only the application containers
 make vault-status   # where the gateway says its secrets came from

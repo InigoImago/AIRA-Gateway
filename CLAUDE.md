@@ -77,7 +77,14 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
   `[ngModel]="x()" (ngModelChange)="x.set($event)"`. See FRD-203 §4.
 - **No silent failures in the UI**: every load and mutation reports its outcome through
   `core/api/error-message.ts`, which surfaces the backend's error envelope.
-- **Lint/format**: Python (ruff + black), Angular (eslint + prettier). CI blocks on violations.
+- **Lint/format**: Python is **ruff** — `ruff check` *and* `ruff format --check`, no black. Angular
+  is **Prettier**, with `ng build` (so `tsc`) standing in for a linter. CI blocks on all of these
+  (`make lint-py`, `make lint-frontend`, `.github/workflows/ci.yml`).
+  **There is no ESLint**, and this line claimed there was: no config file, no `lint` target in
+  `angular.json`, no CI step. It also named black, which this repository has never used. Both
+  halves were a rule the project stated and did not have — the shape `LESSONS.md` §5 lists, and the
+  more embarrassing for sitting in the file every contributor reads first. Adding ESLint is a
+  reasonable thing to want; asserting it while `npx eslint` exits 2 is not.
 - **API contracts**: OpenAPI for HTTP; explicit, versioned schemas for Kafka events.
 - **Config over code**: behavior driven by use-case configuration, not hard-coded branches.
 - **Async on the hot path**: persistence and event emission must not block the gateway request path.
