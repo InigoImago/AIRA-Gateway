@@ -141,6 +141,31 @@ class TestCaseViewSet(viewsets.ModelViewSet[TestCase]):
             return [IsAuthenticated(), MayRunTests()]
         return [IsAuthenticated(), IsITSecurity()]
 
+    def perform_destroy(self, instance: TestCase) -> None:
+        """Refuse to delete a question somebody has already answered, and say what to do instead.
+
+        `TestResult.case` is `PROTECT` on purpose — a verdict was formed against this wording, and
+        deleting the question would take the verdict with it. But nothing caught the resulting
+        `ProtectedError`, so *Remove* on any question the catalogue had ever been run against
+        raised an unhandled exception: a **500** on a control the console offers, with a confirm
+        box that promised *"answers already given to it stay."* Measured on 2026-08-17.
+
+        `retired` is the field that exists for this and had no caller. Named here rather than done
+        silently: a DELETE that quietly becomes a soft delete is a different verb than the one the
+        client sent.
+        """
+        if instance.results.exists():
+            raise ValidationError(
+                {
+                    "detail": [
+                        f"'{instance.topic}' has already been answered, and those verdicts were "
+                        "formed against this wording. Retire it instead — it leaves the catalogue "
+                        "and its answers keep their meaning."
+                    ]
+                }
+            )
+        super().perform_destroy(instance)
+
 
 class TestRunViewSet(viewsets.ModelViewSet[TestRun]):
     """Running the catalogue is **making requests**, in a use case one administers.

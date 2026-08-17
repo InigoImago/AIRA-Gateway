@@ -329,6 +329,60 @@
             />
             <span class="field__hint">Kept with the decision, and read by whoever reviews it.</span>
           </div>
+          <!-- The three the table has always *shown* and this form could not produce: a scope, a
+               gentler action, and the rate it holds somebody to. Until 2026-08-17 every manual
+               decision was a full block, everywhere — the blunt end of an incident control, chosen
+               by the form rather than by the person using it. -->
+          <div class="field">
+            <label for="stop-scope">Where</label>
+            <select
+              id="stop-scope"
+              name="use_case"
+              [ngModel]="scope()"
+              (ngModelChange)="scope.set($event)"
+              data-testid="stop-scope"
+            >
+              <option value="">everywhere</option>
+              @for (slug of useCases(); track slug) {
+                <option [value]="slug">only in {{ slug }}</option>
+              }
+            </select>
+            <span class="field__hint">
+              A credential is often bound to one use case; stopping it everywhere stops more than
+              the incident.
+            </span>
+          </div>
+          <div class="field">
+            <label for="stop-action">Do what</label>
+            <select
+              id="stop-action"
+              name="action"
+              [ngModel]="action()"
+              (ngModelChange)="action.set($event)"
+              data-testid="stop-action"
+            >
+              <option value="block">refuse every request</option>
+              <option value="throttle">hold it to a rate</option>
+            </select>
+          </div>
+          @if (action() === 'throttle') {
+            <div class="field">
+              <label for="stop-rpm">Requests per minute</label>
+              <input
+                id="stop-rpm"
+                name="throttle_rpm"
+                type="number"
+                min="1"
+                [ngModel]="throttleRpm()"
+                (ngModelChange)="throttleRpm.set($event)"
+                placeholder="e.g. 10"
+                data-testid="stop-rpm"
+              />
+              <span class="field__hint"
+                >Required for a throttle — the server refuses one without.</span
+              >
+            </div>
+          }
           <div class="field">
             <label for="stop-minutes">For (minutes)</label>
             <input

@@ -107,8 +107,13 @@ function setup(options: Options = {}) {
     },
     suspensions: () => options.suspensions ?? of({ suspensions: [SUSPENSION] }),
     globalRules: () => of(options.rules ?? [RULE]),
+    // The scope picker's source. A page that could not name a use case could only ever stop
+    // traffic everywhere, which is what this list exists to widen.
+    list: () => of([{ slug: 'kundenservice' }, { slug: 'entwicklung' }]),
     suspend: (body: Record<string, unknown>) => {
-      calls.push(`suspend:${body['target']}:${body['target_value']}`);
+      calls.push(
+        `suspend:${body['target']}:${body['target_value']}:${body['use_case']}:${body['action']}:${body['throttle_rpm']}`,
+      );
       return options.suspend ?? of(SUSPENSION);
     },
     liftSuspension: (id: string) => {
@@ -259,7 +264,59 @@ describe('SecurityPage — suspensions and the kill switch', () => {
 
     component.stop();
 
-    expect(harness.calls).toContain('suspend:subject:ada');
+    expect(harness.calls).toContain('suspend:subject:ada:null:block:null');
+  });
+
+  it('scopes a stop to one use case, and holds a caller to a rate', () => {
+    /** Three fields the suspensions table has always **rendered** — a scope, a throttle and its
+     *  rate, because a *rule* can produce them — and the manual form could not. So every decision
+     *  a person made was a full block, everywhere: a credential bound to one use case was stopped
+     *  in all of them, and "hold this caller to ten a minute" could not be said at all. */
+    const harness = setup();
+    const component = harness.component as unknown as {
+      tab: { set: (v: string) => void };
+      showStop: { set: (v: boolean) => void };
+      targetValue: { set: (v: string) => void };
+      scope: { set: (v: string) => void };
+      action: { set: (v: string) => void };
+      throttleRpm: { set: (v: number | null) => void };
+      canSubmit: () => boolean;
+      stop: () => void;
+    };
+    component.tab.set('suspensions');
+    component.showStop.set(true);
+    component.targetValue.set('ada');
+    component.action.set('throttle');
+    harness.fixture.detectChanges();
+
+    // A throttle without a rate is refused by the server; the form must not spend an incident's
+    // first minute finding that out.
+    expect(component.canSubmit()).toBe(false);
+
+    component.throttleRpm.set(10);
+    component.scope.set('kundenservice');
+    harness.fixture.detectChanges();
+    component.stop();
+
+    expect(harness.calls).toContain('suspend:subject:ada:kundenservice:throttle:10');
+  });
+
+  it('offers the scope and action controls, with the use cases it could load', () => {
+    const harness = setup();
+    const component = harness.component as unknown as {
+      tab: { set: (v: string) => void };
+      showStop: { set: (v: boolean) => void };
+    };
+    component.tab.set('suspensions');
+    component.showStop.set(true);
+    harness.fixture.detectChanges();
+
+    const html = harness.fixture.nativeElement as HTMLElement;
+    expect(html.querySelector('[data-testid="stop-scope"]')).not.toBeNull();
+    expect(html.querySelector('[data-testid="stop-action"]')).not.toBeNull();
+    // The rate only exists for a throttle — an input that is always there reads as always needed.
+    expect(html.querySelector('[data-testid="stop-rpm"]')).toBeNull();
+    expect(html.textContent).toContain('only in kundenservice');
   });
 
   it('says the decision takes a moment to reach every instance', () => {
@@ -466,6 +523,7 @@ describe('SecurityPage — reading a rule', () => {
           useValue: {
             anomalies: () => of({ events: [], scope: 'all' }),
             suspensions: () => of({ suspensions: [] }),
+            list: () => of([]),
             globalRules: () => throwError(() => ({ status: 500 })),
           },
         },

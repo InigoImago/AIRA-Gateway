@@ -465,15 +465,30 @@ export class SmokeTests implements OnInit {
     });
   }
 
-  protected removeCase(item: TestCase): void {
-    const question = `Remove "${item.topic}" from the catalogue? Answers already given to it stay.`;
+  /**
+   * Take a question out of the catalogue and keep every answer already given to it.
+   *
+   * This was a **delete**, and the model has said *"retired rather than deleted"* since it was
+   * written: a verdict was formed against this wording, so removing the question would take the
+   * verdict with it. `TestResult.case` is `PROTECT` and enforced that — by raising an unhandled
+   * `ProtectedError`, which is a **500** on a control the console offers, behind a confirm box
+   * that promised *"answers already given to it stay."* Every question in an installation that
+   * has run the catalogue once was in that state.
+   *
+   * `retired` is the field that exists for this and had no caller anywhere. The server refuses the
+   * delete by name now; this is the verb that works.
+   */
+  protected retireCase(item: TestCase): void {
+    const question =
+      `Retire "${item.topic}"? It leaves the catalogue and stops being asked. ` +
+      'Answers already given to it are kept, with the wording they were judged against.';
     if (!this.confirmService.ask(question)) return;
-    this.service.deleteCase(item.id).subscribe({
+    this.service.updateCase(item.id, { retired: true }).subscribe({
       next: () => {
-        this.feedback.succeed('Question removed.');
+        this.feedback.succeed('Question retired. Its answers are kept.');
         this.reloadCatalogue();
       },
-      error: (response: unknown) => this.feedback.fail(response, 'Could not remove this question.'),
+      error: (response: unknown) => this.feedback.fail(response, 'Could not retire this question.'),
     });
   }
 

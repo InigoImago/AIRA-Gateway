@@ -429,13 +429,18 @@
                           >
                             Edit
                           </button>
+                          <!-- Retire, not delete. `TestResult.case` is PROTECT, so *Remove* on a
+                               question the catalogue had ever been run against raised an
+                               unhandled ProtectedError — a 500 behind a confirm box that promised
+                               the answers would stay. Retiring is what the model was built for:
+                               out of the catalogue, verdicts intact. -->
                           <button
                             type="button"
                             class="btn btn--sm btn--danger"
-                            (click)="removeCase(item)"
-                            [attr.data-testid]="'delete-case-' + item.id"
+                            (click)="retireCase(item)"
+                            [attr.data-testid]="'retire-case-' + item.id"
                           >
-                            Remove
+                            Retire
                           </button>
                         </div>
                       </td>

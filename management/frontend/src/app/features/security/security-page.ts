@@ -71,6 +71,22 @@ export class SecurityPage implements OnInit {
   protected readonly targetValue = signal('');
   protected readonly reason = signal('');
   protected readonly minutes = signal<number | null>(null);
+  /**
+   * The three the table has always **shown** and this form could not produce.
+   *
+   * `use_case` (empty = everywhere), `action` (block or throttle) and the rate a throttle holds
+   * somebody to are all accepted by `POST /v1beta/suspensions` and all obeyed by the matcher — and
+   * the suspensions table renders each of them, because a *rule* can create a throttled or a
+   * scoped one. Every **manual** decision was therefore a full block, everywhere: the blunt end of
+   * an incident control, chosen by the form rather than by the person using it. A credential bound
+   * to one use case was stopped in all of them, and "hold this caller to ten a minute" could not
+   * be said at all.
+   */
+  protected readonly scope = signal('');
+  protected readonly action = signal<'block' | 'throttle'>('block');
+  protected readonly throttleRpm = signal<number | null>(null);
+  /** Slugs for the scope picker — what this caller can see, which is what they can name. */
+  protected readonly useCases = signal<string[]>([]);
 
   /**
    * Whether this caller may stop traffic — **not** whether they may see this page.
@@ -105,6 +121,12 @@ export class SecurityPage implements OnInit {
     );
     this.loadSuspensions();
     this.loadRules();
+    // For the scope picker. A failure leaves the list empty, which still offers "everywhere" —
+    // the control degrades to what it was rather than disappearing.
+    this.service.list().subscribe({
+      next: (useCases) => this.useCases.set(useCases.map((useCase) => useCase.slug).sort()),
+      error: () => undefined,
+    });
   }
 
   /** What a rule does, in a sentence — see `rule-language.ts` for why this is not the raw kind. */
@@ -313,7 +335,10 @@ export class SecurityPage implements OnInit {
   }
 
   protected canSubmit(): boolean {
-    return !!this.targetValue().trim() && !this.feedback.busy();
+    if (!this.targetValue().trim() || this.feedback.busy()) return false;
+    // The server refuses a throttle without a rate, and a form that lets the request go anyway
+    // spends an incident's first minute on a 400.
+    return this.action() !== 'throttle' || !!this.throttleRpm();
   }
 
   protected stop(): void {
@@ -325,6 +350,9 @@ export class SecurityPage implements OnInit {
         target_value: value,
         reason: this.reason().trim(),
         minutes: this.minutes(),
+        use_case: this.scope() || null,
+        action: this.action(),
+        throttle_rpm: this.action() === 'throttle' ? this.throttleRpm() : null,
       }),
       {
         failure: 'Could not stop this traffic.',
@@ -335,6 +363,9 @@ export class SecurityPage implements OnInit {
           this.targetValue.set('');
           this.reason.set('');
           this.minutes.set(null);
+          this.scope.set('');
+          this.action.set('block');
+          this.throttleRpm.set(null);
           this.showStop.set(false);
           this.loadSuspensions();
         },

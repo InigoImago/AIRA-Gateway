@@ -495,6 +495,15 @@ export interface TestCase {
   prompt: string;
   expectation: string;
   position: number;
+  /**
+   * Out of the catalogue, with its answers kept.
+   *
+   * The listing never carries a retired question — the viewset filters them out — so this is only
+   * ever *sent*, to retire one. It is what removal means here: a verdict was formed against this
+   * wording, and deleting the question would take the verdict with it (`TestResult.case` is
+   * `PROTECT`, which used to turn *Remove* into a 500).
+   */
+  retired?: boolean;
 }
 
 /**

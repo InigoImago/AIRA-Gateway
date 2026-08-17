@@ -1388,6 +1388,22 @@ MUTATIONS = [
         "management/backend/tests/test_apikeys.py",
     ),
     Mutation(
+        "C19",
+        "a kill-switch field no person can set is reported, not shipped",
+        "management/frontend/src/app/features/security/security-page.ts",
+        "        use_case: this.scope() || null,",
+        "",
+        "management/backend/tests/test_every_use_case_control_is_reachable.py",
+    ),
+    Mutation(
+        "C20",
+        "an answered question is refused deletion by name, never with a 500",
+        "management/backend/src/aira_management/apps/smoketests/views.py",
+        "        if instance.results.exists():",
+        "        if False:",
+        "management/backend/tests/test_smoketests.py",
+    ),
+    Mutation(
         "C8",
         "an older event applies its prices without erasing a declaration",
         "gateway/src/aira_gateway/consumer/apply.py",

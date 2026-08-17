@@ -697,3 +697,50 @@ def test_the_seed_points_at_nothing_when_there_is_no_model_to_point_at() -> None
     use_case = UseCase.objects.get(slug=DEMO_MODEL_TEST_USE_CASE)
     assert not use_case.allowed_models.exists()
     assert not hasattr(use_case, "pipeline")
+
+
+def test_a_question_that_has_been_answered_cannot_be_deleted_and_says_why() -> None:
+    """`PROTECT` was doing its job and nothing caught the result.
+
+    *Remove* on a question the catalogue had ever been run against raised `ProtectedError` — an
+    unhandled exception, so a 500 — while the console's confirm box promised *"answers already
+    given to it stay."* Measured before this test existed.
+    """
+    sec = _user("del-sec", "it-security")
+    case = Case.objects.create(topic="delete-me", prompt="p", position=90)
+    run = Run.objects.create(model="m", use_case="u", requested_by=sec)
+    Result.objects.create(run=run, case=case)
+
+    resp = _client(sec).delete(f"/api/v1/test-cases/{case.pk}/")
+
+    assert resp.status_code == 400
+    assert "Retire it instead" in str(resp.data)
+    assert Case.objects.filter(pk=case.pk).exists()
+
+
+def test_a_question_nobody_has_answered_is_still_deletable() -> None:
+    """A question typed by mistake is not history, and making it undeletable would leave the
+    catalogue with a permanent record of a typo."""
+    sec = _user("del-sec-2", "it-security")
+    case = Case.objects.create(topic="typo", prompt="p", position=91)
+
+    resp = _client(sec).delete(f"/api/v1/test-cases/{case.pk}/")
+
+    assert resp.status_code == 204
+    assert not Case.objects.filter(pk=case.pk).exists()
+
+
+def test_retiring_takes_a_question_out_of_the_catalogue_and_keeps_its_answers() -> None:
+    """The field that exists for exactly this, and had no caller until 2026-08-17."""
+    sec = _user("retire-sec", "it-security")
+    case = Case.objects.create(topic="old wording", prompt="p", position=92)
+    run = Run.objects.create(model="m", use_case="u", requested_by=sec)
+    Result.objects.create(run=run, case=case, verdict="pass")
+
+    resp = _client(sec).patch(f"/api/v1/test-cases/{case.pk}/", {"retired": True}, format="json")
+
+    assert resp.status_code == 200
+    listed = _client(sec).get("/api/v1/test-cases/")
+    assert case.pk not in [row["id"] for row in listed.data]
+    # The verdict is what retirement exists to preserve.
+    assert Result.objects.filter(case=case, verdict="pass").exists()

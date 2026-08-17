@@ -5,6 +5,40 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The kill switch could only ever do the blunt thing, and a question could not leave the catalogue
+
+Fifth pass, and both areas had a finding.
+
+**Suspensions.** `POST /v1beta/suspensions` accepts `use_case`, `action` and `throttle_rpm`, the
+matcher obeys all three, and the suspensions table **renders** each of them — because a *rule* can
+create a scoped or throttled suspension. The manual form sent none. So every decision a person made
+during an incident was a **full block, everywhere**: a credential bound to one use case was stopped
+in all of them, and *"hold this caller to ten a minute"* could not be said at all. The gentler and
+narrower options existed, were displayed, and belonged to the automation only.
+
+The form now has a scope picker (default *everywhere*, so nothing changes for somebody who does not
+care), block-or-throttle, and a rate that appears only for a throttle — and `canSubmit` refuses a
+throttle without one, because the server does and an incident's first minute should not be spent on
+a 400.
+
+**The question catalogue.** `TestResult.case` is `PROTECT` and the model has said *"retired rather
+than deleted"* since it was written: a verdict was formed against that wording, so deleting the
+question would take the verdict with it. Nothing caught the `ProtectedError`, so *Remove* raised an
+unhandled exception — a **500** — for every question the catalogue had ever been run against, behind
+a confirm box promising *"answers already given to it stay."* And `retired`, the field built for
+exactly this, had **no caller anywhere**: not in the console, not in the API layer, only in a
+migration.
+
+Both halves: the server refuses the delete by name and says to retire instead, and the console's
+button is *Retire*, which is a PATCH that leaves the answers with the wording they were judged
+against. An unanswered question — a typo — is still deletable, because making it permanent would
+leave the catalogue with a record of a mistake.
+
+The kill-switch guard reads `create_suspension`'s own `body.get(...)` calls rather than a
+serializer, since that endpoint deliberately bypasses Management and Kafka. Mutations `C19`/`C20`,
+both caught. 2372 Python tests, 843 Angular.
+
+---
 ## API keys and anomaly rules: clean, and now kept that way
 
 Fourth pass. Both came out **reachable in both directions**, which is the first time in this audit

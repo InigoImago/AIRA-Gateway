@@ -29,6 +29,9 @@ PIPELINE_EDITOR = REPO / "management/frontend/src/app/features/pipelines/pipelin
 PIPELINE_ENGINE = REPO / "gateway/src/aira_gateway/pipeline/engine.py"
 RULE_FORM = REPO / "management/frontend/src/app/features/security/rule-form.ts"
 USE_CASE_SERVICE = REPO / "management/frontend/src/app/core/api/use-case.service.ts"
+SECURITY_PAGE = REPO / "management/frontend/src/app/features/security/security-page.ts"
+INCIDENTS_API = REPO / "gateway/src/aira_gateway/api/incidents.py"
+SMOKE_TESTS = REPO / "management/frontend/src/app/features/smoketests/smoke-tests.ts"
 
 
 def _arguments(source: str, call: str) -> list[str]:
@@ -243,4 +246,48 @@ def test_every_field_of_an_issued_api_key_leaves_the_console() -> None:
     assert not unreachable, (
         f"These fields of an issued API key are writable and the console does not send them: "
         f"{unreachable}."
+    )
+
+
+def test_every_field_of_the_kill_switch_can_be_set_by_a_person() -> None:
+    """`POST /v1beta/suspensions` is the incident control, and it lives in the gateway.
+
+    Read from `create_suspension`'s own `body.get(...)` calls rather than from a serializer, because
+    that endpoint deliberately bypasses Management and Kafka (`FRD-503` §4.3) — a control that
+    depends on the event bus fails when the bus is the problem.
+
+    Three of its fields — `use_case`, `action`, `throttle_rpm` — were *rendered* by the suspensions
+    table and produced by no form, because a **rule** can create a scoped or throttled suspension
+    and a person could not. Every manual decision was therefore a full block, everywhere.
+    """
+    api = INCIDENTS_API.read_text(encoding="utf-8")
+    start = api.index("async def create_suspension(")
+    handler = api[start : api.index("\n@router", start)]
+    accepted = set(re.findall(r'body\.get\(\s*"([a-z_]+)"', handler))
+
+    page = SECURITY_PAGE.read_text(encoding="utf-8")
+    start = page.index("  protected stop(): void {")
+    sent = set(re.findall(r"([a-z_]+)\s*:", page[start : page.index("\n  }", start)]))
+
+    unreachable = sorted(accepted - sent)
+
+    assert accepted, "no `body.get` in create_suspension — the extractor, not the endpoint"
+    assert not unreachable, (
+        f"The kill switch accepts these and no person can set them: {unreachable}. Whatever the "
+        "endpoint defaults to is then the only decision a human can make during an incident."
+    )
+
+
+def test_a_question_leaves_the_catalogue_by_being_retired() -> None:
+    """`retired` is the one field of a question that is not part of its wording.
+
+    It exists because a verdict was formed against that wording — `TestResult.case` is `PROTECT`,
+    and the console's *Remove* therefore raised an unhandled `ProtectedError`, a 500, for every
+    question the catalogue had ever been run against. The field had no caller anywhere.
+    """
+    console = SMOKE_TESTS.read_text(encoding="utf-8")
+
+    assert "retired: true" in console, (
+        "nothing in the smoke-test console retires a question. Deleting one that has been answered "
+        "is refused by the server (PROTECT), so without this the catalogue cannot be corrected."
     )
