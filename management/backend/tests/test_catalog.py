@@ -200,3 +200,70 @@ def test_who_may_catalogue_is_one_definition_both_planes_read() -> None:
     # role added to one and not the other.
     for role in Role:
         assert may_catalogue([str(role)]) is (role in CATALOG_ROLES), role
+
+
+# ---- the KIRA id -----------------------------------------------------------------------
+
+
+def test_a_model_gets_a_kira_id_it_can_be_addressed_by(captured_events) -> None:
+    """**A model without one is invisible on half the product.**
+
+    `numeric_id` is how a KIRA client names a model — that surface identifies models by integer,
+    not by name. The field existed on the API and the console's form never offered it, so every
+    model catalogued through the console got `NULL`: approvable, releasable, and unaddressable by
+    `/kira/api/external/chat`, which answers `MODEL_NOT_FOUND` and names nothing that would tell a
+    reader why. A control displayed as working and doing nothing (`FRD-125`).
+
+    Assigned rather than demanded: a number nobody chose still beats no number.
+    """
+    response = _client(_user("boss", "global-admin")).post(
+        BASE, {"name": "auto-id-1", "provider": "ollama"}, format="json"
+    )
+
+    assert response.status_code == 201, response.data
+    assert isinstance(response.data["numeric_id"], int)
+    assert response.data["numeric_id"] > 0
+
+
+def test_a_chosen_kira_id_is_kept_because_a_migration_depends_on_it(captured_events) -> None:
+    """The reason the field is settable at all (`FRD-107`).
+
+    An installation moving off the predecessor has clients that already send particular ids. Giving
+    AIRA's models exactly those numbers is what lets those clients keep working unchanged — so an
+    id that was asked for must never be replaced by a generated one.
+    """
+    response = _client(_user("boss", "global-admin")).post(
+        BASE, {"name": "chosen-id-1", "provider": "ollama", "numeric_id": 4711}, format="json"
+    )
+
+    assert response.status_code == 201, response.data
+    assert response.data["numeric_id"] == 4711
+
+
+def test_two_models_may_not_share_a_kira_id(captured_events) -> None:
+    """The read side already refuses an ambiguous id — two entries claiming one make the surface
+    answer 503 rather than guess which model to bill. This is the same rule where somebody can
+    still fix it, and with a sentence rather than a database key name."""
+    client = _client(_user("boss", "global-admin"))
+    client.post(BASE, {"name": "first-1", "provider": "ollama", "numeric_id": 4712}, format="json")
+
+    clash = client.post(
+        BASE, {"name": "second-1", "provider": "ollama", "numeric_id": 4712}, format="json"
+    )
+
+    assert clash.status_code == 400
+    said = str(clash.data)
+    assert "4712" in said and "first-1" in said, said
+
+
+def test_auto_assignment_does_not_collide_with_what_is_already_there(captured_events) -> None:
+    """Generated ids climb past every existing one, chosen or generated. Handing out a number that
+    is already taken would fail on the constraint — a 500 for the person cataloguing a model, on a
+    field they never filled in."""
+    client = _client(_user("boss", "global-admin"))
+    client.post(BASE, {"name": "high-1", "provider": "ollama", "numeric_id": 99999}, format="json")
+
+    generated = client.post(BASE, {"name": "next-1", "provider": "ollama"}, format="json")
+
+    assert generated.status_code == 201, generated.data
+    assert generated.data["numeric_id"] > 99999

@@ -121,6 +121,20 @@ export class ModelCatalog implements OnInit {
   protected readonly platform = signal('');
   protected readonly hosting = signal<'' | 'managed' | 'self_deployed'>('');
   protected readonly maxOutput = signal<number | null>(null);
+
+  /**
+   * The integer a KIRA client addresses this model by (`FRD-107`).
+   *
+   * Offered because it had to be: the API has always accepted it, this form never asked, and the
+   * detail panel showed "KIRA id —" — a field visible and unsettable. Every model catalogued here
+   * therefore had none, which makes it approvable, releasable and **invisible** to
+   * `/kira/api/external/chat`, whose surface names models by integer and answers `MODEL_NOT_FOUND`.
+   *
+   * Blank is fine and does not mean "none": the server assigns the next free number. It is worth
+   * setting when an installation is migrating from the predecessor, whose clients already send
+   * particular ids — giving AIRA's models those exact numbers is what lets them keep working.
+   */
+  protected readonly kiraId = signal<number | null>(null);
   protected readonly defaultOutput = signal<number | null>(null);
   protected readonly deprecated = signal(false);
 
@@ -357,6 +371,7 @@ export class ModelCatalog implements OnInit {
         platform: this.platform().trim(),
         hosting: this.hosting(),
         max_output_tokens: this.maxOutput(),
+        numeric_id: this.kiraId(),
         default_max_output_tokens: this.defaultOutput(),
         deprecated: this.deprecated(),
         approved: this.approved(),
@@ -391,6 +406,7 @@ export class ModelCatalog implements OnInit {
     this.platform.set('');
     this.hosting.set('');
     this.maxOutput.set(null);
+    this.kiraId.set(null);
     this.defaultOutput.set(null);
     this.deprecated.set(false);
     this.approved.set(false);
@@ -897,6 +913,7 @@ export class ModelCatalog implements OnInit {
     this.platform.set(model.platform ?? '');
     this.hosting.set(model.hosting ?? '');
     this.maxOutput.set(model.max_output_tokens ?? null);
+    this.kiraId.set(model.numeric_id ?? null);
     this.defaultOutput.set(model.default_max_output_tokens ?? null);
     this.deprecated.set(model.deprecated ?? false);
     this.approved.set(model.approved ?? false);

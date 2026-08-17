@@ -290,6 +290,13 @@ reading code.
   request.
 - **A control that starts a request must survive that request.** A search box inside the `@else` of
   `@if (loading())` tears itself down on the second keystroke.
+- **A field the detail panel prints is a field the form must offer.** The model panel showed
+  *"KIRA id —"* and no form asked for one, so every model catalogued from the console carried none
+  — addressable on the Gemini surface, invisible on the KIRA one, refused with `MODEL_NOT_FOUND`
+  and no hint as to why. Displaying a value is a promise that it can be set; where it genuinely
+  need not be, give it a server-side default rather than a dash, because a reader cannot tell an
+  empty field from an inapplicable one. Both halves were needed here: the form offers it *and* the
+  server assigns one when it is left blank.
 - **Read-only is a control, greyed — never prose.** The models released to a use case were shown
   to a reader who may not change them as a paragraph of `<code>` chips. *"It does not look like a
   control, so the developer will not even read it"* — the one piece of configuration they most

@@ -5,6 +5,37 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## A model catalogued from the console could not be called by a KIRA client
+
+Reported plainly: *there is no way to give a model a KIRA id, and none is filled in either.* Both
+halves were true, and together they made a control that displayed as working and did nothing.
+
+`numeric_id` is how `/kira/api/external/chat` names a model — that surface identifies models by
+integer, never by name. The column exists, the API has always accepted it, the model detail panel
+even prints **KIRA id —**. The *form* never asked. So every model added through the console went in
+with `NULL`: catalogued, approvable, releasable, listed on the Gemini surface, and answered
+`MODEL_NOT_FOUND` by the KIRA one, with nothing in the refusal that would tell the reader why. The
+only models that worked there were the two the demo seeds with ids written into the seed file.
+
+Two fixes, because either alone leaves half the defect. The form now offers **KIRA id**, so an
+installation migrating from the predecessor can give a model the exact number its clients already
+send — which is what the field is *for*. And when nobody types one, the server assigns the next free
+number from `9500` upwards, above everything this repository seeds or documents, so a model
+catalogued without a thought about KIRA is still reachable there. A number nobody chose beats no
+number.
+
+Uniqueness was already a database constraint, which answers a caller with a 500 and a sentence about
+a key name; DRF's generated validator would have improved that to "model with this numeric id
+already exists" — true, and it leaves you to go and find which one. The refusal now names the other
+model. Dropping DRF's validator to say it better took its range check with it, so `< 1` is checked
+explicitly; the constraint underneath is untouched.
+
+Guarded at both ends: the Angular test types into the rendered input rather than setting the signal,
+because the defect being prevented is a control that renders and sends nothing — and a signal set
+from a test renders nothing. Three mutations (`C9`–`C11`) break the auto-assignment, its climb past
+ids already taken, and the duplicate refusal; all three are caught. 457 properties now.
+
+---
 ## The anomaly evaluator was wrong for every instance after the first
 
 Asked to fix the defect `FRD-127` turned up while it was being written. It is the kind that cannot

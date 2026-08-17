@@ -104,6 +104,7 @@ interface Catalog {
   publisher: { set: (v: string) => void; (): string };
   hosting: { set: (v: string) => void; (): string };
   maxOutput: { set: (v: number | null) => void; (): number | null };
+  kiraId: { set: (v: number | null) => void; (): number | null };
   defaultOutput: { set: (v: number | null) => void; (): number | null };
   deprecated: { set: (v: boolean) => void; (): boolean };
   thinkingModes: { set: (v: string[]) => void; (): string[] };
@@ -566,6 +567,47 @@ describe('ModelCatalog — declarations (FRD-114)', () => {
     expect(sent.max_output_tokens).toBe(64000);
     expect(sent.default_max_output_tokens).toBe(4096);
     expect(sent.deprecated).toBe(true);
+  });
+
+  it('offers the KIRA id, and sends what was typed into it', async () => {
+    /** The field the form never had. `numeric_id` is how a KIRA client names a model — that
+     *  surface identifies models by integer, not by name — and the API has always accepted it, so
+     *  every model catalogued from this screen went in with `NULL`: approvable, releasable, and
+     *  invisible to `/kira/api/external/chat`, which answers `MODEL_NOT_FOUND` and names nothing
+     *  that would tell the reader why. The detail panel even printed "KIRA id —", so the field was
+     *  visible and unsettable.
+     *
+     *  Typed into the real input rather than set on the signal: the defect being guarded against is
+     *  a control that renders and sends nothing, and a signal set from a test renders nothing. */
+    const page = setup();
+    page.component.showAdd.set(true);
+    page.component.name.set('legacy-1');
+    page.component.toggleCapability('generate', true);
+    page.lookFirst();
+    // `ngModel` inside a `<form>` registers its control on a microtask, so a value typed before
+    // that flush reaches nothing. The wait is the test being a real interaction, not a signal set.
+    await Promise.resolve();
+
+    expect(page.testid('model-kira-id')).not.toBeNull();
+    page.type('model-kira-id', '4711');
+    expect(page.component.kiraId()).toBe(4711);
+
+    page.component.save();
+    expect(page.saved[page.saved.length - 1].numeric_id).toBe(4711);
+  });
+
+  it('leaves the KIRA id to the server when it is not typed', () => {
+    /** Blank is not "none": the server assigns the next free number, so a model catalogued without
+     *  a thought about KIRA is still addressable there. What must not be sent is a `0` or an empty
+     *  string, which the server would have to refuse. */
+    const page = setup();
+    page.component.showAdd.set(true);
+    page.component.name.set('plain-1');
+    page.component.toggleCapability('generate', true);
+    page.lookFirst();
+    page.component.save();
+
+    expect(page.saved[page.saved.length - 1].numeric_id).toBeNull();
   });
 
   it('refuses a default output cap above the maximum before sending it', () => {

@@ -581,6 +581,24 @@
           </span>
         </div>
         <div class="field">
+          <label for="model-kira-id">KIRA id</label>
+          <input
+            id="model-kira-id"
+            type="number"
+            min="1"
+            name="kira_id"
+            [ngModel]="kiraId()"
+            (ngModelChange)="kiraId.set($event)"
+            placeholder="assigned automatically"
+            data-testid="model-kira-id"
+          />
+          <span class="field__hint">
+            How a KIRA client names this model — that surface identifies models by number, not by
+            name. Left blank, the next free one is assigned. Set it to keep clients migrating from
+            the predecessor working unchanged, by giving this model the id they already send.
+          </span>
+        </div>
+        <div class="field">
           <label for="model-max-output">Max output tokens</label>
           <input
             id="model-max-output"

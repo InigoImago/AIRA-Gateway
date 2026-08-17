@@ -348,6 +348,12 @@ Google knows about. `GET /kira/api/external/models` lists what this installation
 ids to use. It is unique across the catalog: two entries claiming one id make the surface answer
 `503` rather than guess which model to bill.
 
+**Leave it out and one is assigned** (from `9500` upwards, above everything this repository seeds),
+so a model catalogued without a thought about KIRA is still reachable there. Set it when clients
+already send a particular number — that is what keeps an installation migrating from the
+predecessor working unchanged. The console's *Models* screen offers the same field, labelled **KIRA
+id**; before it did, every model added from the console got none and was invisible to this surface.
+
 **Two things went wrong on the way, and both were the product being right.**
 
 *The model in the listing could not be called.* `gemini-2.5-flash` is in Google's own `/models`

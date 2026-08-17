@@ -55,6 +55,11 @@ changing a base URL.
   status mapping.
 - **FR-4 Integer model ids** resolved through `FRD-114`'s numeric alias; an unknown id is
   `422 MODEL_NOT_FOUND`, the contract's own status, and so is a model the gateway does not serve.
+  **A model has to have one, and the console never asked for it** — the field is offered on the
+  model form now, and left blank the control plane assigns the next free number (from `9500`).
+  Before that, every model catalogued from the console carried `NULL` and was addressable on the
+  Gemini surface and invisible on this one, refused with the vocabulary above and no hint as to why.
+  An installation migrating from the predecessor gives a model the number its clients already send.
 - **FR-5 SSE events** as §2.2: `{status: "update"|"completed", data}`, terminating in a
   `CompletedEvent` carrying the full response and usage.
 - **FR-6 Attribution** resolved per §5.3 — this is the requirement with no counterpart in the
