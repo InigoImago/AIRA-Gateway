@@ -191,6 +191,32 @@ because it is a decision rather than an oversight:
   universal — Anthropic's is `0–1` — so a bound in the canonical core would be a claim that is
   false for one of the vendors this gateway serves (`ADR-0011`). The provider refuses what it
   cannot accept, and the refusal names the field.
+- **Group membership is read from the token, never from `userinfo`.** The predecessor validates the
+  JWT and then calls the OIDC `userinfo` endpoint, taking the groups its authorization uses from
+  *that* response; the token's groups are only logged. We authorize from the `groups` claim, plus
+  the grants in the read-model, and make **no** call to the issuer on the request path.
+
+  Deliberate, and for reasons that are not about compatibility: a `userinfo` call puts the IdP on
+  the critical path of every model call, so a slow or unavailable Keycloak stops traffic whose
+  token is cryptographically fine; and groups read at request time cannot be reconstructed from
+  the evidence afterwards, while a token's claims can. The freshness this costs is smaller than it
+  looks — use-case membership is resolved per request against the read-model, so only the
+  **installation roles** age with the token (≤ 5 minutes at this realm's lifetime).
+
+  **It is a migration step, though, and the one most likely to be missed:** a client whose realm
+  puts groups only in `userinfo` reaches nothing here, and the refusal reads as a permission
+  problem. Either add a group-membership mapper to the client (full paths, on the access token),
+  or grant the membership by name in the console, which needs no mapper at all. Walked through in
+  `docs/deployment/showcase.md`, measured on a client created from that page.
+- **No tolerance for a clock difference — yet.** The predecessor allows 60 seconds of drift between
+  the issuer and itself; `JwtVerifier` passes no `leeway`, so PyJWT uses `0`. Because `iat` is a
+  required claim here, a gateway whose clock is even a second behind the issuer's refuses **every**
+  freshly minted token as *not yet valid*, and the caller sees `401 INVALID_TOKEN` — which is
+  indistinguishable from a wrong secret. `FRD-134` closes it, and splits the concession in two: the
+  60 seconds are for a clock that is behind, which costs nothing, while tolerance **past `exp`** —
+  which the predecessor also grants — stays at zero by default, because that one extends a
+  credential's life. A client relying on the second half is a client with a broken refresh
+  strategy, and an installation that wants to absorb it sets the value.
 - **`GET /version-info` carries no `jenkins` object** and `GET /models` uses one shared entry shape
   with `None` fields removed, where the predecessor has separate chat and embedding DTOs with
   type-specific required fields. A strictly typed client can fail on both.
