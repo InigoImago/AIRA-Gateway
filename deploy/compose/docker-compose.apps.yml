@@ -213,6 +213,17 @@ services:
       AIRA_OIDC_ISSUER: ${AIRA_OIDC_ISSUER:-http://localhost:8080/realms/aira}
       AIRA_OIDC_JWKS_URI: ${AIRA_OIDC_JWKS_URI:-http://keycloak:8080/realms/aira/protocol/openid-connect/certs}
       AIRA_OIDC_AUDIENCE: ${AIRA_OIDC_AUDIENCE:-}
+      # **Authentication, and the one knob that switches it off entirely.** Default `true`, and
+      # passed through so that a laptop demo can set it — it was absent from this file until
+      # 2026-08-16, so setting it in `.env` did nothing at all, which is the "knob that is not
+      # wired" defect noted a few lines below, in its other form.
+      #
+      # `false` serves **every route to anyone who can reach the port**, with no credential and no
+      # use case: the request is charged to no budget, bounded by no use-case rate limit, outside
+      # the model release, and its audit row names nobody. `security.py` refuses to start with it
+      # off unless `AIRA_ENVIRONMENT=local`, and `AIRA_DEMO_MODE` deliberately does **not** waive
+      # that — see `WAIVED_BY_A_DEMO`.
+      AIRA_AUTH_REQUIRED: ${AIRA_AUTH_REQUIRED:-true}
       # Which Keycloak group confers which AIRA role (`ADR-0017`). Group membership is the **only**
       # source of a role — a realm role on the same token is not read — so an installation that
       # leaves this empty has nobody holding one.

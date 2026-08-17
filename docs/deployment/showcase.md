@@ -225,6 +225,81 @@ The message names the control, and each of these means something different:
 | `403 Not a member of use case …` | the use case is named but this caller does not reach it — the group or membership step above |
 | `429` / over budget | it worked, and the demo's deliberately small limits did their job |
 
+### Or turn authentication off entirely
+
+For a laptop demo where credentials are just in the way, the whole of the above can be skipped.
+
+**The file is `deploy/compose/.env`**, not the `.env` at the repository root — the containers read
+the first and never see the second, which is the commonest reason a variable "does nothing".
+
+```bash
+echo 'AIRA_AUTH_REQUIRED=false' >> deploy/compose/.env
+make up-full          # or: docker compose … up -d gateway
+```
+
+Every route is then served to anyone who can reach the port, with **no credential and no use
+case**:
+
+```bash
+curl -s -X POST http://localhost:8001/v1beta/models/mock-1:generateContent \
+  -H "content-type: application/json" \
+  -d '{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}'
+```
+
+The caller becomes `Principal(subject="demo", method="demo")`, and that method is an explicit
+exemption from the use-case requirement — so `/uc/<slug>` is optional rather than required. Both
+surfaces work this way, and so do the read-only routes (`GET /v1beta/models`,
+`/kira/api/external/models`).
+
+**What you give up, in one sentence each.** This is not "anonymous access to a use case" — it is no
+governance at all:
+
+| | With auth off |
+|---|---|
+| Attribution | the audit row names nobody, and `use_case` is `NULL` |
+| Budgets | none apply — there is no use case to charge |
+| Rate limits | the use-case and per-person limits have nothing to key on |
+| Model release (`FRD-308`) | not consulted; it is a property of a use case |
+| Pipeline | not run; it is configured per use case |
+| Model approval (`FRD-307`) and residency (`FRD-115`) | **still enforced** — those are properties of the installation, checked at every dispatch |
+
+**It is bounded to `AIRA_ENVIRONMENT=local`, and a demo does not unlock it.** With `auth_required`
+off in any other environment the gateway **refuses to start**, saying so:
+
+> `AIRA_AUTH_REQUIRED is off — every route is served to anyone who can reach the port. Leave it on
+> outside local development.`
+
+That refusal is at startup rather than per request, because a check that fires per request produces
+a service that is up, passes its health probe, and answers wrongly. `AIRA_DEMO_MODE` waives a named
+list of things (a published Postgres password, a missing OIDC audience); **authentication is
+deliberately not on that list** — one environment variable that turned into an open port serving
+models is the reason the list exists at all. So this is a laptop switch, not a way to expose a demo
+to a network.
+
+### Can it call real Gemini models?
+
+Yes, and three things have to line up. Two of them are refusals on purpose, so it is worth knowing
+which one you are looking at.
+
+1. **A key, in the right file.** `AIRA_GOOGLE_API_KEY=…` in `deploy/compose/.env`. The adapter is
+   registered only when a key is present.
+2. **Residency has to be widened, or the gateway will not start.** Google AI Studio's endpoint
+   names no region and guarantees none, so it is treated as `global` — and `AIRA_ALLOWED_REGIONS`
+   defaults to the EU regions of every supported cloud, on the principle that a residency
+   constraint which must be switched on is one that will be found switched off. Either
+   `AIRA_ALLOWED_REGIONS=global,…` deliberately, or use **Vertex AI in an EU region**
+   (`AIRA_VERTEX_PROJECT` + credentials), which needs no widening and is the reason the two
+   adapters exist separately.
+3. **The model must be catalogued and approved.** Approval is an installation property and is
+   checked at **every** dispatch — it still applies with authentication off. `AIRA_GEMINI_MODELS`
+   is empty by default, deliberately: it used to name two models a key issued today cannot use, and
+   a default naming something unusable produces a 404 that reads as our fault. Use the catalog
+   screen's discovery to list what your key actually serves, then approve what you want.
+
+With all three in place the same unauthenticated `curl` above works against a real model — swap
+`mock-1` for its name. Note what that means before doing it on a machine anyone else can reach:
+an open port, no attribution, no budget, and a real bill.
+
 ### What to look at afterwards
 
 The interesting part is not that it answered. Open the console and find the client's own traffic:
