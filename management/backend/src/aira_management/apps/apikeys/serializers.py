@@ -27,6 +27,15 @@ class ApiKeySerializer(serializers.ModelSerializer[ApiKey]):
             "revoked_at",
             "expires_at",
         ]
+        #: **Every one of them.** This serializer only ever renders — issuing goes through
+        #: `IssueApiKeySerializer`, revoking is its own route — and nothing here is a caller's to
+        #: decide: `prefix` is generated with the secret it belongs to, `is_active` and
+        #: `revoked_at` are what revocation *means*, and `issued_by` is the record of who
+        #: authorised the credential. Said out loud rather than left to the fact that no endpoint
+        #: writes with it today, because that fact is one `serializer(data=request.data)` away from
+        #: changing, and the shape of that mistake is a caller reviving a revoked key or choosing
+        #: the prefix of somebody else's.
+        read_only_fields = fields
 
 
 class IssueApiKeySerializer(serializers.Serializer[Any]):

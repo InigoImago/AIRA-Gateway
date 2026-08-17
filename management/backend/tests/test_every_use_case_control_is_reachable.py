@@ -17,6 +17,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from aira_management.apps.anomalies.serializers import AnomalyRuleSerializer
+from aira_management.apps.apikeys.serializers import IssueApiKeySerializer
 from aira_management.apps.budgets.serializers import BudgetSerializer
 from aira_management.apps.ratelimits.serializers import RateLimitSerializer
 from aira_management.apps.usecases.serializers import UseCaseSerializer
@@ -25,6 +27,8 @@ REPO = Path(__file__).resolve().parents[3]
 USE_CASE_PANELS = REPO / "management/frontend/src/app/features/use-cases"
 PIPELINE_EDITOR = REPO / "management/frontend/src/app/features/pipelines/pipeline-editor.html"
 PIPELINE_ENGINE = REPO / "gateway/src/aira_gateway/pipeline/engine.py"
+RULE_FORM = REPO / "management/frontend/src/app/features/security/rule-form.ts"
+USE_CASE_SERVICE = REPO / "management/frontend/src/app/core/api/use-case.service.ts"
 
 
 def _arguments(source: str, call: str) -> list[str]:
@@ -189,3 +193,54 @@ def test_every_writable_budget_and_rate_limit_field_leaves_the_console() -> None
             f"{unreachable}. The endpoint upserts, so a field the console never mentions is not "
             "merely unreachable — it is reset to its default on every save."
         )
+
+
+def test_every_writable_anomaly_rule_field_leaves_the_console() -> None:
+    """One form authors both a use case's rules and the global ones (`rules-tab` imports it).
+
+    Every field the **evaluator** reads — kind, window, threshold, parameter, sample floor, action,
+    target, action minutes, throttle — decides whether somebody's traffic is suspended, and
+    `enabled` decides whether the rule is consulted at all (`AnomalyRuleRead.enabled.is_(True)`).
+    A rule half-authored from a form is a control whose remaining half is a default nobody chose.
+
+    **Read from `submit()`, not from any `: AnomalyRule =` literal in the file.** The first version
+    matched both, and this file's other one is `NEW_RULE` — the *template* a blank form starts
+    from, which naturally names every field. So the guard passed with `min_sample` deleted from the
+    payload: a default answered for a control. That is twice today that a guard was satisfied by
+    the wrong source, and both times the tell was the same — it kept passing under a mutation it
+    was written to catch. **Point a reachability check at the thing that is sent.**
+    """
+    source = RULE_FORM.read_text(encoding="utf-8")
+    start = source.index("  protected submit(): void {")
+    submit = source[start : source.index("\n  }", start)]
+    sent = set(re.findall(r"([a-z_]+)\s*:", submit))
+
+    writable = {n for n, f in AnomalyRuleSerializer().fields.items() if not f.read_only}
+    unreachable = sorted(writable - sent)
+
+    assert not unreachable, (
+        f"These anomaly-rule fields are writable and the form does not send them: {unreachable}."
+    )
+
+
+def test_every_field_of_an_issued_api_key_leaves_the_console() -> None:
+    """Issuing is its own contract: `IssueApiKeySerializer`, not the read serializer.
+
+    Three fields — the label, who owns it, and how long it lives — and each is a governance answer
+    rather than a convenience. `expires_in_days` in particular: the serializer fills in the
+    configured default and refuses anything past the configured maximum, so a console that could
+    not send it would make every key live exactly as long as the installation's default and give
+    nobody a way to ask for less.
+    """
+    source = USE_CASE_SERVICE.read_text(encoding="utf-8")
+    start = source.index("  issueApiKey(")
+    body = source[start : source.index("\n  }", start)]
+    sent = set(re.findall(r"([a-z_]+)\s*:", body)) | set(re.findall(r"body\.([a-z_]+)", body))
+
+    writable = {n for n, f in IssueApiKeySerializer().fields.items() if not f.read_only}
+    unreachable = sorted(writable - sent)
+
+    assert not unreachable, (
+        f"These fields of an issued API key are writable and the console does not send them: "
+        f"{unreachable}."
+    )

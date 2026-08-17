@@ -390,3 +390,19 @@ def test_a_nonsensical_lifetime_is_refused() -> None:
     )
 
     assert resp.status_code == 400
+
+
+def test_the_listing_serializer_writes_nothing() -> None:
+    """A read serializer that *looks* writable is one endpoint away from being one.
+
+    `ApiKeySerializer` renders the masked view of a key and nothing writes with it — so its fields
+    carried no `read_only` marking at all, and `is_active`, `revoked_at`, `prefix` and `issued_by`
+    were caller-settable by shape. The mistake this prevents is a future
+    `ApiKeySerializer(data=request.data)`: reviving a revoked credential, or choosing the prefix of
+    somebody else's.
+    """
+    from aira_management.apps.apikeys.serializers import ApiKeySerializer
+
+    writable = [name for name, field in ApiKeySerializer().fields.items() if not field.read_only]
+
+    assert writable == [], writable

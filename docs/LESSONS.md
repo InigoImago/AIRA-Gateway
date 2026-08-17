@@ -321,7 +321,11 @@ reading code.
   (`test_every_model_control_is_reachable.py`,
   `test_every_use_case_control_is_reachable.py`). Read the **typed literal** a screen builds, and
   scope the check to the file that owns it — a first version counted one tab's payload towards
-  another's and passed with the field deleted.
+  another's and passed with the field deleted. **Point it at what is *sent*, not at any literal of
+  the right type**: the anomaly-rule check matched the blank-form template as readily as the
+  payload, so a default answered for a control. Both times the tell was identical — the guard kept
+  passing under the mutation it was written to catch, which is why a guard is not finished until it
+  has been seen to fail.
 - **Read-only is a control, greyed — never prose.** The models released to a use case were shown
   to a reader who may not change them as a paragraph of `<code>` chips. *"It does not look like a
   control, so the developer will not even read it"* — the one piece of configuration they most

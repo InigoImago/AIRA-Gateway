@@ -1372,6 +1372,22 @@ MUTATIONS = [
         "management/backend/tests/test_every_use_case_control_is_reachable.py",
     ),
     Mutation(
+        "C17",
+        "an anomaly-rule field the form stops sending is reported, not shipped",
+        "management/frontend/src/app/features/security/rule-form.ts",
+        "      min_sample: this.sample() ?? 0,",
+        "",
+        "management/backend/tests/test_every_use_case_control_is_reachable.py",
+    ),
+    Mutation(
+        "C18",
+        "the API-key listing serializer stays read-only in every field",
+        "management/backend/src/aira_management/apps/apikeys/serializers.py",
+        "        read_only_fields = fields",
+        '        read_only_fields = ["prefix"]',
+        "management/backend/tests/test_apikeys.py",
+    ),
+    Mutation(
         "C8",
         "an older event applies its prices without erasing a declaration",
         "gateway/src/aira_gateway/consumer/apply.py",

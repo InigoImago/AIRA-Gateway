@@ -5,6 +5,41 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## API keys and anomaly rules: clean, and now kept that way
+
+Fourth pass. Both came out **reachable in both directions**, which is the first time in this audit
+that has happened, and it was checked rather than assumed.
+
+*Anomaly rules.* One form authors a use case's rules and the global ones — `rules-tab` imports it —
+and every field the evaluator reads has a control: kind, window, threshold, parameter, sample floor,
+action, target, action minutes, throttle, and `enabled`, which decides whether the rule is consulted
+at all. The upsert was checked for the trap budgets had (`data.get("enabled", True)`) and does not
+have it: DRF leaves an absent boolean out of `validated_data`, so `defaults=values` preserves it.
+Measured: disable a rule, re-post it without the field, still disabled.
+
+*API keys.* Issuing has its own contract — label, owner, lifetime — and the console sends all three.
+Everything the gateway consults about a key (`is_active`, `revoked_at`, `expires_at`, `subject`,
+`use_case`, `label`) is set at issue or by revocation. Revocation is deliberately one-way and a
+lifetime is not extendable: you issue a new key.
+
+**One thing worth hardening.** `ApiKeySerializer` renders the masked view and nothing writes with
+it — so it carried no `read_only` marking at all, and `is_active`, `revoked_at`, `prefix` and
+`issued_by` were caller-settable *by shape*. Not a live defect; one
+`ApiKeySerializer(data=request.data)` away from being one, and the shape of that mistake is a caller
+reviving a revoked credential or choosing the prefix of somebody else's. Every field is read-only
+now, said out loud rather than left to the fact that no endpoint writes with it today.
+
+**And a guard was satisfied by the wrong source again.** The rule check first matched any
+`: AnomalyRule =` literal in the form file — and the other one is `NEW_RULE`, the *template* a blank
+form starts from, which naturally names every field. It passed with `min_sample` deleted from the
+payload: a default answering for a control. Same tell as the budget/rate-limit guard earlier the
+same day — it kept passing under the mutation it was written to catch. **Point a reachability check
+at the thing that is sent**, and prove it by breaking that thing. Both guards now read `submit()`
+and `issueApiKey()` respectively. Mutations `C17`/`C18`.
+
+2367 Python tests, 841 Angular.
+
+---
 ## Budgets and rate limits: a switch the gateway obeys and nobody could flip
 
 Third pass of the same audit. `enabled` exists on both models, travels on both events, and is
