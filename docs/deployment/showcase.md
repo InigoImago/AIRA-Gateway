@@ -192,9 +192,13 @@ authentication is on. *Regenerate* replaces it and invalidates the old one immed
 - In Keycloak: **Service accounts roles** tab → the link to the service account user → **Groups** →
   **Join Group** → `/use-cases/<slug>`, or any group you have granted to a use case in the console.
   **This alone is not enough — see the mapper below.**
-- Or, simpler and with no Keycloak work at all: add **`service-account-<clientId>`** as a member of
-  the use case in the AIRA console, exactly as you would add a person. This route needs no mapper
-  and no group: the gateway resolves grants by `preferred_username` as well as by group path.
+- Adding **`service-account-<clientId>`** as a member in the AIRA console — the route that needs no
+  mapper and no group, because the gateway resolves grants by `preferred_username` as well as by
+  group path — **works only once that account has authenticated against the console at least
+  once.** Membership points at a user row, and a user row appears on first sign-in; a service
+  account never signs in. Measured: `Unknown user 'service-account-my-chatbot'`. For a person this
+  route is the easy one and for a machine client it is not available, so a machine client needs the
+  mapper below.
 
 #### The mapper a new client does not have
 
