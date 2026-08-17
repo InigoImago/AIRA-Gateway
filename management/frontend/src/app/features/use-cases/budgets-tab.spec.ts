@@ -28,6 +28,7 @@ interface Tab {
   pct: (used: number, limit: number | null | undefined) => number;
   labelFor: (b: Budget) => string;
   unpricedRequests: () => number;
+  setEnabled: (b: Budget, enabled: boolean) => void;
   feedback: PageFeedback;
 }
 
@@ -50,7 +51,9 @@ function setup(options: Options = {}) {
   const overrides = options.overrides ?? {};
   const service = {
     createBudget: (_s: string, budget: Budget) => {
-      calls.push(`create:${budget.scope}:${budget.subject}:${budget.limit_cost}`);
+      calls.push(
+        `create:${budget.scope}:${budget.subject}:${budget.limit_cost}:${budget.limit_tokens}:${budget.enabled}`,
+      );
       return overrides.createBudget ?? of(budget);
     },
     deleteBudget: (_s: string, id: number) => {
@@ -88,6 +91,14 @@ function setup(options: Options = {}) {
     changes,
     component: fixture.componentInstance as unknown as Tab,
     text: () => (fixture.nativeElement as HTMLElement).textContent ?? '',
+    click: (testid: string) => {
+      (fixture.nativeElement as HTMLElement)
+        .querySelector<HTMLButtonElement>(`[data-testid="${testid}"]`)
+        ?.click();
+      fixture.detectChanges();
+    },
+    testid: (id: string) =>
+      (fixture.nativeElement as HTMLElement).querySelector(`[data-testid="${id}"]`),
   };
 }
 
@@ -111,7 +122,7 @@ describe('BudgetsTab', () => {
     expect(component.validationError()).toBeNull();
 
     component.add();
-    expect(calls).toContain('create:use_case::250.50');
+    expect(calls).toContain('create:use_case::250.50:null:true');
   });
 
   it('saves a budget, clears the form and asks the page to reload', () => {
@@ -119,7 +130,7 @@ describe('BudgetsTab', () => {
     component.budgetCost.set('250.00');
     component.add();
 
-    expect(calls).toContain('create:use_case::250.00');
+    expect(calls).toContain('create:use_case::250.00:null:true');
     expect(component.feedback.notice()).toBe('Budget saved.');
     expect(component.budgetCost()).toBe('');
     expect(component.showForm()).toBe(false);
@@ -569,5 +580,62 @@ describe('BudgetsTab — the per-head warning', () => {
     expect(warning?.textContent).toContain('Counted per person');
     expect(warning?.textContent).toContain('Keycloak');
     expect(warning?.textContent).not.toContain('two separate');
+  });
+});
+
+describe('BudgetsTab — lifting a budget without losing it', () => {
+  const BUDGET: Budget = {
+    id: 3,
+    scope: 'use_case',
+    subject: '',
+    period: 'month',
+    limit_cost: '10.00',
+    limit_tokens: 5000,
+  };
+
+  it('offers a switch for a flag the card never even showed', () => {
+    /** `enabled` has been on the model, on the wire and **obeyed by the gateway** since budgets
+     *  existed — it selects only enabled ones — and this card neither displayed it nor could
+     *  change it. A use case could be spending against a budget the console showed and the data
+     *  plane ignored. */
+    const page = setup({ budgets: [BUDGET] });
+
+    expect(page.testid('toggle-budget-3')).not.toBeNull();
+    expect(page.text()).toContain('Active — disable');
+  });
+
+  it('sends the whole row with the switch flipped', () => {
+    const page = setup({ budgets: [BUDGET] });
+    page.click('toggle-budget-3');
+
+    expect(page.calls).toEqual(['create:use_case::10.00:5000:false']);
+    expect(page.component.feedback.notice()).toContain('kept on record');
+    expect(page.changes).toEqual([1]);
+  });
+
+  it('puts a lifted budget back', () => {
+    const page = setup({ budgets: [{ ...BUDGET, enabled: false }] });
+    expect(page.text()).toContain('Disabled — enable');
+    page.click('toggle-budget-3');
+
+    expect(page.calls).toEqual(['create:use_case::10.00:5000:true']);
+    expect(page.component.feedback.notice()).toContain('capped again');
+  });
+
+  it('tells a reader who may not manage that a budget is lifted', () => {
+    /** Otherwise the page shows a limit and the gateway applies none, which is the worst of the
+     *  three states to be silent about. */
+    const page = setup({ budgets: [{ ...BUDGET, enabled: false }], canManage: false });
+
+    expect(page.testid('toggle-budget-3')).toBeNull();
+    expect(page.text()).toContain('Disabled');
+  });
+
+  it('states that a new budget is active rather than leaving it to a default', () => {
+    const page = setup();
+    page.component.budgetTokens.set(1000);
+    page.component.add();
+
+    expect(page.calls).toEqual(['create:use_case::null:1000:true']);
   });
 });

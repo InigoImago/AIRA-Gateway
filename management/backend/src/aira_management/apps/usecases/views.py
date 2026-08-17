@@ -535,18 +535,26 @@ class UseCaseViewSet(viewsets.ModelViewSet[UseCase]):
         serializer = BudgetSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
+        defaults: dict[str, Any] = {
+            "limit_cost": data.get("limit_cost"),
+            "limit_tokens": data.get("limit_tokens"),
+            "limit_requests": data.get("limit_requests"),
+        }
+        # **Only when it was said.** This read `data.get("enabled", True)`, so any upsert that did
+        # not mention the field switched the budget back on — and the console's own save never
+        # mentions it. Measured: disable a budget, change its token cap from the console, and it is
+        # enforcing again with nothing on screen having said so. A limit somebody deliberately
+        # lifted is a decision; silently reversing it is worse than never offering the switch.
+        # Absent on a *create* still means the model's default, which is on.
+        if "enabled" in data:
+            defaults["enabled"] = data["enabled"]
         with transaction.atomic():
             budget, _created = Budget.objects.update_or_create(
                 use_case=usecase,
                 scope=data["scope"],
                 subject=data["subject"],
                 period=data["period"],
-                defaults={
-                    "limit_cost": data.get("limit_cost"),
-                    "limit_tokens": data.get("limit_tokens"),
-                    "limit_requests": data.get("limit_requests"),
-                    "enabled": data.get("enabled", True),
-                },
+                defaults=defaults,
             )
             emit("budget.upserted", _budget_payload(budget, usecase.slug))
         return Response(BudgetSerializer(budget).data, status=status.HTTP_201_CREATED)
@@ -573,10 +581,12 @@ class UseCaseViewSet(viewsets.ModelViewSet[UseCase]):
                 use_case=usecase,
                 scope=data["scope"],
                 subject=data["subject"],
+                # Same rule as budgets above: an upsert that says nothing about `enabled` leaves it
+                # alone rather than switching the limit back on.
                 defaults={
                     "limit_rpm": data["limit_rpm"],
                     "burst": data.get("burst", 0),
-                    "enabled": data.get("enabled", True),
+                    **({"enabled": data["enabled"]} if "enabled" in data else {}),
                 },
             )
             emit("ratelimit.upserted", _rate_limit_payload(limit, usecase.slug))

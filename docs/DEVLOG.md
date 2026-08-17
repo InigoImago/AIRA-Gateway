@@ -5,6 +5,39 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Budgets and rate limits: a switch the gateway obeys and nobody could flip
+
+Third pass of the same audit. `enabled` exists on both models, travels on both events, and is
+**obeyed by the gateway** — `budgets/service.py` selects only enabled budgets, `ratelimit/service.py`
+skips a limit whose flag is off. The rate-limit table has printed an **Active / Disabled** badge
+since it existed. No screen could change either.
+
+**And it was worse than unreachable.** Both endpoints *upsert* — POST keys on
+(scope, subject[, period]) and is how an existing row is edited — and the handler read
+`data.get("enabled", True)`, while the console's body never mentions the field. Measured before
+fixing: disable a budget, change its token cap from the console, and it is enforcing again. A limit
+somebody deliberately lifted for an incident is a decision, and silently reversing a decision is
+worse than never offering the switch. `test_a_save_that_says_nothing_about_enabled_leaves_a_lifted_budget_lifted`
+is that measurement, kept.
+
+Both halves fixed, because either alone leaves the defect. The handler now writes `enabled` **only
+when it was said** — absent on a create still means the model default, which is on. And both tabs
+carry a switch: *Active — disable* / *Disabled — enable*, sending the whole row back because the
+endpoint upserts and a body carrying only the switch would blank the figures beside it. A reader
+who may not manage sees the state and no control — the budget card did not even show it, so a use
+case could be spending against a budget the console displayed and the data plane ignored.
+
+The guard now covers both serializers. It reads the **typed object literal** each tab builds
+(`const budget: Budget = {…}`), because an untyped `{...}` would let a field disappear from the
+payload with the guard still passing — and it is **scoped to the file that owns the payload**: the
+first version counted spreads from every panel at once, so the rate-limit tab's `{ ...limit,
+enabled }` answered for the budget tab's, and the guard passed with `enabled` removed from budgets
+entirely. A guard that a different screen can satisfy is not a guard. Caught by trying it.
+
+Mutations `C15` (the upsert default) and `C16` (a field dropped from the payload). 2364 Python
+tests, 841 Angular.
+
+---
 ## The same audit for use cases and pipelines — and a search tool that lied
 
 *"Mach das gleiche für use cases und pipeline."* Same method: what the column is, what the API

@@ -74,6 +74,10 @@ export class RateLimitsTab {
       subject: '',
       limit_rpm: this.rlRpm() ?? 0,
       burst: this.rlBurst() ?? 0,
+      // Said rather than defaulted. The upsert keys on (scope, subject), so this same call is how
+      // an existing row is edited — and a body that stayed silent about `enabled` used to switch a
+      // lifted limit back on. A new row starts active, and now says so.
+      enabled: true,
     };
     this.feedback.run(this.service.createRateLimit(this.slug(), limit), {
       failure: 'Could not save the rate limit.',
@@ -82,6 +86,33 @@ export class RateLimitsTab {
         this.rlRpm.set(null);
         this.rlBurst.set(null);
         this.showForm.set(false);
+        this.changed.emit();
+      },
+    });
+  }
+
+  /**
+   * Lift a limit without losing it, or put it back.
+   *
+   * The table has shown an **Active / Disabled** badge since it existed and no control could
+   * change it, so *Disabled* was a state only a seed or a direct API call could produce — a badge
+   * whose other half was unreachable. The gateway obeys the flag (`if not record.enabled …`), which
+   * makes this a governance control rather than a display: a limit somebody lifted for an incident
+   * is a decision, and deleting the row instead loses what it was.
+   *
+   * The whole row is sent because the endpoint upserts: a body carrying only the switch would
+   * blank the figures beside it.
+   */
+  protected setEnabled(limit: RateLimit, enabled: boolean): void {
+    if (!this.canManage() || this.feedback.busy()) return;
+    this.feedback.run(this.service.createRateLimit(this.slug(), { ...limit, enabled }), {
+      failure: enabled ? 'Could not enable the rate limit.' : 'Could not disable the rate limit.',
+      success: () => {
+        this.feedback.succeed(
+          enabled
+            ? 'Rate limit enabled. Requests are throttled again.'
+            : 'Rate limit disabled. It is kept on record and stops binding.',
+        );
         this.changed.emit();
       },
     });

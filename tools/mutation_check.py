@@ -1356,6 +1356,22 @@ MUTATIONS = [
         "management/backend/tests/test_every_use_case_control_is_reachable.py",
     ),
     Mutation(
+        "C15",
+        "an upsert that says nothing about `enabled` leaves a lifted budget lifted",
+        "management/backend/src/aira_management/apps/usecases/views.py",
+        '        if "enabled" in data:\n            defaults["enabled"] = data["enabled"]',
+        '        defaults["enabled"] = data.get("enabled", True)',
+        "management/backend/tests/test_budgets.py",
+    ),
+    Mutation(
+        "C16",
+        "a budget field the console stops sending is reported, not shipped",
+        "management/frontend/src/app/features/use-cases/budgets-tab.ts",
+        "      limit_requests: this.budgetRequests(),",
+        "",
+        "management/backend/tests/test_every_use_case_control_is_reachable.py",
+    ),
+    Mutation(
         "C8",
         "an older event applies its prices without erasing a declaration",
         "gateway/src/aira_gateway/consumer/apply.py",

@@ -311,9 +311,17 @@ reading code.
   stored, shipped to the gateway, dropped before any decision reads them, and printed among
   Provider and Platform as though they were configuration — giving *those* inputs would be the
   same defect wearing the other mask, a control somebody sets that changes nothing.
+  **An upsert makes it worse than unreachable.** Budgets and rate limits are written by a POST
+  that keys on their scope, so the same call creates and edits — and the handler defaulted
+  `enabled` to true whenever a body did not mention it, which the console's body never did.
+  Disabling a budget and then changing its cap from the console re-armed it, silently. A field the
+  writer omits is not neutral against an upsert: it is a value being *set*.
   **The durable form of this rule is a comparison test**, in both directions: every writable field
   reaches the payload, and every field the *decision object* carries is enterable
-  (`test_every_model_control_is_reachable.py`).
+  (`test_every_model_control_is_reachable.py`,
+  `test_every_use_case_control_is_reachable.py`). Read the **typed literal** a screen builds, and
+  scope the check to the file that owns it — a first version counted one tab's payload towards
+  another's and passed with the field deleted.
 - **Read-only is a control, greyed — never prose.** The models released to a use case were shown
   to a reader who may not change them as a paragraph of `<code>` chips. *"It does not look like a
   control, so the developer will not even read it"* — the one piece of configuration they most

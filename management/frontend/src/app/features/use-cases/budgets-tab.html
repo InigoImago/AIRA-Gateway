@@ -167,17 +167,37 @@
             <!-- Inert until that name turns up; said as what the console knows (`FRD-209`). -->
             <span class="badge badge--muted">{{ budget.period }}</span>
           </div>
-          @if (canManage()) {
-            <button
-              type="button"
-              class="btn btn--sm btn--danger"
-              [disabled]="feedback.busy()"
-              [attr.aria-label]="'Remove budget for ' + labelFor(budget)"
-              (click)="remove(budget.id)"
-            >
-              Remove
-            </button>
-          }
+          <div class="row">
+            <!-- The gateway skips a budget whose `enabled` is false, and this card never said so
+                 and could not change it — a limit could be off while the page showed a limit. -->
+            @if (canManage()) {
+              <button
+                type="button"
+                class="btn btn--sm btn--ghost"
+                [disabled]="feedback.busy()"
+                [attr.data-testid]="'toggle-budget-' + budget.id"
+                [attr.aria-label]="
+                  (budget.enabled === false ? 'Enable' : 'Disable') +
+                  ' budget for ' +
+                  labelFor(budget)
+                "
+                (click)="setEnabled(budget, budget.enabled === false)"
+              >
+                {{ budget.enabled === false ? 'Disabled — enable' : 'Active — disable' }}
+              </button>
+              <button
+                type="button"
+                class="btn btn--sm btn--danger"
+                [disabled]="feedback.busy()"
+                [attr.aria-label]="'Remove budget for ' + labelFor(budget)"
+                (click)="remove(budget.id)"
+              >
+                Remove
+              </button>
+            } @else if (budget.enabled === false) {
+              <span class="badge">Disabled</span>
+            }
+          </div>
         </div>
 
         @if (!measured(budget)) {

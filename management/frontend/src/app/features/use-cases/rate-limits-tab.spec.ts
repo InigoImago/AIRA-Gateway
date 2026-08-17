@@ -25,6 +25,7 @@ interface Tab {
   unmatchedSubject: () => boolean;
   reachesNobodyKnown: (scope: string, subject?: string | null) => boolean;
   effectiveBurst: (l: RateLimit) => number;
+  setEnabled: (l: RateLimit, enabled: boolean) => void;
   feedback: PageFeedback;
 }
 
@@ -41,7 +42,9 @@ function setup(
   const calls: string[] = [];
   const service = {
     createRateLimit: (_s: string, limit: RateLimit) => {
-      calls.push(`create:${limit.scope}:${limit.subject}:${limit.limit_rpm}:${limit.burst}`);
+      calls.push(
+        `create:${limit.scope}:${limit.subject}:${limit.limit_rpm}:${limit.burst}:${limit.enabled}`,
+      );
       return overrides.createRateLimit ?? of(limit);
     },
     deleteRateLimit: (_s: string, id: number) => {
@@ -73,6 +76,14 @@ function setup(
     changes,
     component: fixture.componentInstance as unknown as Tab,
     text: () => (fixture.nativeElement as HTMLElement).textContent ?? '',
+    click: (testid: string) => {
+      (fixture.nativeElement as HTMLElement)
+        .querySelector<HTMLButtonElement>(`[data-testid="${testid}"]`)
+        ?.click();
+      fixture.detectChanges();
+    },
+    testid: (id: string) =>
+      (fixture.nativeElement as HTMLElement).querySelector(`[data-testid="${id}"]`),
   };
 }
 
@@ -102,7 +113,7 @@ describe('RateLimitsTab', () => {
     component.rlBurst.set(20);
     component.add();
 
-    expect(calls).toContain('create:use_case::120:20');
+    expect(calls).toContain('create:use_case::120:20:true');
     expect(component.feedback.notice()).toBe('Rate limit saved.');
     expect(component.rlRpm()).toBeNull();
     expect(component.showForm()).toBe(false);
@@ -325,5 +336,56 @@ describe('RateLimitsTab — the per-head warning', () => {
     expect(warning?.textContent).toContain('Counted per person');
     expect(warning?.textContent).toContain('Keycloak');
     expect(warning?.textContent).not.toContain('two separate');
+  });
+});
+
+describe('RateLimitsTab — lifting a limit without losing it', () => {
+  const LIMIT: RateLimit = { id: 7, scope: 'use_case', subject: '', limit_rpm: 60, burst: 90 };
+
+  it('offers the switch the badge only ever described', () => {
+    /** The table has shown Active/Disabled since it existed, and *Disabled* was a state only a
+     *  seed or a raw API call could produce — a badge whose other half no control could reach,
+     *  while the gateway obeys the flag (`if not record.enabled …`). */
+    const page = setup([LIMIT]);
+
+    expect(page.testid('toggle-limit-7')).not.toBeNull();
+    expect(page.text()).toContain('Active — disable');
+  });
+
+  it('sends the whole row with the switch flipped', () => {
+    /** The whole row, because the endpoint upserts on (scope, subject): a body carrying only the
+     *  switch would blank the figures beside it. */
+    const page = setup([LIMIT]);
+    page.click('toggle-limit-7');
+
+    expect(page.calls).toEqual(['create:use_case::60:90:false']);
+    expect(page.component.feedback.notice()).toContain('kept on record');
+    expect(page.changes).toEqual([1]);
+  });
+
+  it('puts a lifted limit back', () => {
+    const page = setup([{ ...LIMIT, enabled: false }]);
+    expect(page.text()).toContain('Disabled — enable');
+    page.click('toggle-limit-7');
+
+    expect(page.calls).toEqual(['create:use_case::60:90:true']);
+    expect(page.component.feedback.notice()).toContain('throttled again');
+  });
+
+  it('shows a reader who may not manage the state, and no switch', () => {
+    const page = setup([{ ...LIMIT, enabled: false }], {}, true, false);
+
+    expect(page.testid('toggle-limit-7')).toBeNull();
+    expect(page.text()).toContain('Disabled');
+  });
+
+  it('states that a new limit is active rather than leaving it to a default', () => {
+    /** The same call edits an existing row, and a body silent about `enabled` used to switch a
+     *  lifted limit back on — server-side that is fixed, and saying it here is the other half. */
+    const page = setup();
+    page.component.rlRpm.set(30);
+    page.component.add();
+
+    expect(page.calls).toEqual(['create:use_case::30:0:true']);
   });
 });

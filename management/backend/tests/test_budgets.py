@@ -263,3 +263,60 @@ def test_the_cost_limit_is_published_as_a_string(captured_events) -> None:
     )
     published = [p for t, p in captured_events if t == "budget.upserted"]
     assert published[-1]["limit_cost"] == "12.500000"
+
+
+def test_a_save_that_says_nothing_about_enabled_leaves_a_lifted_budget_lifted() -> None:
+    """The console's own save never mentions `enabled`, and this used to switch it back on.
+
+    Found while auditing which controls the console can reach: the upsert read
+    `data.get("enabled", True)`, so changing a token cap on a budget somebody had deliberately
+    switched off re-armed it — with nothing on screen saying so. A limit that was lifted is a
+    decision, and silently reversing a decision is worse than never offering the switch.
+    """
+    admin = _user("enabled-admin", "global-admin")
+    _make_uc(admin, "enabled-uc")
+    client = _client(admin)
+    client.post(
+        f"{BASE}enabled-uc/budgets/",
+        {"scope": "use_case", "period": "month", "limit_tokens": 100},
+        format="json",
+    )
+    Budget.objects.filter(use_case__slug="enabled-uc").update(enabled=False)
+
+    # Exactly the body `budgets-tab.ts` sends — no `enabled` key at all.
+    resp = client.post(
+        f"{BASE}enabled-uc/budgets/",
+        {
+            "scope": "use_case",
+            "subject": "",
+            "period": "month",
+            "limit_cost": None,
+            "limit_tokens": 200,
+            "limit_requests": None,
+        },
+        format="json",
+    )
+
+    assert resp.status_code == 201
+    budget = Budget.objects.get(use_case__slug="enabled-uc")
+    assert budget.limit_tokens == 200, "the change itself must still apply"
+    assert budget.enabled is False, "an upsert that says nothing must not re-arm the budget"
+
+
+def test_enabled_is_honoured_when_it_is_said(captured_events) -> None:
+    """And the switch itself works, in both directions, and reaches the gateway."""
+    admin = _user("switch-admin", "global-admin")
+    _make_uc(admin, "switch-uc")
+    client = _client(admin)
+    body = {"scope": "use_case", "subject": "", "period": "month", "limit_tokens": 50}
+
+    client.post(f"{BASE}switch-uc/budgets/", body, format="json")
+    client.post(f"{BASE}switch-uc/budgets/", {**body, "enabled": False}, format="json")
+    assert Budget.objects.get(use_case__slug="switch-uc").enabled is False
+
+    client.post(f"{BASE}switch-uc/budgets/", {**body, "enabled": True}, format="json")
+    assert Budget.objects.get(use_case__slug="switch-uc").enabled is True
+
+    # The gateway decides on its own copy, so the switch is only real if the event carries it.
+    published = [p for t, p in captured_events if t == "budget.upserted"]
+    assert [p["enabled"] for p in published[-3:]] == [True, False, True]

@@ -85,6 +85,10 @@ export class BudgetsTab {
       limit_cost: cost || null,
       limit_tokens: this.budgetTokens(),
       limit_requests: this.budgetRequests(),
+      // Stated rather than defaulted: this same call edits an existing row (the endpoint upserts
+      // on scope+subject+period), and a body silent about `enabled` used to re-arm a budget
+      // somebody had lifted.
+      enabled: true,
     };
     this.feedback.run(this.service.createBudget(this.slug(), budget), {
       failure: 'Could not save the budget.',
@@ -94,6 +98,33 @@ export class BudgetsTab {
         this.budgetTokens.set(null);
         this.budgetRequests.set(null);
         this.showForm.set(false);
+        this.changed.emit();
+      },
+    });
+  }
+
+  /**
+   * Lift a budget without losing it, or put it back.
+   *
+   * `enabled` has been on the model, on the wire and **obeyed by the gateway** — which selects
+   * only `enabled` budgets — since budgets existed, and this card neither showed it nor could
+   * change it. So a use case could be spending against a budget the console displayed and the
+   * data plane ignored, with no way to tell from this screen and no way to lift one for an
+   * incident except to delete it and lose what it was.
+   *
+   * The whole row goes back because the endpoint upserts on scope+subject+period: a body carrying
+   * only the switch would blank the limits beside it.
+   */
+  protected setEnabled(budget: Budget, enabled: boolean): void {
+    if (!this.canManage() || this.feedback.busy()) return;
+    this.feedback.run(this.service.createBudget(this.slug(), { ...budget, enabled }), {
+      failure: enabled ? 'Could not enable the budget.' : 'Could not disable the budget.',
+      success: () => {
+        this.feedback.succeed(
+          enabled
+            ? 'Budget enabled. Spending is capped again.'
+            : 'Budget disabled. It is kept on record and stops binding.',
+        );
         this.changed.emit();
       },
     });

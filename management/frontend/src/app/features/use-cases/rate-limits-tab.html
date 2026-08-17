@@ -143,7 +143,20 @@
             <td>{{ limit.limit_rpm }}</td>
             <td>{{ effectiveBurst(limit) }}</td>
             <td>
-              @if (limit.enabled === false) {
+              <!-- Was a badge alone: *Disabled* was a state no control on this page could reach,
+                   although the gateway obeys the flag. Still a badge for a reader who may not
+                   manage; a switch for one who may. -->
+              @if (canManage()) {
+                <button
+                  type="button"
+                  class="btn btn--ghost"
+                  [disabled]="feedback.busy()"
+                  [attr.data-testid]="'toggle-limit-' + limit.id"
+                  (click)="setEnabled(limit, limit.enabled === false)"
+                >
+                  {{ limit.enabled === false ? 'Disabled — enable' : 'Active — disable' }}
+                </button>
+              } @else if (limit.enabled === false) {
                 <span class="badge">Disabled</span>
               } @else {
                 <span class="badge badge--ok">Active</span>
