@@ -191,8 +191,55 @@ authentication is on. *Regenerate* replaces it and invalidates the old one immed
 
 - In Keycloak: **Service accounts roles** tab → the link to the service account user → **Groups** →
   **Join Group** → `/use-cases/<slug>`, or any group you have granted to a use case in the console.
+  **This alone is not enough — see the mapper below.**
 - Or, simpler and with no Keycloak work at all: add **`service-account-<clientId>`** as a member of
-  the use case in the AIRA console, exactly as you would add a person.
+  the use case in the AIRA console, exactly as you would add a person. This route needs no mapper
+  and no group: the gateway resolves grants by `preferred_username` as well as by group path.
+
+#### The mapper a new client does not have
+
+**A group you joined is not a group in the token.** Keycloak puts group membership into a token
+only when the client has a *group membership mapper*, and a client you create today has none. The
+clients this realm ships with (`aira-gateway`, the integration-test clients) carry one, which is
+why the demo works and a client of your own silently does not.
+
+Measured in this realm, on a client created exactly as above, whose service account had been joined
+to `/use-cases/entwicklung`:
+
+```
+aud                : account          ← not the gateway's
+groups             : *** ABSENT ***   ← the join is invisible
+preferred_username : service-account-probe-groups
+```
+
+The request that follows is authenticated and then refused with `403
+STANDARD_USER_PERMISSION_REQUIRED` — *"cannot be attributed to a use case"* — which reads like a
+permission problem and is a mapper problem.
+
+**Clients → your client → Client scopes → `<clientId>-dedicated` → Add mapper → By configuration.**
+
+1. **Group Membership** — *Token Claim Name* `groups`, **Full group path: On**, *Add to access
+   token*: On. Full paths matter: the gateway reads `/use-cases/<slug>`, and a bare `entwicklung`
+   resolves to nothing.
+2. **Audience** — *Included Client Audience* `aira-gateway`, *Add to access token*: On. Needed as
+   soon as `AIRA_OIDC_AUDIENCE` is set, which any deployment outside `local` is forced to do: the
+   gateway refuses to start otherwise, because without an audience *any* token this realm minted
+   would be accepted here, including one issued to an unrelated client.
+
+The same client, after both mappers:
+
+```
+aud                : ['aira-gateway', 'account']
+groups             : ['/use-cases/entwicklung']
+```
+
+Which is what the gateway reads: `usecases_from_group_paths(['/use-cases/entwicklung'])` →
+`('entwicklung',)`.
+
+**Roles come from group paths too** (`ADR-0017`), through `AIRA_ROLE_GROUPS` — semicolon-separated,
+full paths, e.g. `it-security=/aira/it-security`. A caller in `/use-cases/entwicklung` and nothing
+else holds no role, which is correct: use-case membership is not oversight. Without the groups
+mapper there are no roles at all, so `GET /ki-usage` refuses even a member of the right group.
 
 #### Getting a token and calling with it
 
