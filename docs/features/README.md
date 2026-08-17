@@ -7,7 +7,7 @@ each FRD's own header is the single source** — this index is generated from th
 and a test fails when they disagree, because feature status kept in two places is feature
 status that goes stale in the copy nobody opens.
 
-**67 of 72 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
+**68 of 72 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
 
 | FRD | Feature | Phase | Status |
 | --- | ------- | ----- | ------ |
@@ -44,7 +44,7 @@ status that goes stale in the copy nobody opens.
 | [131](FRD-131-tool-calling.md) | Tool calling: carried, never executed, and off until somebody turns it on | 9 | ✅ Done |
 | [132](FRD-132-coding-assistant-surface.md) | Which surface a coding assistant needs, measured rather than assumed | 9 | ✅ Stage A done — B1: no new surface needed |
 | [133](FRD-133-prompt-caching.md) | Prompt caching: written down now, built after the agent work | 9 | ✅ Built |
-| [134](FRD-134-clock-skew-in-token-validation.md) | Clock skew in token validation | 1 (platform) | ○ Draft |
+| [134](FRD-134-clock-skew-in-token-validation.md) | Clock skew in token validation | 1 (platform) | ✅ Done |
 | [200](FRD-200-mgmt-backend-foundation.md) | Management backend foundation (DRF API + OIDC) | 2 | ✅ Done (Phase 2) |
 | [201](FRD-201-keycloak-rbac.md) | RBAC: roles + object-level use-case permissions | 2 | ✅ Done (Phase 2) |
 | [202](FRD-202-usecase-crud.md) | Use-case CRUD & membership (self-service) | 2 | ✅ Done (Phase 2) |

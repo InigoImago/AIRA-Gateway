@@ -1,6 +1,6 @@
 # FRD-134 — Clock skew in token validation
 
-> Phase: 1 (platform) · Status: **Draft** · Owner: Vadim Scheibe
+> Phase: 1 (platform) · Status: **Done** · Owner: Vadim Scheibe
 > Related: `FRD-101` (authentication), `FRD-107` §5.4 (the compatibility surface's auth),
 > `ADR-0015` (credentials), `docs/CONFIGURATION.md`
 

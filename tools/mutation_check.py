@@ -1404,6 +1404,22 @@ MUTATIONS = [
         "management/backend/tests/test_smoketests.py",
     ),
     Mutation(
+        "C21",
+        "the expiry tolerance is its own decision, not the clock's",
+        "libs/src/aira_common/oidc.py",
+        "        overdue = time.time() - float(claims[\"exp\"])\n        if overdue > self._expiry_leeway:",
+        "        overdue = time.time() - float(claims[\"exp\"])\n        if False:",
+        "libs/tests/test_oidc_clock_tolerance.py",
+    ),
+    Mutation(
+        "C22",
+        "a clock behind the issuer's does not refuse every fresh token",
+        "libs/src/aira_common/oidc.py",
+        "                leeway=self._clock_skew,",
+        "                leeway=0,",
+        "libs/tests/test_oidc_clock_tolerance.py",
+    ),
+    Mutation(
         "C8",
         "an older event applies its prices without erasing a declaration",
         "gateway/src/aira_gateway/consumer/apply.py",

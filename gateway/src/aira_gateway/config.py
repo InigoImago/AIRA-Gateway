@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from aira_common.config import BaseAiraSettings
 from aira_common.kafka import KafkaSecurity
+from aira_common.oidc import DEFAULT_CLOCK_SKEW_SECONDS, DEFAULT_EXPIRY_LEEWAY_SECONDS
 from aira_common.roles import Role, parse_role_groups
 
 
@@ -258,6 +259,14 @@ class GatewaySettings(BaseAiraSettings):
     oidc_issuer: str = ""
     oidc_audience: str = ""  # empty → skip audience verification (set in enterprise deployments)
     oidc_jwks_uri: str = ""  # empty → derived from the issuer
+    #: How far the **issuer's** clock may run ahead of this gateway's (`FRD-134`). Applies to `iat`
+    #: and `nbf`. Costs nothing: a token that is "too new" was still genuinely minted, and
+    #: accepting it extends nobody's access. At `0` — PyJWT's default, and what this was until
+    #: 2026-08-17 — a gateway one second behind its issuer refuses **every** fresh token.
+    oidc_clock_skew_seconds: float = DEFAULT_CLOCK_SKEW_SECONDS
+    #: How long past `exp` a token is still accepted. **Zero**, and that is the half with a cost:
+    #: it extends a credential's life beyond what the issuer granted.
+    oidc_expiry_leeway_seconds: float = DEFAULT_EXPIRY_LEEWAY_SECONDS
 
     #: Which Keycloak group confers which AIRA role (`ADR-0017`), as
     #: ``role=/path[,/path];role=/path``. Group membership is the **only** source of a role; a

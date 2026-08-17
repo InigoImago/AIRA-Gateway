@@ -14,7 +14,13 @@ from __future__ import annotations
 
 from aira_common.access import usecases_from_group_paths
 from aira_common.logging import get_logger
-from aira_common.oidc import JwtVerifier, SigningKeyResolver, build_jwks_client
+from aira_common.oidc import (
+    DEFAULT_CLOCK_SKEW_SECONDS,
+    DEFAULT_EXPIRY_LEEWAY_SECONDS,
+    JwtVerifier,
+    SigningKeyResolver,
+    build_jwks_client,
+)
 from aira_common.roles import Role, roles_from_groups
 from aira_gateway.auth.principal import Principal
 from aira_gateway.config import GatewaySettings
@@ -30,8 +36,12 @@ class OidcValidator:
         jwks: SigningKeyResolver,
         algorithms: tuple[str, ...] = ("RS256",),
         role_groups: dict[Role, tuple[str, ...]] | None = None,
+        clock_skew_seconds: float = DEFAULT_CLOCK_SKEW_SECONDS,
+        expiry_leeway_seconds: float = DEFAULT_EXPIRY_LEEWAY_SECONDS,
     ) -> None:
-        self._verifier = JwtVerifier(issuer, audience, jwks, algorithms)
+        self._verifier = JwtVerifier(
+            issuer, audience, jwks, algorithms, clock_skew_seconds, expiry_leeway_seconds
+        )
         # An absent mapping grants no roles, which is the safe reading and the one an installation
         # that has not configured `AIRA_ROLE_GROUPS` gets: oversight is withheld, never assumed.
         self._role_groups = role_groups or {}
@@ -91,4 +101,6 @@ def build_oidc_validator(settings: GatewaySettings) -> OidcValidator | None:
         audience=settings.oidc_audience,
         jwks=build_jwks_client(settings.jwks_uri()),
         role_groups=settings.parsed_role_groups(),
+        clock_skew_seconds=settings.oidc_clock_skew_seconds,
+        expiry_leeway_seconds=settings.oidc_expiry_leeway_seconds,
     )

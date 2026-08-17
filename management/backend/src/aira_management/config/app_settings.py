@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from aira_common.config import BaseAiraSettings
 from aira_common.kafka import KafkaSecurity
+from aira_common.oidc import DEFAULT_CLOCK_SKEW_SECONDS, DEFAULT_EXPIRY_LEEWAY_SECONDS
 
 # The well-known development signing key. ``config.security`` refuses to start any non-local
 # environment that is still using it.
@@ -70,6 +71,10 @@ class ManagementSettings(BaseAiraSettings):
     oidc_issuer: str = ""
     oidc_audience: str = ""
     oidc_jwks_uri: str = ""
+    #: `FRD-134`, and the same two values as the gateway's — a tolerance that held on one plane and
+    #: not the other would sign somebody into the console and refuse the same token at the gateway.
+    oidc_clock_skew_seconds: float = DEFAULT_CLOCK_SKEW_SECONDS
+    oidc_expiry_leeway_seconds: float = DEFAULT_EXPIRY_LEEWAY_SECONDS
 
     # How this service authenticates to Kafka (2026-08-09). `PLAINTEXT` keeps the Compose stack
     # working and is **refused outside `local`**: the gateway applies whatever arrives on these

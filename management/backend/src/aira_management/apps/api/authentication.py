@@ -36,7 +36,11 @@ def build_management_verifier() -> JwtVerifier | None:
     if not settings.oidc_issuer:
         return None
     return JwtVerifier(
-        settings.oidc_issuer, settings.oidc_audience, build_jwks_client(settings.jwks_uri())
+        settings.oidc_issuer,
+        settings.oidc_audience,
+        build_jwks_client(settings.jwks_uri()),
+        clock_skew_seconds=settings.oidc_clock_skew_seconds,
+        expiry_leeway_seconds=settings.oidc_expiry_leeway_seconds,
     )
 
 

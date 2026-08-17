@@ -5,6 +5,30 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Sixty seconds, and only for the clock that is behind (`FRD-134`)
+
+Built as specified, and the shape is the point: PyJWT applies one `leeway` to `iat`, `nbf` and
+`exp`, and those are not one question. A token whose `iat` is in the future means **our** clock is
+behind the issuer's, and accepting it extends nobody's access — the token was genuinely minted. A
+token past `exp` is a credential living longer than the issuer granted. `AIRA_OIDC_CLOCK_SKEW_SECONDS`
+defaults to 60, `AIRA_OIDC_EXPIRY_LEEWAY_SECONDS` to 0, both refused above 300 s at construction —
+above a token's own lifetime it stops being tolerance and becomes a second lifetime.
+
+The implementation is deliberately **subtractive**: `decode` gets the clock skew, which covers
+`exp` too, and a second check then refuses what the expiry leeway does not cover. It can only
+reject what `decode` allowed, never the reverse, so no verification is reimplemented and `exp`
+stays required. At the defaults `exp` behaves exactly as it did before; only a clock that is behind
+became forgiving. `C21` breaks that second check and a test notices — which matters, because it is
+the line a later refactor deletes as redundant on the grounds that `decode` looks like it already
+checked.
+
+Both planes, from one place: the gateway and the management backend build the same `JwtVerifier`,
+and a tolerance that held on one would sign somebody into the console and refuse the same token at
+the gateway. The refusal is logged with the claim and the tolerance — *"a token refused as
+not-yet-valid usually means this host's clock is behind the issuer's"* — and the caller still gets
+`401` and nothing more, because reporting our clock to an unauthenticated caller is a disclosure.
+
+---
 ## The kill switch could only ever do the blunt thing, and a question could not leave the catalogue
 
 Fifth pass, and both areas had a finding.
