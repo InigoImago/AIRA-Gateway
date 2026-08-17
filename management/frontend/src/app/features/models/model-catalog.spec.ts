@@ -930,8 +930,6 @@ describe('ModelCatalog — finding one among many', () => {
       'publisher-y',
       'platform-z',
       'self_deployed',
-      'underlying-q',
-      'dep-42',
       'tools',
       '4096',
       '512',
@@ -944,6 +942,15 @@ describe('ModelCatalog — finding one among many', () => {
     ]) {
       expect(shown, `the panel does not show ${value}`).toContain(value);
     }
+
+    // **And two it must not show.** `underlying_model` and `addressing` are stored, carried to the
+    // gateway, and read by no dispatch decision. Printed among Provider, Platform and Hosting they
+    // read as configuration — the same misreading that made "KIRA id —" look like a field somebody
+    // had left blank rather than one nobody could fill. Either a reader appears and they get a
+    // control (which `test_every_model_control_is_reachable.py` then requires), or they stay off
+    // the panel.
+    expect(shown).not.toContain('underlying-q');
+    expect(shown).not.toContain('dep-42');
   });
 
   it('says "—" for a field nobody filled in, and never "null"', () => {
@@ -1662,6 +1669,54 @@ describe('ModelCatalog — declaration blocks', () => {
     expect(sent.attachments).toEqual({
       media_types: { 'application/pdf': { tokens: 258 } },
     });
+  });
+
+  it('a ticked media type with no estimate reserves nothing, and says so', async () => {
+    /** The second field of the KIRA-id shape: the estimate was **displayed** beside a media type
+     *  whenever the API had put one there, and no control could set it. Every declaration written
+     *  in the console therefore sent `{"image/png": null}`, and the gateway reads a missing
+     *  estimate as zero — `attachment_tokens` sums only the entries that are objects. A request
+     *  carrying a 20 000-token document was reserved for as if it were a sentence, which reopens
+     *  under documents the race `FRD-405` closed for text. */
+    const harness = setup();
+    const catalog = harness.component;
+    catalog.edit(DECLARED);
+    catalog.toggleMediaType('image/png', true);
+    catalog.save();
+
+    expect(harness.saved[0].attachments?.media_types?.['image/png']).toBeNull();
+  });
+
+  it('sends the estimate that was typed beside the media type', async () => {
+    /** Typed into the rendered input rather than set through the component: what is being
+     *  prevented is a control that renders and sends nothing. */
+    const harness = setup();
+    const catalog = harness.component;
+    catalog.edit(DECLARED);
+    catalog.toggleMediaType('image/png', true);
+    harness.fixture.detectChanges();
+    await Promise.resolve();
+
+    expect(harness.testid('media-tokens-image/png')).not.toBeNull();
+    harness.type('media-tokens-image/png', '1200');
+    catalog.save();
+
+    expect(harness.saved[0].attachments?.media_types?.['image/png']).toEqual({ tokens: 1200 });
+    // The one already on file is untouched by the new control.
+    expect(harness.saved[0].attachments?.media_types?.['application/pdf']).toEqual({ tokens: 258 });
+  });
+
+  it('forgets an estimate when its media type is unticked', () => {
+    /** A number that is no longer on screen must not come back on a re-tick — that is a value
+     *  nobody can see being sent, which is the whole defect. */
+    const harness = setup();
+    const catalog = harness.component;
+    catalog.edit(DECLARED);
+    catalog.toggleMediaType('application/pdf', false);
+    catalog.toggleMediaType('application/pdf', true);
+    catalog.save();
+
+    expect(harness.saved[0].attachments?.media_types?.['application/pdf']).toBeNull();
   });
 
   /**

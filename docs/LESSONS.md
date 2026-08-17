@@ -290,13 +290,21 @@ reading code.
   request.
 - **A control that starts a request must survive that request.** A search box inside the `@else` of
   `@if (loading())` tears itself down on the second keystroke.
-- **A field the detail panel prints is a field the form must offer.** The model panel showed
-  *"KIRA id —"* and no form asked for one, so every model catalogued from the console carried none
-  — addressable on the Gemini surface, invisible on the KIRA one, refused with `MODEL_NOT_FOUND`
-  and no hint as to why. Displaying a value is a promise that it can be set; where it genuinely
-  need not be, give it a server-side default rather than a dash, because a reader cannot tell an
-  empty field from an inapplicable one. Both halves were needed here: the form offers it *and* the
-  server assigns one when it is left blank.
+- **A field the detail panel prints is a field the form must offer — and a field nothing reads is
+  not printed at all.** One mistake from two sides. The model panel showed *"KIRA id —"* and no
+  form asked for one, so every model catalogued from the console carried none: addressable on the
+  Gemini surface, invisible on the KIRA one, refused with `MODEL_NOT_FOUND` and no hint as to why.
+  The attachment estimate was the same field with a budget behind it — displayed when the API had
+  set one, settable nowhere, and read by the gateway as **zero**, so a 20 000-token document was
+  reserved for as if it were a sentence. Displaying a value is a promise that it can be set; where
+  it need not be, give it a server-side default rather than a dash, because a reader cannot tell an
+  empty field from an inapplicable one. The other side is `underlying_model` and `addressing`:
+  stored, shipped to the gateway, dropped before any decision reads them, and printed among
+  Provider and Platform as though they were configuration — giving *those* inputs would be the
+  same defect wearing the other mask, a control somebody sets that changes nothing.
+  **The durable form of this rule is a comparison test**, in both directions: every writable field
+  reaches the payload, and every field the *decision object* carries is enterable
+  (`test_every_model_control_is_reachable.py`).
 - **Read-only is a control, greyed — never prose.** The models released to a use case were shown
   to a reader who may not change them as a paragraph of `<code>` chips. *"It does not look like a
   control, so the developer will not even read it"* — the one piece of configuration they most

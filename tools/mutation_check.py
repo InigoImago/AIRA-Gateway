@@ -1332,6 +1332,14 @@ MUTATIONS = [
         CATALOG,
     ),
     Mutation(
+        "C12",
+        "a model field the console stops sending is reported, not shipped",
+        "management/frontend/src/app/features/models/model-catalog.ts",
+        "        numeric_id: this.kiraId(),",
+        "",
+        "management/backend/tests/test_every_model_control_is_reachable.py",
+    ),
+    Mutation(
         "C8",
         "an older event applies its prices without erasing a declaration",
         "gateway/src/aira_gateway/consumer/apply.py",

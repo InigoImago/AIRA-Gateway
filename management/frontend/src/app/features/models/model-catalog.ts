@@ -261,10 +261,32 @@ export class ModelCatalog implements OnInit {
   protected toggleMediaType(mediaType: string, on: boolean): void {
     const current = this.mediaTypes().filter((value) => value !== mediaType);
     this.mediaTypes.set(on ? [...current, mediaType] : current);
+    // Untick clears the estimate too. Keeping it would leave a number that is no longer on screen
+    // and would be sent again the moment somebody re-ticks the type — a value nobody can see is
+    // the defect this whole field exists to fix, not a convenience.
+    if (!on) this.setMediaTypeTokens(mediaType, null);
   }
 
   protected mediaTypeTokens(mediaType: string): number | null {
     return this.mediaTypeSpecs()[mediaType]?.tokens ?? null;
+  }
+
+  /**
+   * What one attachment of this type is expected to cost in **input** tokens.
+   *
+   * Offered because the console could tick a media type and never say what it costs, so every
+   * declaration written here sent `{"image/png": null}` — and the gateway reads a missing estimate
+   * as **zero**: `attachment_tokens` sums only the entries that are objects. A request carrying a
+   * 20 000-token document was then reserved for as if it were a sentence, which reopens under
+   * documents exactly the race `FRD-405` closed for text. The figure was already *displayed* next
+   * to the type when the API had put one there; it simply could not be set. Wrong high is
+   * intended: `settle` corrects it the moment the real usage arrives, and a silent zero is not a
+   * limit.
+   */
+  protected setMediaTypeTokens(mediaType: string, tokens: number | null): void {
+    const specs = { ...this.mediaTypeSpecs() };
+    specs[mediaType] = tokens === null || Number.isNaN(tokens) ? null : { tokens };
+    this.mediaTypeSpecs.set(specs);
   }
 
   /** Only a Global Administrator maintains prices — they follow the provider contract. */
@@ -501,8 +523,13 @@ export class ModelCatalog implements OnInit {
       { key: 'publisher', label: 'Dialect (publisher)', value: dash(model.publisher) },
       { key: 'platform', label: 'Platform', value: dash(model.platform) },
       { key: 'hosting', label: 'Hosting', value: dash(model.hosting) },
-      { key: 'underlying_model', label: 'Underlying model', value: dash(model.underlying_model) },
-      { key: 'addressing', label: 'Addressing', value: json(model.addressing) },
+      // `underlying_model` and `addressing` stood here and were removed on 2026-08-17. Both are
+      // stored, carried to the gateway by the config event — and dropped on the way into
+      // `ModelDeclaration`, so no dispatch decision has ever read either. Printed beside Provider,
+      // Platform and Hosting they read as configuration, which is what made "KIRA id —" look like
+      // a field somebody had left blank rather than one nobody could fill. A value that steers
+      // nothing is not shown as though it steers something; if a reader ever appears, the control
+      // arrives in the same change, and `test_every_model_control_is_reachable.py` enforces it.
       {
         key: 'capabilities',
         label: 'Capabilities',
@@ -998,7 +1025,8 @@ export class ModelCatalog implements OnInit {
     const attachments: AttachmentDeclaration | null = this.hasCapability('attachments')
       ? {
           media_types: Object.fromEntries(
-            // The estimate on file is carried through, because the form has no input for it.
+            // The estimate the form now asks for, or `null` where nobody gave one — and the
+            // difference matters: `null` reserves nothing at dispatch (`attachment_tokens`).
             this.mediaTypes().map((mediaType) => [mediaType, specs[mediaType] ?? null]),
           ),
         }

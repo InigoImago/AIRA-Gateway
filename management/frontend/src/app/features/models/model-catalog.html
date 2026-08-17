@@ -844,8 +844,19 @@
                   [attr.data-testid]="'media-' + mediaType"
                 />
                 <code>{{ mediaType }}</code>
-                @if (mediaTypeTokens(mediaType); as tokens) {
-                  <span class="muted">· {{ tokens }} tokens</span>
+                @if (hasMediaType(mediaType)) {
+                  <input
+                    type="number"
+                    min="1"
+                    class="inline-number"
+                    [name]="'media-tokens-' + mediaType"
+                    [ngModel]="mediaTypeTokens(mediaType)"
+                    (ngModelChange)="setMediaTypeTokens(mediaType, $event)"
+                    [attr.data-testid]="'media-tokens-' + mediaType"
+                    [attr.aria-label]="'Input tokens one ' + mediaType + ' attachment costs'"
+                    placeholder="tokens"
+                  />
+                  <span class="muted">input tokens each</span>
                 }
               </label>
             }

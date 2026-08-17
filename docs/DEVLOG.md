@@ -5,6 +5,44 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Every control a model needs, checked one by one — and made a guard
+
+*"Heute hatten wir ein unerreichbares Feld mit der KIRA Model ID. Ich will nicht, dass es sich
+wiederholt — geh alle einzelnen Elemente durch."* So: model field by model field, comparing what
+the column is, what the API accepts, what the form offers and what the panel prints.
+
+**Two more of the same shape, and one of them costs money.**
+
+*The attachment estimate.* The console could tick `image/png` for a model and never say what one
+costs, so every declaration written there sent `{"image/png": null}` — and the gateway reads a
+missing estimate as **zero**: `attachment_tokens` sums only the entries that are objects. A request
+carrying a 20 000-token document was reserved for as if it were a sentence, which reopens under
+documents exactly the race `FRD-405` closed for text. The figure was already *displayed* beside the
+type whenever the API had put one there. Displayed, unsettable, and load-bearing — the KIRA id
+again, with a budget behind it. The form now asks, and unticking a type forgets its number rather
+than keeping one nobody can see.
+
+*`underlying_model` and `addressing`* were the opposite trap. Both are stored, both travel to the
+gateway on the config event, and both are **dropped** on the way into `ModelDeclaration` — the
+object every dispatch decision is made from. Nothing has ever read them. Printed among Provider,
+Platform and Hosting they read as configuration, which is precisely what made *"KIRA id —"* look
+like a field somebody had left blank rather than one nobody could fill. Giving them inputs would be
+the same defect wearing the other mask: a control you can set that changes nothing. They are off
+the panel; the columns stay, unread, and if a reader ever appears it brings a control with it.
+
+**The durable half is the guard**, because a list of findings is true for one afternoon.
+`test_every_model_control_is_reachable.py` asks the question from both ends: every writable field
+of `ModelSerializer` must appear in what the console sends, and — the one that matters — **every
+field of `ModelDeclaration` must be enterable in the console**, because a dispatch decision taken
+on a value nobody can enter is what the KIRA id was for a whole API surface. Exemptions carry their
+evidence, and a second test fails when an exemption outlives its field.
+
+Proven by breaking it: with `numeric_id` removed from the payload the guard names it. That is also
+mutation `C12`, so a later refactor that loosens the guard is caught rather than trusted. The use
+case's own model controls were checked the same way and are complete — release, approval, caching,
+tools, retention, member scoping all reach the console.
+
+---
 ## A model catalogued from the console could not be called by a KIRA client
 
 Reported plainly: *there is no way to give a model a KIRA id, and none is filled in either.* Both
