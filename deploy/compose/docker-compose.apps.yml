@@ -104,7 +104,7 @@ services:
         # layer down: absent and empty are different answers.
         set --
         for name in AIRA_GOOGLE_API_KEY AIRA_POSTGRES_PASSWORD AIRA_SECRET_KEY \
-                    AIRA_VERTEX_SERVICE_ACCOUNT_JSON AIRA_AZURE_API_KEY AIRA_OPENAI_API_KEY; do
+                    AIRA_VERTEX_CREDENTIALS AIRA_VERTEX_API_KEY AIRA_OPENAI_API_KEY; do
           value=$$(eval echo \$$$$name)
           [ -n "$$value" ] && set -- "$$@" "$$name=$$value"
         done
@@ -128,7 +128,8 @@ services:
       AIRA_GOOGLE_API_KEY: ${AIRA_GOOGLE_API_KEY:-}
       AIRA_POSTGRES_PASSWORD: ${AIRA_POSTGRES_PASSWORD:-}
       AIRA_SECRET_KEY: ${AIRA_SECRET_KEY:-}
-      AIRA_VERTEX_SERVICE_ACCOUNT_JSON: ${AIRA_VERTEX_SERVICE_ACCOUNT_JSON:-}
+      AIRA_VERTEX_CREDENTIALS: ${AIRA_VERTEX_CREDENTIALS:-}
+      AIRA_VERTEX_API_KEY: ${AIRA_VERTEX_API_KEY:-}
       AIRA_AZURE_API_KEY: ${AIRA_AZURE_API_KEY:-}
       AIRA_OPENAI_API_KEY: ${AIRA_OPENAI_API_KEY:-}
     depends_on:
@@ -252,6 +253,24 @@ services:
       # nobody noticed: an unpassed setting is invisible until somebody depends on it.
       AIRA_VERTEX_TIMEOUT_SECONDS: ${AIRA_VERTEX_TIMEOUT_SECONDS:-}
       AIRA_FOUNDRY_TIMEOUT_SECONDS: ${AIRA_FOUNDRY_TIMEOUT_SECONDS:-}
+      # **And a fourth time, for the whole adapter.** Only the timeout above was passed, so Vertex
+      # — the EU-regional platform this product's residency story rests on — could not be
+      # configured through the shipped stack **at all**, with either credential. Found on
+      # 2026-08-17 by setting the key and watching `/readyz` list Mock and Ollama.
+      #
+      # The vault-seed loop below made it worse by naming `AIRA_VERTEX_SERVICE_ACCOUNT_JSON`, which
+      # is not a setting anywhere in this codebase — so the one line that mentioned the credential
+      # was a name nothing reads. A knob that is not wired is worse than an absent one; a knob
+      # wired to a name that does not exist is worse again, because it reads as done.
+      AIRA_VERTEX_PROJECT: ${AIRA_VERTEX_PROJECT:-}
+      AIRA_VERTEX_CREDENTIALS: ${AIRA_VERTEX_CREDENTIALS:-}
+      AIRA_VERTEX_API_KEY: ${AIRA_VERTEX_API_KEY:-}
+      AIRA_VERTEX_MODELS: ${AIRA_VERTEX_MODELS:-}
+      AIRA_VERTEX_DEFAULT_MAX_TOKENS: ${AIRA_VERTEX_DEFAULT_MAX_TOKENS:-}
+      AIRA_FOUNDRY_ENDPOINT: ${AIRA_FOUNDRY_ENDPOINT:-}
+      AIRA_FOUNDRY_API_KEY: ${AIRA_FOUNDRY_API_KEY:-}
+      AIRA_FOUNDRY_API_VERSION: ${AIRA_FOUNDRY_API_VERSION:-}
+      AIRA_FOUNDRY_DEPLOYMENTS: ${AIRA_FOUNDRY_DEPLOYMENTS:-}
       AIRA_ALLOWED_REGIONS: ${AIRA_ALLOWED_REGIONS:-}
       AIRA_OTEL_ENABLED: ${AIRA_OTEL_ENABLED:-false}
       AIRA_OTEL_ENDPOINT: http://otel-collector:4318

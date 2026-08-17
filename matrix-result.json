@@ -1,0 +1,241 @@
+{
+  "models": {
+    "generation": "gemini-2.5-flash",
+    "embedding": ""
+  },
+  "checks": [
+    {
+      "block": "gemini",
+      "name": "generateContent answers and reports usage",
+      "expected": "200 + usageMetadata",
+      "got": "400, in=0 out=0",
+      "ok": false,
+      "detail": "{\"error\":{\"code\":400,\"message\":\"Personal data could not be removed: the redactor returned far less text than it was given.\",\"status\":\"INVALID_ARGUMENT\"}}",
+      "ms": 1303,
+      "tokens_in": 0,
+      "tokens_out": 0
+    },
+    {
+      "block": "gemini",
+      "name": "streamGenerateContent delivers more than one chunk",
+      "expected": "200 + chunks",
+      "got": "400, 1 lines",
+      "ok": false,
+      "detail": "",
+      "ms": 1003,
+      "tokens_in": 0,
+      "tokens_out": 0
+    },
+    {
+      "block": "kira",
+      "name": "/chat answers in the predecessor's shape",
+      "expected": "200 + parts",
+      "got": "400",
+      "ok": false,
+      "detail": "{\"code\":\"VALIDATION_ERROR\",\"message\":\"Personal data could not be removed: the redactor returned far less text than it was given.\"}",
+      "ms": 0,
+      "tokens_in": 0,
+      "tokens_out": 0
+    },
+    {
+      "block": "kira",
+      "name": "/streaming-chat emits SSE events",
+      "expected": "200 + events",
+      "got": "200, 2 events",
+      "ok": true,
+      "detail": "",
+      "ms": 0,
+      "tokens_in": 0,
+      "tokens_out": 0
+    },
+    {
+      "block": "kira",
+      "name": "an unknown model id is 422 MODEL_NOT_FOUND, the contract's own status",
+      "expected": "422",
+      "got": "422 MODEL_NOT_FOUND",
+      "ok": true,
+      "detail": "",
+      "ms": 0,
+      "tokens_in": 0,
+      "tokens_out": 0
+    },
+    {
+      "block": "kira",
+      "name": "/models answers",
+      "expected": "200",
+      "got": "200",
+      "ok": true,
+      "detail": "",
+      "ms": 0,
+      "tokens_in": 0,
+      "tokens_out": 0
+    },
+    {
+      "block": "kira",
+      "name": "/health answers",
+      "expected": "200",
+      "got": "200",
+      "ok": true,
+      "detail": "",
+      "ms": 0,
+      "tokens_in": 0,
+      "tokens_out": 0
+    },
+    {
+      "block": "kira",
+      "name": "/version-info answers",
+      "expected": "200",
+      "got": "200",
+      "ok": true,
+      "detail": "",
+      "ms": 0,
+      "tokens_in": 0,
+      "tokens_out": 0
+    },
+    {
+      "block": "pipeline",
+      "name": "the injection filter blocks, and costs no upstream call",
+      "expected": "400",
+      "got": "400",
+      "ok": true,
+      "detail": "{\"error\":{\"code\":400,\"message\":\"Request rejected by the prompt-injection filter.\",\"status\":\"INVALID_ARGUMENT\"}}",
+      "ms": 0,
+      "tokens_in": 0,
+      "tokens_out": 0
+    },
+    {
+      "block": "pipeline",
+      "name": "the router classifies and serves",
+      "expected": "200",
+      "got": "200",
+      "ok": true,
+      "detail": "",
+      "ms": 0,
+      "tokens_in": 0,
+      "tokens_out": 0
+    },
+    {
+      "block": "pipeline",
+      "name": "the PII step runs and the request is served",
+      "expected": "200",
+      "got": "200",
+      "ok": true,
+      "detail": "",
+      "ms": 0,
+      "tokens_in": 0,
+      "tokens_out": 0
+    },
+    {
+      "block": "caching",
+      "name": "first priming call",
+      "expected": "200",
+      "got": "400",
+      "ok": false,
+      "detail": "{\"error\":{\"code\":400,\"message\":\"Personal data could not be removed: the redactor returned far less text than it was given.\",\"status\":\"INVALID_ARGUMENT\"}}",
+      "ms": 0,
+      "tokens_in": 0,
+      "tokens_out": 0
+    },
+    {
+      "block": "parallel",
+      "name": "four concurrent requests all serve",
+      "expected": "4\u00d7 200",
+      "got": "[400, 400, 400, 400]",
+      "ok": false,
+      "detail": "",
+      "ms": 1228,
+      "tokens_in": 0,
+      "tokens_out": 0
+    },
+    {
+      "block": "security",
+      "name": "no credential is refused",
+      "expected": "401",
+      "got": "401",
+      "ok": true,
+      "detail": "{\"error\":{\"code\":401,\"message\":\"Missing or invalid credentials.\",\"status\":\"UNAUTHENTICATED\"}}",
+      "ms": 0,
+      "tokens_in": 0,
+      "tokens_out": 0
+    },
+    {
+      "block": "security",
+      "name": "a malformed token is refused",
+      "expected": "401",
+      "got": "401",
+      "ok": true,
+      "detail": "",
+      "ms": 0,
+      "tokens_in": 0,
+      "tokens_out": 0
+    },
+    {
+      "block": "security",
+      "name": "a caller who is not a member of this use case is refused",
+      "expected": "403",
+      "got": "403",
+      "ok": true,
+      "detail": "{\"error\":{\"code\":403,\"message\":\"Not a member of use case 'matrix-test'.\",\"status\":\"PERMISSION_DENIED\"}}",
+      "ms": 0,
+      "tokens_in": 0,
+      "tokens_out": 0
+    },
+    {
+      "block": "security",
+      "name": "a model that is not released to this use case is refused (FRD-308)",
+      "expected": "403/404/422",
+      "got": "404",
+      "ok": true,
+      "detail": "{\"error\":{\"code\":404,\"message\":\"Model 'gemini-not-released' not found.\",\"status\":\"NOT_FOUND\"}}",
+      "ms": 0,
+      "tokens_in": 0,
+      "tokens_out": 0
+    },
+    {
+      "block": "security",
+      "name": "an API key bound to this use case serves without naming one",
+      "expected": "200",
+      "got": "200",
+      "ok": true,
+      "detail": "",
+      "ms": 0,
+      "tokens_in": 0,
+      "tokens_out": 0
+    },
+    {
+      "block": "limits",
+      "name": "a rate limit of one per minute refuses the rest",
+      "expected": "some 429",
+      "got": "[200, 200, 200, 200]",
+      "ok": false,
+      "detail": "",
+      "ms": 0,
+      "tokens_in": 0,
+      "tokens_out": 0
+    },
+    {
+      "block": "limits",
+      "name": "an exhausted budget refuses",
+      "expected": "429",
+      "got": "200",
+      "ok": false,
+      "detail": "{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"\",\"inlineData\":null,\"functionCall\":null,\"functionResponse\":null}]},\"finishReason\":\"MAX_TOKENS\",\"inde",
+      "ms": 0,
+      "tokens_in": 0,
+      "tokens_out": 0
+    }
+  ],
+  "accounting": {
+    "rows": 0,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "cached_input_tokens": 0,
+    "cost_nanos": 0,
+    "cost_eur_or_usd": 0.0,
+    "requests_by_model": {},
+    "outcomes": []
+  },
+  "notes": [
+    "Embeddings were not exercised. On Agent Platform `:embedContent` answers `401 API keys are not supported by this API` \u2014 it wants OAuth \u2014 while `:predict` accepts the key and this adapter does not use `:predict`. Measured, not assumed. A service account (tomorrow) is expected to close it; until then this is a gap in the run, stated rather than skipped."
+  ]
+}
