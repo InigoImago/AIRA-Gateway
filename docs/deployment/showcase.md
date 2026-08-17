@@ -251,17 +251,27 @@ exemption from the use-case requirement — so `/uc/<slug>` is optional rather t
 surfaces work this way, and so do the read-only routes (`GET /v1beta/models`,
 `/kira/api/external/models`).
 
-**What you give up, in one sentence each.** This is not "anonymous access to a use case" — it is no
-governance at all:
+**What you give up depends on whether the caller names a use case**, and the difference is larger
+than it looks. Both were measured against the running stack rather than reasoned about.
 
-| | With auth off |
-|---|---|
-| Attribution | the audit row names nobody, and `use_case` is `NULL` |
-| Budgets | none apply — there is no use case to charge |
-| Rate limits | the use-case and per-person limits have nothing to key on |
-| Model release (`FRD-308`) | not consulted; it is a property of a use case |
-| Pipeline | not run; it is configured per use case |
-| Model approval (`FRD-307`) and residency (`FRD-115`) | **still enforced** — those are properties of the installation, checked at every dispatch |
+| | `/uc/<slug>/…` — a use case is named | no use case named |
+|---|---|---|
+| Attribution | the row carries `use_case`, `auth_method=demo`, `subject=demo` | `use_case` is `NULL` |
+| Client IP | recorded in `source_ip` either way | recorded either way |
+| Model release (`FRD-308`) | **still enforced** — a model not released to that use case is refused by name | not consulted |
+| Budgets, rate limits, pipeline | apply; they are keyed on the use case, which is present | nothing to key on |
+| Per-person budgets and limits | meaningless — every caller is the same `demo` subject | meaningless |
+| Model approval (`FRD-307`) and residency (`FRD-115`) | **always enforced** — properties of the installation, checked at every dispatch | **always enforced** |
+
+So `auth_required=false` plus `/uc/<slug>` is closer to "anonymous access to a use case" than it
+first appears: the use case's own governance is intact, and only the *person* is missing.
+
+**But it is not enforceable, and that is the point.** With authentication off, a caller who simply
+omits the `/uc/` prefix is served anyway — measured: `200`, `use_case = NULL`. Naming a use case is
+then the caller's choice, so every control that hangs off one is optional to them. That is the
+difference between this switch and a per-use-case anonymous flag, which would make anonymity a
+property of *one* use case that the gateway requires rather than a global amnesty the caller may
+decline.
 
 **It is bounded to `AIRA_ENVIRONMENT=local`, and a demo does not unlock it.** With `auth_required`
 off in any other environment the gateway **refuses to start**, saying so:
@@ -296,9 +306,71 @@ which one you are looking at.
    a default naming something unusable produces a 404 that reads as our fault. Use the catalog
    screen's discovery to list what your key actually serves, then approve what you want.
 
-With all three in place the same unauthenticated `curl` above works against a real model — swap
-`mock-1` for its name. Note what that means before doing it on a machine anyone else can reach:
-an open port, no attribution, no budget, and a real bill.
+#### The whole thing, once, as it was actually run
+
+Walked end to end against a live key rather than described. Four steps, and the two surprises are
+worth more than the happy path.
+
+```bash
+# 1. the gateway: a key, a widened residency, a model list, auth off
+AIRA_GOOGLE_API_KEY=…  AIRA_ALLOWED_REGIONS=global,eu,europe-west1,…  \
+AIRA_GEMINI_MODELS=gemini-flash-latest  AIRA_AUTH_REQUIRED=false      make up-full
+
+# 2. catalogue and approve it, with the integer alias a KIRA client sends
+POST /api/v1/models/  {"name": "gemini-flash-latest", "provider": "google",
+                       "region": "global", "numeric_id": 9102, "approved": true}
+
+# 3. a use case, with that model released to it
+POST  /api/v1/use-cases/          {"slug": "anon-demo", "name": "Anonymous demo"}
+PATCH /api/v1/use-cases/anon-demo/ {"allowed_models": ["gemini-flash-latest"]}
+
+# 4. the request — no Authorization header anywhere
+curl -X POST http://localhost:8001/uc/anon-demo/kira/api/external/chat \
+  -H "content-type: application/json" \
+  -d '{"model_id": 9102, "request": {"parts": [{"text": "say hi"}]}}'
+```
+
+```json
+{"parts":[{"text":"anonymous gemini works"}],"usage_data":{"token_input":9,"token_output":4}}
+```
+
+and the row it wrote:
+
+```
+subject=demo  username=  auth_method=demo  use_case=anon-demo
+model=gemini-flash-latest  api=kira  status=200  outcome=served  source_ip=172.19.0.1
+credential=  cost_nanos=
+```
+
+**The id is `numeric_id`, which you choose.** KIRA identifies models by integer, not by name, and
+that integer is a column on the catalog entry — not the catalog's primary key, and not anything
+Google knows about. `GET /kira/api/external/models` lists what this installation serves with the
+ids to use. It is unique across the catalog: two entries claiming one id make the surface answer
+`503` rather than guess which model to bill.
+
+**Two things went wrong on the way, and both were the product being right.**
+
+*The model in the listing could not be called.* `gemini-2.5-flash` is in Google's own `/models`
+response and answers `404 — no longer available to new users` on the first generate. That is
+exactly why `AIRA_GEMINI_MODELS` ships empty: it once named two models a key issued today cannot
+use, and a default that names something unusable produces a 404 that reads as AIRA's fault. Ask the
+endpoint what your key actually serves.
+
+*Cataloguing a model does not make the gateway serve it.* Those are two facts with two owners — the
+catalog is the installation's declaration, `AIRA_GEMINI_MODELS` is which models the adapter offers.
+With the model catalogued but not in the adapter's list, the surface answered
+`MODEL_NOT_FOUND: Model 'gemini-flash-latest' not found.`
+
+And the release check is real even here: asking `anon-demo` for a model it has not been released
+answers *"'qwen3:0.6b' has not been released to use case 'anon-demo'. An administrator of the use
+case can add it; it currently has 1 model(s)."*
+
+`cost_nanos` is empty above because the catalog entry carries no price — unpriced traffic is
+counted apart rather than as zero (`FRD-403`). Set the prices if you want the money figures to mean
+something.
+
+Before doing any of this where others can reach it: an open port, one shared `demo` identity, and a
+real bill.
 
 ### What to look at afterwards
 
