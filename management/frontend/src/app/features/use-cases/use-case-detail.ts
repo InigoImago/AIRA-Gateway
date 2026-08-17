@@ -27,6 +27,7 @@ import { BudgetsTab } from './budgets-tab';
 import { ConnectionPanel } from './connection-panel';
 import { ConsumptionPanel } from './consumption-panel';
 import { PeoplePanel } from './people-panel';
+import { AboutPanel } from './about-panel';
 import { ModelReleasePanel } from './model-release-panel';
 import { AccessPanel } from './access-panel';
 import { RulesTab } from './rules-tab';
@@ -62,6 +63,7 @@ const TABS: readonly Tab[] = [
     Modal,
     ConsumptionPanel,
     PeoplePanel,
+    AboutPanel,
     ModelReleasePanel,
     RateLimitsTab,
     RulesTab,

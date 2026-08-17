@@ -51,6 +51,15 @@ reading code.
   against a list that was itself incomplete. When a vocabulary cannot be imported across a language
   boundary, the comparison belongs in the language that can read **both** files.
 
+- **A search that finds nothing looks exactly like a search that found nothing.** `grep` skips a
+  file it judges *binary* silently — no message, exit status 1 — and `model-release-panel.ts`
+  earned that judgement by writing `join('\0')` as **raw NUL bytes**: valid TypeScript, the same
+  string to the compiler, invisible to every text tool. `grep allowed_models` across the console
+  then reported that nothing writes which models a use case may call, in the middle of an audit
+  whose entire method was searching the source. **Before trusting a negative result, check the
+  tool could see the file**; the guard is that no tracked source may carry such a byte
+  (`tools/tests/test_source_files_are_readable_as_text.py`).
+
 - **A rule restated on a second surface.** Identical the day it was written, and compared by
   nothing afterwards. *Many:* KIRA read an empty membership list as *"anything goes"* while Gemini
   refused the same request; `:embedContent` bypassed the pre-dispatch gate, then the streaming

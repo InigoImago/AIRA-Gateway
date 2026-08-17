@@ -484,14 +484,22 @@ describe('UseCaseDetail rendering', () => {
     expect(harness.text()).toContain('copy it manually');
   });
 
-  it('renders processing notes on the overview when present', () => {
-    const { text } = render(
+  it('offers the processing notes on the overview, filled in, rather than printing them', async () => {
+    /** They were a paragraph until 2026-08-17 — printed by the overview and settable on no screen,
+     *  so "No description." was the only thing most installations ever saw. Same values, now in a
+     *  control, which is why this asserts the field's value instead of the page text. */
+    const { html, fixture } = render(
       {
         get: of({ ...USE_CASE, processing_notes: 'No personal data.' }),
       },
       'overview',
     );
-    expect(text()).toContain('No personal data.');
+    // `ngModel` writes to the element on a microtask, so a synchronous read sees an empty field.
+    await Promise.resolve();
+    fixture.detectChanges();
+
+    const notes = html().querySelector<HTMLTextAreaElement>('[data-testid="uc-processing"]');
+    expect(notes?.value).toBe('No personal data.');
   });
 });
 

@@ -127,14 +127,14 @@
          has arrived lets a change be silently overwritten by the response — the same race the
          pipeline builder had. -->
     <div class="card stack" role="tabpanel" aria-labelledby="tab-overview">
-      @if (useCase(); as useCase) {
-        <p style="margin: 0">{{ useCase.description || 'No description.' }}</p>
-        @if (useCase.processing_notes) {
-          <p class="muted" style="margin: 0">
-            <strong>Processing:</strong> {{ useCase.processing_notes }}
-          </p>
-        }
-      }
+      <!-- Was two paragraphs printing values no screen could set: "No description." was the only
+           thing most installations ever saw. Same two values, as controls (`FRD-206`). -->
+      <app-about-panel
+        [slug]="slug"
+        [canManage]="canManage()"
+        [useCase]="useCase()"
+        (saved)="useCase.set($event)"
+      />
       <div class="tiles">
         <div class="tile">
           <div class="tile__value">{{ members().length }}</div>

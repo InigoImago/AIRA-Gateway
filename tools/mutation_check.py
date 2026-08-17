@@ -1340,6 +1340,22 @@ MUTATIONS = [
         "management/backend/tests/test_every_model_control_is_reachable.py",
     ),
     Mutation(
+        "C13",
+        "a use-case field the console stops sending is reported, not shipped",
+        "management/frontend/src/app/features/use-cases/about-panel.ts",
+        "        description: this.description().trim(),",
+        "",
+        "management/backend/tests/test_every_use_case_control_is_reachable.py",
+    ),
+    Mutation(
+        "C14",
+        "a pipeline setting the engine obeys and the builder cannot set is reported",
+        "management/frontend/src/app/features/pipelines/pipeline-editor.html",
+        "setStepField(selectedIndex(), 'use_builtins', $event)",
+        "setStepField(selectedIndex(), 'unused', $event)",
+        "management/backend/tests/test_every_use_case_control_is_reachable.py",
+    ),
+    Mutation(
         "C8",
         "an older event applies its prices without erasing a declaration",
         "gateway/src/aira_gateway/consumer/apply.py",

@@ -5,6 +5,46 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The same audit for use cases and pipelines — and a search tool that lied
+
+*"Mach das gleiche für use cases und pipeline."* Same method: what the column is, what the API
+takes, what the console sends, what the screen prints.
+
+**The pipeline came out clean**, and that is worth stating because it was not assumed. All twelve
+step-config keys `engine.py` reads — `action`, `mode`, `scope`, `use_builtins`, `patterns`,
+`instruction`, `on_undetermined`, `notice`, `on_failure`, `model`, `default_model`, `categories` —
+are settable in the builder, and a routing category can be given all three of its fields including
+the **description**, which is the string `classifiers.py` puts in the router's prompt as
+`- {name}: {description}`. A category somebody could name and not describe would route by nothing
+and look configured.
+
+**The use case had two**, and they were the KIRA id exactly: `description` and `processing_notes`
+are accepted by the API, carried to the gateway's read-model, **printed on the overview** — and
+offered by no screen. *"No description."* was what every installation ever saw. `processing_notes`
+is the sentence somebody writes for a data-protection review, so a governance record nobody could
+author is a governance record nobody had. Both now live in an `about-panel`, greyed for a reader
+who may not manage, and the parent's two paragraphs are gone.
+
+**And the audit nearly reported a defect that was not there.** `grep -rn allowed_models` across
+the console found nothing that writes it, which would have made *"which models a use case may call
+cannot be set from the console"* the headline finding. It is set — by `model-release-panel.ts`,
+which compared two lists with `join('\0')` written as **raw NUL bytes**. Valid TypeScript, the same
+string to the compiler, and enough to make grep classify the file as binary and skip it **with no
+message and exit status 1**. The one file that answers the question was the one file the search
+could not see, on the day the question was asked.
+
+That is the worst failure a search tool has — an empty result and a true search look identical —
+so it gets a guard of its own: no tracked source file may carry a byte that makes standard tools
+treat it as binary (`tools/tests/test_source_files_are_readable_as_text.py`). The escape is three
+characters and reads the same to the compiler.
+
+Guards, both directions, both planes: every writable `UseCaseSerializer` field must be sent by some
+panel (`slug` exempt, with the reason — it is the key in every client's URL), and every step-config
+key the **engine** obeys must be authorable. Proven by breaking each: remove `description` from the
+panel's payload, rename `use_builtins` in the builder — each is named by the guard. Mutations
+`C13`/`C14`. 2361 Python tests, 831 Angular.
+
+---
 ## Every control a model needs, checked one by one — and made a guard
 
 *"Heute hatten wir ein unerreichbares Feld mit der KIRA Model ID. Ich will nicht, dass es sich

@@ -1,0 +1,47 @@
+<!--
+  Two fields the overview has always printed and no screen could fill. Read-only for anybody who
+  may not manage this use case: the same values, shown as disabled controls rather than as prose,
+  because a paragraph does not read as configuration and a greyed control says *you may look, not
+  change* without a sentence having to.
+-->
+<section class="stack" data-testid="about-panel">
+  <h3 style="margin: 0">What this use case is for</h3>
+
+  <div class="field">
+    <label for="uc-description">Description</label>
+    <textarea
+      id="uc-description"
+      name="description"
+      rows="2"
+      [disabled]="!canManage()"
+      [ngModel]="description()"
+      (ngModelChange)="edit('description', $event)"
+      placeholder="What this use case does, for whoever finds it later"
+      data-testid="uc-description"
+    ></textarea>
+  </div>
+
+  <div class="field">
+    <label for="uc-processing">Processing notes</label>
+    <textarea
+      id="uc-processing"
+      name="processing_notes"
+      rows="2"
+      [disabled]="!canManage()"
+      [ngModel]="processingNotes()"
+      (ngModelChange)="edit('processingNotes', $event)"
+      placeholder="How this use case's data is handled — the sentence a data-protection review asks for"
+      data-testid="uc-processing"
+    ></textarea>
+    <span class="field__hint">
+      Carried to the gateway with the rest of the use case, and shown on the overview. Nothing here
+      changes what a request may do — these two say what somebody decided and why.
+    </span>
+  </div>
+
+  @if (canManage()) {
+    <div class="row">
+      <button type="button" class="btn" [disabled]="feedback.busy()" (click)="save()">Save</button>
+    </div>
+  }
+</section>
