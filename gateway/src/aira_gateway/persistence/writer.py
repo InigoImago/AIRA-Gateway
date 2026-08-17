@@ -56,6 +56,9 @@ class PendingLog:
     # FRD-122. Defaulted so a caller that only knows the old facts still produces a valid row —
     # which matters because a *refusal* often knows nothing else.
     credential: str | None = None
+    #: Which realm minted the token (`FRD-118`). Defaulted like the fields around it: a refusal
+    #: often knows no issuer, and the middleware's own row knows nothing at all.
+    issuer: str | None = None
     #: See `RequestLog.username`: a name for grouping a display, not an identity (`FRD-606`).
     #: Defaulted for the same reason the fields around it are — a refusal often knows no name,
     #: and the middleware's own row knows nothing at all.
@@ -238,6 +241,7 @@ class RequestLogWriter:
                 response_payload=_maybe(entry.response_payload),
                 cost_nanos=entry.cost_nanos,
                 credential=entry.credential,
+                issuer=entry.issuer,
                 outcome=entry.outcome,
                 requested_model=entry.requested_model,
                 model_selection=entry.model_selection,

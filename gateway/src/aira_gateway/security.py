@@ -112,14 +112,25 @@ def unsafe_settings(settings: GatewaySettings) -> list[str]:
             "AIRA_POSTGRES_PASSWORD is still the published development default — "
             "set a unique value (from Vault) per deployment."
         )
-    if (
-        "AIRA_OIDC_AUDIENCE" not in waived
-        and settings.oidc_enabled
-        and not settings.oidc_audience.strip()
-    ):
+    # **Every configured issuer**, not the single setting. `AIRA_OIDC_ISSUERS` (`FRD-118`) leaves
+    # `oidc_audience` empty, so a check that read only that pair would have passed vacuously for a
+    # multi-realm deployment — the shape where a hardening check silently stops applying because
+    # the thing it guards moved.
+    unnamed = [name for name, audience, _ in settings.issuers() if not audience.strip()]
+    if "AIRA_OIDC_AUDIENCE" not in waived and settings.oidc_enabled and unnamed:
         problems.append(
-            "AIRA_OIDC_AUDIENCE is unset — any token this issuer minted would be accepted, "
-            "including one issued to a different client. Name the audience this gateway answers to."
+            f"AIRA_OIDC_AUDIENCE is unset for {', '.join(unnamed)} — any token those issuers "
+            "minted would be accepted, including one issued to a different client. Name the "
+            "audience this gateway answers to, for every issuer."
+        )
+    if settings.oidc_enabled and not settings.issuers():
+        # OIDC declared on and no issuer to validate against: the validator is never built, so
+        # every bearer token is refused while the configuration says authentication is configured.
+        # A control that reads as on and is absent — the shape `FRD-125` is named for.
+        problems.append(
+            "AIRA_OIDC_ENABLED is on and no issuer is configured (AIRA_OIDC_ISSUER or "
+            "AIRA_OIDC_ISSUERS). No OIDC token can be validated, and every bearer credential is "
+            "refused, while the configuration reads as though single sign-on were working."
         )
     if not settings.require_use_case:
         problems.append(
@@ -148,11 +159,11 @@ def unsafe_settings(settings: GatewaySettings) -> list[str]:
             {
                 name: value
                 for name, value in (
-                    ("AIRA_OIDC_ISSUER", settings.oidc_issuer),
-                    (
-                        "AIRA_OIDC_JWKS_URI",
-                        settings.jwks_uri() if settings.oidc_issuer else "",
-                    ),
+                    # Every issuer and every key set, for the reason above: the JWKS is where
+                    # signing keys come from, and a second realm reached over plaintext is the
+                    # same hole as the first.
+                    *(("AIRA_OIDC_ISSUER", issuer) for issuer, _, _ in settings.issuers()),
+                    *(("AIRA_OIDC_JWKS_URI", uri) for _, _, uri in settings.issuers()),
                     ("VAULT_ADDR", os.environ.get("VAULT_ADDR", "")),
                 )
                 if name not in waived

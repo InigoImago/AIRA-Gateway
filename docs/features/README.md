@@ -29,7 +29,7 @@ status that goes stale in the copy nobody opens.
 | [115](FRD-115-vertex-ai-upstream.md) | Reaching the models: Vertex AI / Model Garden in the EU | 8 (KIRA parity) | ✅ Done |
 | [116](FRD-116-vault-secrets.md) | Secrets actually read from Vault | 8 (KIRA parity) | ✅ Done |
 | [117](FRD-117-diagnostics-and-compatibility.md) | Diagnostics and client compatibility | 8 (KIRA parity) | ✅ Done except FR-7 |
-| [118](FRD-118-federated-identity.md) | Several Keycloak backends, and groups from UserInfo | 8 (KIRA parity) | ○ Draft — requirement not yet confirmed |
+| [118](FRD-118-federated-identity.md) | Several Keycloak backends, and groups from UserInfo | 8 (KIRA parity) | ○ FR-1 done; FR-2 folded into it; FR-3 declined |
 | [119](FRD-119-anthropic-on-vertex.md) | Anthropic models on Vertex: the second dialect | 8 (KIRA parity) | ✅ Done |
 | [120](FRD-120-microsoft-foundry.md) | Microsoft Foundry: Azure OpenAI and Microsoft's own models | 8 (KIRA parity) / Phase 3 backlog | ✅ Built, hermetically verified only |
 | [121](FRD-121-document-normalisation.md) | Document normalisation for models that cannot read documents | 8 (KIRA parity) | ○ Draft — optional, and probably should not be built first |

@@ -68,6 +68,7 @@ class RequestLogService:
         cost_nanos: int | None = None,
         api: str = "gemini",
         credential: str | None = None,
+        issuer: str | None = None,
         outcome: str | None = None,
         requested_model: str | None = None,
         model_selection: str | None = None,
@@ -87,6 +88,7 @@ class RequestLogService:
             use_case=use_case,
             source_ip=source_ip,
             credential=credential,
+            issuer=issuer,
             api=api,
             # All three are caller-derived — the model name and the method come straight out of
             # the URL — so all three are bounded to their column. The cost is the row's

@@ -92,6 +92,11 @@ class RequestLog(Base):
     #: Null where the credential names nobody, and on every row written before it existed.
     username: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     auth_method: Mapped[str] = mapped_column(String(32))
+    #: Which Keycloak realm minted the token (`FRD-118`). NULL for an API key, for demo mode, and
+    #: on every row written before several issuers were configurable. One realm is the ordinary
+    #: case and this is then the same value throughout; it earns its place during a migration,
+    #: when "which directory was this decided on" has two answers and this is where somebody looks.
+    issuer: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     use_case: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     #: Indexed since `0033`: `/v1beta/traces?source_ip=` filters on it, and "which machine is
     #: doing this" is the first question of an incident — asked against the largest table here, by

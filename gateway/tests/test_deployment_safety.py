@@ -66,13 +66,46 @@ def test_the_published_database_password_refuses_to_start() -> None:
 def test_oidc_without_an_audience_refuses_to_start() -> None:
     """Any token the issuer minted would otherwise be accepted — including one issued to a
     different client, for a different purpose, by a user who never chose to call this gateway."""
-    problems = unsafe_settings(_production(oidc_enabled=True, oidc_audience=""))
+    problems = unsafe_settings(
+        _production(oidc_enabled=True, oidc_issuer="https://kc/realms/aira", oidc_audience="")
+    )
 
     assert any("AIRA_OIDC_AUDIENCE" in problem for problem in problems)
 
 
+def test_a_second_issuer_needs_an_audience_too() -> None:
+    """`FRD-118`: the check read `oidc_audience`, which a multi-realm deployment leaves empty — so
+    a check written to make an audience unavoidable would have stopped applying the moment the
+    thing it guards moved into a list. The refusal names *which* issuer is missing one."""
+    problems = unsafe_settings(
+        _production(
+            oidc_enabled=True,
+            oidc_issuers="https://kc-a/realms/aira|aira-gateway;https://kc-b/realms/aira",
+        )
+    )
+
+    assert any("AIRA_OIDC_AUDIENCE" in problem and "kc-b" in problem for problem in problems)
+    assert not any("kc-a" in problem for problem in problems)
+
+
+def test_oidc_on_with_no_issuer_at_all_refuses_to_start() -> None:
+    """Authentication that reads as configured and validates nothing."""
+    problems = unsafe_settings(_production(oidc_enabled=True))
+
+    assert any("no issuer is configured" in problem for problem in problems)
+
+
 def test_oidc_with_an_audience_is_fine() -> None:
-    assert unsafe_settings(_production(oidc_enabled=True, oidc_audience="aira-gateway")) == []
+    assert (
+        unsafe_settings(
+            _production(
+                oidc_enabled=True,
+                oidc_issuer="https://kc/realms/aira",
+                oidc_audience="aira-gateway",
+            )
+        )
+        == []
+    )
 
 
 def test_enforce_names_the_environment_and_every_reason() -> None:

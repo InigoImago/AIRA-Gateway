@@ -1407,8 +1407,8 @@ MUTATIONS = [
         "C21",
         "the expiry tolerance is its own decision, not the clock's",
         "libs/src/aira_common/oidc.py",
-        "        overdue = time.time() - float(claims[\"exp\"])\n        if overdue > self._expiry_leeway:",
-        "        overdue = time.time() - float(claims[\"exp\"])\n        if False:",
+        '        overdue = time.time() - float(claims["exp"])\n        if overdue > self._expiry_leeway:',
+        '        overdue = time.time() - float(claims["exp"])\n        if False:',
         "libs/tests/test_oidc_clock_tolerance.py",
     ),
     Mutation(
@@ -1418,6 +1418,22 @@ MUTATIONS = [
         "                leeway=self._clock_skew,",
         "                leeway=0,",
         "libs/tests/test_oidc_clock_tolerance.py",
+    ),
+    Mutation(
+        "C23",
+        "a token is verified by the realm it names, not by whichever realm will take it",
+        "gateway/src/aira_gateway/auth/oidc.py",
+        "            if claims is not None:\n                return self._principal(claims, issuer)",
+        "            if claims is not None:\n                return self._principal(claims, self._verifiers[0][0])",
+        "gateway/tests/test_several_issuers.py",
+    ),
+    Mutation(
+        "C24",
+        "every configured issuer needs an audience, not just the first setting",
+        "gateway/src/aira_gateway/security.py",
+        "    unnamed = [name for name, audience, _ in settings.issuers() if not audience.strip()]",
+        "    unnamed = [] if settings.oidc_audience.strip() else [settings.oidc_issuer]",
+        "gateway/tests/test_deployment_safety.py",
     ),
     Mutation(
         "C8",
@@ -3172,9 +3188,10 @@ MUTATIONS = [
         "H5",
         "OIDC without a named audience refuses to start",
         "gateway/src/aira_gateway/security.py",
-        # Re-anchored 2026-08-15 with H4.
-        "        and settings.oidc_enabled\n        and not settings.oidc_audience.strip()",
-        "        and False",
+        # Re-anchored again when `FRD-118` moved the audience into a per-issuer list: the check
+        # now walks `settings.issuers()`, so the old anchor named a line that no longer exists.
+        '    if "AIRA_OIDC_AUDIENCE" not in waived and settings.oidc_enabled and unnamed:',
+        "    if False:",
         DEPLOYMENT_SAFETY,
     ),
     Mutation(

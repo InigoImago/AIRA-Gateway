@@ -5,6 +5,45 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Tokens from more than one realm (`FRD-118` FR-1)
+
+Confirmed by the owner, and with it the question §11 of that FRD has been holding open since it was
+written: **one population or several?** Answered *one* — a migration between realms, a second
+instance, a merger, where the same group path from either means the same thing because it is the
+same directory content. That is what keeps this a configuration list rather than a schema change.
+Two *unrelated* directories would need `(issuer, sub)` as the identity and an issuer column on
+grants and memberships; that stays unbuilt and is now written down as such.
+
+`AIRA_OIDC_ISSUERS` is `issuer|audience|jwks_uri` per entry, `;`-separated, and `settings.issuers()`
+returns one list whether the single pair or the list was configured — so nothing downstream has to
+ask which form it got, which is the shape `FRD-126` keeps arriving at.
+
+**Routing is by the token's own `iss`, read unverified — a hint, never a trust decision.** The
+verifier it selects then checks `iss` and the signature for real, so a token signed by realm A while
+claiming realm B is refused by both: B has the wrong key, A has the wrong issuer. That property is
+`C23`, and it is the one an implementation gets wrong by returning the first verifier that says yes.
+
+The alternative — probe every verifier — is what makes `kid` selection expensive rather than wrong:
+PyJWT answers an unknown key id by **refetching the whole key set**, so a token from realm B would
+cost realm A a remote call on every single request. Two tests count the fetches, including the case
+where a token names a realm and that realm refuses it: trying the others would only produce the same
+refusal from each, at the price of a key-set refresh apiece — the cheapest denial of service there
+is, aimed at our own upstream.
+
+**A hardening check nearly stopped applying.** `unsafe_settings` read `oidc_audience`, which a
+multi-realm deployment leaves empty — so the rule that makes an audience unavoidable outside `local`
+would have passed vacuously for exactly the deployments that need it most. It walks every issuer now
+and names the one that is missing an audience (`C24`), and a second problem was added beside it:
+OIDC declared on with **no** issuer at all, where the validator is never built, every bearer token is
+refused, and the configuration reads as though single sign-on were working.
+
+The audit row carries the issuer (`0036_log_issuer`, nullable — back-filling history with today's
+realm would be a claim nobody checked). And a test stand-in was replaced by the real `Attribution`
+dataclass: a `SimpleNamespace` that is *less* complete than the thing it replaces breaks the moment
+that thing grows a field, which is the same mistake as one that is *more* permissive, seen from the
+other side.
+
+---
 ## Sixty seconds, and only for the clock that is behind (`FRD-134`)
 
 Built as specified, and the shape is the point: PyJWT applies one `leeway` to `iat`, `nbf` and

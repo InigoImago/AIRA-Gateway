@@ -61,6 +61,10 @@ class Attribution:
     #: allowances are counted against, because the two credentials disagree about the subject and
     #: agree about the name — see :func:`aira_gateway.scopes.person`.
     username: str | None = None
+    #: Which Keycloak realm minted the token (`FRD-118`). `None` for an API key or demo mode, and
+    #: the same value on every row where one realm is configured — it earns its place during a
+    #: migration between realms, when "which directory was this decided on" has two answers.
+    issuer: str | None = None
 
     @property
     def person(self) -> str | None:

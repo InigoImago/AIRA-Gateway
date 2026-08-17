@@ -217,6 +217,7 @@ async def require_attribution(
         username=principal.username,
         use_case=use_case,
         credential=principal.credential,
+        issuer=principal.issuer,
     )
     request.state.attribution = attribution
     set_span_attributes(

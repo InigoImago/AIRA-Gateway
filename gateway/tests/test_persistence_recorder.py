@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 from starlette.requests import Request
 
+from aira_gateway.auth.attribution import Attribution
 from aira_gateway.config import GatewaySettings
 from aira_gateway.persistence.recorder import client_ip
 
@@ -134,8 +135,16 @@ async def test_the_name_on_the_attribution_reaches_the_row() -> None:
             written["entry"] = entry
 
     request = _request(client=("10.0.0.1", 1234))
-    request.state.attribution = SimpleNamespace(
-        subject="kc-uuid-1", method="oidc", username="erika", use_case="uc", credential="console"
+    # The real dataclass, not a namespace. A stand-in that is *less* complete than the thing it
+    # replaces breaks the moment the thing grows a field — and one that is *more* permissive hides
+    # a defect, which is the same mistake seen from the other side (`CLAUDE.md` §3).
+    request.state.attribution = Attribution(
+        subject="kc-uuid-1",
+        method="oidc",
+        username="erika",
+        use_case="uc",
+        credential="console",
+        issuer="https://keycloak.test/realms/aira",
     )
     request.app.state.log_writer = _Writer()
 
@@ -168,7 +177,7 @@ async def test_a_credential_that_names_nobody_writes_no_name() -> None:
             written["entry"] = entry
 
     request = _request(client=("10.0.0.1", 1234))
-    request.state.attribution = SimpleNamespace(
+    request.state.attribution = Attribution(
         subject="svc-1", method="api_key", username=None, use_case="uc", credential="aira_abc"
     )
     request.app.state.log_writer = _Writer()

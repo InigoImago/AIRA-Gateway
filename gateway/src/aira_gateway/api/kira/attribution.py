@@ -97,6 +97,7 @@ def resolve(request: Request, principal: Principal) -> Attribution:
         username=principal.username,
         use_case=selected,
         credential=principal.credential,
+        issuer=principal.issuer,
     )
     request.state.attribution = attribution
     return attribution

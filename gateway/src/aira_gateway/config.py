@@ -12,6 +12,11 @@ from aira_common.oidc import DEFAULT_CLOCK_SKEW_SECONDS, DEFAULT_EXPIRY_LEEWAY_S
 from aira_common.roles import Role, parse_role_groups
 
 
+def _default_jwks_uri(issuer: str) -> str:
+    """Keycloak's certificate endpoint for an issuer. One place, because two would drift."""
+    return f"{issuer.rstrip('/')}/protocol/openid-connect/certs"
+
+
 class GatewaySettings(BaseAiraSettings):
     """Configuration for the Gateway API service."""
 
@@ -259,6 +264,18 @@ class GatewaySettings(BaseAiraSettings):
     oidc_issuer: str = ""
     oidc_audience: str = ""  # empty → skip audience verification (set in enterprise deployments)
     oidc_jwks_uri: str = ""  # empty → derived from the issuer
+    #: **Several Keycloak issuers at once** (`FRD-118` FR-1), for one organisation whose people
+    #: live in more than one realm — a migration between realms, a second instance, a merger.
+    #:
+    #: ``issuer|audience|jwks_uri`` per entry, entries separated by ``;``; the JWKS URI is optional
+    #: and derived from the issuer when omitted. Empty means the single-issuer pair above, which is
+    #: what every deployment had before this existed and what most keep.
+    #:
+    #: **Trusted equally, on purpose** (owner's answer, 2026-08-17): the same group path from
+    #: either realm means the same thing, because it is the same directory content. That holds only
+    #: while the issuers describe one population — two *unrelated* directories would need the
+    #: issuer to be part of the identity, which is a different feature and a schema change.
+    oidc_issuers: str = ""
     #: How far the **issuer's** clock may run ahead of this gateway's (`FRD-134`). Applies to `iat`
     #: and `nbf`. Costs nothing: a token that is "too new" was still genuinely minted, and
     #: accepting it extends nobody's access. At `0` — PyJWT's default, and what this was until
@@ -275,6 +292,33 @@ class GatewaySettings(BaseAiraSettings):
     #: without a global-admin group, because it is the one an installation is repaired from.
     role_groups: str = ""
 
+    def issuers(self) -> tuple[tuple[str, str, str], ...]:
+        """``(issuer, audience, jwks_uri)`` per configured realm, the single pair included.
+
+        One list either way, so nothing downstream has to ask which form was configured — the
+        shape `FRD-126` keeps arriving at: a caller that has to know which of two configurations it
+        got is a caller that will one day handle only one of them.
+        """
+        if not self.oidc_issuers.strip():
+            if not self.oidc_issuer:
+                return ()
+            return ((self.oidc_issuer, self.oidc_audience, self.jwks_uri()),)
+        parsed: list[tuple[str, str, str]] = []
+        for entry in self.oidc_issuers.split(";"):
+            if not entry.strip():
+                continue
+            parts = [part.strip() for part in entry.split("|")]
+            issuer = parts[0]
+            if not issuer:
+                raise ValueError(
+                    "AIRA_OIDC_ISSUERS has an entry with no issuer. Each is "
+                    "'issuer|audience|jwks_uri', and only the last part may be omitted."
+                )
+            audience = parts[1] if len(parts) > 1 else ""
+            jwks = parts[2] if len(parts) > 2 and parts[2] else _default_jwks_uri(issuer)
+            parsed.append((issuer, audience, jwks))
+        return tuple(parsed)
+
     def parsed_role_groups(self) -> dict[Role, tuple[str, ...]]:
         """The mapping, parsed once at startup so a malformed value fails loudly and early."""
         return parse_role_groups(self.role_groups)
@@ -283,7 +327,7 @@ class GatewaySettings(BaseAiraSettings):
         """Return the JWKS URI, deriving it from the issuer when not set explicitly."""
         if self.oidc_jwks_uri:
             return self.oidc_jwks_uri
-        return f"{self.oidc_issuer.rstrip('/')}/protocol/openid-connect/certs"
+        return _default_jwks_uri(self.oidc_issuer)
 
     def database_url(self, *, use_sqlite: bool) -> str:
         """Return the async SQLAlchemy URL for the gateway database."""

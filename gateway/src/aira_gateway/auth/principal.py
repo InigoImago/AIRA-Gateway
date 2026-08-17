@@ -40,6 +40,11 @@ class Principal:
     #: answer "which system called" (FRD-122 FR-5), and it never contains part of a secret.
     credential: str | None = None
     label: str | None = None
+    #: Which Keycloak realm minted this token (`FRD-118`). `None` for an API key and for demo
+    #: mode. One issuer is the ordinary case and this is then the same value on every row; it earns
+    #: its place during a migration, when "which realm was this decided on" has two answers and the
+    #: audit trail is where somebody looks for them.
+    issuer: str | None = None
     use_cases: tuple[str, ...] = ()
     roles: tuple[str, ...] = ()
     #: The Keycloak group paths the token carried, verbatim (`FRD-209`).

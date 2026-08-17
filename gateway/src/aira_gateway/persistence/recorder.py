@@ -145,6 +145,7 @@ async def record_request(
             use_case=attribution.use_case,
             source_ip=source_ip,
             credential=attribution.credential,
+            issuer=attribution.issuer,
             operation=operation,
             model=model,
             status=status,

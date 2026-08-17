@@ -1,9 +1,21 @@
 # FRD-118 — Several Keycloak backends, and groups from UserInfo
 
-> Phase: 8 (KIRA parity) · Status: **Draft — requirement not yet confirmed** · Owner: Vadim Scheibe
+> Phase: 8 (KIRA parity) · Status: **FR-1 done; FR-2 folded into it; FR-3 declined** · Owner: Vadim Scheibe
 >
 > Origin: the predecessor's contract, programme: `ADR-0010`. Touches `FRD-101`, `FRD-102`, `FRD-200`.
 
+> **Answered.** FR-1 is confirmed by the owner and **built**: several issuers, selected
+> by the token's own `iss` with a `kid` probe behind it, each with its own audience and key set.
+> FR-2 came with it — an audience is configured *per issuer*, which is the useful form of "a list
+> of audiences". FR-3 (groups from UserInfo) stays **declined**, and the reasons are now in
+> `FRD-107` §5.5 where a migrating client's owner will find them.
+>
+> The question §11 asks second — one population or several — was put to the owner and answered
+> **one**: the realms describe the same people, so the same group path from either means the same
+> thing. That is what makes this a configuration list rather than a schema change. Two *unrelated*
+> directories would need the issuer to be part of the identity — `(issuer, sub)` as the key, an
+> issuer column on grants and memberships — and that remains unbuilt and unrequested.
+>
 > **Read §11 before starting this one.** Two of its three requirements may exist in the predecessor
 > for reasons that do not apply to us, and one of them would make every authenticated request
 > depend on Keycloak being up. This FRD is written so the requirement can be confirmed or dropped

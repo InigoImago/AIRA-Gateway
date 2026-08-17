@@ -18,6 +18,8 @@ from typing import Any
 
 import jwt
 import pytest
+from cryptography.hazmat.primitives.asymmetric import rsa
+
 from aira_common.oidc import (
     DEFAULT_CLOCK_SKEW_SECONDS,
     DEFAULT_EXPIRY_LEEWAY_SECONDS,
@@ -25,7 +27,6 @@ from aira_common.oidc import (
     JwtVerifier,
     ToleranceOutOfRange,
 )
-from cryptography.hazmat.primitives.asymmetric import rsa
 
 ISSUER = "https://keycloak.test/realms/aira"
 
