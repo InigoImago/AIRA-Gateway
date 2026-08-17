@@ -1436,6 +1436,22 @@ MUTATIONS = [
         "gateway/tests/test_deployment_safety.py",
     ),
     Mutation(
+        "C25",
+        "an API-key credential does not reach for a token that is not there",
+        "gateway/src/aira_gateway/upstreams/vertex/transport.py",
+        "        if self._api_key or self._tokens is None:",
+        "        if False:",
+        "gateway/tests/test_vertex_api_key.py",
+    ),
+    Mutation(
+        "C26",
+        "a service account is preferred where both credentials are configured",
+        "gateway/src/aira_gateway/upstreams/vertex/__init__.py",
+        '        api_key="" if settings.vertex_credentials else settings.vertex_api_key,',
+        "        api_key=settings.vertex_api_key,",
+        "gateway/tests/test_vertex_api_key.py",
+    ),
+    Mutation(
         "C8",
         "an older event applies its prices without erasing a declaration",
         "gateway/src/aira_gateway/consumer/apply.py",

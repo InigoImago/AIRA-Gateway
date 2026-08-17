@@ -191,9 +191,23 @@ class GatewaySettings(BaseAiraSettings):
     # Vertex AI / Model Garden (FRD-115). Registered only when a project and credentials are
     # configured; a laptop keeps working on the Generative Language adapter above.
     vertex_project: str = ""
-    #: The service-account key, as JSON. An interim source — `FRD-116` moves it to Vault, which is
+    #: The service-account key, as JSON. From the environment or from Vault (`FRD-116`), which is
     #: where a private key of this value belongs.
     vertex_credentials: str = ""
+    #: The **other** credential this adapter accepts (`FRD-115` FR-3a): an Agent Platform API key,
+    #: sent as `x-goog-api-key` instead of an exchanged bearer token.
+    #:
+    #: Google issues these to accounts that never create a service account, and until this existed
+    #: an installation holding one could reach nothing: AIRA's only API-key path was AI Studio, on
+    #: a different host, which refuses such a key with `API_KEY_SERVICE_BLOCKED`.
+    #:
+    #: **The region is unaffected**, and that is the point of putting it here rather than building a
+    #: fifth provider on Google's global endpoint: the same key answers on the locational hosts this
+    #: adapter already uses, so `FRD-115` FR-5's residency check applies unchanged.
+    #:
+    #: Set both and the service account wins — a deployment that has one has made the more
+    #: deliberate choice, and silently preferring the key would be a downgrade nobody asked for.
+    vertex_api_key: str = ""
     #: ``region/publisher/model`` per entry. The three things the URL and the dialect need.
     vertex_models: str = ""
     vertex_timeout_seconds: float = 120.0

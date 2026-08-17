@@ -34,7 +34,7 @@ def build_vertex_upstreams(settings: GatewaySettings) -> list[Upstream]:
     every request looks like an upstream outage, and a gateway that starts and quietly serves a
     non-EU region is worse than one that will not start at all.
     """
-    if not settings.vertex_project or not settings.vertex_credentials:
+    if not settings.vertex_project or not (settings.vertex_credentials or settings.vertex_api_key):
         return []
 
     specs = [spec.strip() for spec in settings.vertex_models.split(",") if spec.strip()]
@@ -47,9 +47,19 @@ def build_vertex_upstreams(settings: GatewaySettings) -> list[Upstream]:
     # place where compatibility must not soften a security setting is worth stating where it is
     # decided.
     client = httpx.AsyncClient(timeout=settings.vertex_timeout_seconds, verify=True)
+    # **The service account wins where both are set** (`FRD-115` FR-3a): a deployment that has one
+    # has made the more deliberate choice, and silently preferring a key left in the environment
+    # would be a downgrade nobody asked for. `build_token_source` also *validates* the JSON here,
+    # at startup, which is why it is not called at all on the API-key path — there is nothing to
+    # validate, and calling it with an empty string would refuse a perfectly configured gateway.
     transport = VertexTransport(
         project=settings.vertex_project,
-        tokens=build_token_source(settings.vertex_credentials, client),
+        tokens=(
+            build_token_source(settings.vertex_credentials, client)
+            if settings.vertex_credentials
+            else None
+        ),
+        api_key="" if settings.vertex_credentials else settings.vertex_api_key,
         client=client,
         allowed_regions=allowed,
     )

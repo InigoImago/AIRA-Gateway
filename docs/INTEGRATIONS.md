@@ -315,19 +315,116 @@ counters seed from Postgres on a miss and expire in five minutes so drift cannot
 At least one. Each is registered **only when configured**, and each is audited under its own
 provider, publisher and region.
 
-### Google Vertex AI — Gemini and Anthropic, EU-regional
+### Google Agent Platform (formerly Vertex AI) — Gemini and Anthropic, EU-regional
+
+> **The product was renamed.** Vertex AI is now
+> [Gemini Enterprise Agent Platform](https://cloud.google.com/products/gemini-enterprise-agent-platform);
+> Agent Engine became Agent Runtime, Memory Bank became Agent Platform Memory Bank
+> ([name changes](https://docs.cloud.google.com/gemini-enterprise-agent-platform/vertex-ai-name-changes)).
+> The REST hosts, paths and credentials this adapter uses are unchanged, so the settings keep the
+> `AIRA_VERTEX_*` names — renaming a configuration key breaks every deployment that has one, and
+> buys a word.
 
 | You provide | Why |
 |---|---|
-| A GCP **project** with Vertex AI enabled | |
-| A **service account** with `roles/aiplatform.user` | The narrowest role that can call `:generateContent` and `:rawPredict` |
-| Its **JSON key**, in Vault or a mounted file | `AIRA_VERTEX_CREDENTIALS` |
+| A GCP **project** with the Agent Platform (Vertex AI) API enabled | |
+| **Either** a service account with `roles/aiplatform.user` **or** an API key | Two credentials, one adapter — see below |
+| The credential, from the environment **or Vault** | `AIRA_VERTEX_CREDENTIALS` (JSON) or `AIRA_VERTEX_API_KEY` |
 | The **regions** you are permitted to use | Listed in `AIRA_ALLOWED_REGIONS`; a model outside them refuses to start |
 | **Model Garden access** for the publishers you want | Anthropic models need to be enabled in your project |
 
 One transport, two dialects. Anthropic on Vertex uses `:rawPredict` with the Messages API:
 `max_tokens` is always sent, thinking blocks are **dropped and never persisted**, cache tokens count
 as input, and there are no embeddings.
+
+#### Which credential — and why it is not a free choice
+
+|  | Service account (**recommended**) | API key |
+|---|---|---|
+| Setting | `AIRA_VERTEX_CREDENTIALS` | `AIRA_VERTEX_API_KEY` |
+| How it authenticates | signed JWT exchanged for a short-lived token | `x-goog-api-key`, sent as-is |
+| Rotation | rotate the key in IAM; nothing else moves | replace the string everywhere it is stored |
+| Scope | one IAM role, auditable per principal in Cloud Logging | whatever the key is restricted to |
+| Region | locational host, real residency | **the same** — see the note below |
+
+Set both and the **service account wins**: a deployment that has one has made the more deliberate
+choice, and silently preferring a key left in the environment would be a downgrade nobody asked for.
+
+> **The residency footnote that matters.** Google's own *express mode* documents the **global**
+> endpoint `aiplatform.googleapis.com`, and its
+> [data-residency page](https://docs.cloud.google.com/gemini-enterprise-agent-platform/resources/data-residency)
+> is explicit that global endpoints "route and process data anywhere globally… you can't control or
+> know which region your ML processing requests are sent to". **AIRA does not use that endpoint.**
+> The same API key was measured to answer on the *locational* host
+> (`europe-west1-aiplatform.googleapis.com`, both path forms), so this adapter keeps its regional
+> hosts and its per-model region check, and an API key gets the same residency a service account
+> does. If you point anything else at the global endpoint, that guarantee is gone.
+
+#### B — the service account, step by step
+
+Console, or the equivalent `gcloud`. Replace `PROJECT` with your project id.
+
+1. **Enable the API.** Console → *APIs & Services → Library* → “Vertex AI API” (listed under Agent
+   Platform after the rename) → **Enable**.
+   `gcloud services enable aiplatform.googleapis.com --project PROJECT`
+2. **Create the service account.** *IAM & Admin → Service Accounts → Create*. A name like
+   `aira-gateway`. No project role at creation.
+   `gcloud iam service-accounts create aira-gateway --project PROJECT`
+3. **Grant exactly one role.** `roles/aiplatform.user` — the narrowest that can call
+   `:generateContent` and `:rawPredict`. Not `roles/editor`.
+   ```
+   gcloud projects add-iam-policy-binding PROJECT \
+     --member "serviceAccount:aira-gateway@PROJECT.iam.gserviceaccount.com" \
+     --role roles/aiplatform.user
+   ```
+4. **Create a JSON key.** *Keys → Add key → Create new key → JSON*. It downloads once.
+   `gcloud iam service-accounts keys create key.json --iam-account aira-gateway@PROJECT.iam.gserviceaccount.com`
+5. **Store it** — the whole file, as one line, in Vault (below) or in the environment:
+   `AIRA_VERTEX_CREDENTIALS='{"client_email":"…","private_key":"-----BEGIN PRIVATE KEY-----\n…"}'`
+6. **Name the project and the models:**
+   ```
+   AIRA_VERTEX_PROJECT=PROJECT
+   AIRA_VERTEX_MODELS=europe-west1/google/gemini-2.5-flash,europe-west1/google/text-embedding-005
+   AIRA_ALLOWED_REGIONS=europe-west1,europe-west4,eu
+   ```
+   The form is `region/publisher/model`: **region per model, not per process** (`FRD-115` FR-4).
+7. **Start.** A malformed credential, or a model in a region the list does not permit, is a
+   **startup** failure with the reason named — deliberately, because a gateway that starts and then
+   fails every request looks like an outage at Google.
+
+Reference: [Authenticate to Agent Platform](https://docs.cloud.google.com/gemini-enterprise-agent-platform/machine-learning/authentication)
+· [Deployments and endpoints](https://docs.cloud.google.com/gemini-enterprise-agent-platform/resources/locations)
+
+#### C — the API key, step by step
+
+1. **Get the key.** Console → *APIs & Services → Credentials* → the key created for you, or
+   *Create credentials → API key*
+   ([docs](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/start/api-keys)).
+2. **Check its API restrictions.** This is the step that bites: a key restricted to the Agent
+   Platform API answers `403 API_KEY_SERVICE_BLOCKED` on any other Google API, and a key restricted
+   to something else answers the same here. *Credentials → your key → API restrictions.*
+3. **Store it** as `AIRA_VERTEX_API_KEY`, from the environment or Vault.
+4. **The rest is identical to B** — `AIRA_VERTEX_PROJECT`, `AIRA_VERTEX_MODELS`,
+   `AIRA_ALLOWED_REGIONS`. Same hosts, same paths, same residency check; only the header differs.
+
+#### Both credentials from Vault (`FRD-116`)
+
+Any `AIRA_*` setting can come from Vault — the settings source is generic — and **Vault wins over
+the environment** where both hold a value. Write them under the configured path:
+
+```bash
+vault kv put secret/aira \
+  AIRA_VERTEX_API_KEY='AQ.…' \
+  AIRA_VERTEX_CREDENTIALS='{"client_email":"…","private_key":"-----BEGIN PRIVATE KEY-----\n…"}'
+```
+
+Verified against a running Vault, not assumed: both arrive, and the multi-line PEM survives the
+round trip intact. The startup log names **which keys** were loaded and never their values
+(`vault_secrets_loaded … keys=[AIRA_VERTEX_API_KEY, AIRA_VERTEX_CREDENTIALS]`).
+
+A configured Vault that cannot be read is a **boot failure**, never a quiet fallback to the
+environment — otherwise a deployment whose Vault is down silently runs on whatever stale value the
+environment happens to hold.
 
 ### Microsoft Foundry / Azure OpenAI
 

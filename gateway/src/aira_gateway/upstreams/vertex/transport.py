@@ -41,12 +41,21 @@ class VertexTransport:
         self,
         *,
         project: str,
-        tokens: TokenSource,
+        tokens: TokenSource | None = None,
+        api_key: str = "",
         client: httpx.AsyncClient,
         allowed_regions: tuple[str, ...] = DEFAULT_ALLOWED_REGIONS,
     ) -> None:
+        if tokens is None and not api_key:
+            # Refused here rather than at the first request: a transport with no credential answers
+            # every call with the same upstream error and looks like Google being down.
+            raise ValueError(
+                "VertexTransport needs a credential: a service-account TokenSource "
+                "(AIRA_VERTEX_CREDENTIALS) or an API key (AIRA_VERTEX_API_KEY)."
+            )
         self._project = project
         self._tokens = tokens
+        self._api_key = api_key
         self._client = client
         self._allowed = allowed_regions
 
@@ -71,11 +80,20 @@ class VertexTransport:
         )
 
     async def _headers(self) -> dict[str, str]:
+        """The credential, in whichever of the two forms this deployment configured (FR-3a).
+
+        An API key needs no exchange and cannot fail to be acquired, which is why it has no
+        `TokenUnavailable` path: there is nothing to go and fetch. A service account does, and that
+        failure is an **upstream** one — the caller did nothing wrong, and a 4xx would send them
+        off to fix their own request (FR-9).
+        """
+        if self._api_key or self._tokens is None:
+            # `self._tokens is None` cannot happen with an empty key — the constructor refuses
+            # that pair — so this is the API-key branch, said in a way the type checker can follow.
+            return {"x-goog-api-key": self._api_key, "Content-Type": "application/json"}
         try:
             token = await self._tokens.token()
         except TokenUnavailable as exc:
-            # An upstream failure, never a client error: the caller did nothing wrong, and a 4xx
-            # would send them off to fix their own request (FR-9).
             raise UpstreamError(f"Vertex credentials unavailable: {exc}", 503) from exc
         return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 

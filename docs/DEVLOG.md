@@ -5,6 +5,54 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The Agent Platform adapter takes an API key too (`FRD-115` FR-3a)
+
+The owner put a key in and nothing worked. Google's answer named the cause exactly:
+`403 API_KEY_SERVICE_BLOCKED`, consumer `projects/858738136418`, service
+`generativelanguage.googleapis.com`. Not a network problem, not our code — the key reaches Google
+and Google refuses it *for that API*.
+
+**Because it is not an AI Studio key.** Vertex AI is now
+[Gemini Enterprise Agent Platform](https://cloud.google.com/products/gemini-enterprise-agent-platform),
+and it issues API keys to accounts that never create a service account. AIRA had two Google
+adapters and neither fitted: AI Studio has the right credential and the wrong host, Vertex has the
+right host family and exchanges a service-account JWT. Measured with `countTokens`, which Google
+charges nothing for: the key answers `200` on `aiplatform.googleapis.com` for `gemini-2.5-flash` and
+`gemini-3.5-flash`, and embeds on `gemini-embedding-001` (3072 dims) and `text-embedding-005`.
+Four prompt tokens spent to learn all of it.
+
+**The residency question decided the shape, and the first answer was wrong.** A 404 message
+mentioned `locations/europe-west1`, which I reported as EU residency. Google's own
+[data-residency page](https://docs.cloud.google.com/gemini-enterprise-agent-platform/resources/data-residency)
+says the opposite about the *global* endpoint express mode documents: it "routes and processes data
+anywhere globally… you can't control or know which region". A resource path is not a processing
+guarantee, and I had read one as the other.
+
+So the feature could have been a fifth provider on the global endpoint, declared `global` like AI
+Studio — and then a probe settled it: **the same key answers `200` on the locational host**
+`europe-west1-aiplatform.googleapis.com`, on both path forms. Which makes this not a new provider
+at all but a **second credential on the existing one**: same hosts, same paths, same per-model
+region, `x-goog-api-key` instead of `Authorization: Bearer`. An installation with nothing but an API
+key gets the residency `FRD-115` FR-5 exists for.
+
+Set both and the **service account wins** — a deployment that rotated to one and left the old key
+in the environment would otherwise keep using the key, and Google's audit trail would go on naming
+a credential somebody thought was retired (`C26`).
+
+**Both credentials from Vault, verified against the running server** rather than assumed, because
+that is what was asked for: both arrive, and the multi-line PEM survives the round trip. Also
+learned there: **Vault wins over the environment** (`FRD-116` FR-3) — my test asserted the opposite
+and was wrong, not the code. And `VaultSource._cache` is a *class* attribute, so a case that stubs
+Vault leaves its values standing for every case after it; the builder test three cases later was
+handed a key it never configured. `reset()`'s own docstring says tests must not share that cache and
+nothing was making it true.
+
+Documented as the owner asked: `docs/INTEGRATIONS.md` now carries both paths step by step — service
+account (enable API, create account, one role, JSON key, store, name project and models) and API key
+(get it, check its API restrictions, store it, the rest identical) — with the Vault form for both
+and links to Google's own pages.
+
+---
 ## Tokens from more than one realm (`FRD-118` FR-1)
 
 Confirmed by the owner, and with it the question §11 of that FRD has been holding open since it was

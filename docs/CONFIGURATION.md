@@ -129,6 +129,7 @@ credential.
 | -------------------------------- | ------- | --------------------------------------------------------------------------------- |
 | `AIRA_VERTEX_PROJECT`            | —       | GCP project id.                                                                   |
 | `AIRA_VERTEX_CREDENTIALS`        | —       | Service-account JSON, or a path to it.                                            |
+| `AIRA_VERTEX_API_KEY`               | —           | The **other** credential the same adapter takes (`FRD-115` FR-3a): an Agent Platform API key, sent as `x-goog-api-key`. For accounts that never create a service account — Google issues these, and AIRA's only API-key path used to be AI Studio, on a host that refuses them with `API_KEY_SERVICE_BLOCKED`. **Same regional hosts, same residency check**: this does not use Google's global express endpoint, which processes data anywhere. Set both and the service account wins. From the environment or Vault. |
 | `AIRA_VERTEX_MODELS`             | —       | `name=publisher/model@region`, comma-separated.                                   |
 | `AIRA_VERTEX_TIMEOUT_SECONDS`    | `120`   |                                                                                   |
 | `AIRA_VERTEX_DEFAULT_MAX_TOKENS` | `4096`  | Anthropic requires `max_tokens`; this is what is sent when the caller names none. |

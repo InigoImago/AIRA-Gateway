@@ -74,6 +74,30 @@ either dialect exists, and keeps the dialect work free of authentication concern
   (§5.3a).
 - **FR-3 Service-account auth.** RS256-signed JWT assertion exchanged for an access token; cached
   and refreshed **before** expiry, not on failure. One credential for both publishers.
+- **FR-3a A second credential: an API key.** The same adapter, the same hosts, the same paths —
+  `x-goog-api-key` instead of the exchanged bearer token. Added because Google now issues **Agent
+  Platform** keys (what Vertex AI is called since the rename) to accounts that never create a
+  service account, and an installation holding one could reach nothing here: AIRA's only API-key
+  path was AI Studio, on a different host, which refuses such a key with
+  `API_KEY_SERVICE_BLOCKED`.
+
+  **Configured, never inferred**: `AIRA_VERTEX_API_KEY` beside `AIRA_VERTEX_CREDENTIALS`. Both from
+  the environment or from Vault, like every other secret (`FRD-116`) — the settings source is
+  generic, and this FRD's own §8 says the credential never leaves the process either way.
+
+  **It does not change what FR-5 asks.** Google's *express mode* documents a **global** endpoint,
+  `aiplatform.googleapis.com`, and its own residency page is explicit: global endpoints
+  "route and process data anywhere globally… you can't control or know which region your ML
+  processing requests are sent to". An express key used the documented way would therefore be
+  region `global`, exactly like AI Studio, and would have to be named out loud in
+  `AIRA_ALLOWED_REGIONS`.
+
+  **Measured, and it need not be that way.** The same API key answers `200` on the *locational*
+  host — `europe-west1-aiplatform.googleapis.com`, on both the `/v1/publishers/…` and the
+  `/v1/projects/{p}/locations/{r}/publishers/…` forms. So this adapter keeps its regional hosts and
+  its per-model region, and an installation with nothing but an API key still gets the residency
+  FR-5 exists for. That is the whole reason this is a credential mode here rather than a fifth
+  provider pointed at the global endpoint.
 - **FR-4 Region per model**, not per process. Configuration carries region *and* publisher with
   each model name.
 - **FR-5 EU-only by configuration, checked at startup.** See §5.5.
