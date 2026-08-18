@@ -198,13 +198,11 @@ def test_no_published_port_is_a_literal() -> None:
     `${AIRA_…_PORT:-<today's value>}` now, so the defaults are unchanged and a second copy moves
     with environment variables.
     """
-    literal = re.findall(
-        r'^\s+- "\$\{AIRA_BIND_HOST[^}]*\}:(\d+):', _wiring(), re.M
-    )
+    literal = re.findall(r'^\s+- "\$\{AIRA_BIND_HOST[^}]*\}:(\d+):', _wiring(), re.M)
 
     assert not literal, (
-        f"These host ports cannot be moved without editing the compose file: {sorted(set(literal))}. "
-        "A second stack on the same machine collides on every one of them."
+        "These host ports cannot be moved without editing the compose file: "
+        f"{sorted(set(literal))}. A second stack on the same machine collides on every one."
     )
 
 

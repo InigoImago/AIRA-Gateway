@@ -27,6 +27,16 @@ export class AuthService {
   private reauthenticating = false;
 
   async init(): Promise<void> {
+    if (!authConfig.issuer) {
+      // A console that does not know its issuer cannot log anybody in, and must not pretend it is
+      // merely unreachable: the fix is a deployment one and the message says so, rather than
+      // sending somebody to check whether Keycloak is up.
+      this.startupError.set(
+        'no identity provider is configured — runtime-config.js did not load, or carries no ' +
+          'issuer. It is written at container start from AIRA_OIDC_ISSUER.',
+      );
+      return;
+    }
     this.oauth.configure(authConfig);
     try {
       await this.oauth.loadDiscoveryDocumentAndTryLogin();

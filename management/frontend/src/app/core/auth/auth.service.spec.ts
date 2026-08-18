@@ -33,6 +33,14 @@ function setup(overrides: Partial<Record<string, unknown>> = {}) {
     },
     ...overrides,
   };
+  // The console's issuer comes from `runtime-config.js`, which the container writes at start and
+  // `ng serve` serves from `public/`. A test environment has neither, and an empty issuer is now a
+  // *reported* failure rather than a silent localhost — so the tests that exercise a working
+  // startup have to arrange what a deployment arranges.
+  (window as unknown as { __AIRA_CONFIG__?: unknown }).__AIRA_CONFIG__ = {
+    issuer: 'http://keycloak.test/realms/aira',
+    clientId: 'aira-gateway',
+  };
   TestBed.configureTestingModule({
     providers: [{ provide: OAuthService, useValue: oauth }, AuthService],
   });
@@ -204,5 +212,24 @@ describe('the scopes the console asks for', () => {
     // data being untrustworthy rather than the session having run out.
     expect(authConfig.timeoutFactor).toBeLessThan(1);
     expect(authConfig.silentRefreshRedirectUri).toContain('/silent-refresh.html');
+  });
+});
+
+describe('AuthService — a console that does not know its issuer', () => {
+  it('says so, and does not try to reach an identity provider it cannot name', async () => {
+    /** The fallback used to be `http://localhost:8080/realms/aira`: a deployment whose
+     *  `runtime-config.js` did not load sent every user to a login page on whatever machine their
+     *  browser sat at, and the error named neither the realm nor the reason. Empty and reported
+     *  beats plausible and wrong.
+     *
+     *  Reported rather than thrown: `authConfig` is read at startup, before the shell that could
+     *  explain a thrown error exists — throwing took four test suites down when it was tried. */
+    const { service, calls } = setup();
+    delete (window as unknown as { __AIRA_CONFIG__?: unknown }).__AIRA_CONFIG__;
+
+    await service.init();
+
+    expect(calls).toEqual([]);
+    expect(service.startupError()).toContain('no identity provider is configured');
   });
 });

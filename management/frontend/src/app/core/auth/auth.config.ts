@@ -15,8 +15,30 @@ interface RuntimeConfig {
   clientId?: string;
 }
 
-const runtime: RuntimeConfig =
-  (window as unknown as { __AIRA_CONFIG__?: RuntimeConfig }).__AIRA_CONFIG__ ?? {};
+/**
+ * **Empty, never a guess.**
+ *
+ * This read `?? 'http://localhost:8080/realms/aira'` — the failure the runtime config exists to
+ * prevent, one layer down: a deployment whose `runtime-config.js` did not load would silently send
+ * every user to a login page on whatever machine their browser sits at, and the error they
+ * eventually see names neither the realm nor the reason.
+ *
+ * Empty rather than a thrown error, because this is a module-level constant: throwing here fails
+ * the *import*, which took four test suites down with it and would take the whole console down
+ * before the shell that could explain it exists. `AuthService.init` reports it through the same
+ * `startupError` every other startup failure uses.
+ */
+
+/**
+ * Read at the point of use, not at import.
+ *
+ * A module-level read is evaluated when the bundle loads, before anything can have arranged for
+ * `runtime-config.js` to be there — which made this untestable without a global setup file and,
+ * worse, fixed the console's identity at load time. A function is read when somebody asks.
+ */
+function runtimeConfig(): RuntimeConfig {
+  return (window as unknown as { __AIRA_CONFIG__?: RuntimeConfig }).__AIRA_CONFIG__ ?? {};
+}
 
 /**
  * OIDC client configuration (ADR-0007).
@@ -27,10 +49,14 @@ const runtime: RuntimeConfig =
  * 'code'`) and the discovery document is validated strictly against the issuer.
  */
 export const authConfig: AuthConfig = {
-  issuer: runtime.issuer ?? 'http://localhost:8080/realms/aira',
+  get issuer(): string {
+    return runtimeConfig().issuer ?? '';
+  },
   redirectUri: window.location.origin + '/',
   postLogoutRedirectUri: window.location.origin + '/',
-  clientId: runtime.clientId ?? 'aira-gateway',
+  get clientId(): string {
+    return runtimeConfig().clientId ?? 'aira-gateway';
+  },
   responseType: 'code',
   // Deliberately **not** `offline_access`.
   //

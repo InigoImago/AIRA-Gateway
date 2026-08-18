@@ -5,6 +5,42 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The console named its own address in three places, and a tabbed dialog that jumped
+
+*"We are building enterprise software here, not a junior learning project."* Fair, on both counts.
+
+**The dialog jumped.** `.modal` is centred (`top: 50%` plus a translate) and sized to its content,
+which is right for a dialog whose content does not change while it is open. Put tabs in one and
+every switch resizes it *and* re-centres it: the window moves up and down as the reader crosses
+sections. A `modal--steady` keeps a fixed height bounded by the viewport, so the chrome stays put
+and the body scrolls — no per-tab measurement and no number to revisit when a field is added.
+
+**And the addresses.** Yesterday's grep found two and I reported two. There were **three**, in three
+different mechanisms, each of which would have survived a search for the other two:
+
+- `auth.config.ts` fell back to `http://localhost:8080/realms/aira` — so a deployment whose
+  `runtime-config.js` failed to load sent every user to a login page on their own machine, and the
+  error named neither the realm nor the reason;
+- `index.html` carried a **second** CSP as a `<meta>` tag, compiled into the bundle, naming that
+  same origin. The nginx header could follow the issuer all it liked; the meta tag still refused
+  the connection. A built artefact cannot be templated by nginx, so the entrypoint substitutes a
+  placeholder;
+- the header itself was the separate variable that "has to agree", closed earlier the same day.
+
+One variable decides all three. Proven by starting the image with the issuer moved to `:8090`:
+`runtime-config.js`, the meta policy and the header all named `keycloak.example:8090`.
+
+The fallback did not become a thrown error, though that was the first attempt: `authConfig` is a
+module-level constant, so throwing failed the *import* and took four test suites with it — and in
+production would have failed before the shell that could explain it exists. The issuer is empty
+instead, read at the point of use rather than at import, and `AuthService.init` reports it through
+the `startupError` every other startup failure already uses.
+
+`tools/tests/test_the_console_carries_no_address.py` is what stops the fourth: no shipped `.ts` or
+`.html` may name a host or a port. A dev-server proxy and a Dockerfile default are configuration of
+the build, not knowledge inside the product.
+
+---
 ## Two stacks on one machine, and a console that knew its own address by heart
 
 Reported after a parallel system was brought up beside this one: *"that was a catastrophe"*, and

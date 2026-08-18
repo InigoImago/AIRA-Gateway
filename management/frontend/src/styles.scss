@@ -831,6 +831,24 @@ $field-label-gap: 0.3rem;
   border-radius: var(--aira-radius);
   box-shadow: var(--aira-shadow-lg);
 }
+/* **A tabbed dialog keeps its size.**
+ *
+ * `.modal` is centred and sized to its content, which is right for a dialog whose content does not
+ * change while it is open. Put tabs in one and every switch resizes it *and* re-centres it — the
+ * whole window jumps up and down as the reader moves between sections. Reported on the model
+ * editor, and it reads as unfinished software rather than as a layout detail.
+ *
+ * The fix is the one a dialog with sections wants anyway: a fixed height bounded by the viewport,
+ * so the chrome stays put and the **content** scrolls. No per-tab measurement, no magic number for
+ * the tallest section, and nothing that has to be revisited when a field is added.
+ */
+.modal--steady {
+  height: min(760px, calc(100vh - 3rem));
+}
+.modal--steady .modal__body {
+  flex: 1 1 auto;
+}
+
 .modal:focus-visible {
   outline: none;
 }

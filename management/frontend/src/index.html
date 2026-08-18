@@ -16,12 +16,13 @@
     -->
     <meta
       http-equiv="Content-Security-Policy"
+      data-aira-note="AIRA_ISSUER_ORIGIN is replaced at container start from AIRA_OIDC_ISSUER; see deploy/10-runtime-config.envsh"
       content="default-src 'self';
                script-src 'self';
                style-src 'self' 'unsafe-inline';
                img-src 'self' data:;
                font-src 'self' data:;
-               connect-src 'self' https: http://localhost:8080 ws://localhost:* wss:;
+               connect-src 'self' https: AIRA_ISSUER_ORIGIN ws://localhost:* wss:;
                object-src 'none';
                base-uri 'self';
                form-action 'self'"

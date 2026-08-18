@@ -37,4 +37,13 @@ EOF
 origin=$(printf '%s' "$issuer" | sed -E 's#^([a-zA-Z]+://[^/]+).*#\1#')
 export AIRA_CSP_CONNECT_SRC="${AIRA_CSP_CONNECT_SRC:-'self' ${origin}}"
 
+# **The third place the address lived.** `index.html` carries its own `<meta>` policy — a second
+# CSP beside the header, compiled into the bundle, naming `http://localhost:8080`. The header could
+# follow the issuer all it liked; the meta tag still refused the connection. A built artefact
+# cannot be templated by nginx, so the placeholder is substituted here, where the origin is known.
+index="/usr/share/nginx/html/index.html"
+if [ -f "$index" ]; then
+    sed -i "s#AIRA_ISSUER_ORIGIN#${origin}#g" "$index"
+fi
+
 echo "aira: console configured for issuer ${issuer} (connect-src: ${AIRA_CSP_CONNECT_SRC})"
