@@ -163,6 +163,7 @@ CONSUMER_SURVIVES = "gateway/tests/test_config_distribution_survives_a_bad_event
 DETECTION_WINDOW = "gateway/tests/test_a_failed_tick_keeps_its_window.py"
 REVOCATION_TIME = "gateway/tests/test_consumer_apply.py"
 KIRA_COMPAT = "gateway/tests/test_kira_compatibility_round.py gateway/tests/test_kira_surface.py"
+KIRA_TOLERANCE = "gateway/tests/test_kira_field_spellings.py gateway/tests/test_no_silent_drop.py"
 SURFACE_PARITY = (
     "gateway/tests/test_pipeline_accounting.py "
     "gateway/tests/test_every_surface_records_alike.py "
@@ -176,6 +177,55 @@ SERVING_OPTIONS = (
 )
 
 MUTATIONS = [
+    # ---- tolerating a caller without losing what they sent (FRD-107/124, 2026-08-18) -----
+    Mutation(
+        "TC1",
+        "a near-miss spelling is still refused, not quietly ignored",
+        "gateway/src/aira_gateway/api/kira/schemas.py",
+        "            if match and str(sent) != match:",
+        "            if False:",
+        KIRA_TOLERANCE,
+    ),
+    Mutation(
+        "TC2",
+        "a field this surface does not model is named on the response",
+        "gateway/src/aira_gateway/api/kira/routes.py",
+        "        request.state.unmodelled = names",
+        "        pass",
+        KIRA_TOLERANCE,
+    ),
+    Mutation(
+        "TC3",
+        "the header reaches every exit, not only the one somebody remembered",
+        "gateway/src/aira_gateway/api/kira/routes.py",
+        '        **({UNMODELLED_HEADER: ", ".join(unmodelled)} if unmodelled else {}),',
+        "        # header intentionally dropped",
+        KIRA_TOLERANCE,
+    ),
+    Mutation(
+        "TC4",
+        "a strict client's additionalProperties is forwarded, not refused",
+        "gateway/src/aira_gateway/core/schema.py",
+        '    additional_properties: bool | None = Field(default=None, alias="additionalProperties")',
+        "    # field intentionally removed from the vocabulary",
+        "gateway/tests/test_response_schema.py gateway/tests/test_kira_surface.py",
+    ),
+    Mutation(
+        "TC6",
+        "a streamed refusal carries the reason the server gave, not a bare status",
+        "gateway/src/aira_gateway/upstreams/openai/transport.py",
+        "            await response.aread()",
+        "            pass",
+        "gateway/tests/test_openai_dialect.py",
+    ),
+    Mutation(
+        "TC5",
+        "minimal thinking is sent as a level this dialect actually has",
+        "gateway/src/aira_gateway/upstreams/openai/mapping.py",
+        '    ThinkingMode.MINIMAL: "low",',
+        '    ThinkingMode.MINIMAL: "minimal",',
+        "gateway/tests/test_openai_dialect.py",
+    ),
     # ---- authentication and the tenant boundary (FRD-101/102, ADR-0006/0007) -------------
     Mutation(
         "A1",
@@ -2177,11 +2227,18 @@ MUTATIONS = [
     ),
     Mutation(
         "Y8",
-        "the compatibility surface refuses an unknown field rather than ignoring it",
+        "the compatibility surface does not ignore a field a caller sent",
+        # The rule outlived its mechanism. It used to be `extra="forbid"` on the request shapes,
+        # and this entry broke that single line — until a real chatbot was measured against the
+        # surface and refusal turned out to be the thing making it unusable. The property is
+        # unchanged and now has two halves, each with its own entry: `TC1` keeps the refusal where
+        # ignoring would answer *wrongly* (a near-miss spelling), and `TC2`/`TC3` keep the naming
+        # where it would only answer incompletely. Re-anchored onto the second, because that is
+        # the half this id was really about: nothing is dropped in silence.
         "gateway/src/aira_gateway/api/kira/schemas.py",
-        '_STRICT_ALIASED = ConfigDict(populate_by_name=True, extra="forbid")',
-        '_STRICT_ALIASED = ConfigDict(populate_by_name=True, extra="ignore")',
-        NO_SILENT_DROP,
+        "            match = known.get(_normalise(str(sent)))",
+        "            match = None",
+        NO_SILENT_DROP + " gateway/tests/test_kira_field_spellings.py",
     ),
     Mutation(
         "Y9",

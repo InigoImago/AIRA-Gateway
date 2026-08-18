@@ -192,6 +192,15 @@ requests are slower / more expensive" is answerable without storing schemas.
 field is an error **naming the field** rather than a silent drop; bounds on size, depth and total
 property count, each counted across the whole tree. Forwarded, never executed.
 
+The closed vocabulary stays closed — a schema field constrains the *answer*, so a dropped one
+produces output that is wrong with nothing about the response to show it, which is why `FRD-124`
+§5.6's tolerance stops at this boundary. **`additionalProperties` was added to it on 2026-08-18**,
+and that is not an exception to the rule but a correction of the list: it exists in OpenAPI 3.0 and
+in JSON Schema with the same meaning, every client that generates a schema from a typed model emits
+`additionalProperties: false` on each object, and it was refused with "not a field of the supported
+schema vocabulary" for a field that is. It travels in `to_wire()` and in the JSON-Schema
+translation alike.
+
 Two mechanisms behind one flag, as §5.2 requires: Gemini gets `responseMimeType` +
 `responseSchema` (always together — the schema alone is *ignored* by the API, which would return
 prose to a caller expecting a document, produced by our own request body); Anthropic gets a forced

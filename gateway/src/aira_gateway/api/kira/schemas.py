@@ -21,16 +21,68 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 _ALIASED = ConfigDict(populate_by_name=True, extra="ignore")
 
-#: Request shapes refuse what they do not model (`FRD-124`). Stage A's rule was already "an
-#: unsupported field is refused by name, never ignored", and it was enforced only for the two
-#: fields anybody had thought of. A migrating client that sends a field the predecessor accepted
-#: and this surface does not now learns so at migration time, which is the entire point of running
-#: a compatibility surface rather than hoping.
-_STRICT_ALIASED = ConfigDict(populate_by_name=True, extra="forbid")
+#: Request shapes **accept** what they do not model, and **name** it (`FRD-124` §5.6).
+#:
+#: This was `extra="forbid"`, and the argument for it was good: an unsupported field refused by
+#: name is a migrating client learning at migration time rather than hoping. What it missed is that
+#: a compatibility surface's job is to accept the predecessor's traffic, and the predecessor's
+#: clients send fields nobody here has heard of. Measured against a real chatbot: every call `422`,
+#: over fields that change no answer.
+#:
+#: The rule that replaces it keeps the half that mattered — **nothing is ignored silently**. Where
+#: the names go is the route's business, not this module's: `note_unmodelled` in `routes.py` puts
+#: them in the `X-AIRA-Unmodelled-Fields` response header on every exit, and on the
+#: `kira_request_refused` log line when the request failed for some other reason. This module only
+#: has to stop refusing, and to say which fields were extra — see `ignored_fields` below.
+#:
+#: Typed fields are validated exactly as before: a `model_id` that is not an integer is still a
+#: `422`, and `FRD-124`'s rule stands unchanged on the **Gemini** surface, which is Google's
+#: contract rather than a migration path.
+_TOLERANT_ALIASED = ConfigDict(populate_by_name=True, extra="allow")
 
 
-class TextPart(BaseModel):
-    model_config = _STRICT_ALIASED
+def _normalise(name: str) -> str:
+    return name.replace("_", "").replace("-", "").lower()
+
+
+class TolerantRequest(BaseModel):
+    """Accepts what it does not model — **except a near-miss of something it does**.
+
+    Two failures, and only one of them is fixed by tolerance.
+
+    A client sending a field this surface never heard of is a compatibility problem, and refusing
+    it stops the client working for no gain: measured against a real chatbot, whose every call came
+    back `422`. Those are accepted, and named on the response — see `_TOLERANT_ALIASED`.
+
+    A client sending `conversationHistory` where this surface calls it `conversation_history` is a
+    different thing entirely. Accepting that quietly answers **without the conversation** — a wrong
+    answer rather than a missing feature, and the one case `FRD-124`'s rule was really protecting.
+    A field whose name differs from a modelled one only by case or punctuation is refused, by name,
+    with the spelling this surface takes.
+    """
+
+    @model_validator(mode="after")
+    def _refuse_near_misses(self) -> TolerantRequest:
+        known = {
+            _normalise(name): (field.alias or name)
+            for name, field in type(self).model_fields.items()
+        }
+        for field in type(self).model_fields.values():
+            if field.alias:
+                known[_normalise(field.alias)] = field.alias
+        for sent in self.model_extra or {}:
+            match = known.get(_normalise(str(sent)))
+            if match and str(sent) != match:
+                raise ValueError(
+                    f"'{sent}' is not a field of this API, and it differs from '{match}' only in "
+                    "spelling. Accepting it would answer without what you sent — send it as "
+                    f"'{match}'."
+                )
+        return self
+
+
+class TextPart(TolerantRequest):
+    model_config = _TOLERANT_ALIASED
     text: str
 
 
@@ -43,8 +95,8 @@ class TextPart(BaseModel):
 # the day it shipped, through `mapping._parts`.
 
 
-class RequestContent(BaseModel):
-    model_config = _STRICT_ALIASED
+class RequestContent(TolerantRequest):
+    model_config = _TOLERANT_ALIASED
     parts: list[dict[str, Any]]
 
     @model_validator(mode="after")
@@ -80,20 +132,46 @@ class RequestContent(BaseModel):
         return self
 
 
-class ConversationContent(BaseModel):
-    model_config = _STRICT_ALIASED
+class ConversationContent(TolerantRequest):
+    model_config = _TOLERANT_ALIASED
     content: RequestContent
     role: Literal["user", "model"]
 
 
-class ThinkingSetting(BaseModel):
-    model_config = _STRICT_ALIASED
+class ThinkingSetting(TolerantRequest):
+    model_config = _TOLERANT_ALIASED
     mode: str
     tokens: int | None = None
 
 
-class ChatRequest(BaseModel):
-    model_config = _STRICT_ALIASED
+def ignored_fields(*models: BaseModel | None) -> tuple[str, ...]:
+    """Every field a caller sent that this surface does not model, in order, deduplicated.
+
+    The half of `extra="forbid"` worth keeping: a compatibility surface accepts the predecessor's
+    traffic, and **says what it did not understand**. Without this, tolerance is the silent drop
+    `FRD-124` was written against; with it, an operator can see that a client is sending
+    `thinkingBudget` months before anybody wonders why thinking never happens.
+    """
+    seen: dict[str, None] = {}
+    for model in models:
+        if model is None:
+            continue
+        for name in model.model_extra or {}:
+            seen.setdefault(str(name), None)
+        for value in model.__dict__.values():
+            if isinstance(value, BaseModel):
+                for name in ignored_fields(value):
+                    seen.setdefault(name, None)
+            elif isinstance(value, list):
+                for item in value:
+                    if isinstance(item, BaseModel):
+                        for name in ignored_fields(item):
+                            seen.setdefault(name, None)
+    return tuple(seen)
+
+
+class ChatRequest(TolerantRequest):
+    model_config = _TOLERANT_ALIASED
 
     request: RequestContent
     model_id: int
@@ -118,8 +196,8 @@ class ChatResponse(BaseModel):
     usage_data: UsageDataDto | None = None
 
 
-class EmbeddingRequest(BaseModel):
-    model_config = _STRICT_ALIASED
+class EmbeddingRequest(TolerantRequest):
+    model_config = _TOLERANT_ALIASED
 
     text: str | list[str]
     model_id: int

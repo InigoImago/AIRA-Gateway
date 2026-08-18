@@ -67,8 +67,19 @@ def test_an_unknown_field_is_named() -> None:
     """A caller sending JSON Schema draft 2020-12 gets the field we did not understand, not a
     best-effort conversion that drops the constraint they cared about."""
     with pytest.raises(SchemaRejected) as caught:
-        parse({"type": "OBJECT", "additionalProperties": False})
-    assert "additionalProperties" in str(caught.value)
+        parse({"type": "OBJECT", "unevaluatedItems": False})
+    assert "unevaluatedItems" in str(caught.value)
+
+
+def test_a_strict_objects_additional_properties_is_part_of_the_vocabulary() -> None:
+    """It stood in for "unknown field" above and was never one: it means the same thing in
+    OpenAPI 3.0 and in JSON Schema, and every client that generates a schema from a typed model
+    emits it. Refusing it turned a supported constraint into a rejected request."""
+    schema = parse({"type": "OBJECT", "additionalProperties": False})
+
+    assert schema.additional_properties is False
+    assert schema.to_wire()["additionalProperties"] is False
+    assert to_json_schema(schema)["additionalProperties"] is False
 
 
 def test_an_unknown_field_deep_inside_is_named_with_its_path() -> None:

@@ -19,7 +19,7 @@ look for:
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 
 import httpx
 import pytest
@@ -136,7 +136,12 @@ def test_a_request_with_no_options_carries_none_of_them() -> None:
 @pytest.mark.parametrize(
     ("mode", "effort"),
     [
-        (ThinkingMode.MINIMAL, "minimal"),
+        # `minimal` is a level of *ours*, not of this dialect: it exists on one vendor's newest
+        # family and every other OpenAI-compatible server answers `400 invalid value`. It is sent
+        # as the adjacent level that exists, which is an answer instead of no answer, and costs no
+        # stated budget because this dialect states none. `limited` is still refused below —
+        # there the caller named a number.
+        (ThinkingMode.MINIMAL, "low"),
         (ThinkingMode.LOW, "low"),
         (ThinkingMode.MEDIUM, "medium"),
         (ThinkingMode.HIGH, "high"),
@@ -323,6 +328,42 @@ async def test_a_streaming_failure_is_raised_before_the_caller_iterates() -> Non
     with pytest.raises(UpstreamError):
         async for _ in adapter.stream_generate(_request()):
             pass
+
+
+class _Unread(httpx.AsyncByteStream):
+    """A response body that has genuinely not been read yet, which a `json=` response never is."""
+
+    def __init__(self, payload: bytes) -> None:
+        self._payload = payload
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        yield self._payload
+
+
+async def test_a_streamed_refusal_carries_the_reason_the_server_gave() -> None:
+    """The same 400, on the two paths, has to say the same thing.
+
+    Reported from a chatbot whose streamed calls answered **500** while the identical request
+    non-streamed answered 400 *with the reason in it*. A streamed response arrives unread by
+    design, so judging its status before reading the body left `_raise_for_status` with nothing to
+    quote — and `FRD-129`'s whole point is that a 400 names a fault in the body we built, which is
+    the most actionable thing an operator gets. The half-second it costs to read a refusal's body
+    is not on the hot path: there is no stream to be had.
+    """
+    # **An `httpx.Response(400, json=...)` would not reach the path this test is named after.**
+    # Its content is already in hand, so `_reason()` can read it whether or not anybody called
+    # `aread()`, and the mutation that deletes the fix survives — the test passes for a reason
+    # unrelated to the fix. A response built over a byte *stream* is unread until it is read, which
+    # is what a real refusal from a real server is.
+    message = b'{"error": {"message": "invalid reasoning value: \'minimal\'"}}'
+    adapter = _adapter(lambda request: httpx.Response(400, stream=_Unread(message)))
+
+    with pytest.raises(UpstreamError) as caught:
+        async for _ in adapter.stream_generate(_request()):
+            pass
+
+    assert caught.value.status_code == 400
+    assert "minimal" in str(caught.value), "the server's reason must survive the streaming path"
 
 
 def test_the_two_verb_sets_are_disjoint() -> None:

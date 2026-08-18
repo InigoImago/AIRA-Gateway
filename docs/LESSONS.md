@@ -200,6 +200,21 @@ reading code.
   the audit row.
 - **Two refusals that need different actions stay apart** — *"not in the catalog"* (add it) and
   *"not approved"* (release it); *"no capable model"* (operator-fixable, 400) and an outage (502).
+- **A rule is not its mechanism, and refusing is not the only way to keep one.** *No silent drop*
+  was implemented as `extra="forbid"`, which made the compatibility surface refuse the traffic it
+  exists to accept: a real chatbot got `422` on every call, over fields that change no answer. The
+  fix is not to relax the rule but to ask what ignoring the field would **do** — drop something the
+  caller set (`conversationHistory` for `conversation_history`: refuse, naming the spelling taken)
+  or nothing at all (accept, and name it in a header on every exit). Where the answer is *invisibly
+  wrong* the strictness stays: a `responseSchema` field is a constraint on the output, so that
+  vocabulary is still closed. And the same audit turns up the mirror mistake — a field refused only
+  because it was **missing from the list**: `additionalProperties` means the same thing on both
+  sides of the translation, and "not a field of the supported vocabulary" was simply untrue.
+- **A value your enum has is not a value the wire has.** `minimal` is a thinking level here and on
+  exactly one vendor's newest family; every other OpenAI-compatible server answers `400 invalid
+  value`, so the least-thinking mode was unreachable everywhere. Sending the adjacent level that
+  exists is not the rounding refused for `limited` — there the caller named a number, here the
+  dialect has no number to name. Say which of the two a translation is, in the table itself.
 
 ---
 

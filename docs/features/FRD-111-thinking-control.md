@@ -116,6 +116,13 @@ belongs in the **upstream adapter**, alongside every other provider-specific dec
   predecessor's vocabulary and covers a vendor it was not written for.
 - Mock: honours the setting deterministically so the mode is observable in tests without a cloud.
 
+`minimal` on the OpenAI dialect is sent as **`"low"`**, and this is the one place a level is not
+carried across literally. `"minimal"` is not a value of that dialect: it exists on one vendor's
+newest family and every other OpenAI-compatible server answers `400 invalid value`, so a caller
+asking for the least thinking a model will do received no answer at all. The adjacent level that
+exists is a better approximation of the request than a refusal, and — unlike `limited`, which stays
+refused — it spends no budget the caller named, because this dialect takes no budget to name.
+
 Putting the level→budget table in `FRD-114`'s model metadata rather than in code is what keeps a
 new model from being a code change.
 

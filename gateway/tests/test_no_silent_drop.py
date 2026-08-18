@@ -363,11 +363,22 @@ def test_a_control_nobody_defined_cannot_be_requested() -> None:
 # == the compatibility surface holds the same rule ================================================
 
 
-def test_the_kira_surface_refuses_an_unknown_field_too() -> None:
-    """`FRD-107` Stage A already promised this — "an unsupported field is refused by name, never
-    ignored" — and delivered it for the two fields anybody had thought of at the time. A migrating
-    client sending a field the predecessor accepted should find out during migration, which is what
-    a compatibility surface is *for*."""
+def test_the_kira_surface_names_an_unknown_field_rather_than_dropping_it() -> None:
+    """The rule is *no silent drop*, and refusal was only ever one way of keeping it.
+
+    `FRD-107` Stage A promised "an unsupported field is refused by name, never ignored", and the
+    refusal half of that was measured against a real chatbot on 2026-08-18: it sends fields the
+    predecessor tolerated, so every call came back `422` over a field that changes no answer. A
+    compatibility surface that refuses the traffic it exists to accept is not one.
+
+    What survives is the part that mattered — the field is **named**, in a header on the very
+    response it affected. An operator can see that a client is sending `thinkingBudget` months
+    before anybody wonders why thinking never happens, and the caller is told on the spot.
+
+    The near-miss case is the exception and keeps its refusal: see
+    `test_kira_field_spellings.py`, where accepting `conversationHistory` would answer without
+    the conversation.
+    """
     app = create_app(GatewaySettings(auth_required=False, log_queue_size=0))
     with TestClient(app) as client:
         response = client.post(
@@ -378,10 +389,14 @@ def test_the_kira_surface_refuses_an_unknown_field_too() -> None:
                 "topSecretTuning": 7,
             },
         )
-    # 422, not 400: the predecessor answers validation failures with 422 and this surface keeps
-    # its codes, so a migrating client's error handling still switches on the same numbers.
-    assert response.status_code == 422
-    assert "topSecretTuning" in response.text
+
+    # The request gets *past* the field — this bare gateway has no catalogue, so it then fails on
+    # the model id, and that is the refusal a caller sees. What matters is that the unknown field
+    # is no longer the thing that stopped it, and that it was not swallowed on the way either:
+    # the header names it, on the very response it travelled with.
+    assert "topSecretTuning" not in response.text, response.text
+    assert response.json()["code"] == "MODEL_NOT_FOUND"
+    assert response.headers.get("X-AIRA-Unmodelled-Fields") == "topSecretTuning"
 
 
 # == through the route, which is the only place the wiring is real ================================

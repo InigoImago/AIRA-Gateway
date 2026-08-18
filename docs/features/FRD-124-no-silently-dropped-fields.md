@@ -108,6 +108,31 @@ actually send are ones that *change the answer*, so ignoring them is not harmles
 an unknown field is either misspelling a real one or using a feature we do not have, and both are
 better said out loud.
 
+### 5.6 The compatibility surface: named, not refused (2026-08-18)
+
+FR-1's mechanism on the KIRA surface was `extra="forbid"`, and measured against a real chatbot it
+made the surface unusable: the client sends fields the predecessor tolerated, so every call came
+back `422` over a field that changes no answer. A compatibility surface that refuses the traffic it
+exists to accept is not one.
+
+The rule that matters is *no silent drop*, and refusal was one way of keeping it — not the rule
+itself. So the two cases are now separated by what ignoring them would **do**:
+
+| what the caller sent | what ignoring it would produce | what happens |
+| --- | --- | --- |
+| `conversationHistory`, where the field is `conversation_history` | an answer **without the conversation** — wrong, and nothing about the response shows it | refused, naming the field and the spelling taken |
+| `topSecretTuning`, which names nothing here | the same answer either way | served, and the field named in a header |
+
+The first is decided by normalising both names — case and punctuation removed — and comparing
+against the shape's own fields and aliases, so it holds for a field nobody has thought of yet
+rather than for a hand-written list of four. It is checked on the nested request shapes too, where
+`mimeType` for `mime_type` is the same hazard.
+
+This does **not** extend to `responseSchema` (`FRD-112`): a schema field constrains the *answer*,
+so a dropped one produces output that is wrong invisibly, and the schema vocabulary stays closed.
+What did change there is that `additionalProperties` joined the vocabulary — it was never an
+unknown field, only a missing one.
+
 ## 6. Data Model
 
 None. No migration.
@@ -124,7 +149,12 @@ Refused with `400 INVALID_ARGUMENT`, each naming the field: `tools`, `toolConfig
 
 Refused with `400 FAILED_PRECONDITION` when no candidate's dialect can express a requested control.
 
-The KIRA surface refuses unknown fields with **422** and `VALIDATION_ERROR`, its own vocabulary.
+On the **KIRA compatibility surface** the same rule has a different shape — see §5.6. A field that
+differs from a modelled one only in spelling is refused with **422** and `VALIDATION_ERROR`, naming
+both the field and the spelling this surface takes. Any other unmodelled field is **accepted and
+named** in the `X-AIRA-Unmodelled-Fields` response header, which is set on every exit including
+refusals, and on the request's `kira_request_refused` log line when the request was refused for
+some other reason.
 
 ## 8. Testing
 

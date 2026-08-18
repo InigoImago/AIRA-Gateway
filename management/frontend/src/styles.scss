@@ -306,7 +306,7 @@ $field-label-gap: 0.3rem;
   width: 100%;
 }
 .form-inline > .tabs {
-  margin-bottom: 0.4rem;
+  margin-bottom: 1.25rem;
 }
 
 .form-inline {
@@ -847,6 +847,11 @@ $field-label-gap: 0.3rem;
 }
 .modal--steady .modal__body {
   flex: 1 1 auto;
+}
+/* The strip sits directly above the first field, and 0.4rem read as the two belonging to one
+ * another rather than as a heading over a section. */
+.modal__body > .tabs {
+  margin-bottom: 1.25rem;
 }
 
 .modal:focus-visible {

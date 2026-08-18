@@ -54,10 +54,17 @@ def test_the_snake_case_form_is_accepted_too(wire: str, attribute: str) -> None:
 
 
 @pytest.mark.parametrize(
-    "camel",
-    ["conversationHistory", "systemInstruction", "modelId", "taskType"],
+    ("camel", "model", "spelling"),
+    [
+        ("conversationHistory", schemas.ChatRequest, "conversation_history"),
+        ("systemInstruction", schemas.ChatRequest, "system_instruction"),
+        ("modelId", schemas.ChatRequest, "model_id"),
+        ("taskType", schemas.EmbeddingRequest, "task_type"),
+    ],
 )
-def test_no_other_camel_case_spelling_is_accepted(camel: str) -> None:
+def test_no_other_camel_case_spelling_is_accepted(
+    camel: str, model: type[schemas.TolerantRequest], spelling: str
+) -> None:
     """The other direction, and the reason this file exists.
 
     These are the four fields whose no-op alias made the module look as though it took both forms.
@@ -65,11 +72,44 @@ def test_no_other_camel_case_spelling_is_accepted(camel: str) -> None:
     is refused, never ignored"), so a migrating client learns at migration time rather than by
     wondering why its history has no effect. **That is the failure this guards against**: an
     ignored `conversationHistory` would not error, it would answer without the conversation.
-    """
-    with pytest.raises(ValidationError) as raised:
-        schemas.ChatRequest.model_validate({**BASE, camel: None})
 
-    assert camel in str(raised.value), "the refusal must name the field"
+    Refusal survived the surface becoming tolerant of *unknown* fields, and this is the line
+    between the two: a spelling that differs from a modelled field only in case or punctuation is
+    something the caller meant to set, and accepting it drops what they sent. `taskType` is
+    checked against the shape that has a `task_type` — on the chat shape it names nothing, and is
+    therefore accepted and reported like any other unmodelled field.
+    """
+    base = BASE if model is schemas.ChatRequest else {"text": "hi", "model_id": 1}
+
+    with pytest.raises(ValidationError) as raised:
+        model.model_validate({**base, camel: None})
+
+    message = str(raised.value)
+    assert camel in message, "the refusal must name the field"
+    assert spelling in message, "and must say which spelling this surface takes"
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        ({"topSecretTuning": 7}, ("topSecretTuning",)),
+        ({"request": {"parts": [{"text": "hi"}], "cacheHint": "x"}}, ("cacheHint",)),
+        ({"beta": 1, "gamma": 2}, ("beta", "gamma")),
+    ],
+)
+def test_a_field_this_surface_never_modelled_is_accepted_and_named(
+    payload: dict[str, object], expected: tuple[str, ...]
+) -> None:
+    """Tolerance, and the half of `extra="forbid"` that was worth keeping.
+
+    Refusing these made the surface unusable for a real chatbot — it sends fields the predecessor
+    tolerated, and every call came back `422` for a field that changes nothing about the answer.
+    They are accepted; they are also **named**, at the top level and nested, so nothing is dropped
+    in silence. What the route then does with the names is `test_no_silent_drop.py`'s business.
+    """
+    parsed = schemas.ChatRequest.model_validate({**BASE, **payload})
+
+    assert schemas.ignored_fields(parsed) == expected
 
 
 def test_every_alias_that_remains_says_something_new() -> None:

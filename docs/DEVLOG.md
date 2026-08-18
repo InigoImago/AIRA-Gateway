@@ -5,6 +5,70 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## A compatibility surface that refused the traffic it exists to accept (2026-08-18)
+
+Six diffs came back from a real chatbot pointed at the KIRA surface in another environment. They
+are small, and the reason they existed is not: every one of them is a place where a rule this
+project holds — *no silent drop*, *a closed vocabulary*, *do not approximate* — was being kept by
+a mechanism the rule did not actually require, and the mechanism was refusing valid traffic.
+
+**`extra="forbid"` on the request shapes.** The chatbot sends fields the predecessor tolerated, so
+every call came back `422` over a field that changes no answer. The obvious fix — ignore extras —
+reintroduces exactly the defect `FRD-124` was written against, and the guard said so: a test
+asserts that `conversationHistory` is refused, *"because an ignored `conversationHistory` would not
+error, it would answer without the conversation."*
+
+Both are right, about different fields. So the line is drawn by what ignoring the field would
+**do**. A name that differs from a modelled field only in case or punctuation is something the
+caller meant to set, and accepting it silently drops what they sent: refused, naming the field and
+the spelling this surface takes. Anything else is accepted and **named** — in an
+`X-AIRA-Unmodelled-Fields` header, set in `_sunset()` where all three exits already go, so it
+reaches refusals too. The near-miss check normalises both names rather than listing four, so it
+holds for the field nobody has thought of yet, and it runs on the nested shapes where `mimeType`
+for `mime_type` is the same hazard.
+
+Two tests changed sides, and that is the honest record of it: `test_the_kira_surface_refuses_an_
+unknown_field_too` now asserts the field is *named* rather than refused, and the spelling guard now
+checks each camelCase name against the shape that actually has the field — `taskType` was being
+asserted against `ChatRequest`, which has no `task_type`, so the old blanket refusal was answering
+for a property nobody had checked.
+
+**`additionalProperties` was never an unknown field, only a missing one.** It means the same thing
+in OpenAPI 3.0 and JSON Schema, and every client generating a schema from a typed model emits it on
+each object. Refusing it returned "not a field of the supported schema vocabulary" for a field that
+is. Added to the vocabulary; the vocabulary stays closed otherwise, because a schema field
+constrains the answer and a dropped one is invisible. The test that used it as its example of an
+unknown field now uses `unevaluatedItems`, which genuinely is one.
+
+**`minimal` is not a value of the OpenAI dialect.** It exists on one vendor's newest family; every
+other server answers `400 invalid value`. So the least-thinking mode was unreachable on every
+OpenAI-compatible server there is. It is sent as `"low"` — the adjacent level that exists. This is
+not the rounding refused for `limited`: there the caller named a number, here the dialect has no
+number to name. `minimal` therefore goes back into both local seeds, where it had been struck in
+August for precisely the reason now fixed; the pair-guard that keeps those two seeds in step
+carried the correction across, which is what it is for.
+
+**A streamed non-200 was a 500.** The upstream's body had not been read when the status was judged,
+so the reason never made it into the error — the same request non-streamed answered `400` with the
+reason in it. `await response.aread()` before judging.
+
+**The refused body now goes to the log**, capped at 12 KB. It was already on the audit row, and the
+audit row was not enough: diagnosing this meant a database query against a use case that may not
+have payload storage on, while the operator had a terminal open.
+
+Six mutations added (`TC1`–`TC6`), each run to confirm the new tests notice when the property is
+broken. `Y8` — which broke `extra="forbid"` — was re-anchored rather than deleted: the property it
+named is intact, it simply has two halves now.
+
+`TC6` earned its keep immediately: the first version of the streaming test passed **and** the
+mutation survived it, because an `httpx.Response(400, json=...)` has its content already in hand,
+so `_reason()` could read the body whether or not the fix was there. The test was green for a
+reason unrelated to what it was named after — the trap `CLAUDE.md` names, walked into again the
+same day. A response built over a real byte stream is unread until somebody reads it, and the
+mutation then dies as it should.
+
+---
+
 ## The console named its own address in three places, and a tabbed dialog that jumped
 
 *"We are building enterprise software here, not a junior learning project."* Fair, on both counts.

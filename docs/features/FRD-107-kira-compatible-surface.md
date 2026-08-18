@@ -350,6 +350,27 @@ a cross-tabulation would be a fabricated figure).
 The refusal rule survives the change and only moves. "Not built yet" is gone; **"this model cannot"
 is not**, and it fails exactly as loudly.
 
+## 10b. What a real client changed (2026-08-18)
+
+The risk in §11 — *"the predecessor's contract is a description, not the source"* — arrived as
+predicted, and not from the contract: a real chatbot was pointed at this surface and could not use
+it. Six differences, all on the tolerance axis, none of them in the document. They are recorded in
+`FRD-124` §5.6, `FRD-112` §10a and `FRD-111` §5.2; in summary:
+
+- an unmodelled request field is **named**, not refused — except where the name is a near-miss of
+  a modelled one, which would answer without what the caller sent;
+- `additionalProperties` is part of the schema vocabulary, because it always meant the same thing
+  on both sides of the translation;
+- `minimal` thinking travels to an OpenAI-compatible server as `"low"`, the nearest level that
+  dialect has, so the mode is reachable at all;
+- a streamed upstream refusal is read before it is judged, so a `400` arrives with the server's
+  reason instead of as a `500`;
+- a refused request's body is logged (12 KB cap) beside the audit row it already produced.
+
+Worth stating for the next surface: every one of these was a **rule kept by the wrong mechanism**.
+The rules themselves — no silent drop, a closed schema vocabulary, do not approximate a stated
+budget — all survived unchanged.
+
 ## 11. Dependencies & Risks
 
 - **`ADR-0010`** (blocking), then `FRD-110`–`FRD-114`.

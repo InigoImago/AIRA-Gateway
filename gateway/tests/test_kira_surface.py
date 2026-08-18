@@ -297,16 +297,49 @@ async def test_a_model_without_structured_output_refuses_rather_than_answering_i
 
 
 async def test_an_unknown_schema_field_is_named_rather_than_dropped() -> None:
+    """A schema **is** refused field by field, and unlike the request body it stays that way.
+
+    The two are not the same question. A request field this surface does not model changes no
+    answer, so it is accepted and named in a header. A *schema* field constrains the answer, and
+    a dropped constraint produces output that is wrong in a way nothing about the response shows —
+    `FRD-112` §2's reason, still the reason.
+
+    The example used to be `additionalProperties`, which was never an unknown field so much as a
+    missing one: it means the same thing in OpenAPI and in JSON Schema, every strict
+    structured-output client emits it, and it is now part of the vocabulary. `unevaluatedItems` is
+    draft 2020-12 with no OpenAPI 3.0 equivalent, which is the case this guards.
+    """
     app = _app()
     with TestClient(app) as client:
         await _catalogue(app, capabilities=["generate", "structured_output"])
         response = client.post(
             f"{BASE}/chat",
-            json=_chat(responseSchema={"type": "OBJECT", "additionalProperties": False}),
+            json=_chat(responseSchema={"type": "OBJECT", "unevaluatedItems": False}),
         )
 
     assert response.status_code == 400
-    assert "additionalProperties" in response.json()["message"]
+    assert "unevaluatedItems" in response.json()["message"]
+
+
+async def test_a_strict_schema_from_a_typed_client_is_forwarded_not_refused() -> None:
+    """Measured against a real chatbot: it generates its schema from a typed model, so every
+    object it describes carries `additionalProperties: false`, and every call came back `400`
+    naming a field that means exactly what it says on both sides of the translation."""
+    app = _app()
+    with TestClient(app) as client:
+        await _catalogue(app, capabilities=["generate", "structured_output"])
+        response = client.post(
+            f"{BASE}/chat",
+            json=_chat(
+                responseSchema={
+                    "type": "OBJECT",
+                    "properties": {"answer": {"type": "STRING"}},
+                    "additionalProperties": False,
+                }
+            ),
+        )
+
+    assert response.status_code == 200, response.text
 
 
 async def test_a_declared_thinking_default_is_now_applied_rather_than_refused() -> None:

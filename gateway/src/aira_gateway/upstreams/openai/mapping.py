@@ -65,9 +65,17 @@ SCHEMA_NAME = "aira_response"
 #: caller who explicitly switched thinking off then receives a 200, an empty or truncated answer,
 #: and a bill for several hundred tokens of reasoning that is dropped before they ever see it.
 #: `"none"` on the same server answers in about fifteen tokens.
+#: `minimal` is **sent as `"low"`**, and that is not the rounding refused above. `"minimal"` is
+#: not a value of this dialect — it exists on one vendor's newest family and nowhere else, so
+#: every other OpenAI-compatible server answers `400 invalid value`. A caller asking for the least
+#: thinking a model will do therefore got no answer at all, which is a worse approximation of
+#: their request than the adjacent level that works. It costs no stated budget, because this
+#: dialect has none to state: the difference between the two is the server's own, not a number the
+#: caller named. `limited` stays refused for exactly the reason this one is not — there a number
+#: *was* named.
 _REASONING_EFFORT = {
     ThinkingMode.DISABLED: "none",
-    ThinkingMode.MINIMAL: "minimal",
+    ThinkingMode.MINIMAL: "low",
     ThinkingMode.LOW: "low",
     ThinkingMode.MEDIUM: "medium",
     ThinkingMode.HIGH: "high",

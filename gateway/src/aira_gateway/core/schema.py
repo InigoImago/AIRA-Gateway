@@ -74,6 +74,16 @@ class ResponseSchema(BaseModel):
     min_properties: int | None = Field(default=None, alias="minProperties")
     max_properties: int | None = Field(default=None, alias="maxProperties")
     any_of: list[ResponseSchema] | None = Field(default=None, alias="anyOf")
+    #: Whether keys beyond ``properties`` are allowed. Part of the vocabulary rather than an
+    #: exception to it: it exists in OpenAPI 3.0 and in JSON Schema with the same meaning, and it
+    #: is what every "strict" structured-output client emits — a chatbot generating its schema
+    #: from a typed model sends ``additionalProperties: false`` on every object it describes.
+    #:
+    #: Refusing it was correct by the letter of `FRD-112` §2 and wrong in effect: the constraint
+    #: was neither unsupported nor dropped, it was simply missing from the list, and the caller
+    #: got "not a field of the supported schema vocabulary" for a field that is. The subset here
+    #: is meant to be the *shared* one, and this was a gap in it.
+    additional_properties: bool | None = Field(default=None, alias="additionalProperties")
 
     @field_validator("type", mode="before")
     @classmethod
@@ -201,6 +211,7 @@ _JSON_SCHEMA_ALIASES = {
     "max_items": "maxItems",
     "min_properties": "minProperties",
     "max_properties": "maxProperties",
+    "additional_properties": "additionalProperties",
 }
 
 

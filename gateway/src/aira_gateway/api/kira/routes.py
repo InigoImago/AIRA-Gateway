@@ -23,6 +23,7 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any
 
+import structlog
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import ValidationError
@@ -98,9 +99,48 @@ SUNSET_HEADERS = {
 }
 
 
+_log = structlog.get_logger(__name__)
+
+#: How much of a refused body goes into the log line. A migrating client's request is the evidence,
+#: and a request carrying a document is not: 12 KB is a generous conversation and a negligible log.
+REFUSAL_BODY_LIMIT = 12 * 1024
+
+#: The header naming every field the caller sent that this surface does not model.
+UNMODELLED_HEADER = "X-AIRA-Unmodelled-Fields"
+
+
+def note_unmodelled(request: Request, *models: Any) -> None:
+    """Record the fields a caller sent that this surface does not model.
+
+    `FRD-124`'s rule is that nothing a caller sends is dropped in silence, and until now this
+    surface kept it by **refusing** the request. Measured against a real chatbot, that made the
+    whole surface unusable: it sends fields the predecessor tolerated, and every call came back
+    `422`. Refusal is the right answer for a near-miss of a field we *do* model — see
+    `TolerantRequest` — and the wrong one for a field that carries no meaning here at all.
+
+    So the field is accepted and **named**: in the response header below, on the request's log
+    line, and — where payload storage is on — in the stored body, which is the caller's own.
+    Silence is what the rule forbids; refusal was only ever one way of breaking it.
+    """
+    names = schemas.ignored_fields(*models)
+    if names:
+        request.state.unmodelled = names
+
+
 def _sunset(request: Request) -> dict[str, str]:
+    """Every response's headers, from the one place all three exits already go through.
+
+    Set in each handler instead, `UNMODELLED_HEADER` would reach whichever exits somebody
+    remembered — and this file has already paid for that twice (`FRD-126`, and `tool_calls`
+    missing from the streamed path for an afternoon).
+    """
     configured = getattr(request.app.state.settings, "kira_sunset", "")
-    return {**SUNSET_HEADERS, **({"Sunset": configured} if configured else {})}
+    unmodelled = getattr(request.state, "unmodelled", ())
+    return {
+        **SUNSET_HEADERS,
+        **({"Sunset": configured} if configured else {}),
+        **({UNMODELLED_HEADER: ", ".join(unmodelled)} if unmodelled else {}),
+    }
 
 
 #: A shared control's HTTP status, in the compatibility surface's error vocabulary.
@@ -287,6 +327,7 @@ async def _prepare(
             422, errors.VALIDATION_ERROR, "Request validation failed.", _details(exc)
         ) from exc
 
+    note_unmodelled(request, parsed)
     model = await _resolve_model(request, parsed.model_id)
     trail.requested_model = model
     declaration = await catalog_of(request).declaration(model)
@@ -526,6 +567,7 @@ async def embed(request: Request, principal: Principal = Depends(require_princip
                 422, errors.VALIDATION_ERROR, "Request validation failed.", _details(exc)
             ) from exc
 
+        note_unmodelled(request, parsed)
         model = await _resolve_model(request, parsed.model_id)
         trail.requested_model = model
 
@@ -834,6 +876,25 @@ async def _refused(
 ) -> JSONResponse:
     """One recording site per surface, for the same reason the Gemini surface has one."""
     response = _error_response(request, exc)
+    # **The refused body, in the log, where somebody debugging a client will actually look.**
+    # It is on the audit row too, and the audit row was not enough: diagnosing why a chatbot got
+    # `422` meant a database query against a use case that may not have payload storage on at all,
+    # while the operator had a terminal open. A refusal is not caller content the way an answer
+    # is — nothing was served — and the row's retention clock still governs the stored copy.
+    #
+    # Truncated rather than dropped when large: a body that is too big to log is usually the
+    # interesting one, and its first 12 KB names the fields.
+    encoded = json.dumps(trail.body, default=str) if trail.body else ""
+    _log.warning(
+        "kira_request_refused",
+        operation=operation,
+        status=response.status_code,
+        error=type(exc).__name__,
+        model=trail.served_model or None,
+        unmodelled_fields=list(getattr(request.state, "unmodelled", ())),
+        request_body=encoded[:REFUSAL_BODY_LIMIT],
+        request_body_truncated=len(encoded) > REFUSAL_BODY_LIMIT,
+    )
     if getattr(request.state, "attribution", None) is not None:
         # Never turn a correct refusal into a server error (FRD-122 FR-7).
         with contextlib.suppress(Exception):

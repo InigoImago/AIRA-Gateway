@@ -102,9 +102,23 @@ class OpenAITransport:
 
 
 def _reason(response: httpx.Response) -> str:
-    """The provider's stated reason, if it gave one in the shape this dialect uses."""
+    """The provider's stated reason, if it gave one in the shape this dialect uses.
+
+    **`ResponseNotRead` is not a `ValueError`.** On the streaming path httpx has not read the body
+    when the status arrives, so `.json()` raises `httpx.ResponseNotRead` — a `StreamError`, which
+    this `except` never caught. A 400 from a streamed request therefore left the transport as an
+    unhandled exception and reached the caller as a **500**: an upstream refusing our body, dressed
+    as a fault in this gateway. The reason it names is usually the field to fix.
+
+    Unread bodies are read here rather than at the call site, because this is the only place that
+    needs one and doing it eagerly would pull a whole streamed answer into memory on the happy path.
+    """
     try:
         message = response.json().get("error", {}).get("message")
+    except httpx.ResponseNotRead:
+        # Belt and braces: the streaming path reads the body before it gets here, and a caller that
+        # forgets should get no message rather than a 500.
+        return ""
     except ValueError, AttributeError:
         return ""
     # Bounded: an upstream is not a trusted source of arbitrarily long strings to put in our own
@@ -138,6 +152,17 @@ class _StreamContext:
             response = await self._context.__aenter__()
         except httpx.HTTPError as exc:
             raise UpstreamError(f"Upstream error: {type(exc).__name__}.") from exc
+        if response.status_code != httpx.codes.OK:
+            # **Read before judging.** On a streamed request httpx has the status and not the body,
+            # so `_reason` — which parses the body to quote the provider's own message — hit
+            # `ResponseNotRead` and left the transport as an unhandled exception: a **500** for
+            # what is an upstream refusing our request, with the one sentence naming the offending
+            # field thrown away. Reported from a chatbot whose streaming calls answered 500 while
+            # the same request non-streamed answered 400 with the reason.
+            #
+            # Only on the error path: reading eagerly would pull a whole streamed answer into
+            # memory on every successful call, which is the thing streaming exists to avoid.
+            await response.aread()
         self._transport._raise_for_status(response)
         checked: httpx.Response = response
         return checked
