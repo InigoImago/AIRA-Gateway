@@ -368,552 +368,609 @@
 
     <div class="modal__body">
       <form id="model-editor-form" class="form-inline" (ngSubmit)="save()">
-        <div class="field grow">
-          <label for="model-name">Model id</label>
-          <input
-            id="model-name"
-            name="name"
-            [ngModel]="name()"
-            (ngModelChange)="name.set($event)"
-            [readOnly]="!!editing()"
-            placeholder="gemini-2.0-flash"
-            autocomplete="off"
-          />
-          <span class="field__hint">Exactly as the gateway exposes it.</span>
-        </div>
-        <div class="field">
-          <label for="model-display">Display name</label>
-          <input
-            id="model-display"
-            name="display_name"
-            [ngModel]="displayName()"
-            (ngModelChange)="displayName.set($event)"
-            autocomplete="off"
-          />
-        </div>
         <!--
-          Provider first, model second — the order somebody actually works in, and the order that
-          lets the second question be answered *by the gateway* instead of typed. It used to be a
-          text box: a model was declared under whatever string was entered, and the two refusals a
-          typo produces ("not in the model catalog", "has not been approved") are both correct and
-          neither names the string that was wrong.
-        -->
-        <div class="field">
-          <label for="model-provider">
-            Provider
-            <app-info-hint label="Provider" testid="provider-hint" [wide]="true">
-              Which of this gateway's configured upstreams reaches the model. The list is what the
-              gateway actually has — not what the product supports — because a provider no
-              credential reaches is a choice that cannot work. A model may be declared before its
-              platform is configured: choose <em>Something else</em> and type the name.
-            </app-info-hint>
-          </label>
-          @if (providerIsCustom()) {
-            <input
-              id="model-provider"
-              name="provider"
-              [ngModel]="provider()"
-              (ngModelChange)="provider.set($event)"
-              placeholder="generative-language"
-              autocomplete="off"
-              data-testid="provider-typed"
-            />
-            @if (!providersError() && (providers() ?? []).length) {
-              <button
-                type="button"
-                class="btn btn--sm btn--ghost"
-                (click)="providerIsCustom.set(false)"
-                data-testid="provider-back-to-list"
-              >
-                Choose a configured one instead
-              </button>
-            }
-          } @else {
-            <select
-              id="model-provider"
-              name="provider"
-              [ngModel]="provider()"
-              (ngModelChange)="chooseProvider($event)"
-              data-testid="provider-select"
-            >
-              <option value="">{{ loadingProviders() ? 'Asking the gateway…' : '—' }}</option>
-              @for (upstream of providers() ?? []; track upstream.name) {
-                <option [value]="upstream.name">{{ providerLabel(upstream) }}</option>
-              }
-              <option [value]="OTHER">Something else — type it</option>
-            </select>
-          }
-          @if (providersError(); as message) {
-            <!-- Informs, never blocks. Declaring a model before its credential exists is the
-                 ordinary order of work, so a gateway that cannot be reached degrades to the text
-                 box it replaced rather than locking somebody out of their own catalog. -->
-            <span class="field__hint" data-testid="providers-unavailable">
-              {{ message }} Type the provider name instead.
-            </span>
-          } @else if (selectedProvider(); as upstream) {
-            <span class="field__hint" data-testid="provider-note">
-              @if (upstream.cataloguedIsEnough) {
-                Cataloguing a model here is enough to reach it — no configuration entry needed.
-              } @else {
-                This platform needs the model named in the gateway's configuration as well;
-                cataloguing it alone will not make it answer.
-              }
-            </span>
-          }
-        </div>
+        **Three tabs, and one decision that is on none of them.**
 
-        @if (vendorFilled().length) {
-          <p class="callout grow" data-testid="vendor-filled" style="margin: 0">
-            Filled in from {{ provider() }}: {{ vendorFilled().join(', ') }}. Left for you: the
-            price, and what the model can actually do beyond the verbs its API publishes — a
-            vendor's capability flag is a claim, and a price nobody set is not zero. Nothing is
-            written until you save, and a model is not usable until you release it.
-            @for (note of vendorSaid(); track note) {
-              <span class="muted" style="display: block; margin-top: 0.35rem">{{ note }}</span>
-            }
-          </p>
-        }
-        <div class="field">
-          <label for="model-input">Input price $ / 1M</label>
-          <input
-            id="model-input"
-            name="input_price"
-            inputmode="decimal"
-            [ngModel]="inputPrice()"
-            (ngModelChange)="inputPrice.set($event)"
-            placeholder="0.075"
-            autocomplete="off"
-          />
-        </div>
-        <div class="field">
-          <label for="model-output">Output price $ / 1M</label>
-          <input
-            id="model-output"
-            name="output_price"
-            inputmode="decimal"
-            [ngModel]="outputPrice()"
-            (ngModelChange)="outputPrice.set($event)"
-            placeholder="0.30"
-            autocomplete="off"
-          />
-        </div>
-        <div class="field">
-          <label for="model-cached">
-            Cached input $ / 1M
-            <app-info-hint label="Cached input price" testid="cached-price" [wide]="true">
-              What this provider charges for input it served from its prompt cache instead of
-              reading again. Usually a fraction of the ordinary input price — Anthropic charges a
-              tenth. Leave it empty if the provider does not cache, or if you have not looked it up:
-              cached tokens are then billed at the ordinary input rate, which can only over-state
-              the bill, never under-state it. It also means the saving will not show up in
-              reporting, because as far as AIRA knows there was none.
-            </app-info-hint>
-          </label>
-          <input
-            id="model-cached"
-            name="cached_price"
-            inputmode="decimal"
-            [ngModel]="cachedPrice()"
-            (ngModelChange)="cachedPrice.set($event)"
-            placeholder="0.0075"
-            autocomplete="off"
-          />
-        </div>
-        <div class="field">
-          <label for="model-cache-write">
-            Cache write $ / 1M
-            <app-info-hint label="Cache write price" testid="cache-write-price" [wide]="true">
-              What the <em>first</em> request costs — the one that puts the prefix into the cache.
-              It is <strong>more</strong> than ordinary input, not less: Anthropic charges 1.25× for
-              a five-minute lifetime and 2× for an hour. This is the number that decides whether
-              caching pays at all, because a prefix that is written and never read again costs you a
-              quarter extra. Leave it empty where the provider does not charge for writes (Azure
-              before GPT-5.6, and Gemini's implicit cache).
-            </app-info-hint>
-          </label>
-          <input
-            id="model-cache-write"
-            name="cache_write_price"
-            inputmode="decimal"
-            [ngModel]="cacheWritePrice()"
-            (ngModelChange)="cacheWritePrice.set($event)"
-            placeholder="0.09375"
-            autocomplete="off"
-          />
-        </div>
-        <div class="field">
-          <label for="model-publisher">Publisher</label>
-          <input
-            id="model-publisher"
-            name="publisher"
-            [ngModel]="publisher()"
-            (ngModelChange)="publisher.set($event)"
-            placeholder="google | anthropic | openai"
-            autocomplete="off"
-          />
-          <span class="field__hint">Selects the wire dialect the gateway speaks to it.</span>
-        </div>
-        <div class="field">
-          <label for="model-platform">Platform</label>
-          <input
-            id="model-platform"
-            name="platform"
-            [ngModel]="platform()"
-            (ngModelChange)="platform.set($event)"
-            placeholder="vertex | foundry"
-            autocomplete="off"
-          />
-        </div>
-        <div class="field">
-          <label for="model-hosting">Hosting</label>
-          <select
-            id="model-hosting"
-            name="hosting"
-            [ngModel]="hosting()"
-            (ngModelChange)="hosting.set($event)"
+        The editor had eighteen fields in one column: what the model *is*, what it *costs* and
+        what it *can do*, interleaved — prices sat between the provider and the publisher. Split
+        by the question each field answers, because that is what somebody filling it in is
+        thinking about.
+
+        **Approval is deliberately not a tab.** It is not a property of the model, it is the
+        decision that makes it callable (`FRD-307`), and it starts **off**. On a tab, somebody
+        fills in three screens, presses Save, and creates a model nothing can call — with the
+        switch they never saw sitting at its default. So it lives beside Save, visible whichever
+        tab is open, which is the one place its state cannot be missed at the moment it takes
+        effect. Deprecation keeps it company for the same reason: both are statements about the
+        model's standing rather than its nature.
+      -->
+        <div class="tabs" role="tablist" aria-label="Model declaration">
+          <button
+            type="button"
+            role="tab"
+            class="tab"
+            [class.is-active]="editorTab() === 'identity'"
+            [attr.aria-selected]="editorTab() === 'identity'"
+            (click)="editorTab.set('identity')"
+            data-testid="tab-identity"
           >
-            <option value="">—</option>
-            <option value="managed">Managed by the vendor</option>
-            <option value="self_deployed">Self-deployed (our capacity)</option>
-          </select>
-          <span class="field__hint">
-            Self-deployed endpoints cold-start and answer 429 for capacity, not quota.
-          </span>
+            What it is
+          </button>
+          <button
+            type="button"
+            role="tab"
+            class="tab"
+            [class.is-active]="editorTab() === 'capabilities'"
+            [attr.aria-selected]="editorTab() === 'capabilities'"
+            (click)="editorTab.set('capabilities')"
+            data-testid="tab-capabilities"
+          >
+            What it can do
+          </button>
+          <button
+            type="button"
+            role="tab"
+            class="tab"
+            [class.is-active]="editorTab() === 'price'"
+            [attr.aria-selected]="editorTab() === 'price'"
+            (click)="editorTab.set('price')"
+            data-testid="tab-price"
+          >
+            What it costs
+          </button>
         </div>
-        <div class="field">
-          <label for="model-kira-id">KIRA id</label>
-          <input
-            id="model-kira-id"
-            type="number"
-            min="1"
-            name="kira_id"
-            [ngModel]="kiraId()"
-            (ngModelChange)="kiraId.set($event)"
-            placeholder="assigned automatically"
-            data-testid="model-kira-id"
-          />
-          <span class="field__hint">
-            How a KIRA client names this model — that surface identifies models by number, not by
-            name. Left blank, the next free one is assigned. Set it to keep clients migrating from
-            the predecessor working unchanged, by giving this model the id they already send.
-          </span>
-        </div>
-        <div class="field">
-          <label for="model-max-output">Max output tokens</label>
-          <input
-            id="model-max-output"
-            type="number"
-            min="1"
-            name="max_output"
-            [ngModel]="maxOutput()"
-            (ngModelChange)="maxOutput.set($event)"
-            placeholder="—"
-          />
-        </div>
-        <div class="field">
-          <label for="model-default-output">Default output tokens</label>
-          <input
-            id="model-default-output"
-            type="number"
-            min="1"
-            name="default_output"
-            [ngModel]="defaultOutput()"
-            (ngModelChange)="defaultOutput.set($event)"
-            placeholder="—"
-          />
-          <span class="field__hint">Applied when the caller sets no cap.</span>
-        </div>
-
-        <fieldset class="field" style="border: 0; padding: 0; margin: 0">
-          <legend class="field__legend">Capabilities</legend>
-          @for (capability of allCapabilities; track capability) {
-            <label class="checkline">
-              <input
-                type="checkbox"
-                [name]="'cap-' + capability"
-                [ngModel]="hasCapability(capability)"
-                (ngModelChange)="toggleCapability(capability, $event)"
-              />
-              {{ capability }}
-              <app-info-hint [label]="capability" [testid]="'cap-' + capability" [wide]="true">
-                {{ explain(capability) }}
+        @if (editorTab() === 'identity') {
+          <div class="field grow">
+            <label for="model-name">Model id</label>
+            <input
+              id="model-name"
+              name="name"
+              [ngModel]="name()"
+              (ngModelChange)="name.set($event)"
+              [readOnly]="!!editing()"
+              placeholder="gemini-2.0-flash"
+              autocomplete="off"
+            />
+            <span class="field__hint">Exactly as the gateway exposes it.</span>
+          </div>
+          <div class="field">
+            <label for="model-display">Display name</label>
+            <input
+              id="model-display"
+              name="display_name"
+              [ngModel]="displayName()"
+              (ngModelChange)="displayName.set($event)"
+              autocomplete="off"
+            />
+          </div>
+          <!--
+            Provider first, model second — the order somebody actually works in, and the order that
+            lets the second question be answered *by the gateway* instead of typed. It used to be a
+            text box: a model was declared under whatever string was entered, and the two refusals a
+            typo produces ("not in the model catalog", "has not been approved") are both correct and
+            neither names the string that was wrong.
+          -->
+          <div class="field">
+            <label for="model-provider">
+              Provider
+              <app-info-hint label="Provider" testid="provider-hint" [wide]="true">
+                Which of this gateway's configured upstreams reaches the model. The list is what the
+                gateway actually has — not what the product supports — because a provider no
+                credential reaches is a choice that cannot work. A model may be declared before its
+                platform is configured: choose <em>Something else</em> and type the name.
               </app-info-hint>
             </label>
-          }
-          <span class="field__hint">
-            Nothing ticked means <strong>undeclared</strong>: the gateway serves generation and
-            embedding and refuses everything beyond it.
-          </span>
-        </fieldset>
-
-        <!--
-          The three declaration blocks the API has always accepted and the console could not write.
-          `all-minilm` listed with a batch flag and no width for exactly that reason: the seed was
-          the only way in, so a Global Administrator could tick "embed" and had nowhere to say how
-          wide the vectors are. `FRD-206` inverted — a capability with no way in, which announces
-          itself through nothing because an absent control reads as a design decision.
-
-          Each appears **only when its capability is ticked**, because a thinking budget on a model
-          that does not reason is a declaration the validator refuses and a reader has to guess the
-          meaning of. Nothing appears for a model with no capabilities at all, which is the
-          undeclared baseline.
-        -->
-        @if (hasCapability('thinking')) {
-          <fieldset
-            class="field"
-            style="border: 0; padding: 0; margin: 0"
-            data-testid="thinking-block"
-          >
-            <legend class="field__legend">Thinking — what this model can be told to do</legend>
-            <span class="field__hint">
-              Every box here says <strong>this model accepts that instruction</strong>. None of them
-              changes the model: ticking <em>off</em> does not disable thinking and does not turn a
-              reasoning model into an instruct model — it records that this model can be
-              <em>asked</em> not to think, which is what lets the gateway quieten it for a pipeline
-              filter. Leave a box unticked and the gateway never sends that instruction; a caller
-              who asks for it is refused by name. <br /><br />
-              Declare what you have <strong>measured</strong>, not what a model card claims. A model
-              that cannot be quietened and is declared as though it can answers 400 to every request
-              that tries.
-            </span>
-            @for (mode of allThinkingModes; track mode) {
-              <label class="checkline">
-                <input
-                  type="checkbox"
-                  [name]="'mode-' + mode"
-                  [ngModel]="hasThinkingMode(mode)"
-                  (ngModelChange)="toggleThinkingMode(mode, $event)"
-                  [attr.data-testid]="'mode-' + mode"
-                />
-                <span>
-                  <code>{{ mode }}</code>
-                  <span class="muted"> — {{ thinkingModeMeans(mode) }}</span>
-                </span>
-                @if (hasThinkingMode(mode) && mode !== 'disabled' && mode !== 'auto') {
-                  <input
-                    class="input input--narrow"
-                    type="number"
-                    min="1"
-                    [name]="'level-' + mode"
-                    [ngModel]="thinkingLevel(mode)"
-                    (ngModelChange)="setThinkingLevel(mode, $event)"
-                    [attr.data-testid]="'level-' + mode"
-                    placeholder="tokens"
-                    [attr.aria-label]="'How many thinking tokens ' + mode + ' means'"
-                  />
-                  <span class="muted">thinking tokens this level means</span>
-                }
-              </label>
-            }
-            <!-- The three below are about the *budget a caller may name*, which is a different
-                 question from the boxes above and was sitting among them unlabelled. `limited` is
-                 the only mode that takes a number; these bound it. -->
-            <p class="field__hint" style="margin: 0.8rem 0 0.2rem">
-              <strong>When a caller asks for <code>limited</code></strong
-              >, they name a number of thinking tokens. These two bound what they may name — they
-              are not output caps, and they are not what the model does on its own.
-            </p>
-            <div class="form-inline">
-              <div class="field">
-                <label class="field__label" for="think-min">Smallest thinking budget</label>
-                <input
-                  id="think-min"
-                  class="input"
-                  type="number"
-                  min="1"
-                  name="think_min"
-                  [ngModel]="thinkingMin()"
-                  (ngModelChange)="thinkingMin.set($event)"
-                  placeholder="—"
-                />
-              </div>
-              <div class="field">
-                <label class="field__label" for="think-max">Largest thinking budget</label>
-                <input
-                  id="think-max"
-                  class="input"
-                  type="number"
-                  min="1"
-                  name="think_max"
-                  [ngModel]="thinkingMax()"
-                  (ngModelChange)="thinkingMax.set($event)"
-                  data-testid="thinking-max"
-                  placeholder="—"
-                />
-                <span class="field__hint">
-                  Must stay <strong>below the output cap above</strong>. The thinking budget is
-                  taken <em>out of</em> the output allowance, not added to it — a model told to
-                  think 8000 tokens with an 8000-token cap has nothing left to answer with. Required
-                  when <code>limited</code> is offered.
-                </span>
-              </div>
-              <div class="field">
-                <label class="field__label" for="think-default">
-                  What happens when a caller says nothing
-                </label>
-                <select
-                  id="think-default"
-                  class="input"
-                  name="think_default"
-                  [ngModel]="thinkingDefault()"
-                  (ngModelChange)="thinkingDefault.set($event)"
-                  data-testid="thinking-default"
-                >
-                  <option value="">no default</option>
-                  @for (mode of thinkingModes(); track mode) {
-                    <option [value]="mode">{{ mode }}</option>
-                  }
-                </select>
-                <span class="field__hint">
-                  Most requests name no mode. This is what the gateway sends for them.
-                  <strong>Empty is not "off"</strong>: it means the gateway sends nothing and the
-                  model does whatever it does by default — which for a reasoning model is to think,
-                  and to bill you for it. Pick <code>disabled</code> here if you want quiet answers
-                  unless somebody asks otherwise.
-                </span>
-              </div>
-            </div>
-          </fieldset>
-        }
-
-        @if (hasCapability('embed')) {
-          <fieldset
-            class="field"
-            style="border: 0; padding: 0; margin: 0"
-            data-testid="embedding-block"
-          >
-            <legend class="field__legend">Embedding</legend>
-            <div class="form-inline">
-              <div class="field">
-                <label class="field__label" for="embed-dims">Dimensions</label>
-                <input
-                  id="embed-dims"
-                  class="input"
-                  name="embed_dims"
-                  [ngModel]="dimensions()"
-                  (ngModelChange)="dimensions.set($event)"
-                  data-testid="embedding-dimensions"
-                  placeholder="e.g. 384, 768"
-                />
-                <span class="field__hint">
-                  The widths this model can return, comma-separated. No vendor listing publishes
-                  this — embed one short text and count the values.
-                </span>
-              </div>
-              <div class="field">
-                <label class="field__label" for="embed-default">Default width</label>
-                <select
-                  id="embed-default"
-                  class="input"
-                  name="embed_default"
-                  [ngModel]="defaultDimension()"
-                  (ngModelChange)="defaultDimension.set($event)"
-                  data-testid="embedding-default"
-                >
-                  <option value="">none</option>
-                  @for (value of declaredDimensions(); track value) {
-                    <option [value]="value">{{ value }}</option>
-                  }
-                </select>
-                <span class="field__hint">What a caller who asks for no width gets.</span>
-              </div>
-              <div class="field">
-                <label class="field__label" for="embed-tasks">Task types</label>
-                <input
-                  id="embed-tasks"
-                  class="input"
-                  name="embed_tasks"
-                  [ngModel]="taskTypes()"
-                  (ngModelChange)="taskTypes.set($event)"
-                  data-testid="embedding-task-types"
-                  placeholder="e.g. RETRIEVAL_QUERY, RETRIEVAL_DOCUMENT"
-                />
-                <span class="field__hint">
-                  Comma-separated, exactly as the provider spells them. Leave empty where the
-                  dialect has none — an undeclared type is refused rather than sent and ignored.
-                </span>
-              </div>
-            </div>
-            <label class="checkline">
+            @if (providerIsCustom()) {
               <input
-                type="checkbox"
-                name="embed_batch"
-                [ngModel]="supportsBatch()"
-                (ngModelChange)="supportsBatch.set($event)"
-                data-testid="embedding-batch"
+                id="model-provider"
+                name="provider"
+                [ngModel]="provider()"
+                (ngModelChange)="provider.set($event)"
+                placeholder="generative-language"
+                autocomplete="off"
+                data-testid="provider-typed"
               />
-              Accepts several texts in one call
-            </label>
-          </fieldset>
-        }
+              @if (!providersError() && (providers() ?? []).length) {
+                <button
+                  type="button"
+                  class="btn btn--sm btn--ghost"
+                  (click)="providerIsCustom.set(false)"
+                  data-testid="provider-back-to-list"
+                >
+                  Choose a configured one instead
+                </button>
+              }
+            } @else {
+              <select
+                id="model-provider"
+                name="provider"
+                [ngModel]="provider()"
+                (ngModelChange)="chooseProvider($event)"
+                data-testid="provider-select"
+              >
+                <option value="">{{ loadingProviders() ? 'Asking the gateway…' : '—' }}</option>
+                @for (upstream of providers() ?? []; track upstream.name) {
+                  <option [value]="upstream.name">{{ providerLabel(upstream) }}</option>
+                }
+                <option [value]="OTHER">Something else — type it</option>
+              </select>
+            }
+            @if (providersError(); as message) {
+              <!-- Informs, never blocks. Declaring a model before its credential exists is the
+                   ordinary order of work, so a gateway that cannot be reached degrades to the text
+                   box it replaced rather than locking somebody out of their own catalog. -->
+              <span class="field__hint" data-testid="providers-unavailable">
+                {{ message }} Type the provider name instead.
+              </span>
+            } @else if (selectedProvider(); as upstream) {
+              <span class="field__hint" data-testid="provider-note">
+                @if (upstream.cataloguedIsEnough) {
+                  Cataloguing a model here is enough to reach it — no configuration entry needed.
+                } @else {
+                  This platform needs the model named in the gateway's configuration as well;
+                  cataloguing it alone will not make it answer.
+                }
+              </span>
+            }
+          </div>
 
-        @if (hasCapability('attachments')) {
-          <fieldset
-            class="field"
-            style="border: 0; padding: 0; margin: 0"
-            data-testid="attachments-block"
-          >
-            <legend class="field__legend">Documents and images</legend>
+          @if (vendorFilled().length) {
+            <p class="callout grow" data-testid="vendor-filled" style="margin: 0">
+              Filled in from {{ provider() }}: {{ vendorFilled().join(', ') }}. Left for you: the
+              price, and what the model can actually do beyond the verbs its API publishes — a
+              vendor's capability flag is a claim, and a price nobody set is not zero. Nothing is
+              written until you save, and a model is not usable until you release it.
+              @for (note of vendorSaid(); track note) {
+                <span class="muted" style="display: block; margin-top: 0.35rem">{{ note }}</span>
+              }
+            </p>
+          }
+          <div class="field">
+            <label for="model-publisher">Publisher</label>
+            <input
+              id="model-publisher"
+              name="publisher"
+              [ngModel]="publisher()"
+              (ngModelChange)="publisher.set($event)"
+              placeholder="google | anthropic | openai"
+              autocomplete="off"
+            />
+            <span class="field__hint">Selects the wire dialect the gateway speaks to it.</span>
+          </div>
+          <div class="field">
+            <label for="model-platform">Platform</label>
+            <input
+              id="model-platform"
+              name="platform"
+              [ngModel]="platform()"
+              (ngModelChange)="platform.set($event)"
+              placeholder="vertex | foundry"
+              autocomplete="off"
+            />
+          </div>
+          <div class="field">
+            <label for="model-hosting">Hosting</label>
+            <select
+              id="model-hosting"
+              name="hosting"
+              [ngModel]="hosting()"
+              (ngModelChange)="hosting.set($event)"
+            >
+              <option value="">—</option>
+              <option value="managed">Managed by the vendor</option>
+              <option value="self_deployed">Self-deployed (our capacity)</option>
+            </select>
             <span class="field__hint">
-              What this model can <strong>read</strong>. A request carrying a type that is not
-              ticked is refused by name rather than sent without the attachment — a model that never
-              saw the document answers confidently about it.
+              Self-deployed endpoints cold-start and answer 429 for capacity, not quota.
             </span>
-            @for (mediaType of allMediaTypes; track mediaType) {
+          </div>
+          <div class="field">
+            <label for="model-kira-id">KIRA id</label>
+            <input
+              id="model-kira-id"
+              type="number"
+              min="1"
+              name="kira_id"
+              [ngModel]="kiraId()"
+              (ngModelChange)="kiraId.set($event)"
+              placeholder="assigned automatically"
+              data-testid="model-kira-id"
+            />
+            <span class="field__hint">
+              How a KIRA client names this model — that surface identifies models by number, not by
+              name. Left blank, the next free one is assigned. Set it to keep clients migrating from
+              the predecessor working unchanged, by giving this model the id they already send.
+            </span>
+          </div>
+        }
+        @if (editorTab() === 'capabilities') {
+          <div class="field">
+            <label for="model-max-output">Max output tokens</label>
+            <input
+              id="model-max-output"
+              type="number"
+              min="1"
+              name="max_output"
+              [ngModel]="maxOutput()"
+              (ngModelChange)="maxOutput.set($event)"
+              placeholder="—"
+            />
+          </div>
+          <div class="field">
+            <label for="model-default-output">Default output tokens</label>
+            <input
+              id="model-default-output"
+              type="number"
+              min="1"
+              name="default_output"
+              [ngModel]="defaultOutput()"
+              (ngModelChange)="defaultOutput.set($event)"
+              placeholder="—"
+            />
+            <span class="field__hint">Applied when the caller sets no cap.</span>
+          </div>
+
+          <fieldset class="field" style="border: 0; padding: 0; margin: 0">
+            <legend class="field__legend">Capabilities</legend>
+            @for (capability of allCapabilities; track capability) {
               <label class="checkline">
                 <input
                   type="checkbox"
-                  [name]="'media-' + mediaType"
-                  [ngModel]="hasMediaType(mediaType)"
-                  (ngModelChange)="toggleMediaType(mediaType, $event)"
-                  [attr.data-testid]="'media-' + mediaType"
+                  [name]="'cap-' + capability"
+                  [ngModel]="hasCapability(capability)"
+                  (ngModelChange)="toggleCapability(capability, $event)"
                 />
-                <code>{{ mediaType }}</code>
-                @if (hasMediaType(mediaType)) {
-                  <input
-                    type="number"
-                    min="1"
-                    class="inline-number"
-                    [name]="'media-tokens-' + mediaType"
-                    [ngModel]="mediaTypeTokens(mediaType)"
-                    (ngModelChange)="setMediaTypeTokens(mediaType, $event)"
-                    [attr.data-testid]="'media-tokens-' + mediaType"
-                    [attr.aria-label]="'Input tokens one ' + mediaType + ' attachment costs'"
-                    placeholder="tokens"
-                  />
-                  <span class="muted">input tokens each</span>
-                }
+                {{ capability }}
+                <app-info-hint [label]="capability" [testid]="'cap-' + capability" [wide]="true">
+                  {{ explain(capability) }}
+                </app-info-hint>
               </label>
             }
+            <span class="field__hint">
+              Nothing ticked means <strong>undeclared</strong>: the gateway serves generation and
+              embedding and refuses everything beyond it.
+            </span>
           </fieldset>
-        }
 
-        <!--
+          <!--
+            The three declaration blocks the API has always accepted and the console could not write.
+            `all-minilm` listed with a batch flag and no width for exactly that reason: the seed was
+            the only way in, so a Global Administrator could tick "embed" and had nowhere to say how
+            wide the vectors are. `FRD-206` inverted — a capability with no way in, which announces
+            itself through nothing because an absent control reads as a design decision.
+
+            Each appears **only when its capability is ticked**, because a thinking budget on a model
+            that does not reason is a declaration the validator refuses and a reader has to guess the
+            meaning of. Nothing appears for a model with no capabilities at all, which is the
+            undeclared baseline.
+          -->
+          @if (hasCapability('thinking')) {
+            <fieldset
+              class="field"
+              style="border: 0; padding: 0; margin: 0"
+              data-testid="thinking-block"
+            >
+              <legend class="field__legend">Thinking — what this model can be told to do</legend>
+              <span class="field__hint">
+                Every box here says <strong>this model accepts that instruction</strong>. None of
+                them changes the model: ticking <em>off</em> does not disable thinking and does not
+                turn a reasoning model into an instruct model — it records that this model can be
+                <em>asked</em> not to think, which is what lets the gateway quieten it for a
+                pipeline filter. Leave a box unticked and the gateway never sends that instruction;
+                a caller who asks for it is refused by name. <br /><br />
+                Declare what you have <strong>measured</strong>, not what a model card claims. A
+                model that cannot be quietened and is declared as though it can answers 400 to every
+                request that tries.
+              </span>
+              @for (mode of allThinkingModes; track mode) {
+                <label class="checkline">
+                  <input
+                    type="checkbox"
+                    [name]="'mode-' + mode"
+                    [ngModel]="hasThinkingMode(mode)"
+                    (ngModelChange)="toggleThinkingMode(mode, $event)"
+                    [attr.data-testid]="'mode-' + mode"
+                  />
+                  <span>
+                    <code>{{ mode }}</code>
+                    <span class="muted"> — {{ thinkingModeMeans(mode) }}</span>
+                  </span>
+                  @if (hasThinkingMode(mode) && mode !== 'disabled' && mode !== 'auto') {
+                    <input
+                      class="input input--narrow"
+                      type="number"
+                      min="1"
+                      [name]="'level-' + mode"
+                      [ngModel]="thinkingLevel(mode)"
+                      (ngModelChange)="setThinkingLevel(mode, $event)"
+                      [attr.data-testid]="'level-' + mode"
+                      placeholder="tokens"
+                      [attr.aria-label]="'How many thinking tokens ' + mode + ' means'"
+                    />
+                    <span class="muted">thinking tokens this level means</span>
+                  }
+                </label>
+              }
+              <!-- The three below are about the *budget a caller may name*, which is a different
+                   question from the boxes above and was sitting among them unlabelled. `limited` is
+                   the only mode that takes a number; these bound it. -->
+              <p class="field__hint" style="margin: 0.8rem 0 0.2rem">
+                <strong>When a caller asks for <code>limited</code></strong
+                >, they name a number of thinking tokens. These two bound what they may name — they
+                are not output caps, and they are not what the model does on its own.
+              </p>
+              <div class="form-inline">
+                <div class="field">
+                  <label class="field__label" for="think-min">Smallest thinking budget</label>
+                  <input
+                    id="think-min"
+                    class="input"
+                    type="number"
+                    min="1"
+                    name="think_min"
+                    [ngModel]="thinkingMin()"
+                    (ngModelChange)="thinkingMin.set($event)"
+                    placeholder="—"
+                  />
+                </div>
+                <div class="field">
+                  <label class="field__label" for="think-max">Largest thinking budget</label>
+                  <input
+                    id="think-max"
+                    class="input"
+                    type="number"
+                    min="1"
+                    name="think_max"
+                    [ngModel]="thinkingMax()"
+                    (ngModelChange)="thinkingMax.set($event)"
+                    data-testid="thinking-max"
+                    placeholder="—"
+                  />
+                  <span class="field__hint">
+                    Must stay <strong>below the output cap above</strong>. The thinking budget is
+                    taken <em>out of</em> the output allowance, not added to it — a model told to
+                    think 8000 tokens with an 8000-token cap has nothing left to answer with.
+                    Required when <code>limited</code> is offered.
+                  </span>
+                </div>
+                <div class="field">
+                  <label class="field__label" for="think-default">
+                    What happens when a caller says nothing
+                  </label>
+                  <select
+                    id="think-default"
+                    class="input"
+                    name="think_default"
+                    [ngModel]="thinkingDefault()"
+                    (ngModelChange)="thinkingDefault.set($event)"
+                    data-testid="thinking-default"
+                  >
+                    <option value="">no default</option>
+                    @for (mode of thinkingModes(); track mode) {
+                      <option [value]="mode">{{ mode }}</option>
+                    }
+                  </select>
+                  <span class="field__hint">
+                    Most requests name no mode. This is what the gateway sends for them.
+                    <strong>Empty is not "off"</strong>: it means the gateway sends nothing and the
+                    model does whatever it does by default — which for a reasoning model is to
+                    think, and to bill you for it. Pick <code>disabled</code> here if you want quiet
+                    answers unless somebody asks otherwise.
+                  </span>
+                </div>
+              </div>
+            </fieldset>
+          }
+
+          @if (hasCapability('embed')) {
+            <fieldset
+              class="field"
+              style="border: 0; padding: 0; margin: 0"
+              data-testid="embedding-block"
+            >
+              <legend class="field__legend">Embedding</legend>
+              <div class="form-inline">
+                <div class="field">
+                  <label class="field__label" for="embed-dims">Dimensions</label>
+                  <input
+                    id="embed-dims"
+                    class="input"
+                    name="embed_dims"
+                    [ngModel]="dimensions()"
+                    (ngModelChange)="dimensions.set($event)"
+                    data-testid="embedding-dimensions"
+                    placeholder="e.g. 384, 768"
+                  />
+                  <span class="field__hint">
+                    The widths this model can return, comma-separated. No vendor listing publishes
+                    this — embed one short text and count the values.
+                  </span>
+                </div>
+                <div class="field">
+                  <label class="field__label" for="embed-default">Default width</label>
+                  <select
+                    id="embed-default"
+                    class="input"
+                    name="embed_default"
+                    [ngModel]="defaultDimension()"
+                    (ngModelChange)="defaultDimension.set($event)"
+                    data-testid="embedding-default"
+                  >
+                    <option value="">none</option>
+                    @for (value of declaredDimensions(); track value) {
+                      <option [value]="value">{{ value }}</option>
+                    }
+                  </select>
+                  <span class="field__hint">What a caller who asks for no width gets.</span>
+                </div>
+                <div class="field">
+                  <label class="field__label" for="embed-tasks">Task types</label>
+                  <input
+                    id="embed-tasks"
+                    class="input"
+                    name="embed_tasks"
+                    [ngModel]="taskTypes()"
+                    (ngModelChange)="taskTypes.set($event)"
+                    data-testid="embedding-task-types"
+                    placeholder="e.g. RETRIEVAL_QUERY, RETRIEVAL_DOCUMENT"
+                  />
+                  <span class="field__hint">
+                    Comma-separated, exactly as the provider spells them. Leave empty where the
+                    dialect has none — an undeclared type is refused rather than sent and ignored.
+                  </span>
+                </div>
+              </div>
+              <label class="checkline">
+                <input
+                  type="checkbox"
+                  name="embed_batch"
+                  [ngModel]="supportsBatch()"
+                  (ngModelChange)="supportsBatch.set($event)"
+                  data-testid="embedding-batch"
+                />
+                Accepts several texts in one call
+              </label>
+            </fieldset>
+          }
+
+          @if (hasCapability('attachments')) {
+            <fieldset
+              class="field"
+              style="border: 0; padding: 0; margin: 0"
+              data-testid="attachments-block"
+            >
+              <legend class="field__legend">Documents and images</legend>
+              <span class="field__hint">
+                What this model can <strong>read</strong>. A request carrying a type that is not
+                ticked is refused by name rather than sent without the attachment — a model that
+                never saw the document answers confidently about it.
+              </span>
+              @for (mediaType of allMediaTypes; track mediaType) {
+                <label class="checkline">
+                  <input
+                    type="checkbox"
+                    [name]="'media-' + mediaType"
+                    [ngModel]="hasMediaType(mediaType)"
+                    (ngModelChange)="toggleMediaType(mediaType, $event)"
+                    [attr.data-testid]="'media-' + mediaType"
+                  />
+                  <code>{{ mediaType }}</code>
+                  @if (hasMediaType(mediaType)) {
+                    <input
+                      type="number"
+                      min="1"
+                      class="inline-number"
+                      [name]="'media-tokens-' + mediaType"
+                      [ngModel]="mediaTypeTokens(mediaType)"
+                      (ngModelChange)="setMediaTypeTokens(mediaType, $event)"
+                      [attr.data-testid]="'media-tokens-' + mediaType"
+                      [attr.aria-label]="'Input tokens one ' + mediaType + ' attachment costs'"
+                      placeholder="tokens"
+                    />
+                    <span class="muted">input tokens each</span>
+                  }
+                </label>
+              }
+            </fieldset>
+          }
+        }
+        @if (editorTab() === 'price') {
+          <div class="field">
+            <label for="model-input">Input price $ / 1M</label>
+            <input
+              id="model-input"
+              name="input_price"
+              inputmode="decimal"
+              [ngModel]="inputPrice()"
+              (ngModelChange)="inputPrice.set($event)"
+              placeholder="0.075"
+              autocomplete="off"
+            />
+          </div>
+          <div class="field">
+            <label for="model-output">Output price $ / 1M</label>
+            <input
+              id="model-output"
+              name="output_price"
+              inputmode="decimal"
+              [ngModel]="outputPrice()"
+              (ngModelChange)="outputPrice.set($event)"
+              placeholder="0.30"
+              autocomplete="off"
+            />
+          </div>
+          <div class="field">
+            <label for="model-cached">
+              Cached input $ / 1M
+              <app-info-hint label="Cached input price" testid="cached-price" [wide]="true">
+                What this provider charges for input it served from its prompt cache instead of
+                reading again. Usually a fraction of the ordinary input price — Anthropic charges a
+                tenth. Leave it empty if the provider does not cache, or if you have not looked it
+                up: cached tokens are then billed at the ordinary input rate, which can only
+                over-state the bill, never under-state it. It also means the saving will not show up
+                in reporting, because as far as AIRA knows there was none.
+              </app-info-hint>
+            </label>
+            <input
+              id="model-cached"
+              name="cached_price"
+              inputmode="decimal"
+              [ngModel]="cachedPrice()"
+              (ngModelChange)="cachedPrice.set($event)"
+              placeholder="0.0075"
+              autocomplete="off"
+            />
+          </div>
+          <div class="field">
+            <label for="model-cache-write">
+              Cache write $ / 1M
+              <app-info-hint label="Cache write price" testid="cache-write-price" [wide]="true">
+                What the <em>first</em> request costs — the one that puts the prefix into the cache.
+                It is <strong>more</strong> than ordinary input, not less: Anthropic charges 1.25×
+                for a five-minute lifetime and 2× for an hour. This is the number that decides
+                whether caching pays at all, because a prefix that is written and never read again
+                costs you a quarter extra. Leave it empty where the provider does not charge for
+                writes (Azure before GPT-5.6, and Gemini's implicit cache).
+              </app-info-hint>
+            </label>
+            <input
+              id="model-cache-write"
+              name="cache_write_price"
+              inputmode="decimal"
+              [ngModel]="cacheWritePrice()"
+              (ngModelChange)="cacheWritePrice.set($event)"
+              placeholder="0.09375"
+              autocomplete="off"
+            />
+          </div>
+        }
+      </form>
+
+      <!--
           Approval, and it starts **off**. A model appearing on an upstream is not the same event
           as somebody deciding it may be used here (`FRD-307`) — and the whole editor is already
           Global-Admin-only, which is who releases one.
         -->
-        <label class="checkline">
-          <input
-            type="checkbox"
-            name="approved"
-            [ngModel]="approved()"
-            (ngModelChange)="approved.set($event)"
-            data-testid="model-approved"
-          />
-          Approved for use — a use case may call it
-        </label>
+      <label class="checkline">
+        <input
+          type="checkbox"
+          name="approved"
+          [ngModel]="approved()"
+          (ngModelChange)="approved.set($event)"
+          data-testid="model-approved"
+        />
+        Approved for use — a use case may call it
+      </label>
 
-        <label class="checkline">
-          <input
-            type="checkbox"
-            name="deprecated"
-            [ngModel]="deprecated()"
-            (ngModelChange)="deprecated.set($event)"
-          />
-          Deprecated — requests still succeed and carry a warning
-        </label>
-      </form>
+      <label class="checkline">
+        <input
+          type="checkbox"
+          name="deprecated"
+          [ngModel]="deprecated()"
+          (ngModelChange)="deprecated.set($event)"
+        />
+        Deprecated — requests still succeed and carry a warning
+      </label>
     </div>
 
     <div class="modal__foot">

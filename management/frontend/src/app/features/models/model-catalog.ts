@@ -89,6 +89,16 @@ export class ModelCatalog implements OnInit {
   protected readonly error = signal<string | null>(null);
   protected readonly notice = signal<string | null>(null);
   protected readonly me = signal<Me | null>(null);
+  /**
+   * Which half of the declaration is on screen.
+   *
+   * Eighteen fields in one column, with the prices sitting between the provider and the publisher.
+   * Split by the question each field answers — what it is, what it can do, what it costs — which
+   * is what somebody filling the form in is thinking about. The values live in signals, so
+   * switching tabs keeps everything typed; only the DOM comes and goes.
+   */
+  protected readonly editorTab = signal<'identity' | 'capabilities' | 'price'>('identity');
+
   protected readonly showAdd = signal(false);
   /** The model id being corrected, or '' when adding a new one. Also the window's title. */
   protected readonly editing = signal('');
@@ -435,6 +445,7 @@ export class ModelCatalog implements OnInit {
   }
 
   private reset(): void {
+    this.editorTab.set('identity');
     this.name.set('');
     this.displayName.set('');
     this.provider.set('');

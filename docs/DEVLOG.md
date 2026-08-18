@@ -5,6 +5,33 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The model editor is three tabs, and approval is on none of them
+
+Eighteen fields in one column, with the input price sitting between the provider and the publisher.
+Split by the question each field answers — **what it is** (id, display name, provider, publisher,
+platform, hosting, KIRA id), **what it can do** (capabilities, the output caps, and the thinking,
+embedding and attachment declarations), **what it costs** (the four prices). The capability
+checkboxes and the blocks they reveal are on the same tab on purpose: nobody should tick a box on
+one screen and go looking for its consequences on another.
+
+**Approval is deliberately not a tab, and that was the decision worth making slowly.** It is not a
+property of the model — it is what makes the model callable (`FRD-307`) — and it starts *off*.
+Behind a tab, somebody fills in three screens, presses Save, and creates a model nothing can call,
+with the switch they never opened sitting at its default: a control that did nothing, arrived at by
+never being seen. So it sits beside Save, visible whichever tab is open, which is the one place its
+state cannot be missed at the moment it takes effect. Deprecation keeps it company — both are
+statements about the model's **standing** rather than about what it is.
+
+Values live in signals, so switching tabs keeps everything typed; only the DOM comes and goes. A
+reset returns to the first tab, or reopening the editor would show "what it costs" and no name
+field. Two tests hold the arrangement: one that approval is reachable from every tab, one that each
+field is behind the question it answers — otherwise the next field is appended wherever the file
+happens to end.
+
+The pencil on the use-case description is a plain **Edit** button now. An icon there was a guess at
+what "a pencil or something" meant, and the answer was: a button that says what it does.
+
+---
 ## A model's reasoning, and six things the console got wrong about it
 
 `FRD-135`: thinking is **counted always**, returned **where a use case says so**. The counting is

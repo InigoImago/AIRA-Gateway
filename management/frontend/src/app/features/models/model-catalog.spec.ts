@@ -105,6 +105,7 @@ interface Catalog {
   hosting: { set: (v: string) => void; (): string };
   maxOutput: { set: (v: number | null) => void; (): number | null };
   kiraId: { set: (v: number | null) => void; (): number | null };
+  editorTab: { set: (v: string) => void; (): string };
   defaultOutput: { set: (v: number | null) => void; (): number | null };
   deprecated: { set: (v: boolean) => void; (): boolean };
   thinkingModes: { set: (v: string[]) => void; (): string[] };
@@ -445,6 +446,11 @@ describe('ModelCatalog interactions', () => {
 
     const name = html().querySelector<HTMLInputElement>('#model-name');
     expect(name).not.toBeNull();
+    // The prices moved behind their own tab: eighteen fields in one column had the input price
+    // sitting between the provider and the publisher. A reader looking for what a model *costs*
+    // now opens the tab that says so, and this follows them there.
+    html().querySelector<HTMLButtonElement>('[data-testid="tab-price"]')!.click();
+    harness.fixture.detectChanges();
     expect(html().querySelector('label[for="model-input"]')).not.toBeNull();
     expect(html().querySelector('label[for="model-output"]')).not.toBeNull();
 
@@ -1637,10 +1643,66 @@ describe('ModelCatalog — declaration blocks', () => {
     attachments: { media_types: { 'application/pdf': { tokens: 258 } } },
   };
 
+  it('keeps approval out of the tabs, where pressing Save cannot miss it', () => {
+    /** The decision the split turned on.
+     *
+     *  `approved` is not a property of the model — it is what makes the model callable
+     *  (`FRD-307`), and it starts **off**. Behind a tab, somebody fills in three screens, presses
+     *  Save, and creates a model nothing can call, with the switch they never opened sitting at
+     *  its default. It belongs beside Save, visible on every tab, which is the only place its
+     *  state cannot be missed at the moment it takes effect. Deprecation keeps it company: both
+     *  are statements about the model's standing rather than about what it is.
+     */
+    const harness = setup();
+    const catalog = harness.component;
+    catalog.showAdd.set(true);
+
+    for (const tab of ['identity', 'capabilities', 'price'] as const) {
+      catalog.editorTab.set(tab);
+      harness.fixture.detectChanges();
+
+      expect(
+        harness.html().querySelector('[data-testid="model-approved"]'),
+        `approval must be reachable on the ${tab} tab`,
+      ).not.toBeNull();
+    }
+  });
+
+  it('puts each field behind the question it answers', () => {
+    /** Eighteen fields in one column, with the input price between the provider and the publisher.
+     *  The grouping is the feature; asserting it stops the next field being appended wherever the
+     *  file happens to end. */
+    const harness = setup();
+    const catalog = harness.component;
+    catalog.showAdd.set(true);
+    catalog.capabilities.set(['thinking']);
+
+    const on = (tab: 'identity' | 'capabilities' | 'price', selector: string) => {
+      catalog.editorTab.set(tab);
+      harness.fixture.detectChanges();
+      return harness.html().querySelector(selector) !== null;
+    };
+
+    expect(on('identity', '#model-name')).toBe(true);
+    expect(on('identity', '#model-kira-id')).toBe(true);
+    expect(on('identity', 'label[for="model-input"]')).toBe(false);
+
+    expect(on('capabilities', '[data-testid="thinking-block"]')).toBe(true);
+    expect(on('capabilities', '#model-max-output')).toBe(true);
+    expect(on('capabilities', '#model-name')).toBe(false);
+
+    expect(on('price', 'label[for="model-input"]')).toBe(true);
+    expect(on('price', '[data-testid="thinking-block"]')).toBe(false);
+  });
+
   it('shows a block only where its capability is ticked', () => {
     const harness = setup();
     const catalog = harness.component;
     catalog.showAdd.set(true);
+    // The three declaration blocks live on the tab that answers "what can it do" — which is also
+    // where the capability checkboxes are, so a reader never ticks a box on one screen and looks
+    // for its consequences on another.
+    catalog.editorTab.set('capabilities');
     catalog.capabilities.set([]);
     harness.fixture.detectChanges();
 
@@ -1719,6 +1781,7 @@ describe('ModelCatalog — declaration blocks', () => {
     const harness = setup();
     const catalog = harness.component;
     catalog.edit(DECLARED);
+    catalog.editorTab.set('capabilities');
     catalog.toggleMediaType('image/png', true);
     harness.fixture.detectChanges();
     await Promise.resolve();
