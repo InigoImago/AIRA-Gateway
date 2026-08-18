@@ -53,6 +53,28 @@ COMPOSE_ONLY = {
     # drive the relay and the retention sweep. Not settings, and not meant to be.
     "AIRA_RELAY_INTERVAL",
     "AIRA_RETENTION_INTERVAL",
+    # Which host ports this stack publishes, and what its containers are called. Read by Compose
+    # only. `AIRA_PUBLISH_*` is its own prefix on purpose: `AIRA_POSTGRES_PORT` is a *setting* —
+    # the port the gateway connects to — and one name for both meanings would make moving the
+    # published port silently redirect the in-network connection.
+    "AIRA_STACK",
+    "AIRA_PUBLISH_POSTGRES_PORT",
+    "AIRA_PUBLISH_KEYCLOAK_PORT",
+    "AIRA_PUBLISH_KEYCLOAK_HEALTH_PORT",
+    "AIRA_PUBLISH_KAFKA_PORT",
+    "AIRA_PUBLISH_SCHEMA_REGISTRY_PORT",
+    "AIRA_PUBLISH_VAULT_PORT",
+    "AIRA_PUBLISH_REDIS_PORT",
+    "AIRA_PUBLISH_GRAFANA_PORT",
+    "AIRA_PUBLISH_OTLP_GRPC_PORT",
+    "AIRA_PUBLISH_OTLP_HTTP_PORT",
+    "AIRA_PUBLISH_OLLAMA_PORT",
+    "AIRA_PUBLISH_GATEWAY_PORT",
+    "AIRA_PUBLISH_MANAGEMENT_PORT",
+    "AIRA_PUBLISH_FRONTEND_PORT",
+    # Written into `runtime-config.js` by the console's entrypoint, and read by the browser rather
+    # than by any settings class.
+    "AIRA_OIDC_CLIENT_ID",
 }
 
 #: The settings whose absence from the stack is invisible until somebody configures one — every
@@ -163,4 +185,40 @@ def test_the_exempt_names_are_still_absent_from_the_settings_classes() -> None:
     assert not stale, (
         f"These are listed as compose-only and are now real settings: {stale}. Remove them from "
         "COMPOSE_ONLY so the check above can see them."
+    )
+
+
+def test_no_published_port_is_a_literal() -> None:
+    """Two stacks on one machine collide on a fixed port, and there is no way out but editing this
+    file.
+
+    Reported after somebody brought up a second system beside this one: eleven of the fourteen
+    published ports were hard-coded — Postgres, Keycloak, Kafka, Redis, Grafana, Vault, the two
+    OTLP ports, Ollama — while only the three application ports were variables. Each is
+    `${AIRA_…_PORT:-<today's value>}` now, so the defaults are unchanged and a second copy moves
+    with environment variables.
+    """
+    literal = re.findall(
+        r'^\s+- "\$\{AIRA_BIND_HOST[^}]*\}:(\d+):', _wiring(), re.M
+    )
+
+    assert not literal, (
+        f"These host ports cannot be moved without editing the compose file: {sorted(set(literal))}. "
+        "A second stack on the same machine collides on every one of them."
+    )
+
+
+def test_no_container_name_is_a_literal() -> None:
+    """The collision a port variable does not solve.
+
+    Docker refuses two containers with one name, so even a stack whose ports were all moved could
+    not start beside this one: both wanted to be `aira-postgres`. `${AIRA_STACK:-aira}` prefixes
+    every name, which also gives the second stack a legible identity in `docker ps` rather than a
+    generated suffix.
+    """
+    literal = re.findall(r"^\s+container_name:\s*(aira[-\w]*)\s*$", _wiring(), re.M)
+
+    assert not literal, (
+        f"These container names are fixed: {sorted(set(literal))}. Docker refuses a duplicate "
+        "name, so a second stack cannot start beside this one whatever its ports are."
     )

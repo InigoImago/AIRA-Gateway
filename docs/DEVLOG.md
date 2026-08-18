@@ -5,6 +5,51 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Two stacks on one machine, and a console that knew its own address by heart
+
+Reported after a parallel system was brought up beside this one: *"that was a catastrophe"*, and
+*"the URLs and ports are plain text in the frontend, so changing one means going through the whole
+frontend — that must not be."* Both true, and each in a different way than it looked.
+
+**Ports.** Three of fourteen published ports were variables — gateway, management, console. The
+other **eleven were literals**: Postgres, Keycloak and its health port, Kafka, Schema Registry,
+Vault, Redis, Grafana, both OTLP ports, Ollama. A second stack collides on every one and the only
+way out was editing the compose file. All fourteen are `${AIRA_PUBLISH_…_PORT:-<today's value>}`
+now, so nothing moves by default.
+
+The prefix is `AIRA_PUBLISH_` and that is not decoration: `AIRA_POSTGRES_PORT` is already a
+**setting** — the port the gateway *connects to*. Using it for the published port would make
+"move the published port" silently mean "connect to a different port inside the network", where
+Postgres still listens on 5432, and the failure would read as the database being down. The guard
+that caught it was the phantom-name check written yesterday, on its second day.
+
+**And the collision a port cannot fix**: every `container_name` was fixed, so two stacks both
+wanted to be `aira-postgres` and Docker refuses that whatever the ports say. `${AIRA_STACK:-aira}`
+prefixes all twenty-two, which also gives the second stack a legible identity in `docker ps`.
+
+**The console.** Better than "plain text everywhere" — the issuer and client id already came from
+`runtime-config.js` rather than the bundle. But that file was **static inside the image**, and the
+CSP's `connect-src` was a *second* variable that, in the compose file's own words, "has to agree
+with it". Two places, two formats, and moving Keycloak meant editing a JavaScript file inside a
+built image. The entrypoint writes the file from `AIRA_OIDC_ISSUER` now and derives the policy from
+its origin: one variable, and a pair that cannot disagree.
+
+Getting that right took two measured failures, both of which would have shipped:
+
+- Written as `10-…​.sh`, the derivation ran and vanished. The nginx entrypoint **executes** a `.sh`
+  in a subshell and **sources** a `.envsh`, so only the second can export anything the templating
+  step will see. The console came up, the file was correct, and the served header read
+  `connect-src ;` — found by reading the header off the running container rather than trusting that
+  setting a variable sets it.
+- Renamed, it still did not follow: the Dockerfile *already set* `AIRA_CSP_CONNECT_SRC`, so
+  `${VAR:-derived}` never fired. A probe with the issuer moved to `:8090` still served
+  `localhost:8080`. **At the default port the wrong value happens to be the right one**, which is
+  exactly how it would have gone unnoticed. The image sets no default now.
+
+Proven by rendering a second stack (`AIRA_STACK=aira2`, four moved ports) and by starting the image
+with a moved issuer: `connect-src 'self' http://keycloak.example:8090`, derived.
+
+---
 ## The model editor is three tabs, and approval is on none of them
 
 Eighteen fields in one column, with the input price sitting between the provider and the publisher.

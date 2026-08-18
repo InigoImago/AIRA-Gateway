@@ -41,9 +41,14 @@ RUN npm run build
 # ---- runtime -------------------------------------------------------------------------------
 FROM nginx:1.27-alpine AS runtime
 
+# `AIRA_CSP_CONNECT_SRC` is deliberately **not** given a value here. The entrypoint derives it
+# from `AIRA_OIDC_ISSUER`, and a baked default would win over that derivation silently: a probe
+# with the issuer moved to `:8090` still served `connect-src 'self' http://localhost:8080`, because
+# `${VAR:-default}` never fires for a variable the image has already set. At the default port the
+# wrong value happens to be the right one, which is how this would have shipped.
 ENV AIRA_MANAGEMENT_UPSTREAM=http://management:8002 \
     AIRA_GATEWAY_UPSTREAM=http://gateway:8001 \
-    AIRA_CSP_CONNECT_SRC="'self' http://localhost:8080"
+    AIRA_DNS_RESOLVER=127.0.0.11
 
 COPY --from=builder /src/dist/frontend/browser /usr/share/nginx/html
 COPY management/frontend/deploy/default.conf.template /etc/nginx/templates/default.conf.template
@@ -53,6 +58,11 @@ COPY management/frontend/deploy/default.conf.template /etc/nginx/templates/defau
 # twice: once http-wide, where it would attach a content policy to the JSON API responses too,
 # and once by the `include` in each HTML location. `.inc` is rendered and not auto-loaded.
 COPY management/frontend/deploy/aira-headers.inc.template /etc/nginx/templates/aira-headers.inc.template
+
+# Sourced before the templates above are rendered, so the CSP it derives is the one they see.
+# `.envsh` because the entrypoint *sources* those and *executes* `.sh` in a subshell, where an
+# export dies; `10-` puts it ahead of the image's own `20-envsubst-on-templates.sh`.
+COPY management/frontend/deploy/10-runtime-config.envsh /docker-entrypoint.d/10-aira-runtime-config.envsh
 
 EXPOSE 8080
 

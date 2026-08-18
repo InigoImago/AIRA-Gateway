@@ -24,7 +24,7 @@ services:
   # does not write to one (`FRD-209`). This is the demo stack provisioning its own.
   keycloak-init:
     image: python:3.14-slim
-    container_name: aira-keycloak-init
+    container_name: ${AIRA_STACK:-aira}-keycloak-init
     command: ["python", "/tools/keycloak_demo_realm.py"]
     environment:
       KEYCLOAK_URL: http://keycloak:8080
@@ -65,7 +65,7 @@ services:
   # somebody else owns this Vault.
   vault-init:
     image: hashicorp/vault:1.18
-    container_name: aira-vault-init
+    container_name: ${AIRA_STACK:-aira}-vault-init
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -154,7 +154,7 @@ services:
     build: &gateway-build
       context: ../..
       dockerfile: gateway/Dockerfile
-    container_name: aira-gateway-migrate
+    container_name: ${AIRA_STACK:-aira}-gateway-migrate
     working_dir: /app/gateway
     command: ["alembic", "upgrade", "head"]
     environment: &gateway-env
@@ -211,7 +211,7 @@ services:
       # `iss` claim exactly. The JWKS URI is fetched by this container, which cannot reach
       # "localhost:8080" — hence the in-network override. This split is exactly what
       # AIRA_OIDC_JWKS_URI exists for.
-      AIRA_OIDC_ISSUER: ${AIRA_OIDC_ISSUER:-http://localhost:8080/realms/aira}
+      AIRA_OIDC_ISSUER: ${AIRA_OIDC_ISSUER:-http://localhost:${AIRA_PUBLISH_KEYCLOAK_PORT:-8080}/realms/aira}
       AIRA_OIDC_JWKS_URI: ${AIRA_OIDC_JWKS_URI:-http://keycloak:8080/realms/aira/protocol/openid-connect/certs}
       AIRA_OIDC_AUDIENCE: ${AIRA_OIDC_AUDIENCE:-}
       # **Authentication, and the one knob that switches it off entirely.** Default `true`, and
@@ -288,7 +288,7 @@ services:
     build: &management-build
       context: ../..
       dockerfile: management/backend/Dockerfile
-    container_name: aira-management-migrate
+    container_name: ${AIRA_STACK:-aira}-management-migrate
     command: ["python", "manage.py", "migrate", "--noinput"]
     environment: &management-env
       # Same as the gateway's: Management holds the Django SECRET_KEY and the database password,
@@ -327,7 +327,7 @@ services:
       AIRA_KAFKA_SASL_USERNAME: ${AIRA_KAFKA_SASL_USERNAME:-}
       AIRA_KAFKA_SASL_PASSWORD: ${AIRA_KAFKA_SASL_PASSWORD:-}
       AIRA_KAFKA_SSL_CAFILE: ${AIRA_KAFKA_SSL_CAFILE:-}
-      AIRA_OIDC_ISSUER: ${AIRA_OIDC_ISSUER:-http://localhost:8080/realms/aira}
+      AIRA_OIDC_ISSUER: ${AIRA_OIDC_ISSUER:-http://localhost:${AIRA_PUBLISH_KEYCLOAK_PORT:-8080}/realms/aira}
       AIRA_OIDC_JWKS_URI: ${AIRA_OIDC_JWKS_URI:-http://keycloak:8080/realms/aira/protocol/openid-connect/certs}
       AIRA_OIDC_AUDIENCE: ${AIRA_OIDC_AUDIENCE:-}
       # Which Keycloak group confers which AIRA role (`ADR-0017`). Group membership is the **only**
@@ -351,7 +351,7 @@ services:
   management-seed:
     image: aira-management:${AIRA_IMAGE_TAG:-dev}
     build: *management-build
-    container_name: aira-management-seed
+    container_name: ${AIRA_STACK:-aira}-management-seed
     profiles: ["demo"]
     command: ["python", "manage.py", "seed_demo"]
     environment:
@@ -385,7 +385,7 @@ services:
   # rebuilds its read-model by replaying them.
   kafka-topics:
     image: apache/kafka:3.9.0
-    container_name: aira-kafka-topics
+    container_name: ${AIRA_STACK:-aira}-kafka-topics
     entrypoint: ["/bin/sh", "-c"]
     # One physical line per command: a folded scalar would turn the continuations into arguments
     # of their own, which the topic tool then rejects.
@@ -406,13 +406,13 @@ services:
   gateway:
     image: aira-gateway:${AIRA_IMAGE_TAG:-dev}
     build: *gateway-build
-    container_name: aira-gateway
+    container_name: ${AIRA_STACK:-aira}-gateway
     environment: *gateway-env
     ports:
       # Loopback by default, like the infrastructure stack — see `docker-compose.yml`. This one
       # is the port that serves models, and the demo profile seeds a key whose plaintext is in
       # this repository.
-      - "${AIRA_BIND_HOST:-127.0.0.1}:${AIRA_GATEWAY_PORT:-8001}:8001"
+      - "${AIRA_BIND_HOST:-127.0.0.1}:${AIRA_PUBLISH_GATEWAY_PORT:-${AIRA_GATEWAY_PORT:-8001}}:8001"
     depends_on:
       gateway-migrate:
         condition: service_completed_successfully
@@ -430,7 +430,7 @@ services:
   gateway-consumer:
     image: aira-gateway:${AIRA_IMAGE_TAG:-dev}
     build: *gateway-build
-    container_name: aira-gateway-consumer
+    container_name: ${AIRA_STACK:-aira}-gateway-consumer
     command: ["python", "-m", "aira_gateway.consumer.worker"]
     # A worker, not a server — the image's HTTP healthcheck would never pass.
     healthcheck:
@@ -447,10 +447,10 @@ services:
   management:
     image: aira-management:${AIRA_IMAGE_TAG:-dev}
     build: *management-build
-    container_name: aira-management
+    container_name: ${AIRA_STACK:-aira}-management
     environment: *management-env
     ports:
-      - "${AIRA_BIND_HOST:-127.0.0.1}:${AIRA_MANAGEMENT_PORT:-8002}:8002"
+      - "${AIRA_BIND_HOST:-127.0.0.1}:${AIRA_PUBLISH_MANAGEMENT_PORT:-${AIRA_MANAGEMENT_PORT:-8002}}:8002"
     depends_on:
       management-migrate:
         condition: service_completed_successfully
@@ -465,7 +465,7 @@ services:
   management-relay:
     image: aira-management:${AIRA_IMAGE_TAG:-dev}
     build: *management-build
-    container_name: aira-management-relay
+    container_name: ${AIRA_STACK:-aira}-management-relay
     command:
       - /bin/sh
       - -c
@@ -487,7 +487,7 @@ services:
   gateway-retention:
     image: aira-gateway:${AIRA_IMAGE_TAG:-dev}
     build: *gateway-build
-    container_name: aira-gateway-retention
+    container_name: ${AIRA_STACK:-aira}-gateway-retention
     command:
       - /bin/sh
       - -c
@@ -506,14 +506,22 @@ services:
     build:
       context: ../..
       dockerfile: management/frontend/Dockerfile
-    container_name: aira-frontend
+    container_name: ${AIRA_STACK:-aira}-frontend
     environment:
       AIRA_MANAGEMENT_UPSTREAM: http://management:8002
       AIRA_GATEWAY_UPSTREAM: http://gateway:8001
       # What the console's content policy lets it call. Its own origin for `/api` and `/gw`, plus
       # the Keycloak the token is fetched from — which is deployment configuration, exactly like
       # `public/runtime-config.js`, and has to agree with it. Set both or neither.
-      AIRA_CSP_CONNECT_SRC: ${AIRA_CSP_CONNECT_SRC:-'self' http://localhost:8080}
+      # **One variable, two consumers.** The console's entrypoint writes `runtime-config.js` from
+      # this and derives the CSP's `connect-src` from its origin, so moving Keycloak is one change
+      # rather than a JavaScript file inside a built image plus a header somewhere else. The pair
+      # that "has to agree" is now a pair that cannot disagree.
+      AIRA_OIDC_ISSUER: ${AIRA_OIDC_ISSUER:-http://localhost:${AIRA_PUBLISH_KEYCLOAK_PORT:-8080}/realms/aira}
+      AIRA_OIDC_CLIENT_ID: ${AIRA_OIDC_CLIENT_ID:-aira-gateway}
+      # Only for a deployment that needs something the derivation cannot guess — a second origin,
+      # a websocket host. Left empty, the issuer's origin is used.
+      AIRA_CSP_CONNECT_SRC: ${AIRA_CSP_CONNECT_SRC:-}
       # Docker's embedded DNS. nginx re-resolves the upstreams through it on every request, so a
       # redeploy of the gateway or of management does not leave this proxy talking to a stale
       # address. Override where the platform provides a different resolver.
@@ -521,7 +529,7 @@ services:
     # 4200 on the host because the Keycloak realm pins its redirect URIs to
     # http://localhost:4200 — see deploy/compose/keycloak/realms/aira-realm.json.
     ports:
-      - "${AIRA_BIND_HOST:-127.0.0.1}:${AIRA_FRONTEND_PORT:-4200}:8080"
+      - "${AIRA_BIND_HOST:-127.0.0.1}:${AIRA_PUBLISH_FRONTEND_PORT:-${AIRA_FRONTEND_PORT:-4200}}:8080"
     depends_on:
       - management
       - gateway

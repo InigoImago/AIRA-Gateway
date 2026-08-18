@@ -1,0 +1,40 @@
+#!/bin/sh
+# Write the console's runtime configuration from the environment, at container start.
+#
+# `runtime-config.js` shipped as a **static file in the image**, so moving Keycloak meant editing a
+# JavaScript file inside a built image *and* setting `AIRA_CSP_CONNECT_SRC` somewhere else — two
+# places that have to agree, in two different formats, neither of them next to the other. Reported
+# as: "the URLs and ports are plain text in the frontend, so changing them means going through the
+# whole frontend."
+#
+# One variable now decides both. `AIRA_CSP_CONNECT_SRC` still exists for a deployment that needs
+# something the derivation cannot guess (a second origin, a websocket host); left unset, it is the
+# issuer's origin, which is the only thing the console actually calls cross-origin.
+#
+# **`.envsh`, not `.sh`, and that is the whole mechanism.** The nginx entrypoint *executes* a
+# `*.sh` in its own subshell and *sources* a `*.envsh` — so only the second can export a value the
+# template step will see. Written as `.sh` first: the console came up, `runtime-config.js` was
+# correct, and the served policy read `connect-src ;` with nothing in it, because the export had
+# died with the subshell. Found by reading the header off the running container rather than by
+# trusting that setting a variable sets it.
+#
+# No `set -e` here: this file is sourced into the entrypoint's own loop, and aborting it would stop
+# the container with no page and no explanation.
+
+issuer="${AIRA_OIDC_ISSUER:-http://localhost:8080/realms/aira}"
+client="${AIRA_OIDC_CLIENT_ID:-aira-gateway}"
+
+cat > /usr/share/nginx/html/runtime-config.js <<EOF
+/* Written at container start from AIRA_OIDC_ISSUER / AIRA_OIDC_CLIENT_ID. Do not edit in place:
+ * the next start overwrites it. Nothing secret belongs here — it is served to every browser. */
+window.__AIRA_CONFIG__ = {
+  issuer: '${issuer}',
+  clientId: '${client}',
+};
+EOF
+
+# The origin, not the realm path: a CSP source is scheme + host + port.
+origin=$(printf '%s' "$issuer" | sed -E 's#^([a-zA-Z]+://[^/]+).*#\1#')
+export AIRA_CSP_CONNECT_SRC="${AIRA_CSP_CONNECT_SRC:-'self' ${origin}}"
+
+echo "aira: console configured for issuer ${issuer} (connect-src: ${AIRA_CSP_CONNECT_SRC})"

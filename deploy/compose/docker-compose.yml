@@ -19,7 +19,7 @@ name: aira
 services:
   postgres:
     image: postgres:17-alpine
-    container_name: aira-postgres
+    container_name: ${AIRA_STACK:-aira}-postgres
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-aira}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aira-local}
@@ -27,7 +27,7 @@ services:
       # consumed by the init script to provision the Keycloak DB role
       KC_DB_PASSWORD: ${KC_DB_PASSWORD:-keycloak-local}
     ports:
-      - "${AIRA_BIND_HOST:-127.0.0.1}:5432:5432"
+      - "${AIRA_BIND_HOST:-127.0.0.1}:${AIRA_PUBLISH_POSTGRES_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./postgres/init:/docker-entrypoint-initdb.d:ro
@@ -40,7 +40,7 @@ services:
 
   keycloak:
     image: quay.io/keycloak/keycloak:26.1
-    container_name: aira-keycloak
+    container_name: ${AIRA_STACK:-aira}-keycloak
     command: ["start-dev", "--import-realm"]
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN:-admin}
@@ -52,8 +52,8 @@ services:
       KC_HEALTH_ENABLED: "true"
       KC_HTTP_ENABLED: "true"
     ports:
-      - "${AIRA_BIND_HOST:-127.0.0.1}:8080:8080"   # Keycloak HTTP
-      - "${AIRA_BIND_HOST:-127.0.0.1}:9000:9000"   # management/health port
+      - "${AIRA_BIND_HOST:-127.0.0.1}:${AIRA_PUBLISH_KEYCLOAK_PORT:-8080}:8080"   # Keycloak HTTP
+      - "${AIRA_BIND_HOST:-127.0.0.1}:${AIRA_PUBLISH_KEYCLOAK_HEALTH_PORT:-9000}:9000"   # management/health port
     depends_on:
       postgres:
         condition: service_healthy
@@ -74,9 +74,9 @@ services:
 
   kafka:
     image: apache/kafka:3.9.0
-    container_name: aira-kafka
+    container_name: ${AIRA_STACK:-aira}-kafka
     ports:
-      - "${AIRA_BIND_HOST:-127.0.0.1}:29092:29092"   # host-facing listener (apps on host use localhost:29092)
+      - "${AIRA_BIND_HOST:-127.0.0.1}:${AIRA_PUBLISH_KAFKA_PORT:-29092}:29092"   # host-facing listener (apps on host use localhost:29092)
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
@@ -105,9 +105,9 @@ services:
 
   schema-registry:
     image: confluentinc/cp-schema-registry:7.8.0
-    container_name: aira-schema-registry
+    container_name: ${AIRA_STACK:-aira}-schema-registry
     ports:
-      - "${AIRA_BIND_HOST:-127.0.0.1}:8081:8081"
+      - "${AIRA_BIND_HOST:-127.0.0.1}:${AIRA_PUBLISH_SCHEMA_REGISTRY_PORT:-8081}:8081"
     depends_on:
       kafka:
         condition: service_healthy
@@ -125,10 +125,10 @@ services:
 
   vault:
     image: hashicorp/vault:1.18
-    container_name: aira-vault
+    container_name: ${AIRA_STACK:-aira}-vault
     cap_add: ["IPC_LOCK"]
     ports:
-      - "${AIRA_BIND_HOST:-127.0.0.1}:8200:8200"
+      - "${AIRA_BIND_HOST:-127.0.0.1}:${AIRA_PUBLISH_VAULT_PORT:-8200}:8200"
     environment:
       VAULT_DEV_ROOT_TOKEN_ID: ${VAULT_DEV_ROOT_TOKEN_ID:-root}
       VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
@@ -151,10 +151,10 @@ services:
   # decided degradation path (fail open for limits, Postgres fallback for budgets).
   redis:
     image: redis:7.4-alpine
-    container_name: aira-redis
+    container_name: ${AIRA_STACK:-aira}-redis
     command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory-policy", "noeviction"]
     ports:
-      - "${AIRA_BIND_HOST:-127.0.0.1}:6379:6379"
+      - "${AIRA_BIND_HOST:-127.0.0.1}:${AIRA_PUBLISH_REDIS_PORT:-6379}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -165,25 +165,25 @@ services:
   # --- Observability (opt-in via the "observability" profile; ADR-0004 / FRD-001) ---
   otel-lgtm:
     image: grafana/otel-lgtm:0.30.0
-    container_name: aira-otel-lgtm
+    container_name: ${AIRA_STACK:-aira}-otel-lgtm
     profiles: ["observability"]
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
     ports:
-      - "${AIRA_BIND_HOST:-127.0.0.1}:3000:3000"   # Grafana UI
+      - "${AIRA_BIND_HOST:-127.0.0.1}:${AIRA_PUBLISH_GRAFANA_PORT:-3000}:3000"   # Grafana UI
     networks: [aira]
 
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.157.0
-    container_name: aira-otel-collector
+    container_name: ${AIRA_STACK:-aira}-otel-collector
     profiles: ["observability"]
     command: ["--config=/etc/otelcol-contrib/config.yaml"]
     volumes:
       - ./otel/collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
     ports:
-      - "${AIRA_BIND_HOST:-127.0.0.1}:4317:4317"   # OTLP gRPC
-      - "${AIRA_BIND_HOST:-127.0.0.1}:4318:4318"   # OTLP HTTP
+      - "${AIRA_BIND_HOST:-127.0.0.1}:${AIRA_PUBLISH_OTLP_GRPC_PORT:-4317}:4317"   # OTLP gRPC
+      - "${AIRA_BIND_HOST:-127.0.0.1}:${AIRA_PUBLISH_OTLP_HTTP_PORT:-4318}:4318"   # OTLP HTTP
     depends_on:
       otel-lgtm:
         condition: service_started
@@ -199,7 +199,7 @@ services:
   # The endpoint is unauthenticated: it must stay on this network.
   ollama:
     image: ollama/ollama:latest
-    container_name: aira-ollama
+    container_name: ${AIRA_STACK:-aira}-ollama
     # `demo` as well as `verify` (`FRD-130`): a demo whose models are a mock shows the screens but
     # not the point — the numbers on the spend report have to come from something that actually
     # counted tokens, or the walkthrough is a slideshow.
@@ -219,7 +219,7 @@ services:
     volumes:
       - ollama-models:/root/.ollama
     ports:
-      - "${AIRA_BIND_HOST:-127.0.0.1}:11434:11434"
+      - "${AIRA_BIND_HOST:-127.0.0.1}:${AIRA_PUBLISH_OLLAMA_PORT:-11434}:11434"
     healthcheck:
       # `ollama list` answers as soon as the server is up and — unlike a generation — does **not**
       # load a model. `ADR-0012` §5: a probe that wakes a scaled-to-zero endpoint turns every
@@ -235,7 +235,7 @@ services:
   # would make every restart look like a hang.
   ollama-pull:
     image: ollama/ollama:latest
-    container_name: aira-ollama-pull
+    container_name: ${AIRA_STACK:-aira}-ollama-pull
     profiles: ["verify", "demo"]
     entrypoint: ["/bin/sh", "-c"]
     # Retried, and loud about what a final failure means.

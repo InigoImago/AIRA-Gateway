@@ -367,58 +367,58 @@
     </div>
 
     <div class="modal__body">
+      <!--
+      **Three tabs, and one decision that is on none of them.**
+
+      The editor had eighteen fields in one column: what the model *is*, what it *costs* and
+      what it *can do*, interleaved — prices sat between the provider and the publisher. Split
+      by the question each field answers, because that is what somebody filling it in is
+      thinking about.
+
+      **Approval is deliberately not a tab.** It is not a property of the model, it is the
+      decision that makes it callable (`FRD-307`), and it starts **off**. On a tab, somebody
+      fills in three screens, presses Save, and creates a model nothing can call — with the
+      switch they never saw sitting at its default. So it lives beside Save, visible whichever
+      tab is open, which is the one place its state cannot be missed at the moment it takes
+      effect. Deprecation keeps it company for the same reason: both are statements about the
+      model's standing rather than its nature.
+    -->
+      <div class="tabs" role="tablist" aria-label="Model declaration">
+        <button
+          type="button"
+          role="tab"
+          class="tab"
+          [class.is-active]="editorTab() === 'identity'"
+          [attr.aria-selected]="editorTab() === 'identity'"
+          (click)="editorTab.set('identity')"
+          data-testid="tab-identity"
+        >
+          What it is
+        </button>
+        <button
+          type="button"
+          role="tab"
+          class="tab"
+          [class.is-active]="editorTab() === 'capabilities'"
+          [attr.aria-selected]="editorTab() === 'capabilities'"
+          (click)="editorTab.set('capabilities')"
+          data-testid="tab-capabilities"
+        >
+          What it can do
+        </button>
+        <button
+          type="button"
+          role="tab"
+          class="tab"
+          [class.is-active]="editorTab() === 'price'"
+          [attr.aria-selected]="editorTab() === 'price'"
+          (click)="editorTab.set('price')"
+          data-testid="tab-price"
+        >
+          What it costs
+        </button>
+      </div>
       <form id="model-editor-form" class="form-inline" (ngSubmit)="save()">
-        <!--
-        **Three tabs, and one decision that is on none of them.**
-
-        The editor had eighteen fields in one column: what the model *is*, what it *costs* and
-        what it *can do*, interleaved — prices sat between the provider and the publisher. Split
-        by the question each field answers, because that is what somebody filling it in is
-        thinking about.
-
-        **Approval is deliberately not a tab.** It is not a property of the model, it is the
-        decision that makes it callable (`FRD-307`), and it starts **off**. On a tab, somebody
-        fills in three screens, presses Save, and creates a model nothing can call — with the
-        switch they never saw sitting at its default. So it lives beside Save, visible whichever
-        tab is open, which is the one place its state cannot be missed at the moment it takes
-        effect. Deprecation keeps it company for the same reason: both are statements about the
-        model's standing rather than its nature.
-      -->
-        <div class="tabs" role="tablist" aria-label="Model declaration">
-          <button
-            type="button"
-            role="tab"
-            class="tab"
-            [class.is-active]="editorTab() === 'identity'"
-            [attr.aria-selected]="editorTab() === 'identity'"
-            (click)="editorTab.set('identity')"
-            data-testid="tab-identity"
-          >
-            What it is
-          </button>
-          <button
-            type="button"
-            role="tab"
-            class="tab"
-            [class.is-active]="editorTab() === 'capabilities'"
-            [attr.aria-selected]="editorTab() === 'capabilities'"
-            (click)="editorTab.set('capabilities')"
-            data-testid="tab-capabilities"
-          >
-            What it can do
-          </button>
-          <button
-            type="button"
-            role="tab"
-            class="tab"
-            [class.is-active]="editorTab() === 'price'"
-            [attr.aria-selected]="editorTab() === 'price'"
-            (click)="editorTab.set('price')"
-            data-testid="tab-price"
-          >
-            What it costs
-          </button>
-        </div>
         @if (editorTab() === 'identity') {
           <div class="field grow">
             <label for="model-name">Model id</label>

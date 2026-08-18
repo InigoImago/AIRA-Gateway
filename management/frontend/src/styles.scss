@@ -288,6 +288,27 @@ $field-label-height: 1.2rem;
 $control-height: calc(1.5em + 1rem + 2px);
 $field-label-gap: 0.3rem;
 
+/* **A row-spanning child of a wrapping flex form.**
+ *
+ * `.form-inline` wraps, so every child is sized to its content — right for a field, wrong for
+ * anything that *introduces* the fields below it. The model editor's tab strip was put inside the
+ * form and became a flex item beside the first input, with the fields wrapping around it:
+ * reported as "the tabs do not fill the width and the form falls apart".
+ *
+ * That strip now sits **outside** the form, where it belongs — tabs navigate the dialog, they are
+ * not a control the form submits. This rule stays for the next one: a heading, a strip or a
+ * sentence that governs the fields under it has to occupy its own line, and `flex-basis: 100%` is
+ * what makes a wrapping container break there.
+ */
+.form-inline > .tabs,
+.form-inline > .field--row {
+  flex: 0 0 100%;
+  width: 100%;
+}
+.form-inline > .tabs {
+  margin-bottom: 0.4rem;
+}
+
 .form-inline {
   display: flex;
   /* Aligned at the TOP, not the bottom. Bottom alignment looks right only while every field is
