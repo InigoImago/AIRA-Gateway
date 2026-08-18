@@ -17,6 +17,7 @@ import json
 
 import httpx
 import pytest
+import stack_addresses
 
 from .conftest import GATEWAY_URL
 
@@ -84,7 +85,7 @@ async def test_an_unsigned_token_is_refused() -> None:
             json.dumps(
                 {
                     "sub": "attacker",
-                    "iss": "http://localhost:8080/realms/aira",
+                    "iss": f"{stack_addresses.url('keycloak')}/realms/aira",
                     # Both, because a forged token should not be believed whichever mechanism it
                     # claims through — and `realm_access` is now the one that confers nothing even
                     # when the signature *is* valid.

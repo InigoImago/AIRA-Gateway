@@ -22,8 +22,9 @@ import os
 import sys
 
 import httpx
+import stack_addresses
 
-GATEWAY = os.environ.get("AIRA_GATEWAY_URL", "http://localhost:8001")
+GATEWAY = os.environ.get("AIRA_GATEWAY_URL") or stack_addresses.url("gateway")
 CHAT = os.environ.get("AIRA_DEMO_CHAT_MODEL", "qwen3:0.6b")
 EMBED = os.environ.get("AIRA_DEMO_EMBED_MODEL", "all-minilm")
 

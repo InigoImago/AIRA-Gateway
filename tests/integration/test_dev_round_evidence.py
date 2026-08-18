@@ -267,22 +267,28 @@ async def test_a_declared_thinking_mode_is_served_on_the_kira_surface(
 
 
 async def test_an_undeclared_thinking_mode_is_refused_by_name(governed: Governed) -> None:
-    """**Undeclared means unsupported** (`FRD-114` FR-7). `minimal` is a real mode this server
-    refuses by name, and the catalog was once written from the enum rather than from a run — which
-    produced a request the model rejected and an error worse than the fault."""
+    """**Undeclared means unsupported** (`FRD-114` FR-7). The catalog was once written from the
+    enum rather than from a run, which produced a request the model rejected and an error worse
+    than the fault.
+
+    The mode asserted here is `auto`, which this seed does not declare for this model. It used to
+    be `minimal`, and that stopped testing anything on 2026-08-18 when the dialect mapping made
+    `minimal` reachable and the seed declared it: the test would then have been asserting that a
+    *declared* mode is refused, and it failed loudly rather than drifting, which is the good
+    outcome of naming the mode in one place per property."""
     response = await governed.kira(
         "/chat",
         {
             "request": {"parts": [{"text": "hi"}]},
             "model_id": 9001,
             "maxTokens": 32,
-            "thinking": {"mode": "minimal"},
+            "thinking": {"mode": "auto"},
         },
     )
 
     assert response.status_code == 422, response.text[:300]
     assert response.json()["code"] == "INVALID_THINKING_MODE"
-    assert "minimal" in response.json()["message"]
+    assert "auto" in response.json()["message"]
 
 
 async def test_a_thinking_model_is_refused_when_the_use_case_may_not_call_it(

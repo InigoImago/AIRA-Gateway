@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import httpx
 import pytest
+import stack_addresses
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -35,7 +36,7 @@ pytestmark = pytest.mark.integration
 
 #: Where the model runtime is, as the stack configures it. Read from the gateway's own setting so a
 #: deployment that moves Ollama does not have to remember this file.
-OLLAMA_URL = "http://localhost:11434"
+OLLAMA_URL = stack_addresses.url("ollama")
 
 
 def _runtime_context_length(model: str) -> int | None:

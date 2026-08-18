@@ -258,3 +258,25 @@ def test_a_schema_model_is_constructible_directly() -> None:
     wire parser — otherwise every internal producer would have to serialise first."""
     schema = ResponseSchema(type=SchemaType.STRING)
     assert schema.to_wire() == {"type": "STRING"}
+
+
+def test_the_dataclass_defaults_are_the_settings_defaults() -> None:
+    """Two statements of one bound, and only one of them is what production uses.
+
+    `schema_bounds()` builds `SchemaBounds` from the settings on every request, so the numbers in
+    `GatewaySettings` are the real ones. The dataclass carries its own copies, and those are what
+    `parse(raw)` uses when no bounds are passed — which is every test in this file.
+
+    Let the two drift and the tests go on passing while measuring a limit production does not have:
+    the stand-in is more permissive (or stricter) than the thing it replaces, which is the trap
+    `CLAUDE.md` names and this repository has paid for before. `core/` must not import `config` —
+    that layering is deliberate and worth keeping — so the agreement is asserted instead.
+    """
+    from aira_gateway.config import GatewaySettings
+
+    settings = GatewaySettings()
+    defaults = SchemaBounds()
+
+    assert defaults.max_bytes == settings.max_response_schema_bytes
+    assert defaults.max_depth == settings.max_response_schema_depth
+    assert defaults.max_properties == settings.max_response_schema_properties

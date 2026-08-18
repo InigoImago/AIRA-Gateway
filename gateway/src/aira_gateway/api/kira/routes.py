@@ -16,7 +16,6 @@ cannot see, and that is true whether the reason is "not built yet" or "this mode
 
 from __future__ import annotations
 
-import contextlib
 import json
 import time
 from collections.abc import AsyncIterator
@@ -896,8 +895,16 @@ async def _refused(
         request_body_truncated=len(encoded) > REFUSAL_BODY_LIMIT,
     )
     if getattr(request.state, "attribution", None) is not None:
-        # Never turn a correct refusal into a server error (FRD-122 FR-7).
-        with contextlib.suppress(Exception):
+        # Never turn a correct refusal into a server error (`FRD-122` FR-7) — **and never lose the
+        # row in silence.** This was `contextlib.suppress(Exception)`, which does the first half
+        # and drops the second: a failed write left no row, no log line, and no way for anybody
+        # reviewing the audit to know a request was missing from it. "A control with no trace
+        # cannot be reviewed" is this repository's own words about exactly this path.
+        #
+        # The Gemini surface has said so loudly since the day the suppression was written there;
+        # this one did not, and the two surfaces answering one governance question differently is
+        # the shape `CLAUDE.md` names. Same log event, same fields, so a search finds both.
+        try:
             await _record(
                 request,
                 trail,
@@ -908,5 +915,14 @@ async def _refused(
                 payload=None,
                 started=started,
                 outcome=refusal_outcome(exc),
+            )
+        except Exception:  # noqa: BLE001 — the refusal is correct; only its record failed
+            _log.error(
+                "audit_refusal_not_recorded",
+                operation=operation,
+                model=trail.served_model,
+                status=response.status_code,
+                outcome=str(refusal_outcome(exc)),
+                exc_info=True,
             )
     return response

@@ -37,6 +37,21 @@ environment ([§7](#7-secrets-from-vault)).
 | `AIRA_POSTGRES_HOST` / `_PORT` / `_DB` / `_USER` / `_PASSWORD` | `localhost` / `5432` / _(differs)_ / `aira` / `aira-local` | **Two different databases** — see the note below.                                                                                                                                 |
 | `AIRA_KAFKA_BOOTSTRAP_SERVERS`                                 | `localhost:29092`                                          |                                                                                                                                                                                   |
 
+### How this service authenticates to Kafka
+
+**`PLAINTEXT` is refused outside `local`.** Both planes *apply* what arrives on these topics — the
+gateway builds the read-model its authorization comes from out of them — so an unauthenticated
+broker is a way to grant yourself administrator rights on any use case with no credential and no
+audit row. That is why the check is a startup refusal rather than a warning.
+
+| Variable                       | Default     | What it does                                                                                              |
+| ------------------------------ | ----------- | --------------------------------------------------------------------------------------------------------- |
+| `AIRA_KAFKA_SECURITY_PROTOCOL` | `PLAINTEXT` | `PLAINTEXT` \| `SSL` \| `SASL_PLAINTEXT` \| `SASL_SSL`. Anything but `PLAINTEXT` outside `local`.        |
+| `AIRA_KAFKA_SASL_MECHANISM`    | —           | e.g. `SCRAM-SHA-512`, `PLAIN`. Required by the two `SASL_*` protocols.                                     |
+| `AIRA_KAFKA_SASL_USERNAME`     | —           | SASL user. **A secret** — see §7; put it in Vault rather than in the environment.                          |
+| `AIRA_KAFKA_SASL_PASSWORD`     | —           | SASL password. **A secret** — same.                                                                        |
+| `AIRA_KAFKA_SSL_CAFILE`        | —           | Path to the CA bundle that signs the broker's certificate, for `SSL` and `SASL_SSL`.                       |
+
 > **The two services use two databases.** The gateway defaults to `aira_gateway`, Management to
 > `aira_mgmt`. They are not interchangeable: one holds configuration and the other holds the
 > read-model plus everything that happened. Pointing both at one database will appear to work until
@@ -69,6 +84,11 @@ environment ([§7](#7-secrets-from-vault)).
 | `AIRA_TRUST_FORWARDED_FOR`          | `false`     | Read the client IP from `X-Forwarded-For`. Only enable behind a proxy you control — otherwise any caller can write any address into your audit trail.                                                                                                                       |
 | `AIRA_DIRECTORY_CLIENT_ID`          | —           | Management only. A **read-only** Keycloak service account (`view-users`, `query-groups`) so the console can search your groups and people when granting access (`FRD-209`). Without it the console offers what it already knows and says so.                                |
 | `AIRA_DIRECTORY_CLIENT_SECRET`      | —           | Its secret. From Vault in any real deployment.                                                                                                                                                                                                                              |
+
+| Variable                   | Default | What it does                                                                                                                                                                                                                                                                                                        |
+| -------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AIRA_TRUSTED_PROXY_HOPS`  | `1`     | How many reverse proxies **append** to `X-Forwarded-For` in front of the gateway. The address is read that many entries **from the right**, never from the left: a proxy appends, so the left end is whatever the caller sent. Reading the left end let a caller choose the address in the audit trail — and rotate it to defeat the failed-authentication bound. Raise by one per additional proxy. A chain shorter than this is a request that did not come through them, and its header is ignored in favour of the socket peer. Only consulted when `AIRA_TRUST_FORWARDED_FOR` is on. |
+| `AIRA_ROLE_GROUPS`         | —       | Which Keycloak group confers which AIRA role (`ADR-0017`), as `role=/path[,/path];role=/path`. **Group membership is the only source of a role** — a realm role on the same token is not read. Empty grants no oversight to anybody, which is the safe direction for a data plane; Management is the plane that refuses to boot without a global-admin group, because it is the one an installation is repaired from. |
 
 ### Storage and retention
 
@@ -116,6 +136,8 @@ environment ([§7](#7-secrets-from-vault)).
 | ------------------------------------------------------------- | ------- | ---------------------------------------------------------------------- |
 | `AIRA_KIRA_SUNSET`                                            | —       | Date advertised in the `Sunset` header on the KIRA surface.            |
 | `AIRA_BUILD_NUMBER` / `_TIME` / `AIRA_GIT_COMMIT` / `_BRANCH` | —       | Reported by `/readyz` so a running instance can say which build it is. |
+| `AIRA_APP_NAME`                                               | `aira-gateway` / `aira-management` | The service name in logs and OpenTelemetry resource attributes. Changing it renames the service in every trace and dashboard, so it is left alone unless two installations share one collector. |
+| `AIRA_TEST_DATABASE`                                          | `false` | **Test harness only.** Points the engine at an in-memory SQLite instead of Postgres. Never set in a deployment: the schema differs (SQLite enforces no column lengths), so it would hide exactly the failures Postgres reports. |
 
 ---
 
@@ -232,17 +254,29 @@ audit row, so a request can be read in the light of the conditions it actually m
 ranks **above** the environment — not as an injection into `os.environ`, because values placed there
 are readable from `/proc`, inherited by every subprocess, and dumped by any library that panics.
 
-| Variable                    | What it does                                    |
-| --------------------------- | ----------------------------------------------- |
-| `AIRA_VAULT_ADDRESS`        | Enables Vault when set.                         |
-| `AIRA_VAULT_ROLE_ID`        | AppRole role id.                                |
-| `AIRA_VAULT_SECRET_ID_FILE` | Path to the secret id — a file, not a variable. |
-| `AIRA_VAULT_MOUNT`          | KV-v2 mount (default `secret`).                 |
-| `AIRA_VAULT_PATH`           | Path within the mount.                          |
-| `AIRA_VAULT_NAMESPACE`      | Vault Enterprise namespace.                     |
-| `AIRA_VAULT_TIMEOUT`        |                                                 |
+> **These are the only variables in this document with no `AIRA_` prefix, and that is not a typo.**
+> They are HashiCorp's own names, read by `aira_common.secrets` before any settings class exists —
+> the secret store has to be reachable *before* the thing it configures. This table said
+> `AIRA_VAULT_ADDRESS` until 2026-08-18, which is a name nothing reads: an operator following it
+> set the prefixed form, Vault stayed **off**, and every credential came quietly from the
+> environment. That is the exact failure `secrets_state()` was written for after it cost three
+> days once already — and the document had been sending readers back into it. Confirm with
+> `/readyz`, which reports where this process's secrets came from.
 
-Keys in Vault use the same names as the environment variables (with or without the `AIRA_` prefix).
+| Variable                 | Default  | What it does                                                                   |
+| ------------------------ | -------- | ------------------------------------------------------------------------------ |
+| `VAULT_ADDR`             | —        | **Enables Vault when set.** Unset means every secret comes from the environment. |
+| `VAULT_ROLE_ID`          | —        | AppRole role id.                                                                |
+| `VAULT_SECRET_ID_FILE`   | —        | Path to a file holding the secret id. Preferred over the variable below.        |
+| `VAULT_SECRET_ID`        | —        | The secret id itself. A file is better: a variable is readable from `/proc` and inherited by every subprocess. |
+| `VAULT_TOKEN`            | —        | A plain token instead of AppRole. Dev only — the Compose stack uses `root`.     |
+| `VAULT_MOUNT`            | `secret` | KV-v2 mount.                                                                    |
+| `VAULT_PATH`             | `aira`   | Path within the mount.                                                          |
+| `VAULT_NAMESPACE`        | —        | Vault Enterprise namespace.                                                     |
+| `VAULT_TIMEOUT`          | `10`     | Seconds. An empty value falls back to the default rather than raising.          |
+
+Keys **inside** Vault use the settings' own names, with or without the `AIRA_` prefix — those are
+the values being fetched, and they are unrelated to the connection variables above.
 **Rotation is a restart** — recorded as a decision rather than an omission. "Vault is down" and
 "nobody wrote that key" are different exceptions and are reported differently.
 

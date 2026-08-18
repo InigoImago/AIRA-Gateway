@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { USERS, expectNoSqueezedControls, login } from './support';
+import { USERS, expectNoSqueezedControls, login, openEditorTab } from './support';
 
 /**
  * Importing what the adapters already serve, and asking the vendor what it offers (`FRD-507`).
@@ -25,7 +25,10 @@ test.describe('Catalog import', () => {
     await page.getByTestId('import-mock-1').click();
 
     await expect(page.locator('#model-name')).toHaveValue('mock-1');
-    // The boundary: a price nobody set is not zero, and a capability is a measurement.
+    // The boundary: a price nobody set is not zero, and a capability is a measurement. The price
+    // lives on its own tab since the editor was split, so the check has to go and look — an
+    // import that quietly filled in a zero would otherwise pass by the field not being on screen.
+    await openEditorTab(page, 'price');
     await expect(page.locator('#model-input')).toHaveValue('');
     await expect(page.getByTestId('model-approved')).not.toBeChecked();
   });
@@ -54,6 +57,7 @@ test.describe('Catalog import', () => {
     // Copied, because the vendor stated them; the console names what it took.
     await expect(page.getByTestId('vendor-filled')).toContainText('Filled in from mock');
     // Left, because a price nobody set is not zero and a capability is a measurement.
+    await openEditorTab(page, 'price');
     await expect(page.locator('#model-input')).toHaveValue('');
     await expect(page.locator('#model-output')).toHaveValue('');
     await expect(page.getByTestId('model-approved')).not.toBeChecked();

@@ -45,6 +45,42 @@ ENV_EXAMPLE := $(COMPOSE_DIR)/.env.example
 LOCAL_CHAT_MODEL ?= qwen3:0.6b
 LOCAL_EMBED_MODEL ?= all-minilm
 
+# ---- where the stack answers -------------------------------------------------------------------
+#
+# **Never write a port in this file.** Every address below is derived from the same
+# `AIRA_PUBLISH_…` variable that publishes it in Compose, through `tools/stack_addresses.py`, which
+# reads the environment, then `deploy/compose/.env`, then the default written in the Compose file
+# itself — Compose's own order, so a value never means two things depending on who read it.
+#
+# The published ports became variables on 2026-08-18, after a parallel system collided with them.
+# This file did not notice: it carried twenty literal addresses, so moving a port brought the stack
+# up correctly and left `make showcase` waiting forever on the old one, with an error naming
+# neither the port nor the variable. `tools/tests/test_one_owner_for_the_stack_addresses.py` fails
+# when a literal reappears here or anywhere else that talks to the stack.
+#
+# **One process, `python3`, at parse time.** This runs on every `make` invocation including
+# `make help`; fourteen `uv run` calls would put four seconds in front of every target, and a
+# developer who pays that on `make help` starts working around the Makefile. The module imports
+# nothing outside the standard library so that no dependency resolver sits on this path.
+STACK_ADDRESSES := $(shell python3 tools/stack_addresses.py make)
+stack_url = $(patsubst $(1)=%,%,$(filter $(1)=%,$(STACK_ADDRESSES)))
+
+GATEWAY_URL    := $(call stack_url,gateway)
+MANAGEMENT_URL := $(call stack_url,management)
+CONSOLE_URL    := $(call stack_url,console)
+KEYCLOAK_URL   := $(call stack_url,keycloak)
+OLLAMA_URL     := $(call stack_url,ollama)
+VAULT_URL      := $(call stack_url,vault)
+GRAFANA_URL    := $(call stack_url,grafana)
+KAFKA_ADDR     := $(call stack_url,kafka.netloc)
+
+# The bare ports, for the two dev targets that **bind** rather than connect: `ng serve` and Django's
+# `runserver`. They take the published port on purpose — those processes stand in for the
+# containerised ones, so a port moved to dodge a collision has to move for both or the dev stack
+# collides with exactly the thing the variable was introduced to avoid.
+CONSOLE_PORT    := $(lastword $(subst :, ,$(CONSOLE_URL)))
+MANAGEMENT_PORT := $(lastword $(subst :, ,$(MANAGEMENT_URL)))
+
 .DEFAULT_GOAL := help
 
 .PHONY: help up up-core down destroy ps logs restart env sync test test-py test-frontend \
@@ -74,13 +110,13 @@ up-core: env ## Start only core infra (no observability backend)
 
 up-full: env ## Start EVERYTHING in containers (infra + gateway, management, consumer, relay, SPA)
 	$(COMPOSE_FULL) up -d --build
-	@echo "SPA: http://localhost:4200   (login ucadmin / demo-password)"
+	@echo "SPA: $(CONSOLE_URL)   (login ucadmin / demo-password)"
 
 showcase: env ## Start the full demo: stack, local model, seeded roles/budgets, and real traffic
 	@echo "==> starting the stack (this pulls a model on the first run and takes a few minutes)"
 	$(COMPOSE_FULL) --profile demo up -d --build
 	@# `wait-healthy`, not a second loop of its own. This waited on the **gateway** alone and then
-	@# printed "SPA http://localhost:4200" — so on a machine where the frontend took a few seconds
+	@# printed "SPA $(CONSOLE_URL)" — so on a machine where the frontend took a few seconds
 	@# longer, the one URL the walkthrough starts at answered nothing. Two ideas of "ready", and the
 	@# weaker one was the one this target used.
 	@$(MAKE) --no-print-directory wait-healthy
@@ -113,8 +149,8 @@ showcase: env ## Start the full demo: stack, local model, seeded roles/budgets, 
 	uv run python tools/demo_traffic.py
 	@echo ""
 	@echo "  Start here:"
-	@echo "    Console     http://localhost:4200   the SPA — everything below is reached from it"
-	@echo "    Keycloak    http://localhost:8080/admin/master/console/#/aira/users   admin / admin"
+	@echo "    Console     $(CONSOLE_URL)   the SPA — everything below is reached from it"
+	@echo "    Keycloak    $(KEYCLOAK_URL)/admin/master/console/#/aira/users   admin / admin"
 	@# Read from the running realm, not asserted. Somebody opened the admin console, saw one user
 	@# called `admin` and no groups, and concluded the seed had failed — it had not: that console
 	@# signs you in to the *master* realm and the demo lives in `aira`. Two accounts named `admin`
@@ -124,8 +160,8 @@ showcase: env ## Start the full demo: stack, local model, seeded roles/budgets, 
 		python3 tools/keycloak_demo_realm.py --report
 	@echo ""
 	@echo "  Serving, with no user interface of their own:"
-	@echo "    Gateway     http://localhost:8001   the API that models are called through"
-	@echo "    Management  http://localhost:8002   the control-plane API (/api/v1/...)"
+	@echo "    Gateway     $(GATEWAY_URL)   the API that models are called through"
+	@echo "    Management  $(MANAGEMENT_URL)   the control-plane API (/api/v1/...)"
 	@echo ""
 	@echo "  Log in **to the console** as any of these — password 'demo-password'. These are"
 	@echo "  accounts in the 'aira' realm, and are not the Keycloak admin above:"
@@ -157,8 +193,8 @@ showcase: env ## Start the full demo: stack, local model, seeded roles/budgets, 
 	@echo "  several names one with the 'X-AIRA-Use-Case: <slug>' header — which chooses among what"
 	@echo "  they already have and never grants anything."
 	@echo ""
-	@echo "    KIRA client   http://localhost:8001/kira/api/external   docs/MIGRATION-KIRA.md"
-	@echo "    Gemini client http://localhost:8001/v1beta              docs/MIGRATION-GEMINI.md"
+	@echo "    KIRA client   $(GATEWAY_URL)/kira/api/external   docs/MIGRATION-KIRA.md"
+	@echo "    Gemini client $(GATEWAY_URL)/v1beta              docs/MIGRATION-GEMINI.md"
 	@echo ""
 	@# And one that runs *now*. The four steps above are what a reader needs to migrate; they are
 	@# not what a reader needs to **try**, because the demo has already done all four for its own
@@ -213,13 +249,13 @@ build-images: ## Build the three application images without starting anything
 verify-up: env ## Start a real local model (FRD-123) and pull the two verification models
 	$(COMPOSE) --profile verify up -d ollama
 	@echo "waiting for the endpoint..."
-	@until curl -fsS http://localhost:11434/api/version >/dev/null 2>&1; do sleep 1; done
+	@until curl -fsS $(OLLAMA_URL)/api/version >/dev/null 2>&1; do sleep 1; done
 	@echo "pulling models (hundreds of MB, once per machine)..."
 	docker exec aira-ollama ollama pull $(LOCAL_CHAT_MODEL)
 	docker exec aira-ollama ollama pull $(LOCAL_EMBED_MODEL)
 	@echo
 	@echo "Point the gateway at it:"
-	@echo "  AIRA_OLLAMA_URL=http://localhost:11434 \\"
+	@echo "  AIRA_OLLAMA_URL=$(OLLAMA_URL) \\"
 	@echo "  AIRA_OLLAMA_MODELS=$(LOCAL_CHAT_MODEL) \\"
 	@echo "  AIRA_OLLAMA_EMBEDDING_MODELS=$(LOCAL_EMBED_MODEL) make run-gateway-oidc"
 
@@ -271,10 +307,10 @@ test-integration: ## Run server-side integration tests (needs the live stack; se
 wait-healthy: ## Block until the containerised stack answers (after up-full, and in CI)
 	@echo "waiting for the stack to become ready…"
 	@for i in $$(seq 1 80); do \
-		if curl -sf http://127.0.0.1:4200/ >/dev/null 2>&1 \
-			&& curl -sf http://127.0.0.1:8001/healthz >/dev/null 2>&1 \
-			&& curl -sf http://127.0.0.1:8002/healthz >/dev/null 2>&1 \
-			&& curl -sf http://127.0.0.1:8080/realms/aira/.well-known/openid-configuration >/dev/null 2>&1; \
+		if curl -sf $(CONSOLE_URL)/ >/dev/null 2>&1 \
+			&& curl -sf $(GATEWAY_URL)/healthz >/dev/null 2>&1 \
+			&& curl -sf $(MANAGEMENT_URL)/healthz >/dev/null 2>&1 \
+			&& curl -sf $(KEYCLOAK_URL)/realms/aira/.well-known/openid-configuration >/dev/null 2>&1; \
 		then echo "ready after $$((i * 3))s"; exit 0; fi; \
 		sleep 3; \
 	done; \
@@ -293,14 +329,23 @@ lint-py: ## Run ruff lint + format check + mypy
 	uv run ruff format --check .
 	uv run mypy gateway/src libs/src management/backend/src
 
-lint-frontend: ## Check frontend formatting (Prettier) and types (build)
+lint-frontend: ## Check frontend formatting (Prettier) and types (console build + e2e tsc)
 	cd $(FRONTEND_DIR) && npx prettier --check "src/**/*.{ts,html,scss}"
 	cd $(FRONTEND_DIR) && npx ng build --configuration development
+	cd $(FRONTEND_DIR) && npx prettier --check "proxy.conf.cjs"
+	@# **The browser suite is TypeScript too, and nothing type-checked it.** `ng build` covers the
+	@# console and stops at its own `src/`; `e2e/` has `"strict": true` in its tsconfig and no
+	@# reader. A spread over `NodeListOf<Element>` sat in `layout.spec.ts` compiling fine under
+	@# Playwright's own transpile and failing under `tsc` — found on 2026-08-18 by running the
+	@# check that had never been wired up. A rule only a reviewer enforces is one the next file
+	@# breaks; this is the same shape as the ESLint claim `CLAUDE.md` had to retract.
+	cd e2e && npx prettier --check "**/*.ts" && npx tsc --noEmit -p tsconfig.json
 
 fmt: ## Auto-format and auto-fix the whole codebase
 	uv run ruff format .
 	uv run ruff check --fix .
-	cd $(FRONTEND_DIR) && npx prettier --write "src/**/*.{ts,html,scss}"
+	cd $(FRONTEND_DIR) && npx prettier --write "src/**/*.{ts,html,scss}" "proxy.conf.cjs"
+	cd e2e && npx prettier --write "**/*.ts"
 
 # Local run targets enable OTLP export to the collector (make up starts it).
 run-gateway: ## Run the Gateway API locally against the Compose stack
@@ -310,14 +355,14 @@ run-gateway: ## Run the Gateway API locally against the Compose stack
 # to be able to verify it (ADR-0007).
 run-gateway-oidc: ## Run the Gateway with OIDC enabled (required for the SPA's gateway views)
 	AIRA_OTEL_ENABLED=true AIRA_OIDC_ENABLED=true \
-		AIRA_OIDC_ISSUER=http://localhost:8080/realms/aira \
+		AIRA_OIDC_ISSUER=$(KEYCLOAK_URL)/realms/aira \
 		uv run uvicorn aira_gateway.main:app --reload --port 8001
 
 run-backend: ## Run the Management backend (Django) locally against the Compose stack
-	cd management/backend && AIRA_OTEL_ENABLED=true uv run python manage.py runserver 127.0.0.1:8002
+	cd management/backend && AIRA_OTEL_ENABLED=true uv run python manage.py runserver 127.0.0.1:$(MANAGEMENT_PORT)
 
 run-frontend: ## Run the Angular dev server (proxies /api to the management backend)
-	cd $(FRONTEND_DIR) && npx ng serve --host 0.0.0.0 --port 4200 --proxy-config proxy.conf.json
+	cd $(FRONTEND_DIR) && npx ng serve --host 0.0.0.0 --port $(CONSOLE_PORT) --proxy-config proxy.conf.cjs
 
 migrate-gateway: ## Apply gateway DB migrations (Alembic)
 	cd gateway && uv run alembic upgrade head
@@ -325,7 +370,7 @@ migrate-gateway: ## Apply gateway DB migrations (Alembic)
 kafka-topics: ## Create the compacted config-distribution topics (idempotent)
 	@for t in aira.usecases aira.memberships aira.api-keys aira.pipelines aira.budgets aira.rate-limits aira.models aira.anomaly-rules; do \
 		docker exec aira-kafka /opt/kafka/bin/kafka-topics.sh --create --if-not-exists --topic $$t \
-			--bootstrap-server localhost:9092 --partitions 1 --replication-factor 1 \
+			--bootstrap-server $(KAFKA_ADDR) --partitions 1 --replication-factor 1 \
 			--config cleanup.policy=compact; \
 	done
 
@@ -339,11 +384,11 @@ consume: ## Run the gateway config consumer (applies events into the read-model)
 	uv run python -m aira_gateway.consumer.worker
 
 vault-init: ## Create the Vault path, policy and AppRole; optionally copy AIRA_* secrets in
-	@echo "Setting up Vault at $${VAULT_ADDR:-http://localhost:8200}…"
+	@echo "Setting up Vault at $${VAULT_ADDR:-$(VAULT_URL)}…"
 	uv run python tools/vault_setup.py --from-env
 
 vault-status: ## Where does the gateway say its secrets came from?
-	@curl -s http://localhost:8001/readyz | python3 -c "import json,sys; d=json.load(sys.stdin); print(json.dumps(d.get('secrets', {'note': 'authenticate to see this'}), indent=2))"
+	@curl -s $(GATEWAY_URL)/readyz | python3 -c "import json,sys; d=json.load(sys.stdin); print(json.dumps(d.get('secrets', {'note': 'authenticate to see this'}), indent=2))"
 
 seed: ## Migrate + seed demo data (idempotent; requires 'make up')
 	cd management/backend && AIRA_DEMO_MODE=true uv run python manage.py migrate --noinput

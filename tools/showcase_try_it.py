@@ -23,8 +23,10 @@ import sys
 import urllib.error
 import urllib.request
 
-GATEWAY = os.environ.get("AIRA_GATEWAY_URL", "http://localhost:8001")
-CONSOLE = os.environ.get("AIRA_CONSOLE_URL", "http://localhost:4200")
+import stack_addresses
+
+GATEWAY = os.environ.get("AIRA_GATEWAY_URL") or stack_addresses.url("gateway")
+CONSOLE = os.environ.get("AIRA_CONSOLE_URL") or stack_addresses.url("console")
 SLUG = "kundenservice"
 
 #: Must match `apps/seed/contributions/showcase.py`, as `tools/demo_traffic.py` does. Duplicated

@@ -1,3 +1,4 @@
+import { KEYCLOAK_URL } from '../stack';
 import { Page, expect, test } from '@playwright/test';
 import { USERS, login, logout } from './support';
 
@@ -77,7 +78,7 @@ test.describe('Authentication', () => {
     await page.goto('/use-cases');
 
     const admin = await request.post(
-      'http://localhost:8080/realms/master/protocol/openid-connect/token',
+      `${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token`,
       {
         form: {
           grant_type: 'password',
@@ -88,14 +89,11 @@ test.describe('Authentication', () => {
       },
     );
     const token = (await admin.json()).access_token as string;
-    const users = await request.get(
-      'http://localhost:8080/admin/realms/aira/users?username=ucadmin',
-      {
-        headers: { Authorization: `Bearer ${token}` },
-      },
-    );
+    const users = await request.get(`${KEYCLOAK_URL}/admin/realms/aira/users?username=ucadmin`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
     const userId = (await users.json())[0].id as string;
-    await request.post(`http://localhost:8080/admin/realms/aira/users/${userId}/logout`, {
+    await request.post(`${KEYCLOAK_URL}/admin/realms/aira/users/${userId}/logout`, {
       headers: { Authorization: `Bearer ${token}` },
     });
 

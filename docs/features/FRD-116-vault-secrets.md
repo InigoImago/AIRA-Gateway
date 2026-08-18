@@ -110,12 +110,22 @@ None. No secret is persisted by AIRA; Vault is read, never written.
 
 Configuration only:
 
+**No `AIRA_` prefix.** These are HashiCorp's own variable names, read before any settings class
+exists — the secret store has to be reachable before the thing it configures. This block wrote
+`AIRA_VAULT_ADDR` until 2026-08-18, and `docs/CONFIGURATION.md` wrote a third spelling
+(`AIRA_VAULT_ADDRESS`); neither is read by anything, so following either left Vault **off** with
+every credential coming quietly from the environment — the failure `secrets_state()` exists to
+make visible after it cost three days once. `/readyz` reports where this process's secrets came
+from; check it rather than assuming.
+
 ```
-AIRA_VAULT_ADDR=https://vault.example.com
-AIRA_VAULT_MOUNT=secret
-AIRA_VAULT_PATH=aira/prod
-AIRA_VAULT_ROLE_ID=…
-AIRA_VAULT_SECRET_ID=…          # or AIRA_VAULT_SECRET_ID_FILE=/run/secrets/vault
+VAULT_ADDR=https://vault.example.com
+VAULT_MOUNT=secret
+VAULT_PATH=aira/prod
+VAULT_ROLE_ID=…
+VAULT_SECRET_ID_FILE=/run/secrets/vault   # or VAULT_SECRET_ID=… ; a file is preferred
+VAULT_NAMESPACE=…                         # Vault Enterprise only
+VAULT_TIMEOUT=10
 ```
 
 Keys read: `database_url`, `google_api_key`, `vertex_credentials`, `django_secret_key`,

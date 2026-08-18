@@ -80,3 +80,63 @@ def test_a_surface_that_dispatches_prepares_through_the_shared_sequence(surface:
         pytest.skip(f"{surface.parent.name} dispatches nothing")
 
     assert "prepare_for_dispatch" in called
+
+
+# == and a surface never loses evidence quietly ==================================================
+
+
+def test_no_surface_swallows_a_failed_audit_write() -> None:
+    """Both surfaces refuse to let the audit fail a correctly-refused request. Only one said so.
+
+    `FRD-122` FR-7 is right: turning a 429 into a 500 misinforms the caller about what happened and
+    invites the retry storm the limit exists to prevent. So the write is shielded — and the shield
+    is where the evidence goes missing. The Gemini surface logs `audit_refusal_not_recorded` and
+    has since the shield was written; the KIRA surface used `contextlib.suppress(Exception)`, which
+    keeps FR-7 and drops the row with no row, no log line, and nothing for anybody reviewing the
+    audit to notice. *A control with no trace cannot be reviewed* is this project's own phrase for
+    this exact path, from the mutation that guards it.
+
+    Two surfaces, one governance question, two answers — and the next surface would have copied
+    whichever it read first. Asserted structurally rather than by behaviour because that is what
+    makes it true of a surface nobody has written yet.
+    """
+    offenders: list[str] = []
+    for surface in SURFACES:
+        source = surface.read_text()
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.With | ast.AsyncWith):
+                continue
+            for item in node.items:
+                call = item.context_expr
+                if not isinstance(call, ast.Call):
+                    continue
+                name = ast.unparse(call.func)
+                if not name.endswith("suppress"):
+                    continue
+                # `suppress(CancelledError)` is shutdown, not evidence. What this forbids is a
+                # blanket suppression around a recording call.
+                caught = {ast.unparse(arg) for arg in call.args}
+                if not caught & {"Exception", "BaseException"}:
+                    continue
+                body = ast.unparse(node)
+                if "_record" in body or "record_request" in body or "audit" in body.lower():
+                    offenders.append(f"{surface.parent.name}:{node.lineno}")
+
+    assert not offenders, (
+        "These swallow a failed audit write without saying so: " + ", ".join(offenders) + ".\n"
+        "Shielding the request is right (`FRD-122` FR-7); losing the row in silence is not. "
+        "Catch it and log `audit_refusal_not_recorded`, as both surfaces now do."
+    )
+
+
+def test_every_surface_reports_a_lost_audit_row_under_the_same_name() -> None:
+    """One event name, or the search that looks for missing rows finds one surface's worth."""
+    for surface in SURFACES:
+        source = surface.read_text()
+        if "_record" not in source and "record_request" not in source:
+            continue
+        assert "audit_refusal_not_recorded" in source, (
+            f"{surface.parent.name} records refusals but has no way to report failing to. "
+            "An operator searching for lost evidence would see the other surface only."
+        )

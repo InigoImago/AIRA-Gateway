@@ -1,5 +1,13 @@
 import { expect, test } from '@playwright/test';
-import { USERS, createUseCase, login, logout, uniqueSlug, submitOfOpenForm } from './support';
+import {
+  USERS,
+  createUseCase,
+  login,
+  logout,
+  openEditorTab,
+  submitOfOpenForm,
+  uniqueSlug,
+} from './support';
 
 /**
  * Cost-based budgeting (FRD-403) through the real UI.
@@ -43,6 +51,9 @@ test.describe('Cost budgets', () => {
     await page.click('button:has-text("Add model")');
     const model = uniqueSlug('priced');
     await page.fill('#model-name', model);
+    // The name is on Identity and the prices are on Price — three tabs since 2026-08-18, because
+    // eighteen fields in one column interleaved what a model *is* with what it *costs*.
+    await openEditorTab(page, 'price');
     await page.fill('#model-input', '0.075');
     await page.fill('#model-output', '0.30');
     // Adding a model requires having *looked* first (`FRD-506`): the catalog is what the gateway
@@ -87,6 +98,7 @@ test.describe('Cost budgets', () => {
     await page.goto('/models');
     await page.click('button:has-text("Add model")');
     await page.fill('#model-name', uniqueSlug('half'));
+    await openEditorTab(page, 'price');
     await page.fill('#model-input', '1.00');
 
     await expect(page.locator('.field__hint--error')).toContainText('both');

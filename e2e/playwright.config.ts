@@ -1,3 +1,4 @@
+import { CONSOLE_URL } from './stack';
 import { defineConfig, devices } from '@playwright/test';
 
 /**
@@ -26,7 +27,7 @@ export default defineConfig({
   expect: { timeout: 10_000 },
   reporter: process.env.CI ? [['github'], ['html', { open: 'never' }]] : [['list']],
   use: {
-    baseURL: process.env.AIRA_E2E_BASE_URL ?? 'http://localhost:4200',
+    baseURL: CONSOLE_URL,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     video: 'off',

@@ -109,11 +109,27 @@ graph LR
 
 | Endpoint | URL |
 |---|---|
-| SPA | <http://localhost:4200> — override with `AIRA_FRONTEND_PORT` |
-| Gateway | <http://localhost:8001> · `/healthz` `/readyz` `/docs` — `AIRA_GATEWAY_PORT` |
-| Management API | <http://localhost:8002> · `/healthz` `/readyz` — `AIRA_MANAGEMENT_PORT` |
-| Keycloak | <http://localhost:8080> (`admin` / `admin`) |
-| Grafana (traces) | <http://localhost:3000> |
+| SPA | <http://localhost:4200> — override with `AIRA_PUBLISH_FRONTEND_PORT` |
+| Gateway | <http://localhost:8001> · `/healthz` `/readyz` `/docs` — `AIRA_PUBLISH_GATEWAY_PORT` |
+| Management API | <http://localhost:8002> · `/healthz` `/readyz` — `AIRA_PUBLISH_MANAGEMENT_PORT` |
+| Keycloak | <http://localhost:8080> (`admin` / `admin`) — `AIRA_PUBLISH_KEYCLOAK_PORT` |
+| Grafana (traces) | <http://localhost:3000> — `AIRA_PUBLISH_GRAFANA_PORT` |
+
+**Every published port is a variable**, not only these five: `AIRA_PUBLISH_POSTGRES_PORT`,
+`…_REDIS_PORT`, `…_KAFKA_PORT`, `…_SCHEMA_REGISTRY_PORT`, `…_VAULT_PORT`, `…_OTLP_GRPC_PORT`,
+`…_OTLP_HTTP_PORT`, `…_OLLAMA_PORT`, `…_KEYCLOAK_HEALTH_PORT`. Set them in
+`deploy/compose/.env` or in the environment; `AIRA_BIND_HOST` moves them off `127.0.0.1`. This
+exists because a second system on the same machine collided with the defaults and the only way out
+was editing the Compose file.
+
+The three application services also still accept their older names — `AIRA_FRONTEND_PORT`,
+`AIRA_GATEWAY_PORT`, `AIRA_MANAGEMENT_PORT` — and the `AIRA_PUBLISH_` form wins when both are set.
+Prefer the new one: it says *published*, which distinguishes it from `AIRA_POSTGRES_PORT`, a
+**setting** naming the port the gateway connects to.
+
+Everything that talks to the stack follows these — the Makefile, `tools/`, the integration suite
+and the browser suite all resolve their addresses through `tools/stack_addresses.py`, so moving a
+port moves them too. `make test-integration` proves that against `docker compose config` itself.
 
 ```bash
 make ps            # status and health of every service

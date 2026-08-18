@@ -16,6 +16,7 @@ import subprocess
 import uuid
 
 import pytest
+import stack_addresses
 
 from aira_common.config import BaseAiraSettings, VaultSource
 from aira_common.secrets import (
@@ -29,7 +30,7 @@ from aira_common.secrets import (
 
 pytestmark = pytest.mark.integration
 
-VAULT_ADDR = "http://localhost:8200"
+VAULT_ADDR = stack_addresses.url("vault")
 ROOT_TOKEN = "root"
 
 
@@ -40,7 +41,7 @@ def _vault(*args: str) -> subprocess.CompletedProcess[str]:
             "docker",
             "exec",
             "-e",
-            "VAULT_ADDR=http://127.0.0.1:8200",
+            f"VAULT_ADDR={stack_addresses.url('vault')}",
             "-e",
             f"VAULT_TOKEN={ROOT_TOKEN}",
             "aira-vault",
@@ -159,7 +160,7 @@ def approle(secret_path: str, monkeypatch: pytest.MonkeyPatch):
             "exec",
             "-i",
             "-e",
-            "VAULT_ADDR=http://127.0.0.1:8200",
+            f"VAULT_ADDR={stack_addresses.url('vault')}",
             "-e",
             f"VAULT_TOKEN={ROOT_TOKEN}",
             "aira-vault",

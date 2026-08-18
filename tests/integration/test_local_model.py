@@ -23,6 +23,7 @@ import uuid
 
 import httpx
 import pytest
+import stack_addresses
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -30,7 +31,7 @@ from .conftest import GATEWAY_URL, Fixture
 
 pytestmark = pytest.mark.integration
 
-OLLAMA_URL = os.environ.get("AIRA_OLLAMA_URL", "http://localhost:11434")
+OLLAMA_URL = os.environ.get("AIRA_OLLAMA_URL") or stack_addresses.url("ollama")
 CHAT_MODEL = os.environ.get("AIRA_SEED_LOCAL_CHAT_MODEL", "qwen3:0.6b")
 EMBED_MODEL = os.environ.get("AIRA_SEED_LOCAL_EMBED_MODEL", "all-minilm")
 

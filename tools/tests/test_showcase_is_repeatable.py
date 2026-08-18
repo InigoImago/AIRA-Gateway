@@ -22,6 +22,7 @@ them; a test is what keeps them.
 from __future__ import annotations
 
 import pathlib
+import re
 
 import yaml
 
@@ -147,8 +148,14 @@ def test_the_showcase_waits_for_everything_it_then_points_at() -> None:
     assert "wait-healthy" in showcase, (
         "the showcase waits for something narrower than what it goes on to advertise"
     )
-    assert "curl -fsS http://localhost:8001/readyz" not in showcase, (
-        "a second, weaker readiness loop is back"
+    # **Spelled as a shape, not as a string.** This used to read
+    # `assert "curl -fsS http://localhost:8001/readyz" not in showcase` — and on 2026-08-18 the
+    # Makefile's addresses became `$(GATEWAY_URL)`, at which point the assertion was *vacuously
+    # true*: it looked for a spelling that no longer exists and would have passed with the weaker
+    # loop right back in. A guard that cannot fail is a guard that is gone, and this is the fourth
+    # time this repository has found one satisfied by the wrong source.
+    assert not re.search(r"curl -fsS \S*/readyz", showcase), (
+        "a second, weaker readiness loop is back — `wait-healthy` is the one that checks all four"
     )
 
 
@@ -158,8 +165,18 @@ def test_wait_healthy_covers_the_console_and_not_only_the_apis() -> None:
     body = MAKEFILE.read_text()
     target = body[body.index("\nwait-healthy:") : body.index("\ntest-e2e:")]
 
-    for port in ("4200", "8001", "8002", "8080"):
-        assert port in target, f"nothing waits for the service on {port}"
+    # **Through the variables, not the numbers.** These were `"4200", "8001", "8002", "8080"` until
+    # the Makefile's addresses became `$(CONSOLE_URL)` and friends on 2026-08-18, at which point
+    # every one of them went quietly false: the check passed by finding nothing, which is what it
+    # looks like when it passes by finding everything. Named through the same variables the target
+    # uses, it fails when a service is dropped from the wait and cannot be fooled by a rename.
+    for service, variable in (
+        ("console", "$(CONSOLE_URL)"),
+        ("gateway", "$(GATEWAY_URL)"),
+        ("management", "$(MANAGEMENT_URL)"),
+        ("keycloak", "$(KEYCLOAK_URL)"),
+    ):
+        assert variable in target, f"nothing waits for the {service}"
 
 
 def test_the_printed_walkthrough_names_the_accounts_the_seed_creates() -> None:

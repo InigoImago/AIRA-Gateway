@@ -66,6 +66,10 @@ module = ["guardian.*", "aiokafka.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
+# `tools/` on the path so every layer can `import stack_addresses` — the one module that knows
+# where the local stack answers. Each importer used to insert the path itself, which is four
+# copies of the same three lines and one more thing a new test file has to remember.
+pythonpath = ["tools"]
 asyncio_mode = "auto"
 DJANGO_SETTINGS_MODULE = "aira_management.config.settings"
 testpaths = [

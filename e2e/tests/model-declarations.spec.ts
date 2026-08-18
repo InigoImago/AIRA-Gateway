@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { USERS, login } from './support';
+import { USERS, login, openEditorTab } from './support';
 
 /**
  * Declaring what a model can do — the three blocks the API always accepted and the console could
@@ -25,6 +25,7 @@ test.describe('Model declarations', () => {
     await expect(page.getByTestId('open-model-all-minilm')).toBeVisible({ timeout: 20_000 });
     await page.getByTestId('open-model-all-minilm').click();
     await page.getByTestId('edit-all-minilm').click();
+    await openEditorTab(page, 'capabilities');
 
     // The block is on screen because the model declares `embed` — that is the whole conditional.
     const dimensions = page.getByTestId('embedding-dimensions');
@@ -49,6 +50,9 @@ test.describe('Model declarations', () => {
     await expect(page.getByTestId('open-model-all-minilm')).toBeVisible({ timeout: 20_000 });
     await page.getByTestId('open-model-all-minilm').click();
     await page.getByTestId('edit-all-minilm').click();
+    // The editor opens on Identity every time, so the reopened one needs the tab again — the
+    // round trip is only proved by reading the field back where it actually lives.
+    await openEditorTab(page, 'capabilities');
     await expect(dimensions).toHaveValue(changed);
 
     // Put back, so the next run and the demo find the measured declaration.
@@ -64,6 +68,7 @@ test.describe('Model declarations', () => {
     await expect(page.getByTestId('open-model-qwen3:0.6b')).toBeVisible({ timeout: 20_000 });
     await page.getByTestId('open-model-qwen3:0.6b').click();
     await page.getByTestId('edit-qwen3:0.6b').click();
+    await openEditorTab(page, 'capabilities');
 
     // This one reasons and does not embed, so exactly one of the two is on screen — which is the
     // property: a thinking budget on a model that does not think is a declaration the validator

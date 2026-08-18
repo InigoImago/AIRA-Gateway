@@ -17,6 +17,7 @@ somebody sees something.
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -97,6 +98,31 @@ async def test_oversight_sees_a_use_case_it_did_not_create(
     assert slug in slugs
 
 
+def _row_for(slug: str) -> tuple[list[str], dict[str, object]]:
+    """Every column `usecases_usecase` needs, and a value for each, taken from the Django model.
+
+    Only the fields that would otherwise be `NULL` are filled: the model's own defaults, which is
+    what the API would have written. A column added tomorrow arrives here with its default and
+    nothing has to be remembered.
+    """
+    from aira_management.apps.usecases.models import UseCase
+    from django.db.models import DateTimeField
+
+    columns: list[str] = []
+    values: dict[str, object] = {}
+    for field in UseCase._meta.fields:
+        if field.primary_key or field.is_relation:
+            continue
+        columns.append(field.column)
+        if field.name in {"slug", "name"}:
+            values[field.column] = slug
+        elif isinstance(field, DateTimeField) and (field.auto_now or field.auto_now_add):
+            values[field.column] = datetime.now(UTC)
+        else:
+            values[field.column] = field.get_default()
+    return columns, values
+
+
 async def test_a_caller_does_not_see_a_use_case_it_has_nothing_to_do_with(
     member_token: str,
 ) -> None:
@@ -117,22 +143,20 @@ async def test_a_caller_does_not_see_a_use_case_it_has_nothing_to_do_with(
     management = build_engine(MANAGEMENT_DB)
     try:
         async with management.begin() as connection:
+            # **The column list is asked for, not written out.** It used to be spelled here, with
+            # a comment predicting that "a raw INSERT into an ORM-managed table breaks the moment
+            # a field is added" — because Django's `default=` lives in Python and leaves no
+            # database-level default behind. On 2026-08-18 `include_reasoning` was added and it
+            # broke exactly as foretold, which is the answer to whether a comment is a substitute
+            # for a fix. The model already knows every column and every default; a second
+            # statement of the same fact is the defect, not the missing entry in it.
+            columns, values = _row_for(slug)
             await connection.execute(
-                # Every NOT NULL column named explicitly. Django adds a column with a *one-time*
-                # default and does not leave a database-level one, so a raw INSERT into an
-                # ORM-managed table breaks the moment a field is added — and it broke here on a
-                # migration that only changed a `help_text`, because `AlterField` re-creates the
-                # column and drops the default the original `AddField` had left behind.
                 text(
-                    "INSERT INTO usecases_usecase"
-                    " (slug, name, description, processing_notes, store_payloads,"
-                    "  tools_enabled, prompt_caching_enabled, prompt_cache_ttl,"
-                    "  restrict_members_to_own_requests,"
-                    "  retention_days, created_at, updated_at)"
-                    " VALUES (:slug, :slug, '', '', true, false, false, '5m', false, 7,"
-                    "         now(), now())"
+                    f"INSERT INTO usecases_usecase ({', '.join(columns)})"
+                    f" VALUES ({', '.join(':' + c for c in columns)})"
                 ),
-                {"slug": slug},
+                values,
             )
     finally:
         await management.dispose()

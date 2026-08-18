@@ -16,6 +16,7 @@ import subprocess
 
 import httpx
 import pytest
+import stack_addresses
 
 from .conftest import GATEWAY_URL
 
@@ -92,7 +93,7 @@ async def test_readiness_answers_quickly_even_though_it_reports_upstreams() -> N
 async def test_the_probe_does_not_load_a_model() -> None:
     """A probe that generated would wake a scaled-to-zero endpoint on every health check. Asked of
     the model server directly, because only it knows what is resident."""
-    async with httpx.AsyncClient(base_url="http://localhost:11434", timeout=10.0) as client:
+    async with httpx.AsyncClient(base_url=stack_addresses.url("ollama"), timeout=10.0) as client:
         try:
             before = await client.get("/api/ps")
         except httpx.HTTPError:
@@ -101,7 +102,7 @@ async def test_the_probe_does_not_load_a_model() -> None:
     for _ in range(5):
         await _readyz()
 
-    async with httpx.AsyncClient(base_url="http://localhost:11434", timeout=10.0) as client:
+    async with httpx.AsyncClient(base_url=stack_addresses.url("ollama"), timeout=10.0) as client:
         after = await client.get("/api/ps")
 
     if before.status_code == 200 and after.status_code == 200:

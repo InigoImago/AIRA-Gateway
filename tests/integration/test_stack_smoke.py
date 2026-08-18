@@ -6,6 +6,7 @@ Excluded from the default hermetic run via the ``integration`` marker; run with
 """
 
 import pytest
+import stack_addresses
 from sqlalchemy import text
 
 from aira_gateway.config import GatewaySettings
@@ -24,7 +25,7 @@ async def test_postgres_reachable_and_queryable() -> None:
         await engine.dispose()
 
 
-FRONTEND_URL = "http://127.0.0.1:4200"
+FRONTEND_URL = stack_addresses.url("console")
 
 
 async def test_the_spa_reaches_both_services_through_its_own_origin() -> None:

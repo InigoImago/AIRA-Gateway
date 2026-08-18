@@ -15,6 +15,7 @@ import uuid
 
 import httpx
 import pytest
+import stack_addresses
 
 from .conftest import (
     GATEWAY_URL,
@@ -378,7 +379,7 @@ async def test_the_directory_never_answers_a_one_letter_query_with_the_whole_rea
 # end of the test for exactly that reason: a suite that leaves grants behind in somebody's
 # directory is doing the thing this system refuses to do.
 
-KEYCLOAK_ADMIN = "http://localhost:8080"
+KEYCLOAK_ADMIN = stack_addresses.url("keycloak")
 
 
 async def _kc_admin_token() -> str:

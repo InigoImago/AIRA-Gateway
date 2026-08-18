@@ -1,0 +1,4 @@
+{
+  "management": "/api",
+  "gateway": "/gw"
+}

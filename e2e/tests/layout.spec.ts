@@ -162,7 +162,11 @@ test.describe('Layout', () => {
     // over the inspector by name: the complaint is about the page, and naming one element is how a
     // rule comes back on the next panel somebody adds.
     const scrollers = await page.evaluate(() =>
-      [...document.querySelectorAll('.pipe *')]
+      // `Array.from` rather than a spread: `NodeListOf<Element>` is only iterable when the
+      // `dom.iterable` lib is on, which this project's tsconfig does not enable — the spread was a
+      // `tsc` error that nothing in CI ran, so it sat here compiling fine under Playwright's own
+      // transpile and failing under a type check.
+      Array.from(document.querySelectorAll('.pipe *'))
         .filter((el) => {
           const style = getComputedStyle(el);
           const scrolls = ['auto', 'scroll'].includes(style.overflowY);

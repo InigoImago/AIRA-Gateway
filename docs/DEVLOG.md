@@ -5,6 +5,99 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Going looking for the shapes that turned up in one day (2026-08-18)
+
+*"So many mistakes were found in one day, in one look — now go through the code and eliminate
+similar ones."* Fair. Yesterday's port collision and the console's three copies of one address were
+not isolated; they were instances. This is what a search for the same shapes found, and what it
+cost to fix.
+
+**The ports were half-done, and I had done the half that looks finished.** Compose's fourteen
+published ports became `AIRA_PUBLISH_…_PORT` variables — and *nothing that talks to the stack*
+knew: the Makefile carried twenty literal addresses, `tools/` five, `tests/integration/` a dozen,
+`e2e/` eight, and `proxy.conf.json` two more in a format that cannot ask anything. Move a port to
+dodge a collision and the stack comes up correctly while `make showcase` waits forever on the old
+one and `make test-integration` reports "connection refused" — which reads as *nothing is running*
+rather than *you are knocking on the wrong door*. `tools/stack_addresses.py` is now the one place
+that answers, `tools/stack-addresses.cjs` asks it from Node, and a guard fails when a literal
+reappears. The Makefile resolves all fourteen in one 42ms `python3` call rather than fourteen
+`uv run` calls, because a developer who pays four seconds on `make help` starts working around the
+Makefile.
+
+**And the owner had the same bug it was written to fix.** Compose's fallback for the three
+application services is nested — `${AIRA_PUBLISH_GATEWAY_PORT:-${AIRA_GATEWAY_PORT:-8001}}` — and
+the inner name is what `docs/SETUP.md` had been documenting. Reading only the outer one published
+the stack where the reader asked and left every tool at 8001. Found by asking `docker compose
+config` instead of reasoning about it, which is now a test over five shapes of the resolution.
+
+**`docs/CONFIGURATION.md` documented seven Vault variables that nothing reads.** `AIRA_VAULT_ADDRESS`
+where the code reads `VAULT_ADDR`, with no prefix — they are HashiCorp's own names, read before any
+settings class exists. An operator following the reference to turn Vault on would have set the
+prefixed form, seen no error, and had every credential come quietly from the environment. That is
+the exact failure `secrets_state()` was written for after it cost three days once; the document had
+been sending readers back into it. `FRD-116` had a *third* spelling (`AIRA_VAULT_ADDR`). Nine more
+settings were missing entirely, five of them the whole Kafka SASL/TLS family — the ones a
+production deployment cannot do without, and `PLAINTEXT` is refused outside `local` precisely
+because the read-model that authorization comes from is built from those topics.
+
+**The console's URL prefixes were stated four times** — every call site, `AIRA_PREFIXES` in the
+interceptor, the nginx `location` blocks, and the dev proxy. A fifth prefix added to the services
+and forgotten in the interceptor sends the request without a token, and the `401` is then handled
+by *logging the user out*: a valid session ended over a list nobody extended. One `prefixes.json`
+now, read by TypeScript and by CommonJS; nginx cannot read JSON, so it is compared.
+
+**Three guards were satisfied by a spelling rather than by the thing they name.** Two of them went
+vacuous the moment the Makefile's addresses became variables — `assert "curl -fsS
+http://localhost:8001/readyz" not in showcase` looks for a string that no longer exists, and
+`assert "4200" in target` was checking for a number the file had stopped containing. Both would
+have passed with the weaker readiness loop right back in. The third was mine, in this same session.
+A guard that cannot fail is a guard that is gone.
+
+**The KIRA surface lost an audit row in silence.** `contextlib.suppress(Exception)` around the
+recording of a refusal keeps `FRD-122` FR-7 — never turn a correct refusal into a server error —
+and drops the second half: no row, no log line, nothing for anybody reviewing the audit to notice.
+The Gemini surface has logged `audit_refusal_not_recorded` since the shield was written there. Two
+surfaces, one governance question, two answers; `test_surface_layering.py` now fails on a blanket
+suppression around a recording call, so the third surface cannot inherit the wrong one.
+
+**`e2e/` was never type-checked.** `"strict": true` in its tsconfig and no reader: `ng build`
+covers the console and stops at its own `src/`. A spread over `NodeListOf<Element>` had been
+sitting in `layout.spec.ts`, compiling under Playwright's transpile and failing under `tsc`. Now in
+`make lint-frontend`, which is what CI runs — the same shape as the ESLint claim `CLAUDE.md` had to
+retract in August.
+
+And wiring it up immediately paid for itself twice. The tsconfig said `"module": "ESNext"` while
+Playwright transpiles to **CommonJS**, so the new `stack.ts` type-checked an `import.meta.url` that
+threw `Cannot use 'import.meta' outside a module` on the first run — a type check configured for a
+module system the code never sees is a type check that agrees with itself. It now says `CommonJS`,
+and rejects that expression; `stack.ts` was also missing from `include`, so the file every spec
+imports was only checked by accident.
+
+**A raw INSERT in the integration layer listed its columns by hand**, with a comment predicting
+that it would break "the moment a field is added". `include_reasoning` was added, and it broke. The
+comment was right and was not a fix: the column list is now asked of the Django model.
+
+Also: `FRD-123` promised `make verify-local`, which has never existed (`verify-up`). Guarded now,
+excluding `DEVLOG.md` and `LESSONS.md`, which quote dead targets *because* they were dead.
+
+**And one bound stated twice.** `SchemaBounds`' dataclass defaults and the three
+`max_response_schema_*` settings carried the same numbers independently. Production always passes
+the settings; every test in `test_response_schema.py` uses the dataclass. Let them drift and the
+tests go on passing while measuring a limit production does not have — the stand-in more permissive
+than the thing it replaces. `core/` must not import `config`, so the agreement is asserted instead.
+
+**The browser suite had been red since the model editor was split into tabs, and nobody had
+looked.** Nine specs went straight from "open the editor" to a field, and the fields now live on
+three tabs — `element(s) not found`, which reads as *the control is gone* rather than *it is one
+click away*. That is the cost of shipping a layout change and running only the two lower layers:
+the split was made and verified by hand in a browser, and the layer that exists to catch exactly
+this was not run. `openEditorTab()` in `e2e/tests/support.ts` is the fix, a helper rather than nine
+clicks, because the next tab moves fields again.
+
+Seven new mutations (`TC7`–`TC13`), each broken and confirmed caught. 489 properties.
+
+---
+
 ## A compatibility surface that refused the traffic it exists to accept (2026-08-18)
 
 Six diffs came back from a real chatbot pointed at the KIRA surface in another environment. They

@@ -602,9 +602,19 @@ async def test_an_unauthenticated_request_is_refused(fixture) -> None:
     assert response.status_code == 401
 
 
-async def test_the_kira_surface_refuses_what_its_contract_does_not_serve(fixture, engine) -> None:
-    """`FRD-107` Stage A: an unsupported field is refused **by name**, never ignored — and in the
-    predecessor's own error vocabulary, so a migrating client's handling still switches on it."""
+async def test_the_kira_surface_names_what_its_contract_does_not_model(fixture, engine) -> None:
+    """`FRD-124` §5.6, against the real gateway and a real model.
+
+    Stage A refused an unmodelled field by name. Measured against a real chatbot on 2026-08-18,
+    that made the surface unusable — it sends fields the predecessor tolerated, so every call came
+    back `422` over a field that changes no answer. The rule was never "refuse"; it was **never
+    drop in silence**. The request is served, and the field is named in a header on the very
+    response it travelled with.
+
+    Two assertions, because either alone would pass for the wrong reason: a surface that ignores
+    the field satisfies the first, and one that refuses it satisfies neither but would have
+    satisfied the old test.
+    """
     model_id = await _kira_model_id(engine, CHAT)
     response = await _post(
         fixture,
@@ -612,11 +622,37 @@ async def test_the_kira_surface_refuses_what_its_contract_does_not_serve(fixture
         {
             "request": {"parts": [{"text": "hi"}]},
             "model_id": model_id,
+            "maxTokens": 16,
             "topSecretTuning": 7,
         },
     )
-    assert response.status_code == 422
-    assert "topSecretTuning" in response.text
+    assert response.status_code == 200, response.text[:300]
+    assert response.headers.get("X-AIRA-Unmodelled-Fields") == "topSecretTuning"
+
+
+async def test_the_kira_surface_still_refuses_a_near_miss_of_a_field_it_has(
+    fixture, engine
+) -> None:
+    """The other side of the same line, and the reason it is a line rather than a switch.
+
+    `conversationHistory` differs from `conversation_history` only in spelling, so accepting it
+    would answer **without the conversation** — wrong, with nothing about the response to show it.
+    That one keeps its refusal, and the message names the spelling this surface takes so a
+    migrating client can act on it.
+    """
+    model_id = await _kira_model_id(engine, CHAT)
+    response = await _post(
+        fixture,
+        "/kira/api/external/chat",
+        {
+            "request": {"parts": [{"text": "hi"}]},
+            "model_id": model_id,
+            "conversationHistory": [],
+        },
+    )
+    assert response.status_code == 422, response.text[:300]
+    assert response.json()["code"] == "VALIDATION_ERROR"
+    assert "conversation_history" in response.text
 
 
 # == 5. the controls, against the running model =================================================
@@ -835,7 +871,7 @@ async def test_structured_output_returns_a_document(fixture, engine) -> None:
     assert "city" in body, "a schema was asked for and prose came back"
 
 
-@pytest.mark.parametrize("mode", ["disabled", "low", "medium", "high"])
+@pytest.mark.parametrize("mode", ["disabled", "minimal", "low", "medium", "high"])
 async def test_every_declared_thinking_mode_is_served(fixture, mode: str) -> None:
     """`FRD-111`. A mode the catalog declares must work, or the declaration is a claim nobody
     checked — and this test is how the claim gets checked.
@@ -843,6 +879,12 @@ async def test_every_declared_thinking_mode_is_served(fixture, mode: str) -> Non
     It found one: a hand-written entry declared `minimal`, which this server refuses **by name**
     (it takes `none`, `low`, `medium`, `high`, `max`). The declaration is now what a run measured
     rather than what the enum offers, which is the rule `FRD-114` states in the other direction.
+
+    `minimal` is back on this list as of 2026-08-18, and it is here rather than in a comment
+    because that is the only thing that makes the claim true: the dialect mapping now sends it as
+    `"low"`, the adjacent level this server *does* take, so the mode is honourable again. If that
+    mapping is ever reverted, this parameter fails against the real server — which is exactly how
+    the entry was removed the first time.
     """
     response = await _post(
         fixture,
@@ -852,7 +894,10 @@ async def test_every_declared_thinking_mode_is_served(fixture, mode: str) -> Non
     assert response.status_code == 200
 
 
-@pytest.mark.parametrize("mode", ["limited", "minimal"])
+# `auto`, not `minimal`. `minimal` moved to the declared list above once the dialect mapping made
+# it reachable, and a test asserting "undeclared modes are refused" has to name a mode that is
+# actually undeclared — otherwise it passes by asserting nothing about the rule it is named for.
+@pytest.mark.parametrize("mode", ["limited", "auto"])
 async def test_a_thinking_mode_the_model_does_not_declare_is_refused_by_name(
     fixture, mode: str
 ) -> None:

@@ -23,7 +23,9 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-KEYCLOAK = os.environ.get("KEYCLOAK_URL", "http://localhost:8080")
+import stack_addresses
+
+KEYCLOAK = os.environ.get("KEYCLOAK_URL") or stack_addresses.url("keycloak")
 ADMIN = os.environ.get("KEYCLOAK_ADMIN", "admin")
 ADMIN_PASSWORD = os.environ.get("KEYCLOAK_ADMIN_PASSWORD", "admin")
 REALM = os.environ.get("KEYCLOAK_REALM", "aira")
@@ -162,7 +164,7 @@ def check_management() -> None:
         blame(
             "No demo account has ever signed in to Management.",
             "Roles and visibility are worked out at sign-in from the token's groups; open the "
-            "console at http://localhost:4200 once.",
+            f"console at {stack_addresses.url('console')} once.",
         )
 
 

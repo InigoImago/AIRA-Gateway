@@ -84,3 +84,33 @@ def test_every_mutation_has_an_identifier_of_its_own() -> None:
         f"these ids name more than one property: {', '.join(duplicates)}. A report that says "
         "'X survived' would be ambiguous about which."
     )
+
+
+def test_every_make_target_the_reader_facing_docs_name_exists() -> None:
+    """A documented command that does not exist is the ESLint shape, in a smaller frame.
+
+    `FRD-123` promised `make verify-local`; the target is `verify-up`, and a developer following
+    the document gets *"No rule to make target"* and no clue which of the twenty-odd targets was
+    meant. Four more of these were found in one afternoon in August and fixed one at a time —
+    which is the sign that a check is missing rather than that people are careless.
+
+    `DEVLOG.md` and `LESSONS.md` are deliberately excluded: both quote dead targets *because* they
+    were dead, and rewriting the story to keep a checker happy would delete the record.
+    """
+    import re
+
+    makefile = (ROOT / "Makefile").read_text()
+    targets = set(re.findall(r"^([a-z][a-z0-9_-]*):", makefile, re.M))
+
+    missing: list[str] = []
+    for path in sorted(ROOT.glob("docs/**/*.md")) + [ROOT / "README.md", ROOT / "CLAUDE.md"]:
+        if path.name in {"DEVLOG.md", "LESSONS.md"}:
+            continue
+        for number, line in enumerate(path.read_text().splitlines(), 1):
+            for named in re.findall(r"`make ([a-z][a-z0-9_-]*)`", line):
+                if named not in targets:
+                    missing.append(f"{path.relative_to(ROOT)}:{number}  make {named}")
+
+    assert not missing, (
+        "These documents name a `make` target that does not exist:\n  " + "\n  ".join(missing)
+    )

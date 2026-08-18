@@ -1,16 +1,21 @@
 import { HttpErrorResponse, HttpInterceptorFn } from '@angular/common/http';
 import { inject } from '@angular/core';
 import { catchError, throwError } from 'rxjs';
+import { AIRA_PREFIXES } from '../api/prefixes';
 import { AuthService } from './auth.service';
 
 /**
  * Attach the bearer token to AIRA's own API calls, and treat a 401 as "log in again".
  *
- * Scoped to the two first-party prefixes on purpose (`/api` = management, `/gw` = gateway):
- * an interceptor that attached the token to *every* request would hand it to any third-party
- * host the app ever talks to (ADR-0007).
+ * Scoped to the first-party prefixes on purpose: an interceptor that attached the token to *every*
+ * request would hand it to any third-party host the app ever talks to (`ADR-0007`).
+ *
+ * **Which prefixes those are is not decided here.** It used to be — a local `['/api/', '/gw/']`
+ * beside fifty call sites that spelled the same two prefixes, an nginx template that routed them,
+ * and a dev-proxy config that repeated both. A third prefix added to the services and forgotten
+ * here sends the request without a token, and the `401` that comes back is handled below by
+ * *logging the user out*: a valid session ended over a list nobody remembered to extend.
  */
-const AIRA_PREFIXES = ['/api/', '/gw/'];
 
 export const authInterceptor: HttpInterceptorFn = (req, next) => {
   if (!AIRA_PREFIXES.some((prefix) => req.url.startsWith(prefix))) {

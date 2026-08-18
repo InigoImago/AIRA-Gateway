@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import stack_addresses
 
 #: Everything AIRA reads from Vault. Named here so `--from-env` cannot quietly copy an unrelated
 #: variable in, and so the policy grants exactly what is used.
@@ -96,7 +97,9 @@ def setup(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--address", default=os.environ.get("VAULT_ADDR", "http://localhost:8200"))
+    parser.add_argument(
+        "--address", default=os.environ.get("VAULT_ADDR") or stack_addresses.url("vault")
+    )
     parser.add_argument("--token", default=os.environ.get("VAULT_TOKEN", "root"))
     parser.add_argument("--mount", default=os.environ.get("VAULT_MOUNT", "secret"))
     parser.add_argument("--path", default=os.environ.get("VAULT_PATH", "aira"))

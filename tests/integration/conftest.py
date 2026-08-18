@@ -6,6 +6,7 @@ import uuid
 from collections.abc import AsyncIterator
 
 import pytest
+import stack_addresses
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -13,8 +14,13 @@ from aira_common.apikeys import generate_api_key
 from aira_gateway.config import GatewaySettings
 from aira_gateway.db.base import build_engine
 
-GATEWAY_URL = "http://127.0.0.1:8001"
-MANAGEMENT_URL = "http://127.0.0.1:8002"
+# **Never a literal.** These follow the same `AIRA_PUBLISH_…_PORT` variables that publish the
+# stack, through `tools/stack_addresses.py` — so a port moved to dodge a collision with another
+# system moves here too. They were `http://127.0.0.1:8001`-shaped constants, and this layer then
+# failed against a correctly-running stack with "connection refused", which reads as "nothing is
+# up" rather than "you are knocking on the wrong door".
+GATEWAY_URL = stack_addresses.url("gateway")
+MANAGEMENT_URL = stack_addresses.url("management")
 MANAGEMENT_DB = "postgresql+psycopg://aira:aira-local@localhost:5432/aira_mgmt"
 
 
@@ -58,7 +64,7 @@ async def engine(settings: GatewaySettings) -> AsyncIterator[AsyncEngine]:
         await engine.dispose()
 
 
-KEYCLOAK_URL = "http://localhost:8080"
+KEYCLOAK_URL = stack_addresses.url("keycloak")
 REALM = "aira"
 # A confidential client with a service account, present only in the dev realm. It exists so the
 # integration layer can obtain a **real, realm-signed** token carrying real roles — the thing no

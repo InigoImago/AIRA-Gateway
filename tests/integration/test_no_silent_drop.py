@@ -15,6 +15,7 @@ import asyncio
 
 import httpx
 import pytest
+import stack_addresses
 from tests.integration.conftest import GATEWAY_URL
 
 pytestmark = pytest.mark.integration
@@ -306,7 +307,7 @@ async def test_a_classifier_call_gets_an_answer_at_all_against_a_reasoning_model
     from aira_gateway.upstreams.openai.transport import OpenAITransport
 
     instruction = "Reply with exactly one word: INJECTION or SAFE."
-    async with httpx.AsyncClient(base_url="http://localhost:11434", timeout=300.0) as http:
+    async with httpx.AsyncClient(base_url=stack_addresses.url("ollama"), timeout=300.0) as http:
         provider = OpenAIAdapter(OpenAITransport(client=http), models=[MODEL], provider="probe")
 
         asked = await provider.generate(classifier_request(MODEL, instruction, "What is 2 + 2?"))

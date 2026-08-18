@@ -200,6 +200,25 @@ reading code.
   the audit row.
 - **Two refusals that need different actions stay apart** — *"not in the catalog"* (add it) and
   *"not approved"* (release it); *"no capable model"* (operator-fixable, 400) and an outage (502).
+- **A fact that must agree in N places has one owner and a test in both directions.** Met seven
+  times now (the Kafka topics twice, the group grant, the capability vocabulary, the realm roles,
+  the console's issuer, the local-model seeds) and twice more in one day: the stack's **published
+  ports**, which became variables in Compose while the Makefile, `tools/`, both upper test layers
+  and the dev proxy went on writing them out — so moving a port to dodge a collision brought the
+  stack up correctly and left everything that talks to it knocking on the wrong door; and the
+  console's **URL prefixes**, stated in the call sites, the auth interceptor, the nginx template
+  and the dev proxy, where a prefix missing from the interceptor sends the request without a token
+  and the resulting `401` *logs a valid session out*. One owner, everybody asks, and a guard that
+  fails when a second statement appears. **Mirror the owner's resolution exactly** — Compose's
+  fallback is nested (`${AIRA_PUBLISH_X:-${AIRA_X:-8001}}`) and reading only the outer name
+  reproduced the very bug the owner was written to remove.
+- **Documentation is configuration when it names a variable.** `docs/CONFIGURATION.md` listed seven
+  `AIRA_VAULT_*` variables; the code reads `VAULT_ADDR` and friends, unprefixed. An operator
+  following the reference to switch Vault on would have set names nothing reads, seen no error, and
+  had every credential come from the environment — the failure `secrets_state()` exists to expose,
+  after it cost three days. Nine more settings were missing, five of them the Kafka SASL/TLS family
+  a production deployment cannot do without. A reference is the copy nobody opens *until it
+  matters*; compare it to the settings classes in both directions, as with every other pair.
 - **A rule is not its mechanism, and refusing is not the only way to keep one.** *No silent drop*
   was implemented as `extra="forbid"`, which made the compatibility surface refuse the traffic it
   exists to accept: a real chatbot got `422` on every call, over fields that change no answer. The
@@ -371,8 +390,24 @@ reading code.
 - **A green test proves nothing on its own.** It proves the code and the test agree, which they
   inevitably do when both came from the same idea. **Prove a test can fail**: break the property,
   watch it go red, restore. `make mutants` does this for the properties worth keeping.
+- **A guard that asserts an *absence* goes vacuous the moment the spelling changes**, and passes
+  louder than ever. Three were found in one afternoon: `assert "curl -fsS http://localhost:8001/
+  readyz" not in showcase` and `assert "4200" in target` both stopped checking anything when the
+  Makefile's addresses became `$(GATEWAY_URL)`, and would have passed with the weaker readiness
+  loop right back in. Assert through the **same name the source uses** — the variable, the
+  constant, the shape — never through a rendering of it. And a test whose setup never reaches the
+  path it is named after is the same failure wearing a positive assertion: an
+  `httpx.Response(400, json=…)` has its body already read, so a streaming test built on one passed
+  whether or not the fix under test was present.
+- **A check that quietly narrows its own scope reports green about the part it kept.** A `try`/
+  `except ImportError` around the second of two settings classes made a documentation guard
+  measure one plane and call it the product. If the input cannot be loaded, fail — do not check
+  half and say nothing.
 - **A test that skips when the data is inconvenient reports green about nothing.**
-- **A subset that passes is not a suite that passes.**
+- **A subset that passes is not a suite that passes.** Including *a layer* as the subset: the model
+  editor was split into three tabs, verified by hand in a browser, and shipped — and nine browser
+  specs had been red ever since, because they open the editor and go straight to a field. A layout
+  change is precisely what the browser layer exists for, and it was the layer not run.
 - **A gate nobody runs is a gate that is already red.** The Angular branch-coverage threshold had
   been failing on `main` at 91.37 % against 92 — so `make ci` was red before any change, and every
   local run since had been reading the tail of the output rather than its exit code. Fixed by

@@ -51,8 +51,8 @@ agree, but they agree about a payload the mock also produced.
 - As the **owner**, I want to see a request go in and find the prompt, the response, the cost and
   the calling role in the database afterwards — because that is the product, and a screenshot of it
   is worth more than a passing test.
-- As a **developer**, I want `make up` to stay fast and `make verify-local` to bring up a real
-  model when I want one.
+- As a **developer**, I want `make up` to stay fast and `make verify-up` to bring up a real
+  model when I want one (`make verify-down` to take it away, `make test-verify` to run against it).
 - As **whoever writes `FRD-120`**, I want the OpenAI dialect already built and tested.
 
 ## 4. Functional Requirements

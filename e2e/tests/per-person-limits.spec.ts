@@ -1,3 +1,4 @@
+import { GATEWAY_URL } from '../stack';
 import { APIRequestContext, Page, expect, test } from '@playwright/test';
 import {
   USERS,
@@ -10,7 +11,7 @@ import {
   uniqueSlug,
 } from './support';
 
-const GATEWAY = process.env.AIRA_E2E_GATEWAY_URL ?? 'http://localhost:8001';
+const GATEWAY = GATEWAY_URL;
 
 async function issueKey(page: Page, slug: string): Promise<string> {
   await page.goto(`/use-cases/${slug}?tab=keys`);

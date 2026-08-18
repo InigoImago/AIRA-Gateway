@@ -1,3 +1,4 @@
+import { GATEWAY_URL } from '../stack';
 import { expect, test } from '@playwright/test';
 import { USERS, createUseCase, login, logout, releaseAllModels, uniqueSlug } from './support';
 
@@ -170,7 +171,7 @@ test.describe('Reading what was actually sent', () => {
     // immediately. Polled rather than slept: a fixed wait is either too short on a loaded machine
     // or wasted on an idle one, and both read as flakiness.
     const send = () =>
-      page.request.post('http://localhost:8001/v1beta/models/qwen3:0.6b:generateContent', {
+      page.request.post(`${GATEWAY_URL}/v1beta/models/qwen3:0.6b:generateContent`, {
         headers: { 'x-goog-api-key': key.trim(), 'content-type': 'application/json' },
         data: {
           contents: [{ parts: [{ text: 'A sentence this test can look for.' }] }],

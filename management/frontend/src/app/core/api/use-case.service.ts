@@ -34,6 +34,7 @@ import {
   TracePage,
   TracePayload,
 } from './models';
+import { API, GW } from './prefixes';
 
 /**
  * Every value interpolated into a URL is encoded: slugs, usernames, and key prefixes come from
@@ -45,7 +46,7 @@ const seg = (value: string): string => encodeURIComponent(value);
 @Injectable({ providedIn: 'root' })
 export class UseCaseService {
   private readonly http = inject(HttpClient);
-  private readonly base = '/api/v1/use-cases/';
+  private readonly base = `${API}/v1/use-cases/`;
 
   /**
    * One page of use cases, searched at the server (`FRD-208`).
@@ -57,13 +58,13 @@ export class UseCaseService {
   /** Where a smoke-test run is booked, and whether this caller may book one. */
   /** Which use cases this caller may put the catalogue to, and why not where they may not. */
   testAttribution(): Observable<TestAttribution[]> {
-    return this.http.get<TestAttribution[]>('/api/v1/test-attribution/');
+    return this.http.get<TestAttribution[]>(`${API}/v1/test-attribution/`);
   }
 
   listPage(query: string, page: number): Observable<Page<UseCase>> {
     const params: Record<string, string | number> = { page };
     if (query) params['q'] = query;
-    return this.http.get<Page<UseCase>>('/api/v1/use-cases/', { params });
+    return this.http.get<Page<UseCase>>(`${API}/v1/use-cases/`, { params });
   }
 
   list(): Observable<UseCase[]> {
@@ -117,7 +118,7 @@ export class UseCaseService {
 
   /** Search Keycloak for groups and people a grant could name (`FRD-209` §3). */
   directory(query: string): Observable<DirectoryResults> {
-    return this.http.get<DirectoryResults>('/api/v1/directory/', { params: { q: query } });
+    return this.http.get<DirectoryResults>(`${API}/v1/directory/`, { params: { q: query } });
   }
 
   addMember(slug: string, username: string, role: string): Observable<Membership> {
@@ -184,7 +185,7 @@ export class UseCaseService {
     /** Keep evaluating after a step refuses. Costs real tokens for steps production never runs. */
     past_blocks?: boolean;
   }): Observable<DryRunResult> {
-    return this.http.post<DryRunResult>('/gw/v1beta/pipeline:dryRun', payload);
+    return this.http.post<DryRunResult>(`${GW}/v1beta/pipeline:dryRun`, payload);
   }
 
   budgets(slug: string): Observable<Budget[]> {
@@ -220,11 +221,11 @@ export class UseCaseService {
    * searches and pages this one in the browser, which it can honestly do because it has it all.
    */
   models(): Observable<CatalogModel[]> {
-    return this.http.get<CatalogModel[]>('/api/v1/models/');
+    return this.http.get<CatalogModel[]>(`${API}/v1/models/`);
   }
 
   saveModel(model: CatalogModel): Observable<CatalogModel> {
-    return this.http.post<CatalogModel>('/api/v1/models/', model);
+    return this.http.post<CatalogModel>(`${API}/v1/models/`, model);
   }
 
   /**
@@ -236,7 +237,7 @@ export class UseCaseService {
    * actually sets a client up, could not get at it there.
    */
   kiraModels(): Observable<KiraModel[]> {
-    return this.http.get<KiraModel[]>('/gw/kira/api/external/models');
+    return this.http.get<KiraModel[]>(`${GW}/kira/api/external/models`);
   }
 
   /**
@@ -248,7 +249,7 @@ export class UseCaseService {
    * dry-run, usage and reporting views already use, so the browser's token carries through.
    */
   servedModels(): Observable<ServedModel[]> {
-    return this.http.get<{ models: ServedModel[] }>('/gw/v1beta/models').pipe(
+    return this.http.get<{ models: ServedModel[] }>(`${GW}/v1beta/models`).pipe(
       map((body) =>
         (body.models ?? []).map((model) => ({
           ...model,
@@ -274,7 +275,7 @@ export class UseCaseService {
    */
   providers(): Observable<GatewayProvider[]> {
     return this.http
-      .get<{ providers: GatewayProvider[] }>('/gw/v1beta/providers')
+      .get<{ providers: GatewayProvider[] }>(`${GW}/v1beta/providers`)
       .pipe(map((body) => body.providers ?? []));
   }
 
@@ -287,12 +288,12 @@ export class UseCaseService {
    */
   providerOfferings(provider: string): Observable<OfferedModel[]> {
     return this.http
-      .get<{ models: OfferedModel[] }>(`/gw/v1beta/providers/${seg(provider)}/offerings`)
+      .get<{ models: OfferedModel[] }>(`${GW}/v1beta/providers/${seg(provider)}/offerings`)
       .pipe(map((body) => body.models ?? []));
   }
 
   removeModel(name: string): Observable<void> {
-    return this.http.delete<void>(`/api/v1/models/${seg(name)}/`);
+    return this.http.delete<void>(`${API}/v1/models/${seg(name)}/`);
   }
 
   /**
@@ -302,7 +303,7 @@ export class UseCaseService {
    * same request. What the caller is shown is decided by their token, not by this call.
    */
   report(from: string, to: string): Observable<Report> {
-    return this.http.get<Report>('/gw/v1beta/reporting', { params: { from, to } });
+    return this.http.get<Report>(`${GW}/v1beta/reporting`, { params: { from, to } });
   }
 
   /**
@@ -314,7 +315,7 @@ export class UseCaseService {
    * the token already allows, so this call cannot ask for somebody else's figures.
    */
   useCaseReport(slug: string, from: string, to: string): Observable<Report> {
-    return this.http.get<Report>('/gw/v1beta/reporting', {
+    return this.http.get<Report>(`${GW}/v1beta/reporting`, {
       params: { from, to, use_case: slug },
     });
   }
@@ -327,7 +328,7 @@ export class UseCaseService {
    * looks like the export is broken rather than like the browser cannot authenticate.
    */
   reportCsv(from: string, to: string, breakdown: string): Observable<Blob> {
-    return this.http.get('/gw/v1beta/reporting', {
+    return this.http.get(`${GW}/v1beta/reporting`, {
       params: { from, to, breakdown },
       headers: { Accept: 'text/csv' },
       responseType: 'blob',
@@ -349,7 +350,7 @@ export class UseCaseService {
     // hundred findings and kept the matching ones would show a quiet use case nothing on a busy
     // installation, because somebody else's findings pushed its own off the end.
     if (useCase) params['use_case'] = useCase;
-    return this.http.get<AnomalyPage>('/gw/v1beta/anomalies', { params });
+    return this.http.get<AnomalyPage>(`${GW}/v1beta/anomalies`, { params });
   }
 
   /**
@@ -360,7 +361,7 @@ export class UseCaseService {
    * may see the list.
    */
   tracePayload(id: string): Observable<TracePayload> {
-    return this.http.get<TracePayload>(`/gw/v1beta/traces/${seg(id)}/payload`);
+    return this.http.get<TracePayload>(`${GW}/v1beta/traces/${seg(id)}/payload`);
   }
 
   /**
@@ -370,20 +371,20 @@ export class UseCaseService {
    * must not be the thing that wakes it, bills for it, and takes minutes to answer.
    */
   checkModel(model: string): Observable<ModelCheck> {
-    return this.http.get<ModelCheck>(`/gw/v1beta/models/${seg(model)}:check`);
+    return this.http.get<ModelCheck>(`${GW}/v1beta/models/${seg(model)}:check`);
   }
 
   // ---- model smoke tests (`FRD-504`) --------------------------------------------------------
 
   /** The whole catalogue. A hundred rows, so it is fetched once and read in the browser. */
   testCases(): Observable<TestCase[]> {
-    return this.http.get<TestCase[]>('/api/v1/test-cases/');
+    return this.http.get<TestCase[]>(`${API}/v1/test-cases/`);
   }
 
   testRuns(useCase?: string): Observable<TestRun[]> {
     const params: Record<string, string> = {};
     if (useCase) params['use_case'] = useCase;
-    return this.http.get<TestRun[]>('/api/v1/test-runs/', { params });
+    return this.http.get<TestRun[]>(`${API}/v1/test-runs/`, { params });
   }
 
   /**
@@ -397,15 +398,15 @@ export class UseCaseService {
     // The model the run is **entered at**, picked by the person starting it and bounded by the
     // server to what is released to that use case. It used to come from the pipeline, which took
     // away the point of releasing several models to one use case.
-    return this.http.post<TestRun>('/api/v1/test-runs/', { use_case: useCase, model });
+    return this.http.post<TestRun>(`${API}/v1/test-runs/`, { use_case: useCase, model });
   }
 
   runResults(runId: number): Observable<TestResult[]> {
-    return this.http.get<TestResult[]>(`/api/v1/test-runs/${runId}/results/`);
+    return this.http.get<TestResult[]>(`${API}/v1/test-runs/${runId}/results/`);
   }
 
   finishRun(runId: number): Observable<TestRun> {
-    return this.http.post<TestRun>(`/api/v1/test-runs/${runId}/finish/`, {});
+    return this.http.post<TestRun>(`${API}/v1/test-runs/${runId}/finish/`, {});
   }
 
   /**
@@ -415,7 +416,7 @@ export class UseCaseService {
    * does not stamp a rater, because nobody has read it yet.
    */
   updateResult(id: number, changes: Partial<TestResult>): Observable<TestResult> {
-    return this.http.patch<TestResult>(`/api/v1/test-results/${id}/`, changes);
+    return this.http.patch<TestResult>(`${API}/v1/test-results/${id}/`, changes);
   }
 
   /**
@@ -426,7 +427,7 @@ export class UseCaseService {
    * which also means an installation can see what its own testing costs.
    */
   askModel(model: string, prompt: string, useCase: string): Observable<string> {
-    const path = useCase ? `/gw/uc/${seg(useCase)}` : '/gw';
+    const path = useCase ? `${GW}/uc/${seg(useCase)}` : `${GW}`;
     return this.http
       .post<{ candidates?: { content?: { parts?: { text?: string }[] } }[] }>(
         `${path}/v1beta/models/${seg(model)}:generateContent`,
@@ -441,29 +442,29 @@ export class UseCaseService {
 
   /** The evaluation as CSV. A blob, because a plain link carries no bearer token (`FRD-602`). */
   testRunCsv(runId: number): Observable<Blob> {
-    return this.http.get(`/api/v1/test-runs/${runId}/export/`, { responseType: 'blob' });
+    return this.http.get(`${API}/v1/test-runs/${runId}/export/`, { responseType: 'blob' });
   }
 
   /** Authoring the catalogue. IT Security only on the server; the console offers it to nobody else. */
   createCase(body: Partial<TestCase>): Observable<TestCase> {
-    return this.http.post<TestCase>('/api/v1/test-cases/', body);
+    return this.http.post<TestCase>(`${API}/v1/test-cases/`, body);
   }
 
   updateCase(id: number, body: Partial<TestCase>): Observable<TestCase> {
-    return this.http.patch<TestCase>(`/api/v1/test-cases/${id}/`, body);
+    return this.http.patch<TestCase>(`${API}/v1/test-cases/${id}/`, body);
   }
 
   deleteCase(id: number): Observable<void> {
-    return this.http.delete<void>(`/api/v1/test-cases/${id}/`);
+    return this.http.delete<void>(`${API}/v1/test-cases/${id}/`);
   }
 
   testStats(): Observable<TestModelStats[]> {
-    return this.http.get<TestModelStats[]>('/api/v1/test-stats/');
+    return this.http.get<TestModelStats[]>(`${API}/v1/test-stats/`);
   }
 
   /** Traffic that is currently stopped, and what was stopped before (`FRD-503`). */
   suspensions(): Observable<{ suspensions: Suspension[] }> {
-    return this.http.get<{ suspensions: Suspension[] }>('/gw/v1beta/suspensions');
+    return this.http.get<{ suspensions: Suspension[] }>(`${GW}/v1beta/suspensions`);
   }
 
   /** Stop a subject, a credential or a use case. Needs an incident role; the server decides. */
@@ -476,12 +477,12 @@ export class UseCaseService {
     reason?: string;
     use_case?: string | null;
   }): Observable<Suspension> {
-    return this.http.post<Suspension>('/gw/v1beta/suspensions', body);
+    return this.http.post<Suspension>(`${GW}/v1beta/suspensions`, body);
   }
 
   /** Lift one. The row is kept and stamped, never deleted. */
   liftSuspension(id: string): Observable<Suspension> {
-    return this.http.delete<Suspension>(`/gw/v1beta/suspensions/${seg(id)}`);
+    return this.http.delete<Suspension>(`${GW}/v1beta/suspensions/${seg(id)}`);
   }
 
   /**
@@ -518,7 +519,7 @@ export class UseCaseService {
     if (options.toolsOnly) params['tools_only'] = true;
     if (options.flaggedOnly) params['flagged_only'] = true;
     if (options.cursor) params['cursor'] = options.cursor;
-    return this.http.get<TracePage>('/gw/v1beta/traces', { params });
+    return this.http.get<TracePage>(`${GW}/v1beta/traces`, { params });
   }
 
   /** The anomaly rules of one use case. Members read; whoever manages it writes. */
@@ -543,7 +544,7 @@ export class UseCaseService {
 
   /** Anomaly rules that apply everywhere, plus the ones on use cases the caller may see. */
   globalRules(): Observable<AnomalyRule[]> {
-    return this.http.get<AnomalyRule[]>('/api/v1/anomaly-rules/');
+    return this.http.get<AnomalyRule[]>(`${API}/v1/anomaly-rules/`);
   }
 
   /**
@@ -561,19 +562,19 @@ export class UseCaseService {
    * a control that refuses when used, but a capability nobody could reach.
    */
   createGlobalRule(rule: Partial<AnomalyRule>): Observable<AnomalyRule> {
-    return this.http.post<AnomalyRule>('/api/v1/anomaly-rules/', rule);
+    return this.http.post<AnomalyRule>(`${API}/v1/anomaly-rules/`, rule);
   }
 
   updateRule(id: number, changes: Partial<AnomalyRule>): Observable<AnomalyRule> {
-    return this.http.patch<AnomalyRule>(`/api/v1/anomaly-rules/${id}/`, changes);
+    return this.http.patch<AnomalyRule>(`${API}/v1/anomaly-rules/${id}/`, changes);
   }
 
   deleteRule(id: number): Observable<void> {
-    return this.http.delete<void>(`/api/v1/anomaly-rules/${id}/`);
+    return this.http.delete<void>(`${API}/v1/anomaly-rules/${id}/`);
   }
 
   /** Current-period consumption per budget, from the gateway. */
   budgetUsage(slug: string): Observable<{ usage: BudgetUsage[] }> {
-    return this.http.get<{ usage: BudgetUsage[] }>(`/gw/v1beta/usage/${seg(slug)}`);
+    return this.http.get<{ usage: BudgetUsage[] }>(`${GW}/v1beta/usage/${seg(slug)}`);
   }
 }

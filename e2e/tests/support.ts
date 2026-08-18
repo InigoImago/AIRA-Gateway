@@ -407,3 +407,21 @@ export async function expectFooterActionsApart(page: Page, testid: string, minim
     ).toBeGreaterThanOrEqual(minimum);
   }
 }
+
+/**
+ * Bring one tab of the model editor into view.
+ *
+ * The editor was a single column of eighteen fields until 2026-08-18 and is now three tabs —
+ * identity, capabilities, price — because the fields answer three different questions and were
+ * interleaved. Every spec that opened the editor and went straight to a field went red, all nine
+ * of them at once, with `element(s) not found` and no hint that the element exists one click away.
+ *
+ * A helper rather than a click in each spec: the next tab added moves fields again, and the specs
+ * that care about *what a field does* should not each carry a map of where it lives.
+ */
+export async function openEditorTab(page: Page, tab: 'identity' | 'capabilities' | 'price') {
+  const strip = page.getByTestId(`tab-${tab}`);
+  await strip.waitFor({ timeout: 20_000 });
+  await strip.click();
+  await expect(strip).toHaveAttribute('aria-selected', 'true');
+}

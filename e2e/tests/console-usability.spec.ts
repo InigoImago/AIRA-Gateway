@@ -1,5 +1,12 @@
 import { Page, expect, test } from '@playwright/test';
-import { USERS, expectNoHorizontalOverflow, login, uniqueSlug, createUseCase } from './support';
+import {
+  USERS,
+  createUseCase,
+  expectNoHorizontalOverflow,
+  login,
+  openEditorTab,
+  uniqueSlug,
+} from './support';
 
 /**
  * The console reads, explains and does not move (`FRD-207`).
@@ -460,6 +467,11 @@ test.describe('The explanations behave like overlays', () => {
     await page
       .click('button:has-text("Declare a model"), button:has-text("Add model")')
       .catch(() => {});
+    // The capability checkboxes — and the "i" beside each of them — moved to their own tab when
+    // the editor was split into three. Without this the three overlay tests failed with
+    // `element(s) not found`, which reads as *the explanations are gone* rather than *they are
+    // one click away*.
+    await openEditorTab(page, 'capabilities');
     await expect(page.locator('[data-testid="info-cap-prompt_caching"]')).toBeVisible();
   };
 

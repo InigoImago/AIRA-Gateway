@@ -1,3 +1,4 @@
+import { GATEWAY_URL } from '../stack';
 import { APIRequestContext, Page, expect, test } from '@playwright/test';
 import {
   USERS,
@@ -18,7 +19,7 @@ import {
  * group memberships survive the round trip through the realm and into the gateway.
  */
 
-const GATEWAY = process.env.AIRA_E2E_GATEWAY_URL ?? 'http://localhost:8001';
+const GATEWAY = GATEWAY_URL;
 
 /** Issue an API key for a use case through the UI and return the plaintext. */
 async function issueKey(page: Page, slug: string): Promise<string> {

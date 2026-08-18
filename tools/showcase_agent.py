@@ -22,6 +22,8 @@ import sys
 import urllib.error
 import urllib.request
 
+import stack_addresses
+
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "libs" / "src"))
 
 from aira_common.apikeys import NAMESPACE  # noqa: E402
@@ -32,7 +34,7 @@ from aira_common.apikeys import NAMESPACE  # noqa: E402
 DEMO_KEY_SALT = "aira-showcase-demo-not-a-secret"
 SLUG = "coding-assistant"
 
-GATEWAY = os.environ.get("AIRA_GATEWAY_URL", "http://localhost:8001")
+GATEWAY = os.environ.get("AIRA_GATEWAY_URL") or stack_addresses.url("gateway")
 CHAT_MODEL = os.environ.get("AIRA_DEMO_CHAT_MODEL", "qwen3:0.6b")
 
 

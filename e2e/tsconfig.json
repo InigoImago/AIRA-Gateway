@@ -1,13 +1,18 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "ESNext",
-    "moduleResolution": "bundler",
+    // **CommonJS, because that is what Playwright runs.** It transpiles these files to CJS, and
+    // this said `ESNext` — so `tsc` cheerfully accepted an `import.meta.url` that threw
+    // `Cannot use 'import.meta' outside a module` on the first run. A type check configured for a
+    // module system the code never sees is a type check that agrees with itself; found on
+    // 2026-08-18, the same day this tree was given a type check at all.
+    "module": "CommonJS",
+    "moduleResolution": "node",
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
     "types": ["node"],
     "lib": ["ES2022", "DOM"]
   },
-  "include": ["tests/**/*.ts", "playwright.config.ts"]
+  "include": ["tests/**/*.ts", "playwright.config.ts", "stack.ts"]
 }
