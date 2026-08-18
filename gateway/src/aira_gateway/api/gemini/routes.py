@@ -173,6 +173,19 @@ def refusal_response(exc: Exception) -> JSONResponse:
     return exc.to_response()
 
 
+def _asked_for_reasoning(parsed: schemas.GenerateContentRequest | None) -> bool:
+    """This surface's spelling of "give me the model's reasoning" (`FRD-135` FR-4).
+
+    Takes the **parsed** request, not the raw body: written against `body` first, which is still a
+    `dict` at that point, and 186 tests said so at once. A helper that names its type cannot be
+    handed the wrong thing twice.
+    """
+    if parsed is None or parsed.generationConfig is None:
+        return False
+    thinking = parsed.generationConfig.thinkingConfig
+    return bool(thinking is not None and thinking.includeThoughts)
+
+
 @router.post("/v1beta/models/{resource}")
 async def generate(resource: str, request: Request) -> Response:
     """Dispatch a Gemini verb — and record the request whether or not it was served.
@@ -286,6 +299,9 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
     canonical: CanonicalRequest | None = None
     fallbacks: tuple[str, ...] = ()
     embed_request: CanonicalEmbeddingRequest | None = None
+    # Bound only on the generate branch, and read below on every branch — an embedding request
+    # asks for no reasoning and must not trip over a name the other branch owns.
+    gemini_request: schemas.GenerateContentRequest | None = None
 
     if method in ("generateContent", "streamGenerateContent"):
         try:
@@ -330,6 +346,10 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
         canonical=canonical,
         embed=embed_request,
         requested_output=canonical.max_output_tokens if canonical is not None else None,
+        # This surface's spelling of "give me the reasoning" (`FRD-135` FR-4). The KIRA surface
+        # passes nothing: the predecessor's contract has no field for it, and inventing one is not
+        # compatibility.
+        reasoning_asked_for=_asked_for_reasoning(gemini_request),
     )
     canonical = prepared.canonical
     embed_request = prepared.embed

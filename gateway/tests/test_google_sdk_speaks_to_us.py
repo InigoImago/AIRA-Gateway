@@ -176,11 +176,16 @@ def test_the_sdk_can_turn_thinking_off(client: genai.Client) -> None:
 def test_asking_for_the_models_reasoning_is_refused_by_name(client: genai.Client) -> None:
     """The other half, and the one that must **not** become permissive by accident.
 
-    `includeThoughts` asks for the model's reasoning to be returned. This gateway drops thinking
-    blocks and never stores them (`FRD-119` §5.4), so serving that request would answer with no
-    thoughts, a 200, and nothing saying why — `FRD-124`'s silent drop, on a field whose entire
-    purpose is to add something to the answer. Accepting the snake_case spelling above must not
-    quietly extend to accepting this.
+    `includeThoughts` asks for the model's reasoning to be returned. Serving that request where the
+    use case has not enabled reasoning would answer with no thoughts, a 200, and nothing saying why
+    — `FRD-124`'s silent drop, on a field whose entire purpose is to add something to the answer.
+    Accepting the snake_case spelling above must not quietly extend to accepting this.
+
+    **The refusal moved but did not soften** (`FRD-135` FR-4). It was absolute and lived in the
+    schema; it is now the answer wherever a use case has reasoning off, which is every use case
+    until somebody turns it on — including this test's, which configures none. What must not change
+    is that the refusal **names the field**: a caller who is told "this use case does not do that"
+    without being told *what* has to go looking.
     """
     with pytest.raises(genai.errors.APIError) as raised:
         client.models.generate_content(

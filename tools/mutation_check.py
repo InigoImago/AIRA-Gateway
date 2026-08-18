@@ -1452,6 +1452,38 @@ MUTATIONS = [
         "gateway/tests/test_vertex_api_key.py",
     ),
     Mutation(
+        "C27",
+        "thinking tokens are counted — the 85% that was invisible",
+        "gateway/src/aira_gateway/upstreams/gemini_mapping.py",
+        '    thoughts = int(meta.get("thoughtsTokenCount", 0) or 0)',
+        "    thoughts = 0",
+        "gateway/tests/test_reasoning.py",
+    ),
+    Mutation(
+        "C28",
+        "a use case that has not enabled reasoning refuses the request for it",
+        "gateway/src/aira_gateway/api/serving.py",
+        "    if asked_for and not allowed:",
+        "    if False:",
+        "gateway/tests/test_google_sdk_speaks_to_us.py",
+    ),
+    Mutation(
+        "C29",
+        "a ratio is not applied to a text too short to have one",
+        "gateway/src/aira_gateway/pipeline/classifiers.py",
+        "        if len(given) >= self.MIN_LENGTH_FOR_RATIO and len(rewritten) < len(given) * self.MIN_KEPT:",  # noqa: E501
+        "        if len(rewritten) < len(given) * self.MIN_KEPT:",
+        "gateway/tests/test_the_redactor_length_guard.py",
+    ),
+    Mutation(
+        "C30",
+        "the Agent Platform adapter can be asked whether it is reachable, without generating",
+        "gateway/src/aira_gateway/upstreams/vertex/adapters.py",
+        '            self._url(name, "countTokens"),',
+        '            self._url(name, "generateContent"),',
+        "gateway/tests/test_vertex_api_key.py",
+    ),
+    Mutation(
         "C8",
         "an older event applies its prices without erasing a declaration",
         "gateway/src/aira_gateway/consumer/apply.py",
@@ -4023,10 +4055,13 @@ MUTATIONS = [
     ),
     Mutation(
         "QA26",
+        # Re-anchored when `FRD-135` made reasoning a per-use-case decision: the refusal left the
+        # schema for the surface, where the use case is known. Same property, and it must still
+        # **name the field** — the message is what the test asserts on.
         "asking for the model's reasoning is refused rather than answered without it",
-        "gateway/src/aira_gateway/api/gemini/schemas.py",
-        "        if self.includeThoughts:",
-        "        if False:",
+        "gateway/src/aira_gateway/api/serving.py",
+        "\"'includeThoughts' asks for the model's reasoning, and this use case does not return \"",
+        '"a thing this gateway does not do",',
         GOOGLE_SDK,
     ),
     Mutation(
@@ -4075,7 +4110,9 @@ MUTATIONS = [
         "P10",
         "a rewrite that cannot be trusted blocks instead of being applied",
         "gateway/src/aira_gateway/pipeline/classifiers.py",
-        "        if len(rewritten) < len(text.strip()) * self.MIN_KEPT:",
+        # Re-anchored with `FRD-135`'s round: the ratio now applies only above a length floor,
+        # because on a six-character prompt it refused a correct redaction.
+        "        if len(given) >= self.MIN_LENGTH_FOR_RATIO and len(rewritten) < len(given) * self.MIN_KEPT:",  # noqa: E501
         "        if False:",
         PII,
     ),

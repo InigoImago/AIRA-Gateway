@@ -115,8 +115,16 @@ def canonical_to_gemini_request(request: CanonicalRequest) -> dict[str, Any]:
         generation_config["temperature"] = request.temperature
     if request.max_output_tokens is not None:
         generation_config["maxOutputTokens"] = request.max_output_tokens
-    if request.thinking is not None:
-        generation_config["thinkingConfig"] = {"thinkingBudget": thinking_budget(request.thinking)}
+    if request.thinking is not None or request.include_reasoning:
+        thinking_config: dict[str, Any] = {}
+        if request.thinking is not None:
+            thinking_config["thinkingBudget"] = thinking_budget(request.thinking)
+        if request.include_reasoning:
+            # Asked for only where the **use case** allows it (`FRD-135` FR-3). Google returns
+            # nothing extra without this, so a use case that turned reasoning on and never saw any
+            # would be looking at a switch that changed nothing — the shape `FRD-125` is named for.
+            thinking_config["includeThoughts"] = True
+        generation_config["thinkingConfig"] = thinking_config
     if request.response_schema is not None:
         # Both fields, always together: `responseSchema` without `responseMimeType` is ignored by
         # the API, which would return prose to a caller expecting a document — the silent-wrong
@@ -206,15 +214,35 @@ def embedding_values(data: dict[str, Any]) -> list[list[float]]:
 
 
 def _text_of(candidate: dict[str, Any]) -> str:
+    """The answer, **without** the reasoning.
+
+    Google returns thoughts as ordinary text parts flagged `thought: true`, in the same array. This
+    used to join everything, which is exactly why `includeThoughts` was refused: asking for
+    reasoning would have delivered it glued to the front of the answer, and a caller could not tell
+    which was which (`FRD-135` §5).
+    """
     parts = candidate.get("content", {}).get("parts", [])
-    return "".join(part.get("text", "") for part in parts)
+    return "".join(part.get("text", "") for part in parts if not part.get("thought"))
+
+
+def _reasoning_of(candidate: dict[str, Any]) -> str:
+    """What the model thought, where it was asked for and returned."""
+    parts = candidate.get("content", {}).get("parts", [])
+    return "".join(part.get("text", "") for part in parts if part.get("thought"))
 
 
 def _usage_of(data: dict[str, Any]) -> CanonicalUsage:
     meta = data.get("usageMetadata") or {}
+    # **Thinking is output, and Google bills it as output** (`FRD-135` FR-1). `candidatesTokenCount`
+    # counts only the visible answer, so adding thoughts here is what makes `completion_tokens` mean
+    # "what this response cost" rather than "what of it was printed". Read from nowhere until
+    # 2026-08-17: a measured request counted 143 thought tokens against 1 candidate token, and 85%
+    # of what the provider charged for was invisible to every budget and every report.
+    thoughts = int(meta.get("thoughtsTokenCount", 0) or 0)
     return CanonicalUsage(
         prompt_tokens=int(meta.get("promptTokenCount", 0)),
-        completion_tokens=int(meta.get("candidatesTokenCount", 0)),
+        completion_tokens=int(meta.get("candidatesTokenCount", 0)) + thoughts,
+        reasoning_tokens=thoughts,
         # Implicit caching is on by default from Gemini 2.5 and needs nothing sent; this count is
         # the only evidence it happened (`FRD-133` §4a). `promptTokenCount` already includes it,
         # so this is a subset and not an addition — the same invariant every dialect keeps.
@@ -254,13 +282,16 @@ def gemini_response_to_canonical(data: dict[str, Any], model: str) -> CanonicalR
     text = ""
     finish_reason = "stop"
     calls: tuple[ToolCallPart, ...] = ()
+    reasoning = ""
     if candidates:
         text = _text_of(candidates[0])
+        reasoning = _reasoning_of(candidates[0])
         finish_reason = str(candidates[0].get("finishReason", "STOP")).lower()
         calls = _calls_of(candidates[0])
     return CanonicalResponse(
         model=model,
         text=text,
+        reasoning=reasoning,
         finish_reason=finish_reason,
         usage=_usage_of(data),
         tool_calls=calls,

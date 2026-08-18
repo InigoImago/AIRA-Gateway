@@ -101,6 +101,7 @@ async def _upsert_usecase(session: AsyncSession, payload: dict[str, Any]) -> Non
         # Absent means **off**, which matters for an event written by an older Management: a
         # missing field must not read as permission (`FRD-114` FR-7, one layer over).
         "tools_enabled": bool(payload.get("tools_enabled", False)),
+        "include_reasoning": bool(payload.get("include_reasoning", False)),
         # Same default-off reading as `tools_enabled`: an event from an older Management carries
         # no such field, and inventing consent from its absence is the wrong direction for a
         # setting whose cache scope is shared across the organisation (`FRD-133` §4b).

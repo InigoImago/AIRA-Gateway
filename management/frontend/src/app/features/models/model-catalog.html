@@ -664,11 +664,17 @@
             style="border: 0; padding: 0; margin: 0"
             data-testid="thinking-block"
           >
-            <legend class="field__legend">Thinking</legend>
+            <legend class="field__legend">Thinking — what this model can be told to do</legend>
             <span class="field__hint">
-              Declare the modes you have <strong>measured</strong>, not the ones a model card
-              claims. A mode declared here is a mode the gateway will send; a request asking for one
-              that is not here is refused by name.
+              Every box here says <strong>this model accepts that instruction</strong>. None of them
+              changes the model: ticking <em>off</em> does not disable thinking and does not turn a
+              reasoning model into an instruct model — it records that this model can be
+              <em>asked</em> not to think, which is what lets the gateway quieten it for a pipeline
+              filter. Leave a box unticked and the gateway never sends that instruction; a caller
+              who asks for it is refused by name. <br /><br />
+              Declare what you have <strong>measured</strong>, not what a model card claims. A model
+              that cannot be quietened and is declared as though it can answers 400 to every request
+              that tries.
             </span>
             @for (mode of allThinkingModes; track mode) {
               <label class="checkline">
@@ -679,8 +685,11 @@
                   (ngModelChange)="toggleThinkingMode(mode, $event)"
                   [attr.data-testid]="'mode-' + mode"
                 />
-                {{ mode }}
-                @if (hasThinkingMode(mode) && mode !== 'disabled') {
+                <span>
+                  <code>{{ mode }}</code>
+                  <span class="muted"> — {{ thinkingModeMeans(mode) }}</span>
+                </span>
+                @if (hasThinkingMode(mode) && mode !== 'disabled' && mode !== 'auto') {
                   <input
                     class="input input--narrow"
                     type="number"
@@ -689,14 +698,24 @@
                     [ngModel]="thinkingLevel(mode)"
                     (ngModelChange)="setThinkingLevel(mode, $event)"
                     [attr.data-testid]="'level-' + mode"
-                    placeholder="budget"
+                    placeholder="tokens"
+                    [attr.aria-label]="'How many thinking tokens ' + mode + ' means'"
                   />
+                  <span class="muted">thinking tokens this level means</span>
                 }
               </label>
             }
+            <!-- The three below are about the *budget a caller may name*, which is a different
+                 question from the boxes above and was sitting among them unlabelled. `limited` is
+                 the only mode that takes a number; these bound it. -->
+            <p class="field__hint" style="margin: 0.8rem 0 0.2rem">
+              <strong>When a caller asks for <code>limited</code></strong
+              >, they name a number of thinking tokens. These two bound what they may name — they
+              are not output caps, and they are not what the model does on its own.
+            </p>
             <div class="form-inline">
               <div class="field">
-                <label class="field__label" for="think-min">Minimum tokens</label>
+                <label class="field__label" for="think-min">Smallest thinking budget</label>
                 <input
                   id="think-min"
                   class="input"
@@ -709,7 +728,7 @@
                 />
               </div>
               <div class="field">
-                <label class="field__label" for="think-max">Maximum tokens</label>
+                <label class="field__label" for="think-max">Largest thinking budget</label>
                 <input
                   id="think-max"
                   class="input"
@@ -722,13 +741,16 @@
                   placeholder="—"
                 />
                 <span class="field__hint">
-                  Must stay <strong>below</strong> the output cap: the thinking budget is drawn from
-                  the output allowance, so a model at this budget could never answer. Required when
-                  <code>limited</code> is offered.
+                  Must stay <strong>below the output cap above</strong>. The thinking budget is
+                  taken <em>out of</em> the output allowance, not added to it — a model told to
+                  think 8000 tokens with an 8000-token cap has nothing left to answer with. Required
+                  when <code>limited</code> is offered.
                 </span>
               </div>
               <div class="field">
-                <label class="field__label" for="think-default">Default mode</label>
+                <label class="field__label" for="think-default">
+                  What happens when a caller says nothing
+                </label>
                 <select
                   id="think-default"
                   class="input"
@@ -743,8 +765,11 @@
                   }
                 </select>
                 <span class="field__hint">
-                  What a request that says nothing gets. Absent is not "off" — a model that reasons
-                  by default still will.
+                  Most requests name no mode. This is what the gateway sends for them.
+                  <strong>Empty is not "off"</strong>: it means the gateway sends nothing and the
+                  model does whatever it does by default — which for a reasoning model is to think,
+                  and to bill you for it. Pick <code>disabled</code> here if you want quiet answers
+                  unless somebody asks otherwise.
                 </span>
               </div>
             </div>
@@ -988,15 +1013,45 @@
             @for (upstream of askable(); track upstream.name) {
               <option [value]="upstream.name">{{ providerLabel(upstream) }}</option>
             }
+            <!-- Listed, not filtered out. An absent provider reads as a credential that failed;
+                 a present one that says why answers the question the reader has. -->
+            @for (upstream of unaskable(); track upstream.name) {
+              <option [value]="upstream.name">
+                {{ providerLabel(upstream) }} — publishes no list
+              </option>
+            }
           </select>
           <span class="field__hint">
-            Only the providers that can be <em>asked</em> for a list are here. A platform without
-            one is not broken — its models are named in the gateway's configuration or typed into
-            the catalog, which is what <strong>+ Add model</strong> is for.
+            A platform that publishes no list is not broken: its models are named in the gateway's
+            configuration, and cataloguing one here is how it becomes usable. Choose it to see the
+            way in.
           </span>
         </div>
       </div>
 
+      @if (chosenBrowseProvider(); as upstream) {
+        @if (!upstream.canEnumerate) {
+          <div class="callout" data-testid="provider-not-askable">
+            <p style="margin: 0 0 0.6rem">
+              <strong>{{ providerLabel(upstream) }}</strong> publishes no model list this credential
+              may read, so there is nothing to browse. That is a property of the platform, not a
+              fault here — Agent Platform answers
+              <code>API keys are not supported by this API</code> to a listing request, and Azure's
+              listing names models that still need a deployment before any request reaches them.
+            </p>
+            <p style="margin: 0 0 0.6rem">
+              The way in is the same one step later: name the model yourself. What this platform
+              tells us about itself — the provider and its dialect — is filled in for you, and the
+              model must also be named in the gateway's configuration
+              (<code>AIRA_VERTEX_MODELS</code>, <code>AIRA_FOUNDRY_DEPLOYMENTS</code>) before it
+              will answer.
+            </p>
+            <button type="button" class="btn" (click)="addManually()" data-testid="add-manually">
+              Add a model on {{ providerLabel(upstream) }}
+            </button>
+          </div>
+        }
+      }
       @if (providersError(); as message) {
         <p class="callout callout--danger" role="alert" data-testid="browse-providers-error">
           {{ message }}

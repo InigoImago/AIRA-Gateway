@@ -235,6 +235,25 @@ export class ModelCatalog implements OnInit {
     }
   }
 
+  /** What a thinking mode means, in the words somebody configuring one needs.
+   *
+   *  Reported: *"there it says thinking disabled — is the thinking block disabled, or does the
+   *  model suddenly become an instruct model?"* Neither. Every box declares an **instruction this
+   *  model accepts**, and the label said only the wire value.
+   */
+  protected thinkingModeMeans(mode: string): string {
+    switch (mode) {
+      case 'disabled':
+        return 'can be told not to think at all';
+      case 'auto':
+        return 'can be left to decide for itself how much to think';
+      case 'limited':
+        return 'accepts a token budget, bounded below';
+      default:
+        return 'accepts this as a level — say how many tokens it means';
+    }
+  }
+
   protected thinkingLevel(mode: ThinkingModeName): number | null {
     return this.thinkingLevels()[mode] ?? null;
   }
@@ -668,9 +687,28 @@ export class ModelCatalog implements OnInit {
   protected readonly loadingOfferings = signal(false);
   protected readonly offeringsError = signal<string | null>(null);
 
-  /** The providers that can actually be asked — the only ones this window is about. */
+  /** The providers that can actually be asked for a list. */
   protected readonly askable = computed(() =>
     (this.providers() ?? []).filter((provider) => provider.canEnumerate),
+  );
+
+  /**
+   * The ones that cannot — **shown rather than filtered out**.
+   *
+   * They used to be dropped from the picker with a general sentence underneath, and the reported
+   * result was somebody configuring Agent Platform, opening *Add from provider*, and finding no
+   * mention of it at all. An absent entry is indistinguishable from a credential that did not
+   * work; a present one that says *this platform publishes no list, here is the way in* answers
+   * the question the reader actually has (`FRD-507` FR-7 — the same argument the two provider
+   * facts exist for).
+   */
+  protected readonly unaskable = computed(() =>
+    (this.providers() ?? []).filter((provider) => !provider.canEnumerate),
+  );
+
+  /** The provider chosen in the browse window, askable or not. */
+  protected readonly chosenBrowseProvider = computed(
+    () => (this.providers() ?? []).find((p) => p.name === this.browseProvider()) ?? null,
   );
 
   protected readonly browsedProvider = computed(
@@ -706,9 +744,10 @@ export class ModelCatalog implements OnInit {
       // A provider this gateway no longer offers is forgotten rather than asked for, or the select
       // would show a name it cannot resolve — the same half-state one step along.
       if (remembered) {
+        const known = (this.providers() ?? []).some((provider) => provider.name === remembered);
         if (askable.some((provider) => provider.name === remembered))
           this.chooseBrowseProvider(remembered);
-        else this.browseProvider.set('');
+        else if (!known) this.browseProvider.set('');
         return;
       }
 
@@ -716,6 +755,27 @@ export class ModelCatalog implements OnInit {
       // click that teaches nothing. Two or more, and the reader picks.
       if (askable.length === 1) this.chooseBrowseProvider(askable[0].name);
     });
+  }
+
+  /**
+   * Leave the listing and open the editor with this platform's provenance already filled in.
+   *
+   * The alternative offered to somebody whose platform cannot be listed: not "type everything",
+   * but "the four facts we know about this provider are yours, name the model". Which is the same
+   * thing choosing an offered model does — one step earlier.
+   */
+  protected addManually(): void {
+    const upstream = this.chosenBrowseProvider();
+    this.showBrowse.set(false);
+    this.reset();
+    if (upstream) {
+      this.provider.set(upstream.name);
+      this.publisher.set(upstream.publisher ?? '');
+      this.vendorFilled.set(
+        [upstream.name && 'provider', upstream.publisher && 'dialect'].filter(Boolean) as string[],
+      );
+    }
+    this.showAdd.set(true);
   }
 
   protected closeBrowse(): void {

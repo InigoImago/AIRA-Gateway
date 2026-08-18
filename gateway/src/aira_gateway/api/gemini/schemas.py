@@ -103,6 +103,13 @@ class Part(BaseModel):
     inlineData: InlineData | None = None
     functionCall: FunctionCall | None = None
     functionResponse: FunctionResponse | None = None
+    #: Google's marker for a reasoning part (`FRD-135`). Set on the way **out**, where a use case
+    #: has enabled reasoning; a caller who sends it on the way in is sending a field about the
+    #: model's own output, which `_refuse_unserved` handles like any other unserved field.
+    #:
+    #: It is the whole reason reasoning can be returned at all: without it the thoughts arrive in
+    #: the same `parts` array as the answer and nothing distinguishes them.
+    thought: bool | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -178,12 +185,10 @@ class ThinkingConfig(BaseModel):
             raise ValueError(
                 "send either 'thinkingBudget' or 'mode'/'tokens' in thinkingConfig, not both"
             )
-        if self.includeThoughts:
-            raise ValueError(
-                "'includeThoughts' is not served by this gateway: a model's reasoning is dropped "
-                "and never stored (FRD-119), so the answer would contain no thoughts and say so "
-                "nowhere. Send it as false, or omit it."
-            )
+        # `includeThoughts: true` used to be refused outright. It is decided per **use case** now
+        # (`FRD-135` FR-3/FR-4), and the check moved to where the use case is known — the surface,
+        # not the schema. The refusal itself is unchanged wherever reasoning is off: answering 200
+        # with no thoughts is the silent drop `FRD-124` exists against.
         return self
 
 

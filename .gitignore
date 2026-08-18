@@ -58,3 +58,6 @@ kira_api.md
 test-results/
 opencode.showcase.json
 deploy/compose/docker-compose.sandbox.yml
+
+# Artefact of a live functional run (tools/… scratch), never source.
+matrix-result.json

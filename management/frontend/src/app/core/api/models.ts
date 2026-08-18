@@ -69,6 +69,8 @@ export interface UseCase {
   store_payloads?: boolean;
   /** Let this use case declare functions for the model to call (FRD-131). */
   tools_enabled?: boolean;
+  /** Whether a model's reasoning is returned and stored with the answer (`FRD-135`). */
+  include_reasoning?: boolean;
   /** Mark this use case's stable prefix as cacheable at the provider (FRD-133). */
   prompt_caching_enabled?: boolean;
   /** How long the provider keeps it: `5m` or `1h`. */

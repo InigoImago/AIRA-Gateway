@@ -144,7 +144,7 @@ interface Catalog {
   openBrowse: () => void;
   closeBrowse: () => void;
   showBrowse: () => boolean;
-  browseProvider: () => string;
+  browseProvider: { set: (v: string) => void; (): string };
   browseSearch: { set: (v: string) => void; (): string };
   browseMatches: () => OfferedModel[];
   askable: () => GatewayProvider[];
@@ -1210,19 +1210,45 @@ describe('ModelCatalog — the provider field in the editor (`FRD-507` stage C)'
 });
 
 describe('ModelCatalog — browsing what a provider offers (`FRD-507` stage C)', () => {
-  it('offers only the providers that can actually be asked', () => {
-    /** `canEnumerate` is stated rather than discovered by trying. A window listing every provider
-     *  and then showing an error for the ones without a listing would report a capability gap as a
-     *  fault — and those send a reader to two different systems. */
-    const { component, fixture, html } = setup();
+  it('lists every provider, and says which one publishes no list', () => {
+    /** `canEnumerate` is stated rather than discovered by trying, and a capability gap must never
+     *  be reported as a fault — those send a reader to two different systems.
+     *
+     *  **But it was reported as nothing at all.** A provider without a listing was filtered out of
+     *  this window, and somebody who had just configured Agent Platform opened *Add from provider*
+     *  and found no mention of it: indistinguishable from a credential that had not worked. It is
+     *  listed now, marked, with the way in beside it — no error, and no silence either.
+     */
+    const { fixture, html } = setup();
 
     html().querySelector<HTMLButtonElement>('[data-testid="browse-provider-models"]')!.click();
     fixture.detectChanges();
 
     const select = html().querySelector<HTMLSelectElement>('[data-testid="browse-provider"]')!;
     const values = [...select.options].map((o) => o.value).filter(Boolean);
-    expect(values).toEqual(['generative-language']);
-    expect(select.textContent).toContain('Google AI Studio');
+    expect(values).toEqual(['generative-language', 'vertex']);
+    expect(select.textContent).toContain('publishes no list');
+    // Still no error anywhere: the gap is a property of the platform.
+    expect(html().querySelector('[data-testid="browse-providers-error"]')).toBeNull();
+  });
+
+  it('offers the manual route for a provider that cannot be listed', () => {
+    /** "Type everything" is not an answer. What the platform tells us about itself is filled in,
+     *  and the reader names the model — which is what choosing an offered one does, one step
+     *  earlier. */
+    const { component, fixture, html } = setup();
+
+    html().querySelector<HTMLButtonElement>('[data-testid="browse-provider-models"]')!.click();
+    fixture.detectChanges();
+    component.browseProvider.set('vertex');
+    fixture.detectChanges();
+
+    expect(html().querySelector('[data-testid="provider-not-askable"]')).not.toBeNull();
+    html().querySelector<HTMLButtonElement>('[data-testid="add-manually"]')!.click();
+    fixture.detectChanges();
+
+    expect(component.provider()).toBe('vertex');
+    expect(html().querySelector('#model-name')).not.toBeNull();
   });
 
   it('asks straight away when there is only one provider to ask', () => {

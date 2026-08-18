@@ -240,6 +240,29 @@
             <label class="row" style="gap: 0.5rem">
               <input
                 type="checkbox"
+                id="include-reasoning"
+                name="include_reasoning"
+                data-testid="include-reasoning"
+                [checked]="includeReasoning()"
+                (change)="includeReasoning.set($any($event.target).checked)"
+              />
+              Return and keep the model's reasoning
+              <app-info-hint label="Reasoning" testid="include-reasoning" [wide]="true">
+                A thinking model works through a problem before answering. Off, that reasoning is
+                asked for from nobody and a request for it is <strong>refused by name</strong> —
+                never served with the thoughts silently missing. On, it comes back with the answer
+                and is <strong>stored exactly like the answer</strong>: same payload, same
+                retention, same role needed to read it. Worth having when you are watching agents
+                and want to know <em>why</em> one called a tool. Worth leaving off otherwise:
+                reasoning can restate the prompt word for word, so turning it on is a decision about
+                content, not about detail. The thinking tokens are counted and billed either way —
+                that is not a choice, the provider charges for them.
+              </app-info-hint>
+            </label>
+
+            <label class="row" style="gap: 0.5rem">
+              <input
+                type="checkbox"
                 id="tools-enabled"
                 name="tools_enabled"
                 [checked]="toolsEnabled()"

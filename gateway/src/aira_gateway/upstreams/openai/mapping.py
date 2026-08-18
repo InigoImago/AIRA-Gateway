@@ -270,9 +270,20 @@ def _usage_of(payload: Any) -> CanonicalUsage:
     # self-hosted runtime reports nothing at all and the zero below is the honest answer for it.
     details = usage.get("prompt_tokens_details")
     cached = int((details or {}).get("cached_tokens", 0) or 0) if isinstance(details, dict) else 0
+    # **Already inside `completion_tokens` on this dialect**, unlike Gemini's, so this is read for
+    # visibility and never added (`FRD-135` FR-1's subset invariant). A reasoning model that was
+    # sent no `reasoning_effort` thinks anyway — the comment on that mapping says so — and this is
+    # the only figure that shows how much of the bill was thinking.
+    output_details = usage.get("completion_tokens_details")
+    reasoning = (
+        int((output_details or {}).get("reasoning_tokens", 0) or 0)
+        if isinstance(output_details, dict)
+        else 0
+    )
     return CanonicalUsage(
         prompt_tokens=int(usage.get("prompt_tokens", 0) or 0),
         completion_tokens=int(usage.get("completion_tokens", 0) or 0),
+        reasoning_tokens=reasoning,
         # No write figure exists on this dialect: a first request simply pays the ordinary rate
         # and populates the cache. Reporting a write of zero is therefore correct rather than
         # missing — see `FRD-133` §4a, where only Anthropic separates the two.

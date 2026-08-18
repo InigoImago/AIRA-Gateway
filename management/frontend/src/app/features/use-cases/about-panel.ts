@@ -38,6 +38,9 @@ export class AboutPanel {
   private readonly service = inject(UseCaseService);
   protected readonly feedback = inject(PageFeedback);
 
+  /** Whether the two fields are showing as text or as inputs. Text until somebody asks. */
+  protected readonly editing = signal(false);
+
   protected readonly description = signal('');
   protected readonly processingNotes = signal('');
 
@@ -52,6 +55,23 @@ export class AboutPanel {
       this.description.set(loaded.description ?? '');
       this.processingNotes.set(loaded.processing_notes ?? '');
     });
+  }
+
+  protected startEditing(): void {
+    this.editing.set(true);
+  }
+
+  /**
+   * Leave the form **and forget what was typed** — the values come back from the use case the
+   * parent holds. A cancel that kept the draft would leave the read view showing text that is not
+   * stored, which is the same lie as an unsaved field looking saved.
+   */
+  protected cancelEditing(): void {
+    this.editing.set(false);
+    this.touched.set(false);
+    const loaded = this.useCase();
+    this.description.set(loaded?.description ?? '');
+    this.processingNotes.set(loaded?.processing_notes ?? '');
   }
 
   protected edit(field: 'description' | 'processingNotes', value: string): void {
@@ -70,6 +90,7 @@ export class AboutPanel {
         failure: 'Could not change what this use case says about itself.',
         success: (useCase: UseCase) => {
           this.touched.set(false);
+          this.editing.set(false);
           this.saved.emit(useCase);
           this.feedback.succeed('Saved. The overview and the gateway both read this.');
         },

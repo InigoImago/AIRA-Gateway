@@ -1,47 +1,80 @@
 <!--
-  Two fields the overview has always printed and no screen could fill. Read-only for anybody who
-  may not manage this use case: the same values, shown as disabled controls rather than as prose,
-  because a paragraph does not read as configuration and a greyed control says *you may look, not
-  change* without a sentence having to.
+  Read first, edit on request. These two were directly editable boxes, and the reported objection
+  was that a page of input fields does not read as a description — it reads as a form somebody
+  left open. What a reader wants from an overview is the text; what an administrator wants is a
+  way in. So: the text, and a pencil.
+
+  The read view is not prose-instead-of-a-control, which is the mistake the released-models
+  overview made: there *is* a control, one click away, and the pencil says so. What is removed
+  until then is only what acts.
 -->
 <section class="stack" data-testid="about-panel">
-  <h3 style="margin: 0">What this use case is for</h3>
-
-  <div class="field">
-    <label for="uc-description">Description</label>
-    <textarea
-      id="uc-description"
-      name="description"
-      rows="2"
-      [disabled]="!canManage()"
-      [ngModel]="description()"
-      (ngModelChange)="edit('description', $event)"
-      placeholder="What this use case does, for whoever finds it later"
-      data-testid="uc-description"
-    ></textarea>
+  <div class="spread">
+    <h3 style="margin: 0">What this use case is for</h3>
+    @if (canManage() && !editing()) {
+      <button
+        type="button"
+        class="btn btn--sm btn--ghost"
+        (click)="startEditing()"
+        data-testid="about-edit"
+        aria-label="Edit the description and processing notes"
+      >
+        ✏️ Edit
+      </button>
+    }
   </div>
 
-  <div class="field">
-    <label for="uc-processing">Processing notes</label>
-    <textarea
-      id="uc-processing"
-      name="processing_notes"
-      rows="2"
-      [disabled]="!canManage()"
-      [ngModel]="processingNotes()"
-      (ngModelChange)="edit('processingNotes', $event)"
-      placeholder="How this use case's data is handled — the sentence a data-protection review asks for"
-      data-testid="uc-processing"
-    ></textarea>
-    <span class="field__hint">
-      Carried to the gateway with the rest of the use case, and shown on the overview. Nothing here
-      changes what a request may do — these two say what somebody decided and why.
-    </span>
-  </div>
+  @if (!editing()) {
+    <p style="margin: 0; white-space: pre-wrap" data-testid="about-description">
+      {{ description() || 'No description yet.' }}
+    </p>
+    @if (processingNotes()) {
+      <p class="muted" style="margin: 0; white-space: pre-wrap" data-testid="about-processing">
+        <strong>Processing:</strong> {{ processingNotes() }}
+      </p>
+    }
+  } @else {
+    <div class="field">
+      <label for="uc-description">Description</label>
+      <textarea
+        id="uc-description"
+        name="description"
+        rows="3"
+        [ngModel]="description()"
+        (ngModelChange)="edit('description', $event)"
+        placeholder="What this use case does, for whoever finds it later"
+        data-testid="uc-description"
+      ></textarea>
+    </div>
 
-  @if (canManage()) {
+    <div class="field">
+      <label for="uc-processing">Processing notes</label>
+      <textarea
+        id="uc-processing"
+        name="processing_notes"
+        rows="3"
+        [ngModel]="processingNotes()"
+        (ngModelChange)="edit('processingNotes', $event)"
+        placeholder="How this use case's data is handled — the sentence a data-protection review asks for"
+        data-testid="uc-processing"
+      ></textarea>
+      <span class="field__hint">
+        Carried to the gateway with the rest of the use case, and shown on the overview. Nothing
+        here changes what a request may do — these two say what somebody decided and why.
+      </span>
+    </div>
+
     <div class="row">
       <button type="button" class="btn" [disabled]="feedback.busy()" (click)="save()">Save</button>
+      <button
+        type="button"
+        class="btn btn--ghost"
+        [disabled]="feedback.busy()"
+        (click)="cancelEditing()"
+        data-testid="about-cancel"
+      >
+        Cancel
+      </button>
     </div>
   }
 </section>

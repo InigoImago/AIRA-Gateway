@@ -130,6 +130,23 @@ def _pipeline(*names: str, fallbacks: tuple[str, ...] = ()) -> Pipeline:
 # == the seam: what each step is given ===========================================================
 
 
+def _wrapped(text: str) -> str:
+    """The redactor's input as the redactor receives it — data between markers."""
+    return f"<<<TEXT>>>\n{text}\n<<<END>>>"
+
+
+def _redactor_saw(models: dict, text: str) -> bool:
+    """The redactor is handed its input **as data**, between markers (`FRD-125`).
+
+    The property these cases are about is *which* text reached the redactor, not how it was framed.
+    The framing was added on 2026-08-17 after a measured hijack: a prompt that is itself an
+    instruction ("Answer with the number only") came back from the redactor as `"9"` — it solved the
+    riddle instead of rewriting it. Asserting equality here would tie these cases to the wrapper and
+    say nothing more about the thing they exist to check.
+    """
+    return list(models["scrubber"].seen) == [_wrapped(text)]
+
+
 async def test_redacting_before_routing_keeps_the_personal_data_from_the_classifier() -> None:
     """**The reason order is a decision and not a preference.**
 
@@ -141,7 +158,7 @@ async def test_redacting_before_routing_keeps_the_personal_data_from_the_classif
 
     await engine.run(_pipeline("pii", "route"), _request())
 
-    assert models["scrubber"].seen == [DIRTY], "the redactor is given the original"
+    assert _redactor_saw(models, DIRTY), "the redactor is given the original"
     assert models["judge"].seen == [CLEAN], "the classifier is given the redacted text"
 
 
@@ -154,7 +171,7 @@ async def test_routing_before_redacting_shows_the_classifier_the_original() -> N
     await engine.run(_pipeline("route", "pii"), _request())
 
     assert models["judge"].seen == [DIRTY]
-    assert models["scrubber"].seen == [DIRTY]
+    assert _redactor_saw(models, DIRTY)
 
 
 async def test_a_block_stops_the_steps_behind_it_and_keeps_what_ran_in_front() -> None:
@@ -165,7 +182,7 @@ async def test_a_block_stops_the_steps_behind_it_and_keeps_what_ran_in_front() -
     with pytest.raises(PipelineRejected):
         await engine.run(_pipeline("pii", "filter", "route"), _request(), decisions=decisions)
 
-    assert models["scrubber"].seen == [DIRTY], "the step in front of the block ran"
+    assert _redactor_saw(models, DIRTY), "the step in front of the block ran"
     assert models["judge"].seen == [], "the step behind it did not"
     assert [d["step"] for d in decisions] == ["pii_filter", "injection_filter"]
 
@@ -199,7 +216,9 @@ async def test_a_repeated_step_runs_twice() -> None:
 
     outcome = await engine.run(_pipeline("pii", "pii"), _request())
 
-    assert models["scrubber"].seen == [DIRTY, CLEAN], "the second is given the first's output"
+    assert list(models["scrubber"].seen) == [_wrapped(DIRTY), _wrapped(CLEAN)], (
+        "the second is given the first's output"
+    )
     # The second changed nothing, so it owes no notice — one sentence, not two identical ones.
     assert outcome.notices == ["Eingabe angepasst."]
 

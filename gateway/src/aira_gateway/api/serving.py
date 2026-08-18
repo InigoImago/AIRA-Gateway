@@ -471,6 +471,36 @@ def check_not_empty(canonical: CanonicalRequest) -> None:
         )
 
 
+async def resolve_reasoning(
+    request: Request, canonical: CanonicalRequest, *, asked_for: bool
+) -> CanonicalRequest:
+    """Whether this request may have the model's reasoning back (`FRD-135` FR-3/FR-4).
+
+    Decided by the **use case**, never by the caller. Two outcomes and no third:
+
+    - the use case has reasoning on → the canonical request carries it, the adapter asks the
+      provider for thoughts, and they come back marked;
+    - it does not, and the caller asked → **refused by name**. Answering 200 with no thoughts is
+      the silent drop `FRD-124` exists against, and it is what the schema-level refusal did before
+      this became a per-use-case decision.
+
+    A caller who asked for nothing is unaffected either way, which is nearly all of them.
+    """
+    use_case = getattr(getattr(request.state, "attribution", None), "use_case", None)
+    record = await use_case_record(request, use_case) if use_case else None
+    allowed = bool(record is not None and record.include_reasoning)
+    if asked_for and not allowed:
+        raise GeminiHTTPError(
+            400,
+            "'includeThoughts' asks for the model's reasoning, and this use case does not return "
+            "it. An administrator of the use case can turn it on; it is off by default because "
+            "reasoning can restate the prompt verbatim and is stored with the answer when it is "
+            "on (FRD-135). Send it as false, or omit it.",
+            "FAILED_PRECONDITION",
+        )
+    return canonical.model_copy(update={"include_reasoning": allowed}) if allowed else canonical
+
+
 async def check_tools_permitted(request: Request, canonical: CanonicalRequest) -> None:
     """A use case may declare functions only if somebody turned that on (`FRD-131` FR-3).
 
@@ -790,6 +820,7 @@ async def prepare_for_dispatch(
     *,
     method: str,
     canonical: CanonicalRequest | None = None,
+    reasoning_asked_for: bool = False,
     embed: CanonicalEmbeddingRequest | None = None,
     requested_output: int | None = None,
     default_task_type: str | None = None,
@@ -829,6 +860,11 @@ async def prepare_for_dispatch(
         # the caller's rate-limit allowance on the way to being refused, and it must not pay for
         # a classifier call (`FRD-125b`) either.
         await check_tools_permitted(request, canonical)
+        # Beside the tools gate, and for the same reason it sits here: a request that can never
+        # succeed must be refused before it spends a rate-limit allowance or pays for a classifier
+        # call. `asked_for` comes from the surface, which is the only layer that knows its own
+        # wire format's spelling of "give me the reasoning" (`FRD-135` FR-4).
+        canonical = await resolve_reasoning(request, canonical, asked_for=reasoning_asked_for)
 
     units = embed.size if embed is not None else 1
 

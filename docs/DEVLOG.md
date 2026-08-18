@@ -5,6 +5,67 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## A model's reasoning, and six things the console got wrong about it
+
+`FRD-135`: thinking is **counted always**, returned **where a use case says so**. The counting is
+not a setting — providers bill thinking at the output rate and an installation does not get to
+decide whether it was charged. Measured before the fix: `prompt=25 candidates=1 thoughts=143`, of
+which AIRA recorded 26 of 169. `reasoning_tokens` is a subset of `completion_tokens`, the invariant
+`FRD-133` set for cache tokens, so every existing price, budget and report keeps meaning what it
+meant. Over the live matrix run: 9337 completion tokens of which **4272 were thinking** — 46% of
+the bill would have been invisible.
+
+Returning it is per use case and **off**. Off means the request is refused **by name**; the schema
+level refusal moved to the surface, where the use case is known, and did not soften. On, the
+thoughts come back marked as Google marks them and are stored **in the response payload** — same
+column, same `store_payloads` gate, same retention, same role to read. No second storage path,
+because a second one is a second retention bug.
+
+**The console then reported six problems, and five were real.**
+
+*The toggle was missing* — because the frontend image had not been rebuilt. My fault, and the sort
+that wastes somebody's evening: the code was right and what they were looking at was three builds
+old.
+
+*The description fields were a form.* Two textareas standing open where a reader wants a sentence.
+Read view with a pencil now, and a cancel that **forgets the draft** — keeping it would show, as the
+description, something the server has never been told.
+
+*The model form's thinking section could not be read.* Fair: *"it says thinking disabled — is the
+thinking block disabled, or does the model become an instruct model?"* Neither, and the label said
+only the wire value. Every box now says what it declares — *can be told not to think at all* — and
+the budget bounds are separated from the mode list with the sentence that was missing: they bound
+what a caller may ask for with `limited`, they are not output caps, and the thinking budget comes
+**out of** the output allowance rather than beside it.
+
+*Check reachability answered nothing for Gemini models*, because the Agent Platform adapter had
+**no probe at all** — `/readyz` said "no probe available; not checked" and the console repeated it.
+It has one now: `:countTokens`, which Google does not charge for. A probe that generates costs money
+to answer "are you there", every time anything asks.
+
+*Add from provider had no Vertex* — filtered out for not publishing a list, with a general sentence
+underneath. An absent provider is indistinguishable from a credential that failed. Listed now,
+marked *publishes no list*, with a panel naming why and a button that opens the editor with the
+platform's provenance filled in. And the "not served" message no longer claims a missing credential
+is the only cause: on this platform the key can be perfect and the model simply absent from
+`AIRA_VERTEX_MODELS`.
+
+**The sixth was not a console problem at all**, and it took three wrong diagnoses to find. Requests
+were being refused with *"personal data could not be removed"*. First reading: the length guard is
+too strict for short prompts — true, and fixed (a proportion is a statement about prose; on `"say
+ok"` the bar is two characters). Second: the redactor was spending its whole allowance thinking —
+true, and caused by **my** catalogue entry declaring the `thinking` capability with no thinking
+block, so the pipeline could not tell the model to be quiet. Third, and the real one: with thinking
+off the redactor still answered `"9"` — it had **solved the riddle in the caller's text** instead of
+rewriting it, with an instruction that already said *do not answer*.
+
+That is prompt injection against an **internal** step, and the pipeline's own injection filter does
+not protect it: that filter decides whether to serve the request, while this one hands the same text
+to a second model as a task. The text is passed as **data between markers** now, with the model told
+that everything between them is data. Verified against the real model both ways. `LlmRedactor` had
+no direct test at all before this round; it has nine.
+
+---
 ## The Agent Platform adapter takes an API key too (`FRD-115` FR-3a)
 
 The owner put a key in and nothing worked. Google's answer named the cause exactly:

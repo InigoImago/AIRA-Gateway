@@ -349,6 +349,9 @@ TRACE_FIELDS = (
     "outcome",
     "prompt_tokens",
     "completion_tokens",
+    #: Of the completion, how much was thinking (`FRD-135`). Beside the two it is a subset of, so
+    #: a reader can see what reasoning cost without doing arithmetic against the provider's bill.
+    "reasoning_tokens",
     "total_tokens",
     "latency_ms",
     "cost_nanos",

@@ -68,6 +68,21 @@ class UseCase(models.Model):
         ),
     )
 
+    #: Whether a model's reasoning comes back and is kept (`FRD-135`).
+    #:
+    #: **Off**, because reasoning is content of exactly the kind `ADR-0016` reasoned about: the
+    #: sensitive part and the useful part are the same part. On, it travels in the response and is
+    #: stored the way the answer is — same payload, same `store_payloads` gate, same retention,
+    #: same role check on reading. There is deliberately no second storage path: one would be a
+    #: second retention bug waiting to be found.
+    include_reasoning = models.BooleanField(
+        default=False,
+        help_text=(
+            "Return the model's reasoning to callers and store it with the answer (FRD-135). "
+            "Off by default: reasoning can restate the prompt verbatim."
+        ),
+    )
+
     PROMPT_CACHE_TTLS = [("5m", "5 minutes"), ("1h", "1 hour")]
     prompt_cache_ttl = models.CharField(
         max_length=4,

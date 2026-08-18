@@ -240,6 +240,10 @@ def canonical_to_gemini(response: CanonicalResponse) -> schemas.GenerateContentR
     # all rather than an empty one: `Part` requires exactly one shape, and an empty string is a
     # different claim from "the model said nothing and asked for something instead".
     parts: list[schemas.Part] = []
+    # Reasoning first, marked as Google marks it, because that is the order Google sends it in and
+    # a client reading parts sequentially expects the thinking to precede the answer (`FRD-135`).
+    if response.reasoning:
+        parts.append(schemas.Part(text=response.reasoning, thought=True))
     if response.text:
         parts.append(schemas.Part(text=response.text))
     parts.extend(

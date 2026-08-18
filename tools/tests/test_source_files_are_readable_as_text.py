@@ -35,7 +35,14 @@ def _tracked_text_files() -> list[Path]:
     listed = subprocess.run(
         ["git", "ls-files"], cwd=ROOT, capture_output=True, text=True, check=True
     ).stdout.split()
-    return [ROOT / name for name in listed if name.endswith(TEXT_SUFFIXES)]
+    # `exists()` because `git ls-files` reports the **index**, and a file staged then deleted is
+    # listed and unreadable. Crashing there would make this guard report nothing about the hundreds
+    # of files that *are* present — a check that fails for an unrelated reason is a check nobody
+    # can act on. Walked into on 2026-08-18, from a run artefact that had been staged by an earlier
+    # `git add -A`.
+    return [
+        ROOT / name for name in listed if name.endswith(TEXT_SUFFIXES) and (ROOT / name).exists()
+    ]
 
 
 def test_the_file_list_is_not_empty() -> None:

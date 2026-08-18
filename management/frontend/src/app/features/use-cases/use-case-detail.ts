@@ -217,6 +217,14 @@ export class UseCaseDetail implements OnInit {
    * capability with no way in does not announce itself — unlike a control that refuses when used,
    * which at least produces a complaint (`FRD-206`, inverted). */
   protected readonly toolsEnabled = signal(false);
+  /**
+   * Whether a model's reasoning comes back and is kept (`FRD-135`).
+   *
+   * Beside the other two because it is the same kind of decision — what this use case may do — and
+   * off for the same reason `store_payloads` exists at all: reasoning can restate the prompt
+   * verbatim, so switching it on is a decision about **content**, not about verbosity.
+   */
+  protected readonly includeReasoning = signal(false);
   protected readonly promptCaching = signal(false);
   protected readonly cacheTtl = signal('5m');
 
@@ -286,6 +294,7 @@ export class UseCaseDetail implements OnInit {
         this.storePayloads.set(useCase.store_payloads ?? true);
         this.restrictMembers.set(useCase.restrict_members_to_own_requests ?? false);
         this.toolsEnabled.set(useCase.tools_enabled ?? false);
+        this.includeReasoning.set(useCase.include_reasoning ?? false);
         this.promptCaching.set(useCase.prompt_caching_enabled ?? false);
         this.cacheTtl.set(useCase.prompt_cache_ttl ?? '5m');
         this.loading.set(false);
@@ -591,6 +600,7 @@ export class UseCaseDetail implements OnInit {
   protected capabilitiesChanged(): boolean {
     return (
       this.toolsEnabled() !== (this.useCase()?.tools_enabled ?? false) ||
+      this.includeReasoning() !== (this.useCase()?.include_reasoning ?? false) ||
       this.promptCaching() !== (this.useCase()?.prompt_caching_enabled ?? false) ||
       this.cacheTtl() !== (this.useCase()?.prompt_cache_ttl ?? '5m')
     );
@@ -609,6 +619,7 @@ export class UseCaseDetail implements OnInit {
     this.feedback.run(
       this.service.update(this.slug, {
         tools_enabled: this.toolsEnabled(),
+        include_reasoning: this.includeReasoning(),
         prompt_caching_enabled: caching,
         prompt_cache_ttl: ttl,
       }),
@@ -617,6 +628,7 @@ export class UseCaseDetail implements OnInit {
         success: (useCase: UseCase) => {
           this.useCase.set(useCase);
           this.toolsEnabled.set(useCase.tools_enabled ?? false);
+          this.includeReasoning.set(useCase.include_reasoning ?? false);
           this.promptCaching.set(useCase.prompt_caching_enabled ?? false);
           this.cacheTtl.set(useCase.prompt_cache_ttl ?? '5m');
           // Says what changed *and* where the consequence shows up: a saving nobody can see is a

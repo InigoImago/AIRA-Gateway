@@ -160,6 +160,10 @@ class RequestLog(Base):
     cached_input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     cache_write_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     completion_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: **Of which** the model spent thinking (`FRD-135`). A subset of `completion_tokens`, the same
+    #: shape as the two cache columns above. NULL on every row written before it existed, because
+    #: zero would claim the model did not think — and on the rows this was added for, it did.
+    reasoning_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     total_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     #: How many bytes the caller sent. Counted by the body-size middleware, which was already
@@ -315,6 +319,10 @@ class UseCaseRead(Base):
     #: false**, and the default is the feature: least privilege is not a setting somebody remembers
     #: to switch off, it is the state a use case starts in.
     tools_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    #: Whether a model's reasoning is returned and stored (`FRD-135`). Default off,
+    #: and an event from an older Management that says nothing means off — the same
+    #: reading `tools_enabled` takes, and the safe one for content.
+    include_reasoning: Mapped[bool] = mapped_column(Boolean, default=False)
     #: Mark this use case's stable prefix as cacheable (`FRD-133`). Off by default, and the reason
     #: is not only least privilege: on Vertex the cache scope is the **whole organisation**, so a
     #: use case whose system prompt is itself confidential should not be opted in by somebody

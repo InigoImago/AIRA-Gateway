@@ -217,6 +217,10 @@ class CanonicalRequest(BaseModel):
     #: False changes nothing on any dialect, so a request that does not opt in is byte-identical
     #: to what it was before this field existed.
     cache_prefix: bool = False
+    #: Whether this use case wants the model's reasoning back (`FRD-135` FR-3). Decided by the use
+    #: case, never by the caller — a request that asks for thoughts in a use case that has not
+    #: enabled them is **refused by name** rather than served without them (`FRD-124`).
+    include_reasoning: bool = False
     #: How long the provider should keep it: `5m` or `1h` (`FRD-133`). Only read when
     #: `cache_prefix` is set, and defaulting to the cheap one — an hour costs 2x base input to
     #: write against 1.25x, so the expensive choice has to be made rather than inherited.
@@ -316,6 +320,19 @@ class CanonicalUsage(BaseModel):
     cached_input_tokens: int = 0
     cache_write_tokens: int = 0
 
+    #: **Of which** the model spent thinking (`FRD-135`). A subset of `completion_tokens`, never an
+    #: addition — the same invariant the two cache fields keep above, and for the same reason: the
+    #: total a request consumed is one number, and every price, budget, report and index already
+    #: reads it.
+    #:
+    #: Counted unconditionally, and that is deliberate. An installation may decide whether it wants
+    #: to *see* reasoning (`FRD-135` FR-3); it does not get to decide whether it was *charged* for
+    #: it. Providers bill thinking at the output rate, and until 2026-08-17 this figure was read
+    #: from nowhere: one measured request against `gemini-2.5-flash` counted 25 prompt, 1 candidate
+    #: and **143 thought** tokens, of which AIRA recorded 26 of 169 — the number wrong by 85%, in
+    #: the expensive direction, on the feature whose whole purpose is that the number is right.
+    reasoning_tokens: int = 0
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def uncached_input_tokens(self) -> int:
@@ -333,6 +350,16 @@ class CanonicalUsage(BaseModel):
 class CanonicalResponse(BaseModel):
     model: str
     text: str
+    #: The model's reasoning, when the use case asked for it and the provider returned any
+    #: (`FRD-135`). Empty everywhere else — including for a provider that reports none, which is
+    #: not an error (FR-7).
+    #:
+    #: **Apart from `text`, and that is the whole point.** Google marks thought parts with
+    #: `thought: true` inside the same `parts` array; a mapper that joined them all — which is what
+    #: `_text_of` did — would hand the caller its reasoning as though it were the answer, which is
+    #: worse than dropping it. Kept separate here so each surface decides how to render it, and so
+    #: storage keeps them distinguishable.
+    reasoning: str = ""
     finish_reason: str = "stop"
     usage: CanonicalUsage
     #: What the model asked to have run (`FRD-131`). A turn can carry text, tool calls, or both —

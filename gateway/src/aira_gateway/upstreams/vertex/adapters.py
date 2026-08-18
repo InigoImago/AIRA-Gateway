@@ -100,6 +100,29 @@ class VertexGeminiAdapter:
             region=target.region, publisher=target.publisher, model=target.name, method=method
         )
 
+    async def ping(self) -> str:
+        """The cheapest remote question this platform has (`FRD-117` §5.2).
+
+        `:countTokens`, which **Google does not charge for** — measured on 2026-08-17, and it is
+        the reason this exists at all. Vertex publishes no listing an API key may read (its
+        `/publishers/google/models` answers *"API keys are not supported by this API"*), so this
+        adapter had **no probe**: `/readyz` reported it as *"no probe available; not checked"* and
+        the console's *Check reachability* answered "Served — not contacted" for every model on it.
+        Honest, and useless — the operator asked whether their credential works and was told
+        nobody had looked.
+
+        A generation would have been the obvious alternative and is the wrong one: a probe that
+        generates costs money to answer "are you there", every time anything asks.
+        """
+        if not self._models:
+            return "no model configured"
+        name = next(iter(self._models))
+        await self._transport.post(
+            self._url(name, "countTokens"),
+            {"contents": [{"role": "user", "parts": [{"text": "ping"}]}]},
+        )
+        return f"{name} answered"
+
     async def generate(self, request: CanonicalRequest) -> CanonicalResponse:
         data = await self._transport.post(
             self._url(request.model, "generateContent"), canonical_to_gemini_request(request)

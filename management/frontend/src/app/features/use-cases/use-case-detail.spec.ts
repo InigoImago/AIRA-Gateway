@@ -484,22 +484,22 @@ describe('UseCaseDetail rendering', () => {
     expect(harness.text()).toContain('copy it manually');
   });
 
-  it('offers the processing notes on the overview, filled in, rather than printing them', async () => {
-    /** They were a paragraph until 2026-08-17 — printed by the overview and settable on no screen,
-     *  so "No description." was the only thing most installations ever saw. Same values, now in a
-     *  control, which is why this asserts the field's value instead of the page text. */
+  it('shows the processing notes on the overview as text, not as a form', async () => {
+    /** They were a paragraph until 2026-08-17 — printed by the overview and settable on no screen.
+     *  They became a form, and the reported objection was that a page of inputs does not read as a
+     *  description. So: text again, with a pencil that opens the same fields. The property here is
+     *  that the *value* is on screen; how it got there is `about-panel`'s own test. */
     const { html, fixture } = render(
       {
         get: of({ ...USE_CASE, processing_notes: 'No personal data.' }),
       },
       'overview',
     );
-    // `ngModel` writes to the element on a microtask, so a synchronous read sees an empty field.
     await Promise.resolve();
     fixture.detectChanges();
 
-    const notes = html().querySelector<HTMLTextAreaElement>('[data-testid="uc-processing"]');
-    expect(notes?.value).toBe('No personal data.');
+    const shown = html().querySelector('[data-testid="about-processing"]');
+    expect(shown?.textContent).toContain('No personal data.');
   });
 });
 

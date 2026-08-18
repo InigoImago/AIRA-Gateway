@@ -98,6 +98,7 @@ def _snapshot(usecase: UseCase) -> dict[str, Any]:
         "store_payloads": usecase.store_payloads,
         "restrict_members_to_own_requests": usecase.restrict_members_to_own_requests,
         "tools_enabled": usecase.tools_enabled,
+        "include_reasoning": usecase.include_reasoning,
         "prompt_caching_enabled": usecase.prompt_caching_enabled,
         "prompt_cache_ttl": usecase.prompt_cache_ttl,
         "retention_days": usecase.retention_days,

@@ -298,3 +298,43 @@ def test_a_service_account_is_preferred_where_both_are_configured() -> None:
     transport = upstreams[0]._transport  # type: ignore[attr-defined]
     assert transport._api_key == ""
     assert transport._tokens is not None
+
+
+async def test_the_adapter_can_be_asked_whether_it_is_reachable() -> None:
+    """`:countTokens`, which Google charges nothing for (`FRD-117` §5.2).
+
+    Vertex publishes no listing an API key may read, so this adapter had **no probe at all**:
+    `/readyz` said "no probe available; not checked" and the console's *Check reachability*
+    answered "Served — not contacted" for every model on it. The operator asked whether their
+    credential works and was told nobody had looked.
+    """
+    seen: list[httpx.Request] = []
+    from aira_gateway.upstreams.vertex import VertexModel
+    from aira_gateway.upstreams.vertex.adapters import VertexGeminiAdapter
+
+    transport = _transport(seen, api_key="AQ.test-key")
+    adapter = VertexGeminiAdapter(
+        transport, [VertexModel(name="gemini-2.5-flash", publisher="google", region="europe-west1")]
+    )
+
+    detail = await adapter.ping()
+
+    assert "gemini-2.5-flash" in detail
+    assert str(seen[0].url).endswith(":countTokens"), "a probe must not generate"
+
+
+async def test_a_probe_never_generates() -> None:
+    """The property worth defending rather than the string: a probe that generates costs money to
+    answer "are you there", every time anything asks — and `/readyz` asks on a timer."""
+    seen: list[httpx.Request] = []
+    from aira_gateway.upstreams.vertex import VertexModel
+    from aira_gateway.upstreams.vertex.adapters import VertexGeminiAdapter
+
+    adapter = VertexGeminiAdapter(
+        _transport(seen, api_key="AQ.test-key"),
+        [VertexModel(name="gemini-2.5-flash", publisher="google", region="europe-west1")],
+    )
+
+    await adapter.ping()
+
+    assert not any("generateContent" in str(r.url) for r in seen)

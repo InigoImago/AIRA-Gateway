@@ -15,6 +15,8 @@ const USE_CASE = {
 interface Panel {
   save: () => void;
   edit: (field: 'description' | 'processingNotes', value: string) => void;
+  startEditing: () => void;
+  cancelEditing: () => void;
 }
 
 function setup(options: { canManage?: boolean; update?: unknown } = {}) {
@@ -48,10 +50,23 @@ function setup(options: { canManage?: boolean; update?: unknown } = {}) {
 }
 
 describe('AboutPanel', () => {
-  it('fills both fields from the use case', async () => {
-    /** The whole point: these were printed and unsettable, so the first thing to prove is that
-     *  what the server holds arrives *in the control* rather than beside it. */
+  it('shows the text, not a form, until somebody asks to edit', async () => {
+    /** Reported: a page of input boxes does not read as a description, it reads as a form somebody
+     *  left open. The text is what an overview is for; the pencil is the way in. */
     const page = setup();
+    await Promise.resolve();
+    page.fixture.detectChanges();
+
+    expect(page.html().textContent).toContain('What it was for');
+    expect(page.html().textContent).toContain('No personal data.');
+    expect(page.field('uc-description')).toBeNull();
+    expect(page.html().querySelector('[data-testid="about-edit"]')).not.toBeNull();
+  });
+
+  it('fills both fields from the use case once editing starts', async () => {
+    const page = setup();
+    page.panel.startEditing();
+    page.fixture.detectChanges();
     await Promise.resolve();
     page.fixture.detectChanges();
 
@@ -59,8 +74,22 @@ describe('AboutPanel', () => {
     expect(page.field('uc-processing')?.value).toBe('No personal data.');
   });
 
+  it('forgets a cancelled draft rather than leaving it on screen', async () => {
+    /** A cancel that kept the text would show, as the use case's description, something the server
+     *  has never been told — the same lie as an unsaved field looking saved. */
+    const page = setup();
+    page.panel.startEditing();
+    page.panel.edit('description', 'half a thought');
+    page.panel.cancelEditing();
+    page.fixture.detectChanges();
+
+    expect(page.html().textContent).toContain('What it was for');
+    expect(page.html().textContent).not.toContain('half a thought');
+  });
+
   it('sends both fields, trimmed', () => {
     const page = setup();
+    page.panel.startEditing();
     page.panel.edit('description', '  a routing assistant  ');
     page.panel.edit('processingNotes', '  prompts are stored for 7 days  ');
     page.panel.save();
@@ -75,6 +104,7 @@ describe('AboutPanel', () => {
      *  the effect would refill both fields from the server mid-sentence, and the reader would
      *  watch their own text vanish with nothing to explain it. */
     const page = setup();
+    page.panel.startEditing();
     page.panel.edit('description', 'half a sentence');
     page.fixture.componentRef.setInput('useCase', { ...USE_CASE, description: 'from the server' });
     page.fixture.detectChanges();
@@ -83,21 +113,23 @@ describe('AboutPanel', () => {
     expect(page.field('uc-description')?.value).toBe('half a sentence');
   });
 
-  it('shows the values to a reader who may not change them, disabled rather than as prose', async () => {
-    /** Read-only is a control, greyed — never a paragraph: a paragraph does not read as
-     *  configuration, which is how the released-models overview went unread. */
+  it('shows the values to a reader who may not change them, without a way in', async () => {
+    /** The read view is the same for everybody; what a reader without rights loses is the pencil.
+     *  Not the released-models mistake — there the *control itself* was replaced by prose and the
+     *  reader could not tell configuration from decoration. Here the text is the content, and the
+     *  control is one click away for whoever may use it. */
     const page = setup({ canManage: false });
-    // `ngModel` applies a disabled state through the form control, on a microtask.
     await Promise.resolve();
     page.fixture.detectChanges();
 
-    expect(page.field('uc-description')?.disabled).toBe(true);
-    expect(page.field('uc-processing')?.disabled).toBe(true);
+    expect(page.html().textContent).toContain('What it was for');
+    expect(page.html().querySelector('[data-testid="about-edit"]')).toBeNull();
     expect(page.html().querySelector('button')).toBeNull();
   });
 
   it('refuses to save for a reader who may not manage', () => {
     const page = setup({ canManage: false });
+    page.panel.startEditing();
     page.panel.edit('description', 'sneaking one in');
     page.panel.save();
 
@@ -106,6 +138,7 @@ describe('AboutPanel', () => {
 
   it('reports a failed save instead of looking saved', () => {
     const page = setup({ update: throwError(() => ({ status: 500 })) });
+    page.panel.startEditing();
     page.panel.edit('description', 'anything');
     page.panel.save();
 

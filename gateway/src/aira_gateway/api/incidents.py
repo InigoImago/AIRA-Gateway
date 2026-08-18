@@ -230,9 +230,16 @@ async def check_model(
         # The case a missing credential produces, and the one worth naming precisely: an adapter is
         # registered only when its credential is configured, so "declared but not served" is
         # almost always "nobody gave this installation a key for it".
+        # **Two causes, and naming only one sends people to the wrong system.** This said the
+        # credential must be missing, which is right for AI Studio and wrong for Agent Platform and
+        # Azure: there the credential can be perfectly configured and the *model* simply is not in
+        # `AIRA_VERTEX_MODELS` / `AIRA_FOUNDRY_DEPLOYMENTS`. Reported by somebody whose key worked
+        # and whose model still answered "not served".
         result["detail"] = (
             "No upstream serves this model. A declaration is metadata; reaching a model needs a "
-            "provider, and a provider is registered only when its credential is configured."
+            "provider that offers it — either no credential is configured for its platform, or "
+            "the platform is one where each model must also be named in the gateway's "
+            "configuration (AIRA_VERTEX_MODELS, AIRA_FOUNDRY_DEPLOYMENTS) and this one is not."
         )
         return JSONResponse(result)
 
