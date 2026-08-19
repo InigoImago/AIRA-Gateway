@@ -292,3 +292,41 @@ async def test_a_pipeline_call_spends_the_request_allowance(sessionmaker) -> Non
     await service.book_side_call("uc", "alice", tokens=10, cost_nanos=100, now=NOW)
 
     assert (await service.usage("uc", NOW, subject="alice"))[0]["used_requests"] == 2
+
+
+def test_the_period_boundary_is_utc_and_the_console_says_so() -> None:
+    """One clock, and a reader who is told which.
+
+    The counter key is the UTC calendar day or month, which is the right choice for an
+    installation whose callers, models and operators sit in different zones — and it is a couple
+    of hours from the reader's own calendar, in both directions. In central Europe, traffic at
+    00:30 local counts against yesterday, and a monthly budget that ran out keeps refusing for the
+    first hours of the new month.
+
+    Nothing was wrong with the behaviour and nothing said what it was, which is the state in which
+    a figure somebody is accountable for gets misread. Both halves are pinned here: the boundary,
+    so it cannot drift to local time without a decision, and the console's explanation of it, so
+    the decision cannot become silent again.
+    """
+    from datetime import UTC, datetime, timedelta, timezone
+    from pathlib import Path
+
+    from aira_gateway.budgets.service import _period_key
+
+    # **Handed a moment in another zone**, not a UTC one. A test that passes `datetime.now(UTC)`
+    # cannot tell a UTC key from a local one on a machine whose clock is UTC — which every CI
+    # runner's is, so the first version of this passed while the conversion was removed. Berlin
+    # summer time is +02:00, so 00:30 on the 20th there is 22:30 on the 19th here.
+    berlin = timezone(timedelta(hours=2))
+    assert _period_key("day", datetime(2026, 8, 20, 0, 30, tzinfo=berlin)) == "2026-08-19"
+    # And 00:30 in Berlin on 1 September is still August's budget.
+    assert _period_key("month", datetime(2026, 9, 1, 0, 30, tzinfo=berlin)) == "2026-08"
+    # A UTC moment is unchanged by the conversion, which is the whole point of doing it here.
+    assert _period_key("day", datetime(2026, 8, 19, 22, 30, tzinfo=UTC)) == "2026-08-19"
+
+    console = (
+        Path(__file__).resolve().parents[2]
+        / "management/frontend/src/app/features/use-cases/budgets-tab.html"
+    ).read_text()
+    assert 'testid="budget-period"' in console, "the Period control has no explanation"
+    assert "UTC" in console, "the explanation does not name the clock the counters follow"

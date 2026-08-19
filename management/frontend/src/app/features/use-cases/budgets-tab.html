@@ -55,7 +55,20 @@
           <ng-container [ngTemplateOutlet]="twoPots" />
         }
         <div class="field">
-          <label for="budget-period">Period</label>
+          <label for="budget-period">
+            Period
+            <app-info-hint label="Period" testid="budget-period" [wide]="true">
+              Counters reset on <strong>UTC</strong> boundaries — midnight UTC for a daily budget,
+              the first of the month for a monthly one. That is one clock for an installation whose
+              callers, models and operators sit in different ones, and it is deliberately not the
+              reader's local midnight. <br /><br />
+              Worth knowing because the two differ by a couple of hours, in both directions: in
+              central Europe, traffic at 00:30 local still counts against yesterday, and a monthly
+              budget that ran out keeps refusing for the first hours of the new month. The figure
+              below is the same window — the counter and its label never disagree, but the calendar
+              on the wall can.
+            </app-info-hint>
+          </label>
           <select
             id="budget-period"
             name="period"

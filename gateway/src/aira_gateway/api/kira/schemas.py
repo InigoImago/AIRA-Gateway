@@ -15,7 +15,7 @@ that remain are the two that mean something.
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -170,11 +170,21 @@ def ignored_fields(*models: BaseModel | None) -> tuple[str, ...]:
     return tuple(seen)
 
 
+#: The predecessor's numeric handle for a model, and the range the **column** can hold.
+#:
+#: `int` alone let `999999999999999999999999999` through the surface and into a `WHERE numeric_id
+#: = …` against an `INTEGER` column, where Postgres answered `NumericValueOutOfRange` and the
+#: caller got a **500** for a number they chose. Python's ints have no width; the database's do,
+#: and a boundary that models one as the other has simply moved the failure somewhere it reads as
+#: our fault. Bounded here, it is a `422` naming the field, like every other wrong value.
+ModelId = Annotated[int, Field(ge=1, le=2_147_483_647)]
+
+
 class ChatRequest(TolerantRequest):
     model_config = _TOLERANT_ALIASED
 
     request: RequestContent
-    model_id: int
+    model_id: ModelId
     system_instruction: RequestContent | None = None
     conversation_history: list[ConversationContent] | None = None
     max_tokens: int | None = Field(default=None, alias="maxTokens")
@@ -200,7 +210,7 @@ class EmbeddingRequest(TolerantRequest):
     model_config = _TOLERANT_ALIASED
 
     text: str | list[str]
-    model_id: int
+    model_id: ModelId
     task_type: str | None = None
 
 
@@ -304,7 +314,7 @@ class VersionInfo(BaseModel):
 
 class KiUsageRow(BaseModel):
     user_id: str
-    model_id: int
+    model_id: ModelId
     entry_count: int
     token_input_sum: int
     token_output_sum: int

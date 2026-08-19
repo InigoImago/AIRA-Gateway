@@ -37,6 +37,7 @@ from aira_gateway.api.serving import (
     declared_provider,
     deprecation_headers,
     elapsed_ms,
+    ensure_body_is_encodable,
     prepare_for_dispatch,
     provenance,
     refusal_outcome,
@@ -287,6 +288,7 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
 
     try:
         body = await request.json()
+        ensure_body_is_encodable(body)
     except ValueError:
         raise GeminiHTTPError(400, "Request body is not valid JSON.", "INVALID_ARGUMENT") from None
     trail.body = body

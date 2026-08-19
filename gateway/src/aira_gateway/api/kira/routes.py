@@ -49,6 +49,7 @@ from aira_gateway.api.serving import (
     check_structured_result,
     declared_provider,
     elapsed_ms,
+    ensure_body_is_encodable,
     prepare_for_dispatch,
     provenance,
     refusal_outcome,
@@ -860,6 +861,9 @@ async def _json(request: Request) -> dict[str, Any]:
         raise errors.KiraError(
             422, errors.VALIDATION_ERROR, "Request body is not valid JSON."
         ) from exc
+    # Before anything is spent — see `ensure_body_is_encodable`. A surface parses, and text that
+    # cannot be written as UTF-8 is a parsing question, not a dispatch one.
+    ensure_body_is_encodable(body)
     if not isinstance(body, dict):
         raise errors.KiraError(422, errors.VALIDATION_ERROR, "Request body must be an object.")
     return body

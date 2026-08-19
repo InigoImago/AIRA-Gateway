@@ -47,6 +47,25 @@ reading code.
   and **the evidence was in the user's own output** — the `::1` rows were in the port listing I had
   already read, and I skimmed them because I was looking for a missing forward rather than a
   present one.
+- **A guard written in the language it guards inherits that language's blind spots.**
+  `is_catastrophic` decides which operator-supplied regexes may run on the request path, and it
+  *was* a regex: it matched the outer quantifier as `[+*]`, so every `{n}` form walked past, and
+  its `[^)]*` could not see beyond the first `)`, so a group inside a group was invisible. Four
+  shapes it accepted were timed at 35–159 seconds on a thirty-character input. A pattern language
+  cannot describe its own nesting — use a scanner. And check the widening in **both** directions:
+  a detector that refuses one of the built-ins is not a fix, it is a gateway that will not start.
+- **A number is not a defect until it moves.** `(.*a){20}` cost 30 ms and looked like a fifth
+  finding; measured against inputs from 20 to 800 characters it stayed flat at 30 ms, so it is a
+  fixed cost, not a backtracker. Growth is the property, never the first reading.
+- **A caller's own value must never become a server error — and never a missing record.** Three in
+  one sweep, each dying far from where it entered: a lone surrogate (`"\ud800"`) parses fine and
+  cannot be encoded, so it died inside the HTTP client nine steps later; `1e309` parses to `inf`,
+  which Python writes as `Infinity` and no `json` column will take, so the request was refused
+  correctly and **the refusal was recorded nowhere**; an `int` wider than the `INTEGER` column it
+  is compared against reached the driver. Python's types are unbounded and the database's are not,
+  and a boundary that models one as the other has moved the failure to where it reads as ours.
+  Ask at the boundary whether the value can be *written down*, and make the recorder survive one
+  that cannot — the caller's door and the upstream's are different doors.
 - **A default argument is a silent one** — the wire shape's worst variant, because there is nothing
   *missing* to notice. `resolve()` had taken a `direct` argument since the vocabulary was written,
   with tests of its own; both planes called it with two arguments, so a grant naming a person was

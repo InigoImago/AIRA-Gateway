@@ -80,6 +80,38 @@ class PendingLog:
     request_bytes: int | None = None
 
 
+def storable(value: Any) -> Any:
+    """A payload the database can actually take, with the awkward values named rather than dropped.
+
+    `json` columns are **stricter than Python's parser**. `Infinity`, `-Infinity` and `NaN` are not
+    JSON (RFC 8259 has no such literals), Python emits them anyway, and Postgres refuses the insert
+    — so one such value anywhere in a payload costs the **whole audit row**. Measured on
+    2026-08-19: `maxTokens: 1e309` was correctly refused with a `422`, and the refusal was recorded
+    nowhere. A caller could choose not to be logged, with six characters.
+
+    The boundary now refuses such a body outright (`ensure_body_is_encodable`), which closes the
+    caller's door. This closes the **upstream's**: a response payload is a model's output, nobody
+    here chose its contents, and a provider that answers `NaN` in some field would otherwise erase
+    the record of its own answer. Losing the value is a smaller failure than losing the row, and
+    replacing it with its name is smaller still — a reader sees what was there.
+
+    A lone surrogate is the same shape and gets the same treatment: not encodable, so not storable.
+    """
+    if isinstance(value, float) and (value != value or value in (float("inf"), float("-inf"))):
+        return f"<unrepresentable: {value}>"
+    if isinstance(value, str):
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError:
+            return "<unrepresentable: unpaired surrogate>"
+        return value
+    if isinstance(value, dict):
+        return {str(key): storable(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [storable(item) for item in value]
+    return value
+
+
 class RequestLogWriter:
     """Buffers audit rows and writes them from a background worker."""
 
@@ -223,7 +255,9 @@ class RequestLogWriter:
                 # and hand redaction something it cannot process (FRD-110 §5.4). Unconditional,
                 # because a deployment that swaps the redactor must not be able to turn it off.
                 stripped: dict[str, Any] = strip_attachments(payload)
-                return self._redactor.redact(stripped)
+                # `storable` last, so it also covers whatever a redactor substitutes in.
+                redacted: dict[str, Any] = self._redactor.redact(stripped)
+                return dict(storable(redacted))
 
             await RequestLogService(session).record(
                 subject=entry.subject,

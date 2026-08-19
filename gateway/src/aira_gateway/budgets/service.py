@@ -64,7 +64,21 @@ class _Usage:
 
 
 def _period_key(period: str, now: datetime) -> str:
-    return now.strftime("%Y-%m-%d") if period == "day" else now.strftime("%Y-%m")
+    """The counter key for this moment: the **UTC** calendar day or month.
+
+    One clock for an installation whose callers, models and operators sit in several, and a couple
+    of hours from the reader's own calendar in both directions — in central Europe, traffic at
+    00:30 local counts against yesterday, and a monthly budget that ran out goes on refusing for
+    the first hours of the new month. The console's Period control says so.
+
+    **The conversion is here rather than assumed of the caller.** This used to `strftime` whatever
+    it was handed, which is UTC only because every call site happens to pass `datetime.now(UTC)` —
+    a guarantee held by four call sites instead of by the one function that states it, and the
+    kind that a fifth quietly breaks. `astimezone(UTC)` is a no-op for an already-UTC moment, so
+    nothing changes today and the property stops depending on who calls.
+    """
+    moment = now.astimezone(UTC)
+    return moment.strftime("%Y-%m-%d") if period == "day" else moment.strftime("%Y-%m")
 
 
 def _scope_label(budget: BudgetRead) -> str:

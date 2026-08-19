@@ -140,3 +140,32 @@ def test_every_surface_reports_a_lost_audit_row_under_the_same_name() -> None:
             f"{surface.parent.name} records refusals but has no way to report failing to. "
             "An operator searching for lost evidence would see the other surface only."
         )
+
+
+# == and no surface lets a caller's text become a server error ====================================
+
+
+def test_every_surface_refuses_a_body_it_cannot_encode() -> None:
+    """A lone surrogate in the request text was a **500**, on both surfaces, with no audit row.
+
+    JSON may escape half a surrogate pair — `"\\ud800"` parses into a Python string that no UTF-8
+    encoder accepts. Nothing noticed until httpx built the upstream request, nine steps later: by
+    then the rate limit was spent, the budget reserved and the pipeline run, and the recording
+    sites did not fire because they cover a request that *reached* an upstream. Six characters
+    bought a server error and left no trace.
+
+    Asserted structurally, like the rest of this file, because the point is the surface that has
+    not been written yet. `ensure_body_is_encodable` belongs to the shared layer; calling it is
+    the surface's own parsing step, which is why it is a call site rather than part of
+    `prepare_for_dispatch` — that runs after the controls this has to precede.
+    """
+    missing = [
+        surface.parent.name
+        for surface in SURFACES
+        if "ensure_body_is_encodable" not in surface.read_text()
+    ]
+
+    assert not missing, (
+        f"these surfaces never check that the body can be encoded: {missing}. "
+        "A caller's text must not become a 500 — and must not spend a budget on the way."
+    )

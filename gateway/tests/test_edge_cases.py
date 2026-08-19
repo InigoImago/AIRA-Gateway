@@ -12,6 +12,7 @@ request that asked nothing.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
@@ -222,3 +223,84 @@ async def test_an_unroutable_path_answers_in_this_apis_shape(path: str, key: str
 
     assert response.status_code in (404, 405), response.text
     assert key in response.json(), f"{path} answered in somebody else's envelope: {response.text}"
+
+
+@pytest.mark.parametrize(
+    ("path", "body"),
+    [
+        (
+            "/kira/api/external/chat",
+            {"request": {"parts": [{"text": "\ud800"}]}, "model_id": 1},
+        ),
+        (
+            "/v1beta/models/mock-1:generateContent",
+            {"contents": [{"parts": [{"text": "\ud800"}]}]},
+        ),
+    ],
+)
+def test_a_lone_surrogate_is_a_caller_error_on_both_surfaces(
+    path: str, body: dict[str, object]
+) -> None:
+    """`400`, naming the character — not a `500` nine steps later inside the HTTP client.
+
+    Sent as raw bytes rather than through `json=`: the client would encode the body, and encoding
+    it is the thing that cannot be done. That is the whole defect — the value survives parsing and
+    dies at the wire, so a test that cannot produce it is a test of something else.
+    """
+    app = create_app(GatewaySettings(auth_required=False, log_queue_size=0))
+    with TestClient(app) as client:
+        response = client.post(
+            path,
+            content=json.dumps(body).encode("ascii"),
+            headers={"content-type": "application/json"},
+        )
+
+    assert response.status_code == 400, response.text
+    assert "surrogate" in response.text
+
+
+@pytest.mark.parametrize(
+    ("label", "body", "names"),
+    [
+        (
+            "a number JSON has no literal for",
+            {"request": {"parts": [{"text": "hi"}]}, "model_id": 1, "maxTokens": float("inf")},
+            # **The message, not the status.** Without the boundary check this body is still a
+            # `422` — Pydantic refuses `inf` for an `int` field — so a test that asserted only the
+            # status passed with the fix removed, and the mutation harness said so. What changes is
+            # *where* it is refused and therefore whether the audit row can be written at all.
+            "Infinity",
+        ),
+        (
+            "a model id wider than the column",
+            {"request": {"parts": [{"text": "hi"}]}, "model_id": 999_999_999_999_999_999_999},
+            "model_id",
+        ),
+    ],
+)
+def test_a_value_the_database_cannot_take_is_refused_at_the_boundary(
+    label: str, body: dict[str, object], names: str
+) -> None:
+    """Both were **500**s produced by a caller's own number, and one of them went unrecorded.
+
+    `maxTokens: 1e309` parses to `inf`, which Python's `json` emits as `Infinity` and RFC 8259 does
+    not have — the request was correctly refused with a `422` and then the *audit write* failed on
+    the stored body, so the refusal existed nowhere. Six characters bought an untraceable request.
+
+    `model_id: 999999999999999999999999999` is an `int` to Python and out of range for the
+    `INTEGER` column it is compared against, so the lookup raised `NumericValueOutOfRange` and the
+    caller was told the server had a problem.
+
+    Both are now refused where a body is parsed, with a message naming the value.
+    """
+    app = create_app(GatewaySettings(auth_required=False, log_queue_size=0))
+    with TestClient(app) as client:
+        response = client.post(
+            "/kira/api/external/chat",
+            content=json.dumps(body).encode("ascii"),
+            headers={"content-type": "application/json"},
+        )
+
+    assert response.status_code in (400, 422), f"{label}: {response.status_code} {response.text}"
+    assert response.json()["code"] == "VALIDATION_ERROR", response.text
+    assert names in response.text, f"{label}: the refusal does not name the value:\n{response.text}"

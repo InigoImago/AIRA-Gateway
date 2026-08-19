@@ -5,6 +5,81 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## A regex that could not read regexes (2026-08-19)
+
+`is_catastrophic` decides which operator-supplied patterns may be compiled onto the request path.
+It was one regex — `\([^)]*[+*}][^)]*\)\s*[+*]` — and it had two holes, both found by timing
+candidates rather than by reading it:
+
+    (a+){20}$     accepted      51 s on a thirty-character input
+    (a+){2,}$     accepted      76 s
+    ((a)*)*b      accepted     159 s
+    (\d+){15}$    accepted      35 s
+
+The **outer** quantifier was matched as `[+*]` only, so every counted form walked past — and
+`[^)]*` cannot see beyond the first `)`, so a group inside a group was invisible. A pattern
+language cannot describe its own nesting; that is not a subtlety, it is why the detector is a
+scanner now, tracking group spans with escapes and character classes honoured.
+
+The consequence was real rather than theoretical. These are patterns an operator configures — a
+pipeline filter, `AIRA_REDACT_PATTERNS` — and they run over caller content on the request path.
+One of them stalls a worker for minutes on a short prompt, for every caller, until somebody thinks
+to look at the configuration. The guard exists to stop an operator doing that by accident.
+
+Sixteen known-bad shapes are now refused and twelve ordinary ones still accepted, including the
+three most likely to be caught by a careless widening: a group repeated a fixed few times, a
+character class holding a bracket, and **escaped** parentheses that are not a group. And every
+pattern this project ships is asserted to still compile — a detector that refuses a built-in is not
+a fix, it is a gateway that does not start.
+
+Worth recording how the search went, because the first version of this finding was wrong. `(.*a){20}`
+was also accepted and cost 30 ms, and I nearly reported it: measuring it against longer inputs
+showed a **flat** 30 ms, so it is a fixed cost and not a backtracker. The four above grow past a
+minute. A number is not a defect until it moves.
+
+---
+
+## Six characters bought an untraceable request (2026-08-19)
+
+An adversarial sweep against the running gateway — malformed JSON, wrong types, absurd numbers, a
+traversal in a model name — found three defects of one shape: **a caller's own value becoming a
+server error**, which is the class this project has already fixed twice from the other side.
+
+**A lone surrogate.** JSON may escape half a surrogate pair, so `"\ud800"` parses into a Python
+string that no UTF-8 encoder accepts. Nothing noticed until httpx *built* the upstream request,
+nine steps later: `500` on both surfaces, and no audit row, because the recording sites cover a
+request that reached an upstream and this one died one step short. By then the rate limit was
+spent, the budget reserved and the pipeline run.
+
+**`maxTokens: 1e309`,** and this is the one that matters. It parses to `inf`, Python's `json`
+writes it as `Infinity`, and RFC 8259 has no such literal — so Postgres refused the insert. The
+request was correctly refused with a `422` and **the refusal was recorded nowhere**. A caller
+could choose not to be logged, with six characters, on a product whose entire purpose is evidence.
+
+**`model_id: 999999999999999999999999999`.** An `int` to Python, out of range for the `INTEGER`
+column it is compared against, `NumericValueOutOfRange` from the driver, `500` to the caller.
+
+Three fixes, in the three places the questions belong. `ensure_body_is_encodable` lives in the
+shared layer and both surfaces call it at their own parse step — a surface parses, and *"can this
+be written down"* is a parsing question, not a dispatch one; `test_surface_layering.py` fails on a
+surface that skips it. `ModelId` is bounded to what the column holds, because a boundary that
+models an unbounded int as a 32-bit one has only moved the failure to where it reads as ours. And
+the log writer replaces an unrepresentable value with its name rather than losing the row — that
+one is for the **upstream's** door, since a response payload is a model's output and a provider
+answering `NaN` would otherwise erase the record of its own answer.
+
+The sweep also confirmed what did not break: a NUL byte in a prompt, a float where an int belongs,
+a path traversal in a model name, a schema nested past its bound, an array where an object belongs.
+
+Two notes on the tests. `TC29` survived its first version: without the fix that body is *still* a
+`422`, because Pydantic refuses `inf` for an `int` field — so the status told me nothing and the
+test passed with the fix removed. What changes is the **message**, and therefore where the refusal
+happens and whether a row can be written at all. And the earlier budget finding in this same round
+had the mirror problem: a mutation replacing UTC with local time survived on a machine whose clock
+is UTC, which is every CI runner's.
+
+---
+
 ## Fourteen listeners, none of them on IPv6 (2026-08-19)
 
 The console could not be reached from outside the machine. Every check from inside was green —

@@ -14,6 +14,7 @@ the queue while work is in flight, and only touch the table once it has drained.
 from __future__ import annotations
 
 import asyncio
+import json
 
 import pytest
 from sqlalchemy import select
@@ -364,3 +365,46 @@ async def test_a_row_submitted_while_the_worker_still_exists_is_written_at_once(
         "blocking",
         "late",
     ]
+
+
+def test_a_value_the_column_cannot_take_costs_the_value_and_not_the_row() -> None:
+    """`json` columns are stricter than Python's parser, and one bad value used to cost the row.
+
+    `Infinity`, `-Infinity` and `NaN` are not JSON — RFC 8259 has no such literals — and Postgres
+    refuses an insert carrying one. Measured on 2026-08-19: a request with `maxTokens: 1e309` was
+    correctly refused with a `422`, the audit write then failed with *"Token \\"Infinity\\" is
+    invalid"*, and **no row was written**. A caller could choose not to be recorded.
+
+    The boundary refuses such a body now, which closes the caller's door. This is the upstream's:
+    a response payload is a model's output and nobody here picked its contents. Losing the value
+    is a smaller failure than losing the row — and naming it is smaller still.
+    """
+    from aira_gateway.persistence.writer import storable
+
+    payload = {
+        "score": float("inf"),
+        "ratio": float("nan"),
+        "nested": [{"deep": float("-inf")}, "fine"],
+        "text": "ordinary",
+    }
+
+    cleaned = storable(payload)
+
+    assert cleaned["text"] == "ordinary"
+    assert cleaned["nested"][1] == "fine"
+    for rendered in (cleaned["score"], cleaned["ratio"], cleaned["nested"][0]["deep"]):
+        assert isinstance(rendered, str) and "unrepresentable" in rendered
+    # The whole point: what comes out is something a `json` column will take.
+    json.dumps(cleaned, allow_nan=False)
+
+
+def test_a_lone_surrogate_in_a_payload_does_not_cost_the_row_either() -> None:
+    """Same shape, different door: a model that echoes one back would erase the record of its own
+    answer, and the payload is not something anybody here chose."""
+    from aira_gateway.persistence.writer import storable
+
+    cleaned = storable({"text": "hi\ud800there", "ok": "plain"})
+
+    assert cleaned["ok"] == "plain"
+    assert "unrepresentable" in cleaned["text"]
+    json.dumps(cleaned, allow_nan=False).encode("utf-8")

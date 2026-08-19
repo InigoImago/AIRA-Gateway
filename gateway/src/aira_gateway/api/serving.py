@@ -361,6 +361,54 @@ async def requirements_for(request: Request, canonical: CanonicalRequest | None)
     return permits(checks)
 
 
+def ensure_body_is_encodable(body: Any) -> None:
+    """Refuse a body carrying text that cannot be written as UTF-8, before anything is spent.
+
+    JSON may escape any code unit, including **half of a surrogate pair**: `"\\ud800"` parses
+    happily into a Python string that no UTF-8 encoder will accept. Nothing on the request path
+    notices until the upstream call is *built* — inside httpx, nine steps later — and by then the
+    rate limit is spent, the budget is reserved, the pipeline has run and possibly paid for a
+    classifier, and the caller gets a **500** for a body they sent.
+
+    Measured on 2026-08-19 against both surfaces: `500 INTERNAL_SERVER_ERROR`, and **no audit row
+    at all** — the recording sites cover a request that reached an upstream, and this one dies one
+    step before. So a caller could consume controls and leave no trace by sending six characters.
+
+    A caller error must not be a server error (`FRD-124`'s rule from the other side), so this is a
+    `400` naming what is wrong. Checked with one pass in C rather than by walking the structure:
+    `ensure_ascii=False` is what makes `dumps` emit the character instead of re-escaping it, which
+    is what makes the encoder object.
+    """
+    try:
+        # `allow_nan=False` rejects `Infinity`, `-Infinity` and `NaN`, which Python's parser
+        # accepts and **RFC 8259 does not have**. They were the other half of this defect and the
+        # worse half: `maxTokens: 1e309` was correctly refused with a 422 and then the *audit row*
+        # failed to write, because Postgres will not take `Infinity` in a `json` column. Six
+        # characters and a request left no trace at all. A caller must not be able to choose
+        # whether they are recorded.
+        json.dumps(body, ensure_ascii=False, allow_nan=False).encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise GeminiHTTPError(
+            400,
+            "The request body contains a character that is not valid UTF-8 — an unpaired "
+            f"surrogate ({exc.object[exc.start : exc.end]!r}). JSON can escape one, and nothing "
+            "can send it.",
+            "INVALID_ARGUMENT",
+        ) from exc
+    except ValueError as exc:
+        raise GeminiHTTPError(
+            400,
+            "The request body contains a number JSON cannot represent — `Infinity`, `-Infinity` "
+            "or `NaN`. Python's parser accepts them and the standard does not, so nothing "
+            "downstream can store or forward one.",
+            "INVALID_ARGUMENT",
+        ) from exc
+    except TypeError as exc:  # pragma: no cover - a body that parsed will serialise
+        raise GeminiHTTPError(
+            400, "The request body is not representable as JSON.", "INVALID_ARGUMENT"
+        ) from exc
+
+
 def schema_bounds(request: Request) -> SchemaBounds:
     settings = settings_of(request)
     return SchemaBounds(

@@ -17,7 +17,17 @@ enforcement (FRD-401) and UI (FRD-402) follow.
 - A **budget** caps usage for a **scope** over a **period**.
   - **Scope**: `use_case` (the whole use case) or `each_member` (every person in it, counted
     separately). A third naming one person was removed on 2026-08-14 — see §2.1.
-  - **Period**: `day` or `month` (calendar; usage resets at the period boundary).
+  - **Period**: `day` or `month`. Usage resets at the boundary, and the boundary is **UTC** —
+    midnight UTC for a day, the first of the month for a month. One clock for an installation
+    whose callers, models and operators sit in several, and the counter key is literally
+    `strftime("%Y-%m-%d")` / `%Y-%m` of `datetime.now(UTC)`.
+
+    Stated because it is a couple of hours away from the reader's calendar, in both directions,
+    and the difference is invisible until it is expensive: in central Europe traffic at 00:30
+    local counts against yesterday's daily budget, and a monthly budget that ran out goes on
+    refusing for the first hours of the new month. The console's Period control says so; it said
+    nothing until 2026-08-19, which is how a figure somebody is accountable for gets misread
+    without anything being wrong with it.
   - **Limits**: `limit_tokens` and/or `limit_requests` (either/both; null = unlimited on that axis).
 - Cost-based limits need per-model pricing (not yet available) → **tokens + request count first**;
   monetary budgets are a later extension.
