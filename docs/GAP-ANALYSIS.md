@@ -10,6 +10,11 @@ how much they matter, not by how hard they are.
 
 Legend: done built and verified · partly partial, with the missing half named · missing not built
 
+**Last re-read against the code: 2026-08-19.** That matters for a document of this kind: a gap
+analysis is a *snapshot*, and one nobody re-reads becomes the opposite of what it is for — an
+authoritative-looking list of things that were true a fortnight ago. Row 24 was `missing · not
+scheduled` here while `FRD-118` had shipped.
+
 ---
 
 ## 1. The owner's central features (PRD §1.1)
@@ -55,7 +60,7 @@ rather than correctness — each does what it says for what it covers.
 | 21 | Operational diagnostics | partly `FRD-117` — build identity, upstream health, trace header, CORS done; **FR-7 (a second OpenAPI 3.0 document) not built** |
 | 22 | Masking sensitive content in stored payloads | partly `FRD-406` (2026-08-08) — **credentials** are masked; PII deliberately is not |
 | 23 | Report export | done `FRD-602` — CSV as a renderer on the existing endpoint |
-| 24 | Multiple Keycloak backends / groups from UserInfo | missing `FRD-118` — **need unclear**, not scheduled |
+| 24 | Multiple Keycloak backends / groups from UserInfo | **partly** `FRD-118` (2026-08-18) — several issuers, each with its own JWKS and audience set, selected by the token's issuer; **groups from UserInfo stays declined** (FR-3). The "need unclear" this row carried was answered by the owner and built. |
 
 ---
 

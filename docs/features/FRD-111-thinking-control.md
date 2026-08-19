@@ -10,7 +10,9 @@ Reasoning models spend a variable, caller-controllable amount of effort before a
 predecessor exposes that as a first-class request field with seven modes — `disabled`, `limited`
 (with an explicit token budget), `auto`, and the abstract levels `high`/`medium`/`low`/`minimal` —
 validated against what each model actually supports, with a per-model default when the caller says
-nothing.
+nothing. *(AIRA keeps the first three as its own and treats a level as the vendor's own word —
+`ADR-0021`, §5.2 below. The predecessor's request shape is unchanged: a caller still sends
+`{mode, tokens}`.)*
 
 AIRA has no notion of it. A caller cannot ask for less thinking on a cheap classification, or for
 more on a hard question, and every request gets whatever the model does by default.
@@ -100,31 +102,42 @@ class Thinking(BaseModel):
 keeping it canonical means the KIRA surface (`FRD-107`) and the Gemini surface map onto one
 concept rather than two.
 
-### 5.2 The abstract levels are a provider concern
+### 5.2 A level is the vendor's own word *(rewritten — `ADR-0021`, 2026-08-19)*
 
-`high`/`medium`/`low`/`minimal` mean nothing to an HTTP call. Some providers take a token budget,
-some take a level, and the mapping between them differs per model. That translation therefore
-belongs in the **upstream adapter**, alongside every other provider-specific decision:
+> **This section described a `level → token budget` table per model. That table is gone.** It is
+> kept here rewritten rather than deleted because the reasoning it replaced is still worth having
+> on the record: the original argument — *"`high` means nothing to an HTTP call"* — was true of
+> the vendors in 2026-08 and stopped being true when they converged on words.
 
-- Gemini: `generationConfig.thinkingConfig.thinkingBudget` — `disabled` → `0`, `auto` → `-1`,
-  `limited` → the caller's count, an abstract level → the model's declared budget for that level.
-- Anthropic (`FRD-119`): `thinking{type:"enabled",budget_tokens}` — no `auto` equivalent, so that
-  mode resolves to the model's declared default budget, and every budget is bounded by FR-3a.
-- Azure OpenAI (`FRD-120`): `reasoning_effort` — an **abstract level with no token budget at all**,
-  so `limited` has no equivalent and is refused by capability rather than approximated. Worth
-  noting because it validates the canonical shape: `mode` + optional `tokens` was taken from the
-  predecessor's vocabulary and covers a vendor it was not written for.
-- Mock: honours the setting deterministically so the mode is observable in tests without a cloud.
+The three settings this gateway **owns** still need translating per dialect, because each spells
+them differently:
 
-`minimal` on the OpenAI dialect is sent as **`"low"`**, and this is the one place a level is not
-carried across literally. `"minimal"` is not a value of that dialect: it exists on one vendor's
-newest family and every other OpenAI-compatible server answers `400 invalid value`, so a caller
-asking for the least thinking a model will do received no answer at all. The adjacent level that
-exists is a better approximation of the request than a refusal, and — unlike `limited`, which stays
-refused — it spends no budget the caller named, because this dialect takes no budget to name.
+- Gemini: `thinkingConfig.thinkingBudget` — `disabled` → `0`, `auto` → `-1`, `limited` → the
+  caller's count.
+- Anthropic (`FRD-119`): `thinking{type:"enabled",budget_tokens}` — no `auto` and no level field
+  at all, so both are refused by name (`expresses_thinking_levels = False`).
+- OpenAI / Azure / Foundry (`FRD-120`): `reasoning_effort` — a **word and no budget**, so `limited`
+  is refused, and `auto` too: there is no way to say "you decide".
+- Mock: honours everything deterministically, so a setting is observable without a cloud.
 
-Putting the level→budget table in `FRD-114`'s model metadata rather than in code is what keeps a
-new model from being a code change.
+A **level** is not in that list. It is a word the vendor already accepts — declared per model as
+free text, passed through untranslated, and checked against the model itself. Measured
+2026-08-19, three servers, three different sets:
+
+| | words it accepts |
+| --- | --- |
+| `gemini-3.5-flash` (Vertex, `global`) | `minimal`, `low`, `medium`, `high` |
+| `gemini-2.5-flash` (Vertex) | **none** — *"thinking_level is not supported by this model"* |
+| `qwen3:0.6b` (Ollama) | `low`, `medium`, `high`, `max`, `none` — and `minimal` is a `400` |
+
+`max` is the point of the whole change: it exists in no vocabulary this project ever wrote, and a
+catalogue can hold it today without a line of code changing.
+
+The `minimal` → `"low"` approximation this section used to describe is also gone. It was defended
+as *"the adjacent level that exists is a better approximation than a refusal"*, and that is wrong
+for the reason `limited` was always refused: it silently gives somebody **twice the reasoning they
+asked for and bills them**. A model that takes `minimal` declares it; one that does not never
+offers it, and the caller is refused by name with the words that model does take.
 
 **Levels are the vendor's own words, not a token table** (`ADR-0021`, superseding §5.2's
 `level → budget` table). The table asked whoever catalogued a model for a number no vendor
@@ -151,11 +164,23 @@ dialect cannot say, it now refuses by name.
 the tokens a request can consume are **the answer plus the thinking budget**, and the thinking
 budget is the larger of the two whenever anyone uses this feature seriously.
 
-So the estimate becomes `output_estimate + resolved_thinking_budget`, where the resolved budget is
-the number after FR-4's defaulting and FR-3's validation — i.e. the same number that will be sent
-upstream. For `auto` and the abstract levels, where no explicit count exists, the model's declared
-maximum for that level is used: conservative in the safe direction, and settled against the real
-figure the moment the response returns, exactly as the output estimate already is.
+So the estimate becomes `output_estimate + reserved_thinking_tokens`.
+
+**The number sent and the number reserved are two different questions** (`ADR-0021`, correcting
+this section's first version, which made them one). This used to say *"the same number that will
+be sent upstream"*, and that identity is exactly what forced every model to carry a
+`level → token count` table: a level had to invent a number so this reservation had one to read.
+
+- `limited` reserves the count the **caller** named — the only setting that goes on the wire as a
+  number.
+- `auto` and a level word send no number at all, and reserve the model's **declared ceiling**
+  (`thinking.max_tokens`), which is a figure the vendor actually states: Google names it in its
+  own refusal, *"supported values are integers from 1 to 24576"*.
+- A model with no declared ceiling reserves nothing extra rather than guessing. The output cap
+  already bounds the request, and a guess here is the thing this change removed.
+
+Conservative in the safe direction, and settled against the real figure the moment the response
+returns, exactly as the output estimate already is.
 
 A `disabled` request reserves what it does today. Nothing gets more expensive by accident.
 
@@ -202,8 +227,24 @@ that names the bound and its value.
 
 ## 9. Observability
 
-`aira.thinking.mode` and `aira.thinking.budget` as span attributes, and the resolved budget on the
-audit row — otherwise "why did this month cost twice as much" is unanswerable from the data.
+**What the question needed turned out to be a different figure.** This section asked for
+`aira.thinking.mode` and `aira.thinking.budget` as span attributes and *the resolved budget* on the
+audit row, so that *"why did this month cost twice as much"* is answerable. Neither span attribute
+was built — the gateway sets `aira.model`, `aira.operation`, `aira.status`, `aira.outcome`,
+`aira.source_ip`, `aira.total_tokens`, `aira.cost_nanos` and the four attribution ones, and nothing
+about thinking — and the
+audit row carries something better instead: **`reasoning_tokens`, what the model actually spent**
+(`FRD-135`), as a subset of `completion_tokens`.
+
+That answers the original question and the budget would not have. A budget is a **ceiling, not a
+spend** — measured in `ADR-0021`: `gemini-2.5-pro` thought 59 tokens at a budget of 128 and 59 at
+32 768 — so a column of resolved budgets would show a month's *permission* and say nothing about
+its cost. After `ADR-0021` a level carries no budget at all, which makes the original field
+meaningless as well as unhelpful.
+
+The span attributes stay **unbuilt and named here as such**, rather than left as a requirement
+somebody assumes is met: a trace does not currently say which mode a request asked for, and
+correlating a slow span with a thinking setting means joining to the audit row.
 
 ## 10. Testing & Acceptance Criteria
 
@@ -269,12 +310,17 @@ reserves exactly 20 000 more than the same request without one).
 
 - **Hard dependency on `FRD-114`.** Without per-model declarations there is nothing to validate
   against, and validation is most of this feature.
-- **Risk** — the level→budget mapping is provider-specific and will drift as models change. It is
-  configuration (`FRD-114`), which is the mitigation.
+- **Risk (retired)** — *"the level→budget mapping is provider-specific and will drift as models
+  change; it is configuration, which is the mitigation."* The mitigation was wrong: configuration
+  only helps where somebody can fill it in, and no vendor publishes what a level costs
+  (`ADR-0021`). The mapping is gone. What replaced it carries its own risk — a typo in a free-text
+  word looks like a working declaration — and the mitigation there is a button that asks the
+  model, not a rule that guesses.
 - **Open** — whether any consumer uses `auto`. It costs nothing to support and maps to Google's
   `-1`, so it stays.
 
 ## 12. Rollout / Demo
 
-The mock declares a full thinking config and reports the resolved budget in its deterministic
-answer, so the whole validation matrix is demonstrable without cloud access.
+The mock declares a full thinking config and reports the setting in its deterministic answer —
+`[thinking:medium]`, and a budget beside it only where one was actually sent — so the whole
+validation matrix is demonstrable without cloud access.

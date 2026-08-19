@@ -5,6 +5,56 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Reading the documentation against the code (2026-08-19)
+
+Asked directly: *"can you read the documentation and check it, so we do not have unverified things
+lying around?"* Done mechanically where that is possible and by reading where it is not. Six claims
+were wrong; the mechanical sweep found two of them and reading found four.
+
+**What machines could check.** Every relative link in every document resolves. Every `make X` the
+docs name exists, except in `DEVLOG.md`, which quotes dead targets *because* they were dead — a
+guard for that already exists and already excludes it. `CONFIGURATION.md` is checked against the
+settings classes by its own test.
+
+**What was actually wrong:**
+
+- **`TESTING.md` claimed a "100% coverage gate".** The gates are floors: Python 90%, frontend
+  90/92/93/75 for statements/branches/lines/functions, and the measured figures sit just above
+  them (branches has 0.05 points of headroom). *Enforced 100%* and *a floor that fails on a drop*
+  are different promises, and the second is the one CI makes. Replaced with the table.
+- **`FRD-111` §9 named two span attributes that do not exist** (`aira.thinking.mode`,
+  `aira.thinking.budget`) and *the resolved budget* on the audit row. Neither was built. What is
+  there is better and the section now says so: `reasoning_tokens`, what the model actually **spent**
+  (`FRD-135`). A budget would have recorded a month's *permission* — it is a ceiling, not a spend —
+  and after `ADR-0021` a level carries no budget at all.
+- **`FRD-101` §9 named `auth.method` / `principal.subject`.** Built as `aira.auth_method` /
+  `aira.subject` when `FRD-102` made attribution first-class. A document naming an attribute nothing
+  sets sends somebody to query for it.
+- **Two FRDs promised custom metrics** — a counter for auth failures by reason (`FRD-101`), a token
+  count metric (`FRD-100`). **This project defines no custom OTel instruments at all**: a meter
+  provider and auto-instrumentation, and everything per-feature is a span attribute or an audit
+  row. Both said so now, with what does exist named.
+- **`GAP-ANALYSIS.md` row 24 said `FRD-118` was *missing · need unclear · not scheduled***, and it
+  had shipped the day before. The document is a snapshot written 2026-08-07 and nothing re-reads
+  it, which is how a gap analysis becomes the opposite of what it is for. It now carries the date
+  it was last read against the code.
+- **`FRD-114`, `FRD-119` and `FRD-111` §5.2 still described the `level → budget` table** that
+  `ADR-0021` deleted the same afternoon. §5.2 is rewritten rather than deleted — the argument it
+  replaced (*"`high` means nothing to an HTTP call"*) was true of the vendors in 2026-08 and stopped
+  being true when they converged on words.
+
+**What I could not verify and am not claiming:** `ADR-0010`'s *"fourteen MIME types"* describes the
+**predecessor's** contract, not ours, and there is no copy of that contract here to check it
+against. Ours is 15 in the outer bound and **14 in a model's declaration** — `application/x-javascript`
+is refused by Vertex and stays in the bound because another provider may take it. Verified against
+the running catalogue: `gemini-2.5-flash` declares 14 and not that one.
+
+The shape worth keeping: **the claims that rotted were the ones no test could reach.** Link
+targets, make targets and setting names all have guards and all were clean; span attribute names,
+metric promises and a snapshot's date have none, and every one of those was wrong.
+
+---
+
 ## Thinking levels stop being numbers nobody can know (2026-08-19)
 
 The owner catalogued a real model and objected to the form:

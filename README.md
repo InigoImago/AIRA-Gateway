@@ -73,8 +73,10 @@ Complete, and honest about what is not there. Anything unbuilt is in
 - **Documents and images.** 15 media types with signature checks. A model that cannot read the
   attachment is **refused by name** — never sent the prompt without it, because a dropped attachment
   produces a confident wrong answer with a 200 and the caller blames the model.
-- **Thinking budgets, structured output, batch embedding with task types.** Declared per model. One
-  flag says *whether*; three vendors do each of these three unrelated ways the caller never sees.
+- **Thinking, structured output, batch embedding with task types.** Declared per model. One flag
+  says *whether*; three vendors do each of these three unrelated ways the caller never sees.
+  Thinking is a **word** — `low`, `high`, whatever the vendor calls it — checked against the model
+  itself rather than translated through a token table nobody could fill (`ADR-0021`).
 - **Tool calling**, carried and never executed, off by default per use case.
 - **Fallback chains** that skip a candidate that cannot serve the request and say which and why —
   rather than quietly answering with less than was asked for.

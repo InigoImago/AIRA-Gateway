@@ -94,7 +94,14 @@ Response:
 
 ## 9. Observability
 - Reuse the FRD-001 baseline: FastAPI auto-instrumentation already traces these routes; add a span
-  attribute for the resolved model and a request/response token count metric (basic).
+  attribute for the resolved model — built as `aira.model`, beside `aira.operation`,
+  `aira.status`, `aira.outcome`, `aira.source_ip`, `aira.total_tokens` and `aira.cost_nanos`
+  (`persistence/recorder.py`, one place).
+- **As span attributes, not as a metric.** This line said "token count metric"; there is no OTel
+  instrument for it, and none anywhere in this project — only a meter provider and
+  auto-instrumentation (see `FRD-101` §9). The distinction matters to whoever tries to build a
+  dashboard: a per-model token *rate* has to come from the audit trail or the reporting endpoints
+  (`FRD-601`), not from Prometheus.
 
 ## 10. Testing & Acceptance Criteria
 - **Tests**: schema validation (valid/invalid bodies); Gemini⇄canonical mapping round-trips;

@@ -488,6 +488,18 @@ reading code.
 - **Cursor paging over an appending table.** An offset page shows one row twice and misses another
   while somebody reads, invisibly.
 
+- **A claim no test can reach is a claim that will be wrong.** Reading every document against the
+  code found six false statements, and they sorted themselves perfectly: every kind of claim with a
+  guard behind it was clean — relative links, `make` targets, `AIRA_*` setting names, FRD status
+  headers — and every kind without one was wrong. Span attribute names that nothing sets
+  (`aira.thinking.mode`, `auth.method`), metrics promised in an FRD's *Observability* section that
+  were never built, a gap analysis still calling a shipped feature *"not scheduled"*, and a
+  `TESTING.md` line claiming an enforced **100% coverage gate** where the gates are floors of
+  90–93%. None of those is exotic; each is simply the kind of sentence a person writes once and
+  nobody re-reads. **Prefer a claim a test can hold**, and where that is impossible — an
+  Observability section, a snapshot document — write the date it was last read against the code, so
+  the next reader knows what they are trusting.
+
 ---
 
 ## 7. Tests

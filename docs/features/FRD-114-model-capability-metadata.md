@@ -188,7 +188,7 @@ Management `Model` gains (all nullable, so existing rows stay valid):
 | `max_output_tokens` | int? | FR-2 |
 | `default_max_output_tokens` | int? | applied when the caller sets none (FR-2) |
 | `attachments` | JSON? | accepted media types and their token estimates (FR-4a) |
-| `thinking` | JSON? | modes, `min_tokens`, `max_tokens`, default, level→budget map |
+| `thinking` | JSON? | modes, `min_tokens`/`max_tokens` (for `limited`), default, and `levels`: the vendor's own level **words** (`ADR-0021`, which replaced a level→budget map) |
 | `embedding` | JSON? | `task_types`, `supports_batch`, `dimensions[]`, default |
 | `hosting` | string? | `managed` \| `self_deployed` — timeout, retry and probe policy (FR-4b) |
 | `deprecated` | bool | default false |

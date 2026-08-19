@@ -247,9 +247,11 @@ Listed together so they are not lost in the prose:
 
 - **`FRD-110`** — the allow-list becomes an intersection: what AIRA accepts **and** what the target
   model declares (FR-4). Attachment token estimates are per vendor.
-- **`FRD-111`** — the abstract level → budget table is per model and now genuinely per vendor;
-  `budget < max_tokens` becomes a validation rule; §5.4's drop-and-never-persist obligation is
-  added to its non-goal.
+- **`FRD-111`** — `budget < max_tokens` becomes a validation rule, and §5.4's
+  drop-and-never-persist obligation is added to its non-goal. *(The level → budget table this
+  line was written about is gone — `ADR-0021`. This dialect takes only `budget_tokens`, so it
+  declares `expresses_thinking_levels = False` and refuses a level word by name rather than
+  looking one up.)*
 - **`FRD-112`** — `structured_output` means "by some mechanism"; the adapter may refuse individual
   schema fields it cannot express faithfully; §5.3's post-routing check becomes load-bearing rather
   than defensive.

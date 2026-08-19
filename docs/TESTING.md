@@ -10,7 +10,22 @@ Run everywhere, no services required. This is what a CI unit stage runs on every
   pytest), a **fake JWKS resolver** + self-signed RS256 for OIDC, the **deterministic mock provider**,
   and FastAPI `TestClient` / `httpx.ASGITransport`. No Postgres/Keycloak/Kafka/OTel needed.
 - **Frontend** (`make test-frontend`): Angular unit tests via **Vitest + jsdom** — no browser.
-- Enforced: **100% coverage gate**, `ruff`, `ruff format`, `mypy --strict`, `prettier`.
+- Enforced: `ruff`, `ruff format`, `mypy --strict`, `prettier`, and a coverage **floor** — not the
+  100% this line used to claim. The floors are where they are so that CI fails on a *drop*, and
+  they are deliberately below the actual figures:
+
+  | | gate | measured 2026-08-19 |
+  | --- | --- | --- |
+  | Python (`--cov-fail-under`) | **90%** | — |
+  | Frontend statements | 90% | 93.21% |
+  | Frontend branches | **92%** | 92.05% |
+  | Frontend lines | 93% | 94.77% |
+  | Frontend functions | 75% | 76.72% |
+
+  Branches is the one with almost no headroom, which is why adding a control to the console without
+  testing it fails the build rather than drifting quietly. **A number here is a floor and not an
+  achievement**, and this document said the opposite for as long as it existed: 100% enforced would
+  mean no line could be added without a test that reaches it, and that is not what CI does.
 
 Proof: with the **entire Compose stack stopped**, `uv run pytest` passes all tests.
 
