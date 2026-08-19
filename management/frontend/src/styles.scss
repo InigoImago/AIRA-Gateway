@@ -396,26 +396,28 @@ $field-label-gap: 0.3rem;
   flex-basis: 100%;
 }
 
-/* **One question per row.**
+/* **One question per row, in a window the width of a form.**
  *
- * `.form-inline` is a wrapping flex row, which is right for a form of eighteen fields and wrong
- * for one of two: after the model editor stopped asking for the provenance it already knew, the
- * two questions that remained — the model id and the region — shared a line and each stretched to
- * half the dialog. Reported as *"the fields do not stand under one another, they are stretched"*,
- * and it is the same rule that made the vendor's note a 67-pixel column, seen from the other end:
- * `flex` decides how to fill a row, and a form is not trying to fill a row.
+ * `.form-inline` is a wrapping flex row, which suits a form of eighteen fields and not one of two:
+ * after the model editor stopped asking for the provenance it already knew, the questions that
+ * remained shared a line and each stretched to half an 880-pixel dialog. Reported twice — *"the
+ * fields do not stand under one another, they are stretched"*, and then *"the window is still
+ * stretched"* once the first tab was fixed and the other two were not. Both are the rule that made
+ * the vendor's note a 67-pixel column, seen from the other end: `flex` decides how to fill a row,
+ * and a form is not trying to fill a row.
  *
- * The control is capped rather than the field, so the label and the hint keep the full width they
- * need for a sentence while the box stays a readable measure. `min()` for the same reason as
- * below: a rule meant to stop a control sprawling on a desktop must not force a scrollbar on a
- * phone.
+ * Fixed **per window rather than per field**, which is why the first attempt only fixed a third of
+ * it: a class on each field is a decision that has to be remembered at every field added
+ * afterwards, and it was already forgotten at two tabs out of three before anybody looked. The
+ * width goes with it — 880 pixels was chosen for a listing of fifty models, and a stack of fields
+ * in it is a form using the left half of a window.
+ *
+ * Only the form's **own** children: the capabilities tab nests a `.form-inline` inside a fieldset
+ * for the per-media-type and per-level token fields, and fifteen of those in a column is a page of
+ * scrolling where a row of small numbers is exactly right.
  */
-.form-inline > .field--own-row {
+.modal--steady .modal__body > form.form-inline > .field {
   flex-basis: 100%;
-}
-.form-inline > .field--own-row > input,
-.form-inline > .field--own-row > select {
-  max-width: min(26rem, 100%);
 }
 
 /* A field that grows may not shrink to nothing.
@@ -891,6 +893,8 @@ $field-label-gap: 0.3rem;
  */
 .modal--steady {
   height: min(760px, calc(100vh - 3rem));
+  /* A form's width, not a table's — see the stacking rule above. */
+  width: min(620px, calc(100vw - 2rem));
 }
 /* **A column, so what is fixed stays fixed and only the fields scroll.**
  *

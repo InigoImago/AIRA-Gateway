@@ -425,7 +425,7 @@
       </div>
       <form id="model-editor-form" class="form-inline" (ngSubmit)="save()">
         @if (editorTab() === 'identity') {
-          <div class="field field--own-row">
+          <div class="field">
             <label for="model-name">Model id</label>
             <input
               id="model-name"
@@ -438,7 +438,7 @@
             />
             <span class="field__hint">Exactly as the gateway exposes it.</span>
           </div>
-          <div class="field field--own-row">
+          <div class="field">
             <label for="model-region">
               Region
               <app-info-hint label="Region" testid="model-region" [wide]="true">
@@ -516,7 +516,7 @@
               </p>
             }
           } @else {
-            <div class="field field--own-row" data-testid="provenance-fields">
+            <div class="field" data-testid="provenance-fields">
               <label for="model-display">Display name</label>
               <input
                 id="model-display"
@@ -534,7 +534,7 @@
               typo produces ("not in the model catalog", "has not been approved") are both correct and
               neither names the string that was wrong.
             -->
-            <div class="field field--own-row">
+            <div class="field">
               <label for="model-provider">
                 Provider
                 <app-info-hint label="Provider" testid="provider-hint" [wide]="true">
@@ -597,7 +597,7 @@
                 </span>
               }
             </div>
-            <div class="field field--own-row">
+            <div class="field">
               <label for="model-publisher">Publisher</label>
               <input
                 id="model-publisher"
@@ -609,7 +609,7 @@
               />
               <span class="field__hint">Selects the wire dialect the gateway speaks to it.</span>
             </div>
-            <div class="field field--own-row">
+            <div class="field">
               <label for="model-platform">Platform</label>
               <input
                 id="model-platform"
@@ -620,7 +620,7 @@
                 autocomplete="off"
               />
             </div>
-            <div class="field field--own-row">
+            <div class="field">
               <label for="model-hosting">Hosting</label>
               <select
                 id="model-hosting"
@@ -636,7 +636,7 @@
                 Self-deployed endpoints cold-start and answer 429 for capacity, not quota.
               </span>
             </div>
-            <div class="field field--own-row">
+            <div class="field">
               <label for="model-kira-id">KIRA id</label>
               <input
                 id="model-kira-id"

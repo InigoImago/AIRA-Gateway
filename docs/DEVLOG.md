@@ -61,8 +61,22 @@ suite had nothing to say about:
 
 - *"the fields do not stand under one another, they are stretched."* `.form-inline` is a wrapping
   flex row — right for eighteen fields, wrong for two: the model id and the region shared a line
-  and each took half the dialog. One question per row now (`.field--own-row`), the control capped
-  at a readable measure while the label and hint keep the full width.
+  and each took half the dialog.
+
+  **I fixed a third of it and said it was done.** A class on each field reached the identity tab
+  and left capabilities and price exactly as they were, and the report came back within the hour:
+  *"the window is still stretched."* Both halves of that are fair — the other two tabs still had
+  side-by-side fields, and an 880-pixel dialog holding a stack of fields is a form using the left
+  half of a window. One rule scoped to the window now
+  (`.modal--steady .modal__body > form.form-inline > .field`), the dialog narrowed to 620, and the
+  nested fieldsets left in rows on purpose: fifteen media-type token fields in a column is a page
+  of scrolling.
+
+  A per-field rule is a decision that has to be remembered at every field added afterwards, and it
+  had been forgotten at two thirds of the window before anybody looked at it. So the guard follows
+  the window too: the alignment test — *do the controls on a line start at the same height* — had
+  no line with two controls left to check and would have passed by finding nothing. It asserts the
+  editor **stacks**, on all three tabs, and was broken on purpose and seen to fail naming the tab.
 - The sentence rendered as `Lives on **mock** , speaking the aira dialect .` The markup was
   correct; `.field__summary` was a flex row with `gap: 0.5rem`, and a `<strong>` in the middle of a
   sentence is a flex item. **The unit test asserting the exact sentence passed** — a flex gap is

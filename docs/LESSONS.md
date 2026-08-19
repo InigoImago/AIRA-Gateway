@@ -431,6 +431,13 @@ reading code.
   a `gap`, and a `<strong>` mid-sentence is a flex item. A gap is not a character. Where the defect
   *is* the layout, only a picture or a measured box is evidence; the same goes for a form whose
   fields stopped standing under one another when there were too few left to fill a wrapping row.
+  **And fix a layout per window, not per field** — the first attempt tagged each field with a class,
+  which reached one tab of three and was reported again the same day as *"the window is still
+  stretched"*. A rule carried on every element is one the next element added will not carry; a rule
+  scoped to the container cannot be forgotten. The guard has the same shape: an assertion about
+  *rows* had no rows left to look at and would have gone on passing by finding nothing, so it
+  became an assertion about the stack — **on every tab**, which is precisely the hole the per-field
+  fix fell into.
   Two corollaries paid for on the way: a form that hides fields once they are known must **latch
   them open while somebody is using them**, or a rule about what a form knows fires while they are
   telling it; and removing a manual route because a better one exists silently removes the case the

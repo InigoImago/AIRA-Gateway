@@ -293,10 +293,27 @@ the flow. It is now covered on purpose, from inside it, with the provider's fact
 
 - **The fields stopped standing under one another.** `.form-inline` is a wrapping flex row, which
   suits eighteen fields and not two: the model id and the region shared a line and each stretched
-  to half the dialog. One question per row now (`.field--own-row`), with the *control* capped at a
-  readable measure rather than the field, so the label and the hint keep the width a sentence
-  needs. It is the note-becomes-a-column defect from §4.4 seen from the other end — flex decides
-  how to fill a row, and a form is not trying to fill one.
+  to half the dialog. It is the note-becomes-a-column defect from §4.4 seen from the other end —
+  flex decides how to fill a row, and a form is not trying to fill one.
+
+  **Fixed twice, and the first attempt is the lesson.** A class on each field (`.field--own-row`)
+  reached the identity tab and left the other two alone, and the report came back the same day:
+  *"the window is still stretched."* A rule applied per field is a decision that has to be
+  remembered at every field added afterwards, and it had already been forgotten at two tabs out of
+  three before anybody looked. It is one rule scoped to the window now —
+  `.modal--steady .modal__body > form.form-inline > .field` — and the width goes with it: 880
+  pixels was chosen for a listing of fifty models, and a stack of fields in it is a form using the
+  left half of a window. The editor is 620. Only the form's *own* children, because the
+  capabilities tab nests a `.form-inline` inside a fieldset for the per-media-type and per-level
+  token fields, and fifteen of those in a column is a page of scrolling where a row of small
+  numbers is right.
+
+  The `layout.spec.ts` guard followed the property rather than being deleted: *do the controls on a
+  line start at the same height* had **no line with two controls on it** left to check, and would
+  have gone on passing by finding nothing. It now asserts the editor **stacks** — every top-level
+  field on the same left edge, no two sharing a line — **on all three tabs**, which is exactly the
+  hole the per-field fix fell into. Broken on purpose (`flex-basis: auto`) and seen to fail, naming
+  the tab.
 - **The sentence had spaces before its punctuation**: `Lives on **mock** , speaking the aira
   dialect .` The markup was already correct; `.field__summary` was a flex row with `gap: 0.5rem`,
   and a `<strong>` mid-sentence is a flex item. The unit test that asserts the sentence character

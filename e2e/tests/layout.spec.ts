@@ -214,19 +214,47 @@ test.describe('Form alignment', () => {
     await expectFormControlsAligned(page, 'add budget');
   });
 
-  test('the model catalog form lines up too', async ({ page }) => {
+  test('the model editor is a stack, on every tab', async ({ page }) => {
+    /**
+     * This was `expectFormControlsAligned` — *do the controls sharing a line start at the same
+     * height* — and the model editor now has **no line with two controls on it**. Reported twice
+     * by the owner: the fields stretched to half an 880-pixel dialog and did not stand under one
+     * another. One question per row fixed it, and it also emptied the old assertion, which would
+     * have gone on passing by finding nothing to compare.
+     *
+     * So the guard follows the property. What must hold now is that the editor **stacks**: every
+     * top-level field starts at the same left edge, and no two of them share a line. Asserted on
+     * all three tabs, because the first fix was applied per field and reached exactly one of them
+     * — which is how a window with two thirds of it unfixed got reported a second time.
+     */
     await login(page, USERS.globalAdmin);
     await page.goto('/models');
     await openModelEditor(page);
 
-    // **On the price tab, because the identity tab no longer has a row to misalign.** It asked
-    // eight questions and now asks two — the model id and the region — with the provenance stated
-    // as a sentence instead (`FRD-507` §4.6), and one question per row is what stopped them
-    // stretching to half the dialog each. A stack has no staircase, so this test moved to where
-    // the property it guards still exists rather than being deleted or, worse, kept as an
-    // assertion that passes because it found nothing to check.
-    await openEditorTab(page, 'price');
-    await expectFormControlsAligned(page, 'add model');
+    for (const tab of ['identity', 'capabilities', 'price'] as const) {
+      await openEditorTab(page, tab);
+      const fields = await page.evaluate(() => {
+        const form = document.querySelector('#model-editor-form');
+        return Array.from(form?.children ?? [])
+          .filter((child) => child.classList.contains('field'))
+          .map((child) => {
+            const box = child.getBoundingClientRect();
+            return { left: box.left, top: box.top, bottom: box.bottom };
+          })
+          .filter((box) => box.bottom > box.top);
+      });
+
+      expect(fields.length, `${tab}: no fields found to check`).toBeGreaterThan(1);
+      const lefts = new Set(fields.map((f) => Math.round(f.left)));
+      expect([...lefts], `${tab}: fields do not share a left edge`).toHaveLength(1);
+
+      for (let i = 1; i < fields.length; i += 1) {
+        expect(
+          fields[i].top,
+          `${tab}: two fields share a line — the row is back`,
+        ).toBeGreaterThanOrEqual(fields[i - 1].bottom);
+      }
+    }
   });
 
   test('forms stay aligned when they wrap on a narrow screen', async ({ page }) => {
