@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+import structlog
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,6 +27,15 @@ from aira_gateway.db.models import (
     UseCaseRead,
 )
 from aira_gateway.retention import DEFAULT_RETENTION_DAYS
+
+_log = structlog.get_logger(__name__)
+
+#: Event types this gateway knowingly does not apply, and why each one is here rather than handled.
+#:
+#: An entry means *"seen, considered, nothing to do"*. Anything **not** in this set that reaches
+#: the `else` below is a configuration change that this instance did not make — which is the one
+#: failure a control plane cannot afford to be quiet about.
+IGNORED_EVENT_TYPES: frozenset[str] = frozenset()
 
 
 def _price_nanos(value: object) -> int | None:
@@ -72,6 +82,27 @@ async def apply_event(session: AsyncSession, event_type: str, payload: dict[str,
     elif event_type == "model.deleted":
         await _delete_model(session, payload["name"])
     else:
+        # **Tolerated, and said out loud.** This was a bare `return`.
+        #
+        # Tolerating is right and stays: a rolling update runs two gateway versions at once
+        # (`FRD-127`), and an older one must survive a newer Management's events rather than
+        # crash-looping its consumer — which would stop *every* configuration change reaching it,
+        # not just the new one.
+        #
+        # Silence is the part that was wrong, and it is the same rule the KIRA surface reached on
+        # 2026-08-18: tolerance does not require saying nothing. An unapplied event is a
+        # governance control an operator believes is in force and is not — a budget that never
+        # arrives, a released model that never lands — and the only symptom is the console and the
+        # gateway disagreeing, with nothing anywhere connecting the two. One log line makes it a
+        # search instead of an investigation.
+        if event_type not in IGNORED_EVENT_TYPES:
+            _log.warning(
+                "config_event_not_applied",
+                event_type=event_type,
+                # Names only. The payload is configuration, and configuration carries the
+                # `client_secret`-shaped fields `FRD-122` keeps out of logs.
+                fields=sorted(payload),
+            )
         return
     await session.commit()
 

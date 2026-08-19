@@ -947,30 +947,45 @@
       </form>
 
       <!--
-          Approval, and it starts **off**. A model appearing on an upstream is not the same event
-          as somebody deciding it may be used here (`FRD-307`) — and the whole editor is already
-          Global-Admin-only, which is who releases one.
-        -->
-      <label class="checkline">
-        <input
-          type="checkbox"
-          name="approved"
-          [ngModel]="approved()"
-          (ngModelChange)="approved.set($event)"
-          data-testid="model-approved"
-        />
-        Approved for use — a use case may call it
-      </label>
+        **Below the tabs, and visibly outside them.**
 
-      <label class="checkline">
-        <input
-          type="checkbox"
-          name="deprecated"
-          [ngModel]="deprecated()"
-          (ngModelChange)="deprecated.set($event)"
-        />
-        Deprecated — requests still succeed and carry a warning
-      </label>
+        These two are not properties of the model, they are decisions about its standing, so they
+        belong to the whole editor rather than to any one tab. They already sat here — after the
+        form, before the footer — and read as *"present in every tab"*, because nothing separated
+        them from the fields above: a checkbox flush against the last input is part of that input's
+        section to every reader.
+
+        A rule and its own band is the whole fix. Not a fourth tab: somebody would fill in three
+        screens, press Save, and create a model nothing can call, with the switch they never opened
+        sitting at its default. Not the footer either — that is where Save and Cancel live, and a
+        decision about the model is not an action on the dialog.
+
+        Approval starts **off**. A model appearing on an upstream is not the same event as somebody
+        deciding it may be used here (`FRD-307`), and the editor is Global-Admin-only, which is who
+        releases one.
+      -->
+      <div class="editor-standing" data-testid="editor-standing">
+        <label class="checkline">
+          <input
+            type="checkbox"
+            name="approved"
+            [ngModel]="approved()"
+            (ngModelChange)="approved.set($event)"
+            data-testid="model-approved"
+          />
+          Approved for use — a use case may call it
+        </label>
+
+        <label class="checkline">
+          <input
+            type="checkbox"
+            name="deprecated"
+            [ngModel]="deprecated()"
+            (ngModelChange)="deprecated.set($event)"
+          />
+          Deprecated — requests still succeed and carry a warning
+        </label>
+      </div>
     </div>
 
     <div class="modal__foot">

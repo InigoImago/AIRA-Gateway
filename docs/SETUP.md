@@ -131,6 +131,27 @@ Everything that talks to the stack follows these — the Makefile, `tools/`, the
 and the browser suite all resolve their addresses through `tools/stack_addresses.py`, so moving a
 port moves them too. `make test-integration` proves that against `docker compose config` itself.
 
+**When a forwarder sits in front** — `sbx ports … --publish 14200:4200`, a VM, an SSH tunnel —
+the container still serves 4200 and the browser says `14200`. Keycloak compares against **the
+browser**, so name the visible port: `AIRA_CONSOLE_PORT=14200`. It defaults to the published port,
+which is right when nothing remaps it and wrong in exactly the case somebody reaches for when
+another system already holds the port.
+
+**The login follows the console's port as well**, which was not true until 2026-08-19: the Keycloak
+realm pinned its redirect URIs to a literal `4200`, so moving `AIRA_PUBLISH_FRONTEND_PORT` gave a
+console that loaded and a login that failed with *"Invalid parameter: redirect_uri"* — an error
+naming the realm, not the port. Keycloak now substitutes the port on realm import. Note that this
+happens **at import**, and the import is skipped for a realm that already exists: after moving the
+port on a stack that has run before, recreate Keycloak's state
+(`docker compose down -v keycloak postgres`, or `make destroy`) or edit the two lists in the
+console's client under *Clients → aira-gateway* in the admin console.
+
+> **Reaching the stack from outside this machine** — a sandbox, a VM, another host — needs
+> `AIRA_BIND_HOST=0.0.0.0` as well. The default is `127.0.0.1` on purpose (this file publishes
+> credentials, and Compose's plain `"4200:4200"` would put them on every interface), so a
+> port-forwarder that lands on a non-loopback address finds nothing listening. That is a
+> *reachability* failure with a healthy stack behind it, and `docker compose ps` cannot see it.
+
 ```bash
 make ps            # status and health of every service
 make logs-apps     # tail only the application containers

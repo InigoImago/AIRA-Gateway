@@ -3,6 +3,23 @@ name: aira
 # AIRA local infrastructure stack (FRD-000). Business services (gateway, management)
 # and observability (FRD-001) are added in later slices/FRDs.
 #
+# **Both address families, or a browser that resolves `localhost` to `::1` gets nothing.**
+#
+# Docker binds per family: publishing on `0.0.0.0` leaves IPv6 unserved, and publishing on `[::]`
+# leaves IPv4 unserved — measured here, `bindv6only=0` notwithstanding, because the userland proxy
+# opens one socket per entry rather than one dual-stack socket. So every port is published twice.
+#
+# Found on 2026-08-19 from a symptom that pointed everywhere but here: the console was unreachable
+# with `ERR_CONNECTION_RESET` while `docker compose ps` was green, `curl localhost:4200` answered
+# 200 from inside, and nginx's log showed **no request at all** — because the browser reached the
+# forwarder over `::1`, the forwarder connected into a machine with fourteen IPv4 listeners and
+# zero IPv6 ones, and the connection was reset before any of our code saw it. A reset is not a
+# refusal: something accepted, so every diagnosis started at the wrong end.
+#
+# `AIRA_BIND_HOST6` mirrors `AIRA_BIND_HOST` and defaults to `::1` for the same reason that one
+# defaults to `127.0.0.1` — this file publishes credentials, and loopback is where they belong.
+# Set both to their wildcards (`0.0.0.0` and `::`) when something outside the machine has to reach
+# the stack: a sandbox port-forwarder, a VM, another host.
 # **Every published port binds to loopback** (`AIRA_BIND_HOST`, default `127.0.0.1`).
 #
 # Compose's `"5432:5432"` binds `0.0.0.0`, so this stack put Postgres, Redis, Kafka and a Vault in
@@ -28,6 +45,7 @@ services:
       KC_DB_PASSWORD: ${KC_DB_PASSWORD:-keycloak-local}
     ports:
       - "${AIRA_BIND_HOST:-127.0.0.1}:${AIRA_PUBLISH_POSTGRES_PORT:-5432}:5432"
+      - "[${AIRA_BIND_HOST6:-::1}]:${AIRA_PUBLISH_POSTGRES_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./postgres/init:/docker-entrypoint-initdb.d:ro
@@ -51,9 +69,31 @@ services:
       KC_DB_PASSWORD: ${KC_DB_PASSWORD:-keycloak-local}
       KC_HEALTH_ENABLED: "true"
       KC_HTTP_ENABLED: "true"
+      # **The console's port, resolved once and handed to the realm import.**
+      #
+      # `aira-realm.json` pins the console's redirect URIs and web origins, and it used to pin them
+      # to a literal `4200`. That made `AIRA_PUBLISH_FRONTEND_PORT` a knob that could not actually
+      # be turned: moving the console to dodge a port collision left it loading fine and login
+      # failing with *"Invalid parameter: redirect_uri"*, which names the realm and not the port.
+      # A configurable port that silently breaks authentication is worse than a fixed one.
+      #
+      # Keycloak substitutes `${VAR:default}` when importing a realm — measured against 26.1
+      # before this was written, not assumed. The **whole fallback chain is resolved here** rather
+      # than in the JSON, because the realm's placeholder syntax takes one name and one default
+      # while Compose's takes a chain, and two half-expressions of one rule is how they drift.
+      # `AIRA_CONSOLE_PORT` first, because **the port Keycloak must know is the one in the
+      # browser's address bar**, and that is not always the one this stack publishes. A port
+      # forwarder in front of the machine — `sbx ports … --publish 14200:4200`, a VM, an SSH
+      # tunnel — remaps it: the container serves 4200, the browser says 14200, and Keycloak
+      # compares against what the browser sends. Tying the realm to the published port alone was
+      # right for the ordinary case and wrong for every forwarded one, which is the case somebody
+      # reaches for precisely when another system already holds the port.
+      AIRA_CONSOLE_PORT: ${AIRA_CONSOLE_PORT:-${AIRA_PUBLISH_FRONTEND_PORT:-${AIRA_FRONTEND_PORT:-4200}}}
     ports:
       - "${AIRA_BIND_HOST:-127.0.0.1}:${AIRA_PUBLISH_KEYCLOAK_PORT:-8080}:8080"   # Keycloak HTTP
+      - "[${AIRA_BIND_HOST6:-::1}]:${AIRA_PUBLISH_KEYCLOAK_PORT:-8080}:8080"   # Keycloak HTTP
       - "${AIRA_BIND_HOST:-127.0.0.1}:${AIRA_PUBLISH_KEYCLOAK_HEALTH_PORT:-9000}:9000"   # management/health port
+      - "[${AIRA_BIND_HOST6:-::1}]:${AIRA_PUBLISH_KEYCLOAK_HEALTH_PORT:-9000}:9000"   # management/health port
     depends_on:
       postgres:
         condition: service_healthy
@@ -77,6 +117,7 @@ services:
     container_name: ${AIRA_STACK:-aira}-kafka
     ports:
       - "${AIRA_BIND_HOST:-127.0.0.1}:${AIRA_PUBLISH_KAFKA_PORT:-29092}:29092"   # host-facing listener (apps on host use localhost:29092)
+      - "[${AIRA_BIND_HOST6:-::1}]:${AIRA_PUBLISH_KAFKA_PORT:-29092}:29092"   # host-facing listener (apps on host use localhost:29092)
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
@@ -108,6 +149,7 @@ services:
     container_name: ${AIRA_STACK:-aira}-schema-registry
     ports:
       - "${AIRA_BIND_HOST:-127.0.0.1}:${AIRA_PUBLISH_SCHEMA_REGISTRY_PORT:-8081}:8081"
+      - "[${AIRA_BIND_HOST6:-::1}]:${AIRA_PUBLISH_SCHEMA_REGISTRY_PORT:-8081}:8081"
     depends_on:
       kafka:
         condition: service_healthy
@@ -129,6 +171,7 @@ services:
     cap_add: ["IPC_LOCK"]
     ports:
       - "${AIRA_BIND_HOST:-127.0.0.1}:${AIRA_PUBLISH_VAULT_PORT:-8200}:8200"
+      - "[${AIRA_BIND_HOST6:-::1}]:${AIRA_PUBLISH_VAULT_PORT:-8200}:8200"
     environment:
       VAULT_DEV_ROOT_TOKEN_ID: ${VAULT_DEV_ROOT_TOKEN_ID:-root}
       VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
@@ -155,6 +198,7 @@ services:
     command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory-policy", "noeviction"]
     ports:
       - "${AIRA_BIND_HOST:-127.0.0.1}:${AIRA_PUBLISH_REDIS_PORT:-6379}:6379"
+      - "[${AIRA_BIND_HOST6:-::1}]:${AIRA_PUBLISH_REDIS_PORT:-6379}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -172,6 +216,7 @@ services:
       GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
     ports:
       - "${AIRA_BIND_HOST:-127.0.0.1}:${AIRA_PUBLISH_GRAFANA_PORT:-3000}:3000"   # Grafana UI
+      - "[${AIRA_BIND_HOST6:-::1}]:${AIRA_PUBLISH_GRAFANA_PORT:-3000}:3000"   # Grafana UI
     networks: [aira]
 
   otel-collector:
@@ -183,7 +228,9 @@ services:
       - ./otel/collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
     ports:
       - "${AIRA_BIND_HOST:-127.0.0.1}:${AIRA_PUBLISH_OTLP_GRPC_PORT:-4317}:4317"   # OTLP gRPC
+      - "[${AIRA_BIND_HOST6:-::1}]:${AIRA_PUBLISH_OTLP_GRPC_PORT:-4317}:4317"   # OTLP gRPC
       - "${AIRA_BIND_HOST:-127.0.0.1}:${AIRA_PUBLISH_OTLP_HTTP_PORT:-4318}:4318"   # OTLP HTTP
+      - "[${AIRA_BIND_HOST6:-::1}]:${AIRA_PUBLISH_OTLP_HTTP_PORT:-4318}:4318"   # OTLP HTTP
     depends_on:
       otel-lgtm:
         condition: service_started
@@ -220,6 +267,7 @@ services:
       - ollama-models:/root/.ollama
     ports:
       - "${AIRA_BIND_HOST:-127.0.0.1}:${AIRA_PUBLISH_OLLAMA_PORT:-11434}:11434"
+      - "[${AIRA_BIND_HOST6:-::1}]:${AIRA_PUBLISH_OLLAMA_PORT:-11434}:11434"
     healthcheck:
       # `ollama list` answers as soon as the server is up and — unlike a generation — does **not**
       # load a model. `ADR-0012` §5: a probe that wakes a scaled-to-zero endpoint turns every

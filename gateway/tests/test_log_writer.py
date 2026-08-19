@@ -282,3 +282,85 @@ async def test_concurrent_submissions_all_land(sessionmaker) -> None:
 
     assert len(await _rows(sessionmaker)) == 50
     await writer.stop()
+
+
+class _GatedSessionmaker:
+    """A sessionmaker whose **first** write waits for a gate before it finishes.
+
+    The window this file's shutdown tests are about — `_stopping` is set, the worker still exists —
+    is a few microseconds wide in real time, and `test_a_row_submitted_while_stopping_is_not_lost`
+    tried to land in it with `asyncio.sleep(0)`. That test is green and the mutation harness kills
+    nothing with it: removing the `_stopping` check from `submit` leaves it passing, because the
+    timing lands after the worker is already gone and the entry is written inline for the *other*
+    reason. Green for a reason unrelated to its name.
+
+    So the window is made wide and deterministic instead: the worker blocks inside its first write
+    until this gate opens, which is exactly as long as `stop()` waits on the drain.
+    """
+
+    def __init__(self, inner) -> None:
+        self._inner = inner
+        self.gate = asyncio.Event()
+        self.first = True
+
+    def __call__(self):
+        wait = self.first
+        self.first = False
+        return _GatedSession(self._inner(), self.gate if wait else None)
+
+
+class _GatedSession:
+    def __init__(self, inner, gate) -> None:
+        self._inner = inner
+        self._gate = gate
+
+    async def __aenter__(self):
+        session = await self._inner.__aenter__()
+        if self._gate is not None:
+            await self._gate.wait()
+        return session
+
+    async def __aexit__(self, *exc) -> None:
+        await self._inner.__aexit__(*exc)
+
+
+async def test_a_row_submitted_while_the_worker_still_exists_is_written_at_once(
+    concurrent_sessionmaker,
+) -> None:
+    """The property `M18` claims, tested where it can actually fail.
+
+    `stop()` sets `_stopping` and then waits; the worker is cancelled at the end. An entry handed
+    over inside that window must be written **here and now**, not queued — a queue whose consumer
+    is about to be cancelled is a hole with a shutdown's promise written on it.
+
+    The discriminator is *when*: the late row is asserted present **while the worker is still
+    blocked on its own write**. Queue it instead and it cannot possibly be there yet, which is what
+    makes this fail when the `or self._stopping` is removed and what the previous version of this
+    test could not see.
+
+    On the file-backed database, because an inline write and a blocked worker write overlap here by
+    construction — see `concurrent_sessionmaker`.
+    """
+    gated = _GatedSessionmaker(concurrent_sessionmaker)
+    writer = _writer(gated, max_queue=8)
+    await writer.start()
+    await writer.submit(_entry(operation="blocking"))
+
+    stopping = asyncio.create_task(writer.stop())
+    for _ in range(5):
+        await asyncio.sleep(0)  # let the worker reach the gate and stop() reach its drain
+
+    await writer.submit(_entry(operation="late"))
+
+    written = [row.operation for row in await _rows(concurrent_sessionmaker)]
+    assert "late" in written, (
+        "the row handed over during shutdown was queued against a worker on its way out; "
+        f"the table holds {written}"
+    )
+
+    gated.gate.set()
+    await stopping
+    assert sorted(row.operation for row in await _rows(concurrent_sessionmaker)) == [
+        "blocking",
+        "late",
+    ]

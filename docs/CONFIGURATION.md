@@ -285,15 +285,31 @@ the values being fetched, and they are unrelated to the connection variables abo
 ## 8. What refuses to boot
 
 Safe defaults are enforced, not documented ([`ADR-0007`](adr/ADR-0007-security-hardening-baseline.md)).
-Outside `AIRA_ENVIRONMENT=local`, the process **stops** rather than starting insecurely when:
+Each of the following is a state where starting successfully would be worse than not starting: the
+operator would have a service that looks healthy and is not doing what they believe it is doing.
+
+**Outside `AIRA_ENVIRONMENT=local`** — hardening that a development machine legitimately waives
+(`ADR-0015`: a hardening pass that breaks the demo gets reverted). A **demo** waives a named few of
+these and no more; the list is `WAIVED_BY_A_DEMO`, never a blanket:
 
 - `AIRA_SECRET_KEY` is still the development value
 - `AIRA_DEBUG` is on
 - `AIRA_ALLOWED_HOSTS` is `*`
 - CORS allows `*` **and** credentials
+- `AIRA_AUTH_REQUIRED` is off
+- the Postgres password is still the published development default
+- an OIDC issuer is configured with no audience
+- Kafka speaks `PLAINTEXT`
+
+**In every environment, `local` included** — these are not hardening but *correctness*, and a
+local process that started anyway would be doing something different from the one it stands in for:
+
 - a configured model sits in a region outside `AIRA_ALLOWED_REGIONS`
 - two upstream adapters claim the same model name
 - Vault is configured and cannot be reached
 
-Each of these is a state where starting successfully would be worse than not starting: the operator
-would have a service that looks healthy and is not doing what they believe it is doing.
+That distinction is worth stating because the second group surprises people locally. Setting
+`AIRA_GOOGLE_API_KEY` on a default configuration stops the gateway starting: AI Studio answers on
+the **global** endpoint, `global` is not in the EU-only default of `AIRA_ALLOWED_REGIONS`, and
+residency is not a thing this product enforces only in production. Widen `AIRA_ALLOWED_REGIONS`
+deliberately, or use a regional platform.

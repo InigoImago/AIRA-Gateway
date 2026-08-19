@@ -5,6 +5,124 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Fourteen listeners, none of them on IPv6 (2026-08-19)
+
+The console could not be reached from outside the machine. Every check from inside was green —
+`docker compose ps` healthy, `curl localhost:4200` a 200, `index.html` and `runtime-config.js`
+correct — and the browser answered `ERR_CONNECTION_RESET`. I twice concluded the fault was on the
+far side of the port forwarder and said so, which was wrong both times.
+
+The discriminator was nginx's own access log: **no request from the browser had ever arrived**,
+only the fifteen-second healthchecks from `127.0.0.1`. Traffic that never reaches the server is not
+a server problem, and that separated the question in one look. The forwarder carried
+`::1 4200 -> 4200` alongside the IPv4 row; the browser resolved `localhost` to `::1`; and this
+machine had fourteen IPv4 listeners and zero IPv6 ones.
+
+Docker binds **one socket per published entry**, not one dual-stack socket, and `bindv6only=0` does
+not change that because the userland proxy is what opens them. Measured rather than assumed:
+`-p "[::]:15200:80"` alone answered on `[::1]` and failed on `127.0.0.1`; `-p "0.0.0.0:15200:80"`
+alone did the reverse; both together answered on both. So every published port is now published
+twice, and `AIRA_BIND_HOST6` mirrors `AIRA_BIND_HOST` with the same loopback default — `::1` for
+the same reason `127.0.0.1` is the other one, because these files publish credentials.
+
+Two things worth keeping past this incident. **A reset is not a refusal**: something accepted, so
+the search starts outward, at the forwarder and the host, which is exactly where it did not belong.
+And **every check I ran was over IPv4** — each one green, each one true, and none of them about the
+family that was broken. That is the same shape as a test whose setup never reaches the path it is
+named after, which this repository met twice in the last two days on entirely different code.
+
+**And the model editor's standing decisions.** *"Approved for use / Deprecated is now present in
+every tab."* They were — after the form, before the footer, flush against the last input with
+nothing between them. A checkbox touching the field above it belongs to that field's section, to
+every reader, whichever tab is open; the placement was defensible and the *reading* of it was not,
+which is the only measure that counts for a screen.
+
+A rule alone was not enough, and the second report said so: *"the two toggles now jump with the
+size of the tab contents."* `modal--steady` fixes the **dialog's** height, which keeps the window
+still and lets everything inside it slide — the body was one scrolling block, so the strip and the
+band sat wherever the current tab's fields ended. Measured after the fact: 257 pixels of travel
+between Identity and Price. The body is a column now, the tab panel takes the remaining space and
+scrolls, and the strip and the band are pinned. My own comment in the stylesheet had argued against
+pinning, on the grounds that it leaves a different gap on each tab — true, and beside the point:
+the gap is empty space nobody sees, and the band moving is precisely what a reader does.
+
+A rule and its own band is the rest of the fix, and it is worth saying what was rejected. Not a fourth
+tab: somebody fills in three screens, presses Save, and creates a model nothing can call, with the
+switch they never opened sitting at its default. Not the footer: that is where Save and Cancel
+live, and a decision *about the model* is not an action on the dialog. `e2e` asserts the geometry —
+below the strip, below the form, outside it, with a visible rule — rather than the CSS rule, so the
+next arrangement that puts them back inside a tab fails too.
+
+Also of note, and my own doing: `make migrate-gateway` from the working tree had put the database
+at `0039` while the containerised migrator still ran an image that stopped at `0038`, so the next
+`up` failed with *"Can't locate revision"*. Loud, immediate and fixed by rebuilding — recorded
+because the same order of operations will happen again.
+
+---
+
+## Second sweep: the wire between the planes, and a schema nobody compared (2026-08-19)
+
+Yesterday's sweep found copies of one fact. This one went looking in the places where a fact has
+no copy at all — where two halves of the product are each correct and nothing checks the join.
+
+**A configuration event the gateway cannot apply was dropped in silence.** `apply_event`'s chain
+ended `else: return`. Tolerating an unknown type is right and stays — a rolling update runs two
+gateway versions at once, and a consumer that crash-loops on a newer Management's event stops
+*every* configuration change reaching it, not just the new one. Silence was the wrong half, and it
+is the same line the KIRA surface reached the day before: tolerate, and say so. An unapplied event
+is a governance control an operator believes is in force — a budget that never arrives, a released
+model that never lands — and the only symptom was the console and the gateway disagreeing.
+
+**And nothing compared the two vocabularies.** There are three statements of it: the `emit(…)`
+calls, `_TOPIC_FOR` in the outbox subscriber, and the `elif event_type ==` chain in the consumer.
+`test_outbox_routing` had compared the first two in both directions since August and had found a
+real defect doing so; the third — the end of the wire, the only one that changes what runs — was
+compared with neither. It is now, with `pipeline.deleted` recorded as the one deliberate asymmetry
+(Management has no endpoint that deletes a pipeline; the gateway keeps the branch so an older
+instance survives a newer Management that grows one).
+
+**The gateway had no equivalent of `makemigrations --check`.** Management has had one since
+August, when it found a pending `AlterField` that had been sitting there since `FRD-308` shipped.
+Thirty-nine Alembic revisions and nothing compared them to the models — on the plane where it costs
+more, because SQLAlchemy will not refuse to start over a missing column: it declares the table in
+Python and issues a query, which arrives as a `ProgrammingError` on the request path.
+
+It found something on its first run. `0008` created `ix_request_logs_use_case_created_at`; `0033`
+created `ix_request_logs_use_case_page` on the same leading columns plus one, for the trace view's
+keyset page, and did not drop the older one. Both had been maintained on every insert since, on
+the table that takes **a row per request**. Measured before writing the migration rather than
+assumed: 11 706 scans against 29, and the 29 are queries the survivor answers too. `0039` drops it.
+
+**The migration graph had no guard either.** Two heads is what a merge of two branches produces —
+each a valid chain in its own review — and `alembic upgrade head` refuses it *at the deployment*.
+Now a hermetic test over the version files: one head, one root, every parent present.
+
+**Six security-control properties had tests and no proof those tests could fail.** The bound on
+failed authentications and the Kafka SASL/TLS wiring were both well covered and had no mutation, so
+nobody had ever broken them to watch a test notice. All six caught.
+
+**`docs/CONFIGURATION.md` §8 put three refusals in the wrong group.** It listed all seven under
+*"outside `AIRA_ENVIRONMENT=local`"*, and residency, duplicate model names and an unreachable Vault
+fire everywhere. That is not pedantry: setting `AIRA_GOOGLE_API_KEY` on a stock local configuration
+stops the gateway starting, because AI Studio answers on the **global** endpoint and `global` is not
+in the EU-only default — and a reader who had been told local was exempt watched the process die
+with nothing pointing at the region. Pinned by a test, so a well-meaning `if is_local()` on that
+path cannot make a local gateway route EU traffic differently from a production one.
+
+Two mistakes of my own, both worth recording because both are this repository's own named shapes.
+`str(sqlalchemy.URL)` renders the password as `***`, so the first version of the drift check failed
+with *"password authentication failed"* — a library being careful, producing an error that points
+at the database. And the first fixture set `sqlalchemy.url` on the Alembic config, which
+`migrations/env.py` deliberately ignores in favour of `GatewaySettings()` — so the upgrade ran
+against the **running stack's** database (a no-op, it was at head), the scratch database stayed
+empty, and the check reported thirty-nine missing tables. It looked like a landslide of defects and
+was its own wiring; there is now a test asserting the scratch database is the one that gets
+migrated.
+
+Eight new mutations (`TC14`–`TC23`, less two that could not be hermetic), 499 properties.
+
+---
+
 ## Going looking for the shapes that turned up in one day (2026-08-18)
 
 *"So many mistakes were found in one day, in one look — now go through the code and eliminate

@@ -413,6 +413,7 @@ services:
       # is the port that serves models, and the demo profile seeds a key whose plaintext is in
       # this repository.
       - "${AIRA_BIND_HOST:-127.0.0.1}:${AIRA_PUBLISH_GATEWAY_PORT:-${AIRA_GATEWAY_PORT:-8001}}:8001"
+      - "[${AIRA_BIND_HOST6:-::1}]:${AIRA_PUBLISH_GATEWAY_PORT:-${AIRA_GATEWAY_PORT:-8001}}:8001"
     depends_on:
       gateway-migrate:
         condition: service_completed_successfully
@@ -451,6 +452,7 @@ services:
     environment: *management-env
     ports:
       - "${AIRA_BIND_HOST:-127.0.0.1}:${AIRA_PUBLISH_MANAGEMENT_PORT:-${AIRA_MANAGEMENT_PORT:-8002}}:8002"
+      - "[${AIRA_BIND_HOST6:-::1}]:${AIRA_PUBLISH_MANAGEMENT_PORT:-${AIRA_MANAGEMENT_PORT:-8002}}:8002"
     depends_on:
       management-migrate:
         condition: service_completed_successfully
@@ -526,10 +528,13 @@ services:
       # redeploy of the gateway or of management does not leave this proxy talking to a stale
       # address. Override where the platform provides a different resolver.
       AIRA_DNS_RESOLVER: ${AIRA_DNS_RESOLVER:-127.0.0.11}
-    # 4200 on the host because the Keycloak realm pins its redirect URIs to
-    # http://localhost:4200 — see deploy/compose/keycloak/realms/aira-realm.json.
+    # The realm's redirect URIs follow this port rather than pinning it: Keycloak substitutes
+    # `${AIRA_CONSOLE_PORT:4200}` on import, and Compose resolves that chain for it beside the
+    # Keycloak service. Moving this therefore moves the login too — which is the whole point of
+    # the variable, and was not true until 2026-08-19.
     ports:
       - "${AIRA_BIND_HOST:-127.0.0.1}:${AIRA_PUBLISH_FRONTEND_PORT:-${AIRA_FRONTEND_PORT:-4200}}:8080"
+      - "[${AIRA_BIND_HOST6:-::1}]:${AIRA_PUBLISH_FRONTEND_PORT:-${AIRA_FRONTEND_PORT:-4200}}:8080"
     depends_on:
       - management
       - gateway

@@ -14,6 +14,7 @@ from aira_gateway.core.canonical import (
     Thinking,
 )
 from aira_gateway.core.schema import parse as parse_schema
+from aira_gateway.residency import RegionNotAllowed
 from aira_gateway.upstreams.base import UpstreamError
 from aira_gateway.upstreams.gemini import GeminiUpstream, build_gemini_upstream
 from aira_gateway.upstreams.gemini_mapping import canonical_to_gemini_request
@@ -259,3 +260,27 @@ def test_an_empty_base_url_falls_back_to_the_real_endpoint() -> None:
 
     assert upstream is not None
     assert str(upstream._client.base_url).rstrip("/") == DEFAULT_GEMINI_BASE_URL
+
+
+def test_residency_is_enforced_in_local_too() -> None:
+    """Not every startup refusal is hardening, and the two groups behave differently.
+
+    `docs/CONFIGURATION.md` §8 listed all seven refusals under *"outside
+    `AIRA_ENVIRONMENT=local`"* — and three of them fire everywhere. Residency is one: AI Studio
+    answers on the **global** endpoint, `global` is not in the EU-only default, and a developer who
+    sets `AIRA_GOOGLE_API_KEY` on a stock configuration gets a gateway that will not start.
+
+    That is the right behaviour and the wrong documentation, which is the more dangerous half: a
+    reader concluded local was exempt, saw the process die, and had nothing pointing at the region.
+    Pinned here so the two groups cannot quietly merge — a `is_local()` added to this path would
+    make a local gateway route EU traffic through a global endpoint while the production one
+    refused, which is a difference between environments in exactly the thing the environments are
+    supposed to share.
+    """
+    settings = GatewaySettings(environment="local", google_api_key="a-key")
+
+    with pytest.raises(RegionNotAllowed) as caught:
+        build_gemini_upstream(settings)
+
+    assert "global" in str(caught.value)
+    assert "AIRA_ALLOWED_REGIONS" in str(caught.value) or "allowed set" in str(caught.value)

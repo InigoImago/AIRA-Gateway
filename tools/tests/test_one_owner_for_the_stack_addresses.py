@@ -43,6 +43,12 @@ OWNERS = {
     "deploy/compose/.env.example",
     # This file quotes the addresses it forbids.
     "tools/tests/test_one_owner_for_the_stack_addresses.py",
+    # The mutation harness quotes source lines verbatim — that is what a mutation *is*. A literal
+    # here is the thing being broken to check a test notices, not an address anybody connects to.
+    "tools/mutation_check.py",
+    # And so does the guard that keeps the realm following the console's port: it names the literal
+    # it exists to forbid.
+    "tools/tests/test_the_realm_follows_the_console_port.py",
     # Prose: the setup guide, the configuration reference and the log all name today's values on
     # purpose, because a reader following instructions needs a number to type. They are checked by
     # `test_documented_addresses_are_todays_defaults` below rather than banned.

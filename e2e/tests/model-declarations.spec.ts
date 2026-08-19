@@ -79,4 +79,89 @@ test.describe('Model declarations', () => {
     await expect(page.getByTestId('mode-disabled')).toBeChecked();
     await expect(page.getByTestId('thinking-default')).toHaveValue('disabled');
   });
+
+  test('the standing decisions sit below the tabs, separated, and on none of them', async ({
+    page,
+  }) => {
+    /** Reported: *"Approved for use / Deprecated is now present in every tab."* They were — after
+     *  the form, before the footer, flush against the last input with nothing between. A checkbox
+     *  touching the field above it belongs to that field's section to every reader, whichever tab
+     *  is open.
+     *
+     *  Asserted as geometry rather than as a CSS rule: below the tab strip, below the form, and
+     *  with a visible rule of its own. The next arrangement that puts them back inside a tab's
+     *  content should fail here too. */
+    await login(page, USERS.globalAdmin);
+    await page.goto('/models');
+    await page.click('button:has-text("Add model")');
+
+    const standing = page.getByTestId('editor-standing');
+    await expect(standing).toBeVisible();
+
+    const geometry = await standing.evaluate((el) => {
+      const strip = document.querySelector('.modal__body > .tabs') as HTMLElement;
+      const form = document.querySelector('#model-editor-form') as HTMLElement;
+      const box = el.getBoundingClientRect();
+      return {
+        belowStrip: box.top >= strip.getBoundingClientRect().bottom,
+        belowForm: box.top >= form.getBoundingClientRect().bottom - 1,
+        insideForm: form.contains(el),
+        rule: getComputedStyle(el).borderTopWidth,
+      };
+    });
+
+    expect(geometry.insideForm, 'it must not be part of a tab panel').toBe(false);
+    expect(geometry.belowStrip, 'it sits below the tab strip').toBe(true);
+    expect(geometry.belowForm, 'it sits below the tabbed fields').toBe(true);
+    expect(geometry.rule, 'a rule separates it from the tabbed fields').not.toBe('0px');
+
+    // And it stays put across tabs — the same element, not one per panel.
+    for (const tab of ['capabilities', 'price', 'identity'] as const) {
+      await openEditorTab(page, tab);
+      await expect(page.getByTestId('editor-standing')).toHaveCount(1);
+    }
+  });
+
+  test('the tab strip and the standing decisions do not move when the tab changes', async ({
+    page,
+  }) => {
+    /** Reported: *"the two toggles now jump with the size of the tab contents, which looks
+     *  unprofessional."* They did. `modal--steady` fixed the dialog's height, which keeps the
+     *  *window* still and lets everything inside it slide: the body was one scrolling block, so
+     *  the strip and the band sat wherever the current tab's fields happened to end.
+     *
+     *  Measured, because this is a claim about pixels and nothing else can hold it: the strip's
+     *  top and the band's top are identical on all three tabs, whose field counts differ by more
+     *  than a screen. Asserted to the pixel — a tolerance here would be a licence for the next
+     *  layout to move it "only a little", which is the thing being complained about. */
+    await login(page, USERS.globalAdmin);
+    await page.goto('/models');
+    await page.click('button:has-text("Add model")');
+
+    const measure = async () =>
+      page.evaluate(() => {
+        const strip = document.querySelector('.modal__body > .tabs') as HTMLElement;
+        const band = document.querySelector('[data-testid="editor-standing"]') as HTMLElement;
+        return {
+          strip: Math.round(strip.getBoundingClientRect().top),
+          band: Math.round(band.getBoundingClientRect().top),
+        };
+      });
+
+    const seen: Record<string, { strip: number; band: number }> = {};
+    for (const tab of ['identity', 'capabilities', 'price'] as const) {
+      await openEditorTab(page, tab);
+      seen[tab] = await measure();
+    }
+
+    const positions = Object.entries(seen);
+    for (const [tab, box] of positions) {
+      expect(box.strip, `the tab strip moved on ${tab}: ${JSON.stringify(seen)}`).toBe(
+        positions[0][1].strip,
+      );
+      expect(box.band, `the standing decisions moved on ${tab}: ${JSON.stringify(seen)}`).toBe(
+        positions[0][1].band,
+      );
+    }
+  });
 });

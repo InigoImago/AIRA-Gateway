@@ -58,6 +58,16 @@ COMPOSE_ONLY = {
     # the port the gateway connects to — and one name for both meanings would make moving the
     # published port silently redirect the in-network connection.
     "AIRA_STACK",
+    # Which interface each family binds to. Read by Compose only — two names because Docker opens
+    # one socket per published entry, so a stack bound on `0.0.0.0` alone is reset for every IPv6
+    # caller. See `test_every_published_port_serves_both_families.py`.
+    "AIRA_BIND_HOST6",
+    # The console's published port, **resolved by Compose and handed to Keycloak's realm import**
+    # so the client's redirect URIs follow it. Not a setting of either service: it exists for the
+    # twenty seconds of a realm import. Its own name rather than reusing `AIRA_PUBLISH_FRONTEND_
+    # PORT` because the realm's placeholder syntax takes one name and one default, while Compose's
+    # takes a chain — and the chain has to be resolved somewhere.
+    "AIRA_CONSOLE_PORT",
     "AIRA_PUBLISH_POSTGRES_PORT",
     "AIRA_PUBLISH_KEYCLOAK_PORT",
     "AIRA_PUBLISH_KEYCLOAK_HEALTH_PORT",

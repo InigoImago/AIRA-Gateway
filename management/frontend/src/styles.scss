@@ -845,13 +845,61 @@ $field-label-gap: 0.3rem;
 .modal--steady {
   height: min(760px, calc(100vh - 3rem));
 }
+/* **A column, so what is fixed stays fixed and only the fields scroll.**
+ *
+ * The body was one scrolling block: tab strip, fields, then the standing decisions, stacked. With
+ * a steady height that keeps the *dialog* still and lets everything inside it move — the strip and
+ * the band below it sat wherever the current tab's fields ended, so switching tabs slid them up
+ * and down. Reported, correctly, as looking unprofessional.
+ *
+ * As a column with the tab panel taking the remaining space, the strip is pinned to the top and
+ * the band to the bottom, and the only thing that changes between tabs is how much of the middle
+ * is used — which is empty space, and invisible. `min-height: 0` because a flex item's default
+ * `auto` minimum refuses to shrink below its content, which is what turns an inner `overflow-y`
+ * into a body that scrolls instead. */
 .modal--steady .modal__body {
   flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+.modal--steady .modal__body > .tabs {
+  flex: 0 0 auto;
+}
+.modal--steady .modal__body > form {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  /* Room for a focus ring on the last field, which an `overflow` container would otherwise clip. */
+  padding-bottom: 0.25rem;
 }
 /* The strip sits directly above the first field, and 0.4rem read as the two belonging to one
  * another rather than as a heading over a section. */
 .modal__body > .tabs {
   margin-bottom: 1.25rem;
+}
+
+/* **The decisions that are not on any tab.**
+ *
+ * Approval and deprecation are statements about a model's standing rather than properties of it,
+ * so they sit below the tabbed fields and apply whichever tab is open. Without a rule they sat
+ * flush against the last input and read as part of that tab's content — reported as *"it is in
+ * every tab"*, which is exactly what a checkbox with no separator above it looks like.
+ *
+ * The rule ends the tabbed region and starts a band that plainly belongs to the dialog; the
+ * column above keeps it **still**. An earlier version of this comment argued against pinning it,
+ * on the grounds that a fixed-height body would leave a different gap on each tab — true, and
+ * beside the point: the gap is empty space and nobody sees it, while the band itself moving is
+ * exactly what a reader does see. `flex: 0 0 auto` so it never gives up height to the fields. */
+.editor-standing {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 1.5rem;
+  padding-top: 1.1rem;
+  border-top: 1px solid var(--aira-border);
 }
 
 .modal:focus-visible {

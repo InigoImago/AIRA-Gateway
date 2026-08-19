@@ -6,6 +6,7 @@ pruner rewrite the same rows forever actually live, and where the migration's in
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -101,15 +102,51 @@ async def test_the_pruner_clears_old_payloads_and_keeps_the_accounting(engine: A
             )
 
 
-async def test_the_pruner_index_exists(engine: AsyncEngine) -> None:
-    """Without it the pruner is a sequential scan over a table that only grows."""
+async def test_the_pruner_is_index_backed(engine: AsyncEngine) -> None:
+    """The pruner filters on `(use_case, created_at)`, and an index has to cover both.
+
+    Without one it is a sequential scan over a table that only grows — one row per request, kept
+    long past every payload it carried.
+
+    **By shape, not by name.** This used to assert that `ix_request_logs_use_case_created_at`
+    exists, and on 2026-08-19 that index was dropped as redundant: `0033` had added
+    `ix_request_logs_use_case_page` on the same leading columns plus `id`, and left the older one
+    to be maintained on every insert. The property was intact and the check failed, because it was
+    written about a spelling.
+
+    **And not by asking the planner either**, which was the next thing tried and is worse: with a
+    thousand rows the whole table fits in a few pages, so Postgres picks the single-column
+    `created_at` index and filters on `use_case` — the cheapest plan, and a correct one. An
+    `EXPLAIN` assertion here would measure the size of the demo database. What was measured by
+    hand, with the single-column index dropped inside a rolled-back transaction, is that the
+    surviving index does serve the predicate with **both** columns as index conditions:
+
+        Index Scan using ix_request_logs_use_case_page
+          Index Cond: use_case = … AND created_at < …
+
+    So the structural question is the right one, and it is the one that stays true at any size:
+    is there an index whose first two columns are `use_case` then `created_at`?
+    """
     async with engine.connect() as connection:
-        found = (
-            await connection.execute(
-                text(
-                    "SELECT indexname FROM pg_indexes WHERE tablename = 'request_logs'"
-                    " AND indexname = 'ix_request_logs_use_case_created_at'"
+        definitions = [
+            row[0]
+            for row in (
+                await connection.execute(
+                    text(
+                        "SELECT indexdef FROM pg_indexes WHERE tablename = 'request_logs'"
+                        " AND indexdef LIKE '%use_case%'"
+                    )
                 )
-            )
-        ).scalar()
-    assert found is not None
+            ).all()
+        ]
+
+    assert definitions, "no index on request_logs mentions use_case at all"
+    covering = [
+        definition
+        for definition in definitions
+        if re.search(r"\(use_case[^,)]*,\s*created_at", definition)
+    ]
+    assert covering, (
+        "no index leads with `(use_case, created_at)`, so the pruner bounds one column and filters "
+        "the rest of the table by the other:\n  " + "\n  ".join(definitions)
+    )

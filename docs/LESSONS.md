@@ -28,6 +28,25 @@ reading code.
   no event; a `throttle` produced a value the limiter could not consume; `FRD-116` shipped Vault
   and no container was given `VAULT_ADDR` for three days. **Test the wire, not the ends.**
 
+- **When every check is green and the thing is broken, ask which half you never tested.** Twice
+  now, and both times the untested half was invisible because the tested half was genuinely
+  correct.
+  The console was unreachable from outside with `ERR_CONNECTION_RESET` while
+  `docker compose ps` was healthy, `curl localhost:4200` answered 200, and the served HTML was
+  right — and nginx's access log held **no request from the browser at all**. Docker opens one
+  socket per published entry rather than one dual-stack socket (`bindv6only=0` notwithstanding),
+  so `AIRA_BIND_HOST=0.0.0.0` left fourteen IPv4 listeners and **zero** IPv6 ones; the forwarder
+  carried `::1 4200 -> 4200`, the browser resolved `localhost` to `::1`, and the connection was
+  accepted on the near side and reset on the far side.
+  Three things generalise past IPv6:
+  **a reset is not a refusal** — something accepted, so every diagnosis starts at the wrong end and
+  looks outward;
+  **the access log of the thing that should have answered is the fastest discriminator** — an empty
+  log means the traffic never arrived, which separates "my service is wrong" from "my service was
+  never asked" in one look, and it was the first thing that pointed anywhere useful;
+  and **the evidence was in the user's own output** — the `::1` rows were in the port listing I had
+  already read, and I skimmed them because I was looking for a missing forward rather than a
+  present one.
 - **A default argument is a silent one** — the wire shape's worst variant, because there is nothing
   *missing* to notice. `resolve()` had taken a `direct` argument since the vocabulary was written,
   with tests of its own; both planes called it with two arguments, so a grant naming a person was
@@ -200,6 +219,15 @@ reading code.
   the audit row.
 - **Two refusals that need different actions stay apart** — *"not in the catalog"* (add it) and
   *"not approved"* (release it); *"no capable model"* (operator-fixable, 400) and an outage (502).
+- **Where a fact has no copy, look for the join.** The opposite search to the one above, and it
+  found more: two halves that are each correct with nothing checking the wire between them. The
+  gateway's consumer dropped an event type it did not recognise **in silence**, so a configuration
+  change could be recorded, routed and never applied — and the three statements of the event
+  vocabulary (`emit`, the topic map, the consumer's chain) had only ever been compared two at a
+  time. Management had `makemigrations --check`; the gateway had thirty-nine Alembic revisions and
+  nothing comparing them to its models, on the plane where a missing column is a `ProgrammingError`
+  on the request path rather than a refusal to start. Both checks found a real defect on their
+  first run.
 - **A fact that must agree in N places has one owner and a test in both directions.** Met seven
   times now (the Kafka topics twice, the group grant, the capability vocabulary, the realm roles,
   the console's issuer, the local-model seeds) and twice more in one day: the stack's **published
@@ -404,6 +432,10 @@ reading code.
   measure one plane and call it the product. If the input cannot be loaded, fail — do not check
   half and say nothing.
 - **A test that skips when the data is inconvenient reports green about nothing.**
+- **Tests without a mutation are a claim, not a proof — and the security controls are where that
+  gap hides.** A sweep for source files no mutation touches found the bound on failed
+  authentications and the Kafka SASL/TLS wiring: both well covered, neither ever broken to watch a
+  test notice. Six properties, six mutations, six caught — but nobody knew that until it was tried.
 - **A subset that passes is not a suite that passes.** Including *a layer* as the subset: the model
   editor was split into three tabs, verified by hand in a browser, and shipped — and nine browser
   specs had been red ever since, because they open the editor and go straight to a field. A layout
