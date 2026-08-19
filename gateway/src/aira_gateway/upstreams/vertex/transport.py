@@ -26,8 +26,23 @@ from aira_common.tokens import TokenSource, TokenUnavailable
 from aira_gateway.residency import DEFAULT_ALLOWED_REGIONS, check_region
 from aira_gateway.upstreams.base import UpstreamError, upstream_reason
 
-#: The multi-region endpoint has its own host rather than a `{region}-` prefix.
-_MULTI_REGION_HOSTS = {"eu": "aiplatform.eu.rep.googleapis.com"}
+#: The endpoints that are **not** `{region}-aiplatform.googleapis.com`.
+#:
+#: `global` is the one that cost something. `AIRA_ALLOWED_REGIONS` has shipped with it in the
+#: default deployment, `residency.py` treats it as a real location, and the model catalogue can be
+#: told to use it — and every request built `global-aiplatform.googleapis.com`, which **resolves**
+#: and answers `404`. A dead host that fails DNS is obvious; one that resolves and 404s reads as
+#: "the model does not exist there", which is what the owner saw:
+#:
+#:   *"a further problem is that I cannot call any 3.5 models to test them."*
+#:
+#: Measured on 2026-08-19: this credential reaches `gemini-3.5-flash` and `gemini-3-flash-preview`
+#: **only** at `global`, in none of five regional endpoints — so the one region that could serve
+#: the newest models was the one region the transport could not address.
+_MULTI_REGION_HOSTS = {
+    "eu": "aiplatform.eu.rep.googleapis.com",
+    "global": "aiplatform.googleapis.com",
+}
 
 
 def host_for(region: str) -> str:

@@ -975,7 +975,7 @@ async def prepare_for_dispatch(
         attachments=[part.media_type for part in canonical.attachments] if canonical else None,
         units=units,
         extra_tokens=(
-            reserved_tokens(canonical.thinking)
+            reserved_tokens(canonical.thinking, declaration)
             if canonical is not None
             else embedding_tokens(embed)
             if embed is not None

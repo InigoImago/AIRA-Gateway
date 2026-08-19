@@ -124,6 +124,7 @@ class VertexGeminiAdapter:
     sampling_controls = GEMINI_SAMPLING
     #: The Gemini dialect over Vertex: a token budget, so every mode has a wire value.
     thinking_modes = frozenset(ThinkingMode)
+    expresses_thinking_levels = True
     #: Cataloguing a model for this provider **and** this publisher is enough to serve it.
     #:
     #: Two adapters share the provider name `vertex` — this one speaks Gemini, the other speaks
@@ -253,6 +254,9 @@ class VertexAnthropicAdapter:
     #: default is declared there is nothing to send. That case used to omit the block entirely,
     #: which is a caller asking for thinking, receiving none, and being told nothing.
     thinking_modes = frozenset(ThinkingMode) - {ThinkingMode.AUTO}
+    #: Anthropic asks for thinking by naming `budget_tokens` and has no level field,
+    #: so a level word has nowhere to go and is refused rather than dropped.
+    expresses_thinking_levels = False
     #: A schema and the caller's tools are **separate parameters** here, as of the API checked on
     #: 2026-08-08 (`output_config.format` beside `tools`). They travel together; the model may call
     #: a function or answer with the document, and `stop_reason` says which.

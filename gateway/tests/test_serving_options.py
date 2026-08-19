@@ -107,7 +107,7 @@ async def test_the_canonical_spelling_reaches_the_abstract_levels() -> None:
         await _catalogue(
             app,
             capabilities=["generate", "thinking"],
-            thinking={"modes": ["medium"], "levels": {"medium": 4096}},
+            thinking={"levels": ["medium"], "max_tokens": 4096},
         )
         response = client.post(
             "/v1beta/models/mock-1:generateContent",
@@ -115,7 +115,7 @@ async def test_the_canonical_spelling_reaches_the_abstract_levels() -> None:
         )
 
     assert response.status_code == 200, response.text
-    assert "thinking:medium budget=4096" in response.text
+    assert "thinking:medium]" in response.text
 
 
 async def test_both_spellings_at_once_is_a_400_rather_than_a_precedence_rule() -> None:

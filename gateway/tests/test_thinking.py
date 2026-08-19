@@ -43,7 +43,7 @@ def _model(**thinking: object) -> ModelDeclaration:
 
 def test_a_mode_the_model_does_not_declare_is_refused() -> None:
     with pytest.raises(ThinkingRejected) as caught:
-        resolve(Thinking(mode=ThinkingMode.HIGH), _model(modes=["auto"]))
+        resolve(Thinking(mode="high"), _model(modes=["auto"]))
     assert caught.value.code == INVALID_THINKING_MODE
     # The message names what *is* available: the fix is a one-line client change, and saying so
     # is the difference between that and a support conversation.
@@ -119,10 +119,10 @@ def test_disabled_with_a_count_is_still_refused() -> None:
 def test_no_setting_resolves_to_the_models_declared_default() -> None:
     """FR-4. Not the provider's default and not none: the predecessor applies this, so a gateway
     that sent nothing would answer differently for a reason nobody could see."""
-    model = _model(modes=["medium", "auto"], default={"mode": "medium"}, levels={"medium": 2048})
+    model = _model(modes=["auto"], levels=["medium"], default={"mode": "medium"})
     resolved = resolve(None, model)
     assert resolved is not None
-    assert (resolved.mode, resolved.tokens) == (ThinkingMode.MEDIUM, 2048)
+    assert (resolved.mode, resolved.tokens) == ("medium", None)
 
 
 def test_no_setting_and_no_declaration_sends_nothing() -> None:
@@ -133,31 +133,55 @@ def test_a_malformed_default_does_not_take_every_request_with_it() -> None:
     """Management validates the declaration, so this is unreachable through the API. A catalog
     typo must not fail every request for that model — omitting the setting is what happened
     before the feature existed, so it is the safe reading."""
-    assert resolve(None, _model(modes=["auto"], default={"mode": "aggressive"})) is None
+    assert resolve(None, _model(modes=["auto"], default={"mode": 7})) is None
 
 
-def test_an_abstract_level_is_translated_by_the_models_own_table() -> None:
-    """The level→budget mapping is per model and lives in the catalog, which is what keeps a new
-    model from being a code change (§5.2)."""
-    model = _model(modes=["high", "low"], levels={"high": 8192, "low": 512})
-    assert resolve(Thinking(mode=ThinkingMode.HIGH), model).tokens == 8192
-    assert resolve(Thinking(mode=ThinkingMode.LOW), model).tokens == 512
+def test_a_level_is_the_vendors_own_word_and_no_number_is_invented() -> None:
+    """`ADR-0021`. A level used to be resolved through a per-model `level → tokens` table, and the
+    owner's objection retired it: *"you ask me how many tokens medium should be — you do not even
+    find these parameters on the vendors' own pages."*
+
+    The number was not merely unfounded. It went upstream as a **ceiling on the model's
+    reasoning**, so a hand-typed `medium = 2000` truncates an agentic run that needed twenty
+    thousand, and nothing in the answer says why. Nothing is derived here now."""
+    model = _model(levels=["low", "high"], max_tokens=16_000)
+
+    for word in ("low", "high"):
+        resolved = resolve(Thinking(mode=word), model)
+        assert resolved is not None
+        assert (resolved.mode, resolved.tokens) == (word, None)
 
 
-def test_a_level_with_no_entry_falls_back_to_the_declared_maximum() -> None:
-    """Conservative in the safe direction, and settled against the real figure the moment the
-    response arrives. A silent zero would be a reservation ignoring the expensive half."""
-    model = _model(modes=["high"], max_tokens=16_000)
-    assert resolve(Thinking(mode=ThinkingMode.HIGH), model).tokens == 16_000
+def test_a_word_the_model_does_not_declare_is_refused_and_the_message_names_both_lists() -> None:
+    """A caller does not know whether their word is one of ours or the vendor's, so being told
+    that a model asked for `low` declares `['auto', 'disabled']` sends them nowhere."""
+    model = _model(modes=["auto"], levels=["high"])
+    with pytest.raises(ThinkingRejected) as caught:
+        resolve(Thinking(mode="medium"), model)
+    assert caught.value.code == INVALID_THINKING_MODE
+    assert "'auto'" in str(caught.value) and "'high'" in str(caught.value)
 
 
-def test_disabled_resolves_to_a_budget_of_zero_not_to_nothing() -> None:
+def test_a_vendor_word_nobody_here_has_heard_of_is_accepted_when_the_model_declares_it() -> None:
+    """The point of free text. A closed vocabulary would refuse a vendor's next word from a
+    gateway that has no opinion about it, telling a caller it "is not a thinking mode" while the
+    model in question takes it happily."""
+    resolved = resolve(Thinking(mode="turbo"), _model(levels=["turbo"]))
+    assert resolved is not None
+    assert resolved.mode == "turbo"
+
+
+def test_disabled_is_still_said_out_loud_rather_than_omitted() -> None:
     """The distinction that matters: a model whose default is `auto` must be told *explicitly* to
-    stop, or its default silently wins over the caller's instruction."""
+    stop, or its default silently wins over the caller's instruction.
+
+    Asserted as *a setting is returned* rather than as `tokens == 0`. Zero was Google's encoding
+    of off, carried in the canonical request because the level table forced every setting to hold
+    a number; the dialect owns its own spelling now, and `test_gemini_upstream` checks it there."""
     model = _model(modes=["disabled", "auto"], default={"mode": "auto"})
     resolved = resolve(Thinking(mode=ThinkingMode.DISABLED), model)
     assert resolved is not None
-    assert resolved.tokens == 0
+    assert resolved.mode == ThinkingMode.DISABLED
 
 
 # == what the reservation sees ===================================================================
@@ -167,13 +191,29 @@ def test_disabled_resolves_to_a_budget_of_zero_not_to_nothing() -> None:
     ("setting", "expected"),
     [
         (None, 0),
-        (Thinking(mode=ThinkingMode.DISABLED, tokens=0), 0),
+        (Thinking(mode=ThinkingMode.DISABLED), 0),
         (Thinking(mode=ThinkingMode.LIMITED, tokens=20_000), 20_000),
-        (Thinking(mode=ThinkingMode.AUTO, tokens=None), 0),
+        # `auto` and a level name no number, so the reservation reads the model's ceiling — the
+        # one figure here that a vendor actually states.
+        (Thinking(mode=ThinkingMode.AUTO), 16_000),
+        (Thinking(mode="high"), 16_000),
     ],
 )
-def test_the_reservation_adds_the_resolved_budget(setting: Thinking | None, expected: int) -> None:
-    assert reserved_tokens(setting) == expected
+def test_the_reservation_reads_the_model_not_the_request(
+    setting: Thinking | None, expected: int
+) -> None:
+    """The split `ADR-0021` is built on. `tokens` is what goes on the wire and only `limited` has
+    one; the reservation is a spend estimate and asks the declaration. They were one field, which
+    is why a level had to invent a number for the reservation to have something to read."""
+    assert reserved_tokens(setting, _model(levels=["high"], modes=["auto"], max_tokens=16_000)) == (
+        expected
+    )
+
+
+def test_a_model_with_no_ceiling_reserves_nothing_rather_than_guessing() -> None:
+    """A dialect addressed by level alone — `reasoning_effort` — legitimately has no ceiling. The
+    output cap already bounds the request, and a guess here is the thing this change removed."""
+    assert reserved_tokens(Thinking(mode="high"), _model(levels=["high"])) == 0
 
 
 # == the per-hop check ===========================================================================
@@ -182,7 +222,7 @@ def test_the_reservation_adds_the_resolved_budget(setting: Thinking | None, expe
 def test_a_candidate_that_cannot_think_is_refused_by_name() -> None:
     """The dispatch chain skips it rather than serving a quieter answer: less reasoning than was
     asked for is not an error, it is a worse answer with a 200 on it."""
-    setting = Thinking(mode=ThinkingMode.HIGH, tokens=8192)
+    setting = Thinking(mode="high")
     reason = permitted_by(setting, ModelDeclaration(name="other"))
     assert reason is not None
     assert "undeclared" in reason
@@ -241,21 +281,44 @@ def test_both_surfaces_read_a_mode_string_the_same_way(raw: str) -> None:
     kira = kira_thinking(kira_schemas.ThinkingSetting(mode=raw))
 
     assert gemini is not None and kira is not None
-    assert gemini.mode is kira.mode is ThinkingMode.HIGH
+    assert gemini.mode == kira.mode == "high"
 
 
-def test_an_unknown_mode_is_refused_the_same_way_on_both() -> None:
-    """Including the code, because a migrating client's error handling switches on that string."""
+def test_a_word_neither_surface_knows_is_carried_to_the_model_identically() -> None:
+    """**Both surfaces stopped refusing here, and they had to stop together.**
+
+    A mode used to be checked against a closed enum at parse time, before the model was known —
+    right while the vocabulary was ours, wrong once a level is a word the *vendor* accepts
+    (`ADR-0021`): a gateway with no opinion about `turbo` would refuse it on behalf of a model that
+    takes it. The refusal moved to `thinking.py`, against the model's own declared list.
+
+    What must not change is that the two surfaces still agree, which is why this is asserted
+    through both mappers rather than through `mode_from`.
+    """
     from aira_gateway.api.gemini import schemas as gemini_schemas
     from aira_gateway.api.gemini.mapping import thinking_of as gemini_thinking
     from aira_gateway.api.kira import schemas as kira_schemas
     from aira_gateway.api.kira.mapping import thinking_of as kira_thinking
 
-    with pytest.raises(ThinkingRejected) as gemini:
-        gemini_thinking(gemini_schemas.ThinkingConfig(mode="ponder"))
-    with pytest.raises(ThinkingRejected) as kira:
-        kira_thinking(kira_schemas.ThinkingSetting(mode="ponder"))
+    gemini = gemini_thinking(gemini_schemas.ThinkingConfig(mode="Ponder"))
+    kira = kira_thinking(kira_schemas.ThinkingSetting(mode="Ponder"))
+    assert gemini is not None and kira is not None
+    assert gemini.mode == kira.mode == "ponder"
 
-    assert gemini.value.code == kira.value.code == INVALID_THINKING_MODE
-    assert gemini.value.message == kira.value.message
-    assert "ponder" in gemini.value.message
+    # And the model is where it is refused, by name, with what that model does offer.
+    with pytest.raises(ThinkingRejected) as caught:
+        resolve(gemini, _model(modes=["auto"], levels=["high"]))
+    assert caught.value.code == INVALID_THINKING_MODE
+    assert "ponder" in caught.value.message
+
+
+@pytest.mark.parametrize("raw", ["", "   ", "x" * 33])
+def test_a_mode_that_is_not_a_word_is_refused_at_the_surface(raw: str) -> None:
+    """The one thing the closed enum was still buying. An open set means a caller could otherwise
+    push a paragraph into an error message and an audit row."""
+    from aira_gateway.api.kira import schemas as kira_schemas
+    from aira_gateway.api.kira.mapping import thinking_of as kira_thinking
+
+    with pytest.raises(ThinkingRejected) as caught:
+        kira_thinking(kira_schemas.ThinkingSetting(mode=raw))
+    assert caught.value.code == INVALID_THINKING_MODE

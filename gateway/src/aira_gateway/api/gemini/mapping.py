@@ -167,7 +167,7 @@ def thinking_of(config: schemas.ThinkingConfig | None) -> Thinking | None:
         return None
     if config.thinkingBudget is not None:
         mode = _BUDGET_MODES.get(config.thinkingBudget, ThinkingMode.LIMITED)
-        tokens = config.thinkingBudget if mode is ThinkingMode.LIMITED else None
+        tokens = config.thinkingBudget if mode == ThinkingMode.LIMITED else None
         return Thinking(mode=mode, tokens=tokens)
     if config.mode is None:
         return None

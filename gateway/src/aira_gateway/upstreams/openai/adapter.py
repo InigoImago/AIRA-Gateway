@@ -151,7 +151,9 @@ class OpenAIAdapter:
     #: budget at all, so a caller's explicit count cannot be honoured exactly — and rounding it
     #: would spend a different amount than they asked for with nothing to show it (`FRD-111`
     #: §5.2). Refused by declaration rather than by an exception in one mapper.
-    thinking_modes = frozenset(ThinkingMode) - {ThinkingMode.LIMITED}
+    thinking_modes = frozenset(ThinkingMode) - {ThinkingMode.LIMITED, ThinkingMode.AUTO}
+    #: `reasoning_effort` is a word and nothing else — which is also why `auto` is not above.
+    expresses_thinking_levels = True
     #: `response_format` and `tools` are separate fields in this dialect.
     tools_with_schema = True
 

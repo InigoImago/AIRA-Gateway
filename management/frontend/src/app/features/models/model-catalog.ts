@@ -27,7 +27,7 @@ import {
   ThinkingModeName,
 } from '../../core/api/models';
 import { MeService } from '../../core/api/me.service';
-import { UseCaseService } from '../../core/api/use-case.service';
+import { Provenance, UseCaseService } from '../../core/api/use-case.service';
 import { InfoHint } from '../../core/ui/info-hint';
 import { ConfirmService } from '../../core/ui/confirm.service';
 import { TablePager } from '../../core/ui/table-pager';
@@ -206,9 +206,27 @@ export class ModelCatalog implements OnInit {
   protected readonly thinkingModes = signal<ThinkingModeName[]>([]);
   protected readonly thinkingMin = signal<number | null>(null);
   protected readonly thinkingMax = signal<number | null>(null);
-  protected readonly thinkingDefault = signal<'' | ThinkingModeName>('');
-  /** Mode → budget, so an abstract level reserves the right number of tokens (`FRD-111`). */
-  protected readonly thinkingLevels = signal<Record<string, number>>({});
+  /** A mode or a level word — whichever the model does when the caller says nothing. */
+  protected readonly thinkingDefault = signal<string>('');
+  /**
+   * The **vendor's own** level words this model accepts — `low`, `high`, whatever it calls them.
+   *
+   * This was `Record<string, number>`: a token budget per level, and the field's own screen-reader
+   * label was *"How many thinking tokens medium means"*. Nobody publishes that number. The owner,
+   * cataloguing a real model: *"you ask me how many tokens that should be — you do not even find
+   * these parameters on the vendors' own pages. How am I supposed to know?"*
+   *
+   * And a guess there was not merely unfounded: it went upstream as a **ceiling on the model's
+   * reasoning**, so a typed `medium = 2000` truncates an agentic run that needed twenty thousand.
+   * `ADR-0021` replaced the table with the words themselves, typed freely and **checked against
+   * the model** — one capped request, and the provider's refusal is the answer.
+   */
+  protected readonly thinkingLevels = signal<string[]>([]);
+  /** What is in the box but not yet a chip. Enter, comma or blur commits it. */
+  protected readonly levelDraft = signal('');
+  /** Word → what the model said when it was asked, from the check below. Empty until asked. */
+  protected readonly levelVerdicts = signal<Record<string, { ok: boolean; detail: string }>>({});
+  protected readonly checkingLevels = signal(false);
   /** Comma-separated, because a width list is short and typing it beats a repeater. */
   protected readonly dimensions = signal('');
   protected readonly defaultDimension = signal<'' | number>('');
@@ -285,15 +303,91 @@ export class ModelCatalog implements OnInit {
   protected toggleThinkingMode(mode: ThinkingModeName, on: boolean): void {
     const current = this.thinkingModes().filter((value) => value !== mode);
     this.thinkingModes.set(on ? [...current, mode] : current);
-    if (!on) {
-      // Its budget goes with it, and so does a default naming it — the validator refuses a default
-      // that is not among the declared modes, and leaving either behind turns an untick into a
-      // save that fails for a reason the reader cannot see on screen.
-      const levels = { ...this.thinkingLevels() };
-      delete levels[mode];
-      this.thinkingLevels.set(levels);
-      if (this.thinkingDefault() === mode) this.thinkingDefault.set('');
+    // A default naming it goes with it: the validator refuses a default that is not declared, and
+    // leaving one behind turns an untick into a save that fails for a reason the reader cannot see
+    // on screen.
+    if (!on && this.thinkingDefault() === mode) this.thinkingDefault.set('');
+  }
+
+  /**
+   * Commit whatever is in the box as a level word.
+   *
+   * Lower-cased and de-duplicated, because `Low` and `low` are the same instruction to every
+   * vendor and two chips saying so would be two chips the reader has to reconcile. A word that is
+   * one of the three *modes* is refused here rather than at save: those are settings the gateway
+   * translates per dialect, not words a vendor takes, and a model listing one as a level would
+   * send it verbatim and mean something else by it.
+   */
+  protected addLevel(): void {
+    const word = this.levelDraft().trim().toLowerCase();
+    this.levelDraft.set('');
+    if (!word) return;
+    if ((THINKING_MODES as readonly string[]).includes(word)) {
+      // Through the page's one banner, because `formError` is a *computed* over the form's state
+      // — a rule about what is on screen, not a place to put a message about what somebody typed.
+      this.error.set(
+        `'${word}' is a thinking mode rather than a vendor's level word — tick it above instead.`,
+      );
+      return;
     }
+    if (this.thinkingLevels().includes(word)) return;
+    this.thinkingLevels.set([...this.thinkingLevels(), word]);
+  }
+
+  protected removeLevel(word: string): void {
+    this.thinkingLevels.set(this.thinkingLevels().filter((value) => value !== word));
+    const verdicts = { ...this.levelVerdicts() };
+    delete verdicts[word];
+    this.levelVerdicts.set(verdicts);
+    if (this.thinkingDefault() === word) this.thinkingDefault.set('');
+  }
+
+  /** Everything a caller could ask this model for: the ticked modes, then the declared words. */
+  protected readonly declarableDefaults = computed<string[]>(() => [
+    ...this.thinkingModes(),
+    ...this.thinkingLevels(),
+  ]);
+
+  /** A word's verdict from the last check, or `null` if it has not been asked about. */
+  protected levelVerdict(word: string): { ok: boolean; detail: string } | null {
+    return this.levelVerdicts()[word] ?? null;
+  }
+
+  /**
+   * Ask the model whether it takes the declared words.
+   *
+   * **Informs, never blocks** — `FRD-506`'s rule, and the reason this is a button rather than a
+   * validation rule: a word is free text precisely because no list in this repository can stay
+   * ahead of the vendors, so the only authority on whether `low` works is the model, and it may be
+   * unreachable at the moment somebody is filling in a form.
+   *
+   * The draft is committed first. Typing a word and pressing the button without leaving the box
+   * would otherwise check everything *except* the word the reader was looking at.
+   */
+  protected checkLevels(): void {
+    this.addLevel();
+    const words = this.thinkingLevels();
+    const model = this.name().trim();
+    if (!words.length || !model) return;
+    this.checkingLevels.set(true);
+    this.service.checkThinkingLevels(model, words, this.formProvenance()).subscribe({
+      next: (answer) => {
+        const verdicts: Record<string, { ok: boolean; detail: string }> = {};
+        for (const result of answer.results) {
+          verdicts[result.level] = { ok: result.accepted, detail: result.detail };
+        }
+        this.levelVerdicts.set(verdicts);
+        this.checkingLevels.set(false);
+      },
+      error: (response: unknown) => {
+        this.checkingLevels.set(false);
+        // Nothing is marked. A failed *question* must not read as a failed *answer*: a red chip
+        // says "the model refused this word", and the gateway being down says nothing about the
+        // word at all.
+        this.levelVerdicts.set({});
+        this.error.set(errorMessage(response, 'Could not ask this model about its levels.'));
+      },
+    });
   }
 
   /** What a thinking mode means, in the words somebody configuring one needs.
@@ -309,21 +403,10 @@ export class ModelCatalog implements OnInit {
       case 'auto':
         return 'can be left to decide for itself how much to think';
       case 'limited':
-        return 'accepts a token budget, bounded below';
+        return 'accepts a token budget the caller names, bounded below';
       default:
-        return 'accepts this as a level — say how many tokens it means';
+        return mode;
     }
-  }
-
-  protected thinkingLevel(mode: ThinkingModeName): number | null {
-    return this.thinkingLevels()[mode] ?? null;
-  }
-
-  protected setThinkingLevel(mode: ThinkingModeName, value: number | null): void {
-    const levels = { ...this.thinkingLevels() };
-    if (value === null || value === undefined || Number.isNaN(value)) delete levels[mode];
-    else levels[mode] = value;
-    this.thinkingLevels.set(levels);
   }
 
   /** The widths as numbers, for the default picker — so it can only offer a declared one. */
@@ -564,10 +647,24 @@ export class ModelCatalog implements OnInit {
   protected readonly check = signal<ModelCheck | null>(null);
   protected readonly checking = signal(false);
 
+  /**
+   * Where the **form** says this model lives, for a check to answer about.
+   *
+   * Both buttons sit inside an editor, and without this they asked the gateway about the *saved*
+   * row: correcting a provider from `generative-language` to `vertex`, typing a region and
+   * pressing Check answered *"Declared, but nothing serves it"* — about the declaration being
+   * replaced. Right about the wrong thing, which is the harder kind of wrong to notice.
+   *
+   * Empty from a row opened and not edited, in which case the gateway keeps using what it stored.
+   */
+  private formProvenance(): Provenance {
+    return { provider: this.provider(), publisher: this.publisher(), region: this.region() };
+  }
+
   protected runCheck(model: Pick<CatalogModel, 'name'>): void {
     this.checking.set(true);
     this.check.set(null);
-    this.service.checkModel(model.name).subscribe({
+    this.service.checkModel(model.name, this.formProvenance()).subscribe({
       next: (verdict) => {
         this.check.set(verdict);
         this.checkedName.set(model.name);
@@ -1129,7 +1226,9 @@ export class ModelCatalog implements OnInit {
     this.thinkingMin.set(null);
     this.thinkingMax.set(null);
     this.thinkingDefault.set('');
-    this.thinkingLevels.set({});
+    this.thinkingLevels.set([]);
+    this.levelDraft.set('');
+    this.levelVerdicts.set({});
     this.dimensions.set('');
     this.defaultDimension.set('');
     this.taskTypes.set('');
@@ -1144,7 +1243,9 @@ export class ModelCatalog implements OnInit {
     this.thinkingMin.set(thinking?.min_tokens ?? null);
     this.thinkingMax.set(thinking?.max_tokens ?? null);
     this.thinkingDefault.set(thinking?.default?.mode ?? '');
-    this.thinkingLevels.set({ ...(thinking?.levels ?? {}) });
+    this.thinkingLevels.set([...(thinking?.levels ?? [])]);
+    this.levelDraft.set('');
+    this.levelVerdicts.set({});
 
     const embedding = model.embedding ?? null;
     this.dimensions.set((embedding?.dimensions ?? []).join(', '));
@@ -1175,7 +1276,7 @@ export class ModelCatalog implements OnInit {
           min_tokens: this.thinkingMin(),
           max_tokens: this.thinkingMax(),
           default: chosen ? { mode: chosen } : null,
-          levels: Object.keys(levels).length ? levels : null,
+          levels: levels.length ? levels : null,
         }
       : null;
 

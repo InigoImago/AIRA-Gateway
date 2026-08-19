@@ -55,13 +55,31 @@ def validate_thinking(block: Any, *, max_output_tokens: int | None) -> list[str]
 
     errors: list[str] = []
     modes = block.get("modes")
-    if not isinstance(modes, list) or not modes:
-        errors.append("thinking.modes must be a non-empty list.")
+    if modes is None:
         modes = []
+    if not isinstance(modes, list):
+        errors.append("thinking.modes must be a list.")
+        modes = []
+    # **A closed set, unlike the levels below.** These three are settings the gateway owns and each
+    # dialect spells differently — `disabled` is Google's budget `0` and OpenAI's `"none"` — so an
+    # unknown one here is a typo rather than a vendor's new word.
     known = {member.value for member in ThinkingMode}
     unknown = [mode for mode in modes if mode not in known]
     if unknown:
-        errors.append(f"Unknown thinking modes: {', '.join(map(str, unknown))}.")
+        errors.append(
+            f"Unknown thinking modes: {', '.join(map(str, unknown))}. "
+            f"The modes are {sorted(known)}; a vendor's level word goes in thinking.levels."
+        )
+
+    # A block that offers nothing is a block that should not be there. It used to be "modes must be
+    # non-empty", which stopped being right the moment a model could offer level words and no
+    # control mode at all — an OpenAI-compatible server that takes `reasoning_effort` and has no
+    # way to say "you decide" is exactly that model.
+    if not modes and not block.get("levels"):
+        errors.append(
+            "thinking declares neither a mode nor a level, so nothing about it can be asked for. "
+            "Give it thinking.modes, thinking.levels, or remove the block."
+        )
 
     minimum = _positive_int(block.get("min_tokens"), "thinking.min_tokens", errors)
     maximum = _positive_int(block.get("max_tokens"), "thinking.max_tokens", errors)
@@ -110,57 +128,46 @@ def validate_thinking(block: Any, *, max_output_tokens: int | None) -> list[str]
             "be refused by the provider. Drop one of the two."
         )
 
-    # **Levels without budgets are levels that mean the same thing.**
+    # **A level is a word the vendor accepts, and the only wrong things are shape and duplication.**
     #
-    # `_with_budget` resolves a level with no entry to the declared *maximum* — deliberately, so a
-    # reservation never ignores the expensive half of a request. That figure then goes on the wire
-    # as the budget, so a model declaring `low` and `high` with a ceiling and no table is told the
-    # same thing for both, and the distinction the caller asked for is gone before it leaves here.
+    # This was a `{level: token count}` table with four rules guarding it — a level below the
+    # floor, above the ceiling, for a mode the model does not offer, and levels-with-a-ceiling-and-
+    # no-table. All four were correct about the table and the table was the mistake. The owner:
     #
-    # Only when a ceiling is declared: a model addressed by *level* rather than by budget — the
-    # OpenAI dialect's `reasoning_effort` — legitimately has modes, no ceiling and no table, and
-    # requiring numbers there would be requiring a number nobody sends.
-    abstract = {ThinkingMode.MINIMAL, ThinkingMode.LOW, ThinkingMode.MEDIUM, ThinkingMode.HIGH}
-    declared_levels = {str(mode) for mode in modes} & {str(mode) for mode in abstract}
-    table = block.get("levels")
-    if maximum is not None and len(declared_levels) > 1 and not isinstance(table, dict):
-        errors.append(
-            f"thinking declares {len(declared_levels)} levels and a ceiling of {maximum} but no "
-            "thinking.levels table, so every level would be sent as that ceiling and they would "
-            "all mean the same thing. Give each level its budget."
-        )
-
+    #   *"If I now pick medium or low, you ask me how many tokens that should be. You do not even
+    #   find these parameters on the vendors' own pages. How am I supposed to know?"*
+    #
+    # Nobody publishes it, so nobody could fill it, and a number guessed there was **sent as a
+    # ceiling on the model's reasoning** — a hand-typed `medium = 2000` truncating an agentic run
+    # that needed twenty thousand. `ADR-0021` replaced it with the vendor's own words, declared as
+    # free text and checkable against the model itself.
+    #
+    # So validation here is deliberately thin. Whether a word *works* is a question for the model,
+    # not for a rule in this file: the console asks it with one capped request, and the provider's
+    # refusal is the answer. Refusing an unrecognised word here would be this plane inventing a
+    # vocabulary again, one release behind whatever the vendors ship next.
     levels = block.get("levels")
     if levels is not None:
-        if not isinstance(levels, dict):
-            errors.append("thinking.levels must be an object mapping a mode to a token budget.")
+        if not isinstance(levels, list) or not all(isinstance(level, str) for level in levels):
+            errors.append(
+                "thinking.levels must be a list of the level words this model accepts, "
+                "for example ['low', 'high']."
+            )
         else:
-            for mode, budget in levels.items():
-                if mode not in known:
-                    errors.append(f"thinking.levels has an unknown mode '{mode}'.")
-                elif mode not in modes:
-                    # Dead configuration that reads as a working path: a budget for a level the
-                    # model does not offer is never reachable and never wrong-looking.
-                    errors.append(
-                        f"thinking.levels names '{mode}', which thinking.modes does not offer."
-                    )
-                value = _positive_int(budget, f"thinking.levels.{mode}", errors)
-                # **The bounds are the model's, so a level outside them is a request the provider
-                # refuses.** This is where the vendors differ most and where the difference is
-                # least visible: `low` set to 100 is fine on one model of a family and a `400` on
-                # the next, and the console used to accept both without a word.
-                if value is None:
-                    continue
-                if minimum is not None and value < minimum:
-                    errors.append(
-                        f"thinking.levels.{mode} is {value}, below the {minimum} this model "
-                        "accepts — the provider refuses a budget under its own floor."
-                    )
-                if maximum is not None and value > maximum:
-                    errors.append(
-                        f"thinking.levels.{mode} is {value}, above the {maximum} this model "
-                        "accepts."
-                    )
+            words = [level.strip().lower() for level in levels]
+            if any(not word for word in words):
+                errors.append("thinking.levels may not contain an empty word.")
+            if len(set(words)) != len(words):
+                errors.append("thinking.levels names the same level twice.")
+            clashes = sorted(set(words) & {str(member) for member in ThinkingMode})
+            if clashes:
+                # `disabled`, `auto` and `limited` are settings this gateway translates per
+                # dialect, not words a vendor takes. A model listing one as a *level* would send
+                # it verbatim and mean something else by it.
+                errors.append(
+                    f"thinking.levels names {clashes}, which are thinking modes rather than "
+                    "vendor level words — declare them in thinking.modes."
+                )
     return errors
 
 

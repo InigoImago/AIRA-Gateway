@@ -179,6 +179,18 @@ class Upstream(Protocol):
     #: somebody can still choose the right answer.
     thinking_modes: frozenset[ThinkingMode]
 
+    #: Whether this dialect has a field for a **level word** at all (`ADR-0021`).
+    #:
+    #: The second half of the same declaration, and it became a separate question when levels
+    #: stopped being members of :class:`ThinkingMode`: `reasoning_effort` and Gemini's
+    #: `thinkingLevel` both take a word, and Anthropic's `budget_tokens` takes only a number, so
+    #: there is no field on that dialect for `low` to go into and it must be refused by name.
+    #:
+    #: Declared rather than inferred from the mapper, for the reason every declaration here exists:
+    #: the failure it prevents is a mapper that quietly drops what it cannot express, which is
+    #: exactly what the Anthropic one did before `FRD-124`.
+    expresses_thinking_levels: bool
+
     def models(self) -> list[UpstreamModel]: ...
 
     async def generate(self, request: CanonicalRequest) -> CanonicalResponse: ...

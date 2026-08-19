@@ -73,6 +73,16 @@ UNCONDITIONED: dict[str, str] = {
         "(`FRD-308`) — `_models_named_in` reads `config.model`, so this step needed no separate "
         "rule and gets no separate hole."
     ),
+    "api/incidents.py:check_thinking_levels:generate": (
+        "The console's *Ask the model* button (`ADR-0021`), and it is a question **about the "
+        "installation** rather than a request served for anybody: it names no use case, so there "
+        "is no release, no residency claim and no budget that could apply to it. What it asks is "
+        "precisely whether the provider accepts a word, which is the one thing the conditions "
+        "cannot answer — a level is free text because no list here survives the vendors' next "
+        "release. Gated to the two roles that may investigate an installation, bounded to "
+        "`MAX_LEVELS_PER_CHECK` words, and capped at one output token per word: a word the model "
+        "refuses is free, because the refusal comes before any generation."
+    ),
     "pipeline/dispatch.py:dispatch_with_fallback:generate": (
         "The chain itself, which is where `permits` is asked. Named here because it is the "
         "definition rather than an exemption — the call is one line below the check."

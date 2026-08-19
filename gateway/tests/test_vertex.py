@@ -820,3 +820,26 @@ def test_a_catalogued_model_with_no_region_is_refused_by_name() -> None:
         _target({}, "google", "gemini-2.5-pro", {})
 
     assert "region" in str(caught.value)
+
+
+def test_the_global_endpoint_has_no_region_prefix() -> None:
+    """**A host that resolves and 404s is worse than one that does not resolve.**
+
+    `global` ships in `AIRA_ALLOWED_REGIONS` in the default deployment and `residency.py` treats
+    it as a location, so a model could be catalogued there — and every request went to
+    `global-aiplatform.googleapis.com`, which exists in DNS and answers `404`. That reads as *"the
+    model is not available there"*, which is precisely the wrong conclusion. Reported as:
+
+        *"a further problem is that I cannot call any 3.5 models to test them."*
+
+    Measured on 2026-08-19: this installation's credential reaches `gemini-3.5-flash` and
+    `gemini-3-flash-preview` **only** at `global` — 404 in `europe-west1`, `europe-west4`,
+    `europe-north1` and `us-central1` alike. So the one region that serves the newest models was
+    the one region the transport could not address.
+    """
+    from aira_gateway.upstreams.vertex.transport import host_for
+
+    assert host_for("global") == "aiplatform.googleapis.com"
+    # The other two shapes, so a fix to one is not a break of the others.
+    assert host_for("eu") == "aiplatform.eu.rep.googleapis.com"
+    assert host_for("europe-west1") == "europe-west1-aiplatform.googleapis.com"

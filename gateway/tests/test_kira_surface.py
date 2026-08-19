@@ -211,14 +211,14 @@ async def test_thinking_reaches_the_model_it_was_asked_for() -> None:
         await _catalogue(
             app,
             capabilities=["generate", "thinking"],
-            thinking={"modes": ["medium", "auto"], "levels": {"medium": 2048}},
+            thinking={"modes": ["auto"], "levels": ["medium"], "max_tokens": 2048},
         )
         response = client.post(f"{BASE}/chat", json=_chat(thinking={"mode": "medium"}))
 
     assert response.status_code == 200, response.text
     # The level was translated to this model's own budget for it — the catalog's table, not a
     # constant in our code, which is what keeps a new model from being a code change.
-    assert "thinking:medium budget=2048" in response.json()["parts"][0]["text"]
+    assert "thinking:medium]" in response.json()["parts"][0]["text"]
 
 
 async def test_a_thinking_mode_the_model_does_not_offer_keeps_its_own_code() -> None:
@@ -351,15 +351,18 @@ async def test_a_declared_thinking_default_is_now_applied_rather_than_refused() 
             app,
             capabilities=["generate", "thinking"],
             thinking={
-                "modes": ["auto", "medium"],
+                "modes": ["auto"],
+                "levels": ["medium"],
                 "default": {"mode": "medium"},
-                "levels": {"medium": 1024},
             },
         )
         response = client.post(f"{BASE}/chat", json=_chat())
 
     assert response.status_code == 200, response.text
-    assert "thinking:medium budget=1024" in response.json()["parts"][0]["text"]
+    # **No budget beside the word**, which is the change `ADR-0021` made: a level used to be
+    # turned into a number here from a per-model table nobody could fill, and that number went
+    # upstream as a ceiling on the model's reasoning.
+    assert "thinking:medium]" in response.json()["parts"][0]["text"]
 
 
 async def test_a_model_whose_default_is_disabled_is_served_normally() -> None:

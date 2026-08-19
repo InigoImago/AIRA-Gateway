@@ -181,17 +181,35 @@ def test_naming_global_is_all_it_takes_to_use_it() -> None:
 @pytest.mark.parametrize(
     ("setting", "expected"),
     [
-        (Thinking(mode=ThinkingMode.DISABLED, tokens=0), 0),
-        (Thinking(mode=ThinkingMode.AUTO, tokens=None), -1),
+        (Thinking(mode=ThinkingMode.DISABLED), 0),
+        (Thinking(mode=ThinkingMode.AUTO), -1),
         (Thinking(mode=ThinkingMode.LIMITED, tokens=4096), 4096),
-        # An abstract level arrives already translated by the catalog, so what reaches the wire is
-        # a number — "medium" means nothing to an HTTP call.
-        (Thinking(mode=ThinkingMode.MEDIUM, tokens=2048), 2048),
     ],
 )
-def test_each_thinking_mode_maps_to_googles_budget(setting: Thinking, expected: int) -> None:
+def test_each_control_mode_maps_to_googles_budget(setting: Thinking, expected: int) -> None:
+    """The three settings that are *ours*. Google spells each as a number, and `disabled` is `0`
+    rather than an absent field — the canonical request stopped carrying that zero when the level
+    table went (`ADR-0021`), so the spelling lives here now and this is what pins it."""
     body = canonical_to_gemini_request(_request().model_copy(update={"thinking": setting}))
     assert body["generationConfig"]["thinkingConfig"]["thinkingBudget"] == expected
+
+
+@pytest.mark.parametrize("word", ["low", "high", "turbo"])
+def test_a_level_goes_out_as_the_vendors_own_word(word: str) -> None:
+    """Measured on 2026-08-19: Gemini 3 takes `thinkingLevel`, and `gemini-2.5-flash` answers
+    *"thinking_level is not supported by this model"* — which is why which words a model takes is
+    declared per model rather than decided here by a version check.
+
+    `turbo` is in this list on purpose. Nothing in this repository knows what it means, and that
+    is the property: a vendor's next word must not need a code change to reach it."""
+    body = canonical_to_gemini_request(
+        _request().model_copy(update={"thinking": Thinking(mode=word)})
+    )
+    config = body["generationConfig"]["thinkingConfig"]
+    assert config == {"thinkingLevel": word}
+    # And no budget beside it. A level that also sent a number would be the truncation this
+    # change removed, wearing the new field's name.
+    assert "thinkingBudget" not in config
 
 
 def test_an_auto_mode_ignores_a_resolved_budget_on_the_wire() -> None:

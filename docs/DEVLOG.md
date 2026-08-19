@@ -5,6 +5,72 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Thinking levels stop being numbers nobody can know (2026-08-19)
+
+The owner catalogued a real model and objected to the form:
+
+> *"If I now pick medium or low, you ask me how many tokens that should be. You do not even find
+> these parameters on the vendors' own pages. How am I, cataloguing the model, supposed to know it
+> when the vendor never stated it? … Your story with the percentages is nonsense. And on the
+> thinking limit, I do not find that on the vendor pages either — for agentic coding it would be
+> fatal."*
+
+Every clause holds. The console's own field label, read out by a screen reader, was *"How many
+thinking tokens `medium` means"* — a question with no source. My intermediate proposal, deriving it
+as a fraction of the model's range, was worse rather than better: a fraction of a range is an
+invented number with a formula in front of it. And the number was not inert — it went upstream as
+`thinkingBudget`, a **ceiling on the model's reasoning**, so a typed `medium = 2000` truncates an
+agentic run that needed twenty thousand, with a `200` on it.
+
+A second correction followed a draft that mapped every level to *"let the model decide"*:
+*"for a chatbot it would be different, and you are focusing very hard on gemini 2.5, which is a
+very old model and is being retired in the EU soon."* Right on both counts — the whole point of
+`low` is that it is not `high`, and designing around the dying model was designing backwards.
+
+**So: the vendor's own words, typed freely, checked against the model.** `ThinkingMode` keeps the
+three settings the gateway owns (`disabled`, `auto`, `limited`) and loses the four levels;
+`Thinking.mode` is a `str`; the `level → tokens` table is gone from the catalogue, the console and
+the resolution path. A model whose dialect takes only numbers simply does not offer the words.
+
+**The split that made it possible.** `Thinking.tokens` was doing two jobs — what goes on the wire
+*and* what the budget reserves against — which is exactly why a level had to invent a number: so
+the reservation had something to read. It is what goes on the wire now, and `reserved_tokens` asks
+the declaration for the model's ceiling instead.
+
+**The check.** Free text needs an authority and no rule here can be one. Measured before building:
+`:countTokens` is free and useless (it never reads `generationConfig` and answers 200 to an
+unsupported level), and `generateContent` capped at one output token judges — a refused word costs
+nothing, an accepted one costs a token. So the console has *"Ask the model"*, and it found
+something on its first press: the migration carried `gemini-2.5-flash` across as
+`levels: [low, medium, high]`, and all three came back red in Google's own words.
+
+**And two things the owner found by using it**, neither about thinking:
+
+- *"I cannot call any 3.5 models to test them."* Probed across five endpoints: this credential
+  reaches `gemini-3.5-flash` and `gemini-3-flash-preview` **only at `global`** — and `host_for()`
+  built `global-aiplatform.googleapis.com`, which **resolves** and answers 404. A host that fails
+  DNS is obvious; one that resolves and 404s reads as *"the model is not available there"*. Fixed,
+  and with it the measurement that had been missing all along: on `gemini-3.5-flash`, `minimal`
+  spends **0** thinking tokens, `low`/`medium`/`high` all answer, and a typo (`hight`) is refused
+  by the vendor with the value named.
+- *"gemini 3.5 flash does not work in the interface, I get the error message."* The provenance had
+  been corrected in the form — `vertex`, `google`, `global` — and *Check reachability* still
+  answered *"Declared, but nothing serves it"*, because the check read the **saved** catalogue row.
+  A correct answer about the declaration being replaced. The same shape as a verdict left standing
+  from a previous model, one step along: right, wearing the wrong label. Both checks now take the
+  provenance from the form, and the same case answers **Reachable**.
+- *"When an error is thrown in the interface, the button layout at the bottom breaks."* The
+  footer's message is `.grow` — `flex: 1`, so `flex-basis: 0` — which **contributes nothing to the
+  wrap calculation** and is squeezed instead of taking a line. The same defect
+  `.form-inline > .callout` carries a comment about, one container along, and latent until the
+  editor's window was narrowed to a form's width the same afternoon. A rule that only holds at one
+  width is not a rule.
+
+`ADR-0021` rewritten (it now supersedes its own first version), migration `0005`, seven frontend
+properties and five gateway ones broken by hand and seen to fail.
+
+---
+
 ## Adding a model asks two questions instead of eight (2026-08-19)
 
 The owner declared a real Vertex model through the console for the first time, and reported the

@@ -144,6 +144,9 @@ class GeminiUpstream:
     #: A token budget: `0` off, `-1` the model's choice, otherwise a count — so every mode in the
     #: vocabulary has a wire value, including `limited`.
     thinking_modes = frozenset(ThinkingMode)
+    #: `thinkingLevel` — Gemini 3 takes it; 2.5 answers *"not supported by this model"*, which is
+    #: a fact about the **model** and lives in its catalogue entry rather than here.
+    expresses_thinking_levels = True
     #: A schema parameter and a tools field are separate here.
     tools_with_schema = True
 

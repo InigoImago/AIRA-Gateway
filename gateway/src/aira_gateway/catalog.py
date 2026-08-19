@@ -133,11 +133,17 @@ class ModelDeclaration:
 
     @property
     def thinking_modes(self) -> frozenset[ThinkingMode]:
+        """Which of the gateway's three control settings this model offers. Levels are separate."""
         modes = (self.thinking or {}).get("modes")
         if not isinstance(modes, list):
             return frozenset()
         known = {member.value for member in ThinkingMode}
         return frozenset(ThinkingMode(mode) for mode in modes if mode in known)
+
+    @property
+    def offers_thinking(self) -> bool:
+        """Whether this model offers *any* thinking setting — a control mode or a level word."""
+        return bool(self.thinking_modes or self.thinking_levels)
 
     @property
     def thinking_bounds(self) -> tuple[int | None, int | None]:
@@ -161,18 +167,28 @@ class ModelDeclaration:
         default = (self.thinking or {}).get("default")
         return default if isinstance(default, dict) else None
 
-    def thinking_level_tokens(self, mode: ThinkingMode) -> int | None:
-        """The budget this model attaches to an abstract level.
+    @property
+    def thinking_levels(self) -> tuple[str, ...]:
+        """The **vendor's own** level words this model accepts, in the order they were declared.
 
-        ``high``/``medium``/``low``/``minimal`` mean nothing to an HTTP call; the level→budget
-        table is per model and lives in the catalog, which is what keeps a new model from being a
-        code change (`FRD-111` §5.2).
+        Free text, and that is the point (`ADR-0021`): the vendors converged on words after
+        starting with numbers — Gemini 3 takes ``thinkingLevel``, OpenAI ``reasoning_effort`` —
+        and they do not agree on the set. A closed enum here would make a vendor's next word a code
+        change; a list typed into the catalog and **checked against the model** makes it a Tuesday.
+
+        This replaced a ``{level: token count}`` table. The table asked whoever catalogued the
+        model for a number no vendor publishes, and a wrong guess was not merely unfounded: a
+        hand-typed ``medium = 2000`` silently truncates an agentic run that needed twenty thousand
+        thinking tokens. Nothing is derived here now — a word is sent, or it is not offered.
         """
         levels = (self.thinking or {}).get("levels")
-        if not isinstance(levels, dict):
-            return None
-        value = levels.get(str(mode))
-        return value if isinstance(value, int) and not isinstance(value, bool) else None
+        if not isinstance(levels, list):
+            return ()
+        seen: dict[str, None] = {}
+        for level in levels:
+            if isinstance(level, str) and level.strip():
+                seen.setdefault(level.strip().lower(), None)
+        return tuple(seen)
 
     # -- embedding (FRD-113) --------------------------------------------------------------
 

@@ -230,3 +230,155 @@ async def test_a_test_double_is_not_governed_as_a_model() -> None:
     with TestClient(app):
         check = ModelApproved(ModelCatalog(app.state.db_sessionmaker), _Registry())
         assert await check.refusal("mock-1") is None
+
+
+# ---- and whether it accepts the level words somebody typed (`ADR-0021`) -------------------------
+
+
+class _TakesLevels:
+    """A dialect with a level field, refusing one word the way a real provider does."""
+
+    expresses_thinking_levels = True
+
+    async def generate(self, request: Any) -> Any:
+        from aira_gateway.upstreams.base import UpstreamError
+
+        if request.thinking.mode == "medium":
+            raise UpstreamError(
+                "Unable to submit request because thinking_level is not supported by this model.",
+                status_code=400,
+            )
+        return object()
+
+
+class _BudgetOnly:
+    """Anthropic's shape: thinking is asked for by naming a number, and there is no level field."""
+
+    expresses_thinking_levels = False
+
+    async def generate(self, request: Any) -> Any:  # pragma: no cover - must never be called
+        raise AssertionError("a dialect with no level field must not be asked to spend a token")
+
+
+@pytest.mark.anyio
+async def test_each_level_word_is_answered_by_the_model_in_its_own_words() -> None:
+    """**The authority free text needs.** A level is a word the vendor accepts, typed into the
+    catalog, because no list here survives the vendors' next release — and the cost of that is
+    that a typo looks exactly like a working declaration. So the model is asked, and what comes
+    back is the provider's own sentence rather than a rule's paraphrase of it.
+
+    Not hypothetical: run against the real stack on 2026-08-19, `gemini-2.5-flash` answered
+    *"thinking_level is not supported by this model"* for all three words the migration had
+    carried over for it."""
+    app = _client(GLOBAL_ADMIN, _TakesLevels())
+    with TestClient(app) as client:
+        await _declare(app)
+        body = client.post(
+            "/v1beta/models/gemini-2.0-flash:checkThinking",
+            json={"levels": ["low", "medium"]},
+        ).json()
+
+    assert body["results"] == [
+        {"level": "low", "accepted": True, "detail": "The model accepted it."},
+        {
+            "level": "medium",
+            "accepted": False,
+            "detail": "Unable to submit request because thinking_level is not supported by this "
+            "model.",
+        },
+    ]
+
+
+@pytest.mark.anyio
+async def test_a_dialect_with_no_level_field_answers_without_spending_anything() -> None:
+    """Every word would be refused for the same reason, and none of it is about the model — so
+    asking the provider would spend tokens to learn something the declaration already knows.
+    `_BudgetOnly.generate` raises if it is reached."""
+    app = _client(GLOBAL_ADMIN, _BudgetOnly())
+    with TestClient(app) as client:
+        await _declare(app)
+        body = client.post(
+            "/v1beta/models/gemini-2.0-flash:checkThinking", json={"levels": ["low"]}
+        ).json()
+
+    assert body["results"][0]["accepted"] is False
+    assert "token budget" in body["results"][0]["detail"]
+
+
+@pytest.mark.anyio
+async def test_the_number_of_words_one_press_can_spend_on_is_bounded() -> None:
+    """This endpoint spends real money, one output token per accepted word, and it is reached by a
+    button. An unbounded list is an unbounded bill from one click."""
+    from aira_gateway.api.incidents import MAX_LEVELS_PER_CHECK
+
+    app = _client(GLOBAL_ADMIN, _TakesLevels())
+    with TestClient(app) as client:
+        await _declare(app)
+        body = client.post(
+            "/v1beta/models/gemini-2.0-flash:checkThinking",
+            json={"levels": [f"w{n}" for n in range(MAX_LEVELS_PER_CHECK + 5)]},
+        ).json()
+
+    assert len(body["results"]) == MAX_LEVELS_PER_CHECK
+
+
+@pytest.mark.anyio
+async def test_asking_about_levels_is_bounded_by_the_same_role_as_the_check_beside_it() -> None:
+    """It describes the installation and it spends money; both point at the same two roles."""
+    app = _client(UC_ADMIN, _TakesLevels())
+    with TestClient(app) as client:
+        await _declare(app)
+        response = client.post(
+            "/v1beta/models/gemini-2.0-flash:checkThinking", json={"levels": ["low"]}
+        )
+
+    assert response.status_code == 403
+
+
+@pytest.mark.anyio
+async def test_the_check_answers_about_the_provenance_it_was_given() -> None:
+    """**The button lives in an editor, so the saved row is the wrong thing to answer about.**
+
+    Reported after a real attempt: a model catalogued under `generative-language` — a provider this
+    installation has no credential for — was corrected in the form to `vertex` with a region typed
+    beside it, and *Check reachability* answered *"Declared, but nothing serves it"*. Correct about
+    the stored declaration, and about nothing the reader was asking. The same shape as a verdict
+    left standing from a previous model: right, wearing the wrong label.
+    """
+    served: dict[str, Any] = {}
+
+    def provider_for(model: str, provider: str = "", publisher: str = "") -> Any:
+        served["asked"] = (provider, publisher)
+        return _Reachable() if provider == "vertex" else None
+
+    # The registry is closed on shutdown, so it is **patched rather than replaced**: a stand-in
+    # narrower than the thing it stands for is the trap this file already carries a comment about,
+    # one method along.
+    app = create_app(GatewaySettings(auth_required=False))
+    app.dependency_overrides[require_principal] = lambda: GLOBAL_ADMIN
+    app.state.providers.provider_for = provider_for  # type: ignore[method-assign]
+
+    with TestClient(app) as client:
+        async with app.state.db_sessionmaker() as session:
+            session.add(
+                ModelRead(
+                    model="gemini-3.5-flash",
+                    capabilities=["generate"],
+                    provider="generative-language",
+                    publisher="google",
+                )
+            )
+            await session.commit()
+
+        stored = client.get("/v1beta/models/gemini-3.5-flash:check").json()
+        asked = client.get(
+            "/v1beta/models/gemini-3.5-flash:check",
+            params={"provider": "vertex", "publisher": "google", "region": "global"},
+        ).json()
+
+    # Unchanged where nobody overrides: this still answers about the catalogue.
+    assert stored["served"] is False
+    # And about the form where they do.
+    assert served["asked"] == ("vertex", "google")
+    assert asked["served"] is True
+    assert asked["reachable"] is True

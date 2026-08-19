@@ -991,6 +991,29 @@ $field-label-gap: 0.3rem;
    * pair of buttons a thumb-width apart is where that happens. */
   gap: 1rem;
 }
+/* **A sentence in the footer takes its own line, or it takes it out of the buttons.**
+ *
+ * The model editor's footer carries `Check reachability`, a verdict, an explanation of why Save is
+ * unavailable, then `Cancel` and `Save`. The explanation is a `.field__hint`, and `.grow` is
+ * `flex: 1` — that is `flex-basis: 0`, so the item **contributes nothing to the wrap calculation**
+ * and never moves to a line of its own: it is squeezed, and the buttons beside it are pushed and
+ * cramped instead. The same defect `.form-inline > .callout` above carries a comment about, one
+ * container along.
+ *
+ * Latent until the editor's window was narrowed from 880 px to a form's width — at 880 the longest
+ * message happened to fit on one line, so nothing looked wrong. Reported immediately after:
+ * *"when an error is thrown in the interface, the button layout at the bottom breaks when you
+ * touch the model-name field."* A rule that only holds at one width is not a rule.
+ *
+ * `order: -1` puts it above the buttons rather than below them: it explains why Save is
+ * unavailable, and an explanation under the control it is about is one a reader finds second.
+ */
+.modal__foot > .field__hint {
+  flex-basis: 100%;
+  text-align: left;
+  order: -1;
+}
+
 /* The only scrolling part, so the title stays visible and Save stays reachable however long the
  * declaration gets. */
 .modal__body {
@@ -1590,4 +1613,58 @@ tr.is-open > * {
   padding: 0.5rem;
   color: var(--aira-text-muted);
   font-size: 0.85rem;
+}
+
+/* **A word you typed, as a thing you can see and remove.**
+ *
+ * The model editor's thinking levels are free text (`ADR-0021`): a vendor's own words, typed one
+ * at a time, because no closed list in this repository survives the vendors' next release. A chip
+ * is what makes "typed freely" legible — each word is separately present, separately removable,
+ * and separately marked once the model has been asked whether it takes it.
+ */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.45rem;
+  border: 1px solid var(--aira-border-strong);
+  border-radius: 999px;
+  background: var(--aira-surface);
+  font-size: 0.8rem;
+}
+/* The verdict is a border and a mark, never colour alone — the same rule the badges follow. */
+.chip--ok {
+  border-color: var(--aira-success, #15803d);
+}
+.chip--bad {
+  border-color: var(--aira-danger);
+}
+.chip__note {
+  font-weight: 700;
+}
+.chip--ok .chip__note {
+  color: var(--aira-success, #15803d);
+}
+.chip--bad .chip__note {
+  color: var(--aira-danger);
+}
+.chip__remove {
+  border: 0;
+  background: none;
+  cursor: pointer;
+  padding: 0 0.1rem;
+  font-size: 1rem;
+  line-height: 1;
+  color: var(--aira-text-muted);
+}
+.chip__remove:hover {
+  color: var(--aira-danger);
 }

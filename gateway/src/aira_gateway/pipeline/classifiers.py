@@ -262,7 +262,7 @@ def classifier_request(
         # *and* the word, because the provider bills both against this one number.
         max_output_tokens=(
             CLASSIFIER_OUTPUT_TOKENS
-            if thinking is not None and thinking.mode is ThinkingMode.DISABLED
+            if thinking is not None and thinking.mode == ThinkingMode.DISABLED
             else THINKING_CLASSIFIER_OUTPUT_TOKENS
         ),
         thinking=thinking,

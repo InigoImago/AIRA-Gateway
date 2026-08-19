@@ -21,7 +21,6 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
-from aira_common.models import ThinkingMode
 from aira_gateway.core.schema import ResponseSchema
 
 
@@ -145,17 +144,23 @@ class CanonicalMessage(BaseModel):
 class Thinking(BaseModel):
     """How much reasoning effort a request asks for (`FRD-111` §5.1).
 
-    ``mode`` plus an optional token count, taken from the predecessor's vocabulary — and it turned
-    out to cover three vendors it was not written for: Google takes a budget, Anthropic a budget
-    drawn from ``max_tokens``, Azure an abstract effort level with no budget at all.
+    ``mode`` is either one of the gateway's three control words — ``disabled``, ``auto``,
+    ``limited`` — or a **level word the vendor itself accepts**: `low`, `high`, whatever it calls
+    them. It is
+    a plain string for that reason: a closed enum would make a vendor's new word a code change, and
+    the words are what the vendors have converged on (Gemini 3's ``thinkingLevel``, OpenAI's
+    ``reasoning_effort``) after starting with numbers.
 
-    A request carries the **caller's** setting until :mod:`aira_gateway.thinking` resolves it
-    against the model that will serve it; after that ``tokens`` holds the number actually sent,
-    which is also the number the pre-dispatch reservation is made against. Those two must be the
-    same figure or the budget is reserving for a request that was never made.
+    ``tokens`` is **what goes upstream**, and only ``limited`` has one — the mode where the
+    *caller* named it. It used to double as the figure the pre-dispatch reservation was made
+    against, and that conflation is precisely what forced every model to carry a
+    ``level → token count`` table nobody could fill: a level had to invent a number so that the
+    reservation had one to read. The reservation asks the **declaration** now
+    (:func:`aira_gateway.thinking.reserved_tokens`), which is where the model's own ceiling
+    already lives, and a level sends no number at all.
     """
 
-    mode: ThinkingMode
+    mode: str
     tokens: int | None = None
 
 

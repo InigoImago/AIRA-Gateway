@@ -749,22 +749,107 @@
                     <code>{{ mode }}</code>
                     <span class="muted"> — {{ thinkingModeMeans(mode) }}</span>
                   </span>
-                  @if (hasThinkingMode(mode) && mode !== 'disabled' && mode !== 'auto') {
-                    <input
-                      class="input input--narrow"
-                      type="number"
-                      min="1"
-                      [name]="'level-' + mode"
-                      [ngModel]="thinkingLevel(mode)"
-                      (ngModelChange)="setThinkingLevel(mode, $event)"
-                      [attr.data-testid]="'level-' + mode"
-                      placeholder="tokens"
-                      [attr.aria-label]="'How many thinking tokens ' + mode + ' means'"
-                    />
-                    <span class="muted">thinking tokens this level means</span>
-                  }
                 </label>
               }
+
+              <!--
+                **The levels, as words, typed.** Each of the three boxes above used to carry a
+                number field beside it, labelled — for a screen reader, verbatim — *"How many
+                thinking tokens medium means"*. The owner, cataloguing a real model:
+
+                  *"If I now pick medium or low, you ask me how many tokens that should be. You do
+                  not even find these parameters on the vendors' own pages. How am I supposed to
+                  know it when the vendor never stated it?"*
+
+                Nobody publishes it. And the guess did not merely sit in a database: it was sent
+                as a **ceiling on the model's reasoning**, so a typed `medium = 2000` truncates an
+                agentic run that needed twenty thousand, with nothing in the answer to say why.
+
+                So: the vendor's own words, free text, and a button that asks the model whether it
+                takes them. Free text rather than a list, because a list has to be restated in
+                three places and cannot hold a word a vendor ships next month.
+              -->
+              <div class="field field--own-row" style="margin-top: 0.9rem">
+                <label for="thinking-level-draft">
+                  Level words this model accepts
+                  <app-info-hint label="Level words" testid="levels-hint" [wide]="true">
+                    The words the <em>vendor</em> takes — Gemini 3 reads <code>thinkingLevel</code>,
+                    an OpenAI-compatible server reads <code>reasoning_effort</code>, and they do not
+                    agree on the set. Type each and press Enter. <br /><br />
+                    Leave it empty where the model has no levels:
+                    <code>gemini-2.5-flash</code> answers
+                    <em>"thinking_level is not supported by this model"</em> and is asked with
+                    <code>auto</code> and <code>limited</code> instead. Empty is a valid, complete
+                    answer. <br /><br />
+                    <strong>No token counts.</strong> A budget is a ceiling, and one guessed here
+                    would cap the model's reasoning at a number no vendor ever published.
+                  </app-info-hint>
+                </label>
+                <div class="row" style="gap: 0.4rem; align-items: center">
+                  <input
+                    id="thinking-level-draft"
+                    name="thinking_level_draft"
+                    [ngModel]="levelDraft()"
+                    (ngModelChange)="levelDraft.set($event)"
+                    (keydown.enter)="$event.preventDefault(); addLevel()"
+                    (keydown.,)="$event.preventDefault(); addLevel()"
+                    (blur)="addLevel()"
+                    placeholder="low"
+                    autocomplete="off"
+                    data-testid="thinking-level-draft"
+                  />
+                  <button
+                    type="button"
+                    class="btn btn--sm"
+                    [disabled]="checkingLevels() || !thinkingLevels().length || !name().trim()"
+                    (click)="checkLevels()"
+                    data-testid="check-levels"
+                  >
+                    {{ checkingLevels() ? 'Asking the model…' : 'Ask the model' }}
+                  </button>
+                </div>
+                @if (thinkingLevels().length) {
+                  <ul class="chips" data-testid="thinking-levels">
+                    @for (word of thinkingLevels(); track word) {
+                      <li
+                        class="chip"
+                        [class.chip--ok]="levelVerdict(word)?.ok === true"
+                        [class.chip--bad]="levelVerdict(word)?.ok === false"
+                        [attr.data-testid]="'level-' + word"
+                      >
+                        <code>{{ word }}</code>
+                        @if (levelVerdict(word); as verdict) {
+                          <span class="chip__note" [title]="verdict.detail">
+                            {{ verdict.ok ? '✓' : '✗' }}
+                          </span>
+                        }
+                        <button
+                          type="button"
+                          class="chip__remove"
+                          (click)="removeLevel(word)"
+                          [attr.aria-label]="'Remove the level ' + word"
+                          [attr.data-testid]="'remove-level-' + word"
+                        >
+                          ×
+                        </button>
+                      </li>
+                    }
+                  </ul>
+                  @for (word of thinkingLevels(); track word) {
+                    @if (levelVerdict(word); as verdict) {
+                      @if (!verdict.ok) {
+                        <span class="field__hint field__hint--error">
+                          <code>{{ word }}</code> — {{ verdict.detail }}
+                        </span>
+                      }
+                    }
+                  }
+                } @else {
+                  <span class="field__hint">
+                    None declared. This model is asked with the modes above only.
+                  </span>
+                }
+              </div>
               <!-- The three below are about the *budget a caller may name*, which is a different
                    question from the boxes above and was sitting among them unlabelled. `limited` is
                    the only mode that takes a number; these bound it. -->
@@ -820,8 +905,13 @@
                     data-testid="thinking-default"
                   >
                     <option value="">no default</option>
-                    @for (mode of thinkingModes(); track mode) {
-                      <option [value]="mode">{{ mode }}</option>
+                    <!-- Both lists, because a default is whatever this model does when nobody
+                         says — and that is as likely to be `low` as `auto`. Offering only the
+                         modes would have made a level undeclarable as a default without saying
+                         so, which is the shape `LESSONS.md` calls a control that reads as a
+                         design decision. -->
+                    @for (option of declarableDefaults(); track option) {
+                      <option [value]="option">{{ option }}</option>
                     }
                   </select>
                   <span class="field__hint">

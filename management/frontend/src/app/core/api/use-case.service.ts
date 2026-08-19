@@ -20,6 +20,7 @@ import {
   IssuedApiKey,
   Membership,
   ModelCheck,
+  ThinkingLevelCheck,
   Page,
   PipelineConfig,
   Report,
@@ -42,6 +43,30 @@ import { API, GW } from './prefixes';
  * endpoint (ADR-0007).
  */
 const seg = (value: string): string => encodeURIComponent(value);
+
+/**
+ * Where a model lives, as the **form** currently says — not as the catalogue has it stored.
+ *
+ * Both checks below take it, because both are buttons inside an editor. Without it they answered
+ * about the saved row: somebody correcting a model's provider from `generative-language` to
+ * `vertex`, typing a region and pressing Check was told *"Declared, but nothing serves it"* about
+ * the declaration they were in the middle of replacing. Right about the wrong thing.
+ */
+export interface Provenance {
+  provider?: string;
+  publisher?: string;
+  region?: string;
+}
+
+/** Only what was actually given: an empty string would override a stored value with nothing. */
+function provenanceParams(where: Provenance): Record<string, string> {
+  const params: Record<string, string> = {};
+  for (const key of ['provider', 'publisher', 'region'] as const) {
+    const value = where[key]?.trim();
+    if (value) params[key] = value;
+  }
+  return params;
+}
 
 @Injectable({ providedIn: 'root' })
 export class UseCaseService {
@@ -370,8 +395,31 @@ export class UseCaseService {
    * Never a generation: a self-deployed model can be scaled to zero, and "check whether it works"
    * must not be the thing that wakes it, bills for it, and takes minutes to answer.
    */
-  checkModel(model: string): Observable<ModelCheck> {
-    return this.http.get<ModelCheck>(`${GW}/v1beta/models/${seg(model)}:check`);
+  checkModel(model: string, where: Provenance = {}): Observable<ModelCheck> {
+    return this.http.get<ModelCheck>(`${GW}/v1beta/models/${seg(model)}:check`, {
+      params: provenanceParams(where),
+    });
+  }
+
+  /**
+   * Does this model accept these level words (`ADR-0021`)?
+   *
+   * **This one does generate**, unlike its neighbour above, and the difference is deliberate.
+   * There is no free way to ask: `:countTokens` never looks at `generationConfig` and answers 200
+   * to an unsupported level as readily as to a supported one — measured. A `generateContent`
+   * capped at one output token does judge, and a word the model refuses costs nothing at all
+   * because the refusal comes before any generation.
+   */
+  checkThinkingLevels(
+    model: string,
+    levels: string[],
+    where: Provenance = {},
+  ): Observable<ThinkingLevelCheck> {
+    return this.http.post<ThinkingLevelCheck>(
+      `${GW}/v1beta/models/${seg(model)}:checkThinking`,
+      { levels },
+      { params: provenanceParams(where) },
+    );
   }
 
   // ---- model smoke tests (`FRD-504`) --------------------------------------------------------

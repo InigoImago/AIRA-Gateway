@@ -38,20 +38,44 @@ class Capability(StrEnum):
 
 
 class ThinkingMode(StrEnum):
-    """The reasoning-effort vocabulary (`FRD-111`), taken from the predecessor's.
+    """The three reasoning settings that are **ours**, not a vendor's (`FRD-111`, `ADR-0021`).
 
-    It turned out to cover vendors it was not written for: Google takes a token budget, Anthropic
-    a budget bounded by ``max_tokens``, Azure an abstract effort level — and ``mode`` plus an
-    optional token count expresses all three.
+    These three are semantics the gateway owns and every dialect spells differently — ``disabled``
+    is Google's ``thinkingBudget: 0`` and OpenAI's ``reasoning_effort: "none"``; ``auto`` is
+    Google's ``-1`` and does not exist on Anthropic at all; ``limited`` is a number the **caller**
+    named. They are a closed set because each one is a decision this gateway makes.
+
+    Everything else a caller may ask for is a **level word** — ``low``, ``high``, whatever a vendor
+    calls it — and those are deliberately *not* here. They used to be, with a per-model
+    ``level → token count`` table in the catalog beside them, and the owner's objection retired
+    both:
+
+        *"If I now pick medium or low, you ask me how many tokens that should be. You do not even
+        find these parameters on the vendors' own pages. How am I, cataloguing the model, supposed
+        to know it when the vendor never stated it?"*
+
+    Correct, and measurable: no vendor publishes what ``medium`` costs. Worse, a number invented
+    there is not merely unfounded, it is dangerous — a hand-typed ``medium = 2000`` truncates an
+    agentic run that needed twenty thousand thinking tokens, and nothing in the answer says why.
+
+    So a level is a **word the vendor already accepts**, declared per model as free text and passed
+    through untranslated. Which words a model takes is a fact about that model, checkable against
+    it (`FRD-506`'s shape: one capped request, and a refusal states the answer), and not a thing
+    for anybody to derive.
     """
 
     DISABLED = "disabled"
     LIMITED = "limited"
     AUTO = "auto"
-    HIGH = "high"
-    MEDIUM = "medium"
-    LOW = "low"
-    MINIMAL = "minimal"
+
+
+#: The three above as plain strings, for code that reads a caller's word before knowing the model.
+CONTROL_MODES = frozenset(member.value for member in ThinkingMode)
+
+
+def is_control_mode(mode: str) -> bool:
+    """Whether this word is one of the gateway's three, rather than a vendor's level word."""
+    return mode in CONTROL_MODES
 
 
 class Hosting(StrEnum):

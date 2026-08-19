@@ -28,8 +28,9 @@ from aira_gateway.auth.attribution import is_valid_use_case
 from aira_gateway.auth.dependencies import require_principal
 from aira_gateway.auth.principal import Principal
 from aira_gateway.catalog import ModelCatalog
+from aira_gateway.core.canonical import CanonicalMessage, CanonicalRequest, Role, Thinking
 from aira_gateway.state import sessionmaker_of, suspensions_of
-from aira_gateway.upstreams.base import ProviderRegistry
+from aira_gateway.upstreams.base import DialectUnsupported, ProviderRegistry, UpstreamError
 
 #: A check must be quick enough that somebody presses the button and waits for it.
 MODEL_CHECK_TIMEOUT_SECONDS = 5.0
@@ -195,13 +196,28 @@ async def lift_suspension(
 async def check_model(
     request: Request,
     model: str,
+    provider: str = "",
+    publisher: str = "",
+    region: str = "",
     principal: Principal = Depends(require_principal),
 ) -> JSONResponse:
-    """Whether a declared model is actually served, and whether its provider answers.
+    """Whether a model is actually served, and whether its provider answers.
 
     Bounded by role rather than by use case: it describes the *installation*, not anybody's
     traffic, and the people who need it are the ones who declare models and the ones who
     investigate why a use case cannot reach one.
+
+    **The three provenance parameters are what makes this answer the question being asked.**
+    Without them this read the *saved* catalogue row, and the console's button sits in an editor
+    where somebody has just changed the provider — so a reader who corrected `generative-language`
+    to `vertex`, typed a region, and pressed Check was told *"Declared, but nothing serves it"*
+    about the row they were in the middle of replacing. A correct answer about a configuration
+    nobody was asking about, which is the same shape as a verdict left over from another model:
+    right, and wearing the wrong label.
+
+    Reported after exactly that: *"gemini 3.5 flash does not work in the interface, I get the error
+    message"* — with the form already holding the values that do work. Passed explicitly rather
+    than inferred, so this endpoint keeps answering about the saved row when nobody overrides it.
     """
     if not principal.may_act_on_incidents:
         raise GeminiHTTPError(
@@ -220,17 +236,21 @@ async def check_model(
     # name alone, so the one control an administrator presses to find out whether a model works
     # answered "not served" for a model the gateway was serving — the fifth site to learn the pair,
     # and the one a person actually looks at.
-    provider = registry.provider_for(model, declaration.provider, declaration.publisher)
+    # What the caller is asking about, which is the form's state where they gave one.
+    asked_provider = provider or declaration.provider
+    asked_publisher = publisher or declaration.publisher
+    asked_addressing = {"region": region} if region else declaration.addressing
+    upstream = registry.provider_for(model, asked_provider, asked_publisher)
 
     result: dict[str, Any] = {
         "model": model,
         "declared": bool(declaration and declaration.declared),
-        "served": provider is not None,
+        "served": upstream is not None,
         "reachable": None,
         "detail": "",
     }
 
-    if provider is None:
+    if upstream is None:
         # The case a missing credential produces, and the one worth naming precisely: an adapter is
         # registered only when its credential is configured, so "declared but not served" is
         # almost always "nobody gave this installation a key for it".
@@ -248,7 +268,7 @@ async def check_model(
         )
         return JSONResponse(result)
 
-    ping = getattr(provider, "ping", None)
+    ping = getattr(upstream, "ping", None)
     if ping is None:
         # Said, not assumed — the `FRD-117` rule. "We did not look" and "it is fine" are different
         # answers and only one of them is safe to act on.
@@ -259,7 +279,7 @@ async def check_model(
         # The model being asked about, and its address — so the answer is about *this* model
         # rather than about whichever one the adapter happened to have configured first.
         detail = await asyncio.wait_for(
-            ping(model, declaration.addressing), timeout=MODEL_CHECK_TIMEOUT_SECONDS
+            ping(model, asked_addressing), timeout=MODEL_CHECK_TIMEOUT_SECONDS
         )
     except TimeoutError:
         result["reachable"] = False
@@ -272,3 +292,133 @@ async def check_model(
         result["reachable"] = True
         result["detail"] = str(detail)
     return JSONResponse(result)
+
+
+#: How many words one check may ask about. A level list is a handful — Gemini 3 has two — and this
+#: endpoint spends real tokens, so an unbounded list is an unbounded bill from one button press.
+MAX_LEVELS_PER_CHECK = 12
+
+#: The smallest generation this can be. A refused word costs nothing (the provider answers 400
+#: before generating); an accepted one costs this. Measured on 2026-08-19 against Vertex:
+#: `generateContent` with `maxOutputTokens: 1` billed exactly one output token.
+_PROBE_OUTPUT_TOKENS = 1
+
+
+@router.post("/v1beta/models/{model:path}:checkThinking")
+async def check_thinking_levels(
+    request: Request,
+    model: str,
+    provider: str = "",
+    publisher: str = "",
+    region: str = "",
+    principal: Principal = Depends(require_principal),
+) -> JSONResponse:
+    """Ask the model itself whether it accepts each declared level word (`ADR-0021`).
+
+    **The question the catalog cannot answer.** A level is now a word the vendor takes, typed
+    freely, because no closed list survives the vendors' next release — and the cost of free text
+    is that a typo, or a word from the wrong family, looks exactly like a working declaration until
+    a caller's request comes back 400. So the console asks the model, and the provider's own
+    refusal is the answer: *"thinking_level is not supported by this model"*.
+
+    Measured before it was built, because "can this be checked cheaply" decided whether it was
+    worth building. `:countTokens` is free and **useless here** — it answers 200 to an unsupported
+    level and to an out-of-range budget alike, because it never looks at `generationConfig`. A
+    capped `generateContent` does judge, and it is nearly free: a word the model rejects is refused
+    before any generation, and a word it accepts costs one output token.
+
+    Informs, never blocks — `FRD-506`'s shape. A red word is a word to look at, not a save that is
+    refused: the model may be temporarily unreachable, and the catalog is Management's.
+    """
+    if not principal.may_act_on_incidents:
+        raise GeminiHTTPError(
+            403,
+            "Checking a model is available to IT Security and Global Administrators.",
+            "PERMISSION_DENIED",
+        )
+
+    body = await request.json() if await request.body() else {}
+    asked = body.get("levels") if isinstance(body, dict) else None
+    words = (
+        [w.strip().lower() for w in asked if isinstance(w, str) and w.strip()][
+            :MAX_LEVELS_PER_CHECK
+        ]
+        if isinstance(asked, list)
+        else []
+    )
+    if not words:
+        raise GeminiHTTPError(400, "Name at least one level word to check.", "INVALID_ARGUMENT")
+
+    catalog: ModelCatalog = request.app.state.catalog
+    registry: ProviderRegistry = request.app.state.providers
+    declaration = await catalog.declaration(model)
+    # The same override as `check_model` above, for the same reason: this button sits in an editor
+    # whose provenance may not be saved yet, and an answer about the stored row is an answer to a
+    # question nobody asked.
+    upstream = registry.provider_for(
+        model, provider or declaration.provider, publisher or declaration.publisher
+    )
+    if upstream is None:
+        raise GeminiHTTPError(
+            400,
+            "No upstream serves this model, so there is nobody to ask about its levels. Save the "
+            "model and check its reachability first.",
+            "FAILED_PRECONDITION",
+        )
+    if not getattr(upstream, "expresses_thinking_levels", False):
+        # Answered without spending anything: this dialect has no field for a level at all, so
+        # every word would be refused for the same reason and none of it is about the model.
+        return JSONResponse(
+            {
+                "model": model,
+                "results": [
+                    {
+                        "level": word,
+                        "accepted": False,
+                        "detail": (
+                            "This model's dialect asks for thinking by naming a token budget and "
+                            "has no field for a level word. Use 'limited' instead."
+                        ),
+                    }
+                    for word in words
+                ],
+            }
+        )
+
+    results = []
+    for word in words:
+        probe = CanonicalRequest(
+            model=model,
+            messages=[CanonicalMessage(role=Role.USER, text="hi")],
+            max_output_tokens=_PROBE_OUTPUT_TOKENS,
+            thinking=Thinking(mode=word),
+            addressing={"region": region} if region else declaration.addressing,
+        )
+        try:
+            await asyncio.wait_for(upstream.generate(probe), timeout=MODEL_CHECK_TIMEOUT_SECONDS)
+        except TimeoutError:
+            results.append(
+                {
+                    "level": word,
+                    "accepted": False,
+                    "detail": f"Did not answer within {MODEL_CHECK_TIMEOUT_SECONDS:g}s.",
+                }
+            )
+        except (UpstreamError, DialectUnsupported) as exc:
+            # **The provider's own words**, which is the whole value of this button: Google says
+            # *"thinking_level is not supported by this model"*, and no rule in this repository
+            # could have said it as precisely or stayed as true.
+            results.append({"level": word, "accepted": False, "detail": str(exc)})
+        except Exception as exc:  # noqa: BLE001 — anything else means "we could not tell"
+            # The type, not the message: an arbitrary provider error can carry a URL with a key.
+            results.append(
+                {
+                    "level": word,
+                    "accepted": False,
+                    "detail": f"Could not ask ({type(exc).__name__}).",
+                }
+            )
+        else:
+            results.append({"level": word, "accepted": True, "detail": "The model accepted it."})
+
+    return JSONResponse({"model": model, "results": results})

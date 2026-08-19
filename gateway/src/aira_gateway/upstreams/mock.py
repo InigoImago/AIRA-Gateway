@@ -87,6 +87,8 @@ class MockProvider:
     sampling_controls = frozenset(SAMPLING_CONTROLS)
     #: Everything, deterministically — the mock exists so a mode is observable without a cloud.
     thinking_modes = frozenset(ThinkingMode)
+    #: Everything, so a level word is observable without a cloud.
+    expresses_thinking_levels = True
 
     #: The mock keeps a schema and the caller's tools apart, as Gemini and the OpenAI dialect do.
     #: Declared rather than inherited, for the reason the sampling set above is (`FRD-131` FR-5).
@@ -277,7 +279,7 @@ def _caching(request: CanonicalRequest) -> str:
 
 def _thinking_tokens(request: CanonicalRequest) -> int:
     setting = request.thinking
-    if setting is None or setting.mode is ThinkingMode.DISABLED:
+    if setting is None or setting.mode == ThinkingMode.DISABLED:
         return 0
     # Half the budget: enough that a large budget is visibly more expensive than none, without
     # pretending the mock knows how much a model would really have spent.

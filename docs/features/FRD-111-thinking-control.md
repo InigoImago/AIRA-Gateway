@@ -126,6 +126,16 @@ refused — it spends no budget the caller named, because this dialect takes no 
 Putting the level→budget table in `FRD-114`'s model metadata rather than in code is what keeps a
 new model from being a code change.
 
+**Levels are the vendor's own words, not a token table** (`ADR-0021`, superseding §5.2's
+`level → budget` table). The table asked whoever catalogued a model for a number no vendor
+publishes — the console's own field label read *"How many thinking tokens `medium` means"* — and
+sent the guess upstream as a **ceiling on the model's reasoning**, where a typed `medium = 2000`
+truncates an agentic run that needed twenty thousand. `ThinkingMode` now holds only the three
+settings this gateway owns (`disabled`, `auto`, `limited`); a level is free text, declared per
+model, passed through untranslated, and **checked against the model** by one capped request whose
+refusal is the vendor's own sentence. A model whose dialect takes only numbers does not offer the
+words at all rather than collapsing them into one instruction.
+
 **And the dialect declares its own limits, rather than each mapper deciding alone** (`ADR-0021`).
 The list above describes three adapters; it did not oblige a fourth. `Upstream.thinking_modes`
 does — per adapter, never defaulted to "all", swept by

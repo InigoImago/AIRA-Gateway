@@ -7,9 +7,10 @@ import {
   GatewayProvider,
   Me,
   ModelCheck,
+  ThinkingLevelCheck,
   OfferedModel,
 } from '../../core/api/models';
-import { UseCaseService } from '../../core/api/use-case.service';
+import { Provenance, UseCaseService } from '../../core/api/use-case.service';
 import { ConfirmService } from '../../core/ui/confirm.service';
 import { ModelCatalog } from './model-catalog';
 
@@ -115,10 +116,14 @@ interface Catalog {
   thinkingMin: { set: (v: number | null) => void; (): number | null };
   thinkingMax: { set: (v: number | null) => void; (): number | null };
   thinkingDefault: { set: (v: string) => void; (): string };
-  thinkingLevels: { set: (v: Record<string, number>) => void; (): Record<string, number> };
+  thinkingLevels: { set: (v: string[]) => void; (): string[] };
+  levelDraft: { set: (v: string) => void; (): string };
+  addLevel: () => void;
+  removeLevel: (word: string) => void;
+  checkLevels: () => void;
+  levelVerdict: (word: string) => { ok: boolean; detail: string } | null;
+  declarableDefaults: () => string[];
   toggleThinkingMode: (mode: string, on: boolean) => void;
-  thinkingLevel: (mode: string) => number | null;
-  setThinkingLevel: (mode: string, value: number | null) => void;
   dimensions: { set: (v: string) => void; (): string };
   defaultDimension: { set: (v: string | number) => void; (): string | number };
   taskTypes: { set: (v: string) => void; (): string };
@@ -185,6 +190,8 @@ function setup(
     confirm?: boolean;
     /** What `:check` answers (`FRD-506`). */
     check?: Observable<ModelCheck>;
+    /** One per call, in order — so a test can let the first succeed and the second fail. */
+    levelChecks?: Observable<ThinkingLevelCheck>[];
     /** What the gateway is configured with (`FRD-507` stage C). */
     providers?: Observable<GatewayProvider[]>;
     /** What one provider answers when asked what it offers. */
@@ -192,6 +199,8 @@ function setup(
   } = {},
 ) {
   const checked: string[] = [];
+  const askedLevels: { model: string; levels: string[]; where: Provenance }[] = [];
+  const checkedWhere: Provenance[] = [];
   const asked: string[] = [];
   TestBed.resetTestingModule();
   const saved: CatalogModel[] = [];
@@ -212,9 +221,27 @@ function setup(
       {
         provide: UseCaseService,
         useValue: {
-          checkModel: (name: string) => {
+          checkModel: (name: string, where: Provenance = {}) => {
             checked.push(name);
+            checkedWhere.push(where);
             return options.check ? options.check : of(CHECK);
+          },
+          checkThinkingLevels: (name: string, levels: string[], where: Provenance = {}) => {
+            askedLevels.push({ model: name, levels, where });
+            return (
+              options.levelChecks?.shift() ??
+              of({
+                model: name,
+                results: levels.map((level) => ({
+                  level,
+                  accepted: level !== 'medium',
+                  detail:
+                    level === 'medium'
+                      ? 'Vertex upstream returned 400. thinking_level is not supported…'
+                      : 'The model accepted it.',
+                })),
+              })
+            );
           },
           models: () => options.models ?? of([FLASH, UNPRICED]),
           providers: () => options.providers ?? of([STUDIO, VERTEX]),
@@ -257,6 +284,8 @@ function setup(
     asked,
     text: () => (fixture.nativeElement as HTMLElement).textContent ?? '',
     checked,
+    askedLevels,
+    checkedWhere,
     html: () => fixture.nativeElement as HTMLElement,
     /** Run the reachability check for whatever name is in the editor. Creating a model now
      *  requires having *looked* (`FRD-506`), so every case that creates one does this — which is
@@ -1789,11 +1818,11 @@ describe('ModelCatalog — declaration blocks', () => {
     capabilities: ['generate', 'embed', 'thinking', 'attachments'],
     max_output_tokens: 40960,
     thinking: {
-      modes: ['disabled', 'low', 'high'],
+      modes: ['disabled'],
       min_tokens: 128,
       max_tokens: 8192,
       default: { mode: 'disabled' },
-      levels: { low: 1024, high: 4096 },
+      levels: ['low', 'high'],
     },
     embedding: {
       dimensions: [384, 768],
@@ -1884,10 +1913,10 @@ describe('ModelCatalog — declaration blocks', () => {
     const catalog = harness.component;
     catalog.edit(DECLARED);
 
-    expect(catalog.thinkingModes()).toEqual(['disabled', 'low', 'high']);
+    expect(catalog.thinkingModes()).toEqual(['disabled']);
     expect(catalog.thinkingMax()).toBe(8192);
     expect(catalog.thinkingDefault()).toBe('disabled');
-    expect(catalog.thinkingLevel('low')).toBe(1024);
+    expect(catalog.thinkingLevels()).toEqual(['low', 'high']);
     expect(catalog.dimensions()).toBe('384, 768');
     expect(catalog.defaultDimension()).toBe(384);
     expect(catalog.taskTypes()).toBe('RETRIEVAL_QUERY');
@@ -1903,11 +1932,11 @@ describe('ModelCatalog — declaration blocks', () => {
 
     const sent = harness.saved[0];
     expect(sent.thinking).toEqual({
-      modes: ['disabled', 'low', 'high'],
+      modes: ['disabled'],
       min_tokens: 128,
       max_tokens: 8192,
       default: { mode: 'disabled' },
-      levels: { low: 1024, high: 4096 },
+      levels: ['low', 'high'],
     });
     expect(sent.embedding).toEqual({
       dimensions: [384, 768],
@@ -1999,18 +2028,23 @@ describe('ModelCatalog — declaration blocks', () => {
    * that is not declared is a number nothing will ever read. Both would be a save that fails for a
    * reason the reader cannot see on screen — the form's own state is where it is visible.
    */
-  it('drops a mode’s budget and a default naming it when the mode is unticked', () => {
+  it('drops a default naming a mode that is unticked, or a level that is removed', () => {
     const harness = setup();
     const catalog = harness.component;
     catalog.edit(DECLARED);
-    catalog.toggleThinkingMode('low', false);
-    catalog.thinkingDefault.set('high');
-    catalog.toggleThinkingMode('high', false);
-    catalog.save();
 
+    catalog.thinkingDefault.set('disabled');
+    catalog.toggleThinkingMode('disabled', false);
+    expect(catalog.thinkingDefault()).toBe('');
+
+    catalog.thinkingDefault.set('high');
+    catalog.removeLevel('high');
+    expect(catalog.thinkingDefault()).toBe('');
+
+    catalog.save();
     const thinking = harness.saved[0].thinking;
-    expect(thinking?.modes).toEqual(['disabled']);
-    expect(thinking?.levels).toBeNull();
+    expect(thinking?.modes).toEqual([]);
+    expect(thinking?.levels).toEqual(['low']);
     expect(thinking?.default).toBeNull();
   });
 
@@ -2056,5 +2090,139 @@ describe('ModelCatalog — declaration blocks', () => {
     catalog.dimensions.set('384, nonsense, 768, -1');
 
     expect(catalog.declaredDimensions()).toEqual([384, 768]);
+  });
+});
+
+/**
+ * The thinking levels, after `ADR-0021` turned a token table into the vendor's own words.
+ *
+ * The owner's objection, cataloguing a real model: *"If I now pick medium or low, you ask me how
+ * many tokens that should be. You do not even find these parameters on the vendors' own pages.
+ * How am I supposed to know?"* Nobody publishes it — and a guess did not merely sit in a database,
+ * it went upstream as a **ceiling on the model's reasoning**, so a typed `medium = 2000` truncates
+ * an agentic run that needed twenty thousand.
+ *
+ * What replaced it has to earn the free text: if the words are unconstrained, something other than
+ * a rule in this repository must say whether one works. That is the model itself.
+ */
+describe('ModelCatalog — thinking levels are the vendor’s own words', () => {
+  it('takes a word, lower-cases it, and refuses a duplicate quietly', () => {
+    const { component } = setup();
+    component.add();
+
+    component.levelDraft.set('Low');
+    component.addLevel();
+    component.levelDraft.set('  low  ');
+    component.addLevel();
+    component.levelDraft.set('high');
+    component.addLevel();
+
+    // `Low` and `low` are the same instruction to every vendor, so two chips saying so would be
+    // two chips the reader has to reconcile.
+    expect(component.thinkingLevels()).toEqual(['low', 'high']);
+    expect(component.levelDraft()).toBe('');
+  });
+
+  it('refuses a thinking mode typed as though it were a vendor word', () => {
+    /** `disabled`, `auto` and `limited` are settings the gateway translates per dialect, not words
+     *  a vendor takes. A model listing one as a level would send that string upstream and mean
+     *  something else by it — and it is a mistake somebody makes precisely because the two lists
+     *  sit one above the other. */
+    const { component } = setup();
+    component.add();
+
+    component.levelDraft.set('auto');
+    component.addLevel();
+
+    expect(component.thinkingLevels()).toEqual([]);
+    expect(component.error()).toContain('thinking mode');
+  });
+
+  it('offers modes and levels together as a default', () => {
+    /** A default is whatever the model does when nobody says, and that is as likely to be a level
+     *  as a mode. Offering only the modes would make a level undeclarable without saying so. */
+    const { component } = setup();
+    component.add();
+    component.toggleThinkingMode('auto', true);
+    component.levelDraft.set('high');
+    component.addLevel();
+
+    expect(component.declarableDefaults()).toEqual(['auto', 'high']);
+  });
+
+  it('asks the model and marks each word with what it answered', async () => {
+    const harness = setup();
+    const { component } = harness;
+    component.edit({ ...FLASH, name: 'gemini-2.5-flash' });
+    component.thinkingLevels.set(['low']);
+    // Typed but not committed: pressing the button without leaving the box would otherwise check
+    // everything *except* the word the reader is looking at.
+    component.levelDraft.set('medium');
+    component.checkLevels();
+
+    // **With where the form says it lives.** Both checks ask about the editor's state rather than
+    // the saved row: correcting a provider and pressing a check used to answer about the
+    // declaration being replaced, which is right about the wrong thing.
+    expect(harness.askedLevels).toEqual([
+      {
+        model: 'gemini-2.5-flash',
+        levels: ['low', 'medium'],
+        where: { provider: FLASH.provider ?? '', publisher: '', region: '' },
+      },
+    ]);
+    expect(component.levelVerdict('low')).toEqual({ ok: true, detail: 'The model accepted it.' });
+    // **The provider's own words**, which is the whole value of the button: no rule here could
+    // have said `thinking_level is not supported by this model` as precisely, or stayed as true.
+    expect(component.levelVerdict('medium')?.ok).toBe(false);
+    expect(component.levelVerdict('medium')?.detail).toContain('thinking_level is not supported');
+  });
+
+  it('clears the previous answers when the question itself fails', () => {
+    /** A red chip says *the model refused this word*. The gateway being unreachable says nothing
+     *  about the word at all, and leaving the **last** answers standing beside a failed question
+     *  is worse than either — a verdict about a request that did not happen, which is the shape
+     *  `LESSONS.md` records as unknown rendered as a number.
+     *
+     *  **Asked twice on purpose.** Written first with a single failing call, where the assertion
+     *  passed against code that cleared nothing: there was nothing to clear. A test that never
+     *  reaches the path it is named after is this project's most-repeated defect, and this is the
+     *  mutation run catching it rather than a reviewer. */
+    const harness = setup({
+      levelChecks: [
+        of({
+          model: 'gemini-2.5-flash',
+          results: [{ level: 'low', accepted: true, detail: 'The model accepted it.' }],
+        }),
+        throwError(() => ({ status: 503 })),
+      ],
+    });
+    const { component } = harness;
+    component.edit({ ...FLASH, name: 'gemini-2.5-flash' });
+    component.thinkingLevels.set(['low']);
+
+    component.checkLevels();
+    expect(component.levelVerdict('low')?.ok).toBe(true);
+
+    component.checkLevels();
+    expect(component.levelVerdict('low')).toBeNull();
+    expect(component.error()).toContain('Could not ask');
+  });
+
+  it('removes a word, its verdict, and a default naming it', () => {
+    const harness = setup();
+    const { component } = harness;
+    component.edit({ ...FLASH, name: 'gemini-2.5-flash' });
+    component.thinkingLevels.set(['low']);
+    component.checkLevels();
+    component.thinkingDefault.set('low');
+    expect(component.levelVerdict('low')).not.toBeNull();
+
+    component.removeLevel('low');
+
+    expect(component.thinkingLevels()).toEqual([]);
+    expect(component.levelVerdict('low')).toBeNull();
+    // Or the save fails against a validator refusing a default nothing declares, for a reason the
+    // reader cannot see on screen.
+    expect(component.thinkingDefault()).toBe('');
   });
 });

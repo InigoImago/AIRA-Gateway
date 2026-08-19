@@ -105,7 +105,7 @@ async def test_the_classifier_asks_for_no_thinking() -> None:
     await LlmInjectionClassifier(provider, "guard").verdict("hi")
 
     thinking = provider.seen[0].thinking
-    assert thinking is not None and thinking.mode is ThinkingMode.DISABLED
+    assert thinking is not None and thinking.mode == ThinkingMode.DISABLED
 
 
 async def test_the_router_asks_for_no_thinking_either() -> None:
@@ -115,7 +115,7 @@ async def test_the_router_asks_for_no_thinking_either() -> None:
     await LlmCategoryRouter(provider, "guard", _CATS).classify("x")
 
     thinking = provider.seen[0].thinking
-    assert thinking is not None and thinking.mode is ThinkingMode.DISABLED
+    assert thinking is not None and thinking.mode == ThinkingMode.DISABLED
 
 
 class _BoomProvider(_StubProvider):
@@ -214,7 +214,7 @@ def test_a_classifier_asks_a_model_that_can_be_quietened_to_be_quiet() -> None:
     resolved = for_a_classifier(declaration)
 
     assert resolved is not None
-    assert resolved.mode is ThinkingMode.DISABLED
+    assert resolved.mode == ThinkingMode.DISABLED
 
 
 def test_a_classifier_says_nothing_to_a_model_that_refuses_to_be_quietened() -> None:

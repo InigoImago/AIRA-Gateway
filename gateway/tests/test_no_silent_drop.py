@@ -524,6 +524,13 @@ def test_every_adapter_declares_its_thinking_support() -> None:
         assert declared is not None, f"{adapter.__name__} declares no thinking support"
         unknown = set(declared) - set(ThinkingMode)
         assert not unknown, f"{adapter.__name__} declares modes nobody defines: {unknown}"
+        # **The second half, added with `ADR-0021`.** A level stopped being a member of the enum
+        # above and became a word the vendor accepts, so "can this dialect express a level" is no
+        # longer answerable from the mode set — and it is a different answer per dialect: two of
+        # them have a field that takes a word and one has only a number.
+        assert isinstance(getattr(adapter, "expresses_thinking_levels", None), bool), (
+            f"{adapter.__name__} does not say whether it has a field for a level word"
+        )
 
 
 def test_the_thinking_declarations_differ_which_is_the_reason_they_are_declared() -> None:
@@ -533,12 +540,20 @@ def test_the_thinking_declarations_differ_which_is_the_reason_they_are_declared(
     from aira_gateway.upstreams.openai.adapter import OpenAIAdapter
     from aira_gateway.upstreams.vertex.adapters import VertexAnthropicAdapter, VertexGeminiAdapter
 
-    # No token budget in this dialect, so a caller's explicit count cannot be honoured exactly.
+    # No token budget in this dialect, so a caller's explicit count cannot be honoured exactly —
+    # and no way to say "you decide" either, since `reasoning_effort` is always a level.
     assert ThinkingMode.LIMITED not in OpenAIAdapter.thinking_modes
+    assert ThinkingMode.AUTO not in OpenAIAdapter.thinking_modes
     # No "decide for yourself" value in this one.
     assert ThinkingMode.AUTO not in VertexAnthropicAdapter.thinking_modes
-    # And the budget-shaped Gemini dialect can say all of it.
+    # And the budget-shaped Gemini dialect can say all three.
     assert VertexGeminiAdapter.thinking_modes == frozenset(ThinkingMode)
+
+    # The other axis, and it splits the dialects differently — which is the argument for it being
+    # its own declaration rather than something read off the mode set.
+    assert OpenAIAdapter.expresses_thinking_levels is True
+    assert VertexGeminiAdapter.expresses_thinking_levels is True
+    assert VertexAnthropicAdapter.expresses_thinking_levels is False
 
 
 def test_a_mode_a_dialect_cannot_express_is_refused_and_never_omitted() -> None:
@@ -548,7 +563,6 @@ def test_a_mode_a_dialect_cannot_express_is_refused_and_never_omitted() -> None:
     `thinking` block at all** — the same body as `disabled`. Silence is the one answer a control
     plane cannot give about a control.
     """
-    from aira_common.models import ThinkingMode
     from aira_gateway.core.canonical import Thinking
     from aira_gateway.upstreams.base import DialectUnsupported
     from aira_gateway.upstreams.vertex.anthropic_mapping import canonical_to_anthropic
@@ -556,7 +570,7 @@ def test_a_mode_a_dialect_cannot_express_is_refused_and_never_omitted() -> None:
     asked = CanonicalRequest(
         model="claude",
         messages=[CanonicalMessage(role=Role.USER, text="hi")],
-        thinking=Thinking(mode=ThinkingMode.HIGH, tokens=None),
+        thinking=Thinking(mode="high"),
     )
 
     with pytest.raises(DialectUnsupported) as caught:

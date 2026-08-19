@@ -54,34 +54,6 @@ _FINISH_REASONS = {
 #: The name the schema is registered under. OpenAI requires one; it is never shown to the caller.
 SCHEMA_NAME = "aira_response"
 
-#: `mode` → `reasoning_effort`. The vendor takes an **abstract level and no token budget at all**,
-#: which is why `FRD-111` §5.2 said `limited` has no equivalent here and must be refused by
-#: capability rather than approximated: silently rounding a caller's 20 000-token budget to "high"
-#: would spend a different amount of money than they asked for, and nothing would say so.
-#:
-#: `disabled` maps to the value `"none"` and **not** to an absent field. Measured against a real
-#: server rather than assumed: a reasoning model sent no `reasoning_effort` **thinks anyway** — it
-#: is the model's own default, not "off" — and spends the whole output allowance doing it. The
-#: caller who explicitly switched thinking off then receives a 200, an empty or truncated answer,
-#: and a bill for several hundred tokens of reasoning that is dropped before they ever see it.
-#: `"none"` on the same server answers in about fifteen tokens.
-#: `minimal` is **sent as `"low"`**, and that is not the rounding refused above. `"minimal"` is
-#: not a value of this dialect — it exists on one vendor's newest family and nowhere else, so
-#: every other OpenAI-compatible server answers `400 invalid value`. A caller asking for the least
-#: thinking a model will do therefore got no answer at all, which is a worse approximation of
-#: their request than the adjacent level that works. It costs no stated budget, because this
-#: dialect has none to state: the difference between the two is the server's own, not a number the
-#: caller named. `limited` stays refused for exactly the reason this one is not — there a number
-#: *was* named.
-_REASONING_EFFORT = {
-    ThinkingMode.DISABLED: "none",
-    ThinkingMode.MINIMAL: "low",
-    ThinkingMode.LOW: "low",
-    ThinkingMode.MEDIUM: "medium",
-    ThinkingMode.HIGH: "high",
-    ThinkingMode.AUTO: "medium",
-}
-
 
 def _content(message: CanonicalMessage) -> str | list[dict[str, Any]]:
     """Canonical parts → OpenAI content.
@@ -239,21 +211,44 @@ def _add_sampling(body: dict[str, Any], request: CanonicalRequest) -> None:
 
 
 def _reasoning_effort(setting: Thinking) -> str:
-    """The abstract level this dialect takes — including an explicit `"none"` for off.
+    """The caller's word, and an explicit `"none"` for off.
 
-    The obvious implementation omits the field for `disabled`, on the reasoning that a parameter
-    nobody sets is a feature nobody gets. That reasoning is wrong for a *reasoning* model, whose
-    own default is to think, and the failure it produces is the worst-behaved kind: a 200 with an
-    empty answer. Off has to be said out loud.
+    **A level passes through untranslated.** `reasoning_effort` takes a word, and the catalog
+    declares the words this model accepts, so there is nothing to map: `thinking.py` has already
+    refused anything the model did not declare. This used to be a table, and it mapped `minimal`
+    onto `"low"` and `auto` onto `"medium"` — both guesses wearing the authority of a lookup.
+    `minimal` really does `400` on most servers, but silently *upgrading* somebody to twice the
+    reasoning they asked for and billing it is not the better answer; a model that takes `minimal`
+    now declares it, and one that does not never offers it.
+
+    `disabled` maps to `"none"` and **not** to an absent field. Measured against a real server: a
+    reasoning model sent no `reasoning_effort` **thinks anyway** — that is its own default, not
+    "off" — and spends the whole output allowance doing it. The caller who explicitly switched
+    thinking off then gets a 200, an empty or truncated answer, and a bill for several hundred
+    tokens of reasoning dropped before they see it. `"none"` answers in about fifteen tokens.
+
+    `limited` and `auto` are refused rather than approximated, for the same reason in two
+    directions: one names a number this dialect cannot spend, the other names no number and would
+    have to have one chosen on the caller's behalf.
     """
-    if setting.mode is ThinkingMode.LIMITED:
+    if setting.mode == ThinkingMode.LIMITED:
         raise DialectUnsupported(
             "This dialect takes an effort level, not a token budget, so a 'limited' thinking "
             "budget cannot be honoured exactly. It is refused rather than rounded: rounding "
             "would spend a different amount than was asked for, and nothing about the answer "
             "would show it."
         )
-    return _REASONING_EFFORT[setting.mode]
+    if setting.mode == ThinkingMode.AUTO:
+        raise DialectUnsupported(
+            "This dialect has no way to say 'the model decides': `reasoning_effort` is always a "
+            "level. It is refused rather than guessed at — picking one on the caller's behalf "
+            "would spend their money at a rate nobody chose, and the answer would not say so."
+        )
+    if setting.mode == ThinkingMode.DISABLED:
+        return "none"
+    # A level word, sent as the caller said it. The catalog declared that this model takes it, and
+    # `thinking.py` refused it otherwise, so there is nothing left here to decide.
+    return setting.mode
 
 
 def _response_format(schema: ResponseSchema) -> dict[str, Any]:

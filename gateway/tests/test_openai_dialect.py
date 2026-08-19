@@ -133,24 +133,30 @@ def test_a_request_with_no_options_carries_none_of_them() -> None:
 # == thinking, which this vendor expresses differently ===========================================
 
 
-@pytest.mark.parametrize(
-    ("mode", "effort"),
-    [
-        # `minimal` is a level of *ours*, not of this dialect: it exists on one vendor's newest
-        # family and every other OpenAI-compatible server answers `400 invalid value`. It is sent
-        # as the adjacent level that exists, which is an answer instead of no answer, and costs no
-        # stated budget because this dialect states none. `limited` is still refused below —
-        # there the caller named a number.
-        (ThinkingMode.MINIMAL, "low"),
-        (ThinkingMode.LOW, "low"),
-        (ThinkingMode.MEDIUM, "medium"),
-        (ThinkingMode.HIGH, "high"),
-        (ThinkingMode.AUTO, "medium"),
-    ],
-)
-def test_an_effort_level_maps_to_reasoning_effort(mode: ThinkingMode, effort: str) -> None:
-    body = canonical_to_openai(_request(thinking=Thinking(mode=mode)))
-    assert body["reasoning_effort"] == effort
+@pytest.mark.parametrize("word", ["minimal", "low", "medium", "high", "turbo"])
+def test_a_level_reaches_reasoning_effort_as_the_caller_said_it(word: str) -> None:
+    """**Untranslated**, which is a change of mind recorded in `ADR-0021`.
+
+    This was a table, and it mapped `minimal` onto `"low"` and `auto` onto `"medium"`. The
+    reasoning for the first was that `"minimal"` exists on one vendor's newest family and every
+    other server answers `400 invalid value`, so the adjacent level is an answer instead of no
+    answer. The reasoning is wrong in the same way the level→token table was: it silently gives
+    somebody **twice the reasoning they asked for and bills them**, and the answer does not say so.
+    A model that takes `minimal` declares it; one that does not never offers it, and the caller is
+    refused by name with the words that model does take.
+
+    `turbo` is here for the property: nothing in this repository knows what it means."""
+    body = canonical_to_openai(_request(thinking=Thinking(mode=word)))
+    assert body["reasoning_effort"] == word
+
+
+def test_auto_is_refused_rather_than_turned_into_a_level() -> None:
+    """`auto` is "you decide", and this dialect has no way to say it — `reasoning_effort` is always
+    a level. It used to be sent as `"medium"`, which turns a caller's *absence* of a choice into a
+    choice, at a rate nobody picked. Refused by name, like `limited` beside it."""
+    with pytest.raises(DialectUnsupported) as caught:
+        canonical_to_openai(_request(thinking=Thinking(mode=ThinkingMode.AUTO)))
+    assert "decides" in str(caught.value)
 
 
 def test_disabled_thinking_says_off_out_loud_rather_than_omitting_the_parameter() -> None:
@@ -164,7 +170,7 @@ def test_disabled_thinking_says_off_out_loud_rather_than_omitting_the_parameter(
     received a 200, a truncated answer, and a bill for reasoning that is stripped from the response
     before they ever see it. The same server, sent `"none"`, answered in about fifteen tokens.
     """
-    body = canonical_to_openai(_request(thinking=Thinking(mode=ThinkingMode.DISABLED, tokens=0)))
+    body = canonical_to_openai(_request(thinking=Thinking(mode=ThinkingMode.DISABLED)))
     assert body["reasoning_effort"] == "none"
 
 

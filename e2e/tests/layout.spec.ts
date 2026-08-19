@@ -257,6 +257,58 @@ test.describe('Form alignment', () => {
     }
   });
 
+  test('a message in a dialog footer never squeezes the buttons', async ({ page }) => {
+    /**
+     * Reported the moment the model editor's window was narrowed to a form's width: *"when an
+     * error is thrown in the interface, the button layout at the bottom breaks when you touch the
+     * model-name field."*
+     *
+     * The footer is a wrapping flex row carrying `Check reachability`, an explanation of why Save
+     * is unavailable, `Cancel` and `Save`. The explanation is `.grow`, which is `flex: 1` — that
+     * is `flex-basis: 0`, so it **contributes nothing to the wrap calculation** and never takes a
+     * line of its own: it is squeezed into a column and the buttons are pushed around it. The
+     * identical defect `.form-inline > .callout` carries a comment about, one container along.
+     *
+     * Latent at 880 px, where the longest message happened to fit on one line — which is why this
+     * measures the buttons **with and without** a message rather than asserting a layout at one
+     * width. A rule that only holds at one width is not a rule.
+     */
+    await login(page, USERS.globalAdmin);
+    await page.goto('/models');
+    await openModelEditor(page);
+
+    const box = async () => {
+      const buttons = page.locator('.modal__foot button');
+      const boxes = await buttons.evaluateAll((nodes) =>
+        nodes.map((node) => {
+          const r = node.getBoundingClientRect();
+          return { top: r.top, width: r.width, text: (node.textContent ?? '').trim() };
+        }),
+      );
+      return boxes;
+    };
+
+    const before = await box();
+    expect(before.length).toBeGreaterThan(2);
+
+    await page.locator('#model-name').fill('probe');
+    await openEditorTab(page, 'price');
+    await page.locator('#model-input').fill('0.075');
+    await page.locator('#model-input').blur();
+    await expect(page.getByText('Set both the input and the output price')).toBeVisible();
+
+    const after = await box();
+    // Same buttons, still on one line among themselves, and none of them narrower than it was.
+    expect(after.length).toBe(before.length);
+    expect(new Set(after.map((b) => Math.round(b.top))).size).toBe(1);
+    for (let i = 0; i < after.length; i += 1) {
+      expect(
+        after[i].width,
+        `"${after[i].text}" was squeezed by the message beside it`,
+      ).toBeGreaterThanOrEqual(before[i].width - 1);
+    }
+  });
+
   test('forms stay aligned when they wrap on a narrow screen', async ({ page }) => {
     await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('wrap');

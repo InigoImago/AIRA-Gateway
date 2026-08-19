@@ -66,13 +66,15 @@ def test_a_thinking_budget_below_the_output_cap_is_accepted() -> None:
 @pytest.mark.parametrize(
     ("block", "fragment"),
     [
-        ({"modes": []}, "non-empty list"),
+        # A block that offers nothing at all — neither a mode nor a level word.
+        ({"modes": []}, "neither a mode nor a level"),
         ({"modes": ["telepathy"]}, "Unknown thinking modes"),
         ({"modes": ["limited"]}, "required when 'limited' is offered"),
         ({"modes": ["auto"], "min_tokens": 4096, "max_tokens": 128}, "must not exceed"),
         ({"modes": ["auto"], "default": {"mode": "high"}}, "one of the declared modes"),
-        ({"modes": ["auto"], "levels": {"telepathy": 10}}, "unknown mode"),
-        ({"modes": ["auto"], "levels": {"auto": 0}}, "positive integer"),
+        # A level list of the old shape, and one naming a mode as though it were a vendor word.
+        ({"modes": ["auto"], "levels": {"telepathy": 10}}, "list of the level words"),
+        ({"modes": ["auto"], "levels": ["auto"]}, "thinking modes rather than"),
     ],
 )
 def test_an_inconsistent_thinking_block_is_refused(block: dict[str, Any], fragment: str) -> None:
@@ -265,8 +267,8 @@ def test_somebody_without_a_global_role_may_not_declare_a_model() -> None:
         ({"capabilities": "generate"}, "capabilities must be a list"),
         ({"hosting": "somewhere"}, "hosting must be one of"),
         ({"thinking": ["disabled"]}, "thinking must be an object"),
-        ({"thinking": {"modes": []}}, "thinking.modes must be a non-empty list"),
-        ({"thinking": {"modes": "limited"}}, "thinking.modes must be a non-empty list"),
+        ({"thinking": {"modes": []}}, "thinking declares neither a mode nor a level"),
+        ({"thinking": {"modes": "limited"}}, "thinking.modes must be a list"),
         ({"embedding": []}, "embedding must be an object"),
         ({"embedding": {"task_types": "SEMANTIC"}}, "embedding.task_types must be a list"),
         ({"embedding": {"task_types": [""]}}, "embedding.task_types must be a list"),
@@ -277,9 +279,10 @@ def test_somebody_without_a_global_role_may_not_declare_a_model() -> None:
         ({"embedding": {"default": -1}}, "embedding.default must be a positive"),
         ({"attachments": []}, "attachments must be an object"),
         ({"attachments": {"media_types": []}}, "media_types must be a non-empty object"),
+        # The shapes swapped with `ADR-0021`: a list of words is right, the old table is not.
         (
-            {"thinking": {"modes": ["limited"], "levels": ["low"]}},
-            "thinking.levels must be an object",
+            {"thinking": {"modes": ["limited"], "max_tokens": 4096, "levels": {"low": 512}}},
+            "thinking.levels must be a list of the level words",
         ),
         ({"attachments": {"media_types": {"pdf": {}}}}, "is not a media type"),
         (
@@ -392,17 +395,17 @@ def test_a_valid_declaration_is_accepted() -> None:
 #:   gemini-2.5-flash   budget 0 stops thinking · 1…24576 accepted · 32768 refused
 #:   gemini-2.5-pro     budget 0 **refused** ("does not support setting thinking_budget to 0")
 #:                      1…127 refused · 128…32768 accepted · 40000 refused
+#:   both               `thinkingLevel` refused — *"not supported by this model"* — which is why
+#:                      neither declares a level word and both are asked with the modes instead.
 MEASURED = {
     "gemini-2.5-flash": {
-        "modes": ["disabled", "auto", "low", "medium", "high"],
+        "modes": ["disabled", "auto", "limited"],
         "max_tokens": 24576,
-        "levels": {"low": 512, "medium": 4096, "high": 16384},
     },
     "gemini-2.5-pro": {
-        "modes": ["auto", "low", "medium", "high"],
+        "modes": ["auto", "limited"],
         "min_tokens": 128,
         "max_tokens": 32768,
-        "levels": {"low": 1024, "medium": 8192, "high": 24576},
     },
 }
 
@@ -423,72 +426,66 @@ def test_disabled_and_a_floor_above_zero_cannot_both_be_true() -> None:
     model: it answers *"The model does not support setting thinking_budget to 0"*.
     """
     errors = validate_thinking(
-        {"modes": ["disabled", "low"], "min_tokens": 128, "levels": {"low": 1024}},
+        {"modes": ["disabled", "limited"], "min_tokens": 128},
         max_output_tokens=65536,
     )
 
     assert any("cannot stop thinking" in error for error in errors)
 
 
+# ---- levels are the vendor's words (`ADR-0021`) -------------------------------------------------
+#
+# Four rules used to live here: a level below the floor, above the ceiling, for a mode the model
+# does not offer, and levels-with-a-ceiling-and-no-table. Every one of them was correct about the
+# `{level: token count}` table, and the table was the mistake. The owner, cataloguing a real model:
+#
+#   *"If I now pick medium or low, you ask me how many tokens that should be. You do not even find
+#   these parameters on the vendors' own pages. How am I supposed to know?"*
+#
+# Nobody publishes it, so nobody could fill it, and the guess went upstream as a ceiling on the
+# model's reasoning. The tests below guard what is left, which is deliberately thin: shape and
+# duplication here, and the *model* answers whether a word works.
+
+
+def test_a_list_of_words_is_the_shape_and_a_table_is_not() -> None:
+    """The migration's own before-and-after, asserted. A catalog still holding the old table is a
+    declaration nothing can act on, so it must be refused rather than quietly read as empty."""
+    assert validate_thinking({"levels": ["low", "high"]}, max_output_tokens=65536) == []
+
+    errors = validate_thinking({"levels": {"low": 512}}, max_output_tokens=65536)
+    assert any("list of the level words" in error for error in errors), errors
+
+
+def test_a_word_nobody_here_has_heard_of_is_accepted() -> None:
+    """**The property free text exists for.** A vendor ships a word next month and a catalogue can
+    hold it the same day. A rule refusing an unrecognised one would be this plane inventing a
+    vocabulary again, one release behind whatever the vendors do."""
+    assert validate_thinking({"levels": ["turbo", "glacial"]}, max_output_tokens=65536) == []
+
+
 @pytest.mark.parametrize(
     ("levels", "expected"),
     [
-        ({"low": 100}, "below the 128"),
-        ({"low": 40000}, "above the 32768"),
-        ({"minimal": 1024}, "which thinking.modes does not offer"),
+        (["low", "low"], "the same level twice"),
+        (["low", "LOW"], "the same level twice"),
+        (["low", "  "], "empty word"),
+        (["low", "auto"], "thinking modes rather than vendor level words"),
     ],
 )
-def test_a_level_outside_the_models_envelope_is_refused(levels: dict, expected: str) -> None:
-    """Where the vendors differ most and the difference is least visible.
-
-    `low` set to 100 is fine on one model of a family and a `400` on the next. The console used to
-    accept every one of these, so the operator saw a working configuration and the caller saw the
-    vendor's refusal. A budget for a level the model does not offer is the third shape: dead
-    configuration that reads as a working path.
-    """
-    errors = validate_thinking(
-        {"modes": ["low", "high"], "min_tokens": 128, "max_tokens": 32768, "levels": levels},
-        max_output_tokens=65536,
-    )
-
+def test_a_level_list_that_says_nothing_useful_is_refused(levels: list, expected: str) -> None:
+    """What is left to be wrong about a list of words. The last is the one with teeth: `auto`,
+    `disabled` and `limited` are settings the gateway translates per dialect, so a model listing
+    one as a *level* would send that string to the vendor and mean something else by it."""
+    errors = validate_thinking({"levels": levels}, max_output_tokens=65536)
     assert any(expected in error for error in errors), errors
 
 
-def test_levels_with_a_ceiling_and_no_table_are_refused() -> None:
-    """Otherwise `low` and `high` are the same instruction.
+def test_a_block_that_offers_nothing_is_refused() -> None:
+    """It used to be "modes must be non-empty", which stopped being right the moment a model could
+    offer level words and no control mode — an OpenAI-compatible server that takes
+    `reasoning_effort` and cannot say "you decide" is exactly that model."""
+    assert validate_thinking({"levels": ["low"]}, max_output_tokens=65536) == []
+    assert validate_thinking({"modes": ["auto"]}, max_output_tokens=65536) == []
 
-    `_with_budget` resolves a level with no entry to the declared maximum — deliberately, so a
-    reservation never ignores the expensive half of a request — and that figure goes on the wire.
-    A model declaring `low` and `high` with a ceiling and no table is therefore told the same
-    thing for both, and the distinction the caller asked for is gone before the request leaves.
-
-    This is the question that prompted the rule, from the other side: the levels differ per model,
-    and a declaration that names them without numbers makes them differ from **nothing**.
-    """
-    errors = validate_thinking(
-        {"modes": ["low", "high"], "max_tokens": 24576}, max_output_tokens=65536
-    )
-
-    assert any("all mean the same thing" in error for error in errors)
-
-
-@pytest.mark.parametrize(
-    ("label", "block"),
-    [
-        # Addressed by level rather than by budget — `reasoning_effort` takes a word, so there is
-        # no number to give and requiring one would be requiring something nobody sends.
-        ("a model addressed by level", {"modes": ["minimal", "low", "medium", "high"]}),
-        ("one level and a ceiling", {"modes": ["high"], "max_tokens": 24576}),
-        (
-            "the shape the local seed declares",
-            {
-                "modes": ["disabled", "minimal", "low", "medium", "high"],
-                "default": {"mode": "disabled"},
-            },
-        ),
-    ],
-)
-def test_the_table_is_required_only_where_a_number_is_sent(label: str, block: dict) -> None:
-    """A rule that fired on these would refuse three declarations this project already ships,
-    which is not a rule but an outage."""
-    assert validate_thinking(block, max_output_tokens=65536) == [], label
+    errors = validate_thinking({"min_tokens": 128}, max_output_tokens=65536)
+    assert any("neither a mode nor a level" in error for error in errors), errors

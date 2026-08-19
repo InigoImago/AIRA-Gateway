@@ -431,6 +431,12 @@ reading code.
   a `gap`, and a `<strong>` mid-sentence is a flex item. A gap is not a character. Where the defect
   *is* the layout, only a picture or a measured box is evidence; the same goes for a form whose
   fields stopped standing under one another when there were too few left to fill a wrapping row.
+  **`flex: 1` is `flex-basis: 0`, which contributes nothing to a wrap calculation** — an item with
+  it never moves to a line of its own; it is squeezed, and squeezes its neighbours. Three defects
+  in this one console: a note rendered 67 px wide and 4818 px tall, a growing field collapsed to
+  30 px, and a footer message that cramped Save the moment its dialog was narrowed. Each was
+  latent at the width it was written at, which is the tell: **a layout rule that only holds at one
+  width is not a rule**, so measure it at two.
   **And fix a layout per window, not per field** — the first attempt tagged each field with a class,
   which reached one tab of three and was reported again the same day as *"the window is still
   stretched"*. A rule carried on every element is one the next element added will not carry; a rule
@@ -445,6 +451,20 @@ reading code.
   the redundancy that appears when you state a fact somewhere new: **delete the old statement.**
   The import note still opened with *"Filled in from mock: provider, dialect"* one line under a
   sentence saying exactly that, and two statements of one fact read as two facts.
+- **A field nobody can fill is worse than a missing feature — and a guess that leaves the process
+  is worse again.** The model catalogue asked for a token budget per thinking level, in a control
+  whose screen-reader label was literally *"How many thinking tokens `medium` means"*. No vendor
+  publishes that number, so the honest answers were all wrong; and the number did not stay in the
+  database, it went upstream as a **ceiling on the model's reasoning**, where a typed
+  `medium = 2000` silently truncates work that needed twenty thousand. Two separate tests, and a
+  control has to pass both: *can the person filling this in know the answer*, and *what does a
+  wrong answer do to a request*. When the answer to the first is "no", deriving one is not the fix
+  — a fraction of a range is an invented number with a formula in front of it. **Ask what the
+  vendor already accepts, store that, and let the vendor be the authority on whether it works**: a
+  free-text word plus one capped request that asks the model beats any list this repository can
+  keep current. The same round produced the corollary about *whose* number it is: `limited` — where
+  the **caller** names a budget — was never the problem, because the person naming it is the person
+  who knows.
 - **Read-only is a control, greyed — never prose.** The models released to a use case were shown
   to a reader who may not change them as a paragraph of `<code>` chips. *"It does not look like a
   control, so the developer will not even read it"* — the one piece of configuration they most

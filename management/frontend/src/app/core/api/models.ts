@@ -333,24 +333,20 @@ export const CAPABILITIES: readonly Capability[] = [
 ];
 
 /**
- * The thinking vocabulary (`FRD-111`), restated for the same reason `CAPABILITIES` is: a checkbox
- * list has to come from somewhere. `libs/tests/test_capability_vocabulary.py` compares it against
- * the Python enum **in both directions** — the capability list was missing two members for days
- * and nothing failed, because a value the console cannot express looks exactly like a design
- * decision.
+ * The three thinking settings the **gateway** owns (`FRD-111`, `ADR-0021`), restated for the same
+ * reason `CAPABILITIES` is: a checkbox list has to come from somewhere.
+ * `libs/tests/test_capability_vocabulary.py` compares it against the Python enum **in both
+ * directions** — the capability list was missing two members for days and nothing failed, because
+ * a value the console cannot express looks exactly like a design decision.
+ *
+ * `high`, `medium`, `low` and `minimal` used to be in here, with a token budget asked for beside
+ * each. They are gone, and not because the words are wrong — they are the words the vendors
+ * themselves use — but because a **closed list restated in three places** cannot hold a vendor's
+ * next one. A level is free text now, declared per model and checked against that model.
  */
-export type ThinkingModeName =
-  'disabled' | 'limited' | 'auto' | 'high' | 'medium' | 'low' | 'minimal';
+export type ThinkingModeName = 'disabled' | 'limited' | 'auto';
 
-export const THINKING_MODES: readonly ThinkingModeName[] = [
-  'disabled',
-  'limited',
-  'auto',
-  'high',
-  'medium',
-  'low',
-  'minimal',
-];
+export const THINKING_MODES: readonly ThinkingModeName[] = ['disabled', 'limited', 'auto'];
 
 /**
  * What a model may be declared to read (`FRD-110`).
@@ -377,14 +373,23 @@ export const MEDIA_TYPES: readonly string[] = [
   'image/heif',
 ];
 
-/** A model's thinking declaration (`FRD-114` FR-3). */
+/** A model's thinking declaration (`FRD-114` FR-3, `ADR-0021`). */
 export interface ThinkingDeclaration {
+  /** The gateway's own three, which every dialect spells differently. A closed set. */
   modes: ThinkingModeName[];
+  /** Bounds for `limited` — the one mode where the **caller** names a number. */
   min_tokens?: number | null;
   max_tokens?: number | null;
-  default?: { mode: ThinkingModeName; tokens?: number | null } | null;
-  /** Mode → token budget, so an abstract level reserves the right amount (`FRD-111`). */
-  levels?: Record<string, number> | null;
+  /** A mode or a level word: whatever this model does when the caller says nothing. */
+  default?: { mode: string; tokens?: number | null } | null;
+  /**
+   * The **vendor's own** level words this model accepts, free text.
+   *
+   * Was `Record<string, number>` — a token budget per level, asked for by a form field whose own
+   * label read *"How many thinking tokens medium means"*. No vendor publishes that number, and a
+   * guess went upstream as a ceiling on the model's reasoning.
+   */
+  levels?: string[] | null;
 }
 
 /** An embedding model's shape (`FRD-113`). */
@@ -454,6 +459,12 @@ export interface ModelCheck {
   served: boolean;
   reachable: boolean | null;
   detail: string;
+}
+
+/** What the model itself said about each declared level word (`ADR-0021`). */
+export interface ThinkingLevelCheck {
+  model: string;
+  results: { level: string; accepted: boolean; detail: string }[];
 }
 
 /** A battery of questions to put to a model (`FRD-504`). */

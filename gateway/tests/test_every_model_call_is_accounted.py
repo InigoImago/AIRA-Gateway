@@ -61,6 +61,20 @@ ACCOUNTED: dict[str, str] = {
         "`Accounting`, which is what `test_a_kira_request_is_audited_exactly_like_a_gemini_one` "
         "compares row for row."
     ),
+    "api/incidents.py:generate": (
+        "The console's *Ask the model* button (`ADR-0021`). **The one call site here that spends "
+        "money and books nothing**, so it gets the longest sentence: it belongs to no use case, "
+        "so there is nothing to attribute it to and no budget to reserve against — booking it "
+        "somewhere would be inventing an owner, which is the failure `FRD-403` is about wearing "
+        "the opposite mask.\n\n"
+        "What keeps that honest is the size. One output token per word accepted and nothing at "
+        "all per word refused (measured 2026-08-19: a provider rejects an unsupported "
+        "`thinkingLevel` before generating), at most `MAX_LEVELS_PER_CHECK` words per press, by a "
+        "person who already holds `may_act_on_incidents`. It is a diagnostic beside `ping`, which "
+        "is free only because `:countTokens` happens to exist — and `:countTokens` **cannot** "
+        "answer this one: it never reads `generationConfig` and returns 200 to an unsupported "
+        "level as readily as to a supported one."
+    ),
     "pipeline/classifiers.py:generate": (
         "The LLM injection classifier and the LLM router. Each returns a `ModelCall`, which "
         "`record_pipeline_calls` turns into a `pipeline:<step>` row booked with `requests=0` — the "

@@ -118,7 +118,7 @@ def canonical_to_gemini_request(request: CanonicalRequest) -> dict[str, Any]:
     if request.thinking is not None or request.include_reasoning:
         thinking_config: dict[str, Any] = {}
         if request.thinking is not None:
-            thinking_config["thinkingBudget"] = thinking_budget(request.thinking)
+            thinking_config.update(thinking_fields(request.thinking))
         if request.include_reasoning:
             # Asked for only where the **use case** allows it (`FRD-135` FR-3). Google returns
             # nothing extra without this, so a use case that turned reasoning on and never saw any
@@ -162,18 +162,28 @@ def _add_sampling(config: dict[str, Any], request: CanonicalRequest) -> None:
         config["stopSequences"] = list(request.stop_sequences)
 
 
-def thinking_budget(setting: Thinking) -> int:
-    """Google's ``thinkingBudget``: ``0`` off, ``-1`` model's choice, otherwise a token count.
+def thinking_fields(setting: Thinking) -> dict[str, Any]:
+    """Google's thinking config: a **budget** for our three settings, a **level** for a level.
 
-    The abstract levels never reach here as levels — :mod:`aira_gateway.thinking` has already
-    turned them into the budget the model's own catalog entry attaches to them, because
-    "high" means nothing to an HTTP call and the mapping differs per model.
+    Google itself moved from the first to the second. ``thinkingBudget`` is a token count where
+    ``0`` is off and ``-1`` is the model's choice; ``thinkingLevel`` is a word, and Gemini 3 takes
+    it while Gemini 2.5 answers *"thinking_level is not supported by this model"* — measured on
+    2026-08-19, which is why which one a model takes is **declared per model** rather than decided
+    by a version check here.
+
+    A level word therefore goes out as the word. It used to arrive here already turned into a
+    number, from a ``level → token count`` table in the model's catalog entry — a number no vendor
+    publishes, invented by whoever catalogued the model, and then sent as a **ceiling on the
+    model's reasoning**. `ADR-0021` retired it: an agentic run that needs twenty thousand thinking
+    tokens must not be truncated by somebody's guess at what "medium" means.
     """
-    if setting.mode is ThinkingMode.DISABLED:
-        return 0
-    if setting.mode is ThinkingMode.AUTO:
-        return -1
-    return setting.tokens or -1
+    if setting.mode == ThinkingMode.DISABLED:
+        return {"thinkingBudget": 0}
+    if setting.mode == ThinkingMode.AUTO:
+        return {"thinkingBudget": -1}
+    if setting.mode == ThinkingMode.LIMITED:
+        return {"thinkingBudget": setting.tokens or -1}
+    return {"thinkingLevel": setting.mode}
 
 
 def canonical_to_gemini_embedding(request: CanonicalEmbeddingRequest) -> dict[str, Any]:
