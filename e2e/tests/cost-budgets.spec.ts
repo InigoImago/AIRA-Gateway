@@ -5,6 +5,7 @@ import {
   login,
   logout,
   openEditorTab,
+  removeModel,
   submitOfOpenForm,
   uniqueSlug,
 } from './support';
@@ -91,6 +92,13 @@ test.describe('Cost budgets', () => {
     await expect(
       page.locator('.callout--warning', { hasText: 'left out of every spend figure' }),
     ).toBeVisible();
+
+    // Removed again, both of them. This suite used to leave every model it catalogued behind, so a
+    // stack tested a few times held five entries nobody had declared — and the console's "N models
+    // have no price on file" counts the whole catalogue, so the residue turns a real figure into
+    // noise. Cleaning up is part of the test, not tidiness.
+    await removeModel(page, model);
+    await removeModel(page, unpriced);
   });
 
   test('a one-sided price is refused before it can distort a figure', async ({ page }) => {

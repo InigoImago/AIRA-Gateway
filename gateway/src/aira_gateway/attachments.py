@@ -28,6 +28,25 @@ from typing import Any
 #: The media types AIRA accepts, taken from the compatibility contract. What a *model*
 #: accepts is narrower and is declared per model (`FRD-114`); the two are intersected, and the
 #: intersection is checked against the model about to be dispatched to.
+#: **The outer bound, not a claim about any model.** A type outside this set is refused before any
+#: model is consulted; a type inside it still has to be declared per model (`FRD-114` FR-7), and
+#: the declaration is meant to be evidence.
+#:
+#: Measured on 2026-08-19, one real file per type against `gemini-2.5-flash` on Vertex
+#: (europe-west1). Each file carried a nonsense marker — in the images drawn as **pixels**, so a
+#: correct answer is proof the picture was looked at rather than that a header was parsed — and the
+#: model was asked for the word alone:
+#:
+#:     pdf · javascript · plain · html · md · csv · xml · rtf      read, marker returned exactly
+#:     png · jpg · jpeg · webp · heic · heif                       read, marker returned exactly
+#:     application/x-javascript                                    **refused by Vertex, 400**
+#:
+#: Vertex's own words for the last one: *"it has a mimeType parameter with value
+#: application/x-javascript, which is not supported"*. It stays in this set because the set is the
+#: outer bound across every provider and another one may take it; what changed is the *model's*
+#: declaration, which now names the fourteen that were seen to work. Nobody had ever sent an
+#: attachment through this gateway to a real model before that run — the catalogue entry did not
+#: declare the capability, so every one of these would have been refused at the gate.
 DEFAULT_MEDIA_TYPES: frozenset[str] = frozenset(
     {
         "application/pdf",
@@ -147,10 +166,52 @@ def describe(media_type: str, data: bytes, index: int) -> dict[str, object]:
     }
 
 
-#: Keys a surface uses for inline binary content. `FRD-107`'s KIRA shape adds its own when it
-#: lands; a surface that invents a third must add it here, and the test below is what makes
-#: forgetting visible rather than silent.
+#: The key naming a part's media type, in either spelling. **A dict carrying one of these together
+#: with `data` is inline binary, wherever it sits** — which is the question, and it used to be
+#: asked as a list of wrapper key names instead.
+#:
+#: That list was `("inlineData", "inline_data")`, the Gemini shape, with a comment saying the KIRA
+#: shape "adds its own when it lands". It landed, and nothing was added: the KIRA surface carries
+#: the bytes **on the part itself** (`{"mime_type": …, "data": …}`) with no wrapper at all, so no
+#: key matched and every attachment went into `request_logs.request_payload` verbatim. Measured on
+#: 2026-08-19 — a 5 KB PDF stored whole, on a request that was *refused*, which is this function's
+#: own docstring describing what must never happen.
+#:
+#: Asking about the shape rather than the wrapper covers both surfaces and the third one nobody
+#: has written. A key list is a thing to remember; a shape is a thing to recognise.
+_MIME_KEYS = ("mimeType", "mime_type")
+
+#: Wrapper keys kept for the Gemini shape, where the datum is the *value* under the key. The
+#: recursion below reaches it either way; these are what preserves the wrapper in the stored row.
 _INLINE_KEYS = ("inlineData", "inline_data")
+
+
+def _inline_datum(payload: dict[str, Any]) -> bool:
+    """Whether this dict *is* inline binary: a media type and the bytes, together."""
+    return any(key in payload for key in _MIME_KEYS) and "data" in payload
+
+
+def _measure(raw: Any) -> tuple[int, str]:
+    """The decoded size and digest of a base64 datum, or `(0, "")` if it is not decodable.
+
+    Decoded **once**: this used to call `b64decode` twice, for the size and for the digest, which
+    is two passes over a document on the write path for one answer.
+
+    Never raises. A payload reaching here has usually been validated on the request path — but a
+    *response* payload has not, and an upstream returning something that is not base64 must not
+    cost the audit row (the same door as `storable` in the writer).
+    """
+    try:
+        decoded = base64.b64decode(str(raw), validate=True)
+    except ValueError:
+        return 0, ""
+    return len(decoded), sha256(decoded).hexdigest()
+
+
+def _summary(raw: Any) -> dict[str, Any]:
+    """What is stored in place of the bytes: what they were, not what they said."""
+    size, digest = _measure(raw)
+    return {"kind": "data", "bytes": size, "sha256": digest}
 
 
 def strip_attachments(payload: Any) -> Any:
@@ -166,6 +227,14 @@ def strip_attachments(payload: Any) -> Any:
     if not isinstance(payload, dict):
         return payload
 
+    # The part *is* the datum — the KIRA shape. Replaced in place, because there is no wrapper to
+    # put a summary under and the surrounding part is what a reader is looking at.
+    if _inline_datum(payload):
+        return {
+            **{k: v for k, v in payload.items() if k != "data"},
+            "data": _summary(payload.get("data")),
+        }
+
     for key in _INLINE_KEYS:
         inline = payload.get(key)
         if isinstance(inline, dict):
@@ -174,11 +243,7 @@ def strip_attachments(payload: Any) -> Any:
             # The stored size is the *decoded* one where we can compute it, because that is the
             # figure an audit compares against a limit — base64 is a third larger and comparing it
             # to a byte bound would be quietly wrong.
-            try:
-                size = len(base64.b64decode(str(raw), validate=True))
-                digest = sha256(base64.b64decode(str(raw), validate=True)).hexdigest()
-            except binascii.Error, ValueError:
-                size, digest = 0, ""
+            size, digest = _measure(raw)
             return {
                 **{k: strip_attachments(v) for k, v in payload.items() if k != key},
                 key: {"kind": "data", "media_type": media_type, "bytes": size, "sha256": digest},

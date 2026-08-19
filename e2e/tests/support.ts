@@ -425,3 +425,39 @@ export async function openEditorTab(page: Page, tab: 'identity' | 'capabilities'
   await strip.click();
   await expect(strip).toHaveAttribute('aria-selected', 'true');
 }
+
+/**
+ * Delete a model this suite catalogued.
+ *
+ * Without it the browser suite **grows the catalogue on every run**: `cost-budgets.spec.ts` saved
+ * two models per pass and removed neither, and a stack that had been tested a few times held five
+ * `priced-…` and `unpriced-…` entries nobody had declared. That is not only untidiness — the
+ * console's own warnings count over the whole catalogue ("N models have no price on file"), so
+ * test residue makes a real figure meaningless, and the residue never stops accumulating.
+ *
+ * Tolerant of an already-absent row: a test that failed before saving must not fail again while
+ * cleaning up, or the failure a reader sees is the tidying rather than the defect.
+ */
+export async function removeModel(page: Page, name: string) {
+  await page.getByTestId('model-search').fill(name);
+  // **The row has to be opened first, and waited for.** Remove lives inside the expanded row, not
+  // in the list, and removing one model reloads the table — so a second call that checked
+  // `count() === 0` immediately after typing found nothing, returned, and left the model behind.
+  //
+  // Both mistakes have the same shape and it is worth naming: *a locator that matches nothing and
+  // a cleanup that is not needed look identical*. The leftovers went 12 → 13 after the run meant
+  // to fix them, which is the only reason it was noticed. Wait for the row, and treat a genuine
+  // absence as the one case where waiting is allowed to fail.
+  const open = page.getByTestId(`open-model-${name}`);
+  try {
+    await open.waitFor({ state: 'visible', timeout: 10_000 });
+  } catch {
+    return; // already gone — the test failed before it saved, and tidying must not fail again
+  }
+  await open.click();
+  const remove = page.getByTestId(`remove-${name}`);
+  await expect(remove).toBeVisible({ timeout: 15_000 });
+  page.once('dialog', (dialog) => dialog.accept());
+  await remove.click();
+  await expect(page.getByTestId(`open-model-${name}`)).toHaveCount(0, { timeout: 15_000 });
+}

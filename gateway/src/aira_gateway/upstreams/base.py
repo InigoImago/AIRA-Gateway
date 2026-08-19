@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import Protocol, TypeIs, runtime_checkable
+from typing import Any, Protocol, TypeIs, runtime_checkable
 
 from aira_common.logging import get_logger
 from aira_gateway.core.canonical import (
@@ -20,6 +20,33 @@ from aira_gateway.core.canonical import (
 )
 
 _log = get_logger("aira_gateway.upstreams")
+
+
+def upstream_reason(response: Any) -> str:
+    """The provider's stated reason for refusing, if it gave one, bounded and content-free.
+
+    **One owner, because two adapters answered this differently.** The OpenAI dialect carried the
+    reason for a `400` and the Vertex one did not — its comment reasoning that *"a Vertex error can
+    quote the request"*, which is true of the response **body** and not of `error.message`. The
+    difference cost a diagnosis on 2026-08-19: fourteen media types were confirmed against a real
+    Gemini model and the fifteenth answered `Vertex upstream returned 400.`, while Vertex itself had
+    said
+
+        Unable to submit request because it has a mimeType parameter with value
+        application/x-javascript, which is not supported.
+
+    — the whole answer, discarded one layer down. `FRD-129`'s rule is that a `400` names a fault in
+    the body *we* built and is the most actionable thing anybody gets.
+
+    Only the `message` field, capped: an upstream is not a trusted source of arbitrarily long
+    strings for our error envelope and audit log. Callers apply this to `400` alone — a `401`/`403`
+    is about our credentials and may name one, and a `5xx` is the provider's internal noise.
+    """
+    try:
+        message = response.json().get("error", {}).get("message")
+    except Exception:  # noqa: BLE001 — an unreadable or unexpected body simply has no reason
+        return ""
+    return f" {str(message)[:300]}" if message else ""
 
 
 class UpstreamError(Exception):

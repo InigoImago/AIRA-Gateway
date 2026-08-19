@@ -24,7 +24,7 @@ import httpx
 
 from aira_common.tokens import TokenSource, TokenUnavailable
 from aira_gateway.residency import DEFAULT_ALLOWED_REGIONS, check_region
-from aira_gateway.upstreams.base import UpstreamError
+from aira_gateway.upstreams.base import UpstreamError, upstream_reason
 
 #: The multi-region endpoint has its own host rather than a `{region}-` prefix.
 _MULTI_REGION_HOSTS = {"eu": "aiplatform.eu.rep.googleapis.com"}
@@ -144,7 +144,14 @@ class _StreamContext:
 def _raise_for_status(response: httpx.Response) -> None:
     if response.status_code != httpx.codes.OK:
         # The status is preserved so the route's existing 429/503/504 pass-through keeps working
-        # across every vendor. The body is not echoed: a Vertex error can quote the request.
+        # across every vendor.
+        #
+        # The **reason** is carried for a `400`, and only for a `400`, exactly as the OpenAI
+        # dialect does — one question, one answer, and it used to have two. The body is still not
+        # echoed: a Vertex error can quote the request, which is why `upstream_reason` takes the
+        # `error.message` field alone and caps it. That field named the fault precisely when the
+        # media-type run met it, and this layer threw it away.
+        detail = upstream_reason(response) if response.status_code == 400 else ""
         raise UpstreamError(
-            f"Vertex upstream returned {response.status_code}.", response.status_code
+            f"Vertex upstream returned {response.status_code}.{detail}", response.status_code
         )

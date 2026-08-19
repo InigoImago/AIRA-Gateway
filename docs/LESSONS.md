@@ -47,6 +47,13 @@ reading code.
   and **the evidence was in the user's own output** — the `::1` rows were in the port listing I had
   already read, and I skimmed them because I was looking for a missing forward rather than a
   present one.
+- **Recognise a shape, do not remember a list of names.** `strip_attachments` matched wrapper keys
+  — `inlineData`, `inline_data` — under a comment saying the second surface's shape would be added
+  "when it lands". It landed, nothing was added, and every attachment on that surface went into the
+  audit row verbatim: a 5 KB PDF stored whole, on a request that was *refused*. A dict carrying a
+  media type and `data` together **is** inline binary wherever it sits, and asking that covers the
+  surface nobody has written. Related: a comment predicting a future gap is not a plan, and nobody
+  re-reads it on the day it comes true.
 - **A guard written in the language it guards inherits that language's blind spots.**
   `is_catastrophic` decides which operator-supplied regexes may run on the request path, and it
   *was* a regex: it matched the outer quantifier as `[+*]`, so every `{n}` form walked past, and

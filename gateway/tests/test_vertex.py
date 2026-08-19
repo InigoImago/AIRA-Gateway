@@ -680,3 +680,55 @@ def test_an_encoded_separator_is_not_decoded_into_one() -> None:
 
     assert "%252f" in url
     assert "/../" not in url
+
+
+def test_a_vertex_refusal_carries_the_reason_it_gave() -> None:
+    """One question, one answer — and it had two.
+
+    The OpenAI dialect carried a provider's reason for a `400` and this transport did not, its
+    comment reasoning that *"a Vertex error can quote the request"*. True of the response **body**
+    and not of `error.message`, and the difference cost a diagnosis: a run of fifteen media types
+    against a real Gemini model had fourteen answer correctly and the fifteenth come back as
+    `Vertex upstream returned 400.`, while Vertex itself had said
+
+        Unable to submit request because it has a mimeType parameter with value
+        application/x-javascript, which is not supported.
+
+    The whole answer, discarded one layer down. `FRD-129`: a `400` names a fault in the body *we*
+    built, and its reason is the most actionable thing anybody gets.
+    """
+    import httpx
+
+    from aira_gateway.upstreams.vertex.transport import _raise_for_status
+
+    refused = httpx.Response(
+        400,
+        json={"error": {"message": "mimeType application/x-javascript is not supported"}},
+        request=httpx.Request("POST", "http://x/v1/generateContent"),
+    )
+
+    with pytest.raises(UpstreamError) as caught:
+        _raise_for_status(refused)
+
+    assert "application/x-javascript" in str(caught.value)
+    assert caught.value.status_code == 400
+
+
+@pytest.mark.parametrize("status", [401, 403, 500, 503])
+def test_only_a_400_carries_it(status: int) -> None:
+    """A `401`/`403` is about *our* credentials — the caller cannot act on it and the message may
+    name one. A `5xx` is the provider's internal noise. The same line the OpenAI dialect draws."""
+    import httpx
+
+    from aira_gateway.upstreams.vertex.transport import _raise_for_status
+
+    response = httpx.Response(
+        status,
+        json={"error": {"message": "service account key aira-prod@example is invalid"}},
+        request=httpx.Request("POST", "http://x/v1/generateContent"),
+    )
+
+    with pytest.raises(UpstreamError) as caught:
+        _raise_for_status(response)
+
+    assert "aira-prod@example" not in str(caught.value)

@@ -12,6 +12,7 @@ An error is recoverable. A confident wrong answer is not.
 from __future__ import annotations
 
 import base64
+import json
 from types import SimpleNamespace
 from typing import Any
 
@@ -34,6 +35,16 @@ from aira_gateway.core.canonical import CanonicalMessage, CanonicalRequest, Data
 from aira_gateway.db.models import ModelRead, RequestLog
 from aira_gateway.upstreams.base import ProviderRegistry
 from aira_gateway.upstreams.mock import MockProvider
+
+
+#: The digest is a sha256 of content the test builds; comparing it to a literal would restate the
+#: hash function rather than the property, which is that the bytes are replaced by a description.
+class _AnyDigest:
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, str) and len(other) == 64
+
+
+ANY_DIGEST = _AnyDigest()
 
 PDF = b"%PDF-1.7\n" + b"x" * 200
 PNG = b"\x89PNG\r\n\x1a\n" + b"y" * 100
@@ -489,3 +500,51 @@ def test_the_accepted_media_types_are_the_fifteen_the_contract_names() -> None:
 
     assert contract == DEFAULT_MEDIA_TYPES
     assert len(contract) == 15
+
+
+def test_the_kira_shape_is_stripped_too() -> None:
+    """The KIRA surface carries the bytes **on the part**, and nothing stripped them.
+
+    `strip_attachments` matched a list of wrapper key names — `inlineData`, `inline_data` — which
+    is the Gemini shape, under a comment saying the KIRA shape "adds its own when it lands". It
+    landed. Its parts are `{"mime_type": …, "data": …}` with no wrapper at all, so no key matched
+    and the base64 went into `request_logs.request_payload` verbatim.
+
+    Measured against the running stack on 2026-08-19: a 5 KB PDF stored whole, on a request that
+    was **refused** for lack of a capable model — so not even limited to what was served. That is
+    this module's own docstring describing what must never happen: megabytes per row, binary the
+    gateway never inspected inside the retention boundary, and redaction handed something it
+    cannot process.
+
+    The fix asks about the **shape** rather than the wrapper, so it covers a surface nobody has
+    written yet. A key list is a thing to remember; a shape is a thing to recognise.
+    """
+    document = base64.b64encode(b"%PDF-1.4 " + b"X" * 4000).decode()
+    payload = {"request": {"parts": [{"mime_type": "application/pdf", "data": document}]}}
+
+    stripped = strip_attachments(payload)
+
+    part = stripped["request"]["parts"][0]
+    assert part["mime_type"] == "application/pdf", "what it was survives"
+    assert part["data"] == {"kind": "data", "bytes": 4009, "sha256": ANY_DIGEST}
+    assert document not in json.dumps(stripped), "the bytes are gone"
+
+
+def test_the_camel_case_kira_spelling_is_stripped_as_well() -> None:
+    """`FRD-107`'s surface takes `mimeType` too, and a stripper that knew one spelling would leave
+    the other in the row — the difference invisible until an audit is opened."""
+    document = base64.b64encode(b"binary").decode()
+
+    stripped = strip_attachments({"parts": [{"mimeType": "image/png", "data": document}]})
+
+    assert stripped["parts"][0]["data"]["bytes"] == 6
+    assert document not in json.dumps(stripped)
+
+
+def test_a_datum_that_is_not_base64_costs_the_bytes_and_not_the_row() -> None:
+    """A *response* payload has not been validated on the request path, and an upstream that
+    returns something unreadable must not erase the record of its own answer — the same door
+    `storable` closes in the writer."""
+    stripped = strip_attachments({"parts": [{"mime_type": "text/plain", "data": "not base64!!"}]})
+
+    assert stripped["parts"][0]["data"] == {"kind": "data", "bytes": 0, "sha256": ""}

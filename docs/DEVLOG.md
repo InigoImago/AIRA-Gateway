@@ -5,6 +5,124 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## A second model, a model that does not exist, and a suite that grew the catalogue (2026-08-19)
+
+*"Test it against Gemini 3.5 as well."* It does not exist here: Vertex answers `404` for
+`gemini-3.5-flash` and for `gemini-3-flash` in `europe-west1`, and the catalogue entry names AI
+Studio as its platform while `AIRA_GOOGLE_API_KEY` is empty — so nothing serves it either way. A
+caller asking for it gets a clean `404`/`422` on both surfaces, which is the right refusal.
+
+Worth saying plainly: it is **catalogued and approved**, and the console has no passive marker for
+*"approved, and served by nothing"*. The reachability check exists and is a button somebody has to
+press (`FRD-506`, deliberately informing rather than blocking). A use case could release this model
+and every request against it would fail. Recorded rather than changed — a badge in the list is a
+design decision, not a defect fix.
+
+The question behind the request was whether the media-type result is a property of the *model*, and
+that is answerable with a model that does exist. `gemini-2.5-pro`, asked directly at Vertex so this
+installation's configuration stayed untouched: **14/15, the same fourteen, the same refusal on
+`application/x-javascript`**. So it is the platform's answer rather than one model's, which is what
+makes the trimmed declaration worth keeping.
+
+**And the catalogue had thirteen models nobody declared.** `cost-budgets.spec.ts` saves two models
+per run and removed neither, so the browser suite grew the catalogue on every pass — and the
+console's own warnings count over the *whole* catalogue ("N models have no price on file"), so the
+residue turns a real figure into noise. `removeModel` in the e2e support module now cleans up;
+verified flat over a full file run, 13 before and 13 after.
+
+That helper needed two attempts and both failures were the same shape. The first searched and
+clicked a control that lives inside the **expanded** row, so it matched nothing and returned
+happily. The second waited for nothing: removing one model reloads the table, so the check for the
+next one ran against a table that was not there yet. *A locator that matches nothing and a cleanup
+that is not needed look identical* — the leftovers going 12 → 13 after the run meant to fix them is
+the only reason either was noticed.
+
+A third instance of that shape, in my own tooling on the same afternoon: a shell helper counting
+models parsed the API response without checking the status, so an **expired token read as zero
+models** and I briefly believed thirteen leftovers had vanished. A count that cannot tell "none"
+from "could not ask" is not a count.
+
+---
+
+## Fifteen media types, one real model, and the first attachment this gateway ever sent (2026-08-19)
+
+*"Have you tested all fifteen data types against the real Gemini API? Generate test files — with
+content, so we are sure the model actually sees them."* Fair, and the answer was no: the list had
+only ever been a list.
+
+One real file per declared type, each carrying a nonsense marker that appears nowhere else —
+`KOBALTFISCH` in a hand-built PDF, `PLATINMOOS` **drawn as pixels** in the PNG, `JADEHALM` in the
+HEIC. A model that cannot read the attachment cannot produce the word, so an evasive answer is
+distinguishable from a real one, and for the images a correct answer is proof the picture was
+looked at rather than that a header was parsed. The PNG and the HEIC were opened and read by eye
+before a single call was made, because a test whose fixture is illegible measures nothing.
+
+**The first finding came before the first call.** `gemini-2.5-flash` declared
+`["generate", "tools", "thinking"]` and no attachments, so the gateway would have refused every one
+of these at the gate. No attachment had ever reached a real model through this product.
+
+Declared through the Management API, then measured:
+
+    application/pdf · text/javascript · text/plain · text/html · text/md      marker returned
+    text/csv · text/xml · text/rtf                                            marker returned
+    image/png · image/jpg · image/jpeg · image/webp · image/heic · image/heif marker returned
+    application/x-javascript                                                  Vertex 400
+
+Fourteen of fifteen, every marker exact. The declaration was then trimmed to the fourteen — the
+rule this project already states about thinking modes, applied to media types: *a declaration is
+evidence, not a claim*. The refused type stays in `DEFAULT_MEDIA_TYPES`, which is the outer bound
+across every provider and not a statement about one.
+
+**Both input surfaces, separately.** A run against one says nothing about the other: the Gemini
+surface wraps binary in `inlineData`, and the KIRA surface puts `mime_type` and `data` **on the
+part itself** — the shape whose stripping had been missed. Fifteen files through each. The results
+are identical down to the token counts (1311 for the PDF, 2343 for every image), which is the
+evidence that both map to the same canonical request rather than two paths that merely agree today.
+
+And the audit closes the loop: twenty-eight rows, every one stripped, 359–394 bytes each — for
+attachments up to 22 KB of base64. The refused type is now refused at the gate on both surfaces,
+before an API call costs anything.
+
+**The run found a second defect on its way past.** The gateway's answer for the failing type
+was `Vertex upstream returned 400.` — nothing else. Vertex had said *"it has a mimeType parameter
+with value application/x-javascript, which is not supported"*, and the transport discarded it: the
+OpenAI dialect carries a provider's reason for a `400` and this one did not, its comment reasoning
+that "a Vertex error can quote the request". True of the response **body** and not of
+`error.message`. Two adapters, one question, two answers — `upstream_reason` is the one owner now,
+capped, `400` only, never a credential error. Confirmed live afterwards on a different fault:
+*"temperature value of 9 but the supported range is from 0 to 2.0001"*, where there had been
+silence.
+
+---
+
+## The attachment stripper knew one surface's spelling (2026-08-19)
+
+`strip_attachments` exists so that a base64 document never reaches
+`request_logs.request_payload` — its docstring names the three costs: megabytes per row, binary the
+gateway never inspected inside the retention boundary, and redaction handed something it cannot
+process. It matched a **list of wrapper key names**, `("inlineData", "inline_data")`, under a
+comment reading *"`FRD-107`'s KIRA shape adds its own when it lands"*.
+
+It landed. The KIRA surface carries the bytes **on the part itself** — `{"mime_type": …,
+"data": …}`, no wrapper — so no key matched and nothing was stripped. Measured against the running
+stack: a 5 KB PDF stored whole, in a row for a request that was **refused** for lack of a capable
+model, so not even limited to what was served. Every KIRA attachment since the surface shipped.
+
+The comment predicted its own failure and nobody read it at the moment it came true, which is what
+a note about the future is worth. The fix asks about the **shape** — a dict carrying a media type
+and `data` together is inline binary, wherever it sits — so it covers both surfaces and the third
+one nobody has written. A key list is a thing to remember; a shape is a thing to recognise.
+
+After: 5452 bytes to 195, the bytes replaced by what they were, how many, and a digest.
+
+Two smaller things came with it. The summariser decoded the base64 **twice**, once for the size and
+once for the digest — two passes over a document on the write path for one answer. And it now
+survives a datum that is not base64 at all: a *response* payload has not been validated on the
+request path, and an upstream returning something unreadable must not cost the audit row — the same
+door `storable` closes in the writer, met again from the other side.
+
+---
+
 ## A regex that could not read regexes (2026-08-19)
 
 `is_catastrophic` decides which operator-supplied patterns may be compiled onto the request path.
