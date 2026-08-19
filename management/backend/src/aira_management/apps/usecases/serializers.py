@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Any
 
 from django.contrib.auth.models import Group
@@ -16,6 +17,7 @@ from aira_management.apps.usecases.access import (
     may_manage,
 )
 from aira_management.apps.usecases.models import (
+    PURGE_AFTER_DAYS,
     UseCase,
     UseCaseGroupGrant,
     UseCaseMembership,
@@ -181,3 +183,43 @@ class AddMemberSerializer(serializers.Serializer[Any]):
         choices=[UseCaseMembership.ADMIN, UseCaseMembership.USER],
         default=UseCaseMembership.USER,
     )
+
+
+class RetiredUseCaseSerializer(serializers.ModelSerializer[UseCase]):
+    """A tombstone, as the role deciding its fate needs to read it (`FRD-607`).
+
+    Deliberately **not** `UseCaseSerializer`. That one computes object-level permissions per row
+    and reports what this caller may do here — questions with no answer for a use case nobody may
+    act on, and computing them would invite a screen to offer the actions. What a reader of this
+    list needs is the opposite: what the use case *was*, so the traffic still in the audit trail
+    can be read as evidence.
+    """
+
+    purgeable_on = serializers.SerializerMethodField()
+
+    class Meta:
+        model = UseCase
+        fields = [
+            "slug",
+            "name",
+            "description",
+            "processing_notes",
+            "store_payloads",
+            "retention_days",
+            "created_at",
+            "deleted_at",
+            "deleted_by",
+            "purgeable_on",
+        ]
+        read_only_fields = fields
+
+    def get_purgeable_on(self, obj: UseCase) -> str | None:
+        """When the deliberate second decision becomes available, as a date rather than a rule.
+
+        A reader should not have to hold `PURGE_AFTER_DAYS` in their head and do arithmetic on a
+        timestamp to find out whether a button will work — that is how a screen ends up offering
+        an action that fails.
+        """
+        if obj.deleted_at is None:
+            return None
+        return (obj.deleted_at + timedelta(days=PURGE_AFTER_DAYS)).isoformat()

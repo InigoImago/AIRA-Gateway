@@ -16,6 +16,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
 from django.db import transaction
 from django.db.models import QuerySet
+from django.http import Http404
 from django.utils import timezone
 from guardian.shortcuts import assign_perm, remove_perm
 from rest_framework import status, viewsets
@@ -26,6 +27,7 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 
 from aira_common.apikeys import generate_api_key
+from aira_common.roles import Role
 from aira_management.apps.anomalies.models import AnomalyRule
 from aira_management.apps.anomalies.serializers import AnomalyRuleSerializer
 from aira_management.apps.anomalies.views import upsert_use_case_rule
@@ -53,16 +55,28 @@ from aira_management.apps.usecases.access import (
     may_manage,
 )
 from aira_management.apps.usecases.events import emit
-from aira_management.apps.usecases.models import UseCase, UseCaseGroupGrant, UseCaseMembership
+from aira_management.apps.usecases.models import (
+    PURGE_AFTER_DAYS,
+    UseCase,
+    UseCaseGroupGrant,
+    UseCaseMembership,
+)
 from aira_management.apps.usecases.serializers import (
     AddMemberSerializer,
     GrantGroupSerializer,
     MembershipSerializer,
+    RetiredUseCaseSerializer,
     UseCaseGroupGrantSerializer,
     UseCaseSerializer,
 )
 from aira_management.pagination import ConsolePagination, apply_search
-from aira_management.rbac import IsGlobalAdmin, django_group_name, scope_queryset
+from aira_management.rbac import (
+    IsGlobalAdmin,
+    django_group_name,
+    has_governance_role,
+    has_role,
+    scope_queryset,
+)
 
 # One definition, in `access.py`, because the console asks the same questions to decide what to
 # put on screen — see the module docstring there.
@@ -188,9 +202,9 @@ class UseCaseViewSet(viewsets.ModelViewSet[UseCase]):
             # filtering the visible set here would hand somebody an empty attribution list while
             # the gateway happily accepted their requests. Nothing is disclosed by it: these are
             # exactly the use cases this caller may already name in a request.
-            scoped = may_call_queryset(self.request.user, UseCase.objects.all())
+            scoped = may_call_queryset(self.request.user, self._live())
         else:
-            scoped = scope_queryset(self.request.user, _VIEW, UseCase.objects.all())
+            scoped = scope_queryset(self.request.user, _VIEW, self._live())
         # Ordered explicitly: paging an unordered queryset is undefined, and Postgres is entitled
         # to hand back the same row on two pages and no row for a third. By name, because that is
         # what the list is read by.
@@ -227,13 +241,46 @@ class UseCaseViewSet(viewsets.ModelViewSet[UseCase]):
             usecase = serializer.save()
             emit("usecase.upserted", _snapshot(usecase))
 
+    def _live(self) -> QuerySet[UseCase]:
+        """Every use case that has not been retired.
+
+        **One place, deliberately.** A soft delete that some queries honour and others do not is
+        worse than none: it makes a retired use case appear on the screens nobody audited and
+        vanish from the ones they did, which is a harder bug to see than a hard delete.
+        Purged rows are gone from the table entirely, so they need no filter.
+        """
+        return UseCase.objects.filter(deleted_at__isnull=True)
+
     def perform_destroy(self, instance: UseCase) -> None:
+        """**Retire, never remove** (`FRD-607`).
+
+        The threat this answers, stated by the owner: *"somebody uses a use case for the wrong
+        purposes, compromises it, and deletes the use case."* The person best placed to do that is
+        its administrator, and that is exactly who reaches this method — so this method must not be
+        able to destroy anything.
+
+        What still happens, unchanged: the same `usecase.deleted` event goes out, so the gateway
+        deactivates the keys, drops the memberships, group grants, budgets, limits, rules and
+        pipeline, and the use case stops serving traffic within a Kafka round trip. Retiring is
+        immediate and complete as far as *access* is concerned.
+
+        What no longer happens: the row disappearing. What it was for, which models it had
+        released, whether it stored prompts, how long it kept them and who its members were all
+        live here — and the gateway's audit rows, which are kept on purpose, name it only by slug.
+        Destroying this row leaves the traffic without the context that makes it evidence.
+        """
         if not self._may_admin(instance):
             raise PermissionDenied("You are not an admin of this use case.")
+        if instance.deleted_at is not None:
+            # Not an error worth failing on — the caller asked for a state the system is in — but
+            # not a second event either: re-emitting would re-run the gateway's cascade against
+            # rows already gone, and overwrite *who* retired it with whoever asked twice.
+            return
         with transaction.atomic():
-            slug = instance.slug
-            instance.delete()
-            emit("usecase.deleted", {"slug": slug})
+            instance.deleted_at = timezone.now()
+            instance.deleted_by = str(getattr(self.request.user, "username", "") or "")
+            instance.save(update_fields=["deleted_at", "deleted_by", "updated_at"])
+            emit("usecase.deleted", {"slug": instance.slug})
 
     def _may_admin(self, usecase: UseCase) -> bool:
         return may_admin(self.request.user, usecase)
@@ -284,6 +331,80 @@ class UseCaseViewSet(viewsets.ModelViewSet[UseCase]):
                 }
             )
         return owner, caller.get_username()
+
+    @action(detail=False, methods=["get"], url_path="retired")
+    def retired(self, request: Request) -> Response:
+        """The tombstones, for the role that decides what becomes of them.
+
+        Its own route rather than a flag on the list, because these are not use cases any more:
+        nothing may call them, no member may reach them, and every screen that offers an action
+        would be offering one that cannot be carried out. What is left is a record, and a record
+        is read from somewhere that says so.
+
+        Bounded to governance — a **Global Administrator** decides, and `IT Steuerung` oversees
+        without acting. Notably **not** the use-case administrator, including the one who retired
+        it: the whole design assumes that person may be the reason the record matters.
+        """
+        if not has_governance_role(request.user):
+            raise PermissionDenied("Retired use cases are visible to governance roles.")
+        rows = UseCase.objects.filter(deleted_at__isnull=False).order_by("-deleted_at", "slug")
+        return Response(RetiredUseCaseSerializer(rows, many=True).data)
+
+    @action(detail=True, methods=["delete"], url_path="purge")
+    def purge(self, request: Request, slug: str | None = None) -> Response:
+        """Remove a retired use case for good — **the deliberate later decision** (`FRD-607`).
+
+        Three conditions, and each one is a separate defence:
+
+        1. **A Global Administrator only.** Not the use-case administrator who retired it, and not
+           `IT Steuerung`, which oversees and does not act. The point of splitting retire from
+           purge is that the party who might want the record gone is not the party who can remove
+           it.
+        2. **It must already be retired.** Purging in one step would rebuild exactly the hole this
+           feature closes, behind a longer URL.
+        3. **It must have been retired for at least `PURGE_AFTER_DAYS`.** A decision that can be
+           taken in the same minute as the deletion is not a second decision. The window is short
+           enough to be operable and long enough that erasing evidence requires waiting for it —
+           and waiting is what makes the act visible in the retired list meanwhile.
+
+        The object is fetched off the retired set explicitly. `get_object()` reads `get_queryset()`,
+        which excludes retired rows on purpose, so it would answer 404 here — correctly for every
+        other route and wrongly for this one.
+        """
+        if not has_role(request.user, Role.GLOBAL_ADMIN):
+            raise PermissionDenied("Only a Global Administrator may purge a retired use case.")
+        # Fetched **without** the retired filter, so that one expression below enforces the whole
+        # rule. Written first as `filter(deleted_at__isnull=False)` *and* a guard, and a mutation
+        # run showed the property surviving the loss of either: two independent copies of one
+        # rule, which is redundancy rather than defence in depth — nothing could tell which was
+        # load-bearing, and a later reader deleting "the duplicate" would have had even odds.
+        usecase = UseCase.objects.filter(slug=slug).first()
+        if usecase is None or usecase.deleted_at is None:
+            # Live, or never existed. Both are "there is nothing here to purge", and telling the
+            # two apart would say whether a slug exists to somebody who cannot see it.
+            raise Http404("No retired use case with this id.")
+
+        waited = timezone.now() - usecase.deleted_at
+        if waited < timedelta(days=PURGE_AFTER_DAYS):
+            remaining = timedelta(days=PURGE_AFTER_DAYS) - waited
+            raise ValidationError(
+                {
+                    "detail": [
+                        f"This use case was retired {waited.days} day(s) ago and may be purged "
+                        f"after {PURGE_AFTER_DAYS}. Try again in "
+                        f"{max(1, -(-remaining.total_seconds() // 86400)):.0f} day(s)."
+                    ]
+                }
+            )
+
+        with transaction.atomic():
+            purged = usecase.slug
+            usecase.delete()
+            # A **second** event, not a repeat of `usecase.deleted`. That one ends access and keeps
+            # the tombstone; this one says the record itself is gone, and the gateway drops the
+            # last row it kept — the one retention reads a use case's own period from.
+            emit("usecase.purged", {"slug": purged})
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
     @action(detail=True, methods=["get", "post"])
     def members(self, request: Request, slug: str | None = None) -> Response:

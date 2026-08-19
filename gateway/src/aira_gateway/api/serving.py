@@ -505,6 +505,41 @@ async def use_case_record(request: Request, slug: str | None) -> UseCaseRead | N
     return seen[slug]
 
 
+async def refuse_if_retired(request: Request) -> None:
+    """Refuse a request to a use case that has been retired (`FRD-607`).
+
+    **This check is only possible because the row survives.** `_delete_usecase` used to remove it,
+    and its own comment explains why an existence check at authentication would be wrong: keys and
+    use cases arrive on different Kafka topics with no ordering between them, so a use case that
+    has not arrived yet looks exactly like one that was deleted. Refusing on *absence* would refuse
+    a use case created a second ago.
+
+    A tombstone is not absence. It is positive knowledge that Management retired this slug, and it
+    can only exist after the use case was known — so the ordering argument does not apply and the
+    refusal is safe.
+
+    It closes a hole retirement would otherwise have left open. API keys stop working because the
+    same event deactivates them, and group *grants* go because the read-model row goes. But the
+    `/use-cases/<slug>` Keycloak group resolves **from the token alone** (`auth/oidc.py`), touching
+    no AIRA table — so every OIDC member of a retired use case could have gone on calling it, with
+    the use case's own controls deleted underneath them: no budget, no rate limit, no pipeline.
+    Retiring a compromised use case has to stop the traffic, or it is a filing action.
+    """
+    attribution = getattr(request.state, "attribution", None)
+    slug = getattr(attribution, "use_case", None)
+    record = await use_case_record(request, slug)
+    if record is not None and record.deleted_at is not None:
+        # `403`, not `404`. The caller's credential is valid and their membership is real; what
+        # changed is that the use case was retired, and saying so is the answer that lets somebody
+        # stop retrying and go and ask. A `404` would read as "wrong slug".
+        raise GeminiHTTPError(
+            403,
+            f"Use case '{slug}' has been retired and no longer serves requests. Its record is "
+            "kept for audit; ask a Global Administrator if you believe this is wrong.",
+            "PERMISSION_DENIED",
+        )
+
+
 def check_not_empty(canonical: CanonicalRequest) -> None:
     """Refuse a request that asks nothing (`FRD-113` FR-7's rule, applied to generation).
 
@@ -901,6 +936,10 @@ async def prepare_for_dispatch(
     What is left to a surface is what its own docstring always claimed: parse its wire format,
     render its error envelope, own its routes.
     """
+    # **First, before a retired use case can spend anything.** Not beside the other controls: a
+    # request to a use case that no longer exists must not consume a rate-limit allowance, pay for
+    # a classifier call (`FRD-125b`), or reach a model.
+    await refuse_if_retired(request)
     if canonical is not None:
         # **Before anything can refuse.** It used to be set in `accounting`, which only runs once a
         # request is on its way to a model — so a request that *offered* functions and was then

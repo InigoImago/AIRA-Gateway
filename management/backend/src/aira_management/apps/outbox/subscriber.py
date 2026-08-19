@@ -24,6 +24,10 @@ from aira_management.apps.outbox.models import OutboxEvent
 _TOPIC_FOR = {
     "usecase.upserted": USECASE_TOPIC,
     "usecase.deleted": USECASE_TOPIC,
+    # The second half of `FRD-607`: `deleted` retires and keeps the record, `purged` removes it.
+    # One topic, because they are two states of one thing and their order matters — a purge that
+    # overtook its own retirement on a second topic would delete a row that was still granting.
+    "usecase.purged": USECASE_TOPIC,
     "membership.upserted": MEMBERSHIP_TOPIC,
     "membership.removed": MEMBERSHIP_TOPIC,
     # A group grant travels beside membership: it is the other half of the same question, and the

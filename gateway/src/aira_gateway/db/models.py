@@ -301,6 +301,16 @@ class UseCaseRead(Base):
 
     slug: Mapped[str] = mapped_column(String(64), primary_key=True)
     name: Mapped[str] = mapped_column(String(255))
+    #: Set when Management retires the use case, cleared never (`FRD-607`).
+    #:
+    #: A row with this set grants **nothing** — the keys are deactivated and the members, group
+    #: grants, budgets, limits, rules and pipeline are deleted by the same event. It survives so
+    #: that two questions still have answers after somebody presses Delete: how long this use
+    #: case's stored prompts were promised to live (`retention.py`), and whether a missing payload
+    #: was never stored or has expired (`payloads.py`). Both were silently wrong while the row was
+    #: removed, and both matter most in exactly the case this feature is for: an investigation
+    #: into a use case somebody deleted.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     description: Mapped[str] = mapped_column(String(2000), default="")
     processing_notes: Mapped[str] = mapped_column(String(2000), default="")
     # Whether prompts/responses are written at all for this use case, and for how long they are

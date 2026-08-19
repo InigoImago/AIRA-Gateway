@@ -122,16 +122,31 @@ def test_a_rule_can_be_deleted_and_the_gateway_is_told(captured_events) -> None:
     assert ("anomaly_rule.deleted", {"id": rule_id, "use_case": slug}) in captured_events
 
 
-def test_deleting_a_use_case_takes_its_rules_with_it() -> None:
-    """The mistake `FRD-205` made once with API keys: config that outlives the thing it configured
-    is config that a recreated slug silently inherits."""
+def test_retiring_a_use_case_keeps_its_rules_as_record_and_they_reach_nothing() -> None:
+    """**The cascade moved planes** (`FRD-607`).
+
+    This asserted Django's `CASCADE` had removed the rules, on the argument `FRD-205` made about
+    API keys: config that outlives the thing it configured is config a recreated slug silently
+    inherits. That argument still holds and is now answered twice over:
+
+    - the slug is **never recreated** — a retired use case keeps it, so there is nothing to
+      inherit; and
+    - the *gateway* still deletes its copy of every rule on `usecase.deleted`, which is where a
+      rule would have to exist to do anything at all.
+
+    What is left here is the record: which anomalies this use case was watched for. An
+    investigation into a use case somebody retired asks exactly that, and destroying it was the
+    capability this feature exists to remove.
+    """
     admin = _user("cascade-admin", "global-admin")
     slug = _use_case(admin, "cascade-uc")
     _client(admin).post(f"{BASE}{slug}/anomaly-rules/", _rule(), format="json")
 
     _client(admin).delete(f"{BASE}{slug}/")
 
-    assert not AnomalyRule.objects.filter(use_case__slug=slug).exists()
+    assert AnomalyRule.objects.filter(use_case__slug=slug).exists()
+    # And it is unreachable: every route resolves through the live queryset.
+    assert _client(admin).get(f"{BASE}{slug}/anomaly-rules/").status_code == 404
 
 
 # ---- validation, where the rule is written ---------------------------------------------------

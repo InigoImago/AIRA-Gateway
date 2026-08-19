@@ -14,6 +14,19 @@ from django.db import models
 # last month is simply not there any more (FRD-404).
 DEFAULT_RETENTION_DAYS = 7
 
+#: How long a retired use case must stay retired before it may be purged (`FRD-607`).
+#:
+#: The number is a **decision gap**, not a retention period: a purge that can be carried out in the
+#: same minute as the deletion is not a second decision, it is the same one with an extra click.
+#: Thirty days is long enough that erasing a record requires deliberately coming back for it — and
+#: coming back means the tombstone was visible in the retired list for a month, to every governance
+#: role, while somebody waited.
+#:
+#: It bounds *removal of the record*, and has nothing to do with prompts: those go on the use
+#: case's own `retention_days` clock whether it is retired or not, which is the half of this
+#: feature the GDPR asks about (`FRD-404`).
+PURGE_AFTER_DAYS = 30
+
 slug_validator = RegexValidator(
     regex=r"^[a-z0-9-]+$",
     message="Use lowercase letters, digits, and hyphens only.",
@@ -112,12 +125,37 @@ class UseCase(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    #: When this use case was retired, and by whom. **Deleting is a tombstone, never a removal.**
+    #:
+    #: The threat is stated plainly by the owner: *"somebody uses a use case for the wrong
+    #: purposes, compromises it, and deletes the use case."* Until this existed, the person best
+    #: placed to do that was the one allowed to: `perform_destroy` was open to a **use-case
+    #: administrator**, and it took the row and every membership with it. The traffic survived in
+    #: the gateway's audit trail on purpose (`FRD-404` §4.1) — and survived *context-free*, because
+    #: what the use case was **for**, which models it had released, whether it stored prompts and
+    #: who its members were all lived here and were gone.
+    #:
+    #: So the row stays, unreachable and unservable, and a **Global Administrator** decides later
+    #: whether it is ever really removed. Two different acts by two different roles, which is the
+    #: whole point: the compromised party can retire their use case and cannot erase it.
+    #:
+    #: Its slug stays taken. That is deliberate: a re-created `kundenservice` inheriting the audit
+    #: history of the deleted one is the same evidence problem with extra steps.
+    deleted_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    #: The subject who retired it. A string rather than a foreign key, because the record has to
+    #: outlive the account: an operator who has left is exactly the one an investigation asks about.
+    deleted_by = models.CharField(max_length=150, blank=True)
+
     class Meta:
         ordering = ["slug"]
         permissions = [("manage_members", "Can manage use-case members")]
 
     def __str__(self) -> str:
         return self.slug
+
+    @property
+    def is_deleted(self) -> bool:
+        return self.deleted_at is not None
 
 
 class UseCaseMembership(models.Model):

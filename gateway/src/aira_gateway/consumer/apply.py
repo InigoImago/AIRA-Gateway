@@ -48,7 +48,9 @@ async def apply_event(session: AsyncSession, event_type: str, payload: dict[str,
     if event_type == "usecase.upserted":
         await _upsert_usecase(session, payload)
     elif event_type == "usecase.deleted":
-        await _delete_usecase(session, payload["slug"])
+        await _retire_usecase(session, payload["slug"])
+    elif event_type == "usecase.purged":
+        await _purge_usecase(session, payload["slug"])
     elif event_type == "membership.upserted":
         await _upsert_member(session, payload)
     elif event_type == "membership.removed":
@@ -165,8 +167,8 @@ async def _upsert_usecase(session: AsyncSession, payload: dict[str, Any]) -> Non
             setattr(existing, key, value)
 
 
-async def _delete_usecase(session: AsyncSession, slug: str) -> None:
-    """Remove a use case and everything that hung off it.
+async def _retire_usecase(session: AsyncSession, slug: str) -> None:
+    """End every kind of access, and **keep the row as a tombstone** (`FRD-607`).
 
     Management cascades the deletion in its own database but publishes only ``usecase.deleted``,
     so this is the one place the gateway can learn that the children are gone. Leaving them was a
@@ -209,6 +211,36 @@ async def _delete_usecase(session: AsyncSession, slug: str) -> None:
         )
     )
     await session.execute(delete(UseCaseMemberRead).where(UseCaseMemberRead.use_case_slug == slug))
+    # **The row itself stays.** This used to delete it, and two things depended on it not being
+    # here that nobody had connected:
+    #
+    # - `retention.py` reads a use case's own `retention_days` and `store_payloads` from this
+    #   table. With the row gone, every stored prompt of a retired use case fell through to the
+    #   *installation default* — a promise made to data subjects, quietly replaced by a different
+    #   one at the moment somebody pressed Delete.
+    # - `payloads.py` asks this table to tell a `NOT_STORED` refusal apart from an `EXPIRED` one.
+    #   Without it, "we never kept this" and "we kept it and it aged out" became the same answer.
+    #
+    # Access does not depend on it: keys are deactivated above, and members, group grants, budgets,
+    # limits, rules and the pipeline are all gone. The tombstone grants nothing.
+    await session.execute(
+        update(UseCaseRead).where(UseCaseRead.slug == slug).values(deleted_at=datetime.now(UTC))
+    )
+
+
+async def _purge_usecase(session: AsyncSession, slug: str) -> None:
+    """Drop the tombstone — the second, deliberate decision (`FRD-607`).
+
+    Reached only by `usecase.purged`, which Management emits only for a use case that has been
+    retired for `PURGE_AFTER_DAYS` and only at a **Global Administrator's** request. Everything
+    that grants access went with the retirement; what goes here is the last record of what the use
+    case *was*.
+
+    `request_logs` still stay. They outlive the use case on purpose (`FRD-404` §4.1) and outlive
+    its record too — after this their payloads fall to the installation default, which is the
+    honest consequence of removing the row that named a shorter one, and is the reason the purge
+    is a decision somebody takes rather than a cleanup that happens.
+    """
     await session.execute(delete(UseCaseRead).where(UseCaseRead.slug == slug))
 
 

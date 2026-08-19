@@ -92,6 +92,9 @@ class RetentionService:
             # the rows on purpose while stating that "their payloads still expire on the retention
             # clock". They did not. Measured on a running stack: 1509 rows carrying stored prompts
             # for use cases that no longer existed, on the one clock nothing would ever wind.
+            # (Since `FRD-607` a retired use case keeps its row and its own period, so this pass
+            # now catches only genuinely unknown slugs — a **purged** use case, or one whose row
+            # has not arrived. It stays because both still happen.)
             #
             # The default rather than zero, because a slug the read-model does not name is
             # **ambiguous**: Kafka orders the use-case topic against nothing, so a use case whose
@@ -125,7 +128,18 @@ class RetentionService:
         return outcome
 
     async def _periods(self, session: AsyncSession) -> dict[str, int | None]:
-        """Retention period per use case; ``None`` where storage is switched off entirely."""
+        """Retention period per use case; ``None`` where storage is switched off entirely.
+
+        **Retired use cases are in here, and that is the point** (`FRD-607`). Their rows survive as
+        tombstones, so the promise this installation made about their prompts — *kept N days* —
+        goes on being honoured after somebody presses Delete. While the row was removed, those rows
+        fell through to the pass below and followed the *installation default* instead: a different
+        promise, substituted silently, at the moment a use case was deleted. Whether that default
+        is longer or shorter than the use case's own period is luck, and both directions are wrong.
+
+        A retired use case is **not** swept early either. Retirement is not consent withdrawn; the
+        period the data subject was told about is the period that applies.
+        """
         result = await session.execute(
             select(UseCaseRead.slug, UseCaseRead.retention_days, UseCaseRead.store_payloads)
         )

@@ -500,6 +500,21 @@ reading code.
   Observability section, a snapshot document — write the date it was last read against the code, so
   the next reader knows what they are trusting.
 
+- **A delete that the compromised party can perform is not a control.** Use-case deletion was open
+  to the use-case administrator, which is exactly who an investigation would be about, and it took
+  the configuration record with it — leaving the audit traffic intact and *illegible*, since a row
+  names a use case by slug and nothing else. Retiring and purging are **two acts for two roles**,
+  and the gap between them is a decision period rather than a retention period: 30 days means
+  erasing a record requires deliberately coming back for it. Ask of any destructive action: *who
+  benefits from it, and are they the ones who can perform it?*
+- **A tombstone is not absence, and the difference is what makes a check possible.** The gateway
+  cannot refuse an *unknown* use case — Kafka orders nothing, so one that has not arrived yet looks
+  exactly like one that was deleted. It can refuse a **retired** one, because that row is positive
+  knowledge which can only exist after the use case was known. Keeping the row also kept two
+  answers that had been silently changing at the moment of deletion: the retention period the
+  installation had promised, and whether a missing payload was never stored or had expired. **When
+  a delete makes a downstream answer change rather than disappear, that is the bug.**
+
 ---
 
 ## 7. Tests

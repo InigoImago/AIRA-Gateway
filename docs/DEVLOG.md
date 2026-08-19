@@ -5,6 +5,55 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Deleting a use case stops it and destroys nothing (2026-08-19)
+
+Asked as a regulatory requirement and stated as a threat:
+
+> *"Since we work with regulation it would be good if we did not do a full delete but a soft
+> delete, and only at some point a full delete after a deliberate decision. Prompts should then
+> still be deleted after the defined time — but not in a way that lets somebody use a use case for
+> the wrong purposes, compromise it, and delete the use case."*
+
+The system satisfied that exactly backwards. `DELETE /use-cases/<slug>/` was open to a **use-case
+administrator** — the party an investigation would be about — and it was a hard delete. The traffic
+survived, on purpose (`FRD-404` §4.1), and survived **context-free**: an audit row names a use case
+by slug, and what that slug *meant* — purpose, processing notes, released models, whether prompts
+were stored and for how long, who its members were — lived in Management and went with the row.
+
+**Retire, never remove.** `deleted_at` + `deleted_by`, the same `usecase.deleted` event so access
+ends exactly as before, and a **second** act — `purge`, Global Administrator only, only for an
+already-retired use case, only after 30 days — that emits `usecase.purged`.
+
+**The tombstone is load-bearing, not bookkeeping**, and this is the part I did not expect:
+
+- **It closes a hole retirement would otherwise have opened.** API keys stop working and group
+  grants go with the read-model rows — but a Keycloak group `/use-cases/<slug>` resolves **from the
+  token alone** and touches no AIRA table. Every OIDC member of a retired use case could have gone
+  on calling it with all of its controls deleted underneath them: no budget, no rate limit, no
+  pipeline. And the refusal is *only possible* because the row survives: the gateway deliberately
+  has no existence check, because Kafka orders nothing and a use case that has not arrived yet
+  looks exactly like one that was deleted. A tombstone is not absence.
+- **It keeps the retention promise.** `retention.py` reads a use case's own `retention_days` from
+  that row. While the row was deleted, retired use cases fell to the *installation default* — wrong
+  in both directions: 90 days promised and destroyed at 7, or 3 promised and kept for 30. Both are
+  now pinned.
+
+**Tests**, since the ask was explicitly for scenarios and edge cases: twelve in Management, five in
+the gateway's serving path, four in retention, two in the consumer, and four existing tests
+rewritten where the property genuinely changed. The refusal-before-the-rate-limiter one is the one
+I would keep if I could keep one — a limit of one request, called twice: if the check ran second,
+the second call would be a 429 and the allowance of a use case nobody may call would be spent.
+
+**And a mutation that survived taught something.** `SD3` — *a use case must already be retired
+before it can be purged* — could not be broken, because the rule existed **twice**: a queryset
+filter and an `if`. That is not defence in depth, it is two copies where nothing says which is
+load-bearing, and a later reader deleting "the duplicate" has even odds. One copy deleted, and the
+mutation caught immediately.
+
+`FRD-607`, migrations `usecases/0013` and gateway `0040`.
+
+---
+
 ## Reading the documentation against the code (2026-08-19)
 
 Asked directly: *"can you read the documentation and check it, so we do not have unverified things

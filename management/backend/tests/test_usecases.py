@@ -266,7 +266,13 @@ def test_admin_can_delete_member_cannot() -> None:
 
     assert _client(member).delete(f"{BASE}uc/").status_code == 403
     assert _client(admin).delete(f"{BASE}uc/").status_code == 204
-    assert not UseCase.objects.filter(slug="uc").exists()
+    # **Retired, not removed** (`FRD-607`). This asserted the row was gone, which is precisely the
+    # capability the owner asked to take away: the administrator of a compromised use case was the
+    # one person able to destroy the record of what it had been configured to do.
+    assert not UseCase.objects.filter(slug="uc", deleted_at__isnull=True).exists()
+    retired = UseCase.objects.get(slug="uc")
+    assert retired.deleted_at is not None
+    assert retired.deleted_by == "a"
 
 
 # ---- membership -------------------------------------------------------------------------

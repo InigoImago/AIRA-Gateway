@@ -78,15 +78,49 @@ async def test_a_release_the_event_does_not_mention_is_not_a_release_of_nothing(
     assert rows["junk"] is None
 
 
-async def test_usecase_delete_removes_members(make_session) -> None:
+async def test_retiring_a_use_case_removes_the_members_and_keeps_the_row(make_session) -> None:
+    """**Everything that grants goes; the row that only describes stays** (`FRD-607`).
+
+    The members go because they grant. The `UseCaseRead` row stays because two things read it and
+    neither grants anything: `retention.py` takes this use case's own prompt-retention period from
+    it, and `payloads.py` uses it to tell *never stored* apart from *expired*. While the row was
+    deleted, both silently changed their answer at the moment somebody pressed Delete — the
+    retention promise became the installation default, and a refusal reason became a different one.
+    """
     async with make_session() as session:
         await apply_event(session, "usecase.upserted", {"slug": "uc", "name": "N"})
         await apply_event(
             session, "membership.upserted", {"slug": "uc", "username": "alice", "role": "admin"}
         )
         await apply_event(session, "usecase.deleted", {"slug": "uc"})
-    assert await _all(make_session, UseCaseRead) == []
+
     assert await _all(make_session, UseCaseMemberRead) == []
+    rows = await _all(make_session, UseCaseRead)
+    assert [row.slug for row in rows] == ["uc"]
+    assert rows[0].deleted_at is not None
+
+
+async def test_only_a_purge_drops_the_row(make_session) -> None:
+    """The second, deliberate decision — and the only thing that removes the record.
+
+    Management emits `usecase.purged` for a **Global Administrator** and only for a use case that
+    has been retired for `PURGE_AFTER_DAYS`. Idempotent in both directions on purpose: Kafka
+    delivery is at-least-once, so a redelivered retirement after a purge must not resurrect a row,
+    and a redelivered purge must not fail.
+    """
+    async with make_session() as session:
+        await apply_event(session, "usecase.upserted", {"slug": "uc", "name": "N"})
+        await apply_event(session, "usecase.deleted", {"slug": "uc"})
+        assert len(await _all(make_session, UseCaseRead)) == 1
+
+        await apply_event(session, "usecase.purged", {"slug": "uc"})
+    assert await _all(make_session, UseCaseRead) == []
+
+    async with make_session() as session:
+        # Redelivery, both ways round. Neither may raise, and neither may bring the row back.
+        await apply_event(session, "usecase.purged", {"slug": "uc"})
+        await apply_event(session, "usecase.deleted", {"slug": "uc"})
+    assert await _all(make_session, UseCaseRead) == []
 
 
 async def test_deleting_a_use_case_revokes_the_keys_bound_to_it(make_session) -> None:

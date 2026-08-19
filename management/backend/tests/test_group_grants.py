@@ -364,7 +364,17 @@ def test_removing_a_person_takes_the_permission_away() -> None:
     assert _client(added).get(BASE).data["count"] == 0
 
 
-def test_deleting_the_use_case_takes_its_grants_with_it() -> None:
+def test_retiring_the_use_case_keeps_its_grants_as_a_record_of_who_had_access() -> None:
+    """**Who could reach this use case is the first question an investigation asks** (`FRD-607`).
+
+    This asserted the grants were destroyed with the row. Both halves changed: the row is retired
+    rather than removed, and the grants stay with it — a department's access to a use case that was
+    misused is evidence, and it was the one thing the misusing party could delete.
+
+    Access still ends, on the plane where access is decided: the gateway drops its own
+    `UseCaseGroupRead` rows on `usecase.deleted`, and a request naming a retired slug is refused
+    even for a caller whose Keycloak group still names it.
+    """
     owner = _user("a", "global-admin")
     client = _client(owner)
     _create(client, "uc-a")
@@ -372,8 +382,10 @@ def test_deleting_the_use_case_takes_its_grants_with_it() -> None:
 
     client.delete(f"{BASE}uc-a/")
 
-    assert not UseCaseGroupGrant.objects.filter(use_case__slug="uc-a").exists()
-    assert not UseCase.objects.filter(slug="uc-a").exists()
+    assert UseCaseGroupGrant.objects.filter(use_case__slug="uc-a").exists()
+    assert UseCase.objects.filter(slug="uc-a", deleted_at__isnull=False).exists()
+    # Unreachable through every route, including the one that granted it.
+    assert client.get(f"{BASE}uc-a/groups/").status_code == 404
 
 
 def test_a_use_case_reports_whether_the_gateway_would_accept_this_caller() -> None:

@@ -300,3 +300,91 @@ async def test_a_known_use_case_is_not_swept_by_the_orphan_pass(sessionmaker) ->
 
     assert result.payloads_cleared == 0
     assert (await _rows(sessionmaker))[0].request_payload is not None
+
+
+# ---- a retired use case keeps its own clock (`FRD-607`) --------------------------------------
+
+
+async def _retired(sessionmaker, slug: str, retention_days: int) -> None:
+    """A use case Management has retired: the row survives, marked."""
+    async with sessionmaker() as session:
+        session.add(
+            UseCaseRead(
+                slug=slug,
+                name=slug,
+                retention_days=retention_days,
+                deleted_at=NOW - timedelta(days=1),
+            )
+        )
+        await session.commit()
+
+
+async def test_a_retired_use_case_keeps_the_period_it_promised(sessionmaker) -> None:
+    """**The promise made to a data subject does not change because somebody pressed Delete.**
+
+    The two numbers differ on purpose and in the direction that matters: the use case promised
+    **90** days and the installation default is **7**. While a deleted use case's row was removed,
+    these payloads fell through to the default and were destroyed 83 days early — a different
+    promise, substituted silently, at the moment of deletion.
+
+    The other direction is just as wrong and is the test below.
+    """
+    await _retired(sessionmaker, "retired-long", 90)
+    await _log(sessionmaker, use_case="retired-long", age_days=30)
+    service = RetentionService(sessionmaker, default_retention_days=7)
+
+    result = await service.prune(NOW)
+
+    assert result.payloads_cleared == 0
+    assert [row.request_payload for row in await _rows(sessionmaker)] != [None]
+
+
+async def test_a_retired_use_case_is_not_kept_longer_either(sessionmaker) -> None:
+    """The mirror, and the one the GDPR asks about: a **short** promise must still be honoured.
+
+    A use case that promised 3 days and was retired must not inherit an installation default of 30
+    and keep prompts for a month. Retiring is not consent renewed any more than it is consent
+    withdrawn — the period the data subject was told about is the period that applies.
+    """
+    await _retired(sessionmaker, "retired-short", 3)
+    await _log(sessionmaker, use_case="retired-short", age_days=10)
+    service = RetentionService(sessionmaker, default_retention_days=30)
+
+    result = await service.prune(NOW)
+
+    assert result.payloads_cleared == 1
+    assert [row.request_payload for row in await _rows(sessionmaker)] == [None]
+
+
+async def test_a_retired_use_case_with_storage_switched_off_is_cleared_on_sight(
+    sessionmaker,
+) -> None:
+    """Two states that both mean *do not keep this*, and they compose rather than cancel."""
+    async with sessionmaker() as session:
+        session.add(
+            UseCaseRead(
+                slug="retired-off",
+                name="off",
+                retention_days=90,
+                store_payloads=False,
+                deleted_at=NOW - timedelta(days=1),
+            )
+        )
+        await session.commit()
+    await _log(sessionmaker, use_case="retired-off", age_days=0.1)
+
+    result = await RetentionService(sessionmaker).prune(NOW)
+
+    assert result.payloads_cleared == 1
+
+
+async def test_a_purged_use_case_falls_back_to_the_installation_default(sessionmaker) -> None:
+    """After the second decision there is nothing left to read a period from, and the default is
+    the honest consequence — which is part of why a purge is a decision somebody takes rather than
+    a cleanup that happens."""
+    await _log(sessionmaker, use_case="purged", age_days=10)
+    service = RetentionService(sessionmaker, default_retention_days=7)
+
+    result = await service.prune(NOW)
+
+    assert result.payloads_cleared == 1
