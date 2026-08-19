@@ -128,6 +128,22 @@ def canonical_to_anthropic(request: CanonicalRequest, *, max_tokens: int) -> dic
     _add_sampling(body, request)
     if request.thinking is not None and request.thinking.mode is not ThinkingMode.DISABLED:
         budget = request.thinking.tokens
+        if budget is None:
+            # **Refused, not omitted.** This dialect can only say "think" by naming a number, and
+            # without one the body it produced was byte-for-byte the `disabled` body: the caller
+            # asked for `auto` or `high`, the model did not think, the answer was a `200`, and
+            # nothing anywhere said so. Measured on 2026-08-19 — `auto`, `high` and `low` with no
+            # resolved budget all produced no `thinking` block at all.
+            #
+            # A budget is resolved from the model's own level table (`FRD-111` §5.2), so arriving
+            # here means the declaration is incomplete rather than the request being wrong. The
+            # message says which of the two to fix.
+            raise DialectUnsupported(
+                f"This model was asked to think in mode '{request.thinking.mode}', and the "
+                "Anthropic dialect can only request thinking by naming a token budget. The "
+                "model's catalogue entry declares no budget for that mode, so there is nothing "
+                "to send — declare `thinking.levels` for it, or a `thinking.max_tokens`."
+            )
         if budget is not None:
             # Anthropic draws thinking tokens from `max_tokens`, so a budget at or above it
             # describes a request that can never answer. `FRD-114`'s catalog validation refuses

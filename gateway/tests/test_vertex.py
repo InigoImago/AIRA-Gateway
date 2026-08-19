@@ -732,3 +732,91 @@ def test_only_a_400_carries_it(status: int) -> None:
         _raise_for_status(response)
 
     assert "aira-prod@example" not in str(caught.value)
+
+
+# == cataloguing a Vertex model is enough to serve it ============================================
+
+
+def _registry_with_vertex():
+    from aira_gateway.config import GatewaySettings
+    from aira_gateway.upstreams.base import ProviderRegistry
+    from aira_gateway.upstreams.vertex import build_vertex_upstreams
+
+    return ProviderRegistry(
+        build_vertex_upstreams(
+            GatewaySettings(
+                vertex_project="p",
+                vertex_api_key="AQ.key",
+                vertex_models="",
+                allowed_regions="europe-west1",
+            )
+        )
+    )
+
+
+def test_both_dialects_are_built_with_nothing_configured() -> None:
+    """A deployment that has named no Vertex model still has the adapters.
+
+    They used to be built only for what `AIRA_VERTEX_MODELS` listed, so on a fresh installation
+    there was nothing to claim the provider — a Vertex model catalogued through the console was an
+    entry that could never answer, and the console had to say so at the moment of declaring. An
+    adapter with an empty configured list is the shape Google AI Studio's has had since stage B.
+    """
+    registry = _registry_with_vertex()
+
+    assert "vertex" in registry.by_name()
+    assert registry.models() == [], "nothing is configured, and that is the point"
+
+
+def test_the_publisher_chooses_the_dialect() -> None:
+    """Why `vertex` could not be claimed before: two adapters, one provider name.
+
+    Vertex serves Google's models in the Gemini wire format and Anthropic's in theirs. The
+    catalogue already carries the discriminator — `publisher` — and it is exactly the thing that
+    decides the format, so routing on the pair costs nothing and makes the provider claimable.
+    """
+    registry = _registry_with_vertex()
+
+    gemini = registry.provider_for("gemini-2.5-pro", "vertex", "google")
+    claude = registry.provider_for("claude-sonnet-4-5", "vertex", "anthropic")
+
+    assert type(gemini).__name__ == "VertexGeminiAdapter"
+    assert type(claude).__name__ == "VertexAnthropicAdapter"
+    assert gemini is not claude
+
+
+def test_a_catalogued_model_is_addressed_from_its_declaration() -> None:
+    """The region comes from the catalogue, which is the whole point.
+
+    Vertex reaches a model at `<region>-aiplatform.googleapis.com`, so a model's *name* is not its
+    address there. That second fact lived only in `AIRA_VERTEX_MODELS`, which is why cataloguing
+    was not enough — and `addressing` was a column in both planes, carried over Kafka, that nothing
+    read.
+    """
+    from aira_gateway.upstreams.vertex.adapters import _target
+
+    region, publisher = _target({}, "google", "gemini-2.5-pro", {"region": "europe-west1"})
+
+    assert (region, publisher) == ("europe-west1", "google")
+
+
+def test_a_configured_model_still_wins() -> None:
+    """An installation that named a model in configuration keeps the region it named. Changing
+    where existing traffic goes would be the worst possible way to add a feature."""
+    from aira_gateway.upstreams.vertex.adapters import VertexModel, _target
+
+    configured = {"m": VertexModel("europe-west4", "google", "m")}
+
+    assert _target(configured, "google", "m", {"region": "europe-west1"})[0] == "europe-west4"
+
+
+def test_a_catalogued_model_with_no_region_is_refused_by_name() -> None:
+    """Not guessed. A guess about residency is the one guess this product may not make, and the
+    message says which of the two places to fix."""
+    from aira_gateway.upstreams.base import AmbiguousModel
+    from aira_gateway.upstreams.vertex.adapters import _target
+
+    with pytest.raises(AmbiguousModel) as caught:
+        _target({}, "google", "gemini-2.5-pro", {})
+
+    assert "region" in str(caught.value)

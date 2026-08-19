@@ -25,7 +25,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 from aira_gateway.core.canonical import CanonicalRequest, CanonicalResponse
-from aira_gateway.upstreams.base import ProviderRegistry, UpstreamError
+from aira_gateway.residency import RegionNotAllowed
+from aira_gateway.upstreams.base import AmbiguousModel, ProviderRegistry, UpstreamError
 
 #: Given a model name, why it may not serve this request — or ``None`` if it may.
 Permits = Callable[[str], Awaitable[str | None]]
@@ -68,7 +69,7 @@ async def dispatch_with_fallback(
     fallback_models: tuple[str, ...],
     *,
     permits: Permits | None = None,
-    provider_of: Callable[[str], Awaitable[str]] | None = None,
+    provider_of: Callable[[str], Awaitable[tuple[str, str]]] | None = None,
 ) -> Dispatched:
     candidates = [request.model, *[m for m in fallback_models if m != request.model]]
     skipped: list[Skipped] = []
@@ -78,8 +79,8 @@ async def dispatch_with_fallback(
         # The catalog names who serves a model, so one that was catalogued rather than configured
         # resolves too (`FRD-507`). Asked per candidate, because a fallback chain may cross
         # providers — that is what a chain is for.
-        declared = await provider_of(model) if provider_of is not None else ""
-        provider = registry.provider_for(model, declared)
+        declared = await provider_of(model) if provider_of is not None else ("", "")
+        provider = registry.provider_for(model, *declared)
         if provider is None:
             # Previously a silent `continue`. A model nobody serves is a configuration mistake,
             # and it should be visible in the failure rather than inferred from its absence.
@@ -94,6 +95,18 @@ async def dispatch_with_fallback(
             response = await provider.generate(request.model_copy(update={"model": model}))
         except UpstreamError as exc:
             last_error = exc
+        except (AmbiguousModel, RegionNotAllowed) as exc:
+            # **A candidate that cannot be addressed is a candidate, not a server error.**
+            #
+            # Since cataloguing a model became enough to serve it, the address can be wrong in two
+            # new ways an operator controls: a platform that needs a region and a catalogue entry
+            # that names none, or a region outside `AIRA_ALLOWED_REGIONS`. Both used to escape the
+            # chain and reach the caller as a **500** — a configuration fault dressed as our fault,
+            # measured on 2026-08-19 for both.
+            #
+            # Recorded as a skip so a fallback chain moves on, which is what a chain is for, and so
+            # the refusal names the model and the reason when nothing else qualifies.
+            skipped.append(Skipped(model, str(exc)))
         else:
             return Dispatched(response, index, skipped)
 

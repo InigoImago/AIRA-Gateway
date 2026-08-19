@@ -31,3 +31,4 @@ Each ADR is immutable once **Accepted** — to change a decision, add a new ADR 
 | 0018 | [Everything between the services is a trust boundary](ADR-0018-everything-between-the-services-is-a-trust-boundary.md) | Accepted | 2026-08-09 |
 | 0019 | [An allowance belongs to a person, not to a credential](ADR-0019-an-allowance-belongs-to-a-person.md) | Accepted | 2026-08-15 |
 | 0020 | [The question catalogue tests a use case's pipeline, not a model](ADR-0020-the-catalogue-tests-a-pipeline.md) | Accepted | 2026-08-16 |
+| 0021 | [One thinking vocabulary, two axes of variation](ADR-0021-one-thinking-vocabulary-two-axes-of-variation.md) | **Proposed** | 2026-08-19 |

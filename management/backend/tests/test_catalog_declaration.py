@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 from aira_management.apps.catalog.models import Model
-from aira_management.apps.catalog.validation import validate_declaration
+from aira_management.apps.catalog.validation import validate_declaration, validate_thinking
 
 from .test_catalog import BASE, _client, _user
 
@@ -367,9 +367,13 @@ def test_a_valid_declaration_is_accepted() -> None:
             {
                 "capabilities": ["generate", "thinking", "attachments"],
                 "hosting": "managed",
+                # No `min_tokens` beside `disabled`, and the fixture used to have both — it
+                # described a model that can stop thinking *and* refuses to think less than 128
+                # tokens, which is not a model. Measured on 2026-08-19: `gemini-2.5-flash` takes a
+                # budget of 0; `gemini-2.5-pro` refuses 0 and anything under 128, and offers no
+                # `disabled` at all. A fixture is a claim about the world like any other.
                 "thinking": {
                     "modes": ["disabled", "limited"],
-                    "min_tokens": 128,
                     "max_tokens": 512,
                     "default": {"mode": "limited", "tokens": 256},
                 },
@@ -379,3 +383,112 @@ def test_a_valid_declaration_is_accepted() -> None:
         )
         == []
     )
+
+
+#: What Vertex was **measured** to accept on 2026-08-19, one call per value. Two models of one
+#: family, on one platform, on one afternoon — which is why the envelope belongs to the model and
+#: not to the vocabulary.
+#:
+#:   gemini-2.5-flash   budget 0 stops thinking · 1…24576 accepted · 32768 refused
+#:   gemini-2.5-pro     budget 0 **refused** ("does not support setting thinking_budget to 0")
+#:                      1…127 refused · 128…32768 accepted · 40000 refused
+MEASURED = {
+    "gemini-2.5-flash": {
+        "modes": ["disabled", "auto", "low", "medium", "high"],
+        "max_tokens": 24576,
+        "levels": {"low": 512, "medium": 4096, "high": 16384},
+    },
+    "gemini-2.5-pro": {
+        "modes": ["auto", "low", "medium", "high"],
+        "min_tokens": 128,
+        "max_tokens": 32768,
+        "levels": {"low": 1024, "medium": 8192, "high": 24576},
+    },
+}
+
+
+@pytest.mark.parametrize("model", sorted(MEASURED))
+def test_a_measured_declaration_is_accepted(model: str) -> None:
+    """The other half: rules that refuse a real model's real envelope are not rules, they are a
+    validator nobody can satisfy."""
+    assert validate_thinking(MEASURED[model], max_output_tokens=65536) == []
+
+
+def test_disabled_and_a_floor_above_zero_cannot_both_be_true() -> None:
+    """The contradiction that produced the question this was written for.
+
+    A model with a minimum budget above zero cannot be told to stop. Declaring both is a
+    configuration the console accepted and the provider refuses — at the caller, at request time,
+    with a vendor message and nothing pointing at the catalogue. `gemini-2.5-pro` is exactly that
+    model: it answers *"The model does not support setting thinking_budget to 0"*.
+    """
+    errors = validate_thinking(
+        {"modes": ["disabled", "low"], "min_tokens": 128, "levels": {"low": 1024}},
+        max_output_tokens=65536,
+    )
+
+    assert any("cannot stop thinking" in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    ("levels", "expected"),
+    [
+        ({"low": 100}, "below the 128"),
+        ({"low": 40000}, "above the 32768"),
+        ({"minimal": 1024}, "which thinking.modes does not offer"),
+    ],
+)
+def test_a_level_outside_the_models_envelope_is_refused(levels: dict, expected: str) -> None:
+    """Where the vendors differ most and the difference is least visible.
+
+    `low` set to 100 is fine on one model of a family and a `400` on the next. The console used to
+    accept every one of these, so the operator saw a working configuration and the caller saw the
+    vendor's refusal. A budget for a level the model does not offer is the third shape: dead
+    configuration that reads as a working path.
+    """
+    errors = validate_thinking(
+        {"modes": ["low", "high"], "min_tokens": 128, "max_tokens": 32768, "levels": levels},
+        max_output_tokens=65536,
+    )
+
+    assert any(expected in error for error in errors), errors
+
+
+def test_levels_with_a_ceiling_and_no_table_are_refused() -> None:
+    """Otherwise `low` and `high` are the same instruction.
+
+    `_with_budget` resolves a level with no entry to the declared maximum — deliberately, so a
+    reservation never ignores the expensive half of a request — and that figure goes on the wire.
+    A model declaring `low` and `high` with a ceiling and no table is therefore told the same
+    thing for both, and the distinction the caller asked for is gone before the request leaves.
+
+    This is the question that prompted the rule, from the other side: the levels differ per model,
+    and a declaration that names them without numbers makes them differ from **nothing**.
+    """
+    errors = validate_thinking(
+        {"modes": ["low", "high"], "max_tokens": 24576}, max_output_tokens=65536
+    )
+
+    assert any("all mean the same thing" in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    ("label", "block"),
+    [
+        # Addressed by level rather than by budget — `reasoning_effort` takes a word, so there is
+        # no number to give and requiring one would be requiring something nobody sends.
+        ("a model addressed by level", {"modes": ["minimal", "low", "medium", "high"]}),
+        ("one level and a ceiling", {"modes": ["high"], "max_tokens": 24576}),
+        (
+            "the shape the local seed declares",
+            {
+                "modes": ["disabled", "minimal", "low", "medium", "high"],
+                "default": {"mode": "disabled"},
+            },
+        ),
+    ],
+)
+def test_the_table_is_required_only_where_a_number_is_sent(label: str, block: dict) -> None:
+    """A rule that fired on these would refuse three declarations this project already ships,
+    which is not a rule but an outage."""
+    assert validate_thinking(block, max_output_tokens=65536) == [], label

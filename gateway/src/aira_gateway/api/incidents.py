@@ -216,7 +216,11 @@ async def check_model(
     # `state.py` for what an unchecked one cost.
     registry: ProviderRegistry = request.app.state.providers
     declaration = await catalog.declaration(model)
-    provider = registry.provider_for(model)
+    # The catalogue's provider **and publisher**, like every other resolution. This asked with the
+    # name alone, so the one control an administrator presses to find out whether a model works
+    # answered "not served" for a model the gateway was serving — the fifth site to learn the pair,
+    # and the one a person actually looks at.
+    provider = registry.provider_for(model, declaration.provider, declaration.publisher)
 
     result: dict[str, Any] = {
         "model": model,
@@ -237,9 +241,10 @@ async def check_model(
         # and whose model still answered "not served".
         result["detail"] = (
             "No upstream serves this model. A declaration is metadata; reaching a model needs a "
-            "provider that offers it — either no credential is configured for its platform, or "
-            "the platform is one where each model must also be named in the gateway's "
-            "configuration (AIRA_VERTEX_MODELS, AIRA_FOUNDRY_DEPLOYMENTS) and this one is not."
+            "provider that offers it — most often because no credential is configured for its "
+            "platform, and otherwise because the catalogue entry names a provider no adapter "
+            "claims. Check the provider and publisher on the model: on a platform that hosts two "
+            "dialects the publisher is what selects one."
         )
         return JSONResponse(result)
 
@@ -251,7 +256,11 @@ async def check_model(
         return JSONResponse(result)
 
     try:
-        detail = await asyncio.wait_for(ping(), timeout=MODEL_CHECK_TIMEOUT_SECONDS)
+        # The model being asked about, and its address — so the answer is about *this* model
+        # rather than about whichever one the adapter happened to have configured first.
+        detail = await asyncio.wait_for(
+            ping(model, declaration.addressing), timeout=MODEL_CHECK_TIMEOUT_SECONDS
+        )
     except TimeoutError:
         result["reachable"] = False
         result["detail"] = f"Did not answer within {MODEL_CHECK_TIMEOUT_SECONDS:g}s."

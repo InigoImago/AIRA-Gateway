@@ -82,6 +82,9 @@ const OFFERED_EMBED: OfferedModel = {
 
 interface Catalog {
   add: () => void;
+  openProvenance: () => void;
+  showProvenance: () => boolean;
+  provenanceKnown: () => boolean;
   discover: () => void;
   discovering: () => boolean;
   served: () => unknown[] | null;
@@ -157,6 +160,10 @@ interface Catalog {
   displayName: { set: (v: string) => void; (): string };
   platform: { set: (v: string) => void; (): string };
   checkedName: () => string | null;
+  check: () => { reachable: boolean | null; served: boolean; detail?: string } | null;
+  addManually: () => void;
+  addByName: () => void;
+  region: { set: (v: string) => void; (): string };
   mustCheck: () => boolean;
   OTHER: string;
 }
@@ -435,9 +442,15 @@ describe('ModelCatalog interactions', () => {
     const html = () => harness.fixture.nativeElement as HTMLElement;
 
     expect(html().querySelector('#model-name')).toBeNull();
-    [...html().querySelectorAll<HTMLButtonElement>('button')]
-      .find((button) => button.textContent?.includes('Add model'))
-      ?.click();
+    // **Through the one entrance there is.** There were two buttons and the empty form was one of
+    // them; adding now starts by saying where the model lives, and only a platform that cannot be
+    // listed reaches a form to type into. Driven through the DOM the whole way, because the point
+    // of the change is what a person can click.
+    html().querySelector<HTMLButtonElement>('[data-testid="add-model"]')!.click();
+    harness.fixture.detectChanges();
+    harness.component.browseProvider.set('vertex');
+    harness.fixture.detectChanges();
+    html().querySelector<HTMLButtonElement>('[data-testid="add-manually"]')!.click();
     harness.fixture.detectChanges();
 
     const dialog = html().querySelector('[role="dialog"]');
@@ -1186,6 +1199,10 @@ describe('ModelCatalog — the provider field in the editor (`FRD-507` stage C)'
     const { component, fixture, html } = setup({ providers: late });
 
     component.edit({ ...FLASH, provider: 'vertex' });
+    // A row on file states where the model lives, so the editor summarises it rather than asking
+    // again. This test is about the select's behaviour, so it opens the block the way a reader
+    // correcting the provenance would.
+    component.openProvenance();
     fixture.detectChanges();
     // Nothing is known yet, so the field is the text box it degrades to.
     expect(component.providerIsCustom()).toBe(true);
@@ -1215,6 +1232,144 @@ describe('ModelCatalog — the provider field in the editor (`FRD-507` stage C)'
   });
 });
 
+describe('ModelCatalog — one entrance, and what it stops asking', () => {
+  /**
+   * The owner's verdict on the two buttons that used to sit here: *"the options for adding a
+   * model are too complex … if somebody other than me is to add one, that person will not
+   * understand the screen"*, and *"the Add model button, where you have to type everything
+   * yourself, is by now unnecessary — we have adding from a provider."*
+   *
+   * Both halves are one property: **a model lives somewhere, and the software already knows
+   * where.** The empty form asked eight questions and five of them — provider, publisher,
+   * platform, hosting, the KIRA id — were answered when the provider was chosen.
+   */
+  it('offers one way in, and it starts with the provider', () => {
+    const { component, html } = setup();
+
+    const buttons = [...html().querySelectorAll<HTMLButtonElement>('button')].filter((button) =>
+      /add a model|add model/i.test(button.textContent ?? ''),
+    );
+    expect(buttons.length).toBe(1);
+
+    buttons[0].click();
+    // The browse window, not the editor: nothing is typed before it is known where it goes.
+    expect(component.showBrowse()).toBe(true);
+    expect(component.showAdd()).toBe(false);
+  });
+
+  it('states where the model lives instead of asking, once something knows', () => {
+    const { component, fixture, html } = setup();
+
+    component.addManually();
+    component.provider.set('vertex');
+    component.publisher.set('google');
+    component.platform.set('vertex');
+    fixture.detectChanges();
+
+    const summary = html().querySelector('[data-testid="provenance-summary"]');
+    expect(summary).not.toBeNull();
+    // The **whole sentence**, not a substring of it. A summary assembled from template blocks
+    // strands its punctuation — the formatter puts each `@if` on its own line, and the text node
+    // that follows begins with a newline, so a reader gets "vertex , speaking". Asserting
+    // `toContain('vertex')` would pass through that happily.
+    expect(summary!.textContent!.replace(/\s+/g, ' ').trim()).toBe(
+      'Lives on Google Vertex AI (vertex), speaking the google dialect, on the vertex platform. Change',
+    );
+    // The four boxes are gone — that is the whole point — while the two questions the provider
+    // cannot answer stay in plain sight.
+    expect(html().querySelector('[data-testid="provenance-fields"]')).toBeNull();
+    expect(html().querySelector('#model-name')).not.toBeNull();
+    expect(html().querySelector('#model-region')).not.toBeNull();
+  });
+
+  it('asks where the model lives when nothing knows', () => {
+    /** The empty form is the one case where those fields really are the reader's to answer, so
+     *  there it opens by itself. Hiding a question nobody else can answer is not simplicity. */
+    const { component, fixture, html } = setup();
+
+    component.addByName();
+    fixture.detectChanges();
+
+    expect(component.provenanceKnown()).toBe(false);
+    expect(html().querySelector('[data-testid="provenance-fields"]')).not.toBeNull();
+    expect(html().querySelector('[data-testid="provenance-summary"]')).toBeNull();
+  });
+
+  it('keeps the fields on screen while the reader is using them', () => {
+    /** **The defect this test was written after.** Without a latch, the empty form opened the
+     *  fields (nothing was known), the reader picked a provider from the select — and "a provider
+     *  is now known" collapsed the block, taking the select out of the DOM under the pointer that
+     *  had just used it. A rule about what a form knows, applied while somebody is telling it. */
+    const { component, fixture, html } = setup();
+
+    component.addByName();
+    fixture.detectChanges();
+    component.chooseProvider('vertex');
+    fixture.detectChanges();
+
+    expect(component.provenanceKnown()).toBe(true);
+    expect(html().querySelector('[data-testid="provenance-fields"]')).not.toBeNull();
+  });
+
+  it('opens the fields on request, for a row that already states them', () => {
+    const { component, fixture, html } = setup();
+
+    component.edit({ ...FLASH, provider: 'vertex' });
+    fixture.detectChanges();
+    expect(html().querySelector('[data-testid="provenance-fields"]')).toBeNull();
+
+    html().querySelector<HTMLButtonElement>('[data-testid="change-provenance"]')!.click();
+    fixture.detectChanges();
+    expect(html().querySelector('[data-testid="provenance-fields"]')).not.toBeNull();
+  });
+
+  it('does not carry one model’s reachability verdict onto a form for another', () => {
+    /** **The second defect this pass found.** Two entrances to one window and only one of them
+     *  swept the floor: `add()` clears the verdict with a comment saying why, and the manual route
+     *  opened the same window beside it. Checking a row and then adding a model showed a green
+     *  badge about a different model — the wrong answer wearing a right one's clothes. */
+    const harness = setup({
+      check: of({
+        model: 'gemini-2.0-flash',
+        declared: true,
+        served: true,
+        reachable: true,
+        detail: 'gemini-2.0-flash answered',
+      }),
+    });
+    const { component, fixture, html } = harness;
+
+    harness.openFirst();
+    html().querySelector<HTMLElement>('[data-testid^="check-gemini"]')!.click();
+    fixture.detectChanges();
+    expect(component.check()).not.toBeNull();
+
+    component.addManually();
+    fixture.detectChanges();
+    expect(component.check()).toBeNull();
+    expect(html().querySelector('[data-testid="editor-verdict"]')).toBeNull();
+  });
+
+  it('leaves a way forward when there is no provider to choose', () => {
+    /** The empty form is still reachable, from the one place it is the honest option rather than
+     *  the tempting one: a gateway with no upstream configured has nothing to fill anything in
+     *  from. Removing the button without this would have removed the only way to declare a model
+     *  on a fresh installation. */
+    const { component, fixture, html } = setup({ providers: of([]) });
+
+    component.openBrowse();
+    fixture.detectChanges();
+    expect(html().querySelector('[data-testid="browse-no-providers"]')).not.toBeNull();
+
+    html().querySelector<HTMLButtonElement>('[data-testid="add-by-name"]')!.click();
+    fixture.detectChanges();
+
+    expect(component.showBrowse()).toBe(false);
+    expect(component.showAdd()).toBe(true);
+    expect(html().querySelector('#model-name')).not.toBeNull();
+  });
+});
+
 describe('ModelCatalog — browsing what a provider offers (`FRD-507` stage C)', () => {
   it('lists every provider, and says which one publishes no list', () => {
     /** `canEnumerate` is stated rather than discovered by trying, and a capability gap must never
@@ -1227,7 +1382,7 @@ describe('ModelCatalog — browsing what a provider offers (`FRD-507` stage C)',
      */
     const { fixture, html } = setup();
 
-    html().querySelector<HTMLButtonElement>('[data-testid="browse-provider-models"]')!.click();
+    html().querySelector<HTMLButtonElement>('[data-testid="add-model"]')!.click();
     fixture.detectChanges();
 
     const select = html().querySelector<HTMLSelectElement>('[data-testid="browse-provider"]')!;
@@ -1244,7 +1399,7 @@ describe('ModelCatalog — browsing what a provider offers (`FRD-507` stage C)',
      *  earlier. */
     const { component, fixture, html } = setup();
 
-    html().querySelector<HTMLButtonElement>('[data-testid="browse-provider-models"]')!.click();
+    html().querySelector<HTMLButtonElement>('[data-testid="add-model"]')!.click();
     fixture.detectChanges();
     component.browseProvider.set('vertex');
     fixture.detectChanges();
@@ -1409,8 +1564,14 @@ describe('ModelCatalog — browsing what a provider offers (`FRD-507` stage C)',
 
     // And it says which half is which, because an import that silently fills six fields and
     // silently leaves five is indistinguishable from one that failed at the other five.
-    expect(text()).toContain('Filled in from generative-language');
+    //
+    // Two statements, deliberately not one: the **sentence** says what is now known — that half
+    // used to be six empty boxes — and the **note** says what the import left alone. They said
+    // the same thing for a while, one line apart, which reads as two facts and sends a reader
+    // looking for the difference.
+    expect(text()).toContain('Lives on Google AI Studio (generative-language)');
     expect(text()).toContain('a price nobody set is not zero');
+    expect(text()).not.toContain('Filled in from');
     expect(component.vendorSaid().join(' ')).toContain('it reasons');
   });
 

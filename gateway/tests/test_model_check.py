@@ -32,12 +32,14 @@ UC_ADMIN = Principal(subject="boss", method="oidc", roles=("use-case-admin",), u
 
 
 class _Reachable:
-    async def ping(self) -> str:
-        return "3 models listed"
+    # The check names the model it was asked about, so a double takes the same arguments the real
+    # adapters do — a stand-in with a narrower signature is the shape this project warns about.
+    async def ping(self, model: str = "", addressing: dict[str, str] | None = None) -> str:
+        return f"{model} answered" if model else "3 models listed"
 
 
 class _Unreachable:
-    async def ping(self) -> str:
+    async def ping(self, model: str = "", addressing: dict[str, str] | None = None) -> str:
         raise ConnectionError("https://api.example/v1?key=super-secret-value")
 
 
@@ -49,9 +51,9 @@ def _client(principal: Principal, provider: Any = None) -> TestClient:
     app = create_app(GatewaySettings(auth_required=False))
     app.dependency_overrides[require_principal] = lambda: principal
     if provider is not None:
-        app.state.providers.provider_for = lambda _model: provider  # type: ignore[method-assign]
+        app.state.providers.provider_for = lambda *_a, **_k: provider  # type: ignore[method-assign]
     else:
-        app.state.providers.provider_for = lambda _model: None  # type: ignore[method-assign]
+        app.state.providers.provider_for = lambda *_a, **_k: None  # type: ignore[method-assign]
     return app
 
 
@@ -89,7 +91,12 @@ async def test_a_served_model_that_answers_is_reachable() -> None:
         "declared": True,
         "served": True,
         "reachable": True,
-        "detail": "3 models listed",
+        # **The model that was asked about.** The check used to ping whichever model an adapter had
+        # configured first and report *that* name, so somebody asking about `gemini-2.5-pro` was
+        # told "gemini-2.5-flash answered" — an answer about the credential, worded as an answer
+        # about the model. Since cataloguing a model became enough to serve it, the one being
+        # checked is usually the one *not* in configuration.
+        "detail": "gemini-2.0-flash answered",
     }
 
 

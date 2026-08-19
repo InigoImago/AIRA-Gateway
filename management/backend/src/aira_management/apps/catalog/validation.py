@@ -93,6 +93,43 @@ def validate_thinking(block: Any, *, max_output_tokens: int | None) -> list[str]
             ):
                 errors.append("thinking.default.tokens must lie within the declared bounds.")
 
+    # **`disabled` is not universally available, and the declaration has to be able to say so.**
+    #
+    # Measured on 2026-08-19 against Vertex: `gemini-2.5-flash` takes a budget of `0` and stops
+    # thinking; `gemini-2.5-pro` answers *"The model does not support setting thinking_budget to
+    # 0"* and refuses anything below **128**. Two models of one family, on one platform, on the
+    # same afternoon — which is the shape that will keep happening as families grow.
+    #
+    # A non-zero minimum and `disabled` in the same declaration is therefore a contradiction, and
+    # it used to be accepted: the console showed a working configuration and every request asking
+    # for `disabled` came back `400` from the vendor, at the caller, with nothing pointing here.
+    if ThinkingMode.DISABLED in modes and minimum:
+        errors.append(
+            f"thinking.modes offers 'disabled' while thinking.min_tokens is {minimum} — a model "
+            "with a floor above zero cannot stop thinking, and every request asking it to would "
+            "be refused by the provider. Drop one of the two."
+        )
+
+    # **Levels without budgets are levels that mean the same thing.**
+    #
+    # `_with_budget` resolves a level with no entry to the declared *maximum* — deliberately, so a
+    # reservation never ignores the expensive half of a request. That figure then goes on the wire
+    # as the budget, so a model declaring `low` and `high` with a ceiling and no table is told the
+    # same thing for both, and the distinction the caller asked for is gone before it leaves here.
+    #
+    # Only when a ceiling is declared: a model addressed by *level* rather than by budget — the
+    # OpenAI dialect's `reasoning_effort` — legitimately has modes, no ceiling and no table, and
+    # requiring numbers there would be requiring a number nobody sends.
+    abstract = {ThinkingMode.MINIMAL, ThinkingMode.LOW, ThinkingMode.MEDIUM, ThinkingMode.HIGH}
+    declared_levels = {str(mode) for mode in modes} & {str(mode) for mode in abstract}
+    table = block.get("levels")
+    if maximum is not None and len(declared_levels) > 1 and not isinstance(table, dict):
+        errors.append(
+            f"thinking declares {len(declared_levels)} levels and a ceiling of {maximum} but no "
+            "thinking.levels table, so every level would be sent as that ceiling and they would "
+            "all mean the same thing. Give each level its budget."
+        )
+
     levels = block.get("levels")
     if levels is not None:
         if not isinstance(levels, dict):
@@ -101,7 +138,29 @@ def validate_thinking(block: Any, *, max_output_tokens: int | None) -> list[str]
             for mode, budget in levels.items():
                 if mode not in known:
                     errors.append(f"thinking.levels has an unknown mode '{mode}'.")
-                _positive_int(budget, f"thinking.levels.{mode}", errors)
+                elif mode not in modes:
+                    # Dead configuration that reads as a working path: a budget for a level the
+                    # model does not offer is never reachable and never wrong-looking.
+                    errors.append(
+                        f"thinking.levels names '{mode}', which thinking.modes does not offer."
+                    )
+                value = _positive_int(budget, f"thinking.levels.{mode}", errors)
+                # **The bounds are the model's, so a level outside them is a request the provider
+                # refuses.** This is where the vendors differ most and where the difference is
+                # least visible: `low` set to 100 is fine on one model of a family and a `400` on
+                # the next, and the console used to accept both without a word.
+                if value is None:
+                    continue
+                if minimum is not None and value < minimum:
+                    errors.append(
+                        f"thinking.levels.{mode} is {value}, below the {minimum} this model "
+                        "accepts — the provider refuses a budget under its own floor."
+                    )
+                if maximum is not None and value > maximum:
+                    errors.append(
+                        f"thinking.levels.{mode} is {value}, above the {maximum} this model "
+                        "accepts."
+                    )
     return errors
 
 

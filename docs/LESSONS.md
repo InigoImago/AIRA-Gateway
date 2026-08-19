@@ -414,6 +414,30 @@ reading code.
   payload, so a default answered for a control. Both times the tell was identical — the guard kept
   passing under the mutation it was written to catch, which is why a guard is not finished until it
   has been seen to fail.
+- **A question is a claim that the answer is unknown.** The model editor asked eight things to add
+  a model and five of them — provider, publisher, platform, hosting, the KIRA id — had been
+  answered one screen earlier, by choosing the provider. An empty box beside a fact the software
+  already holds does not read as *confirm this*; it reads as *this is yours to decide*, and the
+  person who cannot decide it stops there. Worse, it invites a **different** answer from the one
+  the system knows. The owner's report is the shape to remember: *"too many options where you do
+  not know exactly what you are doing — if somebody other than me is to add a model, that person
+  will not understand the screen."* State a known fact as a sentence with a way to change it, and
+  keep the fields for what nothing else can answer. **This is the mirror of the rule above** — a
+  field the panel prints must be settable; a fact the flow already knows must not be asked — and
+  the pair has one subject: a control is a statement about who holds the answer. **`textContent` is
+  not a rendering**, and this rule's own summary line proved it: the sentence assembled correctly,
+  the test asserting it character for character passed, and the browser drew
+  `Lives on **vertex** , speaking the google dialect .` — because the container was a flex row with
+  a `gap`, and a `<strong>` mid-sentence is a flex item. A gap is not a character. Where the defect
+  *is* the layout, only a picture or a measured box is evidence; the same goes for a form whose
+  fields stopped standing under one another when there were too few left to fill a wrapping row.
+  Two corollaries paid for on the way: a form that hides fields once they are known must **latch
+  them open while somebody is using them**, or a rule about what a form knows fires while they are
+  telling it; and removing a manual route because a better one exists silently removes the case the
+  better one cannot reach — here, naming a model a provider's listing does not carry. A third, from
+  the redundancy that appears when you state a fact somewhere new: **delete the old statement.**
+  The import note still opened with *"Filled in from mock: provider, dialect"* one line under a
+  sentence saying exactly that, and two statements of one fact read as two facts.
 - **Read-only is a control, greyed — never prose.** The models released to a use case were shown
   to a reader who may not change them as a paragraph of `<code>` chips. *"It does not look like a
   control, so the developer will not even read it"* — the one piece of configuration they most

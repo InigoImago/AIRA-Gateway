@@ -5,6 +5,7 @@ import {
   expectNoHorizontalOverflow,
   login,
   openEditorTab,
+  openModelEditor,
   uniqueSlug,
 } from './support';
 
@@ -461,12 +462,10 @@ test.describe('The explanations behave like overlays', () => {
    * inherited it, laying a 372-character sentence out as a single 2210-pixel line in a 478-pixel
    * box.
    */
-  const openModelEditor = async (page: import('@playwright/test').Page) => {
+  const openEditorHere = async (page: import('@playwright/test').Page) => {
     await login(page, USERS.globalAdmin);
     await page.goto('/models');
-    await page
-      .click('button:has-text("Declare a model"), button:has-text("Add model")')
-      .catch(() => {});
+    await openModelEditor(page);
     // The capability checkboxes — and the "i" beside each of them — moved to their own tab when
     // the editor was split into three. Without this the three overlay tests failed with
     // `element(s) not found`, which reads as *the explanations are gone* rather than *they are
@@ -476,7 +475,7 @@ test.describe('The explanations behave like overlays', () => {
   };
 
   test('an explanation stays inside the window it was opened from', async ({ page }) => {
-    await openModelEditor(page);
+    await openEditorHere(page);
 
     for (const capability of ['generate', 'prompt_caching', 'attachments']) {
       await page.hover(`[data-testid="info-cap-${capability}"]`);
@@ -512,7 +511,7 @@ test.describe('The explanations behave like overlays', () => {
     /** The jiggle, measured the way `FRD-207` measured the last one: with the browser's own
      *  layout-shift observer rather than by looking at it. Every shift counts here — unlike the
      *  live control, this page has nothing arriving on its own to confuse the question. */
-    await openModelEditor(page);
+    await openEditorHere(page);
 
     const shifts = await page.evaluate(async () => {
       const seen: number[] = [];
@@ -556,7 +555,7 @@ test.describe('The explanations behave like overlays', () => {
   }) => {
     /** The last row of a long form is exactly where somebody stops and asks what a field means. */
     await page.setViewportSize({ width: 1280, height: 620 });
-    await openModelEditor(page);
+    await openEditorHere(page);
 
     const last = page.locator('[data-testid^="info-cap-"]').last();
     await last.scrollIntoViewIfNeeded();

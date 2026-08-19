@@ -267,6 +267,7 @@ def canonical_to_gemini(response: CanonicalResponse) -> schemas.GenerateContentR
             promptTokenCount=response.usage.prompt_tokens,
             candidatesTokenCount=response.usage.completion_tokens,
             totalTokenCount=response.usage.total_tokens,
+            thoughtsTokenCount=response.usage.reasoning_tokens or None,
         ),
         modelVersion=response.model,
     )

@@ -282,7 +282,10 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
     # keep. `check_declaration` further in still refuses an uncatalogued or unreleased model, by
     # name and with the two reasons kept apart.
     declared = await catalog_of(request).declaration(model)
-    provider = registry_of(request).provider_for(model, declared.provider)
+    # Publisher as well: one platform can host two wire formats, and on Vertex the provider alone
+    # identifies neither dialect. This was the third of four resolution sites, and the one a real
+    # request actually goes through — the other two answered correctly while this one 404'd.
+    provider = registry_of(request).provider_for(model, declared.provider, declared.publisher)
     if provider is None:
         raise GeminiHTTPError(404, f"Model '{model}' not found.", "NOT_FOUND")
 
@@ -463,6 +466,9 @@ def _chunk_to_gemini(chunk: CanonicalChunk, model: str) -> schemas.GenerateConte
             promptTokenCount=usage.prompt_tokens if usage else 0,
             candidatesTokenCount=usage.completion_tokens if usage else 0,
             totalTokenCount=usage.total_tokens if usage else 0,
+            # The streamed exit too. This file has already paid for a fact recorded at one exit and
+            # missing from the other (`tool_calls`, `FRD-126`), so both are written together.
+            thoughtsTokenCount=(usage.reasoning_tokens or None) if usage else None,
         ),
         modelVersion=model,
     )

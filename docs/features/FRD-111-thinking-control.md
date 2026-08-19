@@ -126,6 +126,15 @@ refused — it spends no budget the caller named, because this dialect takes no 
 Putting the level→budget table in `FRD-114`'s model metadata rather than in code is what keeps a
 new model from being a code change.
 
+**And the dialect declares its own limits, rather than each mapper deciding alone** (`ADR-0021`).
+The list above describes three adapters; it did not oblige a fourth. `Upstream.thinking_modes`
+does — per adapter, never defaulted to "all", swept by
+`test_every_adapter_declares_its_thinking_support` the way `sampling_controls` has been since
+`FRD-124`. The two dialects that cannot express something used to disagree about *how* they could
+not: one raised, and the other **omitted the field**, so a caller asking Anthropic for `auto` with
+no resolved budget received a body identical to `disabled`, a `200`, and no word about it. What a
+dialect cannot say, it now refuses by name.
+
 ### 5.3 The reservation must see the budget
 
 `_estimate` currently reserves `maxOutputTokens or <default>` at the output rate. With thinking,

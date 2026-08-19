@@ -85,6 +85,8 @@ class MockProvider:
     #: it must declare that rather than inherit it, or the declaration would be optional in
     #: practice and the one adapter that forgot would be the one that mattered.
     sampling_controls = frozenset(SAMPLING_CONTROLS)
+    #: Everything, deterministically — the mock exists so a mode is observable without a cloud.
+    thinking_modes = frozenset(ThinkingMode)
 
     #: The mock keeps a schema and the caller's tools apart, as Gemini and the OpenAI dialect do.
     #: Declared rather than inherited, for the reason the sampling set above is (`FRD-131` FR-5).
@@ -113,7 +115,7 @@ class MockProvider:
             for model in self._models
         ]
 
-    async def ping(self) -> str:
+    async def ping(self, model: str = "", addressing: dict[str, str] | None = None) -> str:
         """Answers instantly and contacts nothing, which is the honest verdict for a double."""
         return f"{len(self._models)} model(s) listed"
 

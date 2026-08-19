@@ -396,6 +396,19 @@ class UsageMetadata(BaseModel):
     promptTokenCount: int
     candidatesTokenCount: int
     totalTokenCount: int
+    #: What the model spent thinking, which Google's own `usageMetadata` reports and this surface
+    #: did not. The gateway had the figure all along — it reads `thoughtsTokenCount` from the
+    #: upstream and records it on the audit row as `reasoning_tokens` — and simply never handed it
+    #: back, so a caller could see that a request cost 796 completion tokens and not that 764 of
+    #: them were thinking. That is most of the bill, invisible, on the one number a caller checks.
+    #:
+    #: Omitted when zero rather than sent as `0`, because Google omits it for a model that did not
+    #: think and a compatibility surface should not invent a field the original leaves out.
+    #:
+    #: **Not gated by `include_reasoning`** (`FRD-135`): that decides whether the reasoning *text*
+    #: comes back and is stored, which is a question about content. A token count is a question
+    #: about money, and the tokens are billed either way.
+    thoughtsTokenCount: int | None = None
 
 
 class GenerateContentResponse(BaseModel):

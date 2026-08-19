@@ -100,6 +100,47 @@ export class ModelCatalog implements OnInit {
   protected readonly editorTab = signal<'identity' | 'capabilities' | 'price'>('identity');
 
   protected readonly showAdd = signal(false);
+  /**
+   * Whether the five provenance fields are on screen, or summarised in a sentence.
+   *
+   * Measured complaint, from the owner: *"the options for adding a model are too complex … if
+   * somebody other than me is to add one, that person will not understand the screen."* The
+   * identity tab asked eight questions, and **five of them** — provider, publisher, platform,
+   * hosting, the KIRA id — were answered one screen earlier, when the provider was chosen. Asking
+   * again is not thoroughness: a second empty box beside a fact the software already knows reads
+   * as *"this is yours to decide"*, and the person who cannot decide it stops there.
+   *
+   * So they are shown as a sentence and opened on request. Closed by default when something
+   * filled them in, open when nothing did — because then they really are the reader's to answer.
+   */
+  private readonly provenanceOpened = signal(false);
+  /** Whether the software already knows where this model lives. One fact answers it: a provider. */
+  protected readonly provenanceKnown = computed(() => !!this.provider().trim());
+  protected readonly showProvenance = computed(
+    () => this.provenanceOpened() || !this.provenanceKnown(),
+  );
+  /**
+   * The block **latches open**: once a reader is looking at those fields, choosing one of them
+   * must not make them vanish.
+   *
+   * Found by a test rather than by reading it: without the latch, the empty form opened the fields
+   * (nothing was known), the reader picked a provider from the select — and *"a provider is now
+   * known"* immediately collapsed the block, taking the select out of the DOM under the pointer
+   * that had just used it. A rule about what a form knows, applied while somebody is telling it.
+   */
+  private latchProvenance(): void {
+    this.provenanceOpened.set(true);
+  }
+  /** Show the fields behind the sentence. One way only: there is nothing to close again. */
+  protected openProvenance(): void {
+    this.latchProvenance();
+  }
+
+  /** The provider typed by hand, for a platform this gateway has no adapter for yet. */
+  protected typeProvider(value: string): void {
+    this.latchProvenance();
+    this.provider.set(value);
+  }
   /** The model id being corrected, or '' when adding a new one. Also the window's title. */
   protected readonly editing = signal('');
   private readonly dialog = viewChild<ElementRef<HTMLElement>>('dialog');
@@ -127,6 +168,16 @@ export class ModelCatalog implements OnInit {
   // nothing.
   protected readonly allCapabilities = CAPABILITIES;
   protected readonly capabilities = signal<Capability[]>([]);
+  /** Where this model lives on its platform, for the platforms whose name is not the address.
+   *
+   * Vertex addresses a model by region and Azure by deployment, so cataloguing one there used to
+   * produce an entry that could never answer — the gateway had no second place to learn the region
+   * from, and the console said so at the moment of declaring. The gateway reads it now, which is
+   * why the control exists: `test_every_model_control_is_reachable.py` requires that every fact a
+   * dispatch decision reads can be entered by whoever is accountable for it, and the comment this
+   * replaces predicted exactly this change.
+   */
+  protected readonly region = signal('');
   protected readonly publisher = signal('');
   protected readonly platform = signal('');
   protected readonly hosting = signal<'' | 'managed' | 'self_deployed'>('');
@@ -419,6 +470,9 @@ export class ModelCatalog implements OnInit {
         cache_write_price_per_million: amount(this.cacheWritePrice()),
         capabilities: this.capabilities(),
         publisher: this.publisher().trim(),
+        // Sent as `null` when empty rather than as `{}`: an empty object is a claim that the
+        // addressing was considered and is nothing, and the two read differently in a catalogue.
+        addressing: this.region().trim() ? { region: this.region().trim() } : null,
         platform: this.platform().trim(),
         hosting: this.hosting(),
         max_output_tokens: this.maxOutput(),
@@ -455,6 +509,7 @@ export class ModelCatalog implements OnInit {
     this.cacheWritePrice.set('');
     this.capabilities.set([]);
     this.publisher.set('');
+    this.region.set('');
     this.platform.set('');
     this.hosting.set('');
     this.maxOutput.set(null);
@@ -466,6 +521,7 @@ export class ModelCatalog implements OnInit {
     // The vendor's answers belong to the model that was open. Left standing, they describe the
     // previous one — a note saying "its output cap was filled in" beside a form where it was not.
     this.providerIsCustom.set(false);
+    this.provenanceOpened.set(false);
     this.vendorFilled.set([]);
     this.vendorSaid.set([]);
   }
@@ -644,6 +700,7 @@ export class ModelCatalog implements OnInit {
     this.name.set(model.name);
     this.provider.set(model.airaProvider ?? '');
     this.publisher.set(model.airaPublisher ?? '');
+    this.region.set('');
     this.platform.set(model.airaProvider ?? '');
     this.editing.set('');
     this.showAdd.set(true);
@@ -677,6 +734,36 @@ export class ModelCatalog implements OnInit {
   protected readonly selectedProvider = computed(
     () => (this.providers() ?? []).find((p) => p.name === this.provider()) ?? null,
   );
+
+  /**
+   * How the provenance sentence names the provider: its own label where the gateway has one, and
+   * the bare string it was declared under otherwise.
+   *
+   * Not `providerLabel()`, which appends the region — the sentence already carries where the model
+   * lives, and a provider's *configured* region is not necessarily this model's.
+   */
+  /**
+   * The rest of the provenance sentence, **assembled here rather than out of template blocks.**
+   *
+   * Written first as `@if` blocks around the commas, which reads naturally in the source and puts
+   * a space before every one of them in the browser: the formatter gives each block its own line,
+   * so the text node after it starts with a newline that collapses to a space rather than to
+   * nothing. `Lives on vertex , speaking the google dialect .` A test asserting `toContain`
+   * would never have seen it — the assertion is the whole sentence for that reason.
+   */
+  protected readonly provenanceDetail = computed(() => {
+    const parts: string[] = [];
+    if (this.publisher()) parts.push(`speaking the ${this.publisher()} dialect`);
+    if (this.platform()) parts.push(`on the ${this.platform()} platform`);
+    if (this.hosting() === 'self_deployed') parts.push('self-deployed on our own capacity');
+    return parts.length ? `, ${parts.join(', ')}.` : '.';
+  });
+
+  protected readonly providerSummary = computed(() => {
+    const upstream = this.selectedProvider();
+    const name = this.provider().trim();
+    return upstream?.label && upstream.label !== name ? `${upstream.label} (${name})` : name;
+  });
 
   // ---- browsing a vendor's own catalogue ---------------------------------------------------
   //
@@ -775,18 +862,33 @@ export class ModelCatalog implements OnInit {
    * but "the four facts we know about this provider are yours, name the model". Which is the same
    * thing choosing an offered model does — one step earlier.
    */
+  /**
+   * The empty form, reached from the one place it is the right answer: no upstream is configured,
+   * so there is no provider to choose and nothing to fill anything in from.
+   */
+  protected addByName(): void {
+    this.showBrowse.set(false);
+    this.add();
+  }
+
   protected addManually(): void {
     const upstream = this.chosenBrowseProvider();
     this.showBrowse.set(false);
-    this.reset();
+    // Through `add()` rather than beside it. This path opened the window by hand and so kept two
+    // things `add()` deliberately clears: the model id being corrected, and the **reachability
+    // verdict of whatever was checked last** — which the editor displays. Checking a row, then
+    // reaching this form, showed a green badge about a different model on a form for a new one:
+    // the exact wrong answer in a right answer's clothes that `add()` carries a comment about.
+    // Two entrances to one window, and only one of them swept the floor.
+    this.add();
     if (upstream) {
       this.provider.set(upstream.name);
       this.publisher.set(upstream.publisher ?? '');
+      this.region.set(upstream.region ?? '');
       this.vendorFilled.set(
         [upstream.name && 'provider', upstream.publisher && 'dialect'].filter(Boolean) as string[],
       );
     }
-    this.showAdd.set(true);
   }
 
   protected closeBrowse(): void {
@@ -853,6 +955,7 @@ export class ModelCatalog implements OnInit {
 
   /** The editor's provider select changed: either a configured provider, or "type it yourself". */
   protected chooseProvider(value: string): void {
+    this.latchProvenance();
     if (value === this.OTHER) {
       this.providerIsCustom.set(true);
       this.provider.set('');
@@ -1008,6 +1111,7 @@ export class ModelCatalog implements OnInit {
     this.cacheWritePrice.set(model.cache_write_price_per_million ?? '');
     this.capabilities.set([...(model.capabilities ?? [])]);
     this.publisher.set(model.publisher ?? '');
+    this.region.set(String(model.addressing?.['region'] ?? ''));
     this.platform.set(model.platform ?? '');
     this.hosting.set(model.hosting ?? '');
     this.maxOutput.set(model.max_output_tokens ?? null);

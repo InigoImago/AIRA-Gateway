@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { USERS, login, openEditorTab } from './support';
+import { USERS, login, openEditorTab, openModelEditor } from './support';
 
 /**
  * Declaring what a model can do — the three blocks the API always accepted and the console could
@@ -93,7 +93,7 @@ test.describe('Model declarations', () => {
      *  content should fail here too. */
     await login(page, USERS.globalAdmin);
     await page.goto('/models');
-    await page.click('button:has-text("Add model")');
+    await openModelEditor(page);
 
     const standing = page.getByTestId('editor-standing');
     await expect(standing).toBeVisible();
@@ -136,7 +136,7 @@ test.describe('Model declarations', () => {
      *  layout to move it "only a little", which is the thing being complained about. */
     await login(page, USERS.globalAdmin);
     await page.goto('/models');
-    await page.click('button:has-text("Add model")');
+    await openModelEditor(page);
 
     const measure = async () =>
       page.evaluate(() => {

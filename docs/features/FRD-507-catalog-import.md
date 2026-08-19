@@ -138,11 +138,12 @@ that looks complete and does not work:
 already has. Nothing is filtered out: "nothing left to import" and "this credential reaches
 nothing" must not be the same empty list.
 
-**FR-8a** That list is a **window of its own**, reached from a button beside _Add model_ — not a
-dropdown inside the editor. One real key answered with **50 models**, and a select of fifty inside
-a form that already has eighteen fields is a control somebody scrolls past. The window lists,
-searches, marks and scrolls; it ends by handing exactly one model to the editor, and closes, since
-two open windows leave a reader unsure which one their next click belongs to.
+**FR-8a** That list is a **window of its own** — not a dropdown inside the editor. One real key
+answered with **50 models**, and a select of fifty inside a form that already has eighteen fields
+is a control somebody scrolls past. The window lists, searches, marks and scrolls; it ends by
+handing exactly one model to the editor, and closes, since two open windows leave a reader unsure
+which one their next click belongs to. *(Stage D, §4.6: it was reached from a button beside
+_+ Add model_; it is now the only entrance, and `+ Add a model` opens it.)*
 
 **FR-8b** A model the catalog already has opens its **existing declaration**, never a blank form
 carrying the vendor's answer — a measured capability or an entered price must not be replaced by a
@@ -216,7 +217,11 @@ provider name and offers no listing.
 - Discovery separates catalogued from not-catalogued, in both directions.
 - Choosing a model pre-fills exactly the provenance and **nothing else** — asserted on the price and
   capability fields being untouched, because that is the property an eager implementation breaks.
-- Each shown to fail first.
+- Stage D adds seven: one entrance and it opens the provider window; provenance summarised when
+  known and asked when not; the block latching open while in use; **Change** revealing the fields;
+  the manual route clearing the last verdict; and a gateway with no provider still having a way in.
+- Each shown to fail first. The stage-D seven are frontend properties, so `make mutants` (pytest
+  only) does not reach them: each was broken by hand in the component and confirmed red.
 
 ## 6. Risks
 
@@ -226,3 +231,78 @@ provider name and offers no listing.
 - **A stale configured list.** `AIRA_GEMINI_MODELS` defaulted to `gemini-2.0-flash,gemini-1.5-flash`
   — models a new API key can no longer use. A default that names something unusable is a trap; it
   now names nothing, and discovery is how you find out what your key actually offers.
+
+## 4.6 One entrance, and the questions it stops asking (stage D)
+
+Stages A–C added a way in beside the one that existed. Two buttons stood on the models page —
+_"Add from a provider…"_ and _"+ Add model"_ — and the owner's verdict on the pair, after using it
+to declare a real Vertex model, was two complaints that turn out to be one:
+
+> _"I find the options for adding a model too complex by now, it is very confusing, too many
+> options where you do not know exactly what you are doing. If somebody other than me is to add a
+> model, that person will not understand the screen. A further point is the Add model button, where
+> you have to type everything in yourself — that is by now unnecessary, since we have adding from a
+> provider."_
+
+Measured before changing anything: the editor renders **61 controls** with every capability ticked,
+and its identity tab asks **eight questions**. Five of them — provider, publisher, platform,
+hosting, the KIRA id — are answered by choosing the provider, one screen earlier. The empty form
+asked them anyway, of a reader who had no way to know that the answer was already known.
+
+That is the defect, and it is not "two buttons instead of one". **A screen that offers "type it all
+yourself" beside "let the software fill it in" is not offering a choice; it is offering a way to
+get it wrong** — and the failure it produces is the one `FRD-506` exists to catch, a model declared
+under provenance that reaches nothing.
+
+Three changes, all of them subtraction:
+
+1. **One entrance.** `+ Add a model` opens the provider window. Every model lives somewhere, so
+   every path starts by saying where.
+2. **Provenance is stated, not asked.** When something filled those five fields in — a listing, the
+   gateway's served models, a row being corrected — the editor shows one sentence
+   (_"Lives on **Google Vertex AI (vertex)**, speaking the google dialect, on the vertex
+   platform."_) and a **Change** button.
+   Nothing is concealed: the facts are on screen without a click, and only the four boxes are gone.
+   The block opens by itself when the provider is empty, which is the one case where the reader
+   really does have to answer.
+3. **The empty form survives where it is the honest option**, not the tempting one: a gateway with
+   no upstream configured offers _"Declare a model by name"_, and a provider that publishes a list
+   offers _"Not listed? Name it yourself"_ beside it.
+
+The identity tab now asks **two** questions on the common path — the model id and the region.
+
+Point 3's second half is a gap the change created and the same pass closed. Removing the page-level
+button left a provider that _can_ be listed with no way to name a model the listing does not carry:
+a deployment of your own on an OpenAI-compatible server, a model too new for the vendor's index, a
+name only the gateway's configuration knows. The old button covered that by accident, from outside
+the flow. It is now covered on purpose, from inside it, with the provider's facts still filled in.
+
+**Two defects the tests for this found**, both of the shape this project keeps recording:
+
+- **The block collapsed under the reader.** With provenance shown whenever a provider is known, the
+  empty form opened the fields, the reader picked a provider from the select — and _"a provider is
+  now known"_ took the select out of the DOM under the pointer that had just used it. A rule about
+  what a form knows, applied while somebody is telling it. The block now latches open.
+- **One model's verdict on another model's form.** `add()` clears the reachability verdict and
+  carries a comment saying why; the manual route opened the same window beside it and did not.
+  Checking a row, then adding a model, showed a green badge about a different model. Two entrances
+  to one window and only one of them swept the floor — which is also the argument for there being
+  one entrance.
+
+**Three more the owner found by looking**, after all of the above was green:
+
+- **The fields stopped standing under one another.** `.form-inline` is a wrapping flex row, which
+  suits eighteen fields and not two: the model id and the region shared a line and each stretched
+  to half the dialog. One question per row now (`.field--own-row`), with the *control* capped at a
+  readable measure rather than the field, so the label and the hint keep the width a sentence
+  needs. It is the note-becomes-a-column defect from §4.4 seen from the other end — flex decides
+  how to fill a row, and a form is not trying to fill one.
+- **The sentence had spaces before its punctuation**: `Lives on **mock** , speaking the aira
+  dialect .` The markup was already correct; `.field__summary` was a flex row with `gap: 0.5rem`,
+  and a `<strong>` mid-sentence is a flex item. The unit test that asserts the sentence character
+  for character **passed** — a flex gap is not a character, and `textContent` cannot see it. Where
+  the defect is the layout, only a picture or a measured box is evidence.
+- **The import note repeated the sentence.** It opened with _"Filled in from mock: provider,
+  dialect"_ one line under a sentence saying exactly that. Stating a fact somewhere new means
+  deleting the old statement; the note now carries only what the sentence cannot — what the import
+  deliberately left for you.

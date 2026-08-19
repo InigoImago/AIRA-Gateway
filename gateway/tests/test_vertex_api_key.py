@@ -269,12 +269,21 @@ def _settings(**overrides: Any) -> Any:
 
 
 def test_the_adapter_is_built_from_an_api_key_alone() -> None:
-    """The whole point of FR-3a: an installation with no service account reaches models."""
+    """The whole point of FR-3a: an installation with no service account reaches models.
+
+    **Both dialects, and this used to be one.** They were built only for the models named in
+    configuration, so a deployment that had configured a Gemini model and no Anthropic one had no
+    Anthropic adapter — and a Vertex model catalogued through the console had nothing to claim it.
+    An adapter with an empty configured list is what lets the catalogue be the only list, and it is
+    the shape Google AI Studio's adapter has had since stage B.
+    """
     from aira_gateway.upstreams.vertex import build_vertex_upstreams
 
     upstreams = build_vertex_upstreams(_settings(vertex_api_key="AQ.only-a-key"))
 
-    assert len(upstreams) == 1
+    assert len(upstreams) == 2
+    assert {getattr(up, "serves_publisher", "") for up in upstreams} == {"google", "anthropic"}
+    assert {getattr(up, "serves_provider", "") for up in upstreams} == {"vertex"}
 
 
 def test_neither_credential_builds_nothing_rather_than_failing() -> None:

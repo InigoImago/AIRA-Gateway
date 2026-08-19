@@ -14,6 +14,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from typing import Any
 
+from aira_common.models import ThinkingMode
 from aira_gateway.core.canonical import (
     CanonicalChunk,
     CanonicalEmbeddingRequest,
@@ -146,6 +147,11 @@ class OpenAIAdapter:
         ]
 
     sampling_controls = OPENAI_SAMPLING
+    #: **No `limited`.** This dialect takes `reasoning_effort`, an abstract level with no token
+    #: budget at all, so a caller's explicit count cannot be honoured exactly — and rounding it
+    #: would spend a different amount than they asked for with nothing to show it (`FRD-111`
+    #: §5.2). Refused by declaration rather than by an exception in one mapper.
+    thinking_modes = frozenset(ThinkingMode) - {ThinkingMode.LIMITED}
     #: `response_format` and `tools` are separate fields in this dialect.
     tools_with_schema = True
 
@@ -203,7 +209,7 @@ class OpenAIAdapter:
         them (`FRD-123`)."""
         return self._provider
 
-    async def ping(self) -> str:
+    async def ping(self, model: str = "", addressing: dict[str, str] | None = None) -> str:
         """The cheapest remote question there is (`FRD-117` §5.2).
 
         A **GET of a listing**, never a generation: a probe that generated would cost money to

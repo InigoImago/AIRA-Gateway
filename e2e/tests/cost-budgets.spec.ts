@@ -5,6 +5,7 @@ import {
   login,
   logout,
   openEditorTab,
+  openModelEditor,
   removeModel,
   submitOfOpenForm,
   uniqueSlug,
@@ -49,7 +50,7 @@ test.describe('Cost budgets', () => {
     await login(page, USERS.globalAdmin);
     await page.goto('/models');
 
-    await page.click('button:has-text("Add model")');
+    await openModelEditor(page);
     const model = uniqueSlug('priced');
     await page.fill('#model-name', model);
     // The name is on Identity and the prices are on Price — three tabs since 2026-08-18, because
@@ -69,7 +70,7 @@ test.describe('Cost budgets', () => {
     await expect(page.locator('table')).toContainText('0.075');
 
     // A model without a price is catalogued but marked, because its traffic cannot be costed.
-    await page.click('button:has-text("Add model")');
+    await openModelEditor(page);
     const unpriced = uniqueSlug('unpriced');
     await page.fill('#model-name', unpriced);
     // Adding a model requires having *looked* first (`FRD-506`): the catalog is what the gateway
@@ -104,7 +105,7 @@ test.describe('Cost budgets', () => {
   test('a one-sided price is refused before it can distort a figure', async ({ page }) => {
     await login(page, USERS.globalAdmin);
     await page.goto('/models');
-    await page.click('button:has-text("Add model")');
+    await openModelEditor(page);
     await page.fill('#model-name', uniqueSlug('half'));
     await openEditorTab(page, 'price');
     await page.fill('#model-input', '1.00');
@@ -116,14 +117,14 @@ test.describe('Cost budgets', () => {
   test('only a global admin can change prices', async ({ page }) => {
     await login(page, USERS.globalAdmin);
     await page.goto('/models');
-    await expect(page.locator('button:has-text("Add model")')).toBeVisible();
+    await expect(page.getByTestId('add-model')).toBeVisible();
     await logout(page);
 
     await login(page, USERS.useCaseAdmin);
     await page.goto('/models');
     // The catalog is readable — the budget figures depend on it — but not editable.
     await expect(page.locator('h2')).toContainText('Models');
-    await expect(page.locator('button:has-text("Add model")')).toHaveCount(0);
+    await expect(page.getByTestId('add-model')).toHaveCount(0);
     await expect(page.locator('[aria-label^="Remove "]')).toHaveCount(0);
   });
 });

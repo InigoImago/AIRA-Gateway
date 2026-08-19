@@ -5,6 +5,8 @@ import {
   expectFormControlsAligned,
   expectNoHorizontalOverflow,
   login,
+  openEditorTab,
+  openModelEditor,
   uniqueSlug,
   submitOfOpenForm,
 } from './support';
@@ -215,7 +217,15 @@ test.describe('Form alignment', () => {
   test('the model catalog form lines up too', async ({ page }) => {
     await login(page, USERS.globalAdmin);
     await page.goto('/models');
-    await page.click('button:has-text("Add model")');
+    await openModelEditor(page);
+
+    // **On the price tab, because the identity tab no longer has a row to misalign.** It asked
+    // eight questions and now asks two — the model id and the region — with the provenance stated
+    // as a sentence instead (`FRD-507` §4.6), and one question per row is what stopped them
+    // stretching to half the dialog each. A stack has no staircase, so this test moved to where
+    // the property it guards still exists rather than being deleted or, worse, kept as an
+    // assertion that passes because it found nothing to check.
+    await openEditorTab(page, 'price');
     await expectFormControlsAligned(page, 'add model');
   });
 

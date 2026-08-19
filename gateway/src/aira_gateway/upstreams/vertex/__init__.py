@@ -64,15 +64,20 @@ def build_vertex_upstreams(settings: GatewaySettings) -> list[Upstream]:
         allowed_regions=allowed,
     )
 
-    upstreams: list[Upstream] = []
+    # **Both dialects, whether or not anything is configured.** They used to be built only for the
+    # models named in `AIRA_VERTEX_MODELS`, which made cataloguing a Vertex model impossible on a
+    # fresh deployment: there was no adapter to claim the provider, so the entry an administrator
+    # created had nothing behind it and the console had to say so.
+    #
+    # An adapter with an empty configured list is a shape this registry already knows — Google AI
+    # Studio's is exactly that — and it is what lets the catalogue be the only list. The credential
+    # above is what decides whether this platform is available at all; the model list is not.
     google = [model for model in models if model.publisher == "google"]
     anthropic = [model for model in models if model.publisher == "anthropic"]
-    if google:
-        upstreams.append(VertexGeminiAdapter(transport, google))
-    if anthropic:
-        upstreams.append(
-            VertexAnthropicAdapter(
-                transport, anthropic, default_max_tokens=settings.vertex_default_max_tokens
-            )
-        )
+    upstreams: list[Upstream] = [
+        VertexGeminiAdapter(transport, google),
+        VertexAnthropicAdapter(
+            transport, anthropic, default_max_tokens=settings.vertex_default_max_tokens
+        ),
+    ]
     return upstreams

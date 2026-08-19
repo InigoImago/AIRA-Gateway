@@ -19,7 +19,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, computed_field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
 from aira_common.models import ThinkingMode
 from aira_gateway.core.schema import ResponseSchema
@@ -182,6 +182,16 @@ class CanonicalRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     model: str
+    #: How to reach this model on its platform, from the catalogue's `addressing` (`FRD-507`).
+    #:
+    #: **Opaque here on purpose.** A model name is the whole addressing on most platforms, and on
+    #: two of them it is not: Vertex needs a region, Azure a deployment. Those belong to the
+    #: adapter that speaks to the platform, not to a canonical request that every dialect reads —
+    #: so this carries what the catalogue said and only the adapter that needs it looks inside.
+    #:
+    #: Filled by the dispatch layer, which has already resolved the declaration. Empty for a model
+    #: whose name is its whole address, which is most of them.
+    addressing: dict[str, str] = Field(default_factory=dict)
     messages: list[CanonicalMessage]
     temperature: float | None = None
     max_output_tokens: int | None = None
@@ -287,6 +297,10 @@ class CanonicalEmbeddingRequest(BaseModel):
     """
 
     model: str
+    #: The same platform addressing the generation request carries — see `CanonicalRequest`.
+    #: Embedding goes to the same URL shape, so a catalogued model needs it on both paths or it
+    #: works for one verb and refuses for the other.
+    addressing: dict[str, str] = Field(default_factory=dict)
     texts: list[str]
     #: What the vectors are optimised for. Indexing a corpus with ``RETRIEVAL_QUERY`` instead of
     #: ``RETRIEVAL_DOCUMENT`` produces vectors that work, sit in the right space, and retrieve

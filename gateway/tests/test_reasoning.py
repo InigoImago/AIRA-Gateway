@@ -81,3 +81,65 @@ def test_the_provider_is_asked_for_thoughts_only_where_the_use_case_allows_it() 
 
     assert "thinkingConfig" not in off.get("generationConfig", {})
     assert on["generationConfig"]["thinkingConfig"]["includeThoughts"] is True
+
+
+def test_the_caller_is_told_what_thinking_cost() -> None:
+    """Google reports `thoughtsTokenCount`; this surface recorded it and did not hand it back.
+
+    The figure existed all along — the mapping reads it from the upstream and the audit row keeps
+    it as `reasoning_tokens` — and the caller saw only `candidatesTokenCount`. Measured against a
+    real model on 2026-08-19: 796 completion tokens of which **764 were thinking**, and at the
+    `low` level 1104 of which 443. Most of the bill, invisible, on the one number a caller checks.
+
+    Deliberately **not** gated by `include_reasoning` (`FRD-135`): that decides whether the
+    reasoning *text* is returned and stored, which is a question about content. A token count is a
+    question about money, and the provider bills those tokens either way.
+
+    Omitted rather than sent as `0` when nothing was thought, because Google omits it and a
+    compatibility surface should not invent a field the original leaves out.
+    """
+    from aira_gateway.api.gemini import schemas
+    from aira_gateway.api.gemini.mapping import canonical_to_gemini
+    from aira_gateway.core.canonical import CanonicalResponse, CanonicalUsage
+
+    # **Through the mapping, not only the schema.** The first version of this asserted that the
+    # field exists and is omitted when empty — both true with the mapping handing over `None`, so
+    # the mutation that stopped filling it survived. A schema test proves the shape; only this
+    # proves the number arrives.
+    answered = canonical_to_gemini(
+        CanonicalResponse(
+            model="gemini-2.5-flash",
+            text="7",
+            finish_reason="stop",
+            usage=CanonicalUsage(
+                prompt_tokens=17,
+                completion_tokens=1104,
+                total_tokens=1121,
+                reasoning_tokens=443,
+            ),
+        )
+    )
+    assert answered.usageMetadata.thoughtsTokenCount == 443
+
+    silently = canonical_to_gemini(
+        CanonicalResponse(
+            model="gemini-2.5-flash",
+            text="7",
+            finish_reason="stop",
+            usage=CanonicalUsage(prompt_tokens=17, completion_tokens=553, total_tokens=570),
+        )
+    )
+    assert silently.usageMetadata.thoughtsTokenCount is None
+
+    spent = schemas.UsageMetadata(
+        promptTokenCount=17,
+        candidatesTokenCount=1104,
+        totalTokenCount=1121,
+        thoughtsTokenCount=443,
+    )
+    silent = schemas.UsageMetadata(
+        promptTokenCount=17, candidatesTokenCount=553, totalTokenCount=570
+    )
+
+    assert spent.model_dump(exclude_none=True)["thoughtsTokenCount"] == 443
+    assert "thoughtsTokenCount" not in silent.model_dump(exclude_none=True)

@@ -73,6 +73,11 @@ class ModelDeclaration:
     #: served*; carrying the provider makes it the authority on *who serves it* too, so a model
     #: becomes usable by being catalogued rather than by also being named in configuration.
     provider: str = ""
+    #: How to reach this model on its platform: `{"region": "europe-west1"}` on Vertex, a
+    #: deployment on Azure. **A column that existed in both planes, travelled over Kafka, and
+    #: nothing read** — which is why a Vertex model could be catalogued and would never answer,
+    #: and the console had to say so at the moment of declaring. Read now, so it can.
+    addressing: dict[str, str] = field(default_factory=dict)
     publisher: str = ""
     platform: str = ""
     hosting: str = ""
@@ -355,6 +360,11 @@ def _from_record(model: str, record: ModelRead) -> ModelDeclaration:
         embedding=record.embedding if isinstance(record.embedding, dict) else None,
         attachments=record.attachments if isinstance(record.attachments, dict) else {},
         provider=record.provider or "",
+        addressing={
+            str(key): str(value)
+            for key, value in (record.addressing or {}).items()
+            if isinstance(record.addressing, dict)
+        },
         publisher=record.publisher or "",
         platform=record.platform or "",
         hosting=record.hosting or "",

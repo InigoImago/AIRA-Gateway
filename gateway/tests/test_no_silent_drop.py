@@ -480,3 +480,134 @@ async def test_a_request_using_only_what_the_dialect_has_still_reaches_the_provi
 
     assert response.status_code == 200
     assert provider.reached
+
+
+# == the second axis: what a dialect can say about thinking ======================================
+
+
+def _adapters() -> list[type]:
+    from aira_gateway.upstreams.gemini import GeminiUpstream
+    from aira_gateway.upstreams.mock import MockProvider
+    from aira_gateway.upstreams.openai.adapter import OpenAIAdapter
+    from aira_gateway.upstreams.vertex.adapters import VertexAnthropicAdapter, VertexGeminiAdapter
+
+    return [
+        MockProvider,
+        GeminiUpstream,
+        OpenAIAdapter,
+        VertexGeminiAdapter,
+        VertexAnthropicAdapter,
+    ]
+
+
+def test_every_adapter_declares_its_thinking_support() -> None:
+    """The same rule as sampling, on the axis that had none.
+
+    Vendors differ about thinking in two ways, and only one of them was ever written down. The
+    **envelope** — which modes a model offers, what a level costs — is per model and lives in the
+    catalogue. The **shape** is per dialect: Gemini and Anthropic take a token budget, the OpenAI
+    dialect takes a word and has no budget at all.
+
+    The shape was scattered across `if` branches, and the two dialects that cannot express
+    something behaved differently about it: one raised, and the other **omitted the field**. A
+    caller asking Anthropic for `auto` with no resolved budget received a body identical to
+    `disabled`, answered `200`, and was told nothing. That is the failure this file is named for,
+    on the one axis it did not cover.
+
+    Declared per adapter, never defaulted to "all" — so the sixth dialect has to answer the
+    question at the point somebody can still choose the right answer.
+    """
+    from aira_common.models import ThinkingMode
+
+    for adapter in _adapters():
+        declared = getattr(adapter, "thinking_modes", None)
+        assert declared is not None, f"{adapter.__name__} declares no thinking support"
+        unknown = set(declared) - set(ThinkingMode)
+        assert not unknown, f"{adapter.__name__} declares modes nobody defines: {unknown}"
+
+
+def test_the_thinking_declarations_differ_which_is_the_reason_they_are_declared() -> None:
+    """If every dialect took the same vocabulary this mechanism would be ceremony. They do not,
+    and the differences are exactly where a silently dropped mode lived."""
+    from aira_common.models import ThinkingMode
+    from aira_gateway.upstreams.openai.adapter import OpenAIAdapter
+    from aira_gateway.upstreams.vertex.adapters import VertexAnthropicAdapter, VertexGeminiAdapter
+
+    # No token budget in this dialect, so a caller's explicit count cannot be honoured exactly.
+    assert ThinkingMode.LIMITED not in OpenAIAdapter.thinking_modes
+    # No "decide for yourself" value in this one.
+    assert ThinkingMode.AUTO not in VertexAnthropicAdapter.thinking_modes
+    # And the budget-shaped Gemini dialect can say all of it.
+    assert VertexGeminiAdapter.thinking_modes == frozenset(ThinkingMode)
+
+
+def test_a_mode_a_dialect_cannot_express_is_refused_and_never_omitted() -> None:
+    """The defect itself, on the dialect that had it.
+
+    Measured before the fix: `auto`, `high` and `low` with no resolved budget each produced **no
+    `thinking` block at all** — the same body as `disabled`. Silence is the one answer a control
+    plane cannot give about a control.
+    """
+    from aira_common.models import ThinkingMode
+    from aira_gateway.core.canonical import Thinking
+    from aira_gateway.upstreams.base import DialectUnsupported
+    from aira_gateway.upstreams.vertex.anthropic_mapping import canonical_to_anthropic
+
+    asked = CanonicalRequest(
+        model="claude",
+        messages=[CanonicalMessage(role=Role.USER, text="hi")],
+        thinking=Thinking(mode=ThinkingMode.HIGH, tokens=None),
+    )
+
+    with pytest.raises(DialectUnsupported) as caught:
+        canonical_to_anthropic(asked, max_tokens=4096)
+
+    assert "budget" in str(caught.value)
+
+
+def test_a_candidate_that_cannot_be_addressed_is_skipped_not_a_server_error() -> None:
+    """Since cataloguing became enough to serve a model, the address can be wrong in two new ways.
+
+    A platform that needs a region and an entry that names none; a region outside
+    `AIRA_ALLOWED_REGIONS`. Both are **an operator's** mistake and both escaped the dispatch chain
+    as a `500` — measured on 2026-08-19 against a real deployment, twice. A configuration fault
+    dressed as our fault is the shape this file exists for, arriving through a door that only
+    opened when the catalogue became the list.
+
+    Skipped rather than raised, so a fallback chain moves on — that is what a chain is for — and so
+    the refusal names the model and the reason when nothing else qualifies.
+    """
+    import asyncio
+
+    from aira_gateway.pipeline.dispatch import NoCapableModel, dispatch_with_fallback
+    from aira_gateway.residency import RegionNotAllowed
+    from aira_gateway.upstreams.base import ProviderRegistry
+
+    class _Unaddressable:
+        is_test_double = True
+        sampling_controls = frozenset()
+        thinking_modes = frozenset()
+        serves_provider = "nowhere"
+
+        def models(self):
+            return []
+
+        async def generate(self, request):
+            raise RegionNotAllowed("Region 'us-central1' is not in the allowed set")
+
+    registry = ProviderRegistry([_Unaddressable()])
+
+    async def declared(_model: str) -> tuple[str, str]:
+        return "nowhere", ""
+
+    with pytest.raises(NoCapableModel) as caught:
+        asyncio.run(
+            dispatch_with_fallback(
+                registry,
+                CanonicalRequest(model="m", messages=[CanonicalMessage(role=Role.USER, text="hi")]),
+                (),
+                provider_of=declared,
+            )
+        )
+
+    assert "us-central1" in str(caught.value)

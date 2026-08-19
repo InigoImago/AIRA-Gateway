@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol, TypeIs, runtime_checkable
 
 from aira_common.logging import get_logger
+from aira_common.models import ThinkingMode
 from aira_gateway.core.canonical import (
     CanonicalChunk,
     CanonicalEmbeddingRequest,
@@ -157,6 +158,27 @@ class Upstream(Protocol):
     #: omission a test failure rather than a quiet permission.
     sampling_controls: frozenset[str]
 
+    #: Which `ThinkingMode`s this provider's **dialect** can express (`FRD-111` §5.2).
+    #:
+    #: The second axis of vendor variation, declared the same way as the first and for the same
+    #: reason. There are two axes and they are different things:
+    #:
+    #: - the **shape**: Gemini and Anthropic take a token budget, the OpenAI dialect takes a word
+    #:   and has no budget at all. That is a property of the dialect, and it lives here.
+    #: - the **envelope**: which modes a given model offers and what each level costs. That is a
+    #:   property of the model, and it lives in the catalogue declaration.
+    #:
+    #: Keeping them apart is what lets a new *model* be a catalogue entry and a new *vendor* be one
+    #: adapter. What was missing is this line: a dialect's limits were scattered `if` branches, so
+    #: `limited` was refused by one mapper's exception and `auto` was **silently omitted** by
+    #: another — a caller asking Anthropic for `auto` with no resolved budget received a body
+    #: identical to `disabled`, answered `200`, and was told nothing.
+    #:
+    #: Never defaulted to "all", exactly as above: undeclared means unsupported, and
+    #: `test_every_adapter_declares_its_thinking_support` makes the omission a failure at the point
+    #: somebody can still choose the right answer.
+    thinking_modes: frozenset[ThinkingMode]
+
     def models(self) -> list[UpstreamModel]: ...
 
     async def generate(self, request: CanonicalRequest) -> CanonicalResponse: ...
@@ -206,17 +228,31 @@ class ProviderRegistry:
         #:
         #: Configured models keep working unchanged; this is the fallback for one the catalog knows
         #: and the configuration does not.
-        self._by_provider: dict[str, Upstream] = {}
+        # Keyed by `(provider, publisher)`, and the publisher is usually `""` meaning *any*.
+        #
+        # **Because one platform can host two dialects.** Vertex serves Google's models in the
+        # Gemini wire format and Anthropic's in theirs, so `vertex` alone identifies neither and
+        # the two adapters could not both claim it — which is why cataloguing a Vertex model
+        # produced an entry that would never answer, and the console had to say so. The catalogue
+        # already carries the discriminator: `publisher` is `google` or `anthropic`, and that is
+        # exactly the thing that decides the format.
+        #
+        # A genuine collision — the same provider *and* the same publisher twice — still refuses,
+        # for the reason it always did: registration order would silently pick the region and the
+        # credential.
+        self._by_provider: dict[tuple[str, str], Upstream] = {}
         for provider in providers:
             claimed = getattr(provider, "serves_provider", "")
             if claimed:
-                if claimed in self._by_provider:
+                publisher = str(getattr(provider, "serves_publisher", "") or "")
+                if (claimed, publisher) in self._by_provider:
+                    named = f"'{claimed}'" + (f" publisher '{publisher}'" if publisher else "")
                     raise AmbiguousModel(
-                        f"Two adapters both claim provider '{claimed}'. A model catalogued under "
+                        f"Two adapters both claim provider {named}. A model catalogued under "
                         "it could be served by either, which decides its region and credential by "
                         "registration order — the same silent choice `ADR-0011` refuses."
                     )
-                self._by_provider[claimed] = provider
+                self._by_provider[(claimed, publisher)] = provider
             for model in provider.models():
                 if model.name in self._by_model:
                     raise AmbiguousModel(
@@ -274,7 +310,10 @@ class ProviderRegistry:
         An adapter that claims no provider name is not here, deliberately: a caller cannot address
         it by name either, so there is nothing for a console to offer.
         """
-        return dict(self._by_provider)
+        # Flattened to the provider name, because that is what a console offers and what a
+        # readiness probe reports. Where two dialects share a provider, either answers the question
+        # this is asked — *"is cataloguing enough here"* — and the answer is the same for both.
+        return {provider: upstream for (provider, _), upstream in self._by_provider.items()}
 
     def provenance_for(self, provider: str) -> tuple[str, str, str] | None:
         """Where an adapter that owns a provider name reaches its models (`FRD-507`).
@@ -288,7 +327,7 @@ class ProviderRegistry:
         adapter that owns a namespace and serves no configured model has nothing to answer with,
         and says so rather than guessing.
         """
-        upstream = self._by_provider.get(provider)
+        upstream = self.by_name().get(provider)
         if upstream is None:
             return None
         for model in upstream.models():
@@ -297,18 +336,26 @@ class ProviderRegistry:
         declared = getattr(upstream, "provenance", None)
         return declared if isinstance(declared, tuple) else None
 
-    def provider_for(self, model: str, provider: str = "") -> Upstream | None:
+    def provider_for(self, model: str, provider: str = "", publisher: str = "") -> Upstream | None:
         """Which adapter serves this model.
 
         The configured name first, and a **catalogued** model's provider second. `provider` is what
         the catalog says (`ModelDeclaration.provider`); passing it is what lets a model become
         servable by being catalogued, without a second entry in configuration and without a
         restart. Callers that have no declaration to hand pass nothing and get the old behaviour.
+
+        `publisher` is the second half, and it exists because one platform can host two wire
+        formats: on Vertex, `google` is the Gemini dialect and `anthropic` is Anthropic's. The
+        exact pair is tried first and a provider-wide claim second, so an adapter that owns a whole
+        provider — every one but Vertex today — is unaffected.
         """
         direct = self._by_model.get(model)
         if direct is not None:
             return direct
-        return self._by_provider.get(provider) if provider else None
+        if not provider:
+            return None
+        exact = self._by_provider.get((provider, publisher)) if publisher else None
+        return exact or self._by_provider.get((provider, ""))
 
     def models(self) -> list[UpstreamModel]:
         return list(self._models.values())

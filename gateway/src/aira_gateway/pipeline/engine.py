@@ -630,7 +630,11 @@ class PipelineEngine:
         direct = self._registry.provider_for(model)
         if direct is not None or declaration_of is None:
             return direct
-        return self._registry.provider_for(model, (await declaration_of(model)).provider)
+        declaration = await declaration_of(model)
+        # Publisher too: one platform can host two dialects, and on Vertex the provider alone
+        # identifies neither. A resolution that passed only the provider found nothing there, and
+        # every caller of this reads "nothing" as "quietly do less".
+        return self._registry.provider_for(model, declaration.provider, declaration.publisher)
 
     async def _thinking_for(self, model: str | None, declaration_of: DeclarationOf | None) -> Any:
         """What to tell ``model`` about thinking, from the catalog rather than unconditionally.

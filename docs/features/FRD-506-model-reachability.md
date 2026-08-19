@@ -51,8 +51,8 @@ one). Everybody else gets a 403 naming who may.
 **FR-5 — Adding a model requires having *looked*, not having *succeeded*** *(2026-08-09, after the
 first version was reported as absent)*.
 
-The button was inside `@if (name())`, so opening "Add model" showed nothing at all and the check
-read as missing. A control that appears only once you have done something else is a control nobody
+The button was inside `@if (name())`, so opening the editor on an empty declaration showed nothing
+at all and the check read as missing. A control that appears only once you have done something else is a control nobody
 finds. It is always present now, disabled until there is a name.
 
 And Save is unavailable until a check has been **answered** for the name in the form. The

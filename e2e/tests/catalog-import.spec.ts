@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { USERS, expectNoSqueezedControls, login, openEditorTab } from './support';
+import { USERS, expectNoSqueezedControls, login, openEditorTab, openModelEditor } from './support';
 
 /**
  * Importing what the adapters already serve, and asking the vendor what it offers (`FRD-507`).
@@ -37,7 +37,7 @@ test.describe('Catalog import', () => {
     await login(page, USERS.globalAdmin);
     await page.goto('/models');
 
-    await page.getByTestId('browse-provider-models').click();
+    await page.getByTestId('add-model').click();
 
     // The provider list is what **this gateway** is configured with, fetched over `/gw` with the
     // browser's own token. A hard-coded vocabulary would render identically and mean something
@@ -54,8 +54,12 @@ test.describe('Catalog import', () => {
     await page.getByTestId('offered-mock-1').click();
 
     await expect(page.locator('#model-name')).toHaveValue('mock-1');
-    // Copied, because the vendor stated them; the console names what it took.
-    await expect(page.getByTestId('vendor-filled')).toContainText('Filled in from mock');
+    // Copied, because the vendor stated them — and now **stated as a sentence** rather than asked
+    // for in four boxes, so this is what "the console names what it took" looks like.
+    await expect(page.getByTestId('provenance-summary')).toContainText('Lives on');
+    await expect(page.getByTestId('provenance-summary')).toContainText('mock');
+    // And the note beside it says only the other half: what the import deliberately left alone.
+    await expect(page.getByTestId('vendor-filled')).toContainText('Left for you');
     // Left, because a price nobody set is not zero and a capability is a measurement.
     await openEditorTab(page, 'price');
     await expect(page.locator('#model-input')).toHaveValue('');
@@ -68,11 +72,22 @@ test.describe('Catalog import', () => {
   }) => {
     await login(page, USERS.globalAdmin);
     await page.goto('/models');
-    await page.getByTestId('add-model').click();
+    // Adding starts by saying where the model lives, so the editor is reached *through* the
+    // provider — and arrives with the provenance already answered. The block is therefore a
+    // sentence, and this test is about the field behind it.
+    //
+    // Through the helper because there are **two** routes to a name and which one a provider
+    // offers depends on whether it publishes a list: written by hand here against `mock`, which
+    // does publish one, the test waited 45 seconds for the button the *other* kind of provider
+    // shows.
+    await openModelEditor(page, 'mock');
+
+    await expect(page.getByTestId('provenance-summary')).toContainText('mock');
+    await page.getByTestId('change-provenance').click();
 
     const provider = page.getByTestId('provider-select');
-    await expect(provider).toBeVisible({ timeout: 20_000 });
-    await provider.selectOption('mock');
+    await expect(provider).toBeVisible();
+    await expect(provider).toHaveValue('mock');
 
     // Cataloguing a model under this provider is enough to reach it (`FRD-507` stage B), and the
     // form says so — the field that separates a working import from a convincing decoration.
@@ -90,7 +105,6 @@ test.describe('Catalog import', () => {
 
     await expect(page.getByRole('heading', { name: 'Models & prices' })).toBeVisible();
     await expect(page.getByTestId('add-model')).toHaveCount(0);
-    await expect(page.getByTestId('browse-provider-models')).toHaveCount(0);
     await expect(page.getByTestId('discover-models')).toHaveCount(0);
   });
 
@@ -109,7 +123,7 @@ test.describe('Catalog import', () => {
     await login(page, USERS.globalAdmin);
     await page.goto('/models');
 
-    await page.getByTestId('browse-provider-models').click();
+    await page.getByTestId('add-model').click();
     await page.getByTestId('browse-provider').selectOption({ index: 1 });
     const offer = page.locator('[data-testid^="offered-"]').first();
     await expect(offer).toBeVisible({ timeout: 20_000 });
@@ -142,7 +156,7 @@ test.describe('Catalog import', () => {
     await login(page, USERS.globalAdmin);
     await page.goto('/models');
 
-    await page.getByTestId('browse-provider-models').click();
+    await page.getByTestId('add-model').click();
     await page.getByTestId('browse-provider').selectOption({ index: 1 });
     const chosen = await page.getByTestId('browse-provider').inputValue();
     await expect(page.locator('[data-testid^="offered-"]').first()).toBeVisible({
@@ -152,7 +166,7 @@ test.describe('Catalog import', () => {
     await page.locator('[data-testid^="offered-"]').first().click();
     await page.getByRole('button', { name: /^cancel$/i }).click();
 
-    await page.getByTestId('browse-provider-models').click();
+    await page.getByTestId('add-model').click();
 
     // The selection survives — that is the convenience, and it is not the bug.
     await expect(page.getByTestId('browse-provider')).toHaveValue(chosen);

@@ -5,6 +5,78 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Adding a model asks two questions instead of eight (2026-08-19)
+
+The owner declared a real Vertex model through the console for the first time, and reported the
+screen rather than a bug:
+
+> *"I find the options for adding a model too complex by now, it is very confusing, too many
+> options where you do not know exactly what you are doing. If somebody other than me is to add a
+> model, that person will not understand the screen. A further point is the Add model button, where
+> you have to type everything in yourself — that is by now unnecessary, since we have adding from a
+> provider."*
+
+Measured before touching anything, because *"too complex"* is an impression until it is a number:
+the editor renders **61 controls** with every capability ticked, and its identity tab asks **eight
+questions**. Five of them — provider, publisher, platform, hosting, the KIRA id — are answered by
+choosing the provider one screen earlier. The empty form asked them anyway.
+
+So the two complaints are one: **a screen that offers "type it all yourself" beside "let the
+software fill it in" is not offering a choice, it is offering a way to get it wrong.** There is one
+entrance now (`+ Add a model`, which opens the provider window), and where something already knows
+the provenance the editor states it in a sentence with a **Change** button instead of asking. The
+identity tab asks two questions on the common path: the model id and the region. The empty form
+survives where it is the honest option rather than the tempting one — a gateway with no upstream
+configured, and (see below) a provider whose listing does not carry the model you want.
+
+**A gap the change created, closed in the same pass.** Removing the page-level button left a
+provider that *can* be listed with no way to name a model the listing does not carry — a deployment
+of your own on an OpenAI-compatible server, a model too new for the vendor's index. The old button
+covered that by accident, from outside the flow; *"Not listed? Name it yourself"* now covers it on
+purpose, from inside it, with the provider's facts still filled in. Recorded because it is the
+shape of most simplifications that go wrong: the removed thing was reachable for a reason nobody
+had written down.
+
+**Two defects, both found by the tests for the change rather than by using it.**
+
+- *The block collapsed under the reader.* Shown-when-known, applied literally, means the empty form
+  opens the fields, the reader picks a provider from the select, and *"a provider is now known"*
+  takes the select out of the DOM under the pointer that had just used it. A rule about what a form
+  knows, firing while somebody is telling it. It latches open now.
+- *One model's verdict on another model's form.* `add()` clears the reachability verdict and
+  carries a comment saying why; the manual route opened the same window beside it and did not, so
+  checking a row and then adding a model showed a green badge about a different model. Two
+  entrances to one window and only one swept the floor — which is also the argument for there being
+  one. The manual route now goes *through* `add()`.
+
+**Tests.** Seven new frontend properties, each broken by hand and seen to go red: one entrance and
+what it opens; provenance summarised when known and asked when not; the latch; **Change** revealing
+the fields; the verdict cleared; a way in with no providers configured. `make mutants` is pytest
+only and does not reach them, so the break-and-restore was scripted and its output kept. Nine e2e
+sites that clicked *"Add model"* now go through one `openModelEditor()` helper — a sequence written
+out in nine specs is nine copies of a decision.
+
+**And then the owner looked at it**, which is the part no assertion replaced. Two things a green
+suite had nothing to say about:
+
+- *"the fields do not stand under one another, they are stretched."* `.form-inline` is a wrapping
+  flex row — right for eighteen fields, wrong for two: the model id and the region shared a line
+  and each took half the dialog. One question per row now (`.field--own-row`), the control capped
+  at a readable measure while the label and hint keep the full width.
+- The sentence rendered as `Lives on **mock** , speaking the aira dialect .` The markup was
+  correct; `.field__summary` was a flex row with `gap: 0.5rem`, and a `<strong>` in the middle of a
+  sentence is a flex item. **The unit test asserting the exact sentence passed** — a flex gap is
+  not a character, so `textContent` cannot see it. A screenshot could, which is the only reason it
+  was found.
+
+A third came out of the same look: the blue import note opened with *"Filled in from mock:
+provider, dialect"* — the sentence one line above, in the same words. Two statements of one fact
+read as two facts. The note now says only what the sentence cannot: what the import left for you.
+
+`FRD-507` §4.6 (stage D), `LESSONS.md` §6 (*a question is a claim that the answer is unknown*).
+
+---
+
 ## A second model, a model that does not exist, and a suite that grew the catalogue (2026-08-19)
 
 *"Test it against Gemini 3.5 as well."* It does not exist here: Vertex answers `404` for

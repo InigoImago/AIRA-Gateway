@@ -13,6 +13,7 @@ from typing import Any
 
 import httpx
 
+from aira_common.models import ThinkingMode
 from aira_gateway.config import GatewaySettings
 from aira_gateway.core.canonical import (
     CanonicalChunk,
@@ -140,6 +141,9 @@ class GeminiUpstream:
         ]
 
     sampling_controls = GEMINI_SAMPLING
+    #: A token budget: `0` off, `-1` the model's choice, otherwise a count — so every mode in the
+    #: vocabulary has a wire value, including `limited`.
+    thinking_modes = frozenset(ThinkingMode)
     #: A schema parameter and a tools field are separate here.
     tools_with_schema = True
 
@@ -173,7 +177,7 @@ class GeminiUpstream:
                 break
         return offered
 
-    async def ping(self) -> str:
+    async def ping(self, model: str = "", addressing: dict[str, str] | None = None) -> str:
         """The cheapest remote question there is (`FRD-117` §5.2).
 
         A **GET of the listing**, never a generation. This adapter had none at all until the

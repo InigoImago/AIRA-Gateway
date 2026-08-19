@@ -409,6 +409,42 @@ export async function expectFooterActionsApart(page: Page, testid: string, minim
 }
 
 /**
+ * Open the model editor on an empty declaration, whichever way the console gets there.
+ *
+ * There were two buttons on the models page — "Add from a provider…" and "+ Add model", the second
+ * opening an empty form — and every spec that needed a model clicked the second. The owner's
+ * verdict on the pair: *"the Add model button, where you have to type everything yourself, is by
+ * now unnecessary — we have adding from a provider"*, and behind it the sharper complaint that the
+ * form asked eight questions of which five were already answered by choosing a provider.
+ *
+ * So there is one entrance now, and it starts by asking where the model lives. That makes reaching
+ * an empty form a **sequence** rather than a click, and a sequence written out in nine specs is
+ * nine copies of a decision — the shape this project keeps paying for. Here it is once:
+ * choose a provider that publishes no list (so the console offers to take a name), or, on an
+ * installation with no upstream at all, the by-name button that replaces the offer.
+ */
+export async function openModelEditor(page: Page, provider = 'mock') {
+  await page.getByTestId('add-model').click();
+
+  const byName = page.getByTestId('add-by-name');
+  const picker = page.getByTestId('browse-provider');
+  await expect(byName.or(picker).first()).toBeVisible({ timeout: 20_000 });
+
+  if (await byName.isVisible()) {
+    await byName.click();
+  } else {
+    await picker.selectOption(provider);
+    // Either route to a name, depending on whether this platform publishes a list — the point of
+    // both being present is that neither the reader nor this helper has to know which it is.
+    const manual = page.getByTestId('add-manually');
+    const unlisted = page.getByTestId('name-it-yourself');
+    await expect(manual.or(unlisted).first()).toBeVisible({ timeout: 20_000 });
+    await ((await manual.isVisible()) ? manual : unlisted).click();
+  }
+  await expect(page.locator('#model-name')).toBeVisible({ timeout: 20_000 });
+}
+
+/**
  * Bring one tab of the model editor into view.
  *
  * The editor was a single column of eighteen fields until 2026-08-18 and is now three tabs —

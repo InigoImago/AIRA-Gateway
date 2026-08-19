@@ -277,6 +277,31 @@ textarea:disabled {
 .field__hint--error {
   color: var(--aira-danger);
 }
+/**
+ * A fact the form already knows, stated instead of asked. Reads as prose rather than as a
+ * disabled input on purpose: a greyed-out box still says "this is a field", and the point is
+ * that it is not one.
+ */
+.field__summary {
+  margin: 0;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid var(--aira-border);
+  border-radius: 6px;
+  background: var(--aira-surface-muted, #f9fafb);
+  font-size: 0.85rem;
+  color: var(--aira-text);
+  /* **Prose, so it flows like prose.** Written first as a flex row with `gap: 0.5rem`, which puts
+   * half a rem between every child — and one of the children is a `<strong>` in the middle of a
+   * sentence, so the browser rendered `Lives on **vertex** , speaking the google dialect .` The
+   * markup was already correct (`</strong\n>{{ … }}` closes without whitespace) and the unit test
+   * asserting the exact sentence passed, because a flex gap is not a character: `textContent`
+   * cannot see it. A screenshot could. */
+  line-height: 1.5;
+}
+.field__summary > .btn {
+  margin-left: 0.6rem;
+  vertical-align: baseline;
+}
 input::placeholder {
   color: #9ca3af;
 }
@@ -369,6 +394,28 @@ $field-label-gap: 0.3rem;
 .form-inline > .callout,
 .form-inline > fieldset {
   flex-basis: 100%;
+}
+
+/* **One question per row.**
+ *
+ * `.form-inline` is a wrapping flex row, which is right for a form of eighteen fields and wrong
+ * for one of two: after the model editor stopped asking for the provenance it already knew, the
+ * two questions that remained — the model id and the region — shared a line and each stretched to
+ * half the dialog. Reported as *"the fields do not stand under one another, they are stretched"*,
+ * and it is the same rule that made the vendor's note a 67-pixel column, seen from the other end:
+ * `flex` decides how to fill a row, and a form is not trying to fill a row.
+ *
+ * The control is capped rather than the field, so the label and the hint keep the full width they
+ * need for a sentence while the box stays a readable measure. `min()` for the same reason as
+ * below: a rule meant to stop a control sprawling on a desktop must not force a scrollbar on a
+ * phone.
+ */
+.form-inline > .field--own-row {
+  flex-basis: 100%;
+}
+.form-inline > .field--own-row > input,
+.form-inline > .field--own-row > select {
+  max-width: min(26rem, 100%);
 }
 
 /* A field that grows may not shrink to nothing.

@@ -654,18 +654,24 @@ async def cache_ttl_for(request: Request) -> str:
     return "1h" if chosen == "1h" else "5m"
 
 
-async def declared_provider(request: Request) -> Callable[[str], Awaitable[str]]:
-    """Who the catalog says serves a model (`FRD-507`).
+async def declared_provider(request: Request) -> Callable[[str], Awaitable[tuple[str, str]]]:
+    """Who the catalog says serves a model (`FRD-507`): its `(provider, publisher)`.
 
     Handed to the dispatch chain so a candidate that was **catalogued** rather than configured
     resolves to its adapter. One function, both surfaces — the third time a step written twice
     drifted on one of them (`FRD-126`), and this one decides where a request goes.
+
+    **The pair, not the provider alone.** One platform can host two wire formats: on Vertex,
+    `google` is the Gemini dialect and `anthropic` is Anthropic's, so `vertex` identifies neither
+    and a chain asking with it found nothing. Returning half of an identifier is how a lookup
+    fails in a way that reads as "no such model".
     """
 
     catalog = catalog_of(request)
 
-    async def lookup(model: str) -> str:
-        return (await catalog.declaration(model)).provider
+    async def lookup(model: str) -> tuple[str, str]:
+        declaration = await catalog.declaration(model)
+        return declaration.provider, declaration.publisher
 
     return lookup
 
@@ -929,7 +935,12 @@ async def prepare_for_dispatch(
         # reported "not found" for a model an administrator had just released, which reads as a
         # typo and is a second list nobody was told to keep.
         routed = await catalog_of(request).declaration(canonical.model)
-        if registry_of(request).provider_for(canonical.model, routed.provider) is None:
+        # Publisher as well, because one platform can host two wire formats: on Vertex `google` is
+        # the Gemini dialect and `anthropic` is Anthropic's, so the provider alone routes nowhere.
+        if (
+            registry_of(request).provider_for(canonical.model, routed.provider, routed.publisher)
+            is None
+        ):
             # Routing sent it somewhere nobody serves. Raised as the shared error so each surface
             # renders it in its own envelope rather than each checking for itself.
             raise GeminiHTTPError(404, f"Model '{canonical.model}' not found.", "NOT_FOUND")
@@ -945,6 +956,11 @@ async def prepare_for_dispatch(
                 "thinking": resolve_thinking(canonical.thinking, declaration),
                 "cache_prefix": await cache_prefix_wanted(request, declaration),
                 "cache_ttl": await cache_ttl_for(request),
+                # What the catalogue says about reaching this model on its platform. Carried here
+                # because this is the one place that has the declaration and is about to hand the
+                # request to an adapter — the same reason every other resolved field is filled
+                # here rather than at each surface (`FRD-126`).
+                "addressing": declaration.addressing,
             }
         )
     if embed is not None:
@@ -1018,7 +1034,7 @@ async def resolve_direct_target(
         raise NoCapableModel([Skipped(model, refusal)])
 
     declared = await catalog_of(request).declaration(model)
-    provider = registry_of(request).provider_for(model, declared.provider)
+    provider = registry_of(request).provider_for(model, declared.provider, declared.publisher)
     if provider is None:
         # `prepare_for_dispatch` already refuses this for a routed model; repeated here because
         # this function's contract is to return an adapter, and returning `None` would push the

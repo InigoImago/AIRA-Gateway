@@ -20,22 +20,27 @@
         <h3 class="section-title" style="margin: 0">Model declarations</h3>
         <div class="row">
           <!--
-            Beside "Add model", because it is the same act arrived at from the other end: one
-            starts from an empty form, the other from what a vendor says this installation's
-            credential can reach. Its own window rather than a picker inside the editor — one real
-            key answered with **50 models**, and a dropdown of fifty inside a form with eighteen
-            fields is a control somebody scrolls past.
+            **One entrance, and it starts with the provider.** There were two buttons: "Add from a
+            provider…" and "+ Add model", the second opening an empty form. The owner's verdict on
+            the pair: *"the Add model button, where you have to type everything yourself, is by now
+            unnecessary — we have adding from a provider."* Which is right, and the reason is not
+            that one button is tidier than two. Every model lives **somewhere**, and the empty form
+            asked the reader to know five facts about where — provider, publisher, platform,
+            hosting, region — that choosing the provider first simply answers. A screen that offers
+            "type it all yourself" beside "let the software fill it in" is not offering a choice; it
+            is offering a way to get it wrong.
+
+            The empty form is still reachable, from inside: a gateway with no upstream configured,
+            or a platform that publishes no list, both end in a button that opens it — at the point
+            where it is the honest option rather than the tempting one.
           -->
           <button
             type="button"
-            class="btn"
+            class="btn btn--primary"
             (click)="openBrowse()"
-            data-testid="browse-provider-models"
+            data-testid="add-model"
           >
-            Add from a provider…
-          </button>
-          <button type="button" class="btn btn--primary" (click)="add()" data-testid="add-model">
-            + Add model
+            + Add a model
           </button>
         </div>
       </div>
@@ -420,7 +425,7 @@
       </div>
       <form id="model-editor-form" class="form-inline" (ngSubmit)="save()">
         @if (editorTab() === 'identity') {
-          <div class="field grow">
+          <div class="field field--own-row">
             <label for="model-name">Model id</label>
             <input
               id="model-name"
@@ -433,155 +438,224 @@
             />
             <span class="field__hint">Exactly as the gateway exposes it.</span>
           </div>
-          <div class="field">
-            <label for="model-display">Display name</label>
-            <input
-              id="model-display"
-              name="display_name"
-              [ngModel]="displayName()"
-              (ngModelChange)="displayName.set($event)"
-              autocomplete="off"
-            />
-          </div>
-          <!--
-            Provider first, model second — the order somebody actually works in, and the order that
-            lets the second question be answered *by the gateway* instead of typed. It used to be a
-            text box: a model was declared under whatever string was entered, and the two refusals a
-            typo produces ("not in the model catalog", "has not been approved") are both correct and
-            neither names the string that was wrong.
-          -->
-          <div class="field">
-            <label for="model-provider">
-              Provider
-              <app-info-hint label="Provider" testid="provider-hint" [wide]="true">
-                Which of this gateway's configured upstreams reaches the model. The list is what the
-                gateway actually has — not what the product supports — because a provider no
-                credential reaches is a choice that cannot work. A model may be declared before its
-                platform is configured: choose <em>Something else</em> and type the name.
+          <div class="field field--own-row">
+            <label for="model-region">
+              Region
+              <app-info-hint label="Region" testid="model-region" [wide]="true">
+                Where this model lives on its platform. Needed where the model's <em>name</em> is
+                not its whole address: Vertex reaches a model at
+                <code>&lt;region&gt;-aiplatform.googleapis.com</code>, so without one there is
+                nothing to send the request to. <br /><br />
+                Leave it empty for a platform that addresses a model by name alone — an
+                OpenAI-compatible server, Google AI Studio — where a region here would be a claim
+                about routing that nothing acts on.
+                <br /><br />
+                It is also the residency claim on every audit row for this model, and the gateway
+                refuses a region outside <code>AIRA_ALLOWED_REGIONS</code> at the moment it
+                addresses the request rather than at start-up, because a model catalogued here
+                arrives long after the process booted.
               </app-info-hint>
             </label>
-            @if (providerIsCustom()) {
-              <input
-                id="model-provider"
-                name="provider"
-                [ngModel]="provider()"
-                (ngModelChange)="provider.set($event)"
-                placeholder="generative-language"
-                autocomplete="off"
-                data-testid="provider-typed"
-              />
-              @if (!providersError() && (providers() ?? []).length) {
-                <button
-                  type="button"
-                  class="btn btn--sm btn--ghost"
-                  (click)="providerIsCustom.set(false)"
-                  data-testid="provider-back-to-list"
-                >
-                  Choose a configured one instead
-                </button>
-              }
-            } @else {
-              <select
-                id="model-provider"
-                name="provider"
-                [ngModel]="provider()"
-                (ngModelChange)="chooseProvider($event)"
-                data-testid="provider-select"
-              >
-                <option value="">{{ loadingProviders() ? 'Asking the gateway…' : '—' }}</option>
-                @for (upstream of providers() ?? []; track upstream.name) {
-                  <option [value]="upstream.name">{{ providerLabel(upstream) }}</option>
-                }
-                <option [value]="OTHER">Something else — type it</option>
-              </select>
-            }
-            @if (providersError(); as message) {
-              <!-- Informs, never blocks. Declaring a model before its credential exists is the
-                   ordinary order of work, so a gateway that cannot be reached degrades to the text
-                   box it replaced rather than locking somebody out of their own catalog. -->
-              <span class="field__hint" data-testid="providers-unavailable">
-                {{ message }} Type the provider name instead.
-              </span>
-            } @else if (selectedProvider(); as upstream) {
-              <span class="field__hint" data-testid="provider-note">
-                @if (upstream.cataloguedIsEnough) {
-                  Cataloguing a model here is enough to reach it — no configuration entry needed.
-                } @else {
-                  This platform needs the model named in the gateway's configuration as well;
-                  cataloguing it alone will not make it answer.
-                }
-              </span>
-            }
+            <input
+              id="model-region"
+              name="region"
+              data-testid="model-region"
+              [ngModel]="region()"
+              (ngModelChange)="region.set($event)"
+              placeholder="europe-west1"
+              autocomplete="off"
+            />
+            <span class="field__hint">
+              Required on Vertex. Empty where the model name is the whole address.
+            </span>
           </div>
 
-          @if (vendorFilled().length) {
-            <p class="callout grow" data-testid="vendor-filled" style="margin: 0">
-              Filled in from {{ provider() }}: {{ vendorFilled().join(', ') }}. Left for you: the
-              price, and what the model can actually do beyond the verbs its API publishes — a
-              vendor's capability flag is a claim, and a price nobody set is not zero. Nothing is
-              written until you save, and a model is not usable until you release it.
-              @for (note of vendorSaid(); track note) {
-                <span class="muted" style="display: block; margin-top: 0.35rem">{{ note }}</span>
-              }
+          <!--
+            Where the model lives: **a sentence when it is known, a form when it is not.** These
+            five fields are the ones the owner meant by *"too many options, where you do not know
+            what you are doing"* — and four of the five were already decided when the provider was
+            chosen. A reader who is shown `Provider [aira-vertex ▾] Publisher [google] Platform
+            [vertex] Hosting [—]` cannot tell which of those they are expected to change; a reader
+            shown one sentence and a *Change* button can tell at a glance that the answer is none
+            of them.
+
+            Not hidden — stated. The distinction matters, and it is why this is a sentence and not
+            a collapsed empty section: the facts are visible without a click, so nothing is
+            *concealed*, only the four boxes are gone. And it opens by itself whenever the provider
+            is empty, which is the one case where the reader really does have to answer.
+          -->
+          @if (!showProvenance()) {
+            <p class="field__summary grow" data-testid="provenance-summary">
+              Lives on <strong>{{ providerSummary() }}</strong
+              >{{ provenanceDetail() }}
+              <button
+                type="button"
+                class="btn btn--sm btn--ghost"
+                (click)="openProvenance()"
+                data-testid="change-provenance"
+              >
+                Change
+              </button>
             </p>
+            @if (vendorFilled().length) {
+              <!--
+                **Below the sentence, and no longer repeating it.** This note opened with "Filled
+                in from mock: provider, dialect" — which is what the sentence one line above now
+                says, in the same words, about the same two facts. Two statements of one thing
+                read as two things, and the reader looks for the difference. What is left is the
+                half only this note can say: what the import deliberately did *not* fill in.
+              -->
+              <p class="callout grow" data-testid="vendor-filled" style="margin: 0">
+                Left for you: the price, and what the model can actually do beyond the verbs its API
+                publishes — a vendor's capability flag is a claim, and a price nobody set is not
+                zero. Nothing is written until you save, and a model is not usable until you release
+                it.
+                @for (note of vendorSaid(); track note) {
+                  <span class="muted" style="display: block; margin-top: 0.35rem">{{ note }}</span>
+                }
+              </p>
+            }
+          } @else {
+            <div class="field field--own-row" data-testid="provenance-fields">
+              <label for="model-display">Display name</label>
+              <input
+                id="model-display"
+                name="display_name"
+                [ngModel]="displayName()"
+                (ngModelChange)="displayName.set($event)"
+                autocomplete="off"
+              />
+              <span class="field__hint">Optional — what the console calls it in a list.</span>
+            </div>
+            <!--
+              Provider first, model second — the order somebody actually works in, and the order that
+              lets the second question be answered *by the gateway* instead of typed. It used to be a
+              text box: a model was declared under whatever string was entered, and the two refusals a
+              typo produces ("not in the model catalog", "has not been approved") are both correct and
+              neither names the string that was wrong.
+            -->
+            <div class="field field--own-row">
+              <label for="model-provider">
+                Provider
+                <app-info-hint label="Provider" testid="provider-hint" [wide]="true">
+                  Which of this gateway's configured upstreams reaches the model. The list is what
+                  the gateway actually has — not what the product supports — because a provider no
+                  credential reaches is a choice that cannot work. A model may be declared before
+                  its platform is configured: choose <em>Something else</em> and type the name.
+                </app-info-hint>
+              </label>
+              @if (providerIsCustom()) {
+                <input
+                  id="model-provider"
+                  name="provider"
+                  [ngModel]="provider()"
+                  (ngModelChange)="typeProvider($event)"
+                  placeholder="generative-language"
+                  autocomplete="off"
+                  data-testid="provider-typed"
+                />
+                @if (!providersError() && (providers() ?? []).length) {
+                  <button
+                    type="button"
+                    class="btn btn--sm btn--ghost"
+                    (click)="providerIsCustom.set(false)"
+                    data-testid="provider-back-to-list"
+                  >
+                    Choose a configured one instead
+                  </button>
+                }
+              } @else {
+                <select
+                  id="model-provider"
+                  name="provider"
+                  [ngModel]="provider()"
+                  (ngModelChange)="chooseProvider($event)"
+                  data-testid="provider-select"
+                >
+                  <option value="">{{ loadingProviders() ? 'Asking the gateway…' : '—' }}</option>
+                  @for (upstream of providers() ?? []; track upstream.name) {
+                    <option [value]="upstream.name">{{ providerLabel(upstream) }}</option>
+                  }
+                  <option [value]="OTHER">Something else — type it</option>
+                </select>
+              }
+              @if (providersError(); as message) {
+                <!-- Informs, never blocks. Declaring a model before its credential exists is the
+                     ordinary order of work, so a gateway that cannot be reached degrades to the text
+                     box it replaced rather than locking somebody out of their own catalog. -->
+                <span class="field__hint" data-testid="providers-unavailable">
+                  {{ message }} Type the provider name instead.
+                </span>
+              } @else if (selectedProvider(); as upstream) {
+                <span class="field__hint" data-testid="provider-note">
+                  @if (upstream.cataloguedIsEnough) {
+                    Cataloguing a model here is enough to reach it — no configuration entry needed.
+                  } @else {
+                    This platform needs the model named in the gateway's configuration as well;
+                    cataloguing it alone will not make it answer.
+                  }
+                </span>
+              }
+            </div>
+            <div class="field field--own-row">
+              <label for="model-publisher">Publisher</label>
+              <input
+                id="model-publisher"
+                name="publisher"
+                [ngModel]="publisher()"
+                (ngModelChange)="publisher.set($event)"
+                placeholder="google | anthropic | openai"
+                autocomplete="off"
+              />
+              <span class="field__hint">Selects the wire dialect the gateway speaks to it.</span>
+            </div>
+            <div class="field field--own-row">
+              <label for="model-platform">Platform</label>
+              <input
+                id="model-platform"
+                name="platform"
+                [ngModel]="platform()"
+                (ngModelChange)="platform.set($event)"
+                placeholder="vertex | foundry"
+                autocomplete="off"
+              />
+            </div>
+            <div class="field field--own-row">
+              <label for="model-hosting">Hosting</label>
+              <select
+                id="model-hosting"
+                name="hosting"
+                [ngModel]="hosting()"
+                (ngModelChange)="hosting.set($event)"
+              >
+                <option value="">—</option>
+                <option value="managed">Managed by the vendor</option>
+                <option value="self_deployed">Self-deployed (our capacity)</option>
+              </select>
+              <span class="field__hint">
+                Self-deployed endpoints cold-start and answer 429 for capacity, not quota.
+              </span>
+            </div>
+            <div class="field field--own-row">
+              <label for="model-kira-id">KIRA id</label>
+              <input
+                id="model-kira-id"
+                type="number"
+                min="1"
+                name="kira_id"
+                [ngModel]="kiraId()"
+                (ngModelChange)="kiraId.set($event)"
+                placeholder="assigned automatically"
+                data-testid="model-kira-id"
+              />
+              <span class="field__hint">
+                How a KIRA client names this model — that surface identifies models by number, not
+                by name. Left blank, the next free one is assigned. Set it to keep clients migrating
+                from the predecessor working unchanged, by giving this model the id they already
+                send.
+              </span>
+            </div>
           }
-          <div class="field">
-            <label for="model-publisher">Publisher</label>
-            <input
-              id="model-publisher"
-              name="publisher"
-              [ngModel]="publisher()"
-              (ngModelChange)="publisher.set($event)"
-              placeholder="google | anthropic | openai"
-              autocomplete="off"
-            />
-            <span class="field__hint">Selects the wire dialect the gateway speaks to it.</span>
-          </div>
-          <div class="field">
-            <label for="model-platform">Platform</label>
-            <input
-              id="model-platform"
-              name="platform"
-              [ngModel]="platform()"
-              (ngModelChange)="platform.set($event)"
-              placeholder="vertex | foundry"
-              autocomplete="off"
-            />
-          </div>
-          <div class="field">
-            <label for="model-hosting">Hosting</label>
-            <select
-              id="model-hosting"
-              name="hosting"
-              [ngModel]="hosting()"
-              (ngModelChange)="hosting.set($event)"
-            >
-              <option value="">—</option>
-              <option value="managed">Managed by the vendor</option>
-              <option value="self_deployed">Self-deployed (our capacity)</option>
-            </select>
-            <span class="field__hint">
-              Self-deployed endpoints cold-start and answer 429 for capacity, not quota.
-            </span>
-          </div>
-          <div class="field">
-            <label for="model-kira-id">KIRA id</label>
-            <input
-              id="model-kira-id"
-              type="number"
-              min="1"
-              name="kira_id"
-              [ngModel]="kiraId()"
-              (ngModelChange)="kiraId.set($event)"
-              placeholder="assigned automatically"
-              data-testid="model-kira-id"
-            />
-            <span class="field__hint">
-              How a KIRA client names this model — that surface identifies models by number, not by
-              name. Left blank, the next free one is assigned. Set it to keep clients migrating from
-              the predecessor working unchanged, by giving this model the id they already send.
-            </span>
-          </div>
         }
         @if (editorTab() === 'capabilities') {
           <div class="field">
@@ -1138,15 +1212,18 @@
         <p class="empty" data-testid="browse-no-providers">
           This gateway has no upstream configured, so there is nobody to ask. An adapter is
           registered only when its credential is — set one (a Google AI Studio key, a Vertex service
-          account, a self-hosted server) and restart the gateway. You can still declare a model here
-          in the meantime; it will not be servable until an adapter reaches it.
+          account, a self-hosted server) and restart the gateway. You can still declare a model by
+          name in the meantime; it will not be servable until an adapter reaches it.
         </p>
+        <button type="button" class="btn" (click)="addByName()" data-testid="add-by-name">
+          Declare a model by name
+        </button>
       } @else if (!loadingProviders() && !askable().length) {
         <p class="empty" data-testid="browse-none-askable">
           This gateway's providers are configured, but none of them publishes a model list. That is
-          a property of the platform rather than a fault — name the models in the gateway's
-          configuration or add them by name with <strong>+ Add model</strong>, and use the
-          reachability check to see whether anything serves them.
+          a property of the platform rather than a fault. Choose the provider above to name a model
+          on it — that fills in where it lives — and use the reachability check to see whether
+          anything serves it.
         </p>
       }
 
@@ -1175,6 +1252,23 @@
           <span class="muted" style="font-size: 0.85rem" data-testid="offerings-count">
             {{ list.length }} offered by this credential
           </span>
+          <!--
+            **A list is not a limit.** Found while collapsing the two entrances into one: the
+            manual form used to be reachable from the page, and removing it left a provider that
+            *can* be listed with no way to name a model the listing does not carry — a deployment
+            of your own on an OpenAI-compatible server, a model too new for the vendor's index, a
+            name that only the gateway's configuration knows. The old button covered that by
+            accident, from outside. This covers it on purpose, from where the reader is already
+            looking, with the provider's facts still filled in for them.
+          -->
+          <button
+            type="button"
+            class="btn btn--sm btn--ghost"
+            (click)="addManually()"
+            data-testid="name-it-yourself"
+          >
+            Not listed? Name it yourself
+          </button>
         </div>
 
         @if (!list.length) {
