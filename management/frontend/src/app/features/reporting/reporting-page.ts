@@ -6,6 +6,7 @@ import { InfoHint } from '../../core/ui/info-hint';
 import { Preset, isoDay, windowFor } from '../../core/ui/periods';
 import { PageFeedback } from '../../core/ui/page-feedback';
 import { BreakdownTable } from './breakdown-table';
+import { InstallationBudgetCard } from './installation-budget-card';
 
 /**
  * Spend and usage over a period (FRD-601).
@@ -18,7 +19,7 @@ import { BreakdownTable } from './breakdown-table';
  */
 @Component({
   selector: 'app-reporting-page',
-  imports: [FormsModule, BreakdownTable, InfoHint],
+  imports: [FormsModule, BreakdownTable, InfoHint, InstallationBudgetCard],
   templateUrl: './reporting-page.html',
   // One banner for the page, the same rule as the use-case detail.
   providers: [PageFeedback],

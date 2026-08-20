@@ -1,0 +1,162 @@
+@if (visible()) {
+  <div class="card" data-testid="installation-budget">
+    <div class="spread">
+      <h3 class="section-title" style="margin: 0">
+        Installation budget
+        <app-info-hint label="Installation budget" testid="installation-budget" [wide]="true">
+          The cap on spend that belongs to <strong>no use case</strong>: the model checks this
+          console makes, a break-glass key, demo traffic. Every other budget here is reached through
+          the use case it belongs to — this bucket has none, and until it existed nothing could
+          limit it. <br /><br />
+          It is the <code>(none)</code> row in the <em>By use case</em> table below. The gateway
+          counts against it exactly as it counts against a use case's budget, and refuses with a 429
+          naming <code>installation</code> once it is gone.
+        </app-info-hint>
+      </h3>
+      @if (canManage()) {
+        <button
+          type="button"
+          class="btn btn--sm btn--primary"
+          (click)="showForm.set(true)"
+          data-testid="add-installation-budget"
+        >
+          + Set a limit
+        </button>
+      }
+    </div>
+
+    @if (loaded() && !budgets().length) {
+      <p class="muted" style="margin: 0.25rem 0 0" data-testid="no-installation-budget">
+        No limit is set. Spend that belongs to no use case is counted and audited, and nothing stops
+        it.
+      </p>
+    }
+
+    <app-modal
+      [open]="showForm() && canManage()"
+      title="Set the installation's spend limit"
+      testid="installation-budget-editor"
+      (closed)="showForm.set(false)"
+    >
+      <div modal-body>
+        <form id="installation-budget-form" class="form-inline" (ngSubmit)="save()">
+          <div class="field">
+            <label for="installation-period">Period</label>
+            <select
+              id="installation-period"
+              name="period"
+              [ngModel]="period()"
+              (ngModelChange)="period.set($event)"
+            >
+              <option value="day">Daily</option>
+              <option value="month">Monthly</option>
+            </select>
+            <span class="field__hint">
+              Counters reset on UTC boundaries, the same clock as every other budget here. Setting a
+              period that already has a limit replaces it.
+            </span>
+          </div>
+          <div class="field">
+            <label for="installation-cost">Spend limit (USD)</label>
+            <input
+              id="installation-cost"
+              name="cost"
+              inputmode="decimal"
+              [ngModel]="cost()"
+              (ngModelChange)="cost.set($event)"
+              placeholder="e.g. 20.00"
+              autocomplete="off"
+            />
+          </div>
+          <div class="field">
+            <label for="installation-tokens">Token limit</label>
+            <input
+              id="installation-tokens"
+              type="number"
+              min="1"
+              name="tokens"
+              [ngModel]="tokens()"
+              (ngModelChange)="tokens.set($event)"
+              placeholder="—"
+            />
+          </div>
+          <div class="field">
+            <label for="installation-requests">Request limit</label>
+            <input
+              id="installation-requests"
+              type="number"
+              min="1"
+              name="requests"
+              [ngModel]="requests()"
+              (ngModelChange)="requests.set($event)"
+              placeholder="—"
+            />
+            <span class="field__hint">
+              A request limit is the one that binds a model the catalog has no price for: its cost
+              is unknown, not zero, so a spend limit cannot see it.
+            </span>
+          </div>
+        </form>
+      </div>
+
+      <div modal-foot>
+        @if (validationError(); as message) {
+          <span class="field__hint field__hint--error grow" role="alert">{{ message }}</span>
+        }
+        <button type="button" class="btn" (click)="showForm.set(false)">Cancel</button>
+        <button
+          type="submit"
+          form="installation-budget-form"
+          class="btn btn--primary"
+          [disabled]="!canSave()"
+        >
+          Save
+        </button>
+      </div>
+    </app-modal>
+
+    <div class="stack" style="margin-top: 0.75rem">
+      @for (budget of budgets(); track budget.id) {
+        <div class="card" style="padding: 0.9rem 1rem">
+          <div class="spread">
+            <div class="row">
+              <strong>{{ limitsOf(budget).join(' · ') }}</strong>
+              <span class="badge badge--muted">{{ budget.period }}</span>
+            </div>
+            <div class="row">
+              @if (canManage()) {
+                <button
+                  type="button"
+                  class="btn btn--sm btn--ghost"
+                  [disabled]="feedback.busy()"
+                  [attr.data-testid]="'toggle-installation-budget-' + budget.id"
+                  [attr.aria-label]="
+                    (budget.enabled === false ? 'Enable' : 'Disable') +
+                    ' the ' +
+                    budget.period +
+                    ' installation budget'
+                  "
+                  (click)="setEnabled(budget, budget.enabled === false)"
+                >
+                  {{ budget.enabled === false ? 'Disabled — enable' : 'Active — disable' }}
+                </button>
+                <button
+                  type="button"
+                  class="btn btn--sm btn--danger"
+                  [disabled]="feedback.busy()"
+                  [attr.data-testid]="'remove-installation-budget-' + budget.id"
+                  [attr.aria-label]="'Remove the ' + budget.period + ' installation budget'"
+                  (click)="remove(budget.id)"
+                >
+                  Remove
+                </button>
+              } @else if (budget.enabled === false) {
+                <span class="badge badge--muted">disabled</span>
+              }
+            </div>
+          </div>
+        </div>
+      }
+    </div>
+  </div>
+}

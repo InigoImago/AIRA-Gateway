@@ -211,12 +211,22 @@ async def test_a_model_this_installation_serves_is_reachable(security_token) -> 
 
 
 async def test_a_model_nobody_serves_says_so_rather_than_looking_healthy(security_token) -> None:
-    """The case a missing credential produces. Asked for a Vertex model, which this stack has no
-    key for: the catalog would happily hold it and every request would come back
-    `model_not_found`, which reads to a caller as a typo."""
+    """The case a missing credential produces: every request would come back `model_not_found`,
+    which reads to a caller as a typo rather than as an installation that was never given a key.
+
+    **Asked about a name nothing can claim, and that is the point of the name.** This test used to
+    ask about `gemini-2.5-pro` on the assumption that the stack had no Vertex key — an assumption
+    about the *developer's machine*, which stopped being true the day one was configured, and the
+    test then asserted the opposite of what happens. A catalogued model becomes servable through
+    its provider without appearing in `AIRA_VERTEX_MODELS` at all (`provider_for`), so no real
+    model name is safe to assume unserved.
+
+    The branch under test is `upstream is None`, and it is reached identically by a missing
+    credential and by a name no adapter claims. Only the second can be forced on an installation
+    that happens to have every credential — which is the one this runs against."""
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.get(
-            f"{GATEWAY_URL}/v1beta/models/gemini-2.5-pro:check",
+            f"{GATEWAY_URL}/v1beta/models/aira-no-adapter-claims-this:check",
             headers={"Authorization": f"Bearer {security_token}"},
         )
 

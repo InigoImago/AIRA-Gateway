@@ -61,6 +61,11 @@
     }
   </div>
 
+  <!-- The cap on the `(none)` row of the table below: spend that belongs to no use case. It sits
+       above the report rather than beside that row because it is a control, not a figure, and it
+       must be findable when the period returns nothing at all. -->
+  <app-installation-budget-card />
+
   @if (loading()) {
     <p class="loading">
       <span class="spinner" aria-hidden="true"></span>

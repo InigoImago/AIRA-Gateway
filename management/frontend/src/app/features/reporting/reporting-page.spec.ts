@@ -1,6 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 import { Observable, of, throwError } from 'rxjs';
-import { Report, ReportRow } from '../../core/api/models';
+import { Budget, Report, ReportRow } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { ReportingPage } from './reporting-page';
 import { isoDay, windowFor } from '../../core/ui/periods';
@@ -64,6 +64,11 @@ function setup(response: Observable<Report> = of(report()), csv?: Observable<Blo
       exports.push({ from, to, breakdown });
       return csv ?? of(new Blob(['key,requests\n'], { type: 'text/csv' }));
     },
+    // The installation-budget card is a child of this page and loads on its own. Answered with an
+    // empty list rather than left undefined: this page's tests are about the report, and the card
+    // has its own spec — but a child that throws would take the page down with it, which is a
+    // failure of this page and should be visible here.
+    installationBudgets: () => of([] as Budget[]),
   };
   TestBed.configureTestingModule({
     imports: [ReportingPage],

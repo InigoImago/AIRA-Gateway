@@ -1,11 +1,13 @@
-# FRD-610 — Diagnostics in the audit trail, and a concept for where money leaks
+# FRD-610 — Nothing spends outside a bucket
 
-> Phase: 6 · Status: **Part 1 built · Part 2 is a proposal for review** · Owner: Vadim Scheibe
+> Phase: 6 · Status: **Partly built** — diagnostics are audited (§2) and the installation budget
+> exists (§3.1); §3.2 and §3.3 remain · Owner: Vadim Scheibe
 >
 > Origin: the owner, on the console's model checks: *"how does it look with the budget? Are these
 > test requests counted and taken into the budget, as already described — every request should be
 > auditable and budgetable."* Then: *"make it auditable. Then think out a concept for how we can do
-> it so that money does not leak away from us."*
+> it so that money does not leak away from us."* Then, on the concept below: *"build the
+> installation budget."*
 > Related: `FRD-401`/`FRD-403` (budgets, pricing), `FRD-122` (audit), `FRD-125b` (pipeline spend),
 > `ADR-0021` and `FRD-609` (the checks that prompted this).
 
@@ -58,23 +60,53 @@ allowance can see*:
 | --- | --- | --- |
 | a use case's traffic | ✓ | ✓ |
 | pipeline calls (classifier, router, redactor) | ✓ the use case | ✓ |
-| **diagnostics** | ✗ | ✗ *(now visible, still unbounded)* |
-| **unbound traffic** — break-glass keys, demo | ✗ | ✗ |
+| **diagnostics** | ✓ the installation (§3.1) | ✓ |
+| **unbound traffic** — break-glass keys, demo | ✓ the installation (§3.1) | ✓ |
 | **an unpriced model, under a cost budget** | ✓ | ✗ **blind** |
 
-### 3.1 An installation allowance
+### 3.1 An installation budget — **built**
 
-Budgets are anchored to a use case: `use_case` (a shared pot) and `each_member` (one counter per
-head). There is no third, so anything belonging to *the installation* has nowhere to be counted.
+*(Called an "allowance" in the first draft, and the owner asked what one was — fairly, since it is
+not a thing this system has. It is a **budget**: the same row, the same three limits, the same
+periods, with one difference — no use case behind it.)*
 
-Propose one: an allowance whose scope is the installation, against which **everything with no use
-case** is booked — diagnostics, break-glass keys, demo traffic. It is the residual bucket, and its
-existence is what turns *unowned* into *owned by the installation*. Small by nature and therefore
-easy to set: an installation that spends more than a few euro a month on diagnostics is telling you
-something.
+Budgets were anchored to a use case: `use_case` (a shared pot) and `each_member` (one counter per
+head). There was no third, so anything belonging to *the installation* had nowhere to be counted.
+
+There is now a third: `installation`. Everything with **no use case** books against it —
+diagnostics, break-glass keys, demo traffic. It is the residual bucket, and its existence is what
+turns *unowned* into *owned by the installation*. Small by nature and therefore easy to set: an
+installation that spends more than a few euro a month on diagnostics is telling you something.
 
 The rule it enforces is the one worth stating: **a request that fits no bucket does not run.**
-Today such a request runs and is counted nowhere.
+Before this, such a request ran and was counted nowhere.
+
+#### How it works
+
+| | |
+| --- | --- |
+| **the scope** | `Scope.applying` gains one branch, in the one place a scope is added (`gateway/src/aira_gateway/scopes.py`): an `installation` row binds a request that names **no** use case, and only those. A row that named one as well would be two owners for one spend. |
+| **the counter** | its own prefix, `installation:` — deliberately not `uc:` with an empty name. A usage key is *stored*, so an empty one would be indistinguishable from a use case whose slug somehow emptied, and `_delete_usecase` sweeps counters by the `uc:{slug}` prefix, which with an empty slug is every counter there is. |
+| **the gate** | `BudgetService.guard` no longer returns early for a request that names no use case. That early return was the whole hole: it was written when there was nothing such a request could be counted against, and it survived the arrival of something. |
+| **the refusal** | names the allowance that ran out — `installation`, not *use case* or *member*. Caught by its own test before anybody saw it. |
+| **who sets it** | a Global Administrator, on its own route `/api/v1/installation-budgets/`. `IT Steuerung` and `IT Security` **read** it. |
+| **where** | the reporting screen, above the report — because the figure it bounds is already there, as the `(none)` row of *By use case*, and because a control must be findable in a period that returned nothing at all. |
+
+Its own route rather than a use case's: `/use-cases/<slug>/budgets/` resolves an object from a slug
+this budget does not have, and bending that route to accept an absent one makes *"which use case is
+this for"* a question with a special answer at every layer that asks it.
+
+**Two constraints, in the database and not only in a form.** `use_case` had to become nullable, and
+a NULL is not equal to itself in SQL — so the existing `uq_budget` stops policing exactly the rows
+this feature introduces, and two installation budgets for one period would both be accepted with
+the gateway enforcing whichever it read first. A partial unique constraint covers what the first
+cannot see, and a check constraint refuses a row whose scope and owner disagree, because `clean()`
+runs for a form and not for a fixture, a shell or a migration.
+
+**What it does not change.** A use case's traffic keeps booking against its own budgets and nothing
+else; this is not a global cap over everything. The pipeline's own calls (`refuse_if_exhausted`,
+`book_side_call`) still require a use case, because a pipeline **is** a use case's configuration —
+there is no such thing as an installation-level pipeline call.
 
 ### 3.2 Unpriced is not unlimited
 
@@ -114,10 +146,16 @@ when the installation does not enforce them.
 
 ## 4. Open questions
 
-1. **Does the installation allowance need periods** (`day`/`month`) like a use case's, or is a
-   single running ceiling enough for what is by nature small?
-2. **Who may set it?** A Global Administrator, presumably — but it is the one allowance `IT
-   Steuerung` might reasonably own, since it is the installation's own spend rather than a use
-   case's.
+Two of the three were answered by building §3.1:
+
+1. ~~**Does the installation budget need periods**~~ — **yes, the same `day`/`month` as every other
+   budget.** A running ceiling with no reset is a budget that can only ever be reached once, and
+   the counters, the reset boundary and the console's wording all already exist per period.
+   Nothing was saved by making this budget different, and a reader would have had to learn why.
+2. ~~**Who may set it?**~~ — **a Global Administrator sets it; every oversight role reads it.**
+   The installation's own spend is exactly the figure a governance role exists to see, and setting
+   it is an act — `ADR-0007`: `IT Steuerung` oversees and acts in nothing. If that should change it
+   changes in `InstallationBudgetViewSet.get_permissions` and nowhere else.
 3. **Refusing unpriced models under a cost budget will stop traffic** in installations that have
-   models nobody priced. Behind a switch, defaulting to off for one release?
+   models nobody priced (§3.2). Behind a switch, defaulting to off for one release? — **still
+   open.**

@@ -42,7 +42,7 @@ from aira_common.money import format_display
 from aira_gateway.budgets.errors import BudgetExceeded
 from aira_gateway.budgets.ledger import Amounts, BudgetLedger, Limits
 from aira_gateway.db.models import BudgetRead, BudgetUsage
-from aira_gateway.scopes import EACH_MEMBER, USE_CASE, Scope
+from aira_gateway.scopes import EACH_MEMBER, INSTALLATION, USE_CASE, Scope
 
 _log = get_logger("aira_gateway.budgets")
 
@@ -88,6 +88,11 @@ def _scope_label(budget: BudgetRead) -> str:
     configuration. `each_member` in particular would be reported to a caller as the name of a
     setting rather than as what happened to them, which is that their own allowance is gone.
     """
+    if budget.scope == INSTALLATION:
+        # Named, and not left to fall through to "member". A refusal that names the wrong owner
+        # sends somebody to edit a budget that was never involved — and this one has no use case to
+        # look in, so *"member (month)"* would send them somewhere that does not exist.
+        return "installation"
     return "use case" if budget.scope == USE_CASE else "member"
 
 
@@ -174,7 +179,12 @@ class BudgetService:
         moment the response arrives. Erring high is the safe direction for a spend limit, and a
         request that never completes releases its reservation in full.
         """
-        if not self._enforce or not use_case:
+        # **A request naming no use case is not exempt** (`FRD-610`). It used to be: this returned
+        # an empty reservation for anything unattributed, so break-glass keys, demo traffic and the
+        # console's model checks spent without any allowance able to see them. They book against
+        # the installation budget now, and where none is configured `_applicable` finds nothing and
+        # the behaviour is what it always was.
+        if not self._enforce:
             return Reservation()
         now = now or datetime.now(UTC)
         amounts = estimated or Amounts(requests=1)
@@ -433,6 +443,11 @@ class BudgetService:
         limit, one served request, seven refused, and 72 400 spent. A client with a retry loop
         spends without bound.
         """
+        # Still exempt where there is no use case, and for a reason rather than for convenience:
+        # this check exists to stop a request *before the pipeline runs* (`FRD-125c`), and a
+        # pipeline is a use case's configuration. Unattributed traffic runs none, so there is
+        # nothing here for the installation budget to protect — `guard` already reserves against
+        # it, which is where its spend is bounded.
         if not use_case:
             return
         now = now or datetime.now(UTC)
@@ -482,6 +497,9 @@ class BudgetService:
         later. Found by setting a small cost cap and watching a use case sail past it: the counter
         said 41 000 against a limit of 40 000 and the next request was served.
         """
+        # A **pipeline's** spend, which belongs to the use case whose pipeline ran. Unattributed
+        # traffic has no pipeline, so the `use_case` test stays: it is not an exemption, it is the
+        # absence of the thing this method books.
         if not use_case or tokens <= 0:
             return
         now = now or datetime.now(UTC)
@@ -581,11 +599,20 @@ class BudgetService:
     async def _applicable(
         self,
         session: AsyncSession,
-        use_case: str,
+        use_case: str | None,
         subject: str | None,
     ) -> list[BudgetRead]:
+        """Every enabled budget that binds this request.
+
+        **Two families in one query.** A request naming a use case reads that use case's rows; a
+        request naming none reads the installation's (`FRD-610`), which is the residual bucket for
+        spend no use case owns. `Scope.applying` decides which of the fetched rows actually bind —
+        it is the one place a scope is added, and both this path and the rate limiter follow it.
+        """
         result = await session.execute(
-            select(BudgetRead).where(BudgetRead.use_case == use_case, BudgetRead.enabled.is_(True))
+            select(BudgetRead).where(
+                BudgetRead.use_case == (use_case or ""), BudgetRead.enabled.is_(True)
+            )
         )
         return [
             budget

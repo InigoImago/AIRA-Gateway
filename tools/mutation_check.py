@@ -940,8 +940,10 @@ MUTATIONS = [
         "B7",
         "a disabled budget does not bind",
         "gateway/src/aira_gateway/budgets/service.py",
-        "            select(BudgetRead).where(BudgetRead.use_case == use_case, BudgetRead.enabled.is_(True))",
-        "            select(BudgetRead).where(BudgetRead.use_case == use_case)",
+        # Re-anchored with `FRD-610`: the query now reads `use_case or ""`, so that a request
+        # naming none finds the installation's rows. The property is unchanged and is this clause.
+        '                BudgetRead.use_case == (use_case or ""), BudgetRead.enabled.is_(True)',
+        '                BudgetRead.use_case == (use_case or ""),',
         "gateway/tests/test_budget_service.py",
     ),
     Mutation(
@@ -4991,6 +4993,75 @@ MUTATIONS = [
         "            past_blocks=payload.past_blocks,",
         "",
         "gateway/tests/test_pipeline_dryrun.py",
+    ),
+    # -- `FRD-610`: nothing spends outside a bucket.
+    Mutation(
+        "IB1",
+        "an installation budget binds only a request that names no use case",
+        "gateway/src/aira_gateway/scopes.py",
+        '            return cls("") if not use_case else None',
+        '            return cls("")',
+        "gateway/tests/test_installation_budget.py",
+    ),
+    Mutation(
+        "IB2",
+        "the installation counter has its own prefix, not an empty use case's",
+        "gateway/src/aira_gateway/scopes.py",
+        '            return "installation:"',
+        '            return f"uc:{self.use_case}"',
+        "gateway/tests/test_installation_budget.py",
+    ),
+    Mutation(
+        "IB3",
+        "a refusal says which allowance ran out",
+        "gateway/src/aira_gateway/scopes.py",
+        '            return "installation"',
+        '            return "use case"',
+        "gateway/tests/test_installation_budget.py",
+    ),
+    Mutation(
+        "IB4",
+        "spend that names no use case is reserved rather than waved through",
+        "gateway/src/aira_gateway/budgets/service.py",
+        "        if not self._enforce:",
+        "        if not self._enforce or not use_case:",
+        "gateway/tests/test_installation_budget.py",
+    ),
+    # Anchored in the **migration**, not in `models.py`: the test database is built from
+    # migrations, so a constraint edited only on the model is a constraint the database never
+    # hears about — both of these survived that way first, which is exactly the failure they are
+    # here to describe. A `Meta.constraints` entry with no migration is enforced by nothing.
+    Mutation(
+        "IB5",
+        "two installation budgets for one period are refused by the database, not only by a form",
+        "management/backend/src/aira_management/apps/budgets/migrations/0005_installation_budget.py",
+        '                condition=models.Q(("use_case__isnull", True)),',
+        '                condition=models.Q(("use_case__isnull", False)),',
+        "management/backend/tests/test_installation_budget.py",
+    ),
+    Mutation(
+        "IB6",
+        "a scope and an owner that disagree are refused by the database",
+        "management/backend/src/aira_management/apps/budgets/migrations/0005_installation_budget.py",
+        '                    models.Q(("scope", "installation"), ("use_case__isnull", True)),',
+        '                    models.Q(("scope", "installation")),',
+        "management/backend/tests/test_installation_budget.py",
+    ),
+    Mutation(
+        "IB7",
+        "the event that configures the installation bucket carries an empty use case",
+        "management/backend/src/aira_management/apps/budgets/views.py",
+        '        "use_case": "",',
+        '        "use_case": "installation",',
+        "management/backend/tests/test_installation_budget.py",
+    ),
+    Mutation(
+        "IB8",
+        "governance reads the installation's spend limit and does not set it",
+        "management/backend/src/aira_management/apps/budgets/views.py",
+        "        if not has_oversight_role(request.user):\n            return Response([], status=status.HTTP_200_OK)",
+        "        pass",
+        "management/backend/tests/test_installation_budget.py",
     ),
     Mutation(
         "QA36",

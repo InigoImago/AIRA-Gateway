@@ -871,7 +871,7 @@ async def test_structured_output_returns_a_document(fixture, engine) -> None:
     assert "city" in body, "a schema was asked for and prose came back"
 
 
-@pytest.mark.parametrize("mode", ["disabled", "minimal", "low", "medium", "high"])
+@pytest.mark.parametrize("mode", ["disabled", "low", "medium", "high"])
 async def test_every_declared_thinking_mode_is_served(fixture, mode: str) -> None:
     """`FRD-111`. A mode the catalog declares must work, or the declaration is a claim nobody
     checked — and this test is how the claim gets checked.
@@ -880,11 +880,12 @@ async def test_every_declared_thinking_mode_is_served(fixture, mode: str) -> Non
     (it takes `none`, `low`, `medium`, `high`, `max`). The declaration is now what a run measured
     rather than what the enum offers, which is the rule `FRD-114` states in the other direction.
 
-    `minimal` is back on this list as of 2026-08-18, and it is here rather than in a comment
-    because that is the only thing that makes the claim true: the dialect mapping now sends it as
-    `"low"`, the adjacent level this server *does* take, so the mode is honourable again. If that
-    mapping is ever reverted, this parameter fails against the real server — which is exactly how
-    the entry was removed the first time.
+    **`minimal` is off this list again as of 2026-08-20**, and the history is the argument for the
+    test rather than against it. It was added on 2026-08-18 because a dialect mapping translated it
+    to `"low"`, the adjacent level this server does take. `ADR-0021` deleted that translation — a
+    level is now the vendor's own word, sent as written or refused — so the mode stopped being
+    honourable and this parameter went red against the real server, which is precisely what it was
+    left here to do. It is asserted below, among the modes that are refused by name.
     """
     response = await _post(
         fixture,
@@ -894,10 +895,12 @@ async def test_every_declared_thinking_mode_is_served(fixture, mode: str) -> Non
     assert response.status_code == 200
 
 
-# `auto`, not `minimal`. `minimal` moved to the declared list above once the dialect mapping made
-# it reachable, and a test asserting "undeclared modes are refused" has to name a mode that is
-# actually undeclared — otherwise it passes by asserting nothing about the rule it is named for.
-@pytest.mark.parametrize("mode", ["limited", "auto"])
+# A test asserting "undeclared modes are refused" has to name a mode that is actually undeclared,
+# or it passes by asserting nothing about the rule it is named for. `minimal` was moved *out* of
+# this list on 2026-08-18 when a dialect mapping made it reachable, and back into it on 2026-08-20
+# when `ADR-0021` removed that mapping: a level is the vendor's own word, and this server's words
+# are `none`, `low`, `medium`, `high`, `max`.
+@pytest.mark.parametrize("mode", ["limited", "auto", "minimal"])
 async def test_a_thinking_mode_the_model_does_not_declare_is_refused_by_name(
     fixture, mode: str
 ) -> None:

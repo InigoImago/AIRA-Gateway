@@ -574,6 +574,13 @@ reading code.
   a panel test that left the usage map empty proved the line was missing because nothing had been
   *measured*, not because the scope was wrong. Four of these were found by the harness in one
   session, two of them in tests written minutes earlier.
+- **A test that assumes what the installation is *not* configured for reads the developer's
+  machine too.** *"A model nobody serves says so"* asked about `gemini-2.5-pro`, on the assumption
+  that this stack had no Vertex key. One was configured, and the test then asserted the opposite of
+  what happens — and worse, a catalogued model becomes servable through its *provider* without
+  being listed in `AIRA_VERTEX_MODELS` at all, so **no real model name is safe to assume unserved**.
+  Ask about something nothing can claim: a name no adapter registers reaches the same branch and
+  cannot be falsified by a credential somebody adds next month.
 - **A unit test that reads the developer's machine is a test about that machine** — a `.env` on
   disk, a stack that happens to be running, a Redis holding last run's bucket. *That last one is
   not hypothetical:* `redis_url` defaults to the address `make up` publishes, so the hermetic
@@ -613,6 +620,12 @@ reading code.
   *And a rename is where they go stale in bulk*: changing what a run is *about* moved one anchor
   from `order_by("model", …)` to `order_by("use_case", …)` while the property it guards —  a
   standing is the latest run, never a total — did not change a word.
+  **It must also be anchored where the property actually lives**, which for a database constraint
+  is the *migration*: two mutations breaking `Meta.constraints` in `models.py` survived, because
+  the test database is built from migrations and the model's declaration is never consulted. The
+  survival was the finding rather than a nuisance — a `Meta.constraints` entry with no migration
+  is enforced by nothing at all, in tests and in production alike, and a mutation anchored there
+  would have reported a guard over a rule the database has never heard of.
 - **A property guarded twice cannot be a mutation**, and that is not a reason to weaken the guard.
 - **Each layer sees what the one below structurally cannot.** A dropped socket *cancels* a task
   where an in-process close raises `GeneratorExit`; two credentials can only disagree where both

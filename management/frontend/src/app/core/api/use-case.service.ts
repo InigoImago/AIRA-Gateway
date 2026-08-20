@@ -226,6 +226,28 @@ export class UseCaseService {
     return this.http.delete<void>(`${this.base}${seg(slug)}/budgets/${id}/`);
   }
 
+  /**
+   * The installation's own budgets (`FRD-610`) — its own route, because this bucket has no slug.
+   *
+   * `/use-cases/<slug>/budgets/` resolves an object from the path; bending it to accept an absent
+   * slug would make *"which use case is this for"* a question with a special answer at every layer
+   * that asks it. The server answers an empty list to a caller without an oversight role rather
+   * than refusing: what the installation spends on its own diagnostics is not their business, and
+   * a 403 would tell them there is something here to want.
+   */
+  installationBudgets(): Observable<Budget[]> {
+    return this.http.get<Budget[]>(`${API}/v1/installation-budgets/`);
+  }
+
+  /** Upsert on the period, which is the only thing that distinguishes two of these. */
+  saveInstallationBudget(budget: Budget): Observable<Budget> {
+    return this.http.post<Budget>(`${API}/v1/installation-budgets/`, budget);
+  }
+
+  deleteInstallationBudget(id: number): Observable<void> {
+    return this.http.delete<void>(`${API}/v1/installation-budgets/${id}/`);
+  }
+
   rateLimits(slug: string): Observable<RateLimit[]> {
     return this.http.get<RateLimit[]>(`${this.base}${seg(slug)}/rate-limits/`);
   }

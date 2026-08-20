@@ -86,4 +86,4 @@ status that goes stale in the copy nobody opens.
 | [606](FRD-606-per-person-consumption.md) | What one person consumed in a use case | 6 (Governance & Analytics) | ✅ Done |
 | [607](FRD-607-retiring-a-use-case.md) | Retiring a use case, and the second decision that removes it | 6 (governance) | ✅ Built |
 | [609](FRD-609-several-regions.md) | A model in several regions, tried in order | 6 | ✅ Built |
-| [610](FRD-610-nothing-spends-outside-a-bucket.md) | Diagnostics in the audit trail, and a concept for where money leaks | 6 | ○ Part 1 built · Part 2 is a proposal for review |
+| [610](FRD-610-nothing-spends-outside-a-bucket.md) | Nothing spends outside a bucket | 6 | ○ Partly built |

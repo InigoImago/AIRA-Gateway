@@ -22,6 +22,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 USE_CASE = "use_case"
+
+#: **The installation's own spend, which belongs to no use case** (`FRD-610`).
+#:
+#: The residual bucket, and the reason it exists is that some spending genuinely has no owner: the
+#: console's model checks probe a model *before* anybody has released it, break-glass keys are
+#: unbound by design, and demo traffic belongs to nobody. Measured on a running installation: 59
+#: audit rows carrying no use case, and — until this — no allowance that could ever see them.
+#:
+#: It is not a global cap. A use case's traffic keeps booking against its own budgets and nothing
+#: else; this one takes what the others cannot, which is what makes *"nothing spends outside a
+#: bucket"* a sentence with a subject for every request rather than for most of them.
+INSTALLATION = "installation"
 #: **Each member, individually** — one configured row, one counter per person.
 #:
 #: The answer to "everybody, but separately": a fair share per head, without listing the heads.
@@ -98,6 +110,11 @@ class Scope:
         scope, which matched a typed name against either alphabet. Nothing reads it now, and a
         parameter nothing reads is a rule the code appears to have and does not.
         """
+        if scope == INSTALLATION:
+            # Binds every request that names no use case, and only those. A row with a use case
+            # would be two owners for one spend, which is why Management refuses that combination
+            # where it is authored.
+            return cls("") if not use_case else None
         if scope == USE_CASE:
             return cls(use_case)
         if scope == EACH_MEMBER and caller:
@@ -116,6 +133,12 @@ class Scope:
         how an existing period's counters are found again. Altering it would not lose the rows,
         it would silently stop finding them — every budget would read as unspent.
         """
+        if not self.use_case and self.member is None:
+            # Its own prefix, not `uc:` with an empty name. Two reasons, and the second is the one
+            # that would have hurt: a key is stored, so `uc:` would be indistinguishable from a use
+            # case whose slug somehow emptied — and `_delete_usecase` sweeps counters by
+            # `uc:{slug}` prefix, which with an empty slug is every counter there is.
+            return "installation:"
         if self.member is None:
             return f"uc:{self.use_case}"
         return f"member:{self.use_case}:{self.member}"
@@ -129,10 +152,16 @@ class Scope:
         Redis Cluster refuses a script whose keys live on different nodes. These keys are
         ephemeral, so unlike ``usage_key`` this shape may change freely.
         """
+        if not self.use_case and self.member is None:
+            # A literal tag rather than an empty one: `rl:{}` is a hash tag Redis Cluster reads as
+            # *no* tag, which would scatter these keys across slots instead of pinning them.
+            return "rl:{installation}:all"
         tag = f"rl:{{{self.use_case}}}"
         return f"{tag}:uc" if self.member is None else f"{tag}:member:{self.member}"
 
     @property
     def label(self) -> str:
         """How the scope is named to a caller in a refusal."""
+        if not self.use_case and self.member is None:
+            return "installation"
         return "use case" if self.member is None else "member"

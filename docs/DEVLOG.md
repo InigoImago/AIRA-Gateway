@@ -5,6 +5,87 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The installation's own budget: the bucket for spend that belongs to nobody (2026-08-20)
+
+> *"Build the installation budget."*
+
+Yesterday's concept named three holes of one shape — *spend no allowance can see*. This closes two
+of them, which turn out to be the same one: **there was no bucket for spend that has no owner.**
+
+A budget was anchored to a use case, by two scopes and by the query that fetches them. So the
+gateway's guard opened with an early return for a request naming none — written when there was
+genuinely nothing such a request could be counted against, and left in place after there was.
+Removing it is most of the feature; the rest is making sure the thing it now finds is the right
+thing.
+
+- **`Scope.applying` gains one branch**, in the one place a scope is added, so the budget path and
+  the rate limiter follow together. An `installation` row binds a request that names **no** use
+  case, and only those — a row naming one as well would be two owners for one spend, which is why
+  the database refuses that combination where it is authored.
+- **The counter gets its own prefix**, `installation:`, deliberately not `uc:` with an empty name.
+  A usage key is *stored*, so an empty one would be indistinguishable from a use case whose slug
+  somehow emptied — and `_delete_usecase` sweeps counters by the `uc:{slug}` prefix, which with an
+  empty slug is **every counter there is**.
+- **The refusal names the allowance that ran out.** It said *member*. Caught by a test written
+  while building, before anybody saw it: naming the wrong bucket in a 429 sends an administrator to
+  edit a limit that was never the one binding.
+- **The console** gets it on the reporting screen, above the report, because the figure it bounds
+  is already there — the `(none)` row of *By use case* — and a control must be findable in a period
+  that returned nothing at all. A Global Administrator sets it; every oversight role reads it
+  (`ADR-0007`: `IT Steuerung` oversees and acts in nothing).
+
+**What did not change, and the reason is not symmetry.** The pipeline's own calls still require a
+use case. A pipeline **is** a use case's configuration — there is no installation-level pipeline
+call — and widening those two methods "for consistency" broke four test doubles, which was the
+first hint that the change was about a word rather than about a rule.
+
+**Two constraints, in the database and not only in a form.** `use_case` had to become nullable, and
+**a NULL is not equal to itself in SQL**: the existing `uq_budget` therefore stops policing exactly
+the rows this feature introduces, so two installation budgets for one period would both be accepted
+and the gateway would enforce whichever it read first. A partial unique constraint covers what the
+first cannot see; a check constraint refuses a row whose scope and owner disagree, because
+`clean()` runs for a form and not for a fixture, a shell or a migration.
+
+**Two mutations survived, and the reason is the finding.** `IB5` and `IB6` were anchored in
+`models.py`, where the constraints are declared — and nothing noticed them being broken, because
+**the test database is built from migrations**. A `Meta.constraints` entry with no migration is
+enforced by nothing at all, and a mutation anchored there tests nothing at all. Re-anchored onto
+the migration, both are caught. Now `LESSONS.md` §7.
+
+**Three guards this repository already had fired on my own work**, which is the point of having
+them: the console's *every creator opens a window* test rejected the inline form I had written
+(five other screens open one; the reader learns the pattern four times and meets an exception on
+the fifth), the property count in `CLAUDE.md` was stale by eight, and a mutation anchor went stale
+the moment the budget query changed shape.
+
+**And one defect of my own, found by a test I wrote for coverage**: `remove()` had no `canManage()`
+check while `setEnabled()` did. The server refuses either way, so it was never a hole — it was the
+difference between a no-op and a red banner for a reader who was never offered the control.
+
+**Running the live layer found three reds that had nothing to do with this feature**, which is
+the argument for running it rather than the four hermetic suites alone:
+
+- **The gateway's models and its migrations disagreed.** `0040_use_case_tombstone` creates
+  `ix_use_cases_deleted_at`; the model declared the column without `index=True`, so
+  `alembic --autogenerate` wanted to *drop* the index on every run. One word, and the integration
+  guard that compares the two is the only thing that could have said so.
+- **`minimal` was still on the list of thinking modes that must be served.** It was put there on
+  2026-08-18 because a dialect mapping translated it to `"low"`; `ADR-0021` deleted that mapping
+  two days later, and the parameter went red against the real server — *"which is exactly how the
+  entry was removed the first time"*, as its own docstring predicted. Moved back to the modes that
+  are refused by name.
+- **A test that read the developer's machine.** *"A model nobody serves says so"* asked about
+  `gemini-2.5-pro` on the assumption that this stack had no Vertex key. It has one now, and a
+  catalogued model becomes servable through its *provider* without being listed in
+  `AIRA_VERTEX_MODELS` at all — so the test asserted the opposite of what happens. No real model
+  name is safe to assume unserved; it now asks about a name no adapter can claim, which reaches the
+  same branch and cannot be falsified by a credential somebody adds.
+
+`FRD-610` §3.1 built · 8 new mutations (551) · hermetic, live-stack and browser suites green
+(148 e2e passed, 1 skipped).
+
+---
+
 ## The checks that spent money invisibly, and where else it leaks (2026-08-20)
 
 > *"How does it look with the budget? Are these test requests counted and taken into the budget —

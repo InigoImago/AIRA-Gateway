@@ -256,9 +256,19 @@ export interface DryRunResult {
  */
 export type LimitScope = 'use_case' | 'each_member';
 
+/**
+ * A budget's scope, which is one word wider than a rate limit's (`FRD-610`).
+ *
+ * `installation` names the residual bucket: spend that belongs to **no** use case — the console's
+ * model checks, a break-glass key, demo traffic. Kept out of `LimitScope` on purpose, because a
+ * rate limit cannot carry it: nothing enforces a per-installation request rate, and a type that
+ * offered the word would let a form ask for something no plane obeys.
+ */
+export type BudgetScope = LimitScope | 'installation';
+
 export interface Budget {
   id?: number;
-  scope: LimitScope;
+  scope: BudgetScope;
   subject?: string;
   period: 'day' | 'month';
   /** Spend limit for the period, as an exact decimal string (never a JS number). */

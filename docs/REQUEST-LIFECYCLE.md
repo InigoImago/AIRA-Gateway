@@ -133,6 +133,11 @@ graph TB
 `guard_before_work` checks, in order: **suspensions** (is this caller stopped?), **rate limits**
 (token bucket, all-or-nothing across use-case and member scopes), and **already over budget**.
 
+A request that names **no** use case is not exempt: it books against the installation's own budget
+(`FRD-610`), the residual bucket for spend no use case owns — the console's model checks, a
+break-glass key, demo traffic. Until that scope existed, such a request passed the gate untouched
+because there was nothing for it to be counted against.
+
 A per-head allowance is counted against the **person**, not the credential: an API key and a
 Keycloak sign-in by the same human share one budget and one bucket
 ([`ADR-0019`](adr/ADR-0019-an-allowance-belongs-to-a-person.md)). A suspension is the exception and

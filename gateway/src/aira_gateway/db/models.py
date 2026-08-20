@@ -310,7 +310,12 @@ class UseCaseRead(Base):
     #: was never stored or has expired (`payloads.py`). Both were silently wrong while the row was
     #: removed, and both matter most in exactly the case this feature is for: an investigation
     #: into a use case somebody deleted.
-    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: Indexed here as well as in `0040_use_case_tombstone`, which is where it was created and
+    #: only there: the model and the migration disagreed, so `alembic --autogenerate` wanted to
+    #: **drop** the index on every run. Caught by the integration guard that compares the two.
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
     description: Mapped[str] = mapped_column(String(2000), default="")
     processing_notes: Mapped[str] = mapped_column(String(2000), default="")
     # Whether prompts/responses are written at all for this use case, and for how long they are
@@ -405,7 +410,13 @@ class BudgetRead(Base):
     __tablename__ = "budgets"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    use_case: Mapped[str] = mapped_column(String(64), index=True)
+    #: Empty for an **installation** budget (`FRD-610`) — the residual bucket for spend that
+    #: belongs to no use case: the console's model checks, break-glass keys, demo traffic.
+    #:
+    #: Empty rather than NULL because this column is indexed and compared on every request, and a
+    #: NULL would make `use_case == ""` and `use_case IS NULL` two different questions that mean
+    #: the same thing. `Scope.applying` reads the emptiness, in one place.
+    use_case: Mapped[str] = mapped_column(String(64), index=True, default="")
     scope: Mapped[str] = mapped_column(String(16))
     subject: Mapped[str] = mapped_column(String(255), default="")
     period: Mapped[str] = mapped_column(String(8))
