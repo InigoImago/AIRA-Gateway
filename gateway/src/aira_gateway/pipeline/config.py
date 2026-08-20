@@ -19,7 +19,14 @@ _log = get_logger("aira_gateway.pipeline")
 # refuses to build an unbounded pipeline out of whatever the read-model happens to contain.
 MAX_STEPS = 32
 MAX_FALLBACK_MODELS = 16
-#: The same ceiling Management's serializer applies to a model name.
+#: The same ceiling Management's serializer applies to a model name — **and now applied**.
+#:
+#: It was declared here and read by nothing, so the second half of the sentence below was true for
+#: the step configuration and false for the fallback chain: `from_dict` bounded how *many* models a
+#: chain may name and not how long each name may be. A name is not only looked up — a candidate the
+#: registry cannot resolve is recorded on the audit row as `{"to": <name>}` in a `json` column and
+#: named back to the caller in the `NoCapableModel` message, so an unbounded one is unbounded in
+#: two places a caller reads and a database stores.
 MAX_MODEL_LENGTH = 128
 
 #: The **same bounds the Management serializer applies**, asked again here.
@@ -41,10 +48,12 @@ MAX_MODEL_LENGTH = 128
 #: vanished is unprotected, and only one of those announces itself.
 MAX_TEXT_LENGTH = 4_000
 MAX_CATEGORIES = 32
-#: Every step key holding operator-authored prose. Named rather than inferred: a step that grows a
-#: fourth text field should have to add it here, which is a line of code instead of a hole.
-TEXT_KEYS = ("instruction", "notice")
-CATEGORY_TEXT_KEYS = ("name", "description", "model")
+# `TEXT_KEYS` and `CATEGORY_TEXT_KEYS` stood here until 2026-08-20, naming the step keys that hold
+# operator-authored prose, on a comment saying a step that grows a fourth text field "should have to
+# add it here". Nothing read either of them: `_bounded` clips **every** string in a step's config,
+# which is the stronger rule and needs no list. Two names describing a mechanism the module does not
+# have, in the module that owns the mechanism — a reader adding a field would have added it to a
+# list that decides nothing, and concluded the bound was in force because they had.
 
 
 class StepType(StrEnum):
@@ -143,7 +152,12 @@ class Pipeline:
                     config=_bounded(config, str(step_type)) if isinstance(config, dict) else {},
                 )
             )
+        # Bounded on both axes: how many, and how long each. See `MAX_MODEL_LENGTH` — a name
+        # longer than any model has is a name that reaches an audit row and a caller's error
+        # message, so it is cut here rather than carried.
         fallbacks = tuple(
-            str(m) for m in list(data.get("fallback_models", []))[:MAX_FALLBACK_MODELS] if m
+            str(m)[:MAX_MODEL_LENGTH]
+            for m in list(data.get("fallback_models", []))[:MAX_FALLBACK_MODELS]
+            if m
         )
         return cls(steps=tuple(steps), fallback_models=fallbacks)

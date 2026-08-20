@@ -32,8 +32,9 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from aira_common.access import GrantRole
 from aira_gateway.auth.principal import Principal
@@ -134,6 +135,72 @@ def _member_key(principal: Principal) -> str | None:
     return principal.person
 
 
+#: Whose request a row is, in the alphabet the row happens to be written in.
+#:
+#: `RequestLog.subject` is what the credential called itself: an OIDC token's directory id, an API
+#: key's owner *username*. `RequestLog.username` is the name beside it (`FRD-606`), and NULL on
+#: every row written before that column existed. So the person a row is about is the name where
+#: there is one and the subject otherwise — exactly :func:`aira_gateway.scopes.person`, asked of a
+#: stored row instead of a live caller.
+def _row_person(subject: str | None, username: str | None) -> str | None:
+    return username or subject
+
+
+def is_own_request(principal: Principal, row: RequestLog) -> bool:
+    """Whether ``row`` is **this caller's own** request — whichever credential made it.
+
+    The rule `_member_key` already applies to membership, applied to the other question a
+    restricted use case asks. It was `row.subject != principal.subject`, and those two are the same
+    string only when the caller reads their traffic through the same *kind* of credential that
+    produced it. The console is always OIDC and the traffic is usually an API key, so in the
+    ordinary case the comparison was a directory id against a username: a member of a use case that
+    restricts members to their own requests was refused **their own** prompt, and shown an empty
+    trace list with their own rows in the table.
+
+    Widening, never narrowing. The raw subject still matches — a row from before `username` was
+    recorded has no name to compare, and dropping that comparison would hide history that is
+    visible today.
+
+    It stays *own*: nothing here compares one person's name with another person's subject, so a
+    colleague's request is withheld exactly as before. That rests on the assumption
+    :func:`aira_gateway.scopes.person` states out loud — a directory that does not let somebody
+    rename themselves onto a colleague's name (`docs/INTEGRATIONS.md` §2).
+    """
+    if row.subject == principal.subject:
+        return True
+    person = principal.person
+    return bool(person and _row_person(row.subject, row.username) == person)
+
+
+def own_requests(principal: Principal) -> ColumnElement[bool]:
+    """:func:`is_own_request` as a filter, for the list that has to ask it of every row.
+
+    One rule, two forms, and the forms are checked against each other by
+    `test_own_requests_are_the_persons.py`: a predicate and a query that disagree is how a payload
+    comes to be refused on a screen that lists the row.
+    """
+    person = principal.person
+    own: list[ColumnElement[bool]] = [RequestLog.subject == principal.subject]
+    if person and person != principal.subject:
+        # Written as two indexable disjuncts rather than as
+        # `coalesce(username, subject) = person`, which is the same set of rows and reaches neither
+        # index: this runs on the largest table here, under the page `ix_request_logs_use_case_page`
+        # was added for. The second clause is the pre-`FRD-606` row, which has no name and whose
+        # subject is the only thing it can be recognised by.
+        own.append(RequestLog.username == person)
+        own.append(
+            and_(
+                # `IS NULL` **or** empty, because `_row_person` reads the name for its truth and
+                # SQL does not. No writer produces an empty name today — `auth/oidc.py` stores
+                # `None` for a blank claim — and the two forms of this one rule have to agree for
+                # reasons that do not depend on that staying true.
+                or_(RequestLog.username.is_(None), RequestLog.username == ""),
+                RequestLog.subject == person,
+            )
+        )
+    return or_(*own)
+
+
 async def grant_role_in(session: AsyncSession, principal: Principal, use_case: str) -> str | None:
     """This caller's role **inside** ``use_case``, or ``None`` if they hold no grant there.
 
@@ -215,7 +282,7 @@ async def _authority(
         await session.execute(select(UseCaseRead).where(UseCaseRead.slug == row.use_case))
     ).scalar_one_or_none()
     restricted = bool(use_case is not None and use_case.restrict_members_to_own_requests)
-    if restricted and row.subject != principal.subject:
+    if restricted and not is_own_request(principal, row):
         return PayloadRefusal.OTHERS_REQUEST
     return "use_case_member"
 

@@ -189,15 +189,39 @@ def test_this_rule_names_nothing_create_app_has_stopped_assembling() -> None:
 def test_the_parser_finds_the_accessors_it_is_built_around() -> None:
     """The guard's own failure mode. A parser that matches nothing passes the assertion below, and
     this project has shipped two guards that could not fail — both silently green, both found only
-    by breaking something on purpose."""
-    accessor = ast.parse((SOURCE / ACCESSOR_MODULE).read_text())
-    reads = [
-        node
-        for node in ast.walk(accessor)
-        if isinstance(node, ast.Attribute) and node.attr in SERVICES and _is_app_state(node.value)
-    ]
+    by breaking something on purpose.
 
-    assert len(reads) >= 8, f"state.py should read most services; found {len(reads)}"
+    **A property, not a number.** This read `>= 8` on a sentence claiming state.py reads "most"
+    services; it read 8 of 16, and went red on 2026-08-20 for the removal of one dead accessor —
+    `model_catalog_of`, which nothing called and which handed back the app-wide catalog where every
+    reader wants the per-request one. A literal floor makes deleting dead code look like breaking a
+    guard, and the answer to that pressure is usually to keep the dead code.
+
+    What the assertion is for is that the parser matches what it is pointed at, so it asks that
+    instead: **every accessor in this module is one the parser sees.** That cannot pass vacuously
+    (the module has accessors) and it cannot go red for a set of them growing or shrinking, which
+    is the only thing the old number was measuring.
+    """
+    accessor = ast.parse((SOURCE / ACCESSOR_MODULE).read_text())
+    seen: dict[str, set[str]] = {}
+    for node in ast.walk(accessor):
+        if not isinstance(node, ast.FunctionDef) or not node.name.endswith("_of"):
+            continue
+        seen[node.name] = {
+            read.attr
+            for read in ast.walk(node)
+            if isinstance(read, ast.Attribute) and _is_app_state(read.value)
+        }
+
+    assert seen, f"{ACCESSOR_MODULE} defines no `*_of` accessor — the parser is pointed at nothing"
+    blind = sorted(
+        name for name, attrs in seen.items() if not attrs & (SERVICES | NOT_A_SERVICE.keys())
+    )
+    assert not blind, (
+        f"the parser does not see what {ACCESSOR_MODULE} reads in {blind} — it matches on "
+        "`request.app.state.<attr>`, so an accessor written another way is invisible to every "
+        "check in this file"
+    )
 
 
 def test_every_service_read_declares_what_it_got() -> None:

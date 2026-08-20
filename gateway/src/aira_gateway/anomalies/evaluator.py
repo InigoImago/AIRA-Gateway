@@ -16,8 +16,11 @@ from sqlalchemy import Integer, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aira_common.anomalies import RATIO_KINDS, RuleKind, RuleTarget
+from aira_common.logging import get_logger
 from aira_gateway.audit import Outcome
 from aira_gateway.db.models import AnomalyRuleRead, RequestLog
+
+_log = get_logger("aira_gateway.anomalies")
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +80,12 @@ async def evaluate_rule(
         # A newer Management can publish a kind this gateway does not implement. Measuring nothing
         # is the forward-compatible answer, and the *only* safe one: passing would report a rule as
         # having found nothing, which is a statement about traffic rather than about this version.
+        #
+        # **Said out loud**, which is the rule `consumer.apply` reached on 2026-08-18 about exactly
+        # this shape: tolerance does not require silence. A rule that measures nothing is a control
+        # an operator believes is watching and is not, and the only symptom is the console showing
+        # it as enabled — one log line makes that a search instead of an investigation.
+        _log.warning("anomaly_rule_kind_not_implemented", rule_id=rule.id, kind=rule.kind)
         return []
     if kind in _COUNTED_OUTCOMES:
         return await _evaluate_rate(session, rule, kind, moment)
@@ -87,7 +96,9 @@ async def evaluate_rule(
     if kind is RuleKind.NEW_SOURCE_IP:
         return await _evaluate_new_source(session, rule, moment)
     # A kind the engine does not implement measures nothing, and says so by measuring nothing —
-    # never by passing. `FRD-500`'s vocabulary is closed precisely so this branch stays empty.
+    # never by passing. `FRD-500`'s vocabulary is closed precisely so this branch stays empty, and
+    # a rule that reaches it is announced for the same reason as the one above.
+    _log.warning("anomaly_rule_kind_not_measured", rule_id=rule.id, kind=rule.kind)
     return []
 
 

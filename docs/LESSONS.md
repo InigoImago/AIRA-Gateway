@@ -31,6 +31,15 @@ reading code.
   **read by no code on any path**, so the console offered a mode whose every use was refused.
   **Test the wire, not the ends.**
 
+  *A constant is an end too.* `pipeline/config.MAX_MODEL_LENGTH` — *"the same ceiling Management's
+  serializer applies"* — sat beside a comment naming three ways into that parser which bypass
+  Management, and was read by nothing; `foundry.DEFAULT_API_VERSION` documented the pinned Azure
+  version while the settings default carried the same literal and was the one on the wire, so
+  bumping the constant would have changed the comment and not the request. **A named bound that
+  nothing reads is a bound the module claims and does not have**, and it reads as reassurance to
+  the next person, which is worse than its absence. The counterpart is cheap: apply it, or assert
+  the two copies are equal.
+
 - **"Unreachable in practice" is a claim about who can reach it, and the console is somebody.**
   `DialectUnsupported` was left out of the one list both surfaces catch, on a documented argument:
   *"a model that cannot do a thing does not declare the capability."* True of the seed, false of
@@ -107,6 +116,13 @@ reading code.
   against a list that was itself incomplete. When a vocabulary cannot be imported across a language
   boundary, the comparison belongs in the language that can read **both** files.
 
+  *A written-down danger is not a guard.* `core/auth/roles.ts` opens by naming the live round where
+  two planes answered one question differently, states that a third copy is *"the same defect with
+  a longer fuse"* — and then restates all three role sets, with nothing comparing them for a
+  fortnight. The lists happened to agree, which is the only reason the paragraph was still true.
+  **A paragraph explaining why a copy is dangerous is evidence that the copy needs a test, not a
+  substitute for one.**
+
 - **A search that finds nothing looks exactly like a search that found nothing.** `grep` skips a
   file it judges *binary* silently — no message, exit status 1 — and `model-release-panel.ts`
   earned that judgement by writing `join('\0')` as **raw NUL bytes**: valid TypeScript, the same
@@ -127,6 +143,12 @@ reading code.
   `is_catastrophic` copied privately into the redactor and left behind when the shared one grew.
   **Extract the rule, or write the comparison test.**
 
+  *A rule can also be stated one layer up and not held below.* `record_request` removed the
+  `api="gemini"` default and documented at length why — and `PendingLog.api` and
+  `RequestLogService.record` both kept it, with the body-size middleware building a `PendingLog`
+  directly. The fix that removes a footgun from the layer where it fired leaves it loaded in every
+  layer underneath: **when a default is the defect, remove it everywhere the value is spelled.**
+
 - **The same column read in two alphabets.** A narrower relative of the above, and it survives every
   test whose fixture makes the two coincide. `use_case_members.subject` holds a **username** —
   Management emits one and the consumer writes it — and `auth/grants.py` read it against
@@ -135,6 +157,16 @@ reading code.
   case. It passed for months because the test principals carried no `preferred_username`, so
   `person()` fell back to the subject: **a fixture that makes two things equal is a fixture that
   cannot tell them apart.** Give the stand-in the shape production has.
+
+  *And fixing one reader does not fix the question.* `_member_key` was corrected to `person`;
+  `payloads._authority` two functions below, the trace list's restriction and the `mine=true`
+  filter went on asking `row.subject == principal.subject`, so a member of a use case that shows
+  each member their own requests saw an **empty list with their own rows in the table** and `403`
+  on their own prompt. Same module, same alphabet, same test principals — the matrix that covers
+  every role and every refusal reason is thirteen parametrised rows in which `subject` and
+  `username` are the same string. **Correct the definition, then grep for the comparison**: an
+  identity read in two alphabets has as many sites as there are readers, and the one that keeps
+  passing is the one whose fixture cannot see the difference.
 
 - **Returns silently for something unknown.** *Three instances:* `record_to_outbox` for an
   unmapped event type; a seed loop's `continue` past a rule naming a use case it does not create;
@@ -183,11 +215,34 @@ reading code.
   about the **request** and the function was only ever handed the response. **A docstring naming
   three cases and a condition testing two is a claim, not a control.**
 
-- **A guard that cannot fail.** *Three, each caught only by breaking it deliberately:* an Angular
+- **A dead definition is a rule the module appears to have.** `realm_roles` and `_injection_verdict`
+  were removed for this reason and it kept recurring: `ratelimit._capacity` documented *"the tests
+  and the refusal message both ask how big this bucket is"* and neither did;
+  `pipeline/config.TEXT_KEYS` named the step keys holding operator prose while `_bounded` clips
+  **every** string, so a reader adding a field would have added it to a list that decides nothing;
+  `state.model_catalog_of` was worse than merely unused — it handed back the app-wide catalog where
+  every reader wants the per-request one, so the obvious name was a trap. **Delete it, and say in
+  its place what the module actually does** — a reader who finds a plausible helper uses it.
+
+  *And the pressure not to.* Removing one of these turned a guard red: `test_app_state_is_typed`
+  asserted `len(reads) >= 8` as a vacuity check. A literal floor makes deleting dead code look like
+  breaking a guard, and the cheapest way out is to keep the dead code. **A guard against vacuity is
+  written as the property, not as a number** — every accessor in the module is one the parser sees.
+
+- **A guard that cannot fail.** *Four, each caught only by breaking it deliberately:* an Angular
   spec using `import.meta.glob` failed to *load* and Vitest reported "0 tests" inside a green run;
   an alignment guard queried a container the case it named did not use; a parser that matched
-  nothing. **Every new guard is broken on purpose before it is believed** — all three were
-  silently wrong in the same direction: passing.
+  nothing; and a **mutation** whose edit had become a no-op — `mode is not ThinkingMode.DISABLED`
+  survived `ADR-0021` making that field a plain `str`, so the comparison was always true and the
+  harness reported `SURVIVED` about a property that was fully defended. **Every new guard is broken
+  on purpose before it is believed** — the first three were silently wrong in the same direction,
+  passing; the fourth was wrong in the other, and that is the more expensive one, because it sends
+  the next reader to write a test that already exists.
+
+  *And a guard's own description is part of it.* `M29` anchors in `_purge_usecase` and read
+  *"deleting a use case keeps its request log"*; a reader matching it to a test found the one about
+  **retirement**, which never reaches that code — so a genuine gap sat behind a name that looked
+  covered. **Name the guard after the code it edits**, not after the neighbouring concept.
 
 ---
 

@@ -5,6 +5,126 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## A review pass: one identity, one discriminator, one pinned version (2026-08-20)
+
+> *"I have repeatedly hit simple but critical mistakes — hard-coded strings instead of variables,
+> security holes. Functionality must not disappear; weaknesses have to be found and fixed."*
+
+A read of the request path, both control planes and the console, looking for the shapes this
+project already knows it produces. Nine findings, all of them **rules the code states and does not
+hold** — which is why a green suite of 2646 hermetic tests could not see any of them.
+
+**The one that was visible to a user.** *"Only my own requests"* was compared as
+`row.subject == principal.subject` in three places: the payload authority (`payloads._authority`),
+the trace list's restriction, and the `mine=true` filter. The two credentials answer *who is this*
+in different alphabets — an API key's subject **is** its owner's username, an OIDC token's is the
+directory's user id — and `scopes.person` exists because of exactly that; `_member_key` already
+uses it for membership. The console is always OIDC and the traffic is usually a key, so the
+comparison was a directory id against a username and **could never match**: a member of a use case
+that restricts members to their own requests saw an empty trace list with their own rows in the
+table, and `403 others_request` on their own prompt. The whole payload matrix missed it because
+every principal in it has `subject == username`, which is what no real token looks like — the trap
+`CLAUDE.md` names as *a test whose setup never reaches the path it is named after*. One owner now,
+`payloads.own_requests`/`is_own_request`, in both a predicate and a query form, and the widening is
+strictly additive: the raw subject still matches, so rows written before `FRD-606` stay visible.
+Anomaly findings got the same treatment — `target_value` is grouped from `RequestLog.subject`, so a
+reader signed in with one credential saw half of their own findings.
+
+**A rule stated one layer up and not held below.** `record_request`'s docstring explains at length
+that `api` deliberately has no default, because `"gemini"` *"made a caller that forgot it right on
+one surface and silently wrong on every other"*. `PendingLog.api` and `RequestLogService.record`
+both still carried the default, and the body-size middleware builds a `PendingLog` directly — one
+forgetful edit from the same defect. Required in all three layers now.
+
+**Two definitions of one pinned value.** `DEFAULT_API_VERSION = "2024-10-21"` in the Foundry adapter
+was read by nothing while `GatewaySettings.foundry_api_version` carried the same literal, so bumping
+the constant would have changed the comment and not the wire — and `test_foundry.py` spelled it out
+a third time. The adapter now falls back to it (empty means unset: Compose passes `${VAR:-}`, and
+Azure refuses `api-version=` with nothing after it), the test reads it, and a new test holds the
+settings default to it — the treatment `DEFAULT_GEMINI_BASE_URL` already had.
+
+**A bound that was declared and never applied.** `pipeline/config.py` declares `MAX_MODEL_LENGTH`
+"the same ceiling Management's serializer applies", beside a comment naming three ways into this
+parser that bypass Management. `from_dict` bounded how *many* fallback models a chain may name and
+not how long each name may be — and an unresolvable candidate is written onto the audit row as
+`{"to": <name>}` in a `json` column and named back to the caller in the `NoCapableModel` message.
+
+**A field silently dropped on two dialects out of three.** `FRD-135` makes the model's reasoning a
+use case's decision and its acceptance criteria say *"with it on, thoughts reach the caller"*. Only
+the Gemini mapper read `include_reasoning`; a use case with it on that routed to a Claude model or
+any OpenAI-dialect server was answered `200` with no thoughts. Both halves were invisible because
+the **counting** worked on all three, so the reporting screen showed thinking being paid for that no
+answer ever carried. Both mappers now return it — and, more carefully, withhold it by default:
+these providers send reasoning whether or not it was asked for, so the *off* direction is the one
+that needed a test.
+
+**Three columns nothing bounded, one of them the identity.** `auth/oidc.py` cuts
+`preferred_username` to 150 and the client id to 64, on a comment saying the claim is "bounded like
+every other claim that reaches a stored field". `sub` — the column every audit row is keyed on —
+was not among them, and `_fits` exists precisely because SQLite enforces no width while Postgres
+fails the INSERT *after* the request has been served.
+
+**Five definitions nothing reached**, each of them a rule the module appeared to have:
+`ratelimit._capacity` ("the tests and the refusal message both ask" — neither did),
+`state.model_catalog_of` (worse than merely unused: it handed back the app-wide catalog where every
+reader wants the per-request one), `audit.is_pipeline_operation`, `reporting._EMPTY`,
+`attempts.WINDOW_SECONDS`, and `pipeline/config.TEXT_KEYS`/`CATEGORY_TEXT_KEYS` — the last pair
+describing a per-field allow-list while `_bounded` clips **every** string, so a reader adding a
+field would have added it to a list that decides nothing.
+
+**Two false claims in comments**, both fixed where they were written: Management's installation-budget
+delete said *"the gateway removes the row and its counters"* and the gateway removes only the row
+(consumption is keyed by `(scope, period)`, not by a budget id — so recreating a budget inside the
+same period does **not** hand it a fresh allowance, which is the sentence a reader actually needs);
+and `roles.ts` opens by naming the incident where two planes answered one question differently, then
+restates all three role sets with nothing comparing them. A new `tools/tests` guard compares them
+now, in both directions.
+
+**A tolerated event that says nothing.** `apply_event` learned on 2026-08-18 that *tolerance does
+not require silence* — an unapplied config event is a control an operator believes is in force.
+`evaluate_rule` has the same two branches for a rule kind this build does not implement, and both
+returned `[]` without a word: the console shows the rule enabled, the rule measures nothing, and
+nothing anywhere connects the two. One log line each.
+
+One guard had to be rewritten rather than satisfied. `test_app_state_is_typed` asserted
+`len(reads) >= 8` on a sentence claiming `state.py` reads "most" services; it read 8 of 16 and went
+red for the removal of one dead accessor. A literal floor makes deleting dead code look like
+breaking a guard, and the pressure that creates is to keep the dead code — so it now asserts what it
+meant: every `*_of` accessor in that module is one the parser can see. Proven by breaking it.
+
+**And the harness found two of its own.** Run in full — 568 properties, the first complete pass in
+this round — it reported two survivors, both in code this pass had not touched, and they are
+different failures wearing the same word:
+
+- **`M29`** is a real gap. Its anchor is in `_purge_usecase`, whose docstring promises *"`request_logs`
+  still stay … and outlive its record too"*, and nothing checked it: a mutation making the purge
+  sweep the audit rows passed all 29 tests in the file it names. The description said *"deleting a
+  use case keeps its request log"*, so a reader matching it to a test found the one about
+  **retirement**, which never reaches that code. `FRD-607`'s whole design is that the party who
+  might want the record gone is not the party who can remove it — a purge that took the evidence
+  with it would make the second step a longer path to the same erasure. Test added; description
+  corrected to say *purging*.
+- **`Y6`** is an inert mutation, which is the worse kind of report. It edits
+  `mode is not ThinkingMode.DISABLED`, written when `Thinking.mode` was a `ThinkingMode`;
+  `ADR-0021` made it a plain `str` — a level is the vendor's own word — and from that day the
+  comparison was **always true**, so the mutation changed nothing and reported `SURVIVED` about a
+  property that is fully defended. Verified by hand in both directions before touching it. `!=`
+  now. A mutation nobody can distinguish from a missing test sends the next reader to write one
+  that already exists — the harness's own version of a badge-wearing absent control.
+
+The same identity-comparison mistake was then searched for in the source: every `is <StrEnum>.member`
+in the three packages compares a value that really is an enum member (a typed pydantic field or an
+explicit conversion), so there is none of it outside the harness.
+
+Fourteen mutations added, three re-anchored, one corrected. The full pass ran at 568 properties
+and reported exactly the two survivors above; both were then fixed and re-verified on their own,
+and nothing else in the set is touched by either fix. Every fix was written as a failing test
+first: five of the six own-request tests were red before the
+change, and the Foundry, reasoning and console-roles guards were each broken on purpose and watched
+go red.
+
+---
+
 ## Writing down what four commits had only told the DEVLOG (2026-08-20)
 
 > *"Document everything that was not documented."*

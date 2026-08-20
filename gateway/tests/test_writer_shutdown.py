@@ -42,6 +42,7 @@ def _entry(operation: str = "generateContent") -> PendingLog:
         request_payload=None,
         response_payload=None,
         cost_nanos=None,
+        api="gemini",
     )
 
 

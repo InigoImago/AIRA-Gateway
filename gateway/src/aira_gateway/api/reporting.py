@@ -32,7 +32,12 @@ from aira_gateway.audit import Outcome
 from aira_gateway.auth.dependencies import require_principal, require_valid_use_case
 from aira_gateway.auth.principal import Principal
 from aira_gateway.db.models import AnomalyEvent, PayloadAccess, RequestLog
-from aira_gateway.payloads import may_read_payload, payload_body, restricted_use_cases
+from aira_gateway.payloads import (
+    may_read_payload,
+    own_requests,
+    payload_body,
+    restricted_use_cases,
+)
 from aira_gateway.reporting.csv_export import BREAKDOWNS, filename, render
 from aira_gateway.reporting.service import ReportingService, Scope
 from aira_gateway.state import sessionmaker_of, settings_of
@@ -222,11 +227,16 @@ def _about_this_caller(restricted: list[str], principal: Principal) -> ColumnEle
       belongs to its owner, so somebody else's is exactly what is being withheld.
     """
     own: list[ColumnElement[bool]] = [AnomalyEvent.target == RuleTarget.USE_CASE.value]
-    if principal.subject:
+    # **Either alphabet.** `target_value` is grouped from `RequestLog.subject`, which is a
+    # directory id for an OIDC caller and a username for an API key — so the same person's findings
+    # are filed under two names and a reader signed in with one of them saw only half of their own.
+    # The same widening `payloads.own_requests` makes, expressed against the column this table has.
+    names = {name for name in (principal.subject, principal.person) if name}
+    if names:
         own.append(
             and_(
                 AnomalyEvent.target == RuleTarget.SUBJECT.value,
-                AnomalyEvent.target_value == principal.subject,
+                AnomalyEvent.target_value.in_(sorted(names)),
             )
         )
     if principal.credential:
@@ -487,7 +497,10 @@ async def traces(
             )
         stmt = stmt.where(RequestLog.source_ip == source_ip)
     if mine:
-        stmt = stmt.where(RequestLog.subject == principal.subject)
+        # The same rule, and it has to be the same rule: "only my own requests" and "you may see
+        # only your own requests" are one question asked by two features, and answering it twice
+        # is how they come to disagree about who somebody is.
+        stmt = stmt.where(own_requests(principal))
     if tools_only:
         stmt = stmt.where(RequestLog.tool_calls.is_not(None))
     if flagged_only:
@@ -501,9 +514,11 @@ async def traces(
     async with sessionmaker() as session:
         restricted = await restricted_use_cases(session, principal)
     if restricted:
-        stmt = stmt.where(
-            or_(RequestLog.use_case.notin_(restricted), RequestLog.subject == principal.subject)
-        )
+        # **The person, not the credential.** `own_requests` owns the comparison — see its
+        # docstring: the console is OIDC and the traffic is usually an API key, so a raw
+        # `subject == subject` was a directory id against a username and matched nothing. A member
+        # of a restricted use case was shown an empty list with their own rows in the table.
+        stmt = stmt.where(or_(RequestLog.use_case.notin_(restricted), own_requests(principal)))
 
     if cursor:
         at, row_id = _parse_cursor(cursor)

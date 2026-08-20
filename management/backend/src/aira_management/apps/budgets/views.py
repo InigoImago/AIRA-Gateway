@@ -101,8 +101,18 @@ class InstallationBudgetViewSet(viewsets.ViewSet):
             budget_id = budget.pk
             period = budget.period
             budget.delete()
-            # The gateway removes the row *and* its counters. Deleting the budget without saying so
-            # would leave the gateway enforcing a limit nobody can see — the shape `FRD-205` found
-            # once with API keys.
+            # Deleting the budget without saying so would leave the gateway enforcing a limit
+            # nobody can see — the shape `FRD-205` found once with API keys. So the event goes out
+            # and the gateway drops the row.
+            #
+            # **It drops the row, not the counters**, and this comment claimed otherwise until
+            # 2026-08-20. `consumer.apply._delete_budget` deletes the `BudgetRead` and touches
+            # neither `budget_usage` nor the shared counter — which is right and is worth stating
+            # rather than mis-stating: consumption is keyed by `(scope, period)` and not by a
+            # budget id, so it is a fact about what was spent rather than about the rule that was
+            # in force. The consequence a reader needs: recreating this budget inside the same
+            # period does **not** hand it a fresh allowance, because the spend it would be
+            # measuring against really happened. `use_case` and `period` ride along for a reader of
+            # the topic; the gateway resolves the row by `id`.
             emit("budget.deleted", {"id": budget_id, "use_case": "", "period": period})
         return Response(status=status.HTTP_204_NO_CONTENT)

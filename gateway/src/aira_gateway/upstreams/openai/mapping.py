@@ -298,15 +298,35 @@ def finish_reason(value: Any) -> str:
     return _FINISH_REASONS.get(str(value), "stop")
 
 
-#: The field a reasoning model returns its chain of thought in — **read from, never**. `FRD-111`
-#: §2 decided thoughts are not returned, logged or persisted. With Gemini that was free (we simply
-#: never ask); with Anthropic it became an active obligation to drop a block; here it is a third
-#: shape of the same obligation, and the most easily missed, because the obvious implementation —
-#: concatenating everything the message carries — would return it.
+#: The field a reasoning model returns its chain of thought in — **read only when the use case
+#: asked for it** (`FRD-135` FR-3), and never otherwise.
+#:
+#: `FRD-111` §2 decided thoughts are not returned, logged or persisted, and `FRD-135` revised that
+#: to *never, unless a use case says otherwise*. The default half is the one this dialect makes
+#: easy to get wrong: the obvious implementation — concatenating everything the message carries —
+#: returns the reasoning to every caller, because a reasoning model here **thinks whether or not it
+#: was asked to**. So `answer_of` reads `content` alone, and this field is read from exactly one
+#: place, under the use case's own switch.
+#:
+#: Until 2026-08-20 it was read from **nowhere**, and that was the other half of the same rule
+#: broken from the other side: `include_reasoning` reached the canonical request and only the
+#: Gemini mapper acted on it, so a use case that had turned reasoning on and called a model on an
+#: OpenAI-dialect server was answered `200` with no thoughts and no explanation — the silent drop
+#: `FRD-124` exists against, on a field a use-case administrator had deliberately switched on.
 #:
 #: Measured, not assumed: a one-word answer from a local reasoning model came back with `content`
 #: of "Hi" and 439 characters of `reasoning`, all of it billed inside `completion_tokens`.
 REASONING_FIELD = "reasoning"
+
+
+def reasoning_of(message: dict[str, Any], *, wanted: bool) -> str:
+    """The chain of thought, when — and only when — the use case asked for it.
+
+    ``wanted`` is not a parameter this could do without. The provider sends the field regardless,
+    so a mapper that read it unconditionally would return other people's reasoning into a response
+    the gateway also persists, for every use case that never asked (`FRD-135` §8).
+    """
+    return str(message.get(REASONING_FIELD) or "") if wanted else ""
 
 
 def answer_of(message: dict[str, Any]) -> str:
@@ -350,13 +370,23 @@ def tool_calls_of(raw: Any) -> tuple[ToolCallPart, ...]:
     return tuple(calls)
 
 
-def openai_to_canonical(data: dict[str, Any], model: str) -> CanonicalResponse:
+def openai_to_canonical(
+    data: dict[str, Any], model: str, *, include_reasoning: bool = False
+) -> CanonicalResponse:
+    """This dialect's answer → canonical.
+
+    ``include_reasoning`` is the use case's switch (`FRD-135` FR-3), never the caller's, and it
+    defaults to **off** so that a call site which forgets it withholds rather than discloses. The
+    counting is unconditional either way — `_usage_of` reads `reasoning_tokens` regardless, because
+    a use case is charged for thinking whether or not it gets to see it.
+    """
     choices = data.get("choices") or []
     first = choices[0] if choices else {}
     message = first.get("message") or {}
     return CanonicalResponse(
         model=model,
         text=answer_of(message),
+        reasoning=reasoning_of(message, wanted=include_reasoning),
         finish_reason=finish_reason(first.get("finish_reason")),
         usage=_usage_of(data.get("usage")),
         tool_calls=tool_calls_of(message.get("tool_calls")),

@@ -62,6 +62,25 @@ is a restriction somebody may impose, not a permission that was previously assum
 payload while leaving the row visible still discloses who else calls, how often and at what cost —
 the interesting half of what is being withheld.
 
+**FR-4b — "their own" is the person, not the credential** (`FRD-606`, `scopes.person`). The two
+credentials answer *who is this* in different alphabets: an API key's subject **is** its owner's
+username, an OIDC token's is the directory's user id. Written as `row.subject == principal.subject`
+this compared a directory id with a username for every console reader — the console is always OIDC
+and the traffic is usually a key — so a restricted member was shown an **empty list with their own
+rows in the table**, and refused their own prompt. One definition (`payloads.own_requests`) serves
+the payload check, the list restriction and the `mine=true` filter, in a predicate form and a query
+form, so a screen cannot list a row whose content it will then refuse.
+
+The comparison is **widening only**: the raw subject still matches, because a row written before
+`FRD-606` added the name column has nothing else to be recognised by. It stays *own* — no
+comparison puts one person's name against another person's subject — and it inherits the assumption
+`scopes.person` states out loud, that the directory does not let somebody rename themselves onto a
+colleague's name (`docs/INTEGRATIONS.md` §2).
+
+The same reading applies to a finding: `AnomalyEvent.target_value` is grouped from
+`RequestLog.subject`, so a restricted member saw only the half of their own findings that came from
+the credential they happened to be signed in with.
+
 **FR-5 — What the pipeline objected to is a column and a filter.** Two things count: a request that
 was **blocked**, and one that was **flagged and served**. The second is the one worth having, since
 a blocked request announces itself by failing while a flagged one is a 200 with a note attached.

@@ -36,9 +36,9 @@ from aira_gateway.ratelimit.buckets import per_minute
 from aira_gateway.ratelimit.service import RateLimitService
 from aira_gateway.state import settings_of
 
-#: The bound is expressed per minute, which is what :func:`per_minute` builds. Kept as a name
-#: because the docstring above and the setting's own comment both say "per minute".
-WINDOW_SECONDS = 60.0
+# `WINDOW_SECONDS = 60.0` stood here until 2026-08-20, "kept as a name" and read by nothing — the
+# window is `per_minute`'s, and it is the only thing that decides it. A constant beside a mechanism
+# it does not feed is a second definition waiting to disagree with the first.
 
 
 async def record_failed_authentication(request: Request) -> None:

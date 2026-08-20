@@ -53,6 +53,17 @@ class PendingLog:
     request_payload: dict[str, Any] | None
     response_payload: dict[str, Any] | None
     cost_nanos: int | None
+    #: Which surface this row belongs to. **No default, deliberately**, and the reason is
+    #: `record_request`'s own docstring: it used to default to `"gemini"`, which made a call site
+    #: that forgot it right on one surface and silently wrong on every other — a KIRA request's
+    #: classifier row filed under Gemini, so a use case's governance spend was reported against a
+    #: surface it never used.
+    #:
+    #: That rule was stated one layer up and **not held here**: this dataclass and
+    #: `RequestLogService.record` both kept the default, so anything building a row directly — the
+    #: body-size middleware does — was one forgetful edit away from the same defect. A
+    #: discriminator with a default is a discriminator that stops discriminating.
+    api: str
     # FRD-122. Defaulted so a caller that only knows the old facts still produces a valid row —
     # which matters because a *refusal* often knows nothing else.
     credential: str | None = None
@@ -74,7 +85,6 @@ class PendingLog:
     provider: str | None = None
     publisher: str | None = None
     region: str | None = None
-    api: str = "gemini"
     #: Bytes the caller sent, as counted by the body-size middleware (`FRD-501`). NULL where the
     #: count is unknown, never 0 — an unknown size must not be able to look like a small one.
     request_bytes: int | None = None

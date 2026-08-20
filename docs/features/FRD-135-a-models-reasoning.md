@@ -98,7 +98,38 @@ retention rule of its own — it goes where the answer goes, and inherits the ga
 read-audit that already exist. A use case that does not store payloads does not store reasoning
 either, and that follows without a line of code.
 
-### 5.4 What this revises
+### 5.4 Every dialect, or it is not a use-case switch
+
+FR-5 says *returned*, without naming a vendor, and for a fortnight it was implemented on one. The
+switch reached the canonical request through the whole pre-dispatch sequence and **only the Gemini
+mapper read it**: a use case with reasoning on that routed to a Claude model on Vertex, or to any
+server speaking the OpenAI dialect, was answered `200` with no thoughts and no explanation — FR-4's
+silent drop arriving through the door FR-5 was supposed to open.
+
+Both halves were invisible from the console, because the *counting* was right on all three
+(`reasoning_tokens` is read from every dialect, FR-1 being unconditional): the reporting screen
+showed thinking being paid for that no answer ever carried.
+
+The three dialects differ in one way that decides the shape of the fix:
+
+| dialect | where the reasoning is | returned unasked? |
+| --- | --- | --- |
+| Gemini | `parts[].thought: true` | **no** — it is only sent when the request asks |
+| Anthropic | `content[].type == "thinking"` | no — only with a thinking budget set |
+| OpenAI | `message.reasoning` | **yes** — a reasoning model thinks with no parameter at all |
+
+So the Gemini mapper can read it unconditionally and the other two cannot: an unconditional read on
+the OpenAI dialect returns a chain of thought to every use case that never asked, into a response
+this gateway also persists (§8). Both mappers therefore take the switch as an argument that
+**defaults to off**, so a call site that forgets it withholds rather than discloses, and the
+adapters pass `request.include_reasoning` — one wire each, and the mutation harness guards both,
+because a dropped argument is invisible: the answer is simply always withheld, which looks exactly
+like the feature being off.
+
+**Streams return no reasoning on any dialect** and that is unchanged: `CanonicalChunk` has no
+channel for it, so there is nothing dialect-specific to state.
+
+### 5.5 What this revises
 
 `FRD-119` §5.4 said reasoning is never returned, logged or persisted. It is now: **never, unless a
 use case says otherwise, and then like any other content.** The refusal of `includeThoughts` stays
@@ -113,7 +144,7 @@ exactly as it is wherever the switch is off — that behaviour was right and is 
 ## 7. API / Interface Contract
 
 - Gemini surface: `thinkingConfig.includeThoughts` accepted when the use case allows it; refused by
-  name otherwise, unchanged.
+  name otherwise, unchanged. Honoured on **every** upstream dialect (§5.4), not only Google's.
 - KIRA surface: unchanged — the contract has no field for it, and inventing one is not compatibility.
 - Reporting: one more token column.
 
@@ -136,5 +167,8 @@ exactly as it is wherever the switch is off — that behaviour was right and is 
 - With it on, thoughts reach the caller and appear in the stored payload; with `store_payloads` off,
   they appear nowhere.
 - A model that reports no reasoning with the switch on is served normally.
+- **Each dialect, both directions** (§5.4): with the switch on the thoughts come back, and with it
+  off they do not — the second matters more on the OpenAI dialect, which sends them unasked.
 - Mutation: dropping `thoughtsTokenCount` from the usage mapping must turn a test red — it is the
-  85% that was invisible.
+  85% that was invisible. Likewise dropping `include_reasoning=` from either adapter's call: a lost
+  argument is silent, because withholding is the safe default it falls back to.

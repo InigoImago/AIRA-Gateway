@@ -43,6 +43,14 @@ __all__ = [
 #: Azure requires an explicit API version on every call, and the default is pinned rather than
 #: "latest": a version that moves on its own changes response shapes without a deploy, and the
 #: first sign is a mapper reading a field that stopped being sent.
+#:
+#: **This is the value, and it was not.** `GatewaySettings.foundry_api_version` carried the same
+#: literal and nothing read this constant, so there were two definitions of one pinned version and
+#: the one a request actually used was the settings default. Bumping the version here would have
+#: changed nothing on the wire while reading, in the module that owns the adapter, as though it
+#: had. Repeated in the settings class for the reason `DEFAULT_GEMINI_BASE_URL` is — a default has
+#: to live where `pydantic-settings` can see it, and the adapter must not import the settings class
+#: — and the two are now held together by `test_foundry.py` rather than by memory.
 DEFAULT_API_VERSION = "2024-10-21"
 
 
@@ -156,7 +164,11 @@ def build_foundry_upstreams(settings: GatewaySettings) -> list[Upstream]:
         client=client, api_key=settings.foundry_api_key, timeout=settings.foundry_timeout_seconds
     )
     routes = AzureRoutes(
-        {entry.model: entry.deployment for entry in declared}, settings.foundry_api_version
+        {entry.model: entry.deployment for entry in declared},
+        # Empty means unset, not "no version": Compose passes optional variables as `${VAR:-}`, and
+        # Azure refuses a call carrying `api-version=` with nothing after it. The same fallback
+        # `build_gemini_upstream` makes with its base URL, for the same reason.
+        settings.foundry_api_version or DEFAULT_API_VERSION,
     )
 
     # **One adapter per region**, not one adapter with a region. Provenance is recorded per model

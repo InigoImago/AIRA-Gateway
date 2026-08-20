@@ -30,6 +30,7 @@ from aira_gateway.core.canonical import (
 from aira_gateway.residency import RegionNotAllowed
 from aira_gateway.upstreams.base import ProviderRegistry
 from aira_gateway.upstreams.foundry import (
+    DEFAULT_API_VERSION,
     FoundrySpecInvalid,
     FoundryTransport,
     build_foundry_upstreams,
@@ -41,7 +42,9 @@ from aira_gateway.upstreams.openai.adapter import OpenAIAdapter
 Handler = Callable[[httpx.Request], httpx.Response]
 
 ENDPOINT = "https://contoso.openai.azure.com"
-API_VERSION = "2024-10-21"
+#: Read from the adapter rather than retyped. A test that spells a pinned version out again
+#: is a fourth copy of it, and a fourth copy agrees with the other three only today.
+API_VERSION = DEFAULT_API_VERSION
 
 
 def _adapter(handler: Handler, deployments: dict[str, str] | None = None) -> OpenAIAdapter:
@@ -311,3 +314,43 @@ def test_azure_owns_no_provider_name_and_offers_no_importable_listing() -> None:
 
     assert azure.serves_provider == ""
     assert azure.enumerates is False
+
+
+# == the pinned version is one value =============================================================
+
+
+def test_the_settings_default_is_the_pinned_version() -> None:
+    """Two definitions of one pinned API version is one definition too many.
+
+    `GatewaySettings.foundry_api_version` is what a request actually carries, and
+    `DEFAULT_API_VERSION` is what the adapter's own module documents as the pin — they held the
+    same literal and nothing checked it, so bumping the constant would have changed the comment and
+    not the wire. The settings class keeps its own copy because `pydantic-settings` needs a literal
+    default and the adapter must not import it; this is what keeps the copy honest, exactly as
+    `test_an_empty_base_url_falls_back_to_the_real_endpoint` does for AI Studio.
+    """
+    assert GatewaySettings().foundry_api_version == DEFAULT_API_VERSION
+
+
+async def test_an_empty_api_version_falls_back_to_the_pinned_one() -> None:
+    """Compose passes optional variables as `${VAR:-}`, which is an empty string. Azure refuses
+    `api-version=` with nothing after it, so absent and empty have to mean the same thing here."""
+    seen: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["query"] = dict(request.url.params)
+        return httpx.Response(200, json=COMPLETION)
+
+    settings = GatewaySettings(
+        foundry_endpoint="https://example.openai.azure.com",
+        foundry_api_key="k",
+        foundry_deployments="gpt-4o=prod-gpt4o|westeurope",
+        foundry_api_version="",
+    )
+    upstream = build_foundry_upstreams(settings)[0]
+    upstream._transport._client = httpx.AsyncClient(  # type: ignore[attr-defined]
+        base_url="https://example.openai.azure.com", transport=httpx.MockTransport(handler)
+    )
+    await upstream.generate(_request())
+
+    assert seen["query"] == {"api-version": DEFAULT_API_VERSION}

@@ -218,6 +218,45 @@ async def test_deleting_a_use_case_keeps_its_request_log(make_session) -> None:
     assert rows[0].cost_nanos == 85_000
 
 
+async def test_purging_a_use_case_keeps_its_request_log_too(make_session) -> None:
+    """The promise `_purge_usecase` makes in its own docstring, which nothing checked.
+
+    Retirement keeping the audit trail was tested above; the **purge** — the second, deliberate
+    decision that removes the record itself — was not, and it is the one that matters more. Its
+    docstring says *"`request_logs` still stay. They outlive the use case on purpose (`FRD-404`
+    §4.1) and outlive its record too"*, and a mutation that made the purge sweep them survived the
+    whole suite: nothing anywhere would have noticed the rows going.
+
+    That is precisely the shape `FRD-607` exists against — the threat it names is somebody using a
+    use case for the wrong purposes and then deleting it. If the purge could take the evidence with
+    it, the two-step design would be a longer path to the same erasure.
+    """
+    async with make_session() as session:
+        await apply_event(session, "usecase.upserted", {"slug": "uc", "name": "N"})
+        session.add(
+            RequestLog(
+                subject="alice",
+                auth_method="api_key",
+                use_case="uc",
+                api="gemini",
+                operation="generateContent",
+                model="mock-1",
+                status=200,
+                total_tokens=30,
+                cost_nanos=85_000,
+            )
+        )
+        await session.commit()
+
+        await apply_event(session, "usecase.deleted", {"slug": "uc"})
+        await apply_event(session, "usecase.purged", {"slug": "uc"})
+
+    assert await _all(make_session, UseCaseRead) == [], "the purge is what removes the record"
+    rows = await _all(make_session, RequestLog)
+    assert len(rows) == 1, "the audit trail outlives the record of what the use case was"
+    assert rows[0].cost_nanos == 85_000
+
+
 async def test_a_member_scoped_counter_goes_with_the_use_case(make_session) -> None:
     async with make_session() as session:
         await apply_event(session, "usecase.upserted", {"slug": "uc", "name": "N"})

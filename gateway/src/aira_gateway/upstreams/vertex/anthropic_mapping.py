@@ -253,6 +253,32 @@ def _content_blocks(message: CanonicalMessage) -> list[dict[str, Any]]:
     return blocks
 
 
+#: The block type this vendor puts its chain of thought in. Returned **only** where the use case
+#: asked for it (`FRD-135` FR-3) — see `reasoning_text` below.
+_THINKING_BLOCK = "thinking"
+
+
+def reasoning_text(content: Any, *, wanted: bool) -> str:
+    """What the model thought, where it was asked for and returned.
+
+    Two conditions, and both are real: this vendor sends `thinking` blocks only when a thinking
+    budget was set on the request, and the use case has to have turned reasoning on. Neither
+    implies the other, so a request with a budget and the switch off is answered exactly as it was
+    before this existed — the blocks are dropped by `answer_text`, which reads `_ANSWER_BLOCKS`.
+
+    It exists because `include_reasoning` reached the canonical request and only the Gemini mapper
+    acted on it: a use case that had turned reasoning on and routed to a Claude model got `200`
+    with no thoughts and nothing said, which is the silent drop `FRD-124` exists against.
+    """
+    if not wanted or not isinstance(content, list):
+        return ""
+    return "".join(
+        str(block.get(_THINKING_BLOCK, ""))
+        for block in content
+        if isinstance(block, dict) and block.get("type") == _THINKING_BLOCK
+    )
+
+
 def answer_text(content: Any) -> str:
     """The answer, with every non-answer block dropped (§5.4).
 
@@ -416,9 +442,16 @@ def tool_calls_of(content: Any) -> tuple[ToolCallPart, ...]:
 
 
 def anthropic_to_canonical(
-    data: dict[str, Any], model: str, *, structured: bool = False
+    data: dict[str, Any], model: str, *, structured: bool = False, include_reasoning: bool = False
 ) -> CanonicalResponse:
+    """This vendor's answer → canonical.
+
+    ``include_reasoning`` is the use case's switch (`FRD-135` FR-3) and defaults to **off**, so a
+    call site that forgets it withholds rather than discloses — the same default the OpenAI
+    dialect's mapper takes, for the same reason.
+    """
     text = answer_text(data.get("content"))
+    reasoning = reasoning_text(data.get("content"), wanted=include_reasoning)
     reason = finish_reason(data.get("stop_reason"))
 
     if structured:
@@ -434,6 +467,7 @@ def anthropic_to_canonical(
                 return CanonicalResponse(
                     model=model,
                     text="",
+                    reasoning=reasoning,
                     finish_reason=reason,
                     usage=usage_of(data.get("usage")),
                     tool_calls=calls,
@@ -441,6 +475,7 @@ def anthropic_to_canonical(
             return CanonicalResponse(
                 model=model,
                 text="",
+                reasoning=reasoning,
                 finish_reason=SCHEMA_UNSATISFIED,
                 usage=usage_of(data.get("usage")),
             )
@@ -452,6 +487,7 @@ def anthropic_to_canonical(
     return CanonicalResponse(
         model=model,
         text=text,
+        reasoning=reasoning,
         finish_reason=reason,
         usage=usage_of(data.get("usage")),
         # Reported for a structured request too: the model may call a function *instead of*

@@ -12,6 +12,17 @@ from aira_gateway.db.models import RequestLog
 #: `request_logs.model` and `.requested_model` are `String(128)`; `.operation` is `String(64)`.
 MODEL_COLUMN = 128
 OPERATION_COLUMN = 64
+#: `.subject` and `.username` are `String(255)`.
+#:
+#: Bounded here for the same reason the two above are, and it was not. `auth/oidc.py` cuts
+#: `preferred_username` to 150 and the client id to 64, on a comment saying the claim is "bounded
+#: like every other claim that reaches a stored field" — and `sub`, which is the one every audit
+#: row is keyed on, was not among them. A directory that mints a long subject would therefore fail
+#: the INSERT on Postgres *after* the request had been served, and the row recording it would
+#: vanish: `FRD-122`'s rule broken by the row meant to satisfy it, which is exactly what `_fits`
+#: was written for. Bounded rather than refused, because the identity is only truncated where the
+#: alternative is having no record of the request at all.
+SUBJECT_COLUMN = 255
 
 
 def _fits(value: str | None, width: int = MODEL_COLUMN) -> str | None:
@@ -66,7 +77,9 @@ class RequestLogService:
         request_payload: dict[str, Any] | None,
         response_payload: dict[str, Any] | None,
         cost_nanos: int | None = None,
-        api: str = "gemini",
+        #: No default — see `PendingLog.api`. The one caller in production passes what the surface
+        #: put on the audit trail; a test that omits it is a test writing a row no surface produced.
+        api: str,
         credential: str | None = None,
         issuer: str | None = None,
         outcome: str | None = None,
@@ -82,8 +95,10 @@ class RequestLogService:
         request_bytes: int | None = None,
     ) -> RequestLog:
         entry = RequestLog(
-            subject=subject,
-            username=username,
+            # Caller-derived like the three below: `subject` is a token's `sub` and `username` its
+            # `preferred_username`, and neither is this service's to choose. See `SUBJECT_COLUMN`.
+            subject=str(_fits(subject, SUBJECT_COLUMN)),
+            username=_fits(username, SUBJECT_COLUMN),
             auth_method=auth_method,
             use_case=use_case,
             source_ip=source_ip,

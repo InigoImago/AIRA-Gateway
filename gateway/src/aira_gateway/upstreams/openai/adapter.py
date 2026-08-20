@@ -183,7 +183,10 @@ class OpenAIAdapter:
     async def generate(self, request: CanonicalRequest) -> CanonicalResponse:
         body = self._named(canonical_to_openai(request), request.model)
         data = await self._transport.post(self._routes.chat(request.model), body)
-        return openai_to_canonical(data, request.model)
+        # The use case's switch, carried to the mapper rather than decided there: the request is
+        # the only thing that knows, and this dialect returns reasoning whether or not it was
+        # asked for (`FRD-135` FR-3).
+        return openai_to_canonical(data, request.model, include_reasoning=request.include_reasoning)
 
     async def stream_generate(self, request: CanonicalRequest) -> AsyncIterator[CanonicalChunk]:
         body = self._named(canonical_to_openai(request, stream=True), request.model)

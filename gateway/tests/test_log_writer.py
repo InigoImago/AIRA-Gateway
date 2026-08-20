@@ -77,6 +77,7 @@ def _entry(operation: str = "generateContent", use_case: str | None = None) -> P
         request_payload={"contents": [{"parts": [{"text": "personnel number 4711"}]}]},
         response_payload={"text": "ok"},
         cost_nanos=100,
+        api="gemini",
     )
 
 

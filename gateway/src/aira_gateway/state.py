@@ -40,7 +40,6 @@ if TYPE_CHECKING:  # pragma: no cover - imported for annotations only
 
     from aira_gateway.anomalies.suspensions import SuspensionService
     from aira_gateway.budgets.service import BudgetService
-    from aira_gateway.catalog import ModelCatalog
     from aira_gateway.config import GatewaySettings
     from aira_gateway.persistence.writer import RequestLogWriter
     from aira_gateway.pricing import PricingService
@@ -101,8 +100,9 @@ def providers_of(request: Request) -> ProviderRegistry:
     return registry
 
 
-def model_catalog_of(request: Request) -> ModelCatalog:
-    """What a model is declared to be (`FRD-114`). Also `serving.catalog_of`, for the same
-    reason as above."""
-    catalog: ModelCatalog = request.app.state.catalog
-    return catalog
+# `model_catalog_of(request)` stood here until 2026-08-20 and nothing called it;
+# `serving.catalog_of` is what every reader uses. Removed rather than kept, and this one was worse
+# than an ordinary unused helper: it handed back `app.state.catalog` directly, while `catalog_of`
+# hands back the **per-request** view (`ModelCatalog.per_request`) that exists so five readers
+# asking about one model are one query instead of five. A caller reaching for the obvious name
+# here would have silently opted out of that.

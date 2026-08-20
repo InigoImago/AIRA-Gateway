@@ -30,10 +30,10 @@ from aira_gateway.core.canonical import CanonicalUsage
 #: the operation give a reader the split, and only the *total* is deliberately one number.
 PIPELINE_OPERATION_PREFIX = "pipeline:"
 
-
-def is_pipeline_operation(operation: str | None) -> bool:
-    """Whether this row is a step's own model call rather than a request somebody made."""
-    return bool(operation) and str(operation).startswith(PIPELINE_OPERATION_PREFIX)
+# `is_pipeline_operation(operation)` stood here until 2026-08-20. It was written for the reporting
+# split that `FR-9b` then reversed — both kinds of row are counted now — and nothing has called it
+# since. The prefix above still earns its place, because it is what tells the two kinds apart on a
+# screen; a predicate nobody asks is a rule this module claims and does not apply.
 
 
 class Outcome(StrEnum):

@@ -29,6 +29,7 @@ from typing import Any
 from aira_gateway.pipeline.config import (
     MAX_CATEGORIES,
     MAX_FALLBACK_MODELS,
+    MAX_MODEL_LENGTH,
     MAX_STEPS,
     MAX_TEXT_LENGTH,
     Pipeline,
@@ -97,6 +98,21 @@ def test_the_bounds_that_were_already_asked_still_are() -> None:
 
     assert len(parsed.steps) == MAX_STEPS
     assert len(parsed.fallback_models) == MAX_FALLBACK_MODELS
+
+
+def test_a_fallback_model_name_is_bounded_as_well_as_counted() -> None:
+    """`MAX_MODEL_LENGTH` was declared in this module and read by nothing.
+
+    The chain bounded how *many* models it may name and not how long each name may be, and a name
+    does more than fail a lookup: an unresolvable candidate is recorded on the audit row as
+    `{"step": "dispatch", "action": "skipped", "to": <name>}` in a `json` column, and named back to
+    the caller inside the `NoCapableModel` message. Three ways in reach this parser without passing
+    Management's serializer — a row written straight into the read-model, a publish onto an
+    unauthenticated broker, and `pipeline:dryRun`, whose `pipeline` field is unvalidated by design.
+    """
+    parsed = Pipeline.from_dict({"fallback_models": ["m" * (MAX_MODEL_LENGTH * 10)]})
+
+    assert parsed.fallback_models == ("m" * MAX_MODEL_LENGTH,)
 
 
 def test_a_step_type_this_build_does_not_know_is_still_dropped() -> None:

@@ -498,7 +498,11 @@ class VertexAnthropicAdapter:
             # arrives in a tool-call block that an ordinary answer would never contain, and reading
             # it back as text is the difference between a document and prose about one.
             answer = anthropic_to_canonical(
-                data, request.model, structured=request.response_schema is not None
+                data,
+                request.model,
+                structured=request.response_schema is not None,
+                # The use case's switch, carried rather than decided here (`FRD-135` FR-3).
+                include_reasoning=request.include_reasoning,
             )
             return answer.model_copy(update={"served_region": region})
 

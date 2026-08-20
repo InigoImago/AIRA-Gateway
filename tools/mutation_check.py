@@ -1328,7 +1328,12 @@ MUTATIONS = [
     ),
     Mutation(
         "M29",
-        "deleting a use case keeps its request log",
+        # **"Purging"**, not "deleting". The anchor is in `_purge_usecase` and the description said
+        # `deleting`, which is what `usecase.deleted` does — so a reader matching this line to a
+        # test found `test_deleting_a_use_case_keeps_its_request_log`, which exercises retirement
+        # and never reaches this code. The mutation survived for as long as the two words were
+        # treated as one.
+        "purging a use case keeps its request log",
         "gateway/src/aira_gateway/consumer/apply.py",
         "    await session.execute(delete(UseCaseRead).where(UseCaseRead.slug == slug))",
         # The import is local to the mutation: without it this would fail on a NameError, and a
@@ -1998,6 +2003,78 @@ MUTATIONS = [
         '    thoughts = int(meta.get("thoughtsTokenCount", 0) or 0)',
         "    thoughts = 0",
         "gateway/tests/test_reasoning.py",
+    ),
+    # `FRD-135` FR-3 on the two dialects that were not honouring it. The switch reached the
+    # canonical request and only the Gemini mapper read it, so a use case with reasoning on and a
+    # Claude or OpenAI-dialect model was answered 200 with no thoughts — while the *counting*
+    # worked on all three, so reporting showed thinking being paid for that no answer carried.
+    #
+    # Both directions per dialect, and the second is the one that matters more: these providers
+    # send reasoning whether or not it was asked for, so an unconditional read discloses it to
+    # every use case that never asked (`FRD-135` §8 puts it behind the stored-prompt gate).
+    Mutation(
+        "C28a",
+        "the OpenAI dialect returns the reasoning a use case asked for",
+        "gateway/src/aira_gateway/upstreams/openai/mapping.py",
+        '    return str(message.get(REASONING_FIELD) or "") if wanted else ""',
+        '    return ""',
+        "gateway/tests/test_reasoning_reaches_every_dialect.py",
+    ),
+    Mutation(
+        "C28b",
+        "and returns it to nobody who did not",
+        "gateway/src/aira_gateway/upstreams/openai/mapping.py",
+        '    return str(message.get(REASONING_FIELD) or "") if wanted else ""',
+        '    return str(message.get(REASONING_FIELD) or "")',
+        "gateway/tests/test_reasoning_reaches_every_dialect.py",
+    ),
+    Mutation(
+        "C28c",
+        "Anthropic's thinking blocks reach a use case that asked for them",
+        "gateway/src/aira_gateway/upstreams/vertex/anthropic_mapping.py",
+        "    if not wanted or not isinstance(content, list):",
+        "    if True:",
+        "gateway/tests/test_reasoning_reaches_every_dialect.py",
+    ),
+    Mutation(
+        "C28d",
+        "and are dropped for every use case that did not",
+        "gateway/src/aira_gateway/upstreams/vertex/anthropic_mapping.py",
+        "    if not wanted or not isinstance(content, list):",
+        "    if not isinstance(content, list):",
+        "gateway/tests/test_reasoning_reaches_every_dialect.py",
+    ),
+    Mutation(
+        "C28e",
+        "the adapter carries the use case's switch rather than defaulting it away",
+        "gateway/src/aira_gateway/upstreams/openai/adapter.py",
+        "        return openai_to_canonical(data, request.model, include_reasoning=request.include_reasoning)",  # noqa: E501
+        "        return openai_to_canonical(data, request.model)",
+        "gateway/tests/test_reasoning.py gateway/tests/test_reasoning_reaches_every_dialect.py",
+    ),
+    Mutation(
+        "C27a",
+        "the subject a row is keyed on is bounded to its column, like the model name beside it",
+        "gateway/src/aira_gateway/persistence/service.py",
+        "            subject=str(_fits(subject, SUBJECT_COLUMN)),",
+        "            subject=subject,",
+        "gateway/tests/test_persistence_service.py",
+    ),
+    Mutation(
+        "C27b",
+        "and so is the name recorded beside it",
+        "gateway/src/aira_gateway/persistence/service.py",
+        "            username=_fits(username, SUBJECT_COLUMN),",
+        "            username=username,",
+        "gateway/tests/test_persistence_service.py",
+    ),
+    Mutation(
+        "C28f",
+        "the Vertex Anthropic adapter carries it too — two adapters, two chances to drop it",
+        "gateway/src/aira_gateway/upstreams/vertex/adapters.py",
+        "                include_reasoning=request.include_reasoning,",
+        "                include_reasoning=False,",
+        "gateway/tests/test_reasoning_reaches_every_dialect.py",
     ),
     Mutation(
         "C28",
@@ -2698,12 +2775,20 @@ MUTATIONS = [
         '        supported: frozenset[str] = getattr(provider, "sampling_controls", self._requested)',
         NO_SILENT_DROP,
     ),
+    # **`!=`, not `is not`, and the difference is the whole entry.** This was written as
+    # `mode is not ThinkingMode.DISABLED` while `Thinking.mode` was a `ThinkingMode`; `ADR-0021`
+    # made it a plain `str` — a level is the vendor's own word, so a closed enum would make a new
+    # word a code change — and from that day the comparison was **always true** and the mutation
+    # changed nothing. It then reported `SURVIVED` about a property that is in fact defended:
+    # `test_disabled_thinking_says_off_out_loud_rather_than_omitting_the_parameter` catches the
+    # real edit immediately. A mutation that is inert is worse than a missing one, because it
+    # sends whoever reads the report to write a test that already exists.
     Mutation(
         "Y6",
         "thinking switched off is sent as off, not as an absent parameter the model reads as its default",
         "gateway/src/aira_gateway/upstreams/openai/mapping.py",
         '    if request.thinking is not None:\n        body["reasoning_effort"]',
-        "    if request.thinking is not None and request.thinking.mode is not ThinkingMode.DISABLED:"
+        "    if request.thinking is not None and request.thinking.mode != ThinkingMode.DISABLED:"
         '\n        body["reasoning_effort"]',
         f"{OPENAI_DIALECT} {NO_SILENT_DROP}",
     ),
@@ -3272,9 +3357,9 @@ MUTATIONS = [
         "N43",
         "'only my own requests' means the caller's identity, not everybody's",
         "gateway/src/aira_gateway/api/reporting.py",
-        "        stmt = stmt.where(RequestLog.subject == principal.subject)",
+        "        stmt = stmt.where(own_requests(principal))",
         "        stmt = stmt",
-        "gateway/tests/test_traces.py",
+        "gateway/tests/test_traces.py gateway/tests/test_own_requests_are_the_persons.py",
     ),
     Mutation(
         "N44",
@@ -3331,17 +3416,54 @@ MUTATIONS = [
         "N49",
         "a restricted member is refused somebody else's request",
         "gateway/src/aira_gateway/payloads.py",
-        "    if restricted and row.subject != principal.subject:",
-        "    if False and row.subject != principal.subject:",
+        "    if restricted and not is_own_request(principal, row):",
+        "    if False and not is_own_request(principal, row):",
         "gateway/tests/test_payload_access.py",
     ),
     Mutation(
         "N50",
         "a member reads a colleague's request until somebody restricts it",
         "gateway/src/aira_gateway/payloads.py",
-        "    if restricted and row.subject != principal.subject:",
-        "    if row.subject != principal.subject:",
+        "    if restricted and not is_own_request(principal, row):",
+        "    if not is_own_request(principal, row):",
         "gateway/tests/test_payload_access.py",
+    ),
+    # ---- "own" means the person, not one credential's alphabet (FRD-606 × FRD-505) -----------
+    #
+    # The two credentials answer *who is this* in different alphabets, so `row.subject ==
+    # principal.subject` compared a directory id with a username for every console reader and
+    # matched nothing. Measured: a member of a use case that restricts members to their own
+    # requests saw an empty trace list with their own rows in the table, and `403 others_request`
+    # on their own prompt.
+    #
+    # Both directions, like `N49`/`N50` above. `N60` and `N62` narrow the rule back to the subject
+    # — the defect itself — and `N61` widens it past *own*, which is the one that would matter for
+    # a reason other than usability. The whole matrix in `test_payload_access.py` uses principals
+    # whose subject and username coincide, which is exactly why it could not see any of this; the
+    # tests named here are the ones that build a principal like a real token.
+    Mutation(
+        "N60",
+        "a person's own request is theirs whichever credential made it (the predicate)",
+        "gateway/src/aira_gateway/payloads.py",
+        "    person = principal.person\n    return bool(person and _row_person(row.subject, row.username) == person)",
+        "    return False",
+        "gateway/tests/test_own_requests_are_the_persons.py",
+    ),
+    Mutation(
+        "N61",
+        "and never anybody else's — the widening stops at one person",
+        "gateway/src/aira_gateway/payloads.py",
+        "    return bool(person and _row_person(row.subject, row.username) == person)",
+        "    return bool(person)",
+        "gateway/tests/test_own_requests_are_the_persons.py",
+    ),
+    Mutation(
+        "N62",
+        "the same rule reaches the list, not only the single payload (the query)",
+        "gateway/src/aira_gateway/payloads.py",
+        "        own.append(RequestLog.username == person)",
+        "        pass",
+        "gateway/tests/test_own_requests_are_the_persons.py",
     ),
     Mutation(
         "N51",
@@ -4913,8 +5035,8 @@ MUTATIONS = [
         "QA47",
         "the name is written beside the subject, or nothing can join a person to themselves",
         "gateway/src/aira_gateway/persistence/service.py",
-        "            username=username,",
-        "",
+        "            username=_fits(username, SUBJECT_COLUMN),",
+        "            username=None,",
         "gateway/tests/test_persistence_service.py gateway/tests/test_persistence_recorder.py",
     ),
     Mutation(

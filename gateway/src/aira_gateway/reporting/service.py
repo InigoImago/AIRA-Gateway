@@ -74,7 +74,9 @@ class Figures:
         }
 
 
-_EMPTY = Figures("", 0, 0, 0, 0, 0, 0, 0, 0, None, None)
+# `_EMPTY` — a zeroed `Figures` — stood here until 2026-08-20 with no reader. Removed on
+# `FRD-603`'s own rule: **unknown is never rendered as zero**, and a module-level row of
+# zeros is exactly the thing somebody reaches for when a query returns nothing.
 
 
 def _measures() -> list[Any]:

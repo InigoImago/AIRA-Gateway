@@ -161,10 +161,8 @@ class RateLimitService:
             self._cache.pop(use_case, None)
 
 
-def _capacity(record: RateLimitRead) -> int:
-    """Bucket size, as :func:`per_minute` resolves it.
-
-    Kept as a name of its own because the tests and the refusal message both ask "how big is this
-    bucket", and answering it by restating the rule is how the two came to disagree elsewhere.
-    """
-    return per_minute("", record.limit_rpm, burst=record.burst).capacity
+# `_capacity(record)` stood here until 2026-08-20, on a docstring saying "the tests and the refusal
+# message both ask how big this bucket is". Neither did: the refusal above reads `bucket.capacity`
+# off the `BucketRequest` it already holds, and no test ever imported it. A helper nothing reaches
+# is a rule the module appears to have and does not — the same reason `realm_roles` and
+# `_injection_verdict` were removed rather than kept.

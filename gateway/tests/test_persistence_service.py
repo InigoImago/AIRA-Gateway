@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from aira_gateway.core.canonical import CanonicalUsage
 from aira_gateway.db.base import build_engine, build_sessionmaker, create_all
 from aira_gateway.db.models import RequestLog
-from aira_gateway.persistence.service import RequestLogService
+from aira_gateway.persistence.service import SUBJECT_COLUMN, RequestLogService
 
 
 @pytest_asyncio.fixture
@@ -31,6 +31,7 @@ async def test_record_with_usage(make_session) -> None:
             usage=CanonicalUsage(prompt_tokens=3, completion_tokens=5),
             latency_ms=12,
             trace_id="abc",
+            api="gemini",
             request_payload={"a": 1},
             response_payload={"b": 2},
         )
@@ -61,6 +62,7 @@ async def test_record_without_usage(make_session) -> None:
             usage=None,
             latency_ms=None,
             trace_id=None,
+            api="gemini",
             request_payload=None,
             response_payload=None,
         )
@@ -93,6 +95,7 @@ async def test_the_name_is_persisted_beside_the_subject(make_session) -> None:
             usage=None,
             latency_ms=1,
             trace_id=None,
+            api="gemini",
             request_payload=None,
             response_payload=None,
         )
@@ -118,6 +121,7 @@ async def test_a_row_without_a_name_keeps_null(make_session) -> None:
             usage=None,
             latency_ms=1,
             trace_id=None,
+            api="gemini",
             request_payload=None,
             response_payload=None,
         )
@@ -126,3 +130,35 @@ async def test_a_row_without_a_name_keeps_null(make_session) -> None:
         row = (await session.execute(select(RequestLog))).scalar_one()
 
     assert row.username is None
+
+
+async def test_the_identity_columns_are_bounded_like_the_model_name(make_session) -> None:
+    """`subject` and `username` are `String(255)` and neither is this service's to choose.
+
+    `auth/oidc.py` cuts `preferred_username` to 150 and the client id to 64, on a comment saying the
+    claim is *"bounded like every other claim that reaches a stored field"* — and `sub`, the one
+    every audit row is keyed on, was not among them. SQLite enforces no width, so the hermetic suite
+    could not see it; on Postgres the INSERT fails **after** the request has been served, and the
+    row recording it is the thing that disappears. The same trade `_fits` already makes for the
+    model name: the row's precision, never the row.
+    """
+    async with make_session() as session:
+        row = await RequestLogService(session).record(
+            subject="s" * 400,
+            username="u" * 400,
+            auth_method="oidc",
+            use_case=None,
+            source_ip=None,
+            operation="generateContent",
+            model="mock-1",
+            status=200,
+            usage=None,
+            latency_ms=None,
+            trace_id=None,
+            request_payload=None,
+            response_payload=None,
+            api="gemini",
+        )
+
+    assert len(row.subject) == SUBJECT_COLUMN
+    assert row.username is not None and len(row.username) == SUBJECT_COLUMN
