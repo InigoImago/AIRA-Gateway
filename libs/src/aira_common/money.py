@@ -33,7 +33,20 @@ def to_nanos(amount: Decimal | int | str) -> int:
         value = Decimal(str(amount))
     except (InvalidOperation, ValueError) as exc:
         raise ValueError(f"not a valid amount: {amount!r}") from exc
-    return int(value.quantize(_QUANTUM, rounding=ROUND_HALF_UP) * NANOS_PER_UNIT)
+    if not value.is_finite():
+        # **`Decimal` accepts what money does not.** `Decimal("Infinity")` and `Decimal("NaN")`
+        # construct happily and then make `quantize` raise `InvalidOperation` — an
+        # `ArithmeticError`, from a function whose one documented refusal is a `ValueError`, so a
+        # caller following the contract does not catch it. That is the same value `LESSONS.md` §1
+        # records costing an audit row: JSON has no `Infinity`, Python's parser produces one
+        # anyway, and it travels as the string `"Infinity"` through exactly this door.
+        raise ValueError(f"not a valid amount: {amount!r}")
+    try:
+        return int(value.quantize(_QUANTUM, rounding=ROUND_HALF_UP) * NANOS_PER_UNIT)
+    except InvalidOperation as exc:
+        # Finite and still not statable to the nano-unit — `1e400` is the shape. Refused in the
+        # one word this function promises rather than raised as arithmetic nobody is catching.
+        raise ValueError(f"amount is out of range: {amount!r}") from exc
 
 
 def from_nanos(nanos: int) -> Decimal:

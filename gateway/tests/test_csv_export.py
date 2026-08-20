@@ -84,6 +84,32 @@ def test_a_key_containing_the_delimiter_is_quoted_rather_than_splitting_the_row(
     assert len(rows[1]) == len(rows[2])
 
 
+@pytest.mark.parametrize("formula", ["=1+1", "+1", "-2+3", "@SUM(A1)", "\tSUM(A1)"])
+def test_a_key_a_spreadsheet_would_evaluate_is_written_as_text(formula: str) -> None:
+    """**A cell beginning with `=` is a formula, and the `key` column is caller content.**
+
+    `AuditTrail.served_model` falls back to `requested_model` for a request that never reached a
+    model, so a `404 model_not_found` row carries the string out of the URL. Measured against the
+    hermetic app: one refused request for a model named `=1+1`, and the month's export by model
+    carries `=1+1,1,0,…` as its first data row — a file every oversight role can download.
+
+    Prefixed rather than stripped or refused: an export has to say what the audit trail holds, and
+    the marker is not displayed by any spreadsheet that honours it.
+    """
+    report = {"by_model": [{**REPORT["by_use_case"][0], "key": formula}]}
+
+    key = _rows(render(report, "model", "EUR"))[1][0]
+
+    assert key == "'" + formula, key
+    assert not key.startswith(("=", "+", "-", "@", "\t", "\r"))
+
+
+def test_an_ordinary_key_is_not_decorated() -> None:
+    """The narrowing the guard above must not do: a name that is not a formula is written as it is,
+    because a reader comparing an export against a screen must find the same string."""
+    assert _rows(render(REPORT, "use_case", "EUR"))[1][0] == "kundenservice"
+
+
 def test_the_header_names_the_currency_rather_than_leaving_cost_ambiguous() -> None:
     """One installation, one currency (`FRD-403`) — but a column called `cost` in a file that gets
     forwarded is a number without a unit."""
@@ -193,6 +219,37 @@ def test_csv_is_served_as_an_attachment_with_a_charset() -> None:
     assert "charset=utf-8" in response.headers["content-type"]
     assert response.headers["content-disposition"].startswith("attachment;")
     assert "aira-usage_use_case_" in response.headers["content-disposition"]
+
+
+def test_a_caller_cannot_put_a_formula_into_somebody_elses_export() -> None:
+    """**The whole path, because the unit test above only proves the renderer.**
+
+    A caller names a model that does not exist; `FRD-122` records the refusal, and
+    `AuditTrail.served_model` falls back to what they asked for — so the string out of the URL
+    becomes a `by_model` key. Measured before the fix: the month's export carried `=1+1,1,0,…` as
+    its first data row, in a file every oversight role can download.
+
+    The model name is slash-free on purpose: a `/` would not match the route's path segment at all,
+    and a probe that 404s before any row is written proves nothing (it passed, first try).
+    """
+    with _client() as client:
+        refused = client.post(
+            "/v1beta/models/=1+1:generateContent",
+            json={"contents": [{"role": "user", "parts": [{"text": "hi"}]}]},
+            headers={"X-AIRA-Use-Case": "demo-uc"},
+        )
+        assert refused.status_code == 404, refused.text
+
+        export = client.get(
+            "/v1beta/reporting",
+            params={"breakdown": "model"},
+            headers={"Accept": "text/csv"},
+        )
+
+    keys = [row[0] for row in _rows(export.text)[1:] if row]
+
+    assert "=1+1" not in keys, "a spreadsheet would evaluate this cell"
+    assert "'=1+1" in keys, "and the row still has to be in the file"
 
 
 @pytest.mark.parametrize("accept", ["application/xml", "text/html", "application/pdf"])

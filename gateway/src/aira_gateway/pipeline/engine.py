@@ -242,7 +242,7 @@ class DryRunResult:
 #:
 #: That is `FRD-125`'s defect arriving through a different door, and the shape this project keeps
 #: naming: **a control that stops working without saying so.** The resolver is handed in per
-#: request, exactly as `dispatch_with_fallback` takes `provider_of`, because only the request has
+#: request, exactly as `dispatch_with_fallback` takes `routing_of`, because only the request has
 #: the catalog.
 #:
 #: It answers with the **declaration** rather than with a provider name, because the step needs two
@@ -279,8 +279,8 @@ class PipelineEngine:
         still spent whatever it took to decide that, and a caller-supplied list means the spend
         survives the exception exactly as the decisions do (`FRD-125`).
 
-        ``provider_of`` is how a step reaches a model the **catalog** knows and configuration does
-        not (`FRD-507` stage B). Without it such a step finds no provider and quietly does less.
+        ``declaration_of`` is how a step reaches a model the **catalog** knows and configuration
+        does not (`FRD-507` stage B). Without it such a step finds no provider and does less.
         """
         outcome = PipelineOutcome(
             request=request,

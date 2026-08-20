@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from typing import Any
 
 from aira_gateway.core.canonical import CanonicalRequest, CanonicalResponse
 from aira_gateway.residency import RegionNotAllowed
@@ -30,6 +31,33 @@ from aira_gateway.upstreams.base import AmbiguousModel, ProviderRegistry, Upstre
 
 #: Given a model name, why it may not serve this request — or ``None`` if it may.
 Permits = Callable[[str], Awaitable[str | None]]
+
+
+@dataclass(frozen=True, slots=True)
+class Routing:
+    """Everything the catalogue says about **reaching** one candidate.
+
+    Three facts from one declaration, kept together because they are read together and because
+    fetching two of them and leaving the third behind is exactly how this went wrong. The chain
+    used to ask only for ``(provider, publisher)``; ``addressing`` stayed as the *primary's*, on a
+    request that had already been re-pointed at a different model.
+
+    Nowhere is that visible except at the platform that reads it. On Vertex, ``addressing`` is the
+    region list, so a fallback catalogued in `europe-west4` was addressed at the primary's
+    `europe-west1` — *not deployed here*, then the primary's remaining regions, all equally wrong;
+    and a catalogued Vertex fallback behind a primary that carries no addressing at all was refused
+    with *"catalogued for this platform and says no region"*, which the catalogue flatly
+    contradicts. `ADR-0011`'s rule in its usual clothes: the caller's model name is never the
+    platform's addressing, and a chain that changes the first must change the second with it.
+    """
+
+    provider: str = ""
+    publisher: str = ""
+    addressing: dict[str, Any] = field(default_factory=dict)
+
+
+#: Given a model name, how the catalogue says to reach it.
+RoutingOf = Callable[[str], Awaitable[Routing]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,7 +97,7 @@ async def dispatch_with_fallback(
     fallback_models: tuple[str, ...],
     *,
     permits: Permits | None = None,
-    provider_of: Callable[[str], Awaitable[tuple[str, str]]] | None = None,
+    routing_of: RoutingOf | None = None,
 ) -> Dispatched:
     candidates = [request.model, *[m for m in fallback_models if m != request.model]]
     skipped: list[Skipped] = []
@@ -79,8 +107,8 @@ async def dispatch_with_fallback(
         # The catalog names who serves a model, so one that was catalogued rather than configured
         # resolves too (`FRD-507`). Asked per candidate, because a fallback chain may cross
         # providers — that is what a chain is for.
-        declared = await provider_of(model) if provider_of is not None else ("", "")
-        provider = registry.provider_for(model, *declared)
+        routing = await routing_of(model) if routing_of is not None else Routing()
+        provider = registry.provider_for(model, routing.provider, routing.publisher)
         if provider is None:
             # Previously a silent `continue`. A model nobody serves is a configuration mistake,
             # and it should be visible in the failure rather than inferred from its absence.
@@ -92,7 +120,15 @@ async def dispatch_with_fallback(
                 skipped.append(Skipped(model, refusal))
                 continue
         try:
-            response = await provider.generate(request.model_copy(update={"model": model}))
+            # **The addressing moves with the model.** `model_copy` used to change the name alone,
+            # which left every hop after the first carrying the primary's platform address — see
+            # :class:`Routing`. Only where the chain was told how to look one up: with no
+            # ``routing_of`` the request keeps what it arrived with, which is what a caller that
+            # resolved the addressing itself expects.
+            update: dict[str, Any] = {"model": model}
+            if routing_of is not None:
+                update["addressing"] = routing.addressing
+            response = await provider.generate(request.model_copy(update=update))
         except UpstreamError as exc:
             last_error = exc
         except (AmbiguousModel, RegionNotAllowed) as exc:

@@ -409,3 +409,24 @@ def test_a_lone_surrogate_in_a_payload_does_not_cost_the_row_either() -> None:
     assert cleaned["ok"] == "plain"
     assert "unrepresentable" in cleaned["text"]
     json.dumps(cleaned, allow_nan=False).encode("utf-8")
+
+
+def test_a_key_is_as_unstorable_as_a_value_and_was_copied_through() -> None:
+    """**The rule was applied at each recursion and missing from one of them.**
+
+    `{str(key): storable(item)}` sanitised what a mapping held and passed its keys through
+    untouched, so a payload keyed on a lone surrogate came out of the function whose job is to make
+    a payload storable still unable to be encoded — and cost the whole row.
+
+    Both tests above hand it a well-keyed dict, which is why nothing saw it. The assertion is the
+    one that matters: what comes out **encodes**, keys included. `ensure_ascii=False` is what makes
+    `dumps` emit the character rather than re-escaping it, which is what makes the encoder object —
+    the same spelling `ensure_body_is_encodable` uses at the caller's door.
+    """
+    from aira_gateway.persistence.writer import storable
+
+    cleaned = storable({"k\ud800ey": "v", "ok": "plain", "n": {"deep\ud800": 1}})
+
+    assert cleaned["ok"] == "plain"
+    assert "unrepresentable" in "".join(cleaned)
+    json.dumps(cleaned, ensure_ascii=False, allow_nan=False).encode("utf-8")

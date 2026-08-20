@@ -34,7 +34,7 @@ from aira_gateway.api.serving import (
     annotate,
     catalog_of,
     check_structured_result,
-    declared_provider,
+    declared_routing,
     deprecation_headers,
     elapsed_ms,
     ensure_body_is_encodable,
@@ -386,7 +386,7 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
                     canonical,
                     fallbacks,
                     permits=await requirements_for(request, canonical),
-                    provider_of=await declared_provider(request),
+                    routing_of=await declared_routing(request),
                 )
                 # What the caller is owed about their own prompt having been rewritten under them
                 # (`FRD-309`). Applied on the canonical answer, so the wire mapping and the audit

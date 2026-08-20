@@ -309,6 +309,18 @@ async def test_an_unknown_kind_measures_nothing_rather_than_passing(sessions) ->
     assert await _evaluate(sessions, _rule(kind="not_a_kind", threshold=1)) == []
 
 
+async def test_an_unknown_target_measures_nothing_rather_than_raising(sessions) -> None:
+    """The rule above, on the field beside it — and this one raised.
+
+    `consumer.apply` writes `target` verbatim out of the Kafka payload, so a newer Management or a
+    hand-written event can store a word this build has no column for. It reached
+    `_GROUP_BY[RuleTarget(...)]` as an unguarded `ValueError`.
+    """
+    await _seed(sessions, *[_log(outcome=Outcome.RATE_LIMITED.value) for _ in range(10)])
+
+    assert await _evaluate(sessions, _rule(target="model", threshold=1)) == []
+
+
 # ---- the service ------------------------------------------------------------------------------
 
 
@@ -487,6 +499,43 @@ async def test_a_restart_does_not_re_fire_everything(sessions) -> None:
     await AnomalyService(sessions).tick(NOW + timedelta(minutes=1))
 
     assert len(await _events(sessions)) == 1
+
+
+async def test_one_unreadable_rule_does_not_stop_every_other_one(sessions) -> None:
+    """**A tick has no per-rule boundary, and that is the whole cost of the two guards above.**
+
+    `tick` raised, `_loop` logged `anomaly_tick_failed`, and the watermark deliberately did not
+    move — so the next tick re-read the same row and died in the same place. One rule carrying a
+    `target` this build has no column for switched detection off for the **entire installation**,
+    permanently, while the console went on showing every rule as enabled.
+
+    Asserted as the property rather than as "does not raise": what matters is that the good rule
+    still produces its event.
+    """
+    await _rule_row(sessions, id=1, target="model", name="unreadable")
+    await _rule_row(sessions, id=2, name="readable", threshold=50)
+    await _seed(sessions, *[_log(outcome=Outcome.RATE_LIMITED.value) for _ in range(10)])
+
+    written = await AnomalyService(sessions).tick(NOW)
+
+    assert [event.rule_name for event in written] == ["readable"]
+
+
+async def test_an_action_this_build_cannot_carry_out_is_recorded_as_not_enforced(
+    sessions,
+) -> None:
+    """`action` arrives from Kafka verbatim too, and `RuleAction(rule.action)` raised on it.
+
+    The finding is real and is still written; what cannot be honest is the action, so the row says
+    what `_enforce` already says for a rule whose action cannot be carried out. Downgrading it to
+    `alert` would put a word on the row nobody configured.
+    """
+    await _rule_row(sessions, action="quarantine", threshold=50)
+    await _seed(sessions, *[_log(outcome=Outcome.RATE_LIMITED.value) for _ in range(10)])
+
+    written = await AnomalyService(sessions).tick(NOW)
+
+    assert [event.action_taken for event in written] == [NOT_ENFORCED]
 
 
 @pytest.mark.anyio

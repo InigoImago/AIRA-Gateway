@@ -52,9 +52,83 @@ MODEL_CHECK_TIMEOUT_SECONDS = 5.0
 #: derived from a column is a coincidence that changes when somebody widens the column.
 MAX_TARGET_VALUE = 255
 
+#: The fastest a throttled target may be allowed to go. **The same ceiling Management applies to a
+#: configured rate limit** (`ratelimits/models.py`, `MaxValueValidator(1_000_000)`), because a
+#: throttle *is* a rate limit — one written during an incident instead of in the console — and two
+#: ceilings for one concept is a difference nobody can explain at 03:00.
+#:
+#: A bound rather than a formality: `throttle_rpm` is an `Integer` column, which is 32-bit on
+#: Postgres, so an unbounded figure is a `NumericValueOutOfRange` *after* the caller was told the
+#: request was fine — a caller's own value arriving as a server error.
+MAX_THROTTLE_RPM = 1_000_000
+
+#: The longest a ``minutes`` may name. **Not a policy limit**: a person may already suspend
+#: indefinitely by sending no ``minutes`` at all, and that is the documented way to say *until I
+#: lift it*. This exists so the arithmetic cannot fail: ``datetime.now(UTC) + timedelta(minutes=N)``
+#: raises `OverflowError` long before Python's unbounded integers run out, and it did: `10**30`
+#: answered `500 Python int too large to convert to C int`. A century is longer than any incident
+#: and comfortably inside what a `datetime` column holds.
+MAX_SUSPENSION_MINUTES = 100 * 365 * 24 * 60
+
 _log = structlog.get_logger(__name__)
 
 router = APIRouter(tags=["incidents"])
+
+
+async def _body_of(request: Request, *, optional: bool = False) -> dict[str, Any]:
+    """The JSON object a caller sent, or a **400** naming what is wrong with it.
+
+    `await request.json()` raises `JSONDecodeError` — a `ValueError` — and nothing here caught it,
+    so `{`, an empty body and a couple of stray bytes each answered `500 Internal error` on the two
+    endpoints somebody reaches for during an incident. Every other route in this project that reads
+    a body already does this (`api/pipeline.py`, both surfaces): the rule was stated three times and
+    held in three places, and these two were written afterwards.
+
+    `optional` keeps `:checkThinking`'s existing behaviour, where sending nothing at all means "ask
+    about everything the catalogue declares".
+    """
+    raw = await request.body()
+    if not raw and optional:
+        return {}
+    try:
+        body = await request.json()
+    except ValueError as exc:
+        raise GeminiHTTPError(400, "Request body is not valid JSON.", "INVALID_ARGUMENT") from exc
+    if not isinstance(body, dict):
+        raise GeminiHTTPError(400, "Send one JSON object.", "INVALID_ARGUMENT")
+    return body
+
+
+def _whole(body: dict[str, Any], field: str, *, minimum: int, maximum: int) -> int | None:
+    """A caller's whole number, or ``None`` where they said nothing — never an exception.
+
+    `int(body.get(field))` was written at both call sites below and neither survives a caller: a
+    word answers `ValueError: invalid literal for int()`, and a number wider than a C `int` answers
+    `OverflowError`, both as a **500**. Python's integers are unbounded and the things they end up
+    in are not — a `timedelta`, an `Integer` column — which is the boundary rule this project has
+    already paid for three times over (`LESSONS.md` §1).
+
+    A bool is refused rather than read as 0/1: `true` in this field is a client bug, and silently
+    throttling somebody to one request a minute because of it is the wrong way to find out.
+    """
+    value = body.get(field)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int | str):
+        raise GeminiHTTPError(400, f"'{field}' must be a whole number.", "INVALID_ARGUMENT")
+    try:
+        number = int(value)
+    except ValueError as exc:
+        raise GeminiHTTPError(
+            400, f"'{field}' must be a whole number.", "INVALID_ARGUMENT"
+        ) from exc
+    if not minimum <= number <= maximum:
+        raise GeminiHTTPError(
+            400,
+            f"'{field}' must be between {minimum} and {maximum}.",
+            "INVALID_ARGUMENT",
+        )
+    return number
 
 
 def _require_oversight(principal: Principal) -> None:
@@ -106,9 +180,7 @@ async def create_suspension(
     unhealthy" are not independent events (`FRD-503` §4.3).
     """
     _require_oversight(principal)
-    body = await request.json()
-    if not isinstance(body, dict):
-        raise GeminiHTTPError(400, "Send one suspension.", "INVALID_ARGUMENT")
+    body = await _body_of(request)
 
     target = str(body.get("target") or "")
     if target not in {t.value for t in RuleTarget}:
@@ -142,20 +214,26 @@ async def create_suspension(
     action = str(body.get("action") or RuleAction.BLOCK.value)
     if action not in {RuleAction.BLOCK.value, RuleAction.THROTTLE.value}:
         raise GeminiHTTPError(400, "'action' must be 'block' or 'throttle'.", "INVALID_ARGUMENT")
-    throttle_rpm = body.get("throttle_rpm")
+    # Read through one parser that cannot raise past the caller (see `_whole`). `int(...)` stood
+    # here and answered `500` for a word and for a number wider than a C `int`.
+    throttle_rpm = _whole(body, "throttle_rpm", minimum=1, maximum=MAX_THROTTLE_RPM)
     if action == RuleAction.THROTTLE.value and not throttle_rpm:
         raise GeminiHTTPError(400, "'throttle_rpm' is required for a throttle.", "INVALID_ARGUMENT")
 
-    minutes = body.get("minutes")
+    # **At least one minute.** A zero or a negative writes a suspension that expired before it was
+    # stored — `_still_applies` drops it on the very next read — so the console would list a kill
+    # switch that stops nothing, which is the badge-wearing absent control `FRD-125` is about. It
+    # was accepted silently; saying "no" is the only answer that leaves the operator informed.
+    minutes = _whole(body, "minutes", minimum=1, maximum=MAX_SUSPENSION_MINUTES)
     row = AccessSuspension(
         use_case=scope or None,
         target=target,
         target_value=value,
         action=action,
-        throttle_rpm=int(throttle_rpm) if throttle_rpm else None,
+        throttle_rpm=throttle_rpm,
         # A person may suspend indefinitely, because a person can also lift it. A rule cannot,
         # which is why an automatic one always expires (`ADR-0014` §2).
-        expires_at=(datetime.now(UTC) + timedelta(minutes=int(minutes)) if minutes else None),
+        expires_at=(datetime.now(UTC) + timedelta(minutes=minutes) if minutes else None),
         author=f"user:{principal.subject}",
         reason=str(body.get("reason") or "")[:500],
     )
@@ -479,7 +557,7 @@ async def check_thinking_levels(
             "PERMISSION_DENIED",
         )
 
-    body = await request.json() if await request.body() else {}
+    body = await _body_of(request, optional=True)
     asked = body.get("levels") if isinstance(body, dict) else None
     words = (
         [w.strip().lower() for w in asked if isinstance(w, str) and w.strip()][

@@ -16,7 +16,7 @@ Run everywhere, no services required. This is what a CI unit stage runs on every
 
   | | gate | measured 2026-08-20 |
   | --- | --- | --- |
-  | Python (`--cov-fail-under`) | **90%** | 95.60% |
+  | Python (`--cov-fail-under`) | **90%** | 95.68% |
   | Frontend statements | 90% | 93.13% |
   | Frontend branches | **92%** | 92.08% |
   | Frontend lines | 93% | 94.78% |
@@ -38,7 +38,7 @@ refused a request that should have been served. **Give a test its own slug**; th
 
 ## Tier 1b — Mutation checks (hermetic, on demand)
 `make mutants` (`tools/mutation_check.py`) breaks one property at a time and requires a named test
-to notice. **568 properties** as of 2026-08-20; the figure is stated in `CLAUDE.md` and a test
+to notice. **580 properties** as of 2026-08-20; the figure is stated in `CLAUDE.md` and a test
 fails when the two disagree, because a claim about how much of a system is checked is exactly the
 sort that rots quietly. It is the answer to *"a green test proves only that the code and the test agree"*: a
 property nothing would notice losing is reported as a **survivor**, and a mutation whose anchor has

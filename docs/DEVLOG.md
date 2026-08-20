@@ -5,6 +5,104 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## What a value nobody meant to send does: seven findings (2026-08-20)
+
+> *"Go through the tests systematically and check against the code whether they cover real
+> functionality. If you find a bug, actually try to break the place; if you manage it, fix it and
+> prove it with tests. No functionality may be lost. Be very careful."*
+
+A second pass the same day, and deliberately a different **question** from the one before it. The
+previous round asked *does the code hold the rules it states*. This one asked *what does each
+boundary do with a value nobody meant to send* — and that question is answered by driving values in,
+not by reading. Seven findings, none of them visible to the green hermetic suite the entry below
+signs off, and five of them were found by a **sweep** rather than by a hunch.
+
+**One malformed rule switched the whole detector off, permanently.** `evaluate_rule` guards `kind`
+against a word this build does not implement, at length and for the right reason — *"a newer
+Management can publish a kind this gateway does not implement"*. `target` and `action`, which
+`consumer.apply` writes out of the same Kafka payload with no enum and no default, were coerced
+unguarded: `_GROUP_BY[RuleTarget(rule.target)]` at three call sites and `RuleAction(rule.action)` at
+one. A `ValueError` out of any of them leaves `tick` — which has no per-rule boundary — so the round
+dies, the watermark deliberately does not move, and the **next** tick re-reads the same row and dies
+in the same place. Every other rule in the installation goes unevaluated for ever, with
+`anomaly_tick_failed` in a log and a console still showing every rule as enabled. The two guards are
+now beside each other; the finding is still written, and an action nothing can carry out is recorded
+as `detected_not_enforced`, which is what `_enforce` already says for that case.
+
+**A chain that changed the model name and not the address.** `dispatch_with_fallback` re-points a
+request with `model_copy(update={"model": model})`, and `addressing` — filled once, before the
+chain, from the *routed* model's declaration — travelled unchanged to every hop after the first.
+Invisible in every dialect where a model name is the whole address, and on Vertex `addressing` is
+the **region list**: a fallback catalogued in `europe-west4` was addressed at the primary's
+`europe-west1`, answered *not deployed here*, and the failover loop then walked the primary's
+remaining regions, all equally wrong. The other direction refuses instead of misrouting — behind a
+primary that carries no addressing at all, a Vertex fallback the catalogue names a region for was
+refused with *"catalogued for this platform and says no region"*. `declared_provider` already
+fetched that declaration and returned two thirds of it, so the fix is the same shape as its own
+docstring: one `Routing` value carrying provider, publisher **and** addressing, named
+`declared_routing` because it is no longer about a provider.
+
+**Two exports a spreadsheet would execute.** A cell beginning with `=`, `+`, `-` or `@` is a formula
+to Excel, LibreOffice and Google Sheets, and the `key` column of the usage export is caller content:
+`AuditTrail.served_model` falls back to `requested_model` for a request that never reached a model,
+so a `404 model_not_found` carries the string out of the URL. Measured: one refused request for a
+model named `=1+1`, and the month's export by model carries `=1+1,1,0,…` as its first data row — a
+file every oversight role can download. Management's smoke-test export has the same hole with a
+lower bar: its `response` column is a **model's own answer**, and a model asked for a spreadsheet
+formula gives you one. That file was written after the usage export and says so — *"the same
+conventions `FRD-602` had to get right once already"* — and it copied the BOM, the CRLF and the
+quoting, because those were there to copy. `aira_common.spreadsheet` owns the rule for both now:
+prefixed with `'`, which no spreadsheet displays, and deliberately neither stripped nor refused — a
+row quietly missing from a governance document is the worse failure.
+
+**Four caller values that arrived as `500`.** Found by sweeping every console endpoint with the same
+short list of wrong values rather than by asking about a field:
+
+- `POST /v1beta/suspensions` and `:checkThinking` read their body with a bare `await
+  request.json()`. A stray brace answered `500` on the two endpoints somebody reaches for while
+  something is going wrong — while `api/pipeline.py` and both API surfaces already spell out the
+  guarded form. The rule was stated three times and held in three places; these were written after.
+- The same endpoint's two numbers were `int(...)` with nothing in front: `throttle_rpm: "many"` is a
+  `ValueError`, `minutes: 10**30` is `OverflowError: Python int too large to convert to C int`. Both
+  are bounded now — `throttle_rpm` by the ceiling Management applies to a rate limit, because a
+  throttle *is* one — and a zero or negative `minutes`, which wrote a suspension that had expired
+  before it was stored, is refused rather than accepted as a kill switch that stops nothing.
+- `DELETE /api/v1/installation-budgets/<id>` with a non-numeric id raised
+  `ValueError: Field 'id' expected a number` while *building* the query. Every `ModelViewSet` here
+  is covered by DRF's `get_object_or_404`, which exists for exactly this; the installation budget is
+  the one hand-written route that resolves an id itself, and `pk or 0` guarded the empty string
+  alone.
+
+**Two smaller ones, both a rule applied at each step and missing from one of them.** `storable`
+exists to make a payload something a `json` column will take, and sanitised what a mapping *held*
+while copying its **keys** through untouched — so `{"k\ud800ey": "v"}` came out of it still unable
+to be encoded, and cost the whole row, which is the one outcome it is there to prevent. Both of its
+tests hand it a well-keyed dict. And `to_nanos` promises a `ValueError` for a bad amount and does
+not deliver one for `"Infinity"`, `"NaN"` or `"1e400"`: `Decimal` constructs all three happily and
+`quantize` then raises `InvalidOperation`, an `ArithmeticError` a caller following the contract does
+not catch. `1e309` is exactly how `Infinity` gets into this system, and `LESSONS.md` §1 already
+records that value costing an audit row one door along.
+
+**Open, and stated rather than half-fixed.** `thinking.permitted_by` returns *permitted* for
+`disabled` whatever the candidate declares, so a fallback that cannot express *off* is sent
+`thinkingBudget: 0` / `reasoning_effort: "none"` — which `thinking.py`'s own measurement records as
+a 400 from Google for every model whose thinking cannot be switched off. It is reachable only
+through a chain whose primary declares `disabled` and whose fallback does not, it degrades a request
+rather than answering it wrongly, and the honest fix is per-hop **resolution** rather than a skip:
+skipping would refuse a candidate that is perfectly able to serve the request, which is a narrowing
+this round did not have the owner's leave to make. `FRD-111` §7 carries it.
+
+Method note, because it decided what was found: **the sweep is what found five of the seven.** A
+per-field test asks whether the field behaves; a sweep asks whether the *file* does, and it is the
+only thing that could see that two endpoints written later did not inherit a rule stated three
+times. It is kept as `gateway/tests/test_a_callers_value_is_never_a_server_error.py`, with a vacuity
+guard reading the published OpenAPI document so a sweep whose requests all miss cannot pass.
+
+12 mutations added (580), each observed `caught`; every fix was written as a failing test first and
+each new test was watched go red with the fix reverted. Hermetic suite green at 95.7%.
+
+---
+
 ## A review pass: one identity, one discriminator, one pinned version (2026-08-20)
 
 > *"I have repeatedly hit simple but critical mistakes — hard-coded strings instead of variables,

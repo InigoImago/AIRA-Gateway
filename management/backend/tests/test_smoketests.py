@@ -375,6 +375,27 @@ def test_the_export_survives_a_topic_containing_a_comma(catalogue) -> None:
     assert "attachment" in response["Content-Disposition"]
 
 
+def test_a_model_answer_a_spreadsheet_would_evaluate_is_written_as_text(catalogue) -> None:
+    """**This one needs no attacker.** The `response` column is a model's own answer, and a model
+    asked for a spreadsheet formula gives you one — after which the evaluation somebody opens in
+    Excel runs it.
+
+    The export copied everything `FRD-602` had got right (the BOM, the CRLF, the quoting) and could
+    not copy this, because `FRD-602` had not got it right either. `aira_common.spreadsheet` owns the
+    rule for both files now.
+    """
+    client = _runner()
+    _runnable()
+    run_id = _start(client).data["id"]
+    result = Result.objects.filter(run_id=run_id).first()
+    client.patch(f"{RESULTS}{result.pk}/", {"response": "=1+1"}, format="json")
+
+    body = client.get(f"{RUNS}{run_id}/export/").content.decode("utf-8")
+
+    assert '"=1+1"' not in body, "a spreadsheet would evaluate this cell"
+    assert '"\'=1+1"' in body, "and the answer still has to be in the file"
+
+
 def test_the_export_carries_the_verdict_and_who_gave_it(catalogue) -> None:
     client = _runner()
     _runnable()

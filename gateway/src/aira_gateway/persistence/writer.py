@@ -106,6 +106,14 @@ def storable(value: Any) -> Any:
     replacing it with its name is smaller still — a reader sees what was there.
 
     A lone surrogate is the same shape and gets the same treatment: not encodable, so not storable.
+
+    **Keys as well as values**, which this walked straight past: ``{str(key): storable(item)}``
+    sanitised what a mapping held and copied its keys through untouched, so
+    ``{"k\\ud800ey": "v"}`` came out of the function that exists to make a payload storable still
+    unable to be encoded — and cost the whole row, which is the one outcome this is here to
+    prevent. The rule was applied at each recursion and missing from one of them, in a helper whose
+    two tests each pass a well-keyed dict: the shape `LESSONS.md` §1 names, on the smallest
+    possible scale.
     """
     if isinstance(value, float) and (value != value or value in (float("inf"), float("-inf"))):
         return f"<unrepresentable: {value}>"
@@ -116,7 +124,10 @@ def storable(value: Any) -> Any:
             return "<unrepresentable: unpaired surrogate>"
         return value
     if isinstance(value, dict):
-        return {str(key): storable(item) for key, item in value.items()}
+        # `str(key)` first, because a `json` column has string keys and Python's mapping does not;
+        # `storable` after it, because the string that comes out is subject to exactly the same
+        # rule as any other string in the payload.
+        return {str(storable(str(key))): storable(item) for key, item in value.items()}
     if isinstance(value, list):
         return [storable(item) for item in value]
     return value

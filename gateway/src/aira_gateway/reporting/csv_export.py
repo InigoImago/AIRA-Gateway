@@ -15,6 +15,11 @@ Nothing else needs it and nothing else minds it.
 semicolon files directly and would be happier — and every non-German tool and every script would
 be worse off. The honest fix is not to pick the other surprise but to say, on the download link,
 that Excel may ask about the separator.
+
+**And a third, which was missing rather than decided:** a cell that begins with `=` is a *formula*
+to the spreadsheet this file is written for, and the `key` column is caller content — see
+`aira_common.spreadsheet`, which owns the rule because Management's smoke-test export has the same
+one and copied everything above this line and not this.
 """
 
 from __future__ import annotations
@@ -24,6 +29,7 @@ import io
 from typing import Any
 
 from aira_common.money import format_display
+from aira_common.spreadsheet import safe_cell
 
 #: The breakdowns the report offers. A CSV is *one* table, so the caller picks — silently choosing
 #: one of three would be a guess presented as a document.
@@ -80,18 +86,23 @@ def render(report: dict[str, Any], breakdown: str, currency: str) -> str:
 
     writer.writerow([*COLUMNS[:6], f"cost_{currency.lower()}", *COLUMNS[7:]])
     for row in rows:
+        # Every cell through `safe_cell`, not only the one that is caller content today. `key` is
+        # the one that is — a use case slug, a model name, a subject — and naming it here would be
+        # a guard about a column rather than about a file: the next column somebody adds is added
+        # to this list, not to a rule they have to remember. Nothing else changes, because the
+        # figures are integers and a rendered amount never starts with one of those characters.
         writer.writerow(
             [
-                row.get("key", ""),
-                row.get("requests", 0),
-                row.get("failed", 0),
-                row.get("prompt_tokens", 0),
-                row.get("completion_tokens", 0),
-                row.get("total_tokens", 0),
-                format_display(int(row.get("cost_nanos") or 0)),
-                row.get("unpriced_requests", 0),
-                row.get("avg_latency_ms", 0),
-                row.get("max_latency_ms", 0),
+                safe_cell(row.get("key", "")),
+                safe_cell(row.get("requests", 0)),
+                safe_cell(row.get("failed", 0)),
+                safe_cell(row.get("prompt_tokens", 0)),
+                safe_cell(row.get("completion_tokens", 0)),
+                safe_cell(row.get("total_tokens", 0)),
+                safe_cell(format_display(int(row.get("cost_nanos") or 0))),
+                safe_cell(row.get("unpriced_requests", 0)),
+                safe_cell(row.get("avg_latency_ms", 0)),
+                safe_cell(row.get("max_latency_ms", 0)),
             ]
         )
 

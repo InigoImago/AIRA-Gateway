@@ -42,6 +42,30 @@ def test_rejects_something_that_is_not_an_amount() -> None:
         to_nanos("kostenlos")
 
 
+@pytest.mark.parametrize("amount", ["Infinity", "-Infinity", "NaN", "sNaN"])
+def test_a_number_that_is_not_a_number_is_refused_in_the_documented_word(amount: str) -> None:
+    """**`Decimal` accepts what money does not.**
+
+    `Decimal("Infinity")` constructs happily and `quantize` then raises `InvalidOperation` — an
+    `ArithmeticError`, out of a function whose one documented refusal is a `ValueError`, so a
+    caller following the contract does not catch it. `"kostenlos"` above was the only input this
+    ever asked about, and it is the one that happens to fail in the right place.
+
+    Not hypothetical: `1e309` is exactly how `Infinity` gets into this system — JSON has no such
+    literal, Python's parser produces one anyway, and `LESSONS.md` §1 records that same value
+    costing a whole audit row one door along.
+    """
+    with pytest.raises(ValueError, match="not a valid amount"):
+        to_nanos(amount)
+
+
+def test_an_amount_too_large_to_state_exactly_is_refused_the_same_way() -> None:
+    """Finite, and still not statable to the nano-unit. Same door, same word, different reason —
+    which is why the message says which of the two it was."""
+    with pytest.raises(ValueError, match="out of range"):
+        to_nanos("1e400")
+
+
 def test_prices_are_quoted_per_million_tokens() -> None:
     price = to_nanos("0.075")  # EUR per 1M tokens
     assert cost_nanos(1_000_000, price) == price

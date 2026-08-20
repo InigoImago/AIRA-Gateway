@@ -57,7 +57,13 @@ from aira_gateway.embedding import EmbeddingBounds, EmbeddingRejected
 from aira_gateway.embedding import estimated_tokens as embedding_tokens
 from aira_gateway.embedding import validate as validate_embedding
 from aira_gateway.persistence.recorder import record_request
-from aira_gateway.pipeline.dispatch import NoCapableModel, Permits, Skipped
+from aira_gateway.pipeline.dispatch import (
+    NoCapableModel,
+    Permits,
+    Routing,
+    RoutingOf,
+    Skipped,
+)
 from aira_gateway.pipeline.engine import PipelineEngine
 from aira_gateway.pipeline.errors import PipelineRejected
 from aira_gateway.pipeline.store import PipelineStore
@@ -715,8 +721,8 @@ async def cache_ttl_for(request: Request) -> str:
     return "1h" if chosen == "1h" else "5m"
 
 
-async def declared_provider(request: Request) -> Callable[[str], Awaitable[tuple[str, str]]]:
-    """Who the catalog says serves a model (`FRD-507`): its `(provider, publisher)`.
+async def declared_routing(request: Request) -> RoutingOf:
+    """How the catalog says to reach a model (`FRD-507`): who serves it, and where.
 
     Handed to the dispatch chain so a candidate that was **catalogued** rather than configured
     resolves to its adapter. One function, both surfaces — the third time a step written twice
@@ -726,13 +732,22 @@ async def declared_provider(request: Request) -> Callable[[str], Awaitable[tuple
     `google` is the Gemini dialect and `anthropic` is Anthropic's, so `vertex` identifies neither
     and a chain asking with it found nothing. Returning half of an identifier is how a lookup
     fails in a way that reads as "no such model".
+
+    **And `addressing` with them**, for the same argument one field further along. This returned
+    two thirds of the declaration's routing and the chain filled the model name from it while the
+    *address* stayed as the primary's — `Routing` records what that cost. Whatever else is added to
+    "how is this model reached", it belongs in the value this function returns, not beside it.
     """
 
     catalog = catalog_of(request)
 
-    async def lookup(model: str) -> tuple[str, str]:
+    async def lookup(model: str) -> Routing:
         declaration = await catalog.declaration(model)
-        return declaration.provider, declaration.publisher
+        return Routing(
+            provider=declaration.provider,
+            publisher=declaration.publisher,
+            addressing=declaration.addressing,
+        )
 
     return lookup
 

@@ -593,7 +593,11 @@ def test_a_candidate_that_cannot_be_addressed_is_skipped_not_a_server_error() ->
     """
     import asyncio
 
-    from aira_gateway.pipeline.dispatch import NoCapableModel, dispatch_with_fallback
+    from aira_gateway.pipeline.dispatch import (
+        NoCapableModel,
+        Routing,
+        dispatch_with_fallback,
+    )
     from aira_gateway.residency import RegionNotAllowed
     from aira_gateway.upstreams.base import ProviderRegistry
 
@@ -611,8 +615,8 @@ def test_a_candidate_that_cannot_be_addressed_is_skipped_not_a_server_error() ->
 
     registry = ProviderRegistry([_Unaddressable()])
 
-    async def declared(_model: str) -> tuple[str, str]:
-        return "nowhere", ""
+    async def declared(_model: str) -> Routing:
+        return Routing(provider="nowhere")
 
     with pytest.raises(NoCapableModel) as caught:
         asyncio.run(
@@ -620,7 +624,7 @@ def test_a_candidate_that_cannot_be_addressed_is_skipped_not_a_server_error() ->
                 registry,
                 CanonicalRequest(model="m", messages=[CanonicalMessage(role=Role.USER, text="hi")]),
                 (),
-                provider_of=declared,
+                routing_of=declared,
             )
         )
 

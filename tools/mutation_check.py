@@ -5242,6 +5242,106 @@ MUTATIONS = [
         "                        routing.reply,",
         CLASSIFIERS,
     ),
+    # ── the review round of 2026-08-20: six defects, each reintroduced by one edit ────────────
+    #
+    # Every one of these was found by asking a question the existing tests did not: *what does this
+    # do with a value nobody meant to send*. The tests that catch them are named beside each.
+    Mutation(
+        "RB1",
+        "a rule whose target this build has no column for measures nothing, and does not raise",
+        "gateway/src/aira_gateway/anomalies/evaluator.py",
+        "    if _group_by(rule) is None:",
+        "    if False:",
+        ANOMALY_ENGINE,
+    ),
+    Mutation(
+        "RB2",
+        "a rule whose action this build cannot carry out is recorded, not raised past the tick",
+        "gateway/src/aira_gateway/anomalies/service.py",
+        "            action = None",
+        "            raise",
+        ANOMALY_ENGINE,
+    ),
+    Mutation(
+        "RB3",
+        "a fallback candidate is addressed where the catalogue puts it, not where the primary is",
+        "gateway/src/aira_gateway/pipeline/dispatch.py",
+        '                update["addressing"] = routing.addressing',
+        "                pass",
+        "gateway/tests/test_pipeline_dispatch.py",
+    ),
+    Mutation(
+        "RB4",
+        "an unstorable dict *key* costs the value and not the row, exactly as a value does",
+        "gateway/src/aira_gateway/persistence/writer.py",
+        "        return {str(storable(str(key))): storable(item) for key, item in value.items()}",
+        "        return {str(key): storable(item) for key, item in value.items()}",
+        LOG_WRITER,
+    ),
+    Mutation(
+        "RB5",
+        "a body that is not JSON is a refusal on the incident endpoints too, never a 500",
+        "gateway/src/aira_gateway/api/incidents.py",
+        "    try:\n        body = await request.json()\n    except ValueError as exc:",
+        "    if True:\n        body = await request.json()\n    elif False:",
+        SUSPENSIONS + " gateway/tests/test_model_check.py",
+    ),
+    Mutation(
+        "RB6",
+        "a suspension's two numbers are parsed, not `int()`-ed at the caller's risk",
+        "gateway/src/aira_gateway/api/incidents.py",
+        "    try:\n        number = int(value)\n    except ValueError as exc:",
+        "    if True:\n        number = int(value)\n    elif False:",
+        SUSPENSIONS,
+    ),
+    Mutation(
+        "RB7",
+        "a suspension's two numbers are bounded, so neither overflows what stores it",
+        "gateway/src/aira_gateway/api/incidents.py",
+        "    if not minimum <= number <= maximum:",
+        "    if False:",
+        SUSPENSIONS,
+    ),
+    Mutation(
+        "RB8",
+        "a bool is not a whole number: `true` in a rate field is a client bug, not one request",
+        "gateway/src/aira_gateway/api/incidents.py",
+        "    if isinstance(value, bool) or not isinstance(value, int | str):",
+        "    if not isinstance(value, int | str):",
+        SUSPENSIONS,
+    ),
+    Mutation(
+        "RB9",
+        "an id in the path that is not a number is a 404, not a 500 out of the query builder",
+        "management/backend/src/aira_management/apps/budgets/views.py",
+        "            try:\n                budget = Budget.objects.filter(pk=pk, use_case__isnull=True).first()\n            except TypeError, ValueError:",
+        "            if True:\n                budget = Budget.objects.filter(pk=pk, use_case__isnull=True).first()\n            elif False:",
+        "management/backend/tests/test_installation_budget.py",
+    ),
+    Mutation(
+        "RB10",
+        "an amount `Decimal` accepts and money does not is refused in the documented word",
+        "libs/src/aira_common/money.py",
+        "    if not value.is_finite():",
+        "    if False:",
+        MONEY,
+    ),
+    Mutation(
+        "RB11",
+        "a usage-export cell a spreadsheet would evaluate is written as text",
+        "gateway/src/aira_gateway/reporting/csv_export.py",
+        '                safe_cell(row.get("key", "")),',
+        '                row.get("key", ""),',
+        CSV_EXPORT,
+    ),
+    Mutation(
+        "RB12",
+        "a model's own answer cannot become a formula in the evaluation somebody opens",
+        "management/backend/src/aira_management/apps/smoketests/views.py",
+        "                    safe_cell(row.response),",
+        "                    row.response,",
+        "management/backend/tests/test_smoketests.py",
+    ),
 ]
 
 
@@ -5341,6 +5441,16 @@ def main() -> int:
             wanted = {ident.strip() for ident in sys.argv[index + 1].split(",")}
         elif argument.startswith("-"):
             print(f"Unknown option {argument!r}. The only one is --only=A1,B2.")
+            return 2
+        else:
+            # **A bare id is not a selection, and silence about that is the expensive half.** An
+            # unknown `--only=` id is already refused, on the argument that *"a typo that runs
+            # nothing looks exactly like a subset that passes"*. The inverse was not: `mutation_check
+            # RB1 RB2` fell through here, left `wanted` as `None`, and ran the **whole** set — so
+            # somebody asking for nine properties waited for 580 with nothing said about it. Walked
+            # into on 2026-08-20, and the tell was the same one this file warns about elsewhere: the
+            # run was doing something plausible and not the thing that was asked for.
+            print(f"{argument!r} is not an option. Select a subset with --only={argument}.")
             return 2
 
     chosen = [m for m in MUTATIONS if wanted is None or m.ident in wanted]

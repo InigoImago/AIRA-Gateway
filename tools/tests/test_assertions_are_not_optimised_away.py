@@ -1,10 +1,11 @@
 """The images do not run Python with assertions switched off.
 
-There are twenty `assert` statements in the gateway's and Management's production code. Most narrow
-a type for mypy after a check that already happened, and one is load-bearing enough to say so in
-its own comment — `budgets/service.py` notes that a scope which does not bind its caller *"would
-have failed the assertion below rather than mixing two people's counters, **but only because it is
-asserted**"*.
+There are a couple of dozen `assert` statements in the gateway's and Management's production code
+— **deliberately not a figure**, because a count in a docstring is a claim nothing keeps true, and
+this one had already drifted before anybody noticed. Most of them narrow a type for mypy after a
+check that already happened, and one is load-bearing enough to say so in its own comment:
+`budgets/service.py` notes that a scope which does not bind its caller *"would have failed the
+assertion below rather than mixing two people's counters, **but only because it is asserted**"*.
 
 `python -O` and `PYTHONOPTIMIZE` remove every one of them. That is not a hypothetical setting: it
 is a common "make it faster in production" reflex, it can be set in a base image nobody in this
@@ -12,11 +13,11 @@ repository wrote, and it changes no behaviour visibly — the process starts, se
 silently lost a set of checks. **Undeclared is not permitted** is this project's rule about model
 capabilities; the same reading applies to an assumption about the interpreter.
 
-Verified rather than assumed, because the assumption is what makes those twenty statements
+Verified rather than assumed, because the assumption is what makes those statements
 acceptable. If a deployment ever wants the optimiser, this test is what makes that a **decision** —
 somebody has to delete it, and then convert the load-bearing assertions into real checks first.
 
-Deliberately not a rewrite of the twenty. Turning type-narrowing assertions into `if ... raise`
+Deliberately not a rewrite of them. Turning type-narrowing assertions into `if ... raise`
 would add branches no test can reach and no reader benefits from; the honest fix is to keep them
 and to keep the condition they rely on true.
 """

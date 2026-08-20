@@ -643,3 +643,45 @@ async def test_a_press_with_neither_words_nor_modes_is_refused() -> None:
 
     assert response.status_code == 400
     assert "level word or mode" in response.json()["error"]["message"]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("raw", [b"{", b"not json", b"\xff\xfe", b"[1,2]"])
+async def test_a_body_that_is_not_a_json_object_is_refused_rather_than_crashing(
+    raw: bytes,
+) -> None:
+    """`await request.json()` raises `JSONDecodeError`, and this route did not catch it.
+
+    Every other route in the gateway that reads a body already does — `api/pipeline.py` and both
+    API surfaces spell out the same four lines — so the rule was stated three times and held in
+    three places, and the two incident endpoints were written afterwards. A stray brace answered
+    `500 Internal error` here and on `/v1beta/suspensions`.
+    """
+    app = _client(GLOBAL_ADMIN, _TakesLevels())
+    with TestClient(app) as client:
+        await _declare(app)
+        response = client.post(
+            "/v1beta/models/gemini-2.0-flash:checkThinking",
+            content=raw,
+            headers={"content-type": "application/json"},
+        )
+
+    assert response.status_code == 400, response.text
+
+
+@pytest.mark.anyio
+async def test_no_body_at_all_still_means_an_empty_one() -> None:
+    """The narrowing the fix above must not do.
+
+    An **absent** body is how this endpoint is asked *check whatever the catalogue declares*, and
+    it is the one shape the JSON guard is allowed to read as `{}` rather than refuse. Asserted as
+    "the same answer as sending `{}`" rather than as a status, so it stays true whatever that
+    answer becomes for a given catalogue entry.
+    """
+    app = _client(GLOBAL_ADMIN, _TakesLevels())
+    with TestClient(app) as client:
+        await _declare(app)
+        absent = client.post("/v1beta/models/gemini-2.0-flash:checkThinking")
+        empty = client.post("/v1beta/models/gemini-2.0-flash:checkThinking", json={})
+
+    assert (absent.status_code, absent.json()) == (empty.status_code, empty.json())

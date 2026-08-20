@@ -173,3 +173,18 @@ def test_a_scope_and_an_owner_that_disagree_are_refused() -> None:
         Budget.objects.create(
             scope=Budget.INSTALLATION, use_case=use_case, subject="", period="month"
         )
+
+
+def test_an_id_that_is_not_a_number_is_a_404_rather_than_a_500() -> None:
+    """The router's lookup is `[^/.]+`, so the id in the path is any word a caller cares to send.
+
+    `Budget.objects.filter(pk=pk or 0)` raised `ValueError: Field 'id' expected a number` while
+    *building* the query — a **500** for a route with one honest answer, which is that there is no
+    such budget. `pk or 0` guarded the empty string and nothing else.
+
+    Every `ModelViewSet` here is covered by `rest_framework.generics.get_object_or_404`, which
+    exists for exactly this; this hand-written route is the one that resolves an id itself.
+    """
+    client = _client(_user("admin", "global-admin"))
+
+    assert client.delete(f"{BASE}not-a-number/").status_code == 404

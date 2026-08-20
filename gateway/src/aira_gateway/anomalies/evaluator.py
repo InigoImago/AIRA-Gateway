@@ -56,6 +56,20 @@ _COUNTED_OUTCOMES: dict[RuleKind, frozenset[str] | None] = {
 }
 
 
+def _group_by(rule: AnomalyRuleRead) -> Any | None:
+    """The column this rule measures per, or ``None`` if its target is not one this build has.
+
+    One reader of :data:`_GROUP_BY` rather than the three that each spelled
+    ``_GROUP_BY[RuleTarget(rule.target)]`` out again: a coercion repeated at three call sites is
+    three places to remember that a stored word may not be in the enum, and it was remembered at
+    none of them.
+    """
+    try:
+        return _GROUP_BY[RuleTarget(rule.target)]
+    except ValueError:
+        return None
+
+
 def _scoped(stmt: Any, rule: AnomalyRuleRead) -> Any:
     """Narrow a query to the rule's reach. A global rule (``use_case`` NULL) narrows to nothing."""
     if rule.use_case is not None:
@@ -86,6 +100,22 @@ async def evaluate_rule(
         # an operator believes is watching and is not, and the only symptom is the console showing
         # it as enabled — one log line makes that a search instead of an investigation.
         _log.warning("anomaly_rule_kind_not_implemented", rule_id=rule.id, kind=rule.kind)
+        return []
+    if _group_by(rule) is None:
+        # **The same rule as the kind above, on the field beside it.** `consumer.apply` writes
+        # `target` and `action` verbatim out of the Kafka payload — no enum, no default that
+        # discards an unknown — so a newer Management, a hand-written event or a direct row can put
+        # a word here that this gateway has no column for. It reached `_GROUP_BY[RuleTarget(...)]`
+        # as an unguarded `ValueError`, four frames below the loop in `service.tick`, which is not
+        # where it looked like it came from.
+        #
+        # The consequence was the one this branch's neighbour exists to prevent, an order of
+        # magnitude larger: `tick` has no per-rule boundary, so the raise took the whole round with
+        # it — the watermark stays put by design, every *other* rule in the installation goes
+        # unevaluated, and the next tick re-reads the same rule and dies again. One unreadable row
+        # switched off detection for everybody, permanently, with `anomaly_tick_failed` in the log
+        # and a console still showing every rule as enabled.
+        _log.warning("anomaly_rule_target_not_implemented", rule_id=rule.id, target=rule.target)
         return []
     if kind in _COUNTED_OUTCOMES:
         return await _evaluate_rate(session, rule, kind, moment)
@@ -155,7 +185,9 @@ async def _share(
 ) -> list[Finding]:
     """Percentage of rows in the window matching ``matches``, per target."""
     since, _ = _window(rule, now)
-    group = _GROUP_BY[RuleTarget(rule.target)]
+    group = _group_by(rule)
+    # `evaluate_rule` is the only way in and refuses a target this build has no column for.
+    assert group is not None, f"rule {rule.id} targets {rule.target!r}, which has no column"
     hits = func.sum(func.cast(matches, Integer)).label("hits")
     stmt = select(group, func.count().label("total"), hits).where(RequestLog.created_at >= since)
     if known_only is not None:
@@ -186,7 +218,9 @@ async def _evaluate_ratio(
 ) -> list[Finding]:
     """This window as a percentage of the one before it."""
     since, before = _window(rule, now)
-    group = _GROUP_BY[RuleTarget(rule.target)]
+    group = _group_by(rule)
+    # `evaluate_rule` is the only way in and refuses a target this build has no column for.
+    assert group is not None, f"rule {rule.id} targets {rule.target!r}, which has no column"
     measure = (
         func.coalesce(func.sum(RequestLog.cost_nanos), 0)
         if kind is RuleKind.SPEND_SPIKE
@@ -239,7 +273,9 @@ async def _evaluate_new_source(
 ) -> list[Finding]:
     """Addresses seen in the window that were not seen in the window before it."""
     since, before = _window(rule, now)
-    group = _GROUP_BY[RuleTarget(rule.target)]
+    group = _group_by(rule)
+    # `evaluate_rule` is the only way in and refuses a target this build has no column for.
+    assert group is not None, f"rule {rule.id} targets {rule.target!r}, which has no column"
 
     async def seen(start: datetime, end: datetime) -> dict[str, set[str]]:
         stmt = select(group, RequestLog.source_ip).where(

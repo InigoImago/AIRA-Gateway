@@ -319,6 +319,23 @@ def test_lifting_something_that_is_not_there_says_so() -> None:
         # reaches the audit trail and `_matches`, where it can only ever fail to match — a
         # suspension scoped to a use case that cannot exist stops nothing and looks active.
         ({"target": "subject", "target_value": "x", "use_case": "Not A Slug"}, "use case"),
+        # **The two numbers, which this list did not reach and `int()` did not survive.** Both were
+        # read as `int(body.get(...))` with nothing in front of them, so a word answered
+        # `500 invalid literal for int()` and `10**30` answered
+        # `500 Python int too large to convert to C int` — a caller's own value as a server error,
+        # on the endpoint this test's own docstring says is used in a hurry.
+        ({"target": "subject", "target_value": "x", "throttle_rpm": "many"}, "throttle_rpm"),
+        ({"target": "subject", "target_value": "x", "throttle_rpm": 10**12}, "throttle_rpm"),
+        ({"target": "subject", "target_value": "x", "minutes": "soon"}, "minutes"),
+        ({"target": "subject", "target_value": "x", "minutes": 10**30}, "minutes"),
+        # Zero and negative wrote a suspension that had expired before it was stored: `active()`
+        # drops it on the very next read, so the console listed a kill switch that stopped nothing.
+        # Accepted silently until now, which is the badge-wearing absent control again.
+        ({"target": "subject", "target_value": "x", "minutes": 0}, "minutes"),
+        ({"target": "subject", "target_value": "x", "minutes": -5}, "minutes"),
+        # A bool is a number to `int()` and a client bug to everybody else. Throttling somebody to
+        # one request a minute because their client sent `true` is the wrong way to find out.
+        ({"target": "subject", "target_value": "x", "throttle_rpm": True}, "throttle_rpm"),
     ],
 )
 def test_a_malformed_suspension_is_refused_by_name(body: dict, expected: str) -> None:
@@ -328,6 +345,24 @@ def test_a_malformed_suspension_is_refused_by_name(body: dict, expected: str) ->
 
     assert response.status_code == 400
     assert expected in response.json()["error"]["message"]
+
+
+@pytest.mark.parametrize("raw", [b"{", b"", b"not json", b"\xff\xfe", b"[1,2]"])
+def test_a_body_that_is_not_a_json_object_is_refused_rather_than_crashing(raw: bytes) -> None:
+    """`await request.json()` raises `JSONDecodeError`, and this route did not catch it.
+
+    Every other route in the gateway that reads a body already does — `api/pipeline.py` and both
+    API surfaces spell out the same four lines — so the rule was stated three times and held in
+    three places, and the two incident endpoints were written afterwards. A stray brace answered
+    `500 Internal error` on the endpoint somebody reaches for while something is going wrong.
+    `:checkThinking` is the other one; `test_model_check.py` covers it, where its role fixture is.
+    """
+    with _api() as client:
+        response = client.post(
+            "/v1beta/suspensions", content=raw, headers={"content-type": "application/json"}
+        )
+
+    assert response.status_code == 400, response.text
 
 
 def test_the_endpoints_need_a_credential() -> None:

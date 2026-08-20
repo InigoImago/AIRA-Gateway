@@ -36,6 +36,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 
+from aira_common.spreadsheet import safe_cell
 from aira_management.apps.usecases.access import may_run_tests_queryset
 from aira_management.apps.usecases.models import UseCase
 from aira_management.rbac import IsITSecurity, MayRunTests
@@ -307,6 +308,12 @@ class TestRunViewSet(viewsets.ModelViewSet[TestRun]):
         **BOM** so Excel reads UTF-8 rather than guessing, **CRLF** because that is what RFC 4180
         says, and every field quoted — a topic containing a comma would otherwise shift every
         column after it one to the left, silently, in a file somebody then forwards.
+
+        And one it could **not** copy, because `FRD-602` had not got it right either: a cell
+        beginning with `=` is a formula to the spreadsheet all of the above is for. Here it is not
+        even a caller's string but a **model's own answer** — ask a model for a spreadsheet formula
+        and it will give you one — so this needs no attacker at all. `aira_common.spreadsheet` owns
+        the rule for both exports; the sentence above is what made a second copy worth avoiding.
         """
         run = self.get_object()
         buffer = io.StringIO()
@@ -328,16 +335,16 @@ class TestRunViewSet(viewsets.ModelViewSet[TestRun]):
         for row in run.results.select_related("case", "rated_by").all():
             writer.writerow(
                 [
-                    row.case.topic,
-                    row.case.prompt,
-                    row.case.expectation,
-                    row.response,
-                    row.error,
-                    row.latency_ms if row.latency_ms is not None else "",
-                    row.verdict,
-                    row.note,
-                    getattr(row.rated_by, "username", "") or "",
-                    row.rated_at.isoformat() if row.rated_at else "",
+                    safe_cell(row.case.topic),
+                    safe_cell(row.case.prompt),
+                    safe_cell(row.case.expectation),
+                    safe_cell(row.response),
+                    safe_cell(row.error),
+                    safe_cell(row.latency_ms if row.latency_ms is not None else ""),
+                    safe_cell(row.verdict),
+                    safe_cell(row.note),
+                    safe_cell(getattr(row.rated_by, "username", "") or ""),
+                    safe_cell(row.rated_at.isoformat() if row.rated_at else ""),
                 ]
             )
         name = f"aira-smoketest-{run.model.replace('/', '_')}-{run.started_at.date()}.csv"

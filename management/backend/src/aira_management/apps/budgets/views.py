@@ -94,7 +94,22 @@ class InstallationBudgetViewSet(viewsets.ViewSet):
         return Response(BudgetSerializer(budget).data, status=status.HTTP_201_CREATED)
 
     def destroy(self, request: Request, pk: str | None = None) -> Response:
-        budget = Budget.objects.filter(pk=pk or 0, use_case__isnull=True).first()
+        # **A caller's own value must never become a server error**, and the id in the path is one.
+        # The router's default lookup is `[^/.]+`, so `pk` reaches here as any word — and Django
+        # raises `ValueError: Field 'id' expected a number` while *building* the query, which DRF
+        # renders as a **500** for a route that has one honest answer: there is no such budget.
+        # `pk or 0` guarded the empty string and nothing else.
+        #
+        # This is what `rest_framework.generics.get_object_or_404` does and why it exists; every
+        # `ModelViewSet` in this project is covered by it, and this hand-written one was the single
+        # route that resolves an id itself. Spelled out rather than borrowed so the 404 keeps the
+        # body it already had.
+        budget = None
+        if pk is not None:
+            try:
+                budget = Budget.objects.filter(pk=pk, use_case__isnull=True).first()
+            except TypeError, ValueError:
+                budget = None
         if budget is None:
             return Response(status=status.HTTP_404_NOT_FOUND)
         with transaction.atomic():

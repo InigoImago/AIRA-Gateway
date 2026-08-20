@@ -93,6 +93,32 @@ reading code.
   and a boundary that models one as the other has moved the failure to where it reads as ours.
   Ask at the boundary whether the value can be *written down*, and make the recorder survive one
   that cannot — the caller's door and the upstream's are different doors.
+
+  *Four more, and how they were found is the lesson.* `POST /v1beta/suspensions` and
+  `:checkThinking` read their body with a bare `await request.json()`, so a stray brace was a **500**
+  on the two endpoints somebody reaches for during an incident — while `api/pipeline.py` and both
+  API surfaces already spell out the guarded form. The same endpoint's two numbers were `int(...)`
+  with nothing in front (`"many"`, then `10**30` as `OverflowError`), a non-numeric id in
+  `/installation-budgets/<id>` raised out of Django's *query builder*, and `to_nanos` promised a
+  `ValueError` and raised `InvalidOperation` for `"Infinity"`. **None of these was found by asking
+  about a field.** They were found by sweeping every endpoint with the same short list of wrong
+  values, which is a question about the *file* rather than about the field — and the only kind of
+  question that can see a rule stated in three places and not inherited by the two routes written
+  afterwards. A per-field test proves a field; a sweep proves the ones nobody thought to name
+  (`test_a_callers_value_is_never_a_server_error.py`).
+
+- **An export is not read, it is executed.** A CSV cell beginning with `=`, `+`, `-` or `@` is a
+  formula to Excel, LibreOffice and Sheets, and both exports here hand one straight through: the
+  usage report's `key` column is caller content (`served_model` falls back to `requested_model`, so
+  a `404 model_not_found` carries the string out of the URL — measured, `=1+1,1,0,…` as the first
+  data row of a file every oversight role can download), and the smoke-test export's `response`
+  column is a **model's own answer**, which needs no attacker at all. The second file was written
+  after the first and says so — *"the same conventions `FRD-602` had to get right once already"* —
+  and copied the BOM, the CRLF and the quoting, because those were there to copy. **A convention a
+  later file can copy is not the same thing as a hazard nobody wrote down**: ask what the *reader*
+  of an artefact does with it, not only whether the artefact is well-formed. Prefixed, never
+  stripped and never refused — a row quietly missing from a governance document is worse than an
+  odd-looking one.
 - **A default argument is a silent one** — the wire shape's worst variant, because there is nothing
   *missing* to notice. `resolve()` had taken a `direct` argument since the vocabulary was written,
   with tests of its own; both planes called it with two arguments, so a grant naming a person was
@@ -148,6 +174,18 @@ reading code.
   `RequestLogService.record` both kept it, with the body-size middleware building a `PendingLog`
   directly. The fix that removes a footgun from the layer where it fired leaves it loaded in every
   layer underneath: **when a default is the defect, remove it everywhere the value is spelled.**
+
+  *And one field along, which is the cheapest place of all to miss it.* `evaluate_rule` guards a
+  rule's `kind` against a word this build does not implement — at length, with the reason written
+  out — and coerced `target` and `action`, which `consumer.apply` writes out of the **same** Kafka
+  payload with no enum and no default, straight through `RuleTarget(...)` and `RuleAction(...)`.
+  The consequence was an order of magnitude larger than the guarded case: `tick` has no per-rule
+  boundary, so the `ValueError` took the whole round, the watermark deliberately did not move, and
+  the next tick re-read the same row and died in the same place — **one unreadable row switched
+  detection off for the entire installation, permanently**, with a warning in a log and a console
+  still showing every rule as enabled. Ask of a tolerance whether the *neighbouring* field arrived
+  through the same door; and give a loop over independent items a boundary, or one of them decides
+  for all of them.
 
 - **The same column read in two alphabets.** A narrower relative of the above, and it survives every
   test whose fixture makes the two coincide. `use_case_members.subject` holds a **username** —
@@ -214,6 +252,14 @@ reading code.
   (a `responseSchema` document) was the one it was written for, because that check needs a fact
   about the **request** and the function was only ever handed the response. **A docstring naming
   three cases and a condition testing two is a claim, not a control.**
+
+  *The same shape at its smallest, in a recursion.* `storable` exists to make a payload something a
+  `json` column will take, and applied the rule to what a mapping *held* while copying its **keys**
+  through untouched — `{str(key): storable(item) …}` — so a key carrying a lone surrogate came out
+  of the function whose whole job is that and still could not be encoded, costing the row it was
+  written to save. Both of its tests hand it a well-keyed dict. **A rule applied inside a structure
+  has to be applied to every part of it**, and the part nobody writes a test for is the one that is
+  not the obvious content.
 
 - **A dead definition is a rule the module appears to have.** `realm_roles` and `_injection_verdict`
   were removed for this reason and it kept recurring: `ratelimit._capacity` documented *"the tests
@@ -371,6 +417,15 @@ reading code.
 - **Transport × dialect × model identity.** A transport reaches the cloud, a dialect owns the API
   shape, and **the caller's model name is never the platform's addressing** — an Azure *deployment*
   has no price, so attributing spend to it fails silently rather than loudly (`ADR-0011`).
+  *Which means a chain that changes the name must change the address with it.*
+  `dispatch_with_fallback` re-pointed a request with `model_copy(update={"model": model})`, and
+  `addressing` — resolved once, before the chain, from the routed model — travelled unchanged to
+  every hop after the first. Invisible in every dialect where a name *is* the whole address, and on
+  Vertex `addressing` is the region list: a fallback catalogued in `europe-west4` was addressed at
+  the primary's `europe-west1`, and behind a primary carrying no address at all it was refused with
+  *"says no region"*, which the catalogue contradicts. The lookup that fetched two thirds of the
+  declaration and left the third behind is the tell: **when two facts must move together, return
+  them as one value.**
 - **Capability flags say *whether*, never *how*.** Three vendors do structured output by three
   unrelated mechanisms; the catalog never learns which.
 - **A chain skips an incapable candidate; it never degrades the request.** A stripped attachment

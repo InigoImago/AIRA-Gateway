@@ -267,8 +267,25 @@ class AnomalyService:
         if await self._fired_recently(session, rule, finding.target_value, now):
             return None
 
-        action = RuleAction(rule.action)
-        taken = self._enforce(session, rule, finding, action, now)
+        action: RuleAction | None
+        try:
+            action = RuleAction(rule.action)
+        except ValueError:
+            # An action word this build has no code for — the same forward-compatibility hole as
+            # the rule's `kind` and `target` (`evaluator.evaluate_rule`), and reached the same way:
+            # `consumer.apply` writes `action` verbatim out of the Kafka payload.
+            #
+            # The finding itself is real and is still written. What cannot be honest is the
+            # *action*, so the row says `detected_not_enforced` — exactly what `_enforce` already
+            # records for a rule whose action cannot be carried out. Silently downgrading it to
+            # `alert` would put a word on the row that nobody configured, and raising here would
+            # take the whole tick down with it: `tick` has no per-rule boundary, so one unreadable
+            # row stopped every other rule in the installation from ever being evaluated again.
+            _log.warning("anomaly_rule_action_not_implemented", rule_id=rule.id, action=rule.action)
+            action = None
+        taken = (
+            NOT_ENFORCED if action is None else self._enforce(session, rule, finding, action, now)
+        )
         event = AnomalyEvent(
             # Stamped with the moment this evaluation is *about*, rather than left to the column's
             # server default. `_fired_recently` compares against it, so the two must be the same
@@ -280,7 +297,11 @@ class AnomalyService:
             kind=rule.kind,
             use_case=rule.use_case
             if rule.use_case is not None
-            else (finding.target_value if RuleTarget(rule.target) is RuleTarget.USE_CASE else None),
+            # Compared as the stored word rather than coerced through the enum: this is the third
+            # place a rule's `target` was turned into a `RuleTarget` and the third that would have
+            # raised on one this build does not have. A string this row does not recognise simply
+            # is not `use_case`, which is the right answer and cannot fail.
+            else (finding.target_value if rule.target == RuleTarget.USE_CASE.value else None),
             target=rule.target,
             target_value=finding.target_value,
             observed=finding.observed,

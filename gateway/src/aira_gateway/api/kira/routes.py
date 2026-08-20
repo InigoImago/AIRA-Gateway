@@ -47,7 +47,7 @@ from aira_gateway.api.serving import (
     annotate,
     catalog_of,
     check_structured_result,
-    declared_provider,
+    declared_routing,
     elapsed_ms,
     ensure_body_is_encodable,
     prepare_for_dispatch,
@@ -425,7 +425,7 @@ async def chat(request: Request, principal: Principal = Depends(require_principa
                 canonical,
                 fallbacks,
                 permits=await requirements_for(request, canonical),
-                provider_of=await declared_provider(request),
+                routing_of=await declared_routing(request),
             )
             # What the caller is owed about their own prompt having been rewritten under them
             # (`FRD-309`). This surface applied nothing at all: a use case running a `pii_filter`
