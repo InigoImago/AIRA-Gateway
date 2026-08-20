@@ -113,6 +113,7 @@ interface Catalog {
   defaultOutput: { set: (v: number | null) => void; (): number | null };
   deprecated: { set: (v: boolean) => void; (): boolean };
   thinkingModes: { set: (v: string[]) => void; (): string[] };
+  modeVerdicts: () => Record<string, { ok: boolean; detail: string }>;
   thinkingMin: { set: (v: number | null) => void; (): number | null };
   thinkingMax: { set: (v: number | null) => void; (): number | null };
   thinkingDefault: { set: (v: string) => void; (): string };
@@ -210,7 +211,12 @@ function setup(
   } = {},
 ) {
   const checked: string[] = [];
-  const askedLevels: { model: string; levels: string[]; where: Provenance }[] = [];
+  const askedLevels: {
+    model: string;
+    levels: string[];
+    where: Provenance;
+    modes: string[];
+  }[] = [];
   const checkedWhere: Provenance[] = [];
   const asked: string[] = [];
   TestBed.resetTestingModule();
@@ -237,12 +243,30 @@ function setup(
             checkedWhere.push(where);
             return options.check ? options.check : of(CHECK);
           },
-          checkThinkingLevels: (name: string, levels: string[], where: Provenance = {}) => {
-            askedLevels.push({ model: name, levels, where });
+          checkThinkingLevels: (
+            name: string,
+            levels: string[],
+            where: Provenance = {},
+            modes: string[] = [],
+          ) => {
+            askedLevels.push({ model: name, levels, where, modes });
             return (
               options.levelChecks?.shift() ??
               of({
                 model: name,
+                // The dialect's answer about each ticked mode. `auto` is the one every
+                // OpenAI-family adapter declares it cannot express, and the one an administrator
+                // could tick in silence until this button reported it.
+                modes: modes.map((mode) => ({
+                  mode,
+                  accepted: mode !== 'auto',
+                  detail:
+                    mode === 'auto'
+                      ? "This model's wire format has no way to say 'auto'. Declaring it here " +
+                        'means every request that asks for it is refused — the model is never ' +
+                        'reached.'
+                      : "This model's wire format can express it.",
+                })),
                 results: levels.map((level) => ({
                   region: '',
                   level,
@@ -2186,6 +2210,7 @@ describe('ModelCatalog — thinking levels are the vendor’s own words', () => 
         model: 'gemini-2.5-flash',
         levels: ['low', 'medium'],
         where: { provider: FLASH.provider ?? '', publisher: '', region: '' },
+        modes: component.thinkingModes(),
       },
     ]);
     expect(component.levelVerdict('low')).toEqual({ ok: true, detail: 'The model accepted it.' });
@@ -2193,6 +2218,95 @@ describe('ModelCatalog — thinking levels are the vendor’s own words', () => 
     // have said `thinking_level is not supported by this model` as precisely, or stayed as true.
     expect(component.levelVerdict('medium')?.ok).toBe(false);
     expect(component.levelVerdict('medium')?.detail).toContain('thinking_level is not supported');
+  });
+
+  it('marks a thinking mode the model’s own dialect cannot express', () => {
+    // Measured against the running stack on 2026-08-20: `auto` ticked here for a model served by
+    // an OpenAI-dialect endpoint was accepted in silence, and every thinking request afterwards
+    // answered `500 Internal error`. Every adapter had always declared which modes its wire
+    // format can express — and **nothing on any path read that declaration**.
+    const { component } = setup();
+    component.edit({ ...FLASH, name: 'gemini-2.5-flash' });
+    component.thinkingModes.set(['disabled', 'auto']);
+
+    component.checkLevels();
+
+    expect(component.modeVerdicts()['disabled'].ok).toBe(true);
+    expect(component.modeVerdicts()['auto'].ok).toBe(false);
+    // The sentence says what declaring it would *do*. The reader is deciding whether to leave a
+    // box ticked, and "unsupported" alone does not tell them.
+    expect(component.modeVerdicts()['auto'].detail).toContain('never reached');
+  });
+
+  it('shows the verdict beside the box it is about, and the sentence only for a refusal', () => {
+    // The DOM, not the signal: what an administrator acts on is a mark next to a checkbox. A green
+    // one needs no explanation under it — a red one is the whole point, so its sentence is
+    // rendered rather than hidden in a tooltip.
+    const harness = setup();
+    const catalog = harness.component;
+    catalog.edit({ ...FLASH, name: 'gemini-2.5-flash', capabilities: ['generate', 'thinking'] });
+    catalog.thinkingModes.set(['disabled', 'auto']);
+    catalog.editorTab.set('capabilities');
+    catalog.checkLevels();
+    harness.fixture.detectChanges();
+
+    const html = harness.html();
+    expect(html.querySelector('[data-testid="mode-verdict-disabled"]')?.textContent).toContain(
+      'can say it',
+    );
+    expect(html.querySelector('[data-testid="mode-verdict-auto"]')?.textContent).toContain(
+      'cannot say it',
+    );
+    expect(html.querySelector('[data-testid="mode-why-auto"]')?.textContent).toContain(
+      'never reached',
+    );
+    // No sentence under the box that is fine: an explanation for every row is an explanation
+    // nobody reads, and the one that matters stops standing out.
+    expect(html.querySelector('[data-testid="mode-why-disabled"]')).toBeNull();
+  });
+
+  it('shows no verdict at all before the button is pressed', () => {
+    // An unasked question is not a verdict (`FRD-506`). Ticks appearing on load would be this
+    // console's opinion about a model nobody has asked.
+    const harness = setup();
+    harness.component.edit({
+      ...FLASH,
+      name: 'gemini-2.5-flash',
+      capabilities: ['generate', 'thinking'],
+    });
+    harness.component.thinkingModes.set(['disabled', 'auto']);
+    harness.component.editorTab.set('capabilities');
+    harness.fixture.detectChanges();
+
+    expect(harness.html().querySelector('[data-testid^="mode-verdict-"]')).toBeNull();
+  });
+
+  it('clears the marks when a later question fails, rather than leaving stale ones', () => {
+    // `FRD-506`'s rule, and it applies to the modes for the same reason it applies to the words: a
+    // red mark says "this model refuses it", and an unreachable gateway says nothing about it.
+    //
+    // **The first press has to succeed**, or this asserts nothing: written without it, the test
+    // passed while the clearing line was deleted — there were no marks to leave behind. Found by
+    // breaking the property by hand, which is the whole reason that is done.
+    const { component } = setup({
+      levelChecks: [
+        of({
+          model: 'gemini-2.5-flash',
+          results: [],
+          modes: [{ mode: 'auto', accepted: false, detail: 'no field for it' }],
+        }),
+        throwError(() => ({ status: 502, error: { error: { message: 'no' } } })),
+      ],
+    });
+    component.edit({ ...FLASH, name: 'gemini-2.5-flash' });
+    component.thinkingModes.set(['auto']);
+
+    component.checkLevels();
+    expect(component.modeVerdicts()['auto'].ok).toBe(false);
+
+    component.checkLevels();
+
+    expect(component.modeVerdicts()).toEqual({});
   });
 
   it('clears the previous answers when the question itself fails', () => {

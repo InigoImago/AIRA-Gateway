@@ -821,8 +821,37 @@
                   <span>
                     <code>{{ mode }}</code>
                     <span class="muted"> — {{ thinkingModeMeans(mode) }}</span>
+                    <!--
+                      What the model's own wire format says about this box, once the button below
+                      has been pressed. Not a validation rule and not a blocked save: the same
+                      shape as the level chips (`FRD-506` — inform, never block), and for the same
+                      reason. What it prevents is the state measured on 2026-08-20: `auto` ticked
+                      for a model on an OpenAI-dialect server, accepted in silence, and every
+                      thinking request afterwards refused because that dialect has no field for it.
+                    -->
+                    @if (modeVerdicts()[mode]; as verdict) {
+                      <span
+                        [class]="verdict.ok ? 'badge badge--success' : 'badge badge--danger'"
+                        [attr.data-testid]="'mode-verdict-' + mode"
+                        [title]="verdict.detail"
+                      >
+                        {{
+                          verdict.ok ? '✓ the dialect can say it' : '✗ this dialect cannot say it'
+                        }}
+                      </span>
+                    }
                   </span>
                 </label>
+                @if (modeVerdicts()[mode]; as verdict) {
+                  @if (!verdict.ok) {
+                    <span
+                      class="field__hint field__hint--error"
+                      [attr.data-testid]="'mode-why-' + mode"
+                    >
+                      {{ verdict.detail }}
+                    </span>
+                  }
+                }
               }
 
               <!--

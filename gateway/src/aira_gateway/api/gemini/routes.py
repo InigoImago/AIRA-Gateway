@@ -63,7 +63,7 @@ from aira_gateway.pipeline.dispatch import NoCapableModel, dispatch_with_fallbac
 from aira_gateway.pipeline.errors import PipelineRejected
 from aira_gateway.ratelimit.errors import RateLimited
 from aira_gateway.thinking import ThinkingRejected
-from aira_gateway.upstreams.base import UpstreamError
+from aira_gateway.upstreams.base import DialectUnsupported, UpstreamError
 
 _log = get_logger("aira_gateway")
 
@@ -168,6 +168,12 @@ def refusal_response(exc: Exception) -> JSONResponse:
         return _error(429, exc.message, "RESOURCE_EXHAUSTED")
     if isinstance(exc, PipelineRejected):
         return _error(exc.code, exc.message, exc.status)
+    if isinstance(exc, DialectUnsupported):
+        # 400, and for the same reason `NoCapableModel` is one: the catalogue claims something
+        # this model's wire format cannot say, and that is a declaration somebody can correct. A
+        # 500 said the gateway had failed, which sent the reader to the logs of a service that was
+        # working exactly as designed.
+        return _error(400, str(exc), "FAILED_PRECONDITION")
     if isinstance(exc, UpstreamError):
         return upstream_error(exc)
     assert isinstance(exc, GeminiHTTPError)

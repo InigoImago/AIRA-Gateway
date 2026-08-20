@@ -12,7 +12,15 @@ import { USERS, expectNoHorizontalOverflow, login, logout, submitOfOpenForm } fr
  * answers the same for both sides proves neither).
  */
 
-/** Remove whatever this run left behind, so a re-run starts from the same place. */
+/**
+ * Remove whatever this run left behind, so a re-run starts from the same place.
+ *
+ * **The id is read first and waited on afterwards.** Written as a loop over
+ * `…first()`, this raced its own page: the panel reloads after each removal, so the button
+ * detached mid-click and Playwright retried against an element that no longer existed. Taking one
+ * row's testid and waiting for *that* row to disappear is a wait for the thing rather than a
+ * sample of it — `LESSONS.md` §7, in a test I wrote a day after adding that line.
+ */
 async function clearLimits(page: import('@playwright/test').Page) {
   await page.goto('/reporting');
   const card = page.locator('[data-testid="installation-budget"]');
@@ -20,9 +28,10 @@ async function clearLimits(page: import('@playwright/test').Page) {
   for (;;) {
     const remove = card.locator('button[data-testid^="remove-installation-budget-"]').first();
     if ((await remove.count()) === 0) break;
+    const testid = await remove.getAttribute('data-testid');
     page.once('dialog', (dialog) => dialog.accept());
     await remove.click();
-    await expect(page.locator('.callout, [role="alert"]').first()).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator(`[data-testid="${testid}"]`)).toHaveCount(0, { timeout: 15_000 });
   }
 }
 

@@ -52,13 +52,16 @@ because you can only release what is approved:
 
 ```bash
 curl -s http://localhost:8002/api/v1/models/ -H "authorization: Bearer $TOKEN"
-# [{"name":"qwen3:0.6b","approved":true,"numeric_id":9001, …},
+# [{"name":"qwen3:0.6b","approved":true,"numeric_id":1004, …},
 #  {"name":"all-minilm","approved":true,"numeric_id":9002, …}]
 ```
 
 `numeric_id` is the integer a KIRA client sends as `model_id`. It is assigned in the catalog, so if
 your clients send the predecessor's ids (`1002`, `1004`, …) an administrator can give the
 corresponding AIRA models exactly those numbers — then the client's model ids do not change either.
+The demo does exactly that: its chat model carries `1004`, the predecessor's own chat id, because a
+migration guide whose one runnable command uses a different number is demonstrating the opposite of
+what it claims.
 
 ### 2.2 Create the use case
 
@@ -172,7 +175,7 @@ curl -X POST http://localhost:8001/kira/api/external/chat \
   -H "x-goog-api-key: $KEY" \
   -H 'X-AIRA-Use-Case: migration-demo' \
   -H 'content-type: application/json' \
-  -d '{"request":{"parts":[{"text":"Sag OK."}]},"model_id":9001,"maxTokens":16}'
+  -d '{"request":{"parts":[{"text":"Sag OK."}]},"model_id":1004,"maxTokens":16}'
 # 200  {"parts":[{"text":"Sag."}],"usage_data":{"token_input":20,"token_output":4}}
 ```
 

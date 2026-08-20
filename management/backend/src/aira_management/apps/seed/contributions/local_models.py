@@ -174,7 +174,16 @@ def _declarations() -> list[dict[str, Any]]:
             #   permission). A capability belongs to a model, not to a family or a runtime.
             "thinking": THINKING_BY_MODEL.get(CHAT_MODEL),
             "approved": True,
-            "numeric_id": 9001,
+            # **The predecessor's own chat id** (`ADR-0010`, `docs/MIGRATION-KIRA.md`), carried by
+            # the demo deliberately. `FRD-107`'s promise is that a KIRA client migrates by changing
+            # a base URL; while this was `9001`, every document said `model_id: 1004` and the one
+            # command the showcase prints said something else. The number is assigned in the
+            # catalog exactly so an installation can match what its clients already send.
+            #
+            # Must stay equal to `tools/seed_local_catalog.py`'s `CHAT_NUMERIC_ID`: two seeds
+            # write this row, and a mismatch is a model that answers to a different number
+            # depending on which one ran last.
+            "numeric_id": 1004,
         },
         {
             "name": EMBED_MODEL,

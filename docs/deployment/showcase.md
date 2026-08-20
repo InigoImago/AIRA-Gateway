@@ -255,7 +255,7 @@ TOKEN=$(curl -s -X POST \
 
 curl -s -X POST http://localhost:8001/uc/<slug>/kira/api/external/chat \
   -H "Authorization: Bearer $TOKEN" -H "content-type: application/json" \
-  -d '{"model_id": 9001, "request": {"parts": [{"text": "say hi"}]}}'
+  -d '{"model_id": 1004, "request": {"parts": [{"text": "say hi"}]}}'
 ```
 
 `model_id` is the numeric id from `GET /kira/api/external/models`, which is the KIRA contract —

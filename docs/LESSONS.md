@@ -23,10 +23,21 @@ These have each happened more than once. When something behaves impossibly, chec
 reading code.
 
 - **Two correct halves and no wire.** Both ends exist and nothing joins them, so every review of
-  either end passes. *Five instances:* `record_to_outbox` had no topic for an event type;
+  either end passes. *Six instances:* `record_to_outbox` had no topic for an event type;
   `payload_size` counted bytes into a column nothing wrote; the seed wrote a catalog and emitted
   no event; a `throttle` produced a value the limiter could not consume; `FRD-116` shipped Vault
-  and no container was given `VAULT_ADDR` for three days. **Test the wire, not the ends.**
+  and no container was given `VAULT_ADDR` for three days; and `Upstream.thinking_modes` — which
+  dialect can express *"you decide"* — was declared by four adapters, asserted by one test, and
+  **read by no code on any path**, so the console offered a mode whose every use was refused.
+  **Test the wire, not the ends.**
+
+- **"Unreachable in practice" is a claim about who can reach it, and the console is somebody.**
+  `DialectUnsupported` was left out of the one list both surfaces catch, on a documented argument:
+  *"a model that cannot do a thing does not declare the capability."* True of the seed, false of
+  the screen where a Global Administrator declares one — ticking a box took ten seconds and turned
+  every thinking request into `500 Internal error`. An exception whose reachability depends on
+  nobody making an ordinary mistake in a form is reachable. **A configuration mistake must arrive
+  as a named refusal**, or the operator is sent to read the logs of a service that is working.
 
 - **When every check is green and the thing is broken, ask which half you never tested.** Twice
   now, and both times the untested half was invisible because the tested half was genuinely

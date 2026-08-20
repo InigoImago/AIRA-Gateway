@@ -23,7 +23,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from .conftest import GATEWAY_URL, Fixture
+from .conftest import GATEWAY_URL, LOCAL_CHAT_MODEL_ID, Fixture
 
 pytestmark = pytest.mark.integration
 
@@ -332,13 +332,13 @@ async def test_the_predecessors_surface_reaches_the_real_model(fixture: Fixture)
             f"{KIRA}/chat",
             json={
                 "request": {"parts": [{"text": "Say hello in one word."}]},
-                "model_id": 9001,
+                "model_id": LOCAL_CHAT_MODEL_ID,
                 "maxTokens": 900,
             },
             headers=fixture.headers(),
         )
 
-    if response.status_code == 404 and "id 9001" in response.text:
+    if response.status_code == 404 and f"id {LOCAL_CHAT_MODEL_ID}" in response.text:
         pytest.skip("no numeric id for the local model — run tools/seed_local_catalog.py")
     assert response.status_code == 200, response.text
 
@@ -366,7 +366,11 @@ async def test_both_surfaces_record_the_same_request_the_same_way(
         )
         kira = await client.post(
             f"{KIRA}/chat",
-            json={"request": {"parts": [{"text": "hi"}]}, "model_id": 9001, "maxTokens": 900},
+            json={
+                "request": {"parts": [{"text": "hi"}]},
+                "model_id": LOCAL_CHAT_MODEL_ID,
+                "maxTokens": 900,
+            },
             headers=fixture.headers(),
         )
     if gemini.status_code != 200 or kira.status_code != 200:
@@ -409,12 +413,20 @@ async def test_a_kira_caller_meets_the_same_budget(engine: AsyncEngine, fixture:
     async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=120.0) as client:
         first = await client.post(
             f"{KIRA}/chat",
-            json={"request": {"parts": [{"text": "hi"}]}, "model_id": 9001, "maxTokens": 200},
+            json={
+                "request": {"parts": [{"text": "hi"}]},
+                "model_id": LOCAL_CHAT_MODEL_ID,
+                "maxTokens": 200,
+            },
             headers=fixture.headers(),
         )
         second = await client.post(
             f"{KIRA}/chat",
-            json={"request": {"parts": [{"text": "hi"}]}, "model_id": 9001, "maxTokens": 200},
+            json={
+                "request": {"parts": [{"text": "hi"}]},
+                "model_id": LOCAL_CHAT_MODEL_ID,
+                "maxTokens": 200,
+            },
             headers=fixture.headers(),
         )
 

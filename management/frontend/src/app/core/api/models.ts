@@ -512,6 +512,15 @@ export interface ThinkingLevelCheck {
   model: string;
   /** One row per region **and** word: which places accept which is not knowable in advance. */
   results: { region: string; level: string; accepted: boolean; detail: string }[];
+  /**
+   * One row per **mode** that was asked about — `disabled`, `limited`, `auto`.
+   *
+   * No region, and no request: whether a wire format has a field for *"you decide"* is a fact
+   * about the dialect, not about the model or the place it runs in. Every adapter has always
+   * declared it and nothing read the declaration, so ticking `auto` for a model on an
+   * OpenAI-dialect server was accepted in silence and refused on every request afterwards.
+   */
+  modes?: { mode: string; accepted: boolean; detail: string }[];
 }
 
 /** A battery of questions to put to a model (`FRD-504`). */

@@ -24,6 +24,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import select
 
 from aira_common.anomalies import RuleAction, RuleTarget
+from aira_common.models import ThinkingMode
 from aira_gateway.anomalies.suspensions import AccessSuspension, as_dict
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.audit import Outcome
@@ -487,8 +488,18 @@ async def check_thinking_levels(
         if isinstance(asked, list)
         else []
     )
-    if not words:
-        raise GeminiHTTPError(400, "Name at least one level word to check.", "INVALID_ARGUMENT")
+    asked_modes = body.get("modes") if isinstance(body, dict) else None
+    modes = (
+        [m.strip().lower() for m in asked_modes if isinstance(m, str) and m.strip()][
+            :MAX_LEVELS_PER_CHECK
+        ]
+        if isinstance(asked_modes, list)
+        else []
+    )
+    if not words and not modes:
+        raise GeminiHTTPError(
+            400, "Name at least one level word or mode to check.", "INVALID_ARGUMENT"
+        )
 
     catalog: ModelCatalog = request.app.state.catalog
     registry: ProviderRegistry = request.app.state.providers
@@ -506,12 +517,45 @@ async def check_thinking_levels(
             "model and check its reachability first.",
             "FAILED_PRECONDITION",
         )
+    # **The modes, answered from the dialect and for nothing.** Every adapter declares
+    # `thinking_modes` — the OpenAI family excludes `limited` and `auto`, Anthropic excludes
+    # `auto` — and until now **nothing read it**: a declaration made by four adapters, asserted by
+    # one test, and consulted by no code on any path. So a Global Administrator could tick `auto`
+    # for a model on an OpenAI-dialect endpoint, be told nothing, and turn every thinking request
+    # into a refusal that only shows up in production. Measured on the running stack on
+    # 2026-08-20, where it was a `500`.
+    #
+    # No request is sent: the dialect either has the field or it does not, and that is not a
+    # question about the model. Which is also why it is answered before the level branch below —
+    # a dialect with no field for a *word* still has one for `disabled`.
+    mode_results = [
+        {
+            "mode": mode,
+            "accepted": mode in _expressible_modes(upstream),
+            "detail": (
+                "This model's wire format can express it."
+                if mode in _expressible_modes(upstream)
+                else (
+                    f"This model's wire format has no way to say '{mode}'. Declaring it here "
+                    "means every request that asks for it is refused — the model is never "
+                    "reached."
+                )
+            ),
+        }
+        for mode in modes
+    ]
+
+    # No early return for "modes only". There was one, and a mutation proved it changed nothing:
+    # with no words, both branches below produce an empty `results` list and neither sends a
+    # request — so it was a second statement of a rule the code already made. This repository has
+    # deleted three of those; a rule written twice is one that can be corrected in one place.
     if not getattr(upstream, "expresses_thinking_levels", False):
         # Answered without spending anything: this dialect has no field for a level at all, so
         # every word would be refused for the same reason and none of it is about the model.
         return JSONResponse(
             {
                 "model": model,
+                "modes": mode_results,
                 "results": [
                     {
                         "region": "",
@@ -556,7 +600,21 @@ async def check_thinking_levels(
             )
             results.append({"region": asked_region, "level": word, **verdict})
 
-    return JSONResponse({"model": model, "results": results})
+    return JSONResponse({"model": model, "results": results, "modes": mode_results})
+
+
+def _expressible_modes(upstream: Any) -> set[str]:
+    """Which thinking modes this dialect has a field for, as the words the console sends.
+
+    `getattr` with a permissive default, deliberately: an adapter that declares nothing is treated
+    as able to express everything, which keeps this button *informing* rather than inventing red
+    marks about a stand-in or a provider written before the flag existed. The runtime refusal is
+    the backstop either way — `DialectUnsupported` is in `REFUSALS` and answers 400 by name.
+    """
+    declared = getattr(upstream, "thinking_modes", None)
+    if not declared:
+        return {str(mode) for mode in ThinkingMode}
+    return {str(mode) for mode in declared}
 
 
 async def _accepts(

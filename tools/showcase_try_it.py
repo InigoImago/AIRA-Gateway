@@ -40,6 +40,12 @@ def key_for(slug: str) -> str:
     return f"aira_{digest[:8]}_{digest[8:56]}"
 
 
+#: The demo's own chat model — the one the seed declares, releases to the demo use cases, and
+#: drives its traffic through. Read from the same variable the seed reads, so a demo started with
+#: a different local model prints a command about *that* one.
+DEMO_CHAT_MODEL = os.environ.get("AIRA_SEED_LOCAL_CHAT_MODEL", "qwen3:0.6b")
+
+
 def chat_model(key: str) -> tuple[str, int] | None:
     """The demo's chat model and the integer id a KIRA client addresses it by.
 
@@ -47,6 +53,13 @@ def chat_model(key: str) -> tuple[str, int] | None:
     predecessor's addressing and that endpoint is where it is published. `None` when the gateway
     cannot be reached or has no chat model — in which case this block says nothing rather than
     printing a command that cannot work.
+
+    **The demo's own model first, not merely the first model.** This took whichever chat model the
+    catalog listed first, which on an installation that has cloud credentials configured is a cloud
+    model — so `make showcase` printed a `model_id` for `gemini-2.5-flash`, a model the demo never
+    seeded, never released and never sent a request to. It answered `200` with an **empty** body:
+    24 output tokens, all of them spent thinking. A first command that works is the entire purpose
+    of this file, and "works" has to mean "answers with something".
     """
     request = urllib.request.Request(  # noqa: S310 — a fixed localhost URL
         f"{GATEWAY}/kira/api/external/models", headers={"x-goog-api-key": key}
@@ -56,9 +69,15 @@ def chat_model(key: str) -> tuple[str, int] | None:
             models = json.loads(response.read())
     except urllib.error.URLError, TimeoutError, ValueError, OSError:
         return None
-    for model in models:
-        if "CHAT" in (model.get("capabilities") or []):
+    chats = [model for model in models if "CHAT" in (model.get("capabilities") or [])]
+    for model in chats:
+        if str(model.get("name")) == DEMO_CHAT_MODEL:
             return str(model["name"]), int(model["id"])
+    # Nothing local in the catalog — the pull failed, or somebody is running the showcase against
+    # an installation of their own. The first chat model is then the best available answer, and it
+    # is still read from the running system rather than written down here.
+    for model in chats:
+        return str(model["name"]), int(model["id"])
     return None
 
 

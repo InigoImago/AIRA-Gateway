@@ -6,6 +6,7 @@ import uuid
 from collections.abc import AsyncIterator
 
 import pytest
+import seed_local_catalog
 import stack_addresses
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -22,6 +23,16 @@ from aira_gateway.db.base import build_engine
 GATEWAY_URL = stack_addresses.url("gateway")
 MANAGEMENT_URL = stack_addresses.url("management")
 MANAGEMENT_DB = "postgresql+psycopg://aira:aira-local@localhost:5432/aira_mgmt"
+
+#: The integer a KIRA client sends for the demo's chat model.
+#:
+#: **Imported from the seed that writes it, not typed here.** Six tests carried `9001` as a
+#: literal, and moving the demo onto the predecessor's own id (`1004`, `FRD-107`) would have left
+#: every one of them addressing a model that no longer answers — reported as a `404` about a
+#: number, which reads as a broken surface rather than as a stale test. `tools/` is already on the
+#: path for this layer, and `test_local_model_measurements_agree.py` is what keeps the *other*
+#: seed equal to this one.
+LOCAL_CHAT_MODEL_ID = seed_local_catalog.CHAT_NUMERIC_ID
 
 
 async def wait_for_row(engine: AsyncEngine, sql: str, params: dict, timeout: float = 8.0):

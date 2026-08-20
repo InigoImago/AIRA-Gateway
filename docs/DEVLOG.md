@@ -5,6 +5,68 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## A declaration the console accepts and the dialect cannot say (2026-08-20)
+
+> *"You broke my showcase — if you now change something on `qwen3:0.6b`, it cannot cope with
+> thinking methods. And set the KIRA model id to 1004."*
+
+`make showcase` itself ran green, so the report was reproduced the way it was described: open the
+model in the console, tick a box, save. Ticking **`auto`** for `qwen3:0.6b` — a model served by an
+OpenAI-dialect endpoint — takes ten seconds, is offered without a word of warning, and turns every
+thinking request into:
+
+    {"error": {"code": 500, "message": "Internal error while processing the request."}}
+
+**`DialectUnsupported` was not in `REFUSALS`.** That list is the single place both surfaces catch,
+written so *"a new control cannot be caught by one surface and escape the other"* — and this
+exception escaped both. Its own docstring explains why nobody noticed: *"It should be unreachable
+in practice — a model that cannot do a thing does not declare the capability."* The console is
+where a capability is declared, so *unreachable in practice* rested on nobody making an ordinary
+mistake in it.
+
+Both surfaces now name the reason. Verified live, same request that produced the 500:
+
+    400  FAILED_PRECONDITION  "This dialect has no way to say 'the model decides':
+                               `reasoning_effort` is always a level…"
+    400  VALIDATION_ERROR     the same sentence, in the predecessor's envelope
+
+and the audit row says `invalid_request` rather than recording an outage that did not happen.
+
+**The declaration nobody read.** Every adapter has always carried `thinking_modes` — the OpenAI
+family excludes `limited` and `auto`, Anthropic excludes `auto` — and **no code on any path
+consulted it**: four adapters declaring, one test asserting, nothing asking. So the console's *Ask
+the model* button now asks about the ticked modes as well as the level words, and answers them from
+the dialect for nothing: whether a wire format has a field for *"you decide"* is not a question
+about the model or the region it runs in, so no request leaves the gateway. The ✗ arrives before
+the save, with the sentence that matters — *"every request that asks for it is refused; the model
+is never reached"*. It **informs, never blocks** (`FRD-506`), because the runtime refusal above is
+the backstop and a console that refuses a save is a console that is sometimes wrong about a model
+it cannot reach.
+
+**The KIRA id is now `1004`.** `ADR-0010`, `docs/MIGRATION-KIRA.md` and the hermetic suite have all
+used the predecessor's own chat id as their example since the surface was built, and the demo
+answered to `9001` — so the one runnable command in a migration guide used a different number from
+every sentence around it. `FRD-107`'s promise is that a client migrates by changing a base URL; the
+demo is the first place that should look like an installation that kept its clients' ids. Six
+integration tests carried the literal; they now import it from the seed that writes it.
+
+**And the showcase was printing a command for a model it does not own.** `showcase_try_it.py`
+takes the first chat model the KIRA catalog lists — which, on a machine with cloud credentials, is
+a cloud model. It printed `model_id: 9504` for `gemini-2.5-flash`, a model the demo never seeds,
+never releases and never sends a request to, and running it returned `200` with an **empty** body:
+24 output tokens, all spent thinking. The file exists for one sentence in its own docstring — *"what
+was missing was one command that works"* — and *works* has to mean *answers with something*.
+
+One mutation survived and was **deleted rather than defended**: an early return for a modes-only
+check that both following branches already produced. A rule written twice is one that can be
+corrected in one place. And one console property was broken by hand and *did not go red* — the test
+never set a verdict before failing the next question, so there was nothing stale to leave behind.
+It sets one now.
+
+7 new mutations (557) · showcase green end to end · hermetic, console and browser suites green.
+
+---
+
 ## The installation's own budget: the bucket for spend that belongs to nobody (2026-08-20)
 
 > *"Build the installation budget."*

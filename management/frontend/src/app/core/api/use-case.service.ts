@@ -444,10 +444,14 @@ export class UseCaseService {
     model: string,
     levels: string[],
     where: Provenance = {},
+    modes: string[] = [],
   ): Observable<ThinkingLevelCheck> {
     return this.http.post<ThinkingLevelCheck>(
       `${GW}/v1beta/models/${seg(model)}:checkThinking`,
-      { levels },
+      // The modes travel with the words because they are the same question asked twice — *can
+      // this model be told this?* — and answering them costs nothing: the dialect either has the
+      // field or it does not, so no request leaves the gateway for them.
+      { levels, modes },
       { params: provenanceParams(where) },
     );
   }

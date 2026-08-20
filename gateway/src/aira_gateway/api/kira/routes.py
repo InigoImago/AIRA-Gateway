@@ -79,7 +79,7 @@ from aira_gateway.pipeline.errors import PipelineRejected
 from aira_gateway.ratelimit.errors import RateLimited
 from aira_gateway.reporting.service import ReportingService
 from aira_gateway.thinking import ThinkingRejected
-from aira_gateway.upstreams.base import UpstreamError
+from aira_gateway.upstreams.base import DialectUnsupported, UpstreamError
 
 BASE = "/kira/api/external"
 
@@ -186,6 +186,12 @@ def _error_response(request: Request, exc: Exception) -> JSONResponse:
         response = errors.kira_error_response(exc.code, errors.VALIDATION_ERROR, exc.message)
     elif isinstance(exc, NoCapableModel):
         response = errors.kira_error_response(400, errors.MODEL_NOT_FOUND, str(exc))
+    elif isinstance(exc, DialectUnsupported):
+        # The declaration claims something this model's wire format cannot say. `VALIDATION_ERROR`
+        # rather than `MODEL_NOT_FOUND`: the model exists and is reachable, and the request as
+        # written cannot be carried — telling a client the model is missing would send it looking
+        # for a different id.
+        response = errors.kira_error_response(400, errors.VALIDATION_ERROR, str(exc))
     elif isinstance(exc, UpstreamError):
         code = upstream_status(exc.status_code)[0]
         name = (

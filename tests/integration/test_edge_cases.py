@@ -26,7 +26,7 @@ from typing import Any
 import httpx
 import pytest
 
-from .conftest import GATEWAY_URL, Fixture
+from .conftest import GATEWAY_URL, LOCAL_CHAT_MODEL_ID, Fixture
 
 pytestmark = pytest.mark.integration
 
@@ -576,12 +576,33 @@ async def test_batch_embedding_bounds_hold(
         ({"request": {"parts": [{"text": "hi"}]}, "model_id": 9999999}, (422,)),
         ({"request": {"parts": [{"text": "hi"}]}, "model_id": "nine"}, (422,)),
         ({"request": {"parts": [{"text": "hi"}]}, "model_id": -1}, (404, 422)),
-        ({"request": {"parts": []}, "model_id": 9001}, (400, 404)),
-        ({"request": {"parts": [{}]}, "model_id": 9001}, (422,)),
-        ({"request": "hi", "model_id": 9001}, (422,)),
-        ({"request": {"parts": [{"text": "hi"}]}, "model_id": 9001, "maxTokens": 0}, (422,)),
-        ({"request": {"parts": [{"text": "hi"}]}, "model_id": 9001, "maxTokens": -5}, (422,)),
-        ({"request": {"parts": [{"text": "hi"}]}, "model_id": 9001, "temperature": "warm"}, (422,)),
+        ({"request": {"parts": []}, "model_id": LOCAL_CHAT_MODEL_ID}, (400, 404)),
+        ({"request": {"parts": [{}]}, "model_id": LOCAL_CHAT_MODEL_ID}, (422,)),
+        ({"request": "hi", "model_id": LOCAL_CHAT_MODEL_ID}, (422,)),
+        (
+            {
+                "request": {"parts": [{"text": "hi"}]},
+                "model_id": LOCAL_CHAT_MODEL_ID,
+                "maxTokens": 0,
+            },
+            (422,),
+        ),
+        (
+            {
+                "request": {"parts": [{"text": "hi"}]},
+                "model_id": LOCAL_CHAT_MODEL_ID,
+                "maxTokens": -5,
+            },
+            (422,),
+        ),
+        (
+            {
+                "request": {"parts": [{"text": "hi"}]},
+                "model_id": LOCAL_CHAT_MODEL_ID,
+                "temperature": "warm",
+            },
+            (422,),
+        ),
     ],
 )
 async def test_the_kira_surface_refuses_in_the_predecessors_shape(

@@ -88,7 +88,12 @@ from aira_gateway.state import (
 )
 from aira_gateway.thinking import ThinkingRejected, reserved_tokens
 from aira_gateway.thinking import resolve as resolve_thinking
-from aira_gateway.upstreams.base import ProviderRegistry, Upstream, UpstreamError
+from aira_gateway.upstreams.base import (
+    DialectUnsupported,
+    ProviderRegistry,
+    Upstream,
+    UpstreamError,
+)
 
 _log = get_logger("aira_gateway")
 
@@ -105,6 +110,13 @@ REFUSALS = (
     PipelineRejected,
     NoCapableModel,
     UpstreamError,
+    # **A mapping that cannot express the request is a refusal, not a crash.** Its own docstring
+    # called it "unreachable in practice — a model that cannot do a thing does not declare the
+    # capability" — and the console is where an administrator declares one. Ticking `auto` for a
+    # model on an OpenAI-dialect server took ten seconds and turned every thinking request into a
+    # **500 "Internal error"**: the caller learned nothing, the operator learned nothing, and the
+    # audit row said the gateway had broken rather than that a declaration was wrong.
+    DialectUnsupported,
     GeminiHTTPError,
 )
 

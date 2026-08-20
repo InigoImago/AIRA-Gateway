@@ -19,6 +19,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from aira_common.models import ThinkingMode
 from aira_gateway.app import create_app
 from aira_gateway.auth.dependencies import require_principal
 from aira_gateway.auth.principal import Principal
@@ -551,3 +552,94 @@ async def test_a_diagnostic_is_not_counted_as_served() -> None:
     # `:countTokens` is free, so nothing was spent — and the row saying so is a stronger statement
     # than no row at all.
     assert rows[0].total_tokens is None
+
+
+class _NoAutoNoBudget:
+    """The OpenAI family's shape: `reasoning_effort` takes a word and nothing else.
+
+    `thinking_modes` is the adapters' own declaration, and it is the one under test here — every
+    adapter has carried it since the dialects were split, and **nothing on any path read it**
+    until this button did.
+    """
+
+    expresses_thinking_levels = True
+    thinking_modes = frozenset(ThinkingMode) - {ThinkingMode.LIMITED, ThinkingMode.AUTO}
+
+    async def generate(self, request: Any) -> Any:  # pragma: no cover - must never be called
+        raise AssertionError("a mode is answered from the dialect, never by spending a token")
+
+
+@pytest.mark.anyio
+async def test_a_mode_the_dialect_cannot_express_is_marked_before_it_is_saved() -> None:
+    """The state this exists to prevent, measured on the running stack on 2026-08-20: `auto`
+    ticked in the console for a model served by an OpenAI-dialect endpoint, accepted in silence,
+    and every thinking request afterwards answering `500 Internal error`.
+
+    Whether a wire format has a field for *"you decide"* is a fact about the **dialect** — not
+    about the model, and not about the region it runs in — so no request is sent and
+    `_NoAutoNoBudget.generate` raises if one is."""
+    app = _client(GLOBAL_ADMIN, _NoAutoNoBudget())
+    with TestClient(app) as client:
+        await _declare(app)
+        body = client.post(
+            "/v1beta/models/gemini-2.0-flash:checkThinking",
+            json={"modes": ["disabled", "auto", "limited"]},
+        ).json()
+
+    assert [(row["mode"], row["accepted"]) for row in body["modes"]] == [
+        ("disabled", True),
+        ("auto", False),
+        ("limited", False),
+    ]
+    # The sentence says what declaring it would *do*, not merely that it is unsupported: the
+    # reader is deciding whether to leave a box ticked.
+    assert "no way to say 'auto'" in body["modes"][1]["detail"]
+    assert "never reached" in body["modes"][1]["detail"]
+
+
+@pytest.mark.anyio
+async def test_the_modes_are_answered_alongside_the_words_in_one_press() -> None:
+    """One button, one question — *can this model be told this?* — asked of both halves of the
+    declaration. Two buttons would mean two chances to press only one."""
+    app = _client(GLOBAL_ADMIN, _TakesLevels())
+    with TestClient(app) as client:
+        await _declare(app)
+        body = client.post(
+            "/v1beta/models/gemini-2.0-flash:checkThinking",
+            json={"levels": ["low"], "modes": ["disabled"]},
+        ).json()
+
+    assert body["results"][0]["level"] == "low"
+    assert body["modes"] == [
+        {
+            "mode": "disabled",
+            "accepted": True,
+            "detail": "This model's wire format can express it.",
+        }
+    ]
+
+
+@pytest.mark.anyio
+async def test_an_adapter_that_declares_nothing_is_not_marked_red() -> None:
+    """`FRD-506`'s rule again: inform, never invent. An adapter written before the flag existed
+    knows nothing about its modes, and a red mark there would be this console's opinion rather
+    than the dialect's — while the runtime refusal still backstops it."""
+    app = _client(GLOBAL_ADMIN, _TakesLevels())  # declares no `thinking_modes`
+    with TestClient(app) as client:
+        await _declare(app)
+        body = client.post(
+            "/v1beta/models/gemini-2.0-flash:checkThinking", json={"modes": ["auto"]}
+        ).json()
+
+    assert body["modes"][0]["accepted"] is True
+
+
+@pytest.mark.anyio
+async def test_a_press_with_neither_words_nor_modes_is_refused() -> None:
+    app = _client(GLOBAL_ADMIN, _TakesLevels())
+    with TestClient(app) as client:
+        await _declare(app)
+        response = client.post("/v1beta/models/gemini-2.0-flash:checkThinking", json={})
+
+    assert response.status_code == 400
+    assert "level word or mode" in response.json()["error"]["message"]

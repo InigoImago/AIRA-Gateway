@@ -26,7 +26,16 @@ from aira_gateway.db.base import build_engine
 #: "the local embedding model" — not a particular model, so re-running for a different model
 #: *moves* the id rather than adding a second claim to it. Fixed rather than derived because a
 #: caller's configuration holds the number, and changing it would break them silently.
-CHAT_NUMERIC_ID = 9001
+#:
+#: **`1004` is the predecessor's own chat id** (`ADR-0010`, `docs/MIGRATION-KIRA.md`), and the demo
+#: carries it deliberately. `FRD-107`'s promise is that a KIRA client migrates by changing a base
+#: URL; a demo whose chat model answered to `9001` illustrated the opposite — every document and
+#: every example said `1004`, and the one runnable command said something else. The number is
+#: assigned in the catalog precisely so an installation can match what its clients already send,
+#: and the demo is the first place that should look like an installation that did.
+CHAT_NUMERIC_ID = 1004
+#: Kept out of the 1000s: the predecessor's embedding id is not something this repository knows,
+#: and inventing a plausible-looking one would be a claim about a system nobody here has measured.
 EMBED_NUMERIC_ID = 9002
 
 

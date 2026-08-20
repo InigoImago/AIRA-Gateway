@@ -254,6 +254,9 @@ export class ModelCatalog implements OnInit {
    * the model** — one capped request, and the provider's refusal is the answer.
    */
   protected readonly thinkingLevels = signal<string[]>([]);
+  /** What the dialect said about each ticked mode. Empty until the button is pressed — an
+   *  unasked question is not a verdict (`FRD-506`). */
+  protected readonly modeVerdicts = signal<Record<string, { ok: boolean; detail: string }>>({});
   /** What is in the box but not yet a chip. Enter, comma or blur commits it. */
   protected readonly levelDraft = signal('');
   /** Word → what the model said when it was asked, from the check below. Empty until asked. */
@@ -399,16 +402,26 @@ export class ModelCatalog implements OnInit {
   protected checkLevels(): void {
     this.addLevel();
     const words = this.thinkingLevels();
+    const modes = this.thinkingModes();
     const model = this.name().trim();
-    if (!words.length || !model) return;
+    if ((!words.length && !modes.length) || !model) return;
     this.checkingLevels.set(true);
-    this.service.checkThinkingLevels(model, words, this.formProvenance()).subscribe({
+    this.service.checkThinkingLevels(model, words, this.formProvenance(), modes).subscribe({
       next: (answer) => {
         const verdicts: Record<string, { ok: boolean; detail: string }> = {};
         for (const result of answer.results) {
           verdicts[result.level] = { ok: result.accepted, detail: result.detail };
         }
         this.levelVerdicts.set(verdicts);
+        // The ticked boxes, answered from the dialect rather than from the model: `auto` has no
+        // field in the OpenAI family and `limited` none in Anthropic's, so declaring one here
+        // produced a model that refused every request asking for it. The adapters had always said
+        // so and nothing had ever asked them.
+        const modeVerdicts: Record<string, { ok: boolean; detail: string }> = {};
+        for (const result of answer.modes ?? []) {
+          modeVerdicts[result.mode] = { ok: result.accepted, detail: result.detail };
+        }
+        this.modeVerdicts.set(modeVerdicts);
         this.checkingLevels.set(false);
       },
       error: (response: unknown) => {
@@ -417,6 +430,7 @@ export class ModelCatalog implements OnInit {
         // says "the model refused this word", and the gateway being down says nothing about the
         // word at all.
         this.levelVerdicts.set({});
+        this.modeVerdicts.set({});
         this.error.set(errorMessage(response, 'Could not ask this model about its levels.'));
       },
     });
@@ -1332,6 +1346,7 @@ export class ModelCatalog implements OnInit {
     this.thinkingLevels.set([]);
     this.levelDraft.set('');
     this.levelVerdicts.set({});
+    this.modeVerdicts.set({});
     this.dimensions.set('');
     this.defaultDimension.set('');
     this.taskTypes.set('');
@@ -1349,6 +1364,7 @@ export class ModelCatalog implements OnInit {
     this.thinkingLevels.set([...(thinking?.levels ?? [])]);
     this.levelDraft.set('');
     this.levelVerdicts.set({});
+    this.modeVerdicts.set({});
 
     const embedding = model.embedding ?? null;
     this.dimensions.set((embedding?.dimensions ?? []).join(', '));
