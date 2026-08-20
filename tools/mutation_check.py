@@ -246,8 +246,8 @@ MUTATIONS = [
         "TC46",
         "a catalogued model is addressed from its declaration rather than guessed at",
         "gateway/src/aira_gateway/upstreams/vertex/adapters.py",
-        '    region = (addressing or {}).get("region", "").strip()',
-        '    region = ""',
+        "    regions = _declared_regions(addressing)",
+        "    regions = ()",
         "gateway/tests/test_vertex.py",
     ),
     Mutation(
@@ -376,6 +376,54 @@ MUTATIONS = [
         "gateway/src/aira_gateway/api/incidents.py",
         "    asked_provider = provider or declaration.provider",
         "    asked_provider = declaration.provider",
+        "gateway/tests/test_model_check.py",
+    ),
+    Mutation(
+        "V22",
+        "a failure about the place moves to the next region",
+        "gateway/src/aira_gateway/upstreams/vertex/adapters.py",
+        "            if exc.status_code not in REGION_FAILOVER_STATUSES:",
+        "            if True:",
+        "gateway/tests/test_region_failover.py",
+    ),
+    Mutation(
+        "V23",
+        "a failure about the request is not retried in another region",
+        "gateway/src/aira_gateway/upstreams/vertex/adapters.py",
+        "REGION_FAILOVER_STATUSES = frozenset({404, 408, 429, 500, 502, 503, 504})",
+        "REGION_FAILOVER_STATUSES = frozenset({400, 401, 403, 404, 408, 422, 429, 500, 502, 503, 504})",  # noqa: E501
+        "gateway/tests/test_region_failover.py",
+    ),
+    Mutation(
+        "V24",
+        "a region the residency policy forbids is stepped over, not fatal",
+        "gateway/src/aira_gateway/upstreams/vertex/adapters.py",
+        "        except RegionNotAllowed as exc:\n            last = exc",
+        "        except RegionNotAllowed:\n            raise",
+        "gateway/tests/test_region_failover.py",
+    ),
+    Mutation(
+        "V25",
+        "the answer carries the region that produced it, for the audit row",
+        "gateway/src/aira_gateway/upstreams/vertex/adapters.py",
+        '            return answer.model_copy(update={"served_region": region})\n\n        return await _across_regions(self._targets_for(request.model, request.addressing), attempt)\n\n    async def stream_generate(self, request: CanonicalRequest) -> AsyncIterator[CanonicalChunk]:\n        """**Failover ends at the first chunk**',  # noqa: E501
+        '            return answer\n\n        return await _across_regions(self._targets_for(request.model, request.addressing), attempt)\n\n    async def stream_generate(self, request: CanonicalRequest) -> AsyncIterator[CanonicalChunk]:\n        """**Failover ends at the first chunk**',  # noqa: E501
+        "gateway/tests/test_region_failover.py",
+    ),
+    Mutation(
+        "V26",
+        "the audit row prefers the region that answered over the configured one",
+        "gateway/src/aira_gateway/api/serving.py",
+        "        return (described.provider, described.publisher, served_region or described.region)",
+        "        return (described.provider, described.publisher, described.region)",
+        "gateway/tests/test_region_failover.py",
+    ),
+    Mutation(
+        "V27",
+        "every declared region is checked, not only the first",
+        "gateway/src/aira_gateway/api/incidents.py",
+        '    for asked_region in asked_regions or [""]:',
+        '    for asked_region in (asked_regions or [""])[:1]:',
         "gateway/tests/test_model_check.py",
     ),
     Mutation(

@@ -14,6 +14,7 @@ import {
   CAPABILITIES,
   MEDIA_TYPES,
   THINKING_MODES,
+  readRegions,
   AttachmentDeclaration,
   Capability,
   CatalogModel,
@@ -131,6 +132,38 @@ export class ModelCatalog implements OnInit {
   private latchProvenance(): void {
     this.provenanceOpened.set(true);
   }
+  /**
+   * Commit whatever is in the box as a region.
+   *
+   * Order is preserved because order is the meaning: the first entry is where an ordinary request
+   * goes, and the rest are what the gateway falls back to. Duplicates are dropped — a list naming
+   * the same place twice would retry the failure it just had.
+   */
+  protected addRegion(): void {
+    const region = this.regionDraft().trim();
+    this.regionDraft.set('');
+    if (!region || this.regions().includes(region)) return;
+    this.regions.set([...this.regions(), region]);
+  }
+
+  protected removeRegion(region: string): void {
+    this.regions.set(this.regions().filter((value) => value !== region));
+    const verdicts = { ...this.regionVerdicts() };
+    delete verdicts[region];
+    this.regionVerdicts.set(verdicts);
+  }
+
+  /** A region's verdict from the last check, or `null` if it has not been asked about. */
+  protected regionVerdict(region: string): { ok: boolean; detail: string } | null {
+    return this.regionVerdicts()[region] ?? null;
+  }
+
+  /** Whether this installation permits a region — `null` where the gateway did not say. */
+  protected regionAllowed(region: string): boolean | null {
+    const allowed = this.allowedRegions();
+    return allowed.length ? allowed.includes(region) : null;
+  }
+
   /** Show the fields behind the sentence. One way only: there is nothing to close again. */
   protected openProvenance(): void {
     this.latchProvenance();
@@ -177,7 +210,6 @@ export class ModelCatalog implements OnInit {
    * dispatch decision reads can be entered by whoever is accountable for it, and the comment this
    * replaces predicted exactly this change.
    */
-  protected readonly region = signal('');
   protected readonly publisher = signal('');
   protected readonly platform = signal('');
   protected readonly hosting = signal<'' | 'managed' | 'self_deployed'>('');
@@ -483,9 +515,11 @@ export class ModelCatalog implements OnInit {
     // addresses a request — correct, and weeks too late for whoever catalogued the model: they
     // hear nothing until a caller gets a 4xx. Judged against the gateway's own published list, so
     // this is the same policy said earlier rather than a second policy.
-    if (this.regionPermitted() === false) {
+    const forbidden = this.forbiddenRegions();
+    if (forbidden.length) {
       return (
-        `Region '${this.region().trim()}' is not one this installation permits. ` +
+        `${forbidden.length === 1 ? 'Region' : 'Regions'} ${forbidden.map((r) => `'${r}'`).join(', ')} ` +
+        `${forbidden.length === 1 ? 'is' : 'are'} not permitted by this installation. ` +
         `Allowed: ${this.allowedRegions().join(', ')}. ` +
         'Residency is set on the gateway (AIRA_ALLOWED_REGIONS); widen it there if that is intended.'
       );
@@ -566,7 +600,7 @@ export class ModelCatalog implements OnInit {
         publisher: this.publisher().trim(),
         // Sent as `null` when empty rather than as `{}`: an empty object is a claim that the
         // addressing was considered and is nothing, and the two read differently in a catalogue.
-        addressing: this.region().trim() ? { region: this.region().trim() } : null,
+        addressing: this.regions().length ? { regions: this.regions() } : null,
         platform: this.platform().trim(),
         hosting: this.hosting(),
         max_output_tokens: this.maxOutput(),
@@ -603,7 +637,9 @@ export class ModelCatalog implements OnInit {
     this.cacheWritePrice.set('');
     this.capabilities.set([]);
     this.publisher.set('');
-    this.region.set('');
+    this.regions.set([]);
+    this.regionDraft.set('');
+    this.regionVerdicts.set({});
     this.platform.set('');
     this.hosting.set('');
     this.maxOutput.set(null);
@@ -669,7 +705,13 @@ export class ModelCatalog implements OnInit {
    * Empty from a row opened and not edited, in which case the gateway keeps using what it stored.
    */
   private formProvenance(): Provenance {
-    return { provider: this.provider(), publisher: this.publisher(), region: this.region() };
+    // Comma-separated: the check endpoint asks each of them, and a query parameter is a
+    // string. One shape on the wire, split by the one reader that knows what it means.
+    return {
+      provider: this.provider(),
+      publisher: this.publisher(),
+      region: this.regions().join(','),
+    };
   }
 
   protected runCheck(model: Pick<CatalogModel, 'name'>): void {
@@ -678,6 +720,13 @@ export class ModelCatalog implements OnInit {
     this.service.checkModel(model.name, this.formProvenance()).subscribe({
       next: (verdict) => {
         this.check.set(verdict);
+        // **One verdict per region**, so a model in three places says which of them answered
+        // rather than a single yes-or-no about the first (`FRD-609`).
+        const verdicts: Record<string, { ok: boolean; detail: string }> = {};
+        for (const entry of verdict.regions ?? []) {
+          if (entry.region) verdicts[entry.region] = { ok: entry.reachable, detail: entry.detail };
+        }
+        this.regionVerdicts.set(verdicts);
         this.checkedName.set(model.name);
         this.checking.set(false);
       },
@@ -808,7 +857,9 @@ export class ModelCatalog implements OnInit {
     this.name.set(model.name);
     this.provider.set(model.airaProvider ?? '');
     this.publisher.set(model.airaPublisher ?? '');
-    this.region.set('');
+    this.regions.set([]);
+    this.regionDraft.set('');
+    this.regionVerdicts.set({});
     this.platform.set(model.airaProvider ?? '');
     this.editing.set('');
     this.showAdd.set(true);
@@ -853,12 +904,30 @@ export class ModelCatalog implements OnInit {
    */
   protected readonly allowedRegions = signal<string[]>([]);
 
-  /** Whether the region in the form is one this installation permits, or `null` if unknowable. */
-  protected readonly regionPermitted = computed<boolean | null>(() => {
-    const region = this.region().trim();
+  /**
+   * Where this model lives, **in the order it should be tried** (`FRD-609`).
+   *
+   * A list rather than a string because a model can be in several places, and order is meaning:
+   * the first entry is what an ordinary request uses, and the rest are what the gateway falls back
+   * to when a region cannot serve — no quota there, not deployed there, unwell there.
+   *
+   * Chips for the same reason the thinking levels are: each entry is separately present,
+   * separately removable, and separately answerable when the model is asked about it.
+   */
+  protected readonly regions = signal<string[]>([]);
+  /** What is in the box but not yet a chip. Enter, comma or blur commits it. */
+  protected readonly regionDraft = signal('');
+  /** Region → what the gateway said when asked. Empty until the check has run. */
+  protected readonly regionVerdicts = signal<Record<string, { ok: boolean; detail: string }>>({});
+
+  /** The regions in the form that this installation does not permit. */
+  protected readonly forbiddenRegions = computed<string[]>(() => {
     const allowed = this.allowedRegions();
-    if (!region || !allowed.length) return null;
-    return allowed.includes(region);
+    // Empty means *the gateway did not say* (an older one, or a failed load), never *nothing is
+    // allowed*: a console reading absence as an empty allow-list would refuse every region
+    // anybody typed, enforcing a policy it has never heard.
+    if (!allowed.length) return [];
+    return this.regions().filter((region) => !allowed.includes(region));
   });
 
   protected readonly selectedProvider = computed(
@@ -1014,7 +1083,7 @@ export class ModelCatalog implements OnInit {
     if (upstream) {
       this.provider.set(upstream.name);
       this.publisher.set(upstream.publisher ?? '');
-      this.region.set(upstream.region ?? '');
+      this.regions.set(upstream.region ? [upstream.region] : []);
       this.vendorFilled.set(
         [upstream.name && 'provider', upstream.publisher && 'dialect'].filter(Boolean) as string[],
       );
@@ -1242,7 +1311,7 @@ export class ModelCatalog implements OnInit {
     this.cacheWritePrice.set(model.cache_write_price_per_million ?? '');
     this.capabilities.set([...(model.capabilities ?? [])]);
     this.publisher.set(model.publisher ?? '');
-    this.region.set(String(model.addressing?.['region'] ?? ''));
+    this.regions.set(readRegions(model.addressing));
     this.platform.set(model.platform ?? '');
     this.hosting.set(model.hosting ?? '');
     this.maxOutput.set(model.max_output_tokens ?? null);

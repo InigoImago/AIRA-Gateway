@@ -73,7 +73,7 @@ UNCONDITIONED: dict[str, str] = {
         "(`FRD-308`) — `_models_named_in` reads `config.model`, so this step needed no separate "
         "rule and gets no separate hole."
     ),
-    "api/incidents.py:check_thinking_levels:generate": (
+    "api/incidents.py:_accepts:generate": (
         "The console's *Ask the model* button (`ADR-0021`), and it is a question **about the "
         "installation** rather than a request served for anybody: it names no use case, so there "
         "is no release, no residency claim and no budget that could apply to it. What it asks is "

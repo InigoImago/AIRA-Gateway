@@ -5,6 +5,61 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## A model in several regions, and three things that already depended on there being one (2026-08-20)
+
+> *"In the catalogue I would like to be able to enter several regions, and they should also be
+> checkable — whether the model is reachable, and the same for the thinking methods. And check what
+> else could depend on this."*
+
+The last clause is the one that paid. Twelve places read a model's region; **three of them were
+already wrong**, and the feature would have made each systematically wrong rather than
+occasionally:
+
+- **The audit row named the region from configuration, not the one that answered.**
+  `provenance_for(provider)` returns the region of the first *configured* model on that adapter.
+  For a catalogued model in a different region that was already a false residency claim; with a
+  failover chain it would have been one on every request that used a fallback. `FRD-115`'s whole
+  argument is the difference between *"the configuration says EU"* and *"this request went to
+  `eu`"*, and the row had the first while reading as the second. **A wrong claim is worse than a
+  blank one** — a blank column is neither a claim nor evidence.
+- **A leaked stream on every refused connection.** `_StreamContext.__aenter__` raises after the
+  inner httpx context is entered, and Python does not call `__aexit__` when `__aenter__` raises. One
+  leak per refused stream since the transport was written, invisible until `429`s arrive often
+  enough — and failover turns that path from the unlucky end of a request into something a healthy
+  request walks through.
+- **A guard claiming `addressing` was read by nothing**, true until the day before, and unfalsifiable
+  by construction: the check subtracts the payload keys *and* the exemption list, so a field that is
+  genuinely offered is subtracted twice and the stale claim reads as current.
+
+**The feature itself** is an ordered list, and the design is entirely in *which failures move on*:
+`404 408 429 5xx` are facts about a **place** and fall through; `400 401 403 422` are facts about
+the **request**, identical everywhere, and retrying them triples the wait before the same refusal —
+and, on a `403`, triples the failed-auth count somebody is alerting on. A `200` never falls through:
+the model answered, and asking a second region is shopping for a verdict.
+
+Two things worth stating because they were choices:
+
+- **The failover loop keeps no copy of `AIRA_ALLOWED_REGIONS`.** It learns that a region is
+  forbidden by addressing it and being told, so residency still has exactly one owner and a model
+  catalogued in `europe-west1, global` simply works on an installation that permits only the first.
+- **A stream that has sent a byte is committed.** The chain is walked while opening; after the first
+  chunk every failure propagates. A client with half an answer cannot have it continued by another
+  region.
+
+**Checks are per region, both of them** — the owner's choice over a cheaper approximation, and the
+right one: a vendor rolls a family out region by region, so `thinkingLevel` can work in one region
+and answer *"not supported by this model"* in another. A declaration checked in one place would be
+a claim about the others. The summary is the **best** region with the failures named beside it,
+because a model that answers in one of its three *is* reachable.
+
+**Sixteen mutations.** `V26` — the audit row preferring the region that answered — survived its
+first form, which is how the residency-evidence test came to exist: the code was right, and nothing
+would have noticed it becoming wrong.
+
+`FRD-609`, migration `catalog/0006`.
+
+---
+
 ## A region the policy forbids is refused where it is typed (2026-08-20)
 
 > *"global out of allowed regions, and refuse the ones that are not permitted in the console."*

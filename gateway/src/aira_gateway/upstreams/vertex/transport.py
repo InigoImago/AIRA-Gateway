@@ -147,8 +147,23 @@ class _StreamContext:
         try:
             response: httpx.Response = await self._cm.__aenter__()
         except httpx.HTTPError as exc:
+            self._cm = None
             raise UpstreamError(f"Vertex transport error: {type(exc).__name__}.") from exc
-        _raise_for_status(response)
+        try:
+            _raise_for_status(response)
+        except UpstreamError:
+            # **Close what was opened.** Python does not call `__aexit__` when `__aenter__` raises,
+            # so a non-200 left the httpx stream — and its connection — open for the pool to reap
+            # whenever the object was collected. One leak per refused stream, invisible until a
+            # `429` arrives often enough to matter.
+            #
+            # Found while adding regional failover (`FRD-609`), which turns "one leak per refused
+            # stream" into "one per refused region per stream" and is the reason it was noticed:
+            # this path used to be the unlucky end of a request, and is now something a healthy
+            # request walks through on the way to an answer.
+            await self._cm.__aexit__(None, None, None)
+            self._cm = None
+            raise
         return response
 
     async def __aexit__(self, *exc_info: Any) -> None:

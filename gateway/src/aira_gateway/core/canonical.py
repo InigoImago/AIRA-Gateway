@@ -196,7 +196,7 @@ class CanonicalRequest(BaseModel):
     #:
     #: Filled by the dispatch layer, which has already resolved the declaration. Empty for a model
     #: whose name is its whole address, which is most of them.
-    addressing: dict[str, str] = Field(default_factory=dict)
+    addressing: dict[str, Any] = Field(default_factory=dict)
     messages: list[CanonicalMessage]
     temperature: float | None = None
     max_output_tokens: int | None = None
@@ -305,7 +305,7 @@ class CanonicalEmbeddingRequest(BaseModel):
     #: The same platform addressing the generation request carries — see `CanonicalRequest`.
     #: Embedding goes to the same URL shape, so a catalogued model needs it on both paths or it
     #: works for one verb and refuses for the other.
-    addressing: dict[str, str] = Field(default_factory=dict)
+    addressing: dict[str, Any] = Field(default_factory=dict)
     texts: list[str]
     #: What the vectors are optimised for. Indexing a corpus with ``RETRIEVAL_QUERY`` instead of
     #: ``RETRIEVAL_DOCUMENT`` produces vectors that work, sit in the right space, and retrieve
@@ -385,6 +385,18 @@ class CanonicalResponse(BaseModel):
     #: several at once, because all three vendors can return more than one and a single-call field
     #: would need replacing the first time one did.
     tool_calls: tuple[ToolCallPart, ...] = ()
+    #: **Where this answer was actually produced** (`FRD-609`, `FRD-115` FR-10).
+    #:
+    #: Empty on every dialect that has one place, which is most of them. It exists because a model
+    #: may be catalogued in several regions and tried in order, so *"the configuration says
+    #: europe-west1"* and *"this request went to europe-west1"* stopped being the same sentence —
+    #: and `FRD-115`'s whole argument is that only the second is evidence.
+    #:
+    #: The audit row had a **static** answer before this: `provenance_for(provider)` returns the
+    #: region of the first *configured* model on that adapter, which is right for a configured
+    #: model and a guess for a catalogued one. With a failover chain it would have become a
+    #: confident, wrong residency claim on every request that used the second region.
+    served_region: str = ""
 
 
 class CanonicalChunk(BaseModel):

@@ -43,23 +43,26 @@ PAYLOAD_REGIONS = ("protected save(): void {", "private declarations()")
 
 #: Writable fields the console deliberately does not offer, each with the reason it steers nothing.
 #:
-#: Both entries are read by **nothing**: they are carried to the gateway's read-model by the
-#: consumer and dropped on the way into `ModelDeclaration`, which is the object every dispatch
-#: decision is made from. `FRD-507` §4.4 settled the case they were meant for — for Azure the
-#: deployment name is the addressing, and it is named in the gateway's configuration, which is why
-#: that provider reports `cataloguedIsEnough: false`.
+#: The entry here is read by **nothing**: it is carried to the gateway's read-model by the consumer
+#: and dropped on the way into `ModelDeclaration`, which is the object every dispatch decision is
+#: made from.
 #:
-#: So they are not "unreachable controls", they are columns without a reader. Giving them inputs
-#: would be the same defect wearing the other mask: a control somebody sets that changes nothing.
-#: If a reader ever appears, it needs a control in the same change — that is what this dict is for.
+#: So it is not an "unreachable control", it is a column without a reader. Giving it an input would
+#: be the same defect wearing the other mask: a control somebody sets that changes nothing. If a
+#: reader ever appears, it needs a control in the same change — that is what this dict is for.
+#:
+#: **`addressing` was here and is not any more.** It gained a reader on 2026-08-19 —
+#: `ModelDeclaration.addressing`, which `VertexGeminiAdapter._target` uses to address a catalogued
+#: model — and the console gained the Region control in the same change. This comment kept saying
+#: neither for a day, and **no assertion could catch it**: the check subtracts the payload keys
+#: *and* this dict, so a field that is genuinely offered is simply subtracted twice and the stale
+#: claim sits here reading as current. Exactly the shape `LESSONS.md` §6 names — a claim no test can
+#: reach is a claim that will be wrong.
 STEERS_NOTHING = {
-    "addressing": (
-        "Read by nothing. Dropped between the read-model row and ModelDeclaration; Azure's "
-        "deployment addressing lives in AIRA_FOUNDRY_DEPLOYMENTS (FRD-507 §4.4)."
-    ),
     "underlying_model": (
-        "Read by nothing. Same path as `addressing`: stored, shipped, never consulted by any "
-        "dispatch decision."
+        "Read by nothing: stored, shipped to the gateway's read-model, and never consulted by any "
+        "dispatch decision. `ADR-0011` rule 2 describes what it is for — a price attaching to the "
+        "vendor's model when the caller-facing name differs — and nothing implements it."
     ),
 }
 

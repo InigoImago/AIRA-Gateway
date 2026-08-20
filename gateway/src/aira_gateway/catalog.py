@@ -73,11 +73,45 @@ class ModelDeclaration:
     #: served*; carrying the provider makes it the authority on *who serves it* too, so a model
     #: becomes usable by being catalogued rather than by also being named in configuration.
     provider: str = ""
-    #: How to reach this model on its platform: `{"region": "europe-west1"}` on Vertex, a
-    #: deployment on Azure. **A column that existed in both planes, travelled over Kafka, and
-    #: nothing read** — which is why a Vertex model could be catalogued and would never answer,
+    #: How to reach this model on its platform: `{"regions": ["europe-west1", "europe-west4"]}` on
+    #: Vertex, a deployment on Azure. **A column that existed in both planes, travelled over Kafka,
+    #: and nothing read** — which is why a Vertex model could be catalogued and would never answer,
     #: and the console had to say so at the moment of declaring. Read now, so it can.
-    addressing: dict[str, str] = field(default_factory=dict)
+    #:
+    #: Values stay `str | list[str]` rather than `str`, because a region list is a list.
+    addressing: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def regions(self) -> tuple[str, ...]:
+        """Where this model may be addressed, **in the order it should be tried** (`FRD-609`).
+
+        One reader for two spellings, and only one of them is current. `{"region": "x"}` was the
+        shape until a model could name several; rows written before that still carry it, and a
+        redelivered Kafka event can carry it after a rollback. Normalising here rather than
+        migrating in five readers is the same argument `thinking_levels` makes one field along:
+        the shape is read in one place, so a second spelling cannot mean two different things in
+        two of them.
+
+        Order is meaning, not presentation: the first region a request may use is the first one
+        this installation's residency policy permits, and a failure falls through to the next
+        (`vertex/adapters.py`). Duplicates are dropped and blanks ignored, because a list that
+        names the same place twice would retry the failure it just had.
+        """
+        block = self.addressing or {}
+        raw = block.get("regions")
+        if raw is None:
+            single = block.get("region")
+            raw = [single] if isinstance(single, str) else []
+        if isinstance(raw, str):
+            raw = [raw]
+        if not isinstance(raw, list):
+            return ()
+        seen: dict[str, None] = {}
+        for region in raw:
+            if isinstance(region, str) and region.strip():
+                seen.setdefault(region.strip(), None)
+        return tuple(seen)
+
     publisher: str = ""
     platform: str = ""
     hosting: str = ""
@@ -376,11 +410,15 @@ def _from_record(model: str, record: ModelRead) -> ModelDeclaration:
         embedding=record.embedding if isinstance(record.embedding, dict) else None,
         attachments=record.attachments if isinstance(record.attachments, dict) else {},
         provider=record.provider or "",
-        addressing={
-            str(key): str(value)
-            for key, value in (record.addressing or {}).items()
+        # **Not stringified.** This used to coerce every value with `str()`, which turned a
+        # `regions` list into the literal `"['europe-west1']"` — a region name nothing could match
+        # and a residency claim nothing could read. Values are carried as they arrive and shaped by
+        # the one reader that knows what each key means (`ModelDeclaration.regions`).
+        addressing=(
+            {str(key): value for key, value in record.addressing.items()}
             if isinstance(record.addressing, dict)
-        },
+            else {}
+        ),
         publisher=record.publisher or "",
         platform=record.platform or "",
         hosting=record.hosting or "",

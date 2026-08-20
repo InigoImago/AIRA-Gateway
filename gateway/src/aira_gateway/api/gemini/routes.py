@@ -259,7 +259,7 @@ async def _write_refusal(
         requested_model=trail.requested_model,
         model_selection=trail.selection,
         pipeline_decisions=decision_summary(trail.decisions),
-        provenance=await provenance(request, trail.served_model),
+        provenance=await provenance(request, trail.served_model, trail.served_region),
         # Stated rather than defaulted. It was right by accident here and wrong elsewhere.
         api=trail.api,
         # A refused request that *offered* functions recorded nothing about them, so "somebody

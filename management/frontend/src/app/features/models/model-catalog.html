@@ -459,34 +459,83 @@
               </app-info-hint>
             </label>
             <!--
-              **A list, and still free text.** The permitted regions come from the gateway, so
-              offering them is offering this installation's actual policy rather than a vocabulary
-              of what the product supports. `list` rather than a `<select>` because the field is
-              legitimately empty for a platform addressed by model name alone, and because a
-              region the gateway has not heard of is a *refusal to explain*, not a value to hide:
-              somebody widening `AIRA_ALLOWED_REGIONS` should be able to type the new one before
-              the console has been reloaded.
+              **Several regions, in the order they should be tried** (`FRD-609`). A model can live
+              in more than one place, and the order is the meaning: the first is where an ordinary
+              request goes, and the rest are what the gateway falls back to when a region cannot
+              serve — no quota there, not deployed there, unwell there.
+
+              Chips for the same reason the thinking levels are: each entry is separately present,
+              separately removable, and separately answerable when the model is asked about it. And
+              still free text rather than a `<select>`, because somebody widening
+              `AIRA_ALLOWED_REGIONS` on the gateway should be able to type the new region before
+              this console has been reloaded.
             -->
-            <input
-              id="model-region"
-              name="region"
-              data-testid="model-region"
-              list="allowed-regions"
-              [ngModel]="region()"
-              (ngModelChange)="region.set($event)"
-              placeholder="europe-west1"
-              autocomplete="off"
-            />
+            <div class="row" style="gap: 0.4rem; align-items: center">
+              <input
+                id="model-region"
+                name="region"
+                data-testid="model-region"
+                list="allowed-regions"
+                [ngModel]="regionDraft()"
+                (ngModelChange)="regionDraft.set($event)"
+                (keydown.enter)="$event.preventDefault(); addRegion()"
+                (keydown.,)="$event.preventDefault(); addRegion()"
+                (blur)="addRegion()"
+                placeholder="europe-west1"
+                autocomplete="off"
+              />
+            </div>
             <datalist id="allowed-regions">
               @for (allowed of allowedRegions(); track allowed) {
                 <option [value]="allowed"></option>
               }
             </datalist>
-            @if (regionPermitted() === false) {
-              <span class="field__hint field__hint--error" data-testid="region-not-permitted">
-                Not permitted by this installation. Allowed:
-                <code>{{ allowedRegions().join(', ') }}</code>
-              </span>
+            @if (regions().length) {
+              <ul class="chips" data-testid="model-regions">
+                @for (region of regions(); track region; let first = $first) {
+                  <li
+                    class="chip"
+                    [class.chip--ok]="regionVerdict(region)?.ok === true"
+                    [class.chip--bad]="
+                      regionVerdict(region)?.ok === false || regionAllowed(region) === false
+                    "
+                    [attr.data-testid]="'region-' + region"
+                  >
+                    <code>{{ region }}</code>
+                    @if (first) {
+                      <span class="muted" style="font-size: 0.7rem">first</span>
+                    }
+                    @if (regionAllowed(region) === false) {
+                      <span class="chip__note" title="Not permitted by this installation">!</span>
+                    } @else if (regionVerdict(region); as verdict) {
+                      <span class="chip__note" [title]="verdict.detail">
+                        {{ verdict.ok ? '✓' : '✗' }}
+                      </span>
+                    }
+                    <button
+                      type="button"
+                      class="chip__remove"
+                      (click)="removeRegion(region)"
+                      [attr.aria-label]="'Remove the region ' + region"
+                      [attr.data-testid]="'remove-region-' + region"
+                    >
+                      ×
+                    </button>
+                  </li>
+                }
+              </ul>
+              @if (forbiddenRegions().length) {
+                <span class="field__hint field__hint--error" data-testid="region-not-permitted">
+                  Not permitted by this installation:
+                  <code>{{ forbiddenRegions().join(', ') }}</code
+                  >. Allowed:
+                  <code>{{ allowedRegions().join(', ') }}</code>
+                </span>
+              } @else {
+                <span class="field__hint">
+                  Tried in this order. The first is where an ordinary request goes.
+                </span>
+              }
             } @else {
               <span class="field__hint">
                 Required on Vertex. Empty where the model name is the whole address.

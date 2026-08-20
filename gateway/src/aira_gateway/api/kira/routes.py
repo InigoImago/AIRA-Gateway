@@ -390,7 +390,7 @@ async def _record(
         requested_model=trail.requested_model,
         model_selection=trail.selection,
         pipeline_decisions=decision_summary(trail.decisions),
-        provenance=await provenance(request, trail.served_model),
+        provenance=await provenance(request, trail.served_model, trail.served_region),
         api=trail.api,
         tool_calls=tool_summary(trail),
     )

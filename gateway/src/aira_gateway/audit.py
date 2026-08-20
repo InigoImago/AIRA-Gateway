@@ -154,6 +154,20 @@ class AuditTrail:
     #: use case running a blocking filter over rejected traffic is paying for exactly those.
     model_calls: list[ModelCall] = field(default_factory=list)
 
+    #: Where the answer was actually produced, when the adapter said (`FRD-609`, `FRD-115` FR-10).
+    #:
+    #: Empty for every dialect that has one place, and for a request that never reached one. On
+    #: this trail rather than beside either exit, for the reason `tool_calls` above gives and paid
+    #: for: a fact recorded at each `return` is a fact eventually missing from one of them.
+    #:
+    #: It exists because a model may now be catalogued in several regions and tried in order, so
+    #: *"the configuration says europe-west1"* and *"this request went to europe-west1"* stopped
+    #: being the same sentence. The audit row had only the first — `provenance_for(provider)`
+    #: answers with the region of the first *configured* model on that adapter — which is right for
+    #: a configured model, a guess for a catalogued one, and would have been a confident wrong
+    #: residency claim on every request that used a fallback region.
+    served_region: str = ""
+
     @property
     def served_model(self) -> str:
         """The model to record. Falls back to the requested one for a request never dispatched."""

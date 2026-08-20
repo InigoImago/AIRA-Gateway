@@ -86,6 +86,11 @@ async def test_a_served_model_that_answers_is_reachable() -> None:
         await _declare(app)
         body = client.get("/v1beta/models/gemini-2.0-flash:check").json()
 
+    # One entry per region, and a model with none declared is asked once with no region — which
+    # is what every dialect addressed by model name alone does (`FRD-609`).
+    assert body.pop("regions") == [
+        {"region": "", "reachable": True, "detail": "gemini-2.0-flash answered"}
+    ]
     assert body == {
         "model": "gemini-2.0-flash",
         "declared": True,
@@ -278,9 +283,11 @@ async def test_each_level_word_is_answered_by_the_model_in_its_own_words() -> No
             json={"levels": ["low", "medium"]},
         ).json()
 
+    # Every result names the region it is about, empty where the model declares none.
     assert body["results"] == [
-        {"level": "low", "accepted": True, "detail": "The model accepted it."},
+        {"region": "", "level": "low", "accepted": True, "detail": "The model accepted it."},
         {
+            "region": "",
             "level": "medium",
             "accepted": False,
             "detail": "Unable to submit request because thinking_level is not supported by this "
@@ -382,3 +389,78 @@ async def test_the_check_answers_about_the_provenance_it_was_given() -> None:
     assert served["asked"] == ("vertex", "google")
     assert asked["served"] is True
     assert asked["reachable"] is True
+
+
+# ---- several regions, checked one by one (`FRD-609`) --------------------------------------------
+
+
+class _ReachableInOneRegion:
+    """Answers in `europe-west4` and refuses in `europe-west1` — the case the list is for."""
+
+    expresses_thinking_levels = True
+
+    async def ping(self, model: str = "", addressing: dict[str, Any] | None = None) -> str:
+        region = ((addressing or {}).get("regions") or [""])[0]
+        if region == "europe-west1":
+            from aira_gateway.upstreams.base import UpstreamError
+
+            raise UpstreamError("Vertex upstream returned 404.", 404)
+        return f"{model} answered in {region}"
+
+    async def generate(self, request: Any) -> Any:
+        from aira_gateway.upstreams.base import UpstreamError
+
+        region = (request.addressing.get("regions") or [""])[0]
+        if region == "europe-west1":
+            raise UpstreamError(
+                "Unable to submit request because thinking_level is not supported by this model.",
+                400,
+            )
+        return object()
+
+
+@pytest.mark.anyio
+async def test_every_declared_region_is_checked_and_the_summary_says_which_failed() -> None:
+    """**A model in three places is reachable in some and not others**, which is the whole reason
+    somebody lists more than one. Answering about the first would be an answer to a question nobody
+    asked — the same defect as reporting about whichever model an adapter had configured first.
+
+    The summary is the *best* of them, because the request will be served: a model that answers in
+    one of its regions **is** reachable, and a summary of "not reachable" would be false. What the
+    administrator needs is both — it works, and here is the one that does not.
+    """
+    app = _client(GLOBAL_ADMIN, _ReachableInOneRegion())
+    with TestClient(app) as client:
+        await _declare(app, "gemini-2.5-pro")
+        body = client.get(
+            "/v1beta/models/gemini-2.5-pro:check",
+            params={"provider": "vertex", "region": "europe-west1,europe-west4"},
+        ).json()
+
+    assert [entry["region"] for entry in body["regions"]] == ["europe-west1", "europe-west4"]
+    assert [entry["reachable"] for entry in body["regions"]] == [False, True]
+    assert body["reachable"] is True
+    assert "Not reachable in: europe-west1" in body["detail"]
+
+
+@pytest.mark.anyio
+async def test_a_thinking_word_is_asked_in_every_region() -> None:
+    """Which words a place accepts is not knowable from here: a vendor rolls a family out region by
+    region, so `thinkingLevel` can work in one and answer *"not supported by this model"* in
+    another — and a declaration checked in one region would be a claim about the others."""
+    app = _client(GLOBAL_ADMIN, _ReachableInOneRegion())
+    with TestClient(app) as client:
+        await _declare(app, "gemini-2.5-pro")
+        body = client.post(
+            "/v1beta/models/gemini-2.5-pro:checkThinking",
+            params={"provider": "vertex", "region": "europe-west1,europe-west4"},
+            json={"levels": ["low", "high"]},
+        ).json()
+
+    assert [(r["region"], r["level"], r["accepted"]) for r in body["results"]] == [
+        ("europe-west1", "low", False),
+        ("europe-west1", "high", False),
+        ("europe-west4", "low", True),
+        ("europe-west4", "high", True),
+    ]
+    assert "thinking_level is not supported" in body["results"][0]["detail"]

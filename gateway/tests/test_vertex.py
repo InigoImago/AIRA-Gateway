@@ -793,31 +793,40 @@ def test_a_catalogued_model_is_addressed_from_its_declaration() -> None:
     was not enough — and `addressing` was a column in both planes, carried over Kafka, that nothing
     read.
     """
-    from aira_gateway.upstreams.vertex.adapters import _target
+    from aira_gateway.upstreams.vertex.adapters import _targets
 
-    region, publisher = _target({}, "google", "gemini-2.5-pro", {"region": "europe-west1"})
-
-    assert (region, publisher) == ("europe-west1", "google")
+    # Both spellings, because a row written before a model could name several still carries the
+    # singular one — and a redelivered Kafka event can carry it after a rollback.
+    assert _targets({}, "google", "gemini-2.5-pro", {"region": "europe-west1"}) == (
+        ("europe-west1", "google"),
+    )
+    assert _targets({}, "google", "gemini-2.5-pro", {"regions": ["europe-west1"]}) == (
+        ("europe-west1", "google"),
+    )
 
 
 def test_a_configured_model_still_wins() -> None:
     """An installation that named a model in configuration keeps the region it named. Changing
     where existing traffic goes would be the worst possible way to add a feature."""
-    from aira_gateway.upstreams.vertex.adapters import VertexModel, _target
+    from aira_gateway.upstreams.vertex.adapters import VertexModel, _targets
 
     configured = {"m": VertexModel("europe-west4", "google", "m")}
 
-    assert _target(configured, "google", "m", {"region": "europe-west1"})[0] == "europe-west4"
+    # One target and no chain: `AIRA_VERTEX_MODELS` has one entry per model by construction, so a
+    # configured model has exactly one place and nothing to fall back to.
+    assert _targets(configured, "google", "m", {"regions": ["europe-west1", "eu"]}) == (
+        ("europe-west4", "google"),
+    )
 
 
 def test_a_catalogued_model_with_no_region_is_refused_by_name() -> None:
     """Not guessed. A guess about residency is the one guess this product may not make, and the
     message says which of the two places to fix."""
     from aira_gateway.upstreams.base import AmbiguousModel
-    from aira_gateway.upstreams.vertex.adapters import _target
+    from aira_gateway.upstreams.vertex.adapters import _targets
 
     with pytest.raises(AmbiguousModel) as caught:
-        _target({}, "google", "gemini-2.5-pro", {})
+        _targets({}, "google", "gemini-2.5-pro", {})
 
     assert "region" in str(caught.value)
 

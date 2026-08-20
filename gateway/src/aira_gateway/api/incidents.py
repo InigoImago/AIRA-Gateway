@@ -29,6 +29,7 @@ from aira_gateway.auth.dependencies import require_principal
 from aira_gateway.auth.principal import Principal
 from aira_gateway.catalog import ModelCatalog
 from aira_gateway.core.canonical import CanonicalMessage, CanonicalRequest, Role, Thinking
+from aira_gateway.residency import RegionNotAllowed
 from aira_gateway.state import sessionmaker_of, suspensions_of
 from aira_gateway.upstreams.base import DialectUnsupported, ProviderRegistry, UpstreamError
 
@@ -239,7 +240,7 @@ async def check_model(
     # What the caller is asking about, which is the form's state where they gave one.
     asked_provider = provider or declaration.provider
     asked_publisher = publisher or declaration.publisher
-    asked_addressing = {"region": region} if region else declaration.addressing
+    asked_regions = _regions_asked(region, declaration)
     upstream = registry.provider_for(model, asked_provider, asked_publisher)
 
     result: dict[str, Any] = {
@@ -248,6 +249,9 @@ async def check_model(
         "served": upstream is not None,
         "reachable": None,
         "detail": "",
+        #: One verdict per region, because a model in several places is reachable in some of them
+        #: and not others — which is the whole reason somebody lists more than one (`FRD-609`).
+        "regions": [],
     }
 
     if upstream is None:
@@ -275,23 +279,57 @@ async def check_model(
         result["detail"] = "This upstream offers nothing cheap to ask; it was not contacted."
         return JSONResponse(result)
 
+    # **Every region, not the first.** A model catalogued in three places is reachable in some and
+    # not others, and answering about one of them would be an answer to a question nobody asked —
+    # the same shape as reporting about whichever model an adapter had configured first, which is
+    # the defect the `model` argument to `ping` was added for.
+    #
+    # `:countTokens` costs nothing, so the number of regions bounds nothing but time.
+    for asked_region in asked_regions or [""]:
+        verdict = await _reach(ping, model, asked_region)
+        result["regions"].append({"region": asked_region, **verdict})
+
+    # The summary is the **best** of them, and the list beside it says which. A model that answers
+    # in one of its three regions *is* reachable — the request will be served — and a summary of
+    # "not reachable" would be false. The two together are what an administrator needs: it works,
+    # and here is the one that does not.
+    reachable = [entry for entry in result["regions"] if entry["reachable"]]
+    best = reachable[0] if reachable else result["regions"][0]
+    result["reachable"] = best["reachable"]
+    result["detail"] = best["detail"]
+    if reachable and len(reachable) != len(result["regions"]):
+        unreachable = [entry["region"] for entry in result["regions"] if not entry["reachable"]]
+        result["detail"] += f" Not reachable in: {', '.join(unreachable)}."
+    return JSONResponse(result)
+
+
+def _regions_asked(region: str, declaration: Any) -> list[str]:
+    """Which regions to check: the form's, where it gave any, otherwise the catalogue's."""
+    if region:
+        return [part.strip() for part in region.split(",") if part.strip()]
+    return list(getattr(declaration, "regions", ()) or [])
+
+
+async def _reach(ping: Any, model: str, region: str) -> dict[str, Any]:
+    """Ask one region whether it has this model, and say what happened in its own words."""
+    addressing = {"regions": [region]} if region else {}
     try:
-        # The model being asked about, and its address — so the answer is about *this* model
-        # rather than about whichever one the adapter happened to have configured first.
         detail = await asyncio.wait_for(
-            ping(model, asked_addressing), timeout=MODEL_CHECK_TIMEOUT_SECONDS
+            ping(model, addressing), timeout=MODEL_CHECK_TIMEOUT_SECONDS
         )
     except TimeoutError:
-        result["reachable"] = False
-        result["detail"] = f"Did not answer within {MODEL_CHECK_TIMEOUT_SECONDS:g}s."
-    except Exception as exc:  # noqa: BLE001 — anything here means "not reachable"
-        result["reachable"] = False
+        return {
+            "reachable": False,
+            "detail": f"Did not answer within {MODEL_CHECK_TIMEOUT_SECONDS:g}s.",
+        }
+    except RegionNotAllowed as exc:
+        # Named apart from an unreachable one, because the two need different actions: this one is
+        # fixed in `AIRA_ALLOWED_REGIONS` or by not listing the region, never by the provider.
+        return {"reachable": False, "detail": str(exc)}
+    except Exception as exc:  # noqa: BLE001 — anything else here means "not reachable"
         # The type, not the message: a provider's error text can carry a URL with a key in it.
-        result["detail"] = f"Not reachable ({type(exc).__name__})."
-    else:
-        result["reachable"] = True
-        result["detail"] = str(detail)
-    return JSONResponse(result)
+        return {"reachable": False, "detail": f"Not reachable ({type(exc).__name__})."}
+    return {"reachable": True, "detail": str(detail)}
 
 
 #: How many words one check may ask about. A level list is a handful — Gemini 3 has two — and this
@@ -373,6 +411,7 @@ async def check_thinking_levels(
                 "model": model,
                 "results": [
                     {
+                        "region": "",
                         "level": word,
                         "accepted": False,
                         "detail": (
@@ -385,40 +424,53 @@ async def check_thinking_levels(
             }
         )
 
+    # **Every word in every region.** A model may be catalogued in several places, and which
+    # thinking words a place accepts is not knowable from here: Google rolls a family out region by
+    # region, so `thinkingLevel` can work in one and answer *"not supported by this model"* in
+    # another, and a declaration checked in one region would be a claim about the others.
+    #
+    # It costs one output token per accepted word per region, and nothing at all for a refused one
+    # — the refusal precedes any generation. `MAX_LEVELS_PER_CHECK` bounds the words; the regions
+    # are bounded by what somebody typed into the catalogue.
+    asked_regions = _regions_asked(region, declaration) or [""]
     results = []
-    for word in words:
-        probe = CanonicalRequest(
-            model=model,
-            messages=[CanonicalMessage(role=Role.USER, text="hi")],
-            max_output_tokens=_PROBE_OUTPUT_TOKENS,
-            thinking=Thinking(mode=word),
-            addressing={"region": region} if region else declaration.addressing,
-        )
-        try:
-            await asyncio.wait_for(upstream.generate(probe), timeout=MODEL_CHECK_TIMEOUT_SECONDS)
-        except TimeoutError:
+    for asked_region in asked_regions:
+        for word in words:
             results.append(
                 {
+                    "region": asked_region,
                     "level": word,
-                    "accepted": False,
-                    "detail": f"Did not answer within {MODEL_CHECK_TIMEOUT_SECONDS:g}s.",
+                    **await _accepts(upstream, model, word, asked_region),
                 }
             )
-        except (UpstreamError, DialectUnsupported) as exc:
-            # **The provider's own words**, which is the whole value of this button: Google says
-            # *"thinking_level is not supported by this model"*, and no rule in this repository
-            # could have said it as precisely or stayed as true.
-            results.append({"level": word, "accepted": False, "detail": str(exc)})
-        except Exception as exc:  # noqa: BLE001 — anything else means "we could not tell"
-            # The type, not the message: an arbitrary provider error can carry a URL with a key.
-            results.append(
-                {
-                    "level": word,
-                    "accepted": False,
-                    "detail": f"Could not ask ({type(exc).__name__}).",
-                }
-            )
-        else:
-            results.append({"level": word, "accepted": True, "detail": "The model accepted it."})
 
     return JSONResponse({"model": model, "results": results})
+
+
+async def _accepts(upstream: Any, model: str, word: str, region: str) -> dict[str, Any]:
+    """Ask one model in one region whether it takes one level word."""
+    probe = CanonicalRequest(
+        model=model,
+        messages=[CanonicalMessage(role=Role.USER, text="hi")],
+        max_output_tokens=_PROBE_OUTPUT_TOKENS,
+        thinking=Thinking(mode=word),
+        addressing={"regions": [region]} if region else {},
+    )
+    try:
+        await asyncio.wait_for(upstream.generate(probe), timeout=MODEL_CHECK_TIMEOUT_SECONDS)
+    except TimeoutError:
+        return {
+            "accepted": False,
+            "detail": f"Did not answer within {MODEL_CHECK_TIMEOUT_SECONDS:g}s.",
+        }
+    except RegionNotAllowed as exc:
+        return {"accepted": False, "detail": str(exc)}
+    except (UpstreamError, DialectUnsupported) as exc:
+        # **The provider's own words**, which is the whole value of this button: Google says
+        # *"thinking_level is not supported by this model"*, and no rule in this repository could
+        # have said it as precisely or stayed as true.
+        return {"accepted": False, "detail": str(exc)}
+    except Exception as exc:  # noqa: BLE001 — anything else means "we could not tell"
+        # The type, not the message: an arbitrary provider error can carry a URL with a key.
+        return {"accepted": False, "detail": f"Could not ask ({type(exc).__name__})."}
+    return {"accepted": True, "detail": "The model accepted it."}

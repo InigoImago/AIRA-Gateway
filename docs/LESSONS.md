@@ -515,6 +515,15 @@ reading code.
   installation had promised, and whether a missing payload was never stored or had expired. **When
   a delete makes a downstream answer change rather than disappear, that is the bug.**
 
+- **Widening a field from one to many is a search, not an edit.** Making a model's region a list
+  meant reading the twelve places that consumed it — and three were **already wrong**, in ways that
+  the new feature would have promoted from occasional to systematic: an audit row taking the region
+  from *configuration* rather than from the request that happened, a stream leaked on every refused
+  connection because `__aexit__` does not run when `__aenter__` raises, and a guard asserting a
+  field was read by nothing a day after it gained a reader. None was found by thinking about the
+  feature; all three came from asking *what reads this today* before writing anything. **Ask it of
+  every "make it a list" — the answer is where the bodies are.**
+
 ---
 
 ## 7. Tests

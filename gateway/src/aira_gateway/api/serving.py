@@ -446,8 +446,17 @@ def check_structured_result(canonical: CanonicalRequest, response: CanonicalResp
     )
 
 
-async def provenance(request: Request, model: str) -> tuple[str, str, str] | None:
+async def provenance(
+    request: Request, model: str, served_region: str = ""
+) -> tuple[str, str, str] | None:
     """Where the request was processed, from the adapter that serves the model.
+
+    **`served_region` wins whenever the adapter reported one** (`FRD-609`). Everything below
+    answers from *configuration* — which region a model is set up in — and that was the same
+    sentence as "where this request went" only for as long as a model had one region. With a
+    failover chain it is not: a request served from the second region would otherwise be recorded
+    at the first, and a residency claim naming a place the request did not go to is worse than a
+    blank one, because it reads as evidence.
 
     The registry first: the catalog says where a model is *configured* to run, the registry says
     which adapter actually holds it, and under a residency requirement the second is the one worth
@@ -462,10 +471,15 @@ async def provenance(request: Request, model: str) -> tuple[str, str, str] | Non
     registry = registry_of(request)
     described = registry.get_model(model)
     if described is not None and described.provider:
-        return (described.provider, described.publisher, described.region)
+        return (described.provider, described.publisher, served_region or described.region)
 
     declared = await catalog_of(request).declaration(model)
-    return registry.provenance_for(declared.provider) if declared.provider else None
+    if not declared.provider:
+        return None
+    configured = registry.provenance_for(declared.provider)
+    if configured is None:
+        return None
+    return (configured[0], configured[1], served_region or configured[2])
 
 
 def catalog_of(request: Request) -> ModelCatalog:
@@ -1421,6 +1435,11 @@ def annotate(
     Streams cannot use this: by the time there is a finished answer their first chunk is on the
     wire. They use :class:`StreamedNotice`, which applies the same rule one chunk earlier.
     """
+    # **Where it was produced, before anything else may return early.** The adapter is the only
+    # layer that knows which region answered — with a chain, the catalogue's first entry is a guess
+    # — and this is the one site every non-streamed exit passes through.
+    if response.served_region:
+        trail.served_region = response.served_region
     if not prepared.notices:
         return response
     structured = canonical is not None and canonical.response_schema is not None

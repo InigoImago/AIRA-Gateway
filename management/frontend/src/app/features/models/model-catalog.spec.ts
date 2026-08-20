@@ -170,7 +170,14 @@ interface Catalog {
   check: () => { reachable: boolean | null; served: boolean; detail?: string } | null;
   addManually: () => void;
   addByName: () => void;
-  region: { set: (v: string) => void; (): string };
+  regions: { set: (v: string[]) => void; (): string[] };
+  regionDraft: { set: (v: string) => void; (): string };
+  addRegion: () => void;
+  removeRegion: (region: string) => void;
+  regionVerdict: (region: string) => { ok: boolean; detail: string } | null;
+  regionAllowed: (region: string) => boolean | null;
+  regionVerdicts: { set: (v: Record<string, { ok: boolean; detail: string }>) => void };
+  forbiddenRegions: () => string[];
   mustCheck: () => boolean;
   OTHER: string;
 }
@@ -237,6 +244,7 @@ function setup(
               of({
                 model: name,
                 results: levels.map((level) => ({
+                  region: '',
                   level,
                   accepted: level !== 'medium',
                   detail:
@@ -2201,7 +2209,7 @@ describe('ModelCatalog — thinking levels are the vendor’s own words', () => 
       levelChecks: [
         of({
           model: 'gemini-2.5-flash',
-          results: [{ level: 'low', accepted: true, detail: 'The model accepted it.' }],
+          results: [{ region: '', level: 'low', accepted: true, detail: 'The model accepted it.' }],
         }),
         throwError(() => ({ status: 503 })),
       ],
@@ -2254,10 +2262,13 @@ describe('ModelCatalog — a region this installation does not permit', () => {
     const { component } = setup({ allowedRegions: ['eu', 'europe-west1'] });
     component.add();
     component.name.set('gemini-3.5-flash');
-    component.region.set('global');
+    component.regions.set(['global']);
 
-    expect(component.regionPermitted()).toBe(false);
-    expect(component.formError()).toContain("Region 'global' is not one this installation permits");
+    expect(component.regionAllowed('global')).toBe(false);
+    expect(component.forbiddenRegions()).toEqual(['global']);
+    expect(component.formError()).toContain(
+      "Region 'global' is not permitted by this installation",
+    );
     // The remedy names where the policy lives, because it is not changed here.
     expect(component.formError()).toContain('AIRA_ALLOWED_REGIONS');
     expect(component.canSave()).toBe(false);
@@ -2266,9 +2277,10 @@ describe('ModelCatalog — a region this installation does not permit', () => {
   it('permits one that is on the list', () => {
     const { component } = setup({ allowedRegions: ['eu', 'europe-west1'] });
     component.add();
-    component.region.set('europe-west1');
+    component.regions.set(['europe-west1']);
 
-    expect(component.regionPermitted()).toBe(true);
+    expect(component.regionAllowed('europe-west1')).toBe(true);
+    expect(component.forbiddenRegions()).toEqual([]);
     expect(component.formError()).not.toContain('permits');
   });
 
@@ -2277,9 +2289,11 @@ describe('ModelCatalog — a region this installation does not permit', () => {
      *  OpenAI-compatible server — where a region would be a claim about routing nothing acts on. */
     const { component } = setup({ allowedRegions: ['eu'] });
     component.add();
-    component.region.set('   ');
+    component.regionDraft.set('   ');
+    component.addRegion();
 
-    expect(component.regionPermitted()).toBeNull();
+    expect(component.regions()).toEqual([]);
+    expect(component.forbiddenRegions()).toEqual([]);
     expect(component.formError()).not.toContain('permits');
   });
 
@@ -2295,9 +2309,10 @@ describe('ModelCatalog — a region this installation does not permit', () => {
     const { component } = setup({ allowedRegions: [] });
     component.add();
     component.name.set('m');
-    component.region.set('somewhere-else');
+    component.regions.set(['somewhere-else']);
 
-    expect(component.regionPermitted()).toBeNull();
+    expect(component.regionAllowed('somewhere-else')).toBeNull();
+    expect(component.forbiddenRegions()).toEqual([]);
     expect(component.formError()).toBeNull();
   });
 
@@ -2319,11 +2334,145 @@ describe('ModelCatalog — a region this installation does not permit', () => {
   it('says so beside the field, not only in the footer', () => {
     const { component, fixture, html } = setup({ allowedRegions: ['eu'] });
     component.add();
-    component.region.set('global');
+    component.regions.set(['global']);
     fixture.detectChanges();
 
     const note = html().querySelector('[data-testid="region-not-permitted"]');
     expect(note).not.toBeNull();
     expect(note!.textContent).toContain('eu');
+  });
+});
+
+/**
+ * Several regions, in the order they should be tried (`FRD-609`).
+ *
+ * *"In the catalogue I would like to be able to enter several regions, and they should also be
+ * checkable — whether the model is reachable, and the same for the thinking methods."*
+ *
+ * Order is the meaning, not the presentation: the first entry is where an ordinary request goes,
+ * and the rest are what the gateway falls back to when a region cannot serve.
+ */
+describe('ModelCatalog — a model in several regions', () => {
+  it('keeps the order they were typed in', () => {
+    const { component } = setup();
+    component.add();
+
+    for (const region of ['europe-west4', 'europe-west1', 'eu']) {
+      component.regionDraft.set(region);
+      component.addRegion();
+    }
+
+    expect(component.regions()).toEqual(['europe-west4', 'europe-west1', 'eu']);
+  });
+
+  it('drops a repeat rather than queueing the same failure twice', () => {
+    const { component } = setup();
+    component.add();
+    component.regionDraft.set('eu');
+    component.addRegion();
+    component.regionDraft.set('  eu  ');
+    component.addRegion();
+
+    expect(component.regions()).toEqual(['eu']);
+  });
+
+  it('sends them as a list, and null when there are none', () => {
+    /** `{regions: [...]}` is the shape both planes read. A model addressed by name alone — an
+     *  OpenAI-compatible server, AI Studio — sends `null`, because an empty object would be a
+     *  claim about routing that nothing acts on. */
+    const harness = setup({ allowedRegions: ['europe-west1', 'europe-west4'] });
+    const { component } = harness;
+    component.add();
+    component.name.set('m');
+    component.regions.set(['europe-west1', 'europe-west4']);
+    harness.lookFirst();
+    component.save();
+
+    expect(harness.saved[0].addressing).toEqual({
+      regions: ['europe-west1', 'europe-west4'],
+    });
+
+    component.add();
+    component.name.set('m2');
+    harness.lookFirst();
+    component.save();
+    expect(harness.saved[1].addressing).toBeNull();
+  });
+
+  it('reads a model saved with the old single-region shape', () => {
+    /** Rows written before a model could name several still carry `{region: "x"}`, and a
+     *  redelivered event can carry it after a rollback. One reader for both spellings, in the same
+     *  place the gateway has one. */
+    const { component } = setup();
+    component.edit({ ...FLASH, addressing: { region: 'europe-west3' } });
+
+    expect(component.regions()).toEqual(['europe-west3']);
+  });
+
+  it('marks each region with what the gateway said about it', () => {
+    /** **The reason the list is checkable at all.** A model in three places is reachable in some
+     *  and not others, and a single yes-or-no about the first would be an answer to a question
+     *  nobody asked. */
+    const harness = setup({
+      check: of({
+        model: 'gemini-2.5-pro',
+        declared: true,
+        served: true,
+        reachable: true,
+        detail: 'answered in europe-west4. Not reachable in: europe-west1.',
+        regions: [
+          { region: 'europe-west1', reachable: false, detail: 'Vertex returned 404.' },
+          { region: 'europe-west4', reachable: true, detail: 'answered' },
+        ],
+      }),
+    });
+    const { component } = harness;
+    component.edit({ ...FLASH, name: 'gemini-2.5-pro' });
+    component.regions.set(['europe-west1', 'europe-west4']);
+    harness.lookFirst();
+
+    expect(component.regionVerdict('europe-west1')).toEqual({
+      ok: false,
+      detail: 'Vertex returned 404.',
+    });
+    expect(component.regionVerdict('europe-west4')?.ok).toBe(true);
+  });
+
+  it('asks about every region it holds', () => {
+    const harness = setup();
+    const { component } = harness;
+    component.edit({ ...FLASH, name: 'gemini-2.5-pro' });
+    component.regions.set(['europe-west1', 'europe-west4']);
+    component.thinkingLevels.set(['low']);
+    component.checkLevels();
+
+    // Comma-separated on the wire, because a query parameter is a string; one shape, split by the
+    // one reader that knows what it means.
+    expect(harness.askedLevels[0].where.region).toBe('europe-west1,europe-west4');
+  });
+
+  it('refuses only the regions the installation does not permit, and names them', () => {
+    const { component } = setup({ allowedRegions: ['eu', 'europe-west1'] });
+    component.add();
+    component.name.set('m');
+    component.regions.set(['europe-west1', 'global', 'us-central1']);
+
+    expect(component.forbiddenRegions()).toEqual(['global', 'us-central1']);
+    expect(component.formError()).toContain("'global', 'us-central1'");
+    expect(component.formError()).toContain('are not permitted');
+    // The permitted one is not implicated.
+    expect(component.regionAllowed('europe-west1')).toBe(true);
+  });
+
+  it('removes a region and the verdict that was about it', () => {
+    const { component } = setup();
+    component.add();
+    component.regions.set(['eu', 'europe-west1']);
+    component.regionVerdicts.set({ eu: { ok: true, detail: 'answered' } });
+
+    component.removeRegion('eu');
+
+    expect(component.regions()).toEqual(['europe-west1']);
+    expect(component.regionVerdict('eu')).toBeNull();
   });
 });

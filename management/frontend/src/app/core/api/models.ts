@@ -387,6 +387,25 @@ export interface GatewayConfiguration {
   allowedRegions: string[];
 }
 
+/**
+ * A model's regions, from either spelling (`FRD-609`).
+ *
+ * `{region: "x"}` was the shape until a model could name several, and rows written before that
+ * still carry it. One reader for both, in the same place the gateway has one, so a second spelling
+ * cannot come to mean two different things in the two planes.
+ */
+export function readRegions(addressing: Record<string, unknown> | null | undefined): string[] {
+  const block = addressing ?? {};
+  const raw = block['regions'] ?? (typeof block['region'] === 'string' ? [block['region']] : []);
+  const list = Array.isArray(raw) ? raw : [raw];
+  const seen: string[] = [];
+  for (const entry of list) {
+    const region = typeof entry === 'string' ? entry.trim() : '';
+    if (region && !seen.includes(region)) seen.push(region);
+  }
+  return seen;
+}
+
 /** A model's thinking declaration (`FRD-114` FR-3, `ADR-0021`). */
 export interface ThinkingDeclaration {
   /** The gateway's own three, which every dialect spells differently. A closed set. */
@@ -471,14 +490,18 @@ export interface ModelCheck {
   model: string;
   declared: boolean;
   served: boolean;
+  /** The **best** of the regions below: a model that answers in one of its places is reachable. */
   reachable: boolean | null;
   detail: string;
+  /** One verdict per declared region (`FRD-609`); a single empty-named entry where none is. */
+  regions?: { region: string; reachable: boolean; detail: string }[];
 }
 
 /** What the model itself said about each declared level word (`ADR-0021`). */
 export interface ThinkingLevelCheck {
   model: string;
-  results: { level: string; accepted: boolean; detail: string }[];
+  /** One row per region **and** word: which places accept which is not knowable in advance. */
+  results: { region: string; level: string; accepted: boolean; detail: string }[];
 }
 
 /** A battery of questions to put to a model (`FRD-504`). */
