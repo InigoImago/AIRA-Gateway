@@ -318,6 +318,7 @@ period has passed (default 7 days). It must be scheduled or nothing is deleted.
 | No candidate could serve it       | 400 `FAILED_PRECONDITION`                      | `no_capable_model`          |
 | Unknown model                     | 404                                            | `model_not_found`           |
 | Field this gateway does not serve | 400, **naming the field**                      | `invalid_request`           |
+| Declared, but the dialect has no field for it | 400 `FAILED_PRECONDITION`, **naming the reason** | `invalid_request`           |
 | Upstream said 400                 | 400 `FAILED_PRECONDITION`, carrying its reason | `upstream_error`            |
 | Upstream 401/403                  | 502, **masked**                                | `upstream_error`            |
 | Caller hung up                    | —                                              | `client_gone`               |

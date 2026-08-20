@@ -35,7 +35,7 @@ scheduled` here while `FRD-118` had shipped.
 | 12 | Self-service filter and routing pipeline | done | `FRD-303`, `FRD-306` |
 | 13 | Permitted models per use case | **done** | Two gates with two owners: a Global Administrator approves a model for the *installation* (`FRD-307`), an administrator of the use case releases it to *that* use case (`FRD-308`, 2026-08-11). Both are dispatch conditions at **every hop**, so neither `model_route` nor a fallback chain goes past them. Empty means **none**. The console picks from the catalog rather than taking free text, and the `allow_check` step — which checked only the name the caller sent, once, before routing — is gone |
 | 14 | Model smoke tests and jailbreak batteries | done | `FRD-504` — one flat catalogue of 100 questions, judged by a person; a standing is the **latest run**, never a sum. Since `ADR-0020` (2026-08-16) a run is put to a **use case's own pipeline** rather than to a model, so the filter, router and redactor are what is measured and a blocked question is a result; testing a model is a use case whose pipeline starts at it. Narrower than drafted: no repetition-as-a-rate, no machine-checked expectations (the two modes are now one mechanism — a filtering pipeline or a bare one) |
-| 15 | Budget overview and limits | done | `FRD-400`–`403`, `FRD-601`, `FRD-603`, `FRD-606` — a use case's consumption is shown **with or without a limit**, and so is each **person's**, with the two credentials shown apart and counted together. A per-head allowance belongs to the person rather than to the credential (`ADR-0019`, 2026-08-15): a key and a browser session share one, where they used to be two |
+| 15 | Budget overview and limits | done | `FRD-400`–`403`, `FRD-601`, `FRD-603`, `FRD-606` — a use case's consumption is shown **with or without a limit**, and so is each **person's**, with the two credentials shown apart and counted together. A per-head allowance belongs to the person rather than to the credential (`ADR-0019`, 2026-08-15): a key and a browser session share one, where they used to be two. Since `FRD-610` (2026-08-20) spend that belongs to **no** use case — the console's model checks, break-glass keys, demo traffic — books against the installation's own budget instead of passing the gate untouched |
 | 16 | Anomaly detection | done | `FRD-500`/`501` — seven kinds, evaluated against the audit trail |
 | 17 | Central overview of all use cases | partly | see 11 |
 
@@ -184,6 +184,12 @@ first screen.
 
 Budget threshold alerting is not built. Today a use case learns it is over budget when its traffic
 starts failing. There is no "80 % of your monthly budget" anywhere — no mail, no webhook, no banner.
+
+Two further gaps in the same area are **named and open** rather than unnoticed (`FRD-610` §3.2–3.3):
+a cost limit is blind to a model the catalogue has no price for — `unpriced_requests` is counted
+separately, which is right for reporting and means *unknown is unbounded* for enforcement — and the
+console says nothing when `AIRA_ENFORCE_BUDGETS` is off, so every figure and bar is drawn for limits
+that are not stopping anything.
 
 The same is true of anomaly findings: an event is a row, and `FRD-503` §7 says explicitly that
 **who gets told** is a separate decision with its own blast radius, not yet made.

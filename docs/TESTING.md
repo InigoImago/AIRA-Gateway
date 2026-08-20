@@ -14,13 +14,13 @@ Run everywhere, no services required. This is what a CI unit stage runs on every
   100% this line used to claim. The floors are where they are so that CI fails on a *drop*, and
   they are deliberately below the actual figures:
 
-  | | gate | measured 2026-08-19 |
+  | | gate | measured 2026-08-20 |
   | --- | --- | --- |
-  | Python (`--cov-fail-under`) | **90%** | — |
-  | Frontend statements | 90% | 93.21% |
-  | Frontend branches | **92%** | 92.05% |
-  | Frontend lines | 93% | 94.77% |
-  | Frontend functions | 75% | 76.72% |
+  | Python (`--cov-fail-under`) | **90%** | 95.57% |
+  | Frontend statements | 90% | 93.13% |
+  | Frontend branches | **92%** | 92.12% |
+  | Frontend lines | 93% | 94.78% |
+  | Frontend functions | 75% | 76.31% |
 
   Branches is the one with almost no headroom, which is why adding a control to the console without
   testing it fails the build rather than drifting quietly. **A number here is a floor and not an
@@ -38,7 +38,9 @@ refused a request that should have been served. **Give a test its own slug**; th
 
 ## Tier 1b — Mutation checks (hermetic, on demand)
 `make mutants` (`tools/mutation_check.py`) breaks one property at a time and requires a named test
-to notice. It is the answer to *"a green test proves only that the code and the test agree"*: a
+to notice. **557 properties** as of 2026-08-20; the figure is stated in `CLAUDE.md` and a test
+fails when the two disagree, because a claim about how much of a system is checked is exactly the
+sort that rots quietly. It is the answer to *"a green test proves only that the code and the test agree"*: a
 property nothing would notice losing is reported as a **survivor**, and a mutation whose anchor has
 moved as **stale** — never as a pass. Run it when adding a rule worth keeping, and add the mutation
 that reintroduces a bug you have just fixed.

@@ -35,9 +35,7 @@ from aira_gateway.db.models import ModelRead, RequestLog
 from aira_gateway.upstreams.base import DialectUnsupported, ProviderRegistry, UpstreamModel
 
 KIRA = "/kira/api/external"
-REASON = (
-    "This dialect has no way to say 'the model decides': `reasoning_effort` is always a level."
-)
+REASON = "This dialect has no way to say 'the model decides': `reasoning_effort` is always a level."
 
 
 class _CannotSayIt:
@@ -107,7 +105,8 @@ async def test_the_gemini_surface_names_the_reason_instead_of_answering_500() ->
     # `FAILED_PRECONDITION`, the same status `NoCapableModel` answers with and for the same
     # reason: this is a configuration somebody can correct, not an outage.
     assert error["status"] == "FAILED_PRECONDITION"
-    assert "reasoning_effort" in error["message"], "the dialect's own explanation reaches the caller"
+    # The dialect's own explanation reaches the caller, rather than a paraphrase of it.
+    assert "reasoning_effort" in error["message"]
 
 
 async def test_the_kira_surface_answers_in_the_predecessors_envelope() -> None:

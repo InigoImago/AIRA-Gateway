@@ -70,9 +70,22 @@ which ones a given model takes is a property of that model.
 5. **A dialect declares whether it has a level field at all** (`Upstream.expresses_thinking_levels`),
    beside the existing `thinking_modes`. Anthropic does not, and refuses a level by name.
 
+   *Amended 2026-08-20 (`FRD-612`).* This sentence cited `thinking_modes` as an existing fact, and
+   it was: declared by four adapters, asserted by one test, and **read by no code on any path**. So
+   the console offered `auto` for a model on an OpenAI-dialect endpoint, accepted it in silence,
+   and every request asking for it was refused at mapping time — as a `500`, because
+   `DialectUnsupported` was not in `REFUSALS` either. Both halves are now joined: the refusal is
+   named on both surfaces, and the console's button in §6 asks about the **ticked modes** as well
+   as the words, answering them from the dialect without sending anything.
+
 6. **The model is asked whether a word works.** Free text needs an authority, and no rule in this
    repository can be one — a list here is always a release behind the vendors. The console's
    *"Ask the model"* button sends one capped request per word and shows the provider's own refusal.
+
+   The same button answers the **modes**, and answers them differently: from the dialect, with no
+   request at all. Whether a wire format has a field for *"you decide"* is not a question about the
+   model or the region it runs in, so asking a provider would spend a token to learn something the
+   adapter already states.
 
 ## Why the check is a button and not a rule
 
@@ -134,6 +147,11 @@ declaration had looked correct in the console for as long as it had existed.
 - **Negative.** A typo now looks like a working declaration until somebody presses the button or a
   caller gets a `400`. That is the price of free text and the reason the button exists; the
   alternative priced in a vocabulary that cannot keep up.
+- **Negative, found on 2026-08-20 and fixed.** The same freedom applies to the three modes that are
+  *ours*, and there the catalogue could claim something the dialect has no field for — with no
+  authority consulted anywhere, because the declaration that knows was read by nothing. A caller
+  then received `500 Internal error`. `FRD-612` names the refusal on both surfaces and gives the
+  button the second half of the question.
 - **Negative — and deliberate.** On a model whose dialect takes only numbers (Gemini 2.5, Anthropic
   today), the level words are simply **not offered**. `low` and `high` do not collapse into one
   instruction there; they are absent, and a caller asking for one is refused by name with the list

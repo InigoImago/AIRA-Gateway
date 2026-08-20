@@ -166,7 +166,7 @@ here** — that is what grew this section to 1667 lines and left twenty-two FRD 
 | Where to look | For |
 | --- | --- |
 | [`docs/features/README.md`](docs/features/README.md) | every feature, its status, its document |
-| [`docs/adr/README.md`](docs/adr/README.md) | why a decision was taken (20 ADRs) |
+| [`docs/adr/README.md`](docs/adr/README.md) | why a decision was taken (21 ADRs) |
 | [`docs/DEVLOG.md`](docs/DEVLOG.md) | what changed when, and what a round measured |
 | [`docs/LESSONS.md`](docs/LESSONS.md) | **rules this project has already paid for** — read before planning |
 | [`docs/PRD.md`](docs/PRD.md) §1.1 | the owner's canonical feature list |
@@ -194,6 +194,14 @@ requires a test to notice.
 - `FRD-106` (an OpenAI-compatible **surface**) stays **withdrawn** — `FRD-132` measured a real
   coding assistant against the existing Gemini surface and it worked unmodified. The OpenAI
   *dialect* as an upstream is unaffected and shipped.
+- `FRD-610` §3.2–3.3 — **two named holes in spend control**, both open. A *cost* limit is blind to a
+  model the catalogue has no price for (unknown is counted apart, which is right for reporting and
+  means *unbounded* for enforcement), and the console says nothing when `AIRA_ENFORCE_BUDGETS` is
+  off. §3.1, the installation's own budget, is built.
+- **A model reachable only at `global` is not usable here** (`FRD-611`, `ADR-0012` §6). `global`
+  names no region and guarantees none, so it is not in the shipped residency default;
+  `gemini-3.5-flash` is catalogued, unapproved, and refused where its region is typed. Stated
+  rather than worked around — this is a policy outcome, not a defect to fix.
 
 A stream still cannot fall back once a chunk is on the wire; conditions are checked, the chain is
 not. Recorded rather than closed — a fallback for streams is a feature.

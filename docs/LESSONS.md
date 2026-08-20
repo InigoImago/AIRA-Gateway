@@ -542,6 +542,12 @@ reading code.
 - **A green test proves nothing on its own.** It proves the code and the test agree, which they
   inevitably do when both came from the same idea. **Prove a test can fail**: break the property,
   watch it go red, restore. `make mutants` does this for the properties worth keeping.
+- **An ADR that cites a control as an existing fact is not a check that it exists.** `ADR-0021` §5
+  named `Upstream.thinking_modes` in passing — *"beside the existing `thinking_modes`"* — and the
+  declaration was read by nothing, so the document described a control the code did not have and
+  every reader after it inherited the belief. The same shape as `CLAUDE.md` claiming an ESLint this
+  repository never had: **the more confidently a rule is referenced in passing, the less likely
+  anybody checks it.** When a decision record cites a mechanism, grep for its reader.
 - **A guard that asserts an *absence* goes vacuous the moment the spelling changes**, and passes
   louder than ever. Three were found in one afternoon: `assert "curl -fsS http://localhost:8001/
   readyz" not in showcase` and `assert "4200" in target` both stopped checking anything when the

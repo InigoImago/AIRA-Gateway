@@ -330,7 +330,7 @@ provider, publisher and region.
 | A GCP **project** with the Agent Platform (Vertex AI) API enabled | |
 | **Either** a service account with `roles/aiplatform.user` **or** an API key | Two credentials, one adapter — see below |
 | The credential, from the environment **or Vault** | `AIRA_VERTEX_CREDENTIALS` (JSON) or `AIRA_VERTEX_API_KEY` |
-| The **regions** you are permitted to use | Listed in `AIRA_ALLOWED_REGIONS`; a model outside them refuses to start |
+| The **regions** you are permitted to use | Listed in `AIRA_ALLOWED_REGIONS`; a model outside them refuses to start, and since `FRD-611` the console refuses one **as it is typed**, naming what is allowed. `global` is not in the shipped default: it names no region and guarantees none, so an installation that wants it says so out loud |
 | **Model Garden access** for the publishers you want | Anthropic models need to be enabled in your project |
 
 One transport, two dialects. Anthropic on Vertex uses `:rawPredict` with the Messages API:

@@ -173,6 +173,21 @@ region and hosting on every audit row, breakable down in reporting. Which of tho
 acceptable is not an engineering decision, and the architecture's contribution is to make the
 question answerable per request instead of per deployment.
 
+**One owner, and now two moments** (added 2026-08-20, `FRD-611`). The list stays in one place —
+Management holds no copy, and the console is *told* what is permitted on the answer it already
+fetches when a model editor opens. What changed is when a reader finds out: enforcement at the
+moment a request is addressed is correct and arrives weeks after somebody catalogued the model, so
+an impermissible region is now refused **where it is typed** as well. The console informs and the
+gateway enforces; a console that is not told anything (an older gateway, mid-rolling-update) says
+nothing rather than refusing everything, because an absent list and an empty one are different
+answers and only one of them is a policy.
+
+**`global` is not a region.** It names none and guarantees none, so it is not in the shipped
+default and an installation that wants Google AI Studio must add it **out loud** — the audit trail
+of this deployment showed two requests already processed there before it was removed. The cost is
+stated rather than hidden: a model reachable only at `global` is not usable under an EU
+requirement, and `gemini-3.5-flash` is one of them today.
+
 ## Consequences
 
 - Positive: a use-case administrator reasons in one vocabulary. "This chain can handle documents;

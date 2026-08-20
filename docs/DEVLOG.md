@@ -5,6 +5,59 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Writing down what four commits had only told the DEVLOG (2026-08-20)
+
+> *"Document everything that was not documented."*
+
+A pass over the last five commits against the documents each should have touched. Two of them had a
+DEVLOG entry and **nothing else** — which is the failure mode `CLAUDE.md` §4 exists to prevent, and
+it had happened twice in two days.
+
+- **`FRD-611`** — *a region the policy forbids is refused where it is typed*. Built on 2026-08-20
+  and until now recorded only as a commit message: the removal of `global` from this deployment's
+  `AIRA_ALLOWED_REGIONS`, the console control that refuses an impermissible region as it is typed,
+  and the design that keeps **one owner** for the policy (Management holds no copy; the gateway
+  publishes the list on the answer the editor already fetches). The edge case is written down where
+  a reader will meet it: an older gateway sends no list, and **absent is not empty** — a console
+  that read it as an empty allow-list would refuse every region during a rolling update.
+- **`FRD-612`** — *a declaration the console accepts and the dialect cannot say*: the `500` that a
+  ticked `auto` produced, the refusal both surfaces now name, the adapter declaration that nothing
+  had ever read, the demo's move to the predecessor's own id `1004`, and the showcase printing a
+  command for a model it does not own.
+
+Both ADRs those features rest on **claimed something that was not true**, which is the more useful
+half of this pass:
+
+- `ADR-0021` §5 cited `Upstream.thinking_modes` as an existing fact. It existed and was read by
+  nothing — so the ADR described a control the code did not have. Amended, with the consequence
+  spelled out under *Negative*.
+- `ADR-0012` §6 said residency is *"one allowed-region list across every transport"*. True, and it
+  said nothing about **when** anybody finds out. Amended: one owner, now two moments — the console
+  informs, the gateway enforces, and a console that was told nothing says nothing.
+
+Six reader-facing documents were stale in ways that would have cost somebody time:
+`REQUEST-LIFECYCLE.md` §8 had no row for the new refusal; `TESTING.md` carried coverage measured on
+the 19th and no mutation count at all; `GAP-ANALYSIS.md` row 15 described budgets as if unattributed
+spend still passed the gate untouched, and its open-gaps section named neither of `FRD-610`'s two;
+`INTEGRATIONS.md` told an integrator that a model outside the list *"refuses to start"* without
+mentioning that the console now refuses one earlier, or that `global` is deliberately absent;
+`ARCHITECTURE.md` listed the console's screens without the installation budget; and
+**`CONFIGURATION.md` documented `AIRA_ENFORCE_BUDGETS` with an empty cell** — the one switch
+`FRD-610` §3.3 is about, described nowhere, while the document that lists it is the one an operator
+reads before turning it off.
+
+`CLAUDE.md` gains the two open items that came out of this week — `FRD-610` §3.2–3.3, and the fact
+that a model reachable only at `global` is not usable under an EU requirement. Both are policy
+outcomes stated on purpose, not defects waiting to be fixed.
+
+Nothing here changes behaviour; the suites are re-run because a documentation pass that breaks a
+guard is a documentation pass that lied. Re-running them found one thing: `ruff check` had not been
+run over yesterday's new test file, and a 101-character line went in with it. `make ci` runs
+`ruff check` *and* `ruff format --check`, and only the second of those was run before that commit —
+two commands, one of which is easy to believe covers the other.
+
+---
+
 ## A declaration the console accepts and the dialect cannot say (2026-08-20)
 
 > *"You broke my showcase — if you now change something on `qwen3:0.6b`, it cannot cope with

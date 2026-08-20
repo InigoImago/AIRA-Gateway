@@ -7,7 +7,7 @@ each FRD's own header is the single source** — this index is generated from th
 and a test fails when they disagree, because feature status kept in two places is feature
 status that goes stale in the copy nobody opens.
 
-**70 of 76 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
+**72 of 78 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
 
 | FRD | Feature | Phase | Status |
 | --- | ------- | ----- | ------ |
@@ -87,3 +87,5 @@ status that goes stale in the copy nobody opens.
 | [607](FRD-607-retiring-a-use-case.md) | Retiring a use case, and the second decision that removes it | 6 (governance) | ✅ Built |
 | [609](FRD-609-several-regions.md) | A model in several regions, tried in order | 6 | ✅ Built |
 | [610](FRD-610-nothing-spends-outside-a-bucket.md) | Nothing spends outside a bucket | 6 | ○ Partly built |
+| [611](FRD-611-residency-refused-where-it-is-typed.md) | A region the policy forbids is refused where it is typed | 6 (governance) | ✅ Built |
+| [612](FRD-612-a-declaration-the-dialect-cannot-say.md) | A declaration the console accepts and the dialect cannot say | 6 | ✅ Built |
