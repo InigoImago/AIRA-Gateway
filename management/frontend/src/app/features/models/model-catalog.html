@@ -450,24 +450,48 @@
                 OpenAI-compatible server, Google AI Studio — where a region here would be a claim
                 about routing that nothing acts on.
                 <br /><br />
-                It is also the residency claim on every audit row for this model, and the gateway
+                It is also the residency claim on every audit row for this model. The gateway
                 refuses a region outside <code>AIRA_ALLOWED_REGIONS</code> at the moment it
                 addresses the request rather than at start-up, because a model catalogued here
-                arrives long after the process booted.
+                arrives long after the process booted — and this screen refuses the same regions
+                <em>as you type them</em>, from the list the gateway publishes, so the answer
+                arrives now rather than when a caller first tries.
               </app-info-hint>
             </label>
+            <!--
+              **A list, and still free text.** The permitted regions come from the gateway, so
+              offering them is offering this installation's actual policy rather than a vocabulary
+              of what the product supports. `list` rather than a `<select>` because the field is
+              legitimately empty for a platform addressed by model name alone, and because a
+              region the gateway has not heard of is a *refusal to explain*, not a value to hide:
+              somebody widening `AIRA_ALLOWED_REGIONS` should be able to type the new one before
+              the console has been reloaded.
+            -->
             <input
               id="model-region"
               name="region"
               data-testid="model-region"
+              list="allowed-regions"
               [ngModel]="region()"
               (ngModelChange)="region.set($event)"
               placeholder="europe-west1"
               autocomplete="off"
             />
-            <span class="field__hint">
-              Required on Vertex. Empty where the model name is the whole address.
-            </span>
+            <datalist id="allowed-regions">
+              @for (allowed of allowedRegions(); track allowed) {
+                <option [value]="allowed"></option>
+              }
+            </datalist>
+            @if (regionPermitted() === false) {
+              <span class="field__hint field__hint--error" data-testid="region-not-permitted">
+                Not permitted by this installation. Allowed:
+                <code>{{ allowedRegions().join(', ') }}</code>
+              </span>
+            } @else {
+              <span class="field__hint">
+                Required on Vertex. Empty where the model name is the whole address.
+              </span>
+            }
           </div>
 
           <!--

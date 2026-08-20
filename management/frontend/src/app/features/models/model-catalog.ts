@@ -479,6 +479,17 @@ export class ModelCatalog implements OnInit {
 
   protected formError(): string | null {
     if (!this.name().trim()) return 'A model id is required.';
+    // **Refused where it is typed, not where it is used.** The gateway enforces residency when it
+    // addresses a request — correct, and weeks too late for whoever catalogued the model: they
+    // hear nothing until a caller gets a 4xx. Judged against the gateway's own published list, so
+    // this is the same policy said earlier rather than a second policy.
+    if (this.regionPermitted() === false) {
+      return (
+        `Region '${this.region().trim()}' is not one this installation permits. ` +
+        `Allowed: ${this.allowedRegions().join(', ')}. ` +
+        'Residency is set on the gateway (AIRA_ALLOWED_REGIONS); widen it there if that is intended.'
+      );
+    }
     const input = this.inputPrice().trim();
     const output = this.outputPrice().trim();
     const cached = this.cachedPrice().trim();
@@ -828,6 +839,28 @@ export class ModelCatalog implements OnInit {
   /** Whether the provider is being typed rather than chosen. */
   protected readonly providerIsCustom = signal(false);
 
+  /**
+   * Where this installation permits processing, **as the gateway states it** (`ADR-0012` §6).
+   *
+   * Held and never authored. `AIRA_ALLOWED_REGIONS` is the gateway's policy, it enforces it at the
+   * moment it addresses a request, and that is correct and **late**: a model is catalogued here,
+   * hours or weeks before a caller finds out. This is what lets the console refuse at the point
+   * somebody types the region — without becoming a second copy of the list that can drift from it.
+   *
+   * Empty means *the gateway did not say* (an older one, or a failed load), never *nothing is
+   * allowed*. The console then declines to have an opinion, and the gateway refuses as it always
+   * did — informing where it can, never blocking on its own ignorance.
+   */
+  protected readonly allowedRegions = signal<string[]>([]);
+
+  /** Whether the region in the form is one this installation permits, or `null` if unknowable. */
+  protected readonly regionPermitted = computed<boolean | null>(() => {
+    const region = this.region().trim();
+    const allowed = this.allowedRegions();
+    if (!region || !allowed.length) return null;
+    return allowed.includes(region);
+  });
+
   protected readonly selectedProvider = computed(
     () => (this.providers() ?? []).find((p) => p.name === this.provider()) ?? null,
   );
@@ -1024,9 +1057,10 @@ export class ModelCatalog implements OnInit {
     if (this.loadingProviders()) return;
     this.loadingProviders.set(true);
     this.service.providers().subscribe({
-      next: (providers) => {
+      next: ({ providers, allowedRegions }) => {
         this.loadingProviders.set(false);
         this.providers.set(providers);
+        this.allowedRegions.set(allowedRegions);
         then?.();
         // Decided in **both** directions, and the first version only did one. Opening the editor
         // fires this call, so a form already carrying a provider is laid out before the answer

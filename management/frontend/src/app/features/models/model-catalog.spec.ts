@@ -1,5 +1,5 @@
 import { TestBed } from '@angular/core/testing';
-import { Observable, Subject, of, throwError } from 'rxjs';
+import { Observable, Subject, map, of, throwError } from 'rxjs';
 import { MeService } from '../../core/api/me.service';
 import {
   Capability,
@@ -142,6 +142,8 @@ interface Catalog {
   edit: (m: CatalogModel) => void;
   remove: (m: CatalogModel) => void;
   providers: () => GatewayProvider[] | null;
+  allowedRegions: () => string[];
+  regionPermitted: () => boolean | null;
   providersError: () => string | null;
   providerIsCustom: { set: (v: boolean) => void; (): boolean };
   chooseProvider: (value: string) => void;
@@ -194,6 +196,8 @@ function setup(
     levelChecks?: Observable<ThinkingLevelCheck>[];
     /** What the gateway is configured with (`FRD-507` stage C). */
     providers?: Observable<GatewayProvider[]>;
+    /** Where this installation permits processing, as the gateway states it (`ADR-0012` §6). */
+    allowedRegions?: string[];
     /** What one provider answers when asked what it offers. */
     offerings?: Observable<OfferedModel[]>;
   } = {},
@@ -244,7 +248,13 @@ function setup(
             );
           },
           models: () => options.models ?? of([FLASH, UNPRICED]),
-          providers: () => options.providers ?? of([STUDIO, VERTEX]),
+          providers: () =>
+            (options.providers ?? of([STUDIO, VERTEX])).pipe(
+              map((providers: GatewayProvider[]) => ({
+                providers,
+                allowedRegions: options.allowedRegions ?? ['eu', 'europe-west1'],
+              })),
+            ),
           providerOfferings: (name: string) => {
             asked.push(name);
             return options.offerings ?? of([OFFERED_FLASH, OFFERED_EMBED]);
@@ -2224,5 +2234,96 @@ describe('ModelCatalog — thinking levels are the vendor’s own words', () => 
     // Or the save fails against a validator refusing a default nothing declares, for a reason the
     // reader cannot see on screen.
     expect(component.thinkingDefault()).toBe('');
+  });
+});
+
+/**
+ * Residency, refused where the region is typed rather than where it is used (`ADR-0012` §6).
+ *
+ * The gateway has always enforced `AIRA_ALLOWED_REGIONS` — at the moment it *addresses* a request,
+ * which is correct and late: a model is catalogued here, and whoever did it hears nothing until a
+ * caller gets a 4xx, possibly weeks later. Measured on the running installation on 2026-08-19: two
+ * requests had been processed at `global`, a region that names no place and guarantees none, and
+ * nothing anywhere said so.
+ *
+ * The console can only refuse earlier if it knows the list — and it must not know it by holding a
+ * copy. One policy, published by the plane that owns it.
+ */
+describe('ModelCatalog — a region this installation does not permit', () => {
+  it('refuses one that is not on the gateway’s list, and names what is', () => {
+    const { component } = setup({ allowedRegions: ['eu', 'europe-west1'] });
+    component.add();
+    component.name.set('gemini-3.5-flash');
+    component.region.set('global');
+
+    expect(component.regionPermitted()).toBe(false);
+    expect(component.formError()).toContain("Region 'global' is not one this installation permits");
+    // The remedy names where the policy lives, because it is not changed here.
+    expect(component.formError()).toContain('AIRA_ALLOWED_REGIONS');
+    expect(component.canSave()).toBe(false);
+  });
+
+  it('permits one that is on the list', () => {
+    const { component } = setup({ allowedRegions: ['eu', 'europe-west1'] });
+    component.add();
+    component.region.set('europe-west1');
+
+    expect(component.regionPermitted()).toBe(true);
+    expect(component.formError()).not.toContain('permits');
+  });
+
+  it('has no opinion about an empty region', () => {
+    /** Empty is the correct answer for a platform addressed by model name alone — AI Studio, an
+     *  OpenAI-compatible server — where a region would be a claim about routing nothing acts on. */
+    const { component } = setup({ allowedRegions: ['eu'] });
+    component.add();
+    component.region.set('   ');
+
+    expect(component.regionPermitted()).toBeNull();
+    expect(component.formError()).not.toContain('permits');
+  });
+
+  it('has no opinion when the gateway did not say', () => {
+    /** **The edge case that matters most, because getting it wrong breaks everything.** An older
+     *  gateway sends no `allowedRegions`, and a console reading absence as an empty allow-list
+     *  would refuse *every* region anybody typed — a console that has never heard the policy
+     *  enforcing its own idea of it.
+     *
+     *  Absence means *this gateway did not say*. The console declines to have an opinion and the
+     *  gateway refuses at request time exactly as it always did: informing where it can, never
+     *  blocking on its own ignorance (`FRD-506`'s rule, one screen over). */
+    const { component } = setup({ allowedRegions: [] });
+    component.add();
+    component.name.set('m');
+    component.region.set('somewhere-else');
+
+    expect(component.regionPermitted()).toBeNull();
+    expect(component.formError()).toBeNull();
+  });
+
+  it('offers the permitted regions without confining the field to them', () => {
+    /** A `datalist`, not a `<select>`: somebody widening the policy on the gateway should be able
+     *  to type the new region before this console has been reloaded, and a region the list does
+     *  not carry deserves the refusal above rather than silent absence. */
+    const { component, fixture, html } = setup({ allowedRegions: ['eu', 'europe-west1'] });
+    component.add();
+    fixture.detectChanges();
+
+    const offered = [...html().querySelectorAll('#allowed-regions option')].map(
+      (option) => (option as HTMLOptionElement).value,
+    );
+    expect(offered).toEqual(['eu', 'europe-west1']);
+    expect(html().querySelector('#model-region')?.tagName).toBe('INPUT');
+  });
+
+  it('says so beside the field, not only in the footer', () => {
+    const { component, fixture, html } = setup({ allowedRegions: ['eu'] });
+    component.add();
+    component.region.set('global');
+    fixture.detectChanges();
+
+    const note = html().querySelector('[data-testid="region-not-permitted"]');
+    expect(note).not.toBeNull();
+    expect(note!.textContent).toContain('eu');
   });
 });

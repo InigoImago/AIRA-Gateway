@@ -26,6 +26,8 @@ from aira_common.roles import may_catalogue
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.auth.dependencies import require_principal
 from aira_gateway.auth.principal import Principal
+from aira_gateway.config import GatewaySettings
+from aira_gateway.residency import parse_allowed
 from aira_gateway.upstreams.base import (
     OfferedModel,
     ProviderRegistry,
@@ -156,15 +158,30 @@ def _entry(name: str, upstreams: list[Upstream], registry: ProviderRegistry) -> 
 async def list_providers(
     request: Request, principal: Principal = Depends(require_principal)
 ) -> JSONResponse:
-    """The upstreams this gateway is configured with, and which of them can be asked for a list."""
+    """The upstreams this gateway is configured with, which can be asked for a list — and where
+    this installation permits processing.
+
+    **The regions ride along rather than getting an endpoint**, because the console asks this one
+    the moment the model editor opens and the two facts are used in the same breath: *which
+    provider* and *where*. A second request would be a second thing to fail.
+
+    They are published for one reason: so nothing has to restate them. `AIRA_ALLOWED_REGIONS` is
+    the gateway's policy and the gateway enforces it at the moment it addresses a request — which
+    is correct and **late**, because a model is catalogued in Management, hours or weeks earlier,
+    by somebody who then hears nothing until a caller does. The console can refuse at authoring
+    time only if it knows the list, and it must not know it by holding a copy: one list, published
+    by its owner, read by whoever needs it (`ADR-0012` §6).
+    """
     _require_catalog_role(principal)
     registry: ProviderRegistry = request.app.state.providers
     grouped = _grouped(registry)
+    settings: GatewaySettings = request.app.state.settings
     return JSONResponse(
         {
             "providers": [
                 _entry(name, upstreams, registry) for name, upstreams in sorted(grouped.items())
-            ]
+            ],
+            "allowedRegions": sorted(parse_allowed(settings.allowed_regions)),
         }
     )
 

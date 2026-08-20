@@ -410,3 +410,53 @@ def test_an_adapter_reached_only_through_the_catalog_is_still_registered() -> No
     assert registry.models() == []
     assert list(registry.by_name()) == ["vendor-x"]
     assert len(registry.each()) == 1
+
+
+# == where this installation permits processing (`ADR-0012` §6) ==================================
+
+
+def _regions(settings: str | None = None) -> Any:
+    """The providers answer, from a gateway configured with `settings` as its allow-list."""
+    app = create_app(
+        GatewaySettings(auth_required=False, **({"allowed_regions": settings} if settings else {}))
+    )
+    app.dependency_overrides[require_principal] = lambda: GLOBAL_ADMIN
+    app.state.providers = ProviderRegistry([_Offering()])
+    return TestClient(app).get("/v1beta/providers").json()
+
+
+def test_the_providers_answer_carries_the_regions_this_installation_permits() -> None:
+    """**One list, published by its owner** rather than restated by the console.
+
+    Residency is the gateway's policy and the gateway enforces it when it *addresses* a request —
+    correct, and weeks after somebody catalogued the model, who then hears nothing until a caller
+    gets a 4xx. The console can refuse at authoring time only if it knows the list, and it must not
+    know it by holding a copy: a second answer to a residency question is how two planes come to
+    disagree about what this installation is allowed to do.
+
+    It rides on this answer rather than getting an endpoint, because the model editor uses both
+    facts in the same breath — *which provider*, and *where*.
+    """
+    body = _regions("europe-west1,eu")
+
+    assert body["allowedRegions"] == ["eu", "europe-west1"]
+    # Beside the providers, not instead of them.
+    assert [entry["name"] for entry in body["providers"]] == ["vendor-x"]
+
+
+def test_an_unset_allow_list_publishes_the_eu_defaults_rather_than_nothing() -> None:
+    """`parse_allowed` falls back to the EU regions of every supported cloud, because a residency
+    constraint that has to be switched on is one that will be found switched off. The published
+    list has to say the same thing, or a console reading it would offer no region at all on a
+    deployment that permits several."""
+    from aira_gateway.residency import DEFAULT_ALLOWED_REGIONS
+
+    assert _regions()["allowedRegions"] == sorted(DEFAULT_ALLOWED_REGIONS)
+
+
+def test_global_is_published_only_where_it_is_configured() -> None:
+    """`global` names no region and guarantees none. It is not in the shipped default, and a
+    deployment that adds it has said something specific — which the console must be able to see,
+    because otherwise it would refuse a region this installation does permit."""
+    assert "global" not in _regions()["allowedRegions"]
+    assert "global" in _regions("global,europe-west1")["allowedRegions"]

@@ -379,6 +379,14 @@ MUTATIONS = [
         "gateway/tests/test_model_check.py",
     ),
     Mutation(
+        "V21",
+        "the gateway publishes where this installation permits processing",
+        "gateway/src/aira_gateway/api/providers.py",
+        '            "allowedRegions": sorted(parse_allowed(settings.allowed_regions)),',
+        '            "allowedRegions": [],',
+        "gateway/tests/test_provider_offerings.py",
+    ),
+    Mutation(
         "V20",
         "the global Vertex endpoint has no region prefix",
         "gateway/src/aira_gateway/upstreams/vertex/transport.py",

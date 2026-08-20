@@ -116,18 +116,31 @@ describe('UseCaseService', () => {
     req.flush({ name: 'm-1' });
   });
 
-  it('asks the gateway which providers it is configured with', () => {
+  it('asks the gateway which providers it has and where it may process', () => {
     /** The gateway, not Management: which upstreams exist is a property of the gateway's
      *  configuration and nothing else knows it. A hard-coded list here would be what the *product*
-     *  supports rather than what *this installation* has. */
-    service.providers().subscribe((providers) => expect(providers.length).toBe(1));
+     *  supports rather than what *this installation* has — and the same argument, one step
+     *  stronger, applies to the regions: residency is a policy with **one** owner. */
+    service.providers().subscribe((answer) => {
+      expect(answer.providers.length).toBe(1);
+      expect(answer.allowedRegions).toEqual(['eu', 'europe-west1']);
+    });
     const req = http.expectOne('/gw/v1beta/providers');
     expect(req.request.method).toBe('GET');
-    req.flush({ providers: [{ name: 'generative-language' }] });
+    req.flush({
+      providers: [{ name: 'generative-language' }],
+      allowedRegions: ['eu', 'europe-west1'],
+    });
   });
 
-  it('reads an empty provider list as empty rather than as undefined', () => {
-    service.providers().subscribe((providers) => expect(providers).toEqual([]));
+  it('reads an absent answer as empty rather than as undefined', () => {
+    /** And an absent `allowedRegions` as *the gateway did not say*, never as "nothing is allowed":
+     *  an older gateway sends no such field, and a console that refused every region on the
+     *  strength of that would be enforcing a policy it has never heard. */
+    service.providers().subscribe((answer) => {
+      expect(answer.providers).toEqual([]);
+      expect(answer.allowedRegions).toEqual([]);
+    });
     http.expectOne('/gw/v1beta/providers').flush({});
   });
 

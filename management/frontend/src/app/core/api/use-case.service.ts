@@ -9,6 +9,7 @@ import {
   Budget,
   BudgetUsage,
   DirectoryResults,
+  GatewayConfiguration,
   GatewayProvider,
   GroupGrant,
   OfferedModel,
@@ -298,10 +299,17 @@ export class UseCaseService {
    * *product* supports rather than what *this installation* has — which is the difference between
    * a dropdown that helps and one that offers a provider no credential reaches.
    */
-  providers(): Observable<GatewayProvider[]> {
-    return this.http
-      .get<{ providers: GatewayProvider[] }>(`${GW}/v1beta/providers`)
-      .pipe(map((body) => body.providers ?? []));
+  providers(): Observable<GatewayConfiguration> {
+    return this.http.get<GatewayConfiguration>(`${GW}/v1beta/providers`).pipe(
+      map((body) => ({
+        providers: body.providers ?? [],
+        // **Empty is not "anything goes".** An older gateway does not send this field, and a
+        // console that read the absence as an empty allow-list would refuse every region a
+        // reader typed. Absence means *this gateway did not say*, and the console then does not
+        // pretend to know — the gateway still refuses at request time, as it always did.
+        allowedRegions: body.allowedRegions ?? [],
+      })),
+    );
   }
 
   /**

@@ -373,6 +373,20 @@ export const MEDIA_TYPES: readonly string[] = [
   'image/heif',
 ];
 
+/**
+ * What the gateway answers about its own configuration (`FRD-507` stage C, `ADR-0012` §6).
+ *
+ * The regions travel with the providers because the model editor uses both in the same breath —
+ * *which provider* and *where* — and because nothing else may hold that list. Residency is the
+ * **gateway's** policy (`AIRA_ALLOWED_REGIONS`); a copy in Management would be a second answer to
+ * a question that must have one.
+ */
+export interface GatewayConfiguration {
+  providers: GatewayProvider[];
+  /** Empty means *the gateway did not say* — an older one — never *nothing is allowed*. */
+  allowedRegions: string[];
+}
+
 /** A model's thinking declaration (`FRD-114` FR-3, `ADR-0021`). */
 export interface ThinkingDeclaration {
   /** The gateway's own three, which every dialect spells differently. A closed set. */

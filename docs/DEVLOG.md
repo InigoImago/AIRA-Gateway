@@ -5,6 +5,47 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## A region the policy forbids is refused where it is typed (2026-08-20)
+
+> *"global out of allowed regions, and refuse the ones that are not permitted in the console."*
+
+Both halves, and the second is the one with an argument behind it.
+
+**`global` is out.** It was in this deployment's `AIRA_ALLOWED_REGIONS` and not in the shipped
+default, added for Google AI Studio — whose key is empty, so it bought nothing. It **names no
+region and guarantees none**, which is the whole difference from Vertex, and the audit trail showed
+two requests already processed there. The file now matches `.env.example` exactly.
+
+The consequence is stated rather than worked around: `gemini-3.5-flash` is reachable with this
+credential **only** at `global` (measured across five endpoints on 2026-08-19), so under an EU
+residency requirement it is not usable here yet. That is the honest answer, and it retires the
+advice I gave that morning.
+
+**The console refuses an impermissible region as it is typed.** The gateway has always enforced
+residency — at the moment it *addresses* a request, which is correct and **late**: a model is
+catalogued in Management, and whoever did it hears nothing until a caller gets a 4xx, possibly
+weeks later.
+
+The interesting part is where the list comes from. Management must not hold a copy: residency is
+one policy with one owner (`ADR-0012` §6), and a second copy is how two planes come to disagree
+about what an installation may do. So the gateway **publishes** it, on the answer the console
+already fetches when the model editor opens — the two facts are used in the same breath, *which
+provider* and *where*, and a second request would be a second thing to fail.
+
+**The edge case worth the most thought**: an older gateway sends no `allowedRegions`. A console
+reading that absence as an *empty allow-list* would refuse every region anybody typed — enforcing
+a policy it has never heard. Absence means *this gateway did not say*; the console then declines to
+have an opinion and the gateway refuses at request time exactly as before. Informing where it can,
+never blocking on its own ignorance.
+
+Seven properties broken by hand and seen to fail, including that one twice — once for the empty
+region and once for the unstated list, because a single condition guards both and only two
+mutations can tell them apart.
+
+`ADR-0012` §6, `FRD-115`.
+
+---
+
 ## Deleting a use case stops it and destroys nothing (2026-08-19)
 
 Asked as a regulatory requirement and stated as a threat:
