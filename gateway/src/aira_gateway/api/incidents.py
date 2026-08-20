@@ -14,9 +14,11 @@ independent events (§4.3).
 from __future__ import annotations
 
 import asyncio
+import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import structlog
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
@@ -24,13 +26,21 @@ from sqlalchemy import select
 from aira_common.anomalies import RuleAction, RuleTarget
 from aira_gateway.anomalies.suspensions import AccessSuspension, as_dict
 from aira_gateway.api.gemini.errors import GeminiHTTPError
-from aira_gateway.auth.attribution import is_valid_use_case
+from aira_gateway.audit import Outcome
+from aira_gateway.auth.attribution import Attribution, is_valid_use_case
 from aira_gateway.auth.dependencies import require_principal
 from aira_gateway.auth.principal import Principal
 from aira_gateway.catalog import ModelCatalog
-from aira_gateway.core.canonical import CanonicalMessage, CanonicalRequest, Role, Thinking
+from aira_gateway.core.canonical import (
+    CanonicalMessage,
+    CanonicalRequest,
+    CanonicalUsage,
+    Role,
+    Thinking,
+)
+from aira_gateway.persistence.recorder import record_request
 from aira_gateway.residency import RegionNotAllowed
-from aira_gateway.state import sessionmaker_of, suspensions_of
+from aira_gateway.state import pricing_of, sessionmaker_of, suspensions_of
 from aira_gateway.upstreams.base import DialectUnsupported, ProviderRegistry, UpstreamError
 
 #: A check must be quick enough that somebody presses the button and waits for it.
@@ -40,6 +50,8 @@ MODEL_CHECK_TIMEOUT_SECONDS = 5.0
 #: check rather than read off the model: a bound the caller is told about is a decision, and one
 #: derived from a column is a coincidence that changes when somebody widens the column.
 MAX_TARGET_VALUE = 255
+
+_log = structlog.get_logger(__name__)
 
 router = APIRouter(tags=["incidents"])
 
@@ -285,8 +297,23 @@ async def check_model(
     # the defect the `model` argument to `ping` was added for.
     #
     # `:countTokens` costs nothing, so the number of regions bounds nothing but time.
+    _attribute_diagnostic(request, principal)
     for asked_region in asked_regions or [""]:
+        started = time.monotonic()
         verdict = await _reach(ping, model, asked_region)
+        # Recorded although `:countTokens` is free, and the zero is the point: an auditor asking
+        # *"who probed this model, and when"* gets an answer, and a row that says nothing was spent
+        # is a stronger statement than no row at all.
+        await _record_diagnostic(
+            request,
+            principal,
+            operation="models:check",
+            model=model,
+            region=asked_region,
+            usage=None,
+            status=200 if verdict["reachable"] else 502,
+            latency_ms=int((time.monotonic() - started) * 1000),
+        )
         result["regions"].append({"region": asked_region, **verdict})
 
     # The summary is the **best** of them, and the list beside it says which. A model that answers
@@ -301,6 +328,82 @@ async def check_model(
         unreachable = [entry["region"] for entry in result["regions"] if not entry["reachable"]]
         result["detail"] += f" Not reachable in: {', '.join(unreachable)}."
     return JSONResponse(result)
+
+
+async def _record_diagnostic(
+    request: Request,
+    principal: Principal,
+    *,
+    operation: str,
+    model: str,
+    region: str,
+    usage: CanonicalUsage | None,
+    status: int,
+    latency_ms: int,
+) -> None:
+    """Leave an audit row for a check somebody pressed (`FRD-610`).
+
+    **These calls spend money, so they belong in the trail.** They were exempt, and the exemption
+    was mine and wrong: the argument — bounded, role-gated, a token at a time — is true and answers
+    a different question. *"How much did this cost"* has to be answerable, and a small amount
+    nobody can see is not a small amount, it is an invisible one.
+
+    Three things make the row honest rather than decorative:
+
+    - **No use case, and none invented.** The check exists for a model that is not released to
+      anybody yet — that is what it is *for* — so there is nothing to attribute it to. An audit row
+      with no use case is an existing, supported shape here (unbound break-glass keys, demo
+      traffic), and inventing an owner so a row has somewhere to sit is the failure `FRD-403`
+      names.
+    - **`Outcome.DIAGNOSTIC`, not `served`.** Counted as served, these would inflate every request
+      figure with traffic no use case made — the shape `FRD-125b` refused for pipeline calls. Its
+      own value is also what makes *"what did diagnostics cost this month"* a question somebody can
+      ask.
+    - **The real usage and the real price**, from the answer and the catalogue, so the figure is
+      what was spent rather than what was estimated.
+
+    Never raises. A diagnostic that fails because its bookkeeping failed would be the worst of both
+    — no answer *and* no row — so a persistence failure is logged and the verdict still returns.
+    """
+    try:
+        cost = await pricing_of(request).cost_nanos(model, usage) if usage else None
+        await record_request(
+            request,
+            operation=operation,
+            model=model,
+            status=status,
+            usage=usage,
+            latency_ms=latency_ms,
+            request_payload=None,
+            response_payload=None,
+            cost_nanos=cost,
+            outcome=Outcome.DIAGNOSTIC,
+            provenance=("", "", region),
+            api="console",
+        )
+    except Exception:  # noqa: BLE001 — the verdict matters more than its bookkeeping
+        _log.warning(
+            "diagnostic_not_recorded",
+            model=model,
+            operation=operation,
+            subject=principal.subject,
+        )
+
+
+def _attribute_diagnostic(request: Request, principal: Principal) -> None:
+    """Attribute the check to the person who pressed it, and to **no use case**.
+
+    `require_principal` authenticates and stops there; `record_request` reads
+    `request.state.attribution`. Set here rather than by widening the dependency, because widening
+    it would make every diagnostic *look like* a use case's request one refactor later.
+    """
+    request.state.attribution = Attribution(
+        subject=principal.subject,
+        method=principal.method,
+        use_case=None,
+        credential=principal.credential,
+        username=principal.username,
+    )
 
 
 def _regions_asked(region: str, declaration: Any) -> list[str]:
@@ -433,22 +536,37 @@ async def check_thinking_levels(
     # — the refusal precedes any generation. `MAX_LEVELS_PER_CHECK` bounds the words; the regions
     # are bounded by what somebody typed into the catalogue.
     asked_regions = _regions_asked(region, declaration) or [""]
+    _attribute_diagnostic(request, principal)
     results = []
     for asked_region in asked_regions:
         for word in words:
-            results.append(
-                {
-                    "region": asked_region,
-                    "level": word,
-                    **await _accepts(upstream, model, word, asked_region),
-                }
+            started = time.monotonic()
+            verdict, usage = await _accepts(upstream, model, word, asked_region)
+            # **The row that closes the exemption.** A word the model accepts costs an output
+            # token; one it refuses costs nothing, and both leave a record naming what was spent.
+            await _record_diagnostic(
+                request,
+                principal,
+                operation=f"models:checkThinking:{word}",
+                model=model,
+                region=asked_region,
+                usage=usage,
+                status=200 if verdict["accepted"] else 400,
+                latency_ms=int((time.monotonic() - started) * 1000),
             )
+            results.append({"region": asked_region, "level": word, **verdict})
 
     return JSONResponse({"model": model, "results": results})
 
 
-async def _accepts(upstream: Any, model: str, word: str, region: str) -> dict[str, Any]:
-    """Ask one model in one region whether it takes one level word."""
+async def _accepts(
+    upstream: Any, model: str, word: str, region: str
+) -> tuple[dict[str, Any], CanonicalUsage | None]:
+    """Ask one model in one region whether it takes one level word, and say what it cost.
+
+    The usage travels back with the verdict because the answer is the only place it exists — this
+    used to discard the response entirely, which is how the spend became invisible.
+    """
     probe = CanonicalRequest(
         model=model,
         messages=[CanonicalMessage(role=Role.USER, text="hi")],
@@ -457,20 +575,22 @@ async def _accepts(upstream: Any, model: str, word: str, region: str) -> dict[st
         addressing={"regions": [region]} if region else {},
     )
     try:
-        await asyncio.wait_for(upstream.generate(probe), timeout=MODEL_CHECK_TIMEOUT_SECONDS)
+        answer = await asyncio.wait_for(
+            upstream.generate(probe), timeout=MODEL_CHECK_TIMEOUT_SECONDS
+        )
     except TimeoutError:
         return {
             "accepted": False,
             "detail": f"Did not answer within {MODEL_CHECK_TIMEOUT_SECONDS:g}s.",
-        }
+        }, None
     except RegionNotAllowed as exc:
-        return {"accepted": False, "detail": str(exc)}
+        return {"accepted": False, "detail": str(exc)}, None
     except (UpstreamError, DialectUnsupported) as exc:
         # **The provider's own words**, which is the whole value of this button: Google says
         # *"thinking_level is not supported by this model"*, and no rule in this repository could
         # have said it as precisely or stayed as true.
-        return {"accepted": False, "detail": str(exc)}
+        return {"accepted": False, "detail": str(exc)}, None
     except Exception as exc:  # noqa: BLE001 — anything else means "we could not tell"
         # The type, not the message: an arbitrary provider error can carry a URL with a key.
-        return {"accepted": False, "detail": f"Could not ask ({type(exc).__name__})."}
-    return {"accepted": True, "detail": "The model accepted it."}
+        return {"accepted": False, "detail": f"Could not ask ({type(exc).__name__})."}, None
+    return {"accepted": True, "detail": "The model accepted it."}, getattr(answer, "usage", None)

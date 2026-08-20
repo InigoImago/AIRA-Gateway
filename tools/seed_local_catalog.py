@@ -51,10 +51,13 @@ EMBED_PRICE = 10_000_000
 #:               the thoughts become the answer. `disabled` is therefore **not declared** for it —
 #:               `FRD-111` then refuses a request asking for it by name, which is a far better
 #:               outcome than a 200 carrying somebody's reasoning.
-#:   both        the server refuses the *value* `"minimal"` by name (`high|medium|low|max|none`),
-#:               which is why the mode was once struck from this table. It is declared again: the
-#:               OpenAI mapping sends `minimal` as `"low"`, so the request that honours it is the
-#:               request `low` makes — and `low` is measured on both.
+#:   both        the server refuses the *value* `"minimal"` by name (`high|medium|low|max|none`).
+#:               Struck, restored, and struck again: it came back on the argument that `FRD-111`'s
+#:               OpenAI mapping sent `minimal` as `"low"`, and `ADR-0021` deleted that translation
+#:               — a level is the vendor's own word and travels untranslated, so declaring it here
+#:               writes a declaration that answers `400` on its first use. Re-measured 2026-08-20.
+#:   0.6b        `max` is accepted, and is a word no vocabulary in this project ever had — which is
+#:               the argument for free text in one line.
 #:
 #: A model that is not in this table gets **no thinking declaration at all**: absence of
 #: information is not permission (`FRD-114` FR-7), and the baseline is that the model thinks
@@ -67,20 +70,33 @@ EMBED_PRICE = 10_000_000
 #: neither the family nor the size; it is that particular build's template. A vendor's capability
 #: flag is a claim, and this catalog is supposed to hold evidence.
 THINKING_BY_MODEL: dict[str, dict] = {
-    # `minimal` is declared again, and the reason it was once removed is the reason it is back.
-    # It was struck on 2026-08-06 because this server refuses the *value* `"minimal"` by name
-    # (`high|medium|low|max|none`). That was a fact about the wire, not about the model: since
-    # `FRD-111`'s OpenAI mapping sends `minimal` as `"low"` — the nearest level this dialect
-    # actually has — a caller asking for it is honoured by the same request that `low` makes, and
-    # `low` is measured on both models below. Refusing it instead left the least-thinking mode
-    # unreachable on every OpenAI-compatible server there is.
+    # **`minimal` is gone, and this is the third time it has moved.** It was struck on 2026-08-06
+    # because this server refuses the value by name; put back on the argument that `FRD-111`'s
+    # OpenAI mapping sent it as `"low"`, so a caller asking for it was honoured by the request
+    # `low` makes; and removed again now, because `ADR-0021` deleted that translation. A level is
+    # the vendor's own word and travels untranslated, so declaring `minimal` here writes a
+    # declaration that answers `400` on its first use.
+    #
+    # Measured against this Ollama on 2026-08-19, and the message is the server's own:
+    #
+    #     invalid reasoning value: 'minimal' (must be "high", "medium", "low", "max", or "none")
+    #
+    # A fact about the **server's parameter validation**, not about either model — which is why it
+    # is removed from both, and why `max` (a word no vocabulary in this project ever had) is
+    # declared for the one it was measured on.
     "qwen3:0.6b": {
-        "modes": ["disabled", "minimal", "low", "medium", "high"],
+        "modes": ["disabled"],
+        "levels": ["low", "medium", "high", "max"],
         "default": {"mode": "disabled"},
     },
-    "qwen3:4b": {
-        "modes": ["minimal", "low", "medium", "high"],
-    },
+    # No `disabled`: `reasoning_effort: "none"` does not switch thinking off on this model, it
+    # switches off the *separation*, and the thoughts arrive as the answer. `FRD-111` refuses a
+    # request asking for a mode a model does not declare, which is the outcome that helps.
+    #
+    # `max` is **not** claimed here: the server takes it, and whether this model is the one it was
+    # measured on is a different question. A declaration nobody measured is the thing the console's
+    # *Ask the model* button exists to catch, and seeding one would be seeding the defect.
+    "qwen3:4b": {"levels": ["low", "medium", "high"]},
 }
 
 

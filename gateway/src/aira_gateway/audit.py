@@ -67,6 +67,16 @@ class Outcome(StrEnum):
     #: value rather than `rate_limited`: "we stopped this caller" and "this caller is going too
     #: fast" want different answers, and a shared bucket would hide the first inside the second.
     SUSPENDED = "suspended"
+    #: **An administrator asking a model about itself** (`FRD-610`) — the console's reachability and
+    #: thinking-word checks. Not a caller's traffic: it belongs to no use case, answers nobody, and
+    #: exists so that a declaration can be verified before anything is released against it.
+    #:
+    #: Its own value rather than `served`, for the reason this vocabulary is closed at all. These
+    #: calls **spend money**, so they have to be in the audit trail — and counted as *served* they
+    #: would inflate every use case's request figure with traffic no use case made, which is the
+    #: shape `FRD-125b` refused for pipeline calls. Separable is what makes them governable:
+    #: *"what did diagnostics cost this month"* is a question somebody can now ask.
+    DIAGNOSTIC = "diagnostic"
 
 
 #: How the served model was arrived at. ``fallback:N`` names the candidate's position in the chain.

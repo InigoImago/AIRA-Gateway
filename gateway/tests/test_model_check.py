@@ -48,7 +48,10 @@ class _Silent:
 
 
 def _client(principal: Principal, provider: Any = None) -> TestClient:
-    app = create_app(GatewaySettings(auth_required=False))
+    # `log_queue_size=0` writes the audit row on the request path. `FRD-405` moved that write off
+    # it, so a row is otherwise merely queued when the response returns — and the assertions below
+    # are about rows.
+    app = create_app(GatewaySettings(auth_required=False, log_queue_size=0))
     app.dependency_overrides[require_principal] = lambda: principal
     if provider is not None:
         app.state.providers.provider_for = lambda *_a, **_k: provider  # type: ignore[method-assign]
@@ -241,11 +244,19 @@ async def test_a_test_double_is_not_governed_as_a_model() -> None:
 
 
 class _TakesLevels:
-    """A dialect with a level field, refusing one word the way a real provider does."""
+    """A dialect with a level field, refusing one word the way a real provider does.
+
+    Returns a **real** `CanonicalResponse` with usage on it, not a bare object. The first version
+    returned `object()`, and a mutation run caught what that hides: the row's usage came back
+    `None` whatever the code did, so *"the row carries what the answer reported"* was a property no
+    test could lose. The trap this project keeps recording — a stand-in emptier than the thing it
+    replaces.
+    """
 
     expresses_thinking_levels = True
 
     async def generate(self, request: Any) -> Any:
+        from aira_gateway.core.canonical import CanonicalResponse, CanonicalUsage
         from aira_gateway.upstreams.base import UpstreamError
 
         if request.thinking.mode == "medium":
@@ -253,7 +264,11 @@ class _TakesLevels:
                 "Unable to submit request because thinking_level is not supported by this model.",
                 status_code=400,
             )
-        return object()
+        return CanonicalResponse(
+            model=request.model,
+            text="ok",
+            usage=CanonicalUsage(prompt_tokens=11, completion_tokens=1, total_tokens=12),
+        )
 
 
 class _BudgetOnly:
@@ -464,3 +479,75 @@ async def test_a_thinking_word_is_asked_in_every_region() -> None:
         ("europe-west4", "high", True),
     ]
     assert "thinking_level is not supported" in body["results"][0]["detail"]
+
+
+# ---- a check that spends money leaves a row (`FRD-610`) ----------------------------------------
+
+
+@pytest.mark.anyio
+async def test_asking_the_model_leaves_an_audit_row_with_what_it_cost() -> None:
+    """**The exemption this closes was mine, and its argument was wrong.**
+
+    It said the spend is tiny, bounded and role-gated — all true, and an answer to a different
+    question. The rule is that every request is auditable, and *"how much did this cost"* has to be
+    answerable: a small amount nobody can see is not a small amount, it is an invisible one.
+    Measured before the fix, against the running installation: 1491 audit rows before pressing the
+    button and 1491 after.
+    """
+    from aira_gateway.audit import Outcome
+    from aira_gateway.db.models import RequestLog
+
+    app = _client(GLOBAL_ADMIN, _TakesLevels())
+    with TestClient(app) as client:
+        await _declare(app)
+        client.post(
+            "/v1beta/models/gemini-2.0-flash:checkThinking",
+            json={"levels": ["low", "medium"]},
+        )
+        async with app.state.db_sessionmaker() as session:
+            rows = (await session.execute(RequestLog.__table__.select())).fetchall()
+
+    diagnostics = [row for row in rows if row.outcome == Outcome.DIAGNOSTIC]
+    assert [row.operation for row in diagnostics] == [
+        "models:checkThinking:low",
+        "models:checkThinking:medium",
+    ]
+    # **No use case, and none invented.** The check exists for a model nobody has released yet, so
+    # there is nothing to attribute it to — and inventing an owner so a row has somewhere to sit is
+    # the failure `FRD-403` names.
+    assert {row.use_case for row in diagnostics} == {None} or {
+        row.use_case for row in diagnostics
+    } == {""}
+    # Attributed to the person who pressed it.
+    assert {row.subject for row in diagnostics} == {GLOBAL_ADMIN.subject}
+
+    # **What it cost**, from the answer rather than from an estimate. The accepted word carries the
+    # usage the model reported; the refused one carries none, because nothing was generated — and
+    # `NULL` rather than `0` is the convention a refusal already uses here (`FRD-403`).
+    accepted = next(row for row in diagnostics if row.operation.endswith(":low"))
+    refused = next(row for row in diagnostics if row.operation.endswith(":medium"))
+    assert (accepted.prompt_tokens, accepted.completion_tokens) == (11, 1)
+    assert accepted.total_tokens == 12
+    assert refused.total_tokens is None
+
+
+@pytest.mark.anyio
+async def test_a_diagnostic_is_not_counted_as_served() -> None:
+    """Its own outcome, because counted as `served` these would inflate every request figure with
+    traffic no use case made — the shape `FRD-125b` refused for pipeline calls. Separable is also
+    what makes *"what did diagnostics cost this month"* answerable at all."""
+    from aira_gateway.audit import Outcome
+    from aira_gateway.db.models import RequestLog
+
+    app = _client(GLOBAL_ADMIN, _Reachable())
+    with TestClient(app) as client:
+        await _declare(app)
+        client.get("/v1beta/models/gemini-2.0-flash:check")
+        async with app.state.db_sessionmaker() as session:
+            rows = (await session.execute(RequestLog.__table__.select())).fetchall()
+
+    assert [row.outcome for row in rows] == [Outcome.DIAGNOSTIC]
+    assert [row.operation for row in rows] == ["models:check"]
+    # `:countTokens` is free, so nothing was spent — and the row saying so is a stronger statement
+    # than no row at all.
+    assert rows[0].total_tokens is None

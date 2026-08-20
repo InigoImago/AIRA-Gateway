@@ -5,6 +5,57 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The checks that spent money invisibly, and where else it leaks (2026-08-20)
+
+> *"How does it look with the budget? Are these test requests counted and taken into the budget —
+> every request should be auditable and budgetable."*
+
+**Measured before answering: 1491 audit rows before pressing the button, 1491 after.** The console's
+*Ask the model* check spent real tokens and left no row, no budget entry, no trace.
+
+That exemption was mine, written the day before, and its argument was that the spend is tiny,
+bounded and role-gated. All three true, and an answer to a different question. **A small amount
+nobody can see is not a small amount — it is an invisible one.**
+
+**Every probe now writes a row**: one per region for the free reachability check (the zero is the
+point — *"who probed this, and when"* now has an answer), one per word per region for the paid one,
+with the real usage and the real price. Verified live: `prompt 11 · completion 1 · cost_nanos 1500`.
+No use case, and **none invented** — the check exists for a model nobody has released, so there is
+nothing to attribute it to, and inventing an owner so a row has somewhere to sit is the failure
+`FRD-403` names. `Outcome.DIAGNOSTIC` rather than `served`, or these would inflate every request
+figure with traffic no use case made.
+
+**And the seed was writing a declaration that answers 400.** `qwen3:0.6b` was seeded with `minimal`
+among its thinking modes, justified by a comment citing `FRD-111`'s translation of `minimal` →
+`"low"` — which `ADR-0021` deleted the day before. Ollama refuses the value by name. Both seeds now
+carry what was measured, including `max`, a word no vocabulary in this project ever had.
+
+**Then: where does money leak?** The concept is `FRD-610` §3 and its finding is that three holes
+are one shape — *spend no allowance can see*:
+
+- **diagnostics** — now visible, still unbounded;
+- **unbound traffic** (break-glass keys, demo) — 59 rows, owned by nobody;
+- **an unpriced model under a cost budget** — and this is the uncomfortable one. A cost limit
+  compares `usage.cost_nanos`; an unpriced model contributes **nothing** to that figure, because it
+  is counted separately as `unpriced_requests`. Right for reporting (*unknown is not zero*), and
+  for enforcement it means *unknown is unbounded*. A use case whose models are all unpriced can
+  spend without limit against a budget that looks configured.
+
+Proposed: an **installation allowance** as the residual bucket, so that *a request that fits no
+bucket does not run*; **unpriced refused under a cost limit** rather than priced by a guess — the
+thing `ADR-0021` just spent a day removing; and the cheapest first, a banner when
+`AIRA_ENFORCE_BUDGETS` is off, because today budgets keep their figures and bars and simply stop
+stopping anything.
+
+**A mutation caught a test double, again.** `D22` — *the row carries the usage the answer reported*
+— survived, because the stand-in returned `object()` where the real adapter returns a response with
+usage: the property could not be lost because the harness never produced it. The same trap this
+project has recorded twice before, in its third costume.
+
+`FRD-610`, `Outcome.DIAGNOSTIC`.
+
+---
+
 ## A model in several regions, and three things that already depended on there being one (2026-08-20)
 
 > *"In the catalogue I would like to be able to enter several regions, and they should also be

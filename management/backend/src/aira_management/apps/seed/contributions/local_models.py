@@ -41,21 +41,33 @@ FICTITIOUS = "[local, fictitious price]"
 #: Thinking modes **per model**, each measured against this Ollama on 2026-08-08. A model that is
 #: absent here is declared with no thinking at all, which is the baseline and nothing more.
 THINKING_BY_MODEL: dict[str, dict[str, Any]] = {
-    # `minimal` is declared again, and the reason it was once removed is the reason it is back.
-    # It was struck on 2026-08-06 because this server refuses the *value* `"minimal"` by name
-    # (`high|medium|low|max|none`). That was a fact about the wire, not about the model: since
-    # `FRD-111`'s OpenAI mapping sends `minimal` as `"low"` — the nearest level this dialect
-    # actually has — a caller asking for it is honoured by the same request that `low` makes, and
-    # `low` is measured on both models below. Refusing it instead left the least-thinking mode
-    # unreachable on every OpenAI-compatible server there is.
+    # **`minimal` is gone, and this is the third time it has moved.** It was struck on 2026-08-06
+    # because this server refuses the value by name; put back on the argument that `FRD-111`'s
+    # OpenAI mapping sent it as `"low"`, so a caller asking for it was honoured by the request
+    # `low` makes; and removed again now, because `ADR-0021` deleted that translation. A level is
+    # the vendor's own word and travels untranslated, so declaring `minimal` here writes a
+    # declaration that answers `400` on its first use.
+    #
+    # Measured against this Ollama on 2026-08-19, and the message is the server's own:
+    #
+    #     invalid reasoning value: 'minimal' (must be "high", "medium", "low", "max", or "none")
+    #
+    # A fact about the **server's parameter validation**, not about either model — which is why it
+    # is removed from both, and why `max` (a word no vocabulary in this project ever had) is
+    # declared for the one it was measured on.
     "qwen3:0.6b": {
-        "modes": ["disabled", "minimal", "low", "medium", "high"],
+        "modes": ["disabled"],
+        "levels": ["low", "medium", "high", "max"],
         "default": {"mode": "disabled"},
     },
     # No `disabled`: `reasoning_effort: "none"` does not switch thinking off on this model, it
     # switches off the *separation*, and the thoughts arrive as the answer. `FRD-111` refuses a
     # request asking for a mode a model does not declare, which is the outcome that helps.
-    "qwen3:4b": {"modes": ["minimal", "low", "medium", "high"]},
+    #
+    # `max` is **not** claimed here: the server takes it, and whether this model is the one it was
+    # measured on is a different question. A declaration nobody measured is the thing the console's
+    # *Ask the model* button exists to catch, and seeding one would be seeding the defect.
+    "qwen3:4b": {"levels": ["low", "medium", "high"]},
     # `qwen2.5-coder` is deliberately **absent**: it is not a reasoning model, so it has no
     # thinking modes to declare, and the table's own rule — a model nobody has measured gets no
     # declaration — produces exactly the right answer for it.

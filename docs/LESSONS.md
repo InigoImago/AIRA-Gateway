@@ -561,7 +561,11 @@ reading code.
 - **A test asserting an *absence* is defended by the mutation that *adds*, never the one that
   removes.**
 - **A stand-in more permissive than the thing it replaces** proves the permission, not the rule —
-  reuse the real method where you can, and mark a test double as one.
+  reuse the real method where you can, and mark a test double as one. **Emptier counts as more
+  permissive**, and that is the costume it keeps coming back in: a double returning `object()`
+  where the real adapter returns a response *with usage* made "the audit row carries what the
+  answer reported" a property no test could lose, because the harness never produced one. Both
+  times a mutation run found it and no reviewer would have.
 - **A test whose setup never reaches the path it is named after.** SQLite enforces no column
   lengths; `TestClient` buffers a streamed body before you can hang up; a *cold* budget counter
   seeds from Postgres and hides a missing write; a fixture whose use case may call nothing can only

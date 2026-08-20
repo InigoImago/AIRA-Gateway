@@ -427,6 +427,30 @@ MUTATIONS = [
         "gateway/tests/test_model_check.py",
     ),
     Mutation(
+        "D20",
+        "a check that spends money leaves an audit row",
+        "gateway/src/aira_gateway/api/incidents.py",
+        '            await _record_diagnostic(\n                request,\n                principal,\n                operation=f"models:checkThinking:{word}",',  # noqa: E501
+        '            if False:\n                await _record_diagnostic(\n                request,\n                principal,\n                operation=f"models:checkThinking:{word}",',  # noqa: E501
+        "gateway/tests/test_model_check.py",
+    ),
+    Mutation(
+        "D21",
+        "a diagnostic is not counted as served traffic",
+        "gateway/src/aira_gateway/api/incidents.py",
+        "            outcome=Outcome.DIAGNOSTIC,",
+        "            outcome=Outcome.SERVED,",
+        "gateway/tests/test_model_check.py",
+    ),
+    Mutation(
+        "D22",
+        "a diagnostic's row carries the usage the answer reported",
+        "gateway/src/aira_gateway/api/incidents.py",
+        '    return {"accepted": True, "detail": "The model accepted it."}, getattr(answer, "usage", None)',  # noqa: E501
+        '    return {"accepted": True, "detail": "The model accepted it."}, None',
+        "gateway/tests/test_model_check.py",
+    ),
+    Mutation(
         "V21",
         "the gateway publishes where this installation permits processing",
         "gateway/src/aira_gateway/api/providers.py",

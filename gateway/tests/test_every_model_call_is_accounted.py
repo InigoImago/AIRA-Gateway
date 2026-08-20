@@ -62,18 +62,16 @@ ACCOUNTED: dict[str, str] = {
         "compares row for row."
     ),
     "api/incidents.py:generate": (
-        "The console's *Ask the model* button (`ADR-0021`). **The one call site here that spends "
-        "money and books nothing**, so it gets the longest sentence: it belongs to no use case, "
-        "so there is nothing to attribute it to and no budget to reserve against — booking it "
-        "somewhere would be inventing an owner, which is the failure `FRD-403` is about wearing "
-        "the opposite mask.\n\n"
-        "What keeps that honest is the size. One output token per word accepted and nothing at "
-        "all per word refused (measured 2026-08-19: a provider rejects an unsupported "
-        "`thinkingLevel` before generating), at most `MAX_LEVELS_PER_CHECK` words per press, by a "
-        "person who already holds `may_act_on_incidents`. It is a diagnostic beside `ping`, which "
-        "is free only because `:countTokens` happens to exist — and `:countTokens` **cannot** "
-        "answer this one: it never reads `generationConfig` and returns 200 to an unsupported "
-        "level as readily as to a supported one."
+        "The console's *Ask the model* and *Check reachability* buttons (`ADR-0021`, `FRD-609`), "
+        "and they **are** accounted now — `_record_diagnostic` writes a row per probe with the "
+        "real usage and the real price, under `Outcome.DIAGNOSTIC` (`FRD-610`).\n\n"
+        "Named here rather than removed because the exemption this entry used to carry is worth "
+        "keeping visible: it argued that the spend was tiny, bounded and role-gated, which was "
+        "true and answered a different question. The owner's rule is that **every request is "
+        "auditable and budgetable**, and a small amount nobody can see is not a small amount — it "
+        "is an invisible one. What is still absent is a *budget*: allowances are anchored to a use "
+        "case, and this call belongs to none by construction, so there is nothing to book it "
+        "against until an installation-level allowance exists (`FRD-610` §4)."
     ),
     "pipeline/classifiers.py:generate": (
         "The LLM injection classifier and the LLM router. Each returns a `ModelCall`, which "

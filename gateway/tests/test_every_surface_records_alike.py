@@ -56,6 +56,22 @@ ALLOWED_OMISSIONS: dict[str, dict[str, str]] = {
         "cost_nanos": "nothing was served, so nothing is priced — and unpriced is not zero",
     },
     "api/kira/routes.py:_record": {},
+    "api/incidents.py:_record_diagnostic": {
+        # An administrator asking a model about itself (`FRD-610`). Four fields are not omitted so
+        # much as **inapplicable**, and each for its own reason rather than as a group:
+        "model_selection": (
+            "nothing routed: the model is named by the person pressing the button, so there is no "
+            "selection to record and 'direct' would be a claim about a chain that never ran"
+        ),
+        "pipeline_decisions": (
+            "no pipeline runs — a diagnostic belongs to no use case, and a pipeline is a use "
+            "case's configuration"
+        ),
+        "requested_model": (
+            "identical to `model` by construction: a check names one model and reaches that one"
+        ),
+        "tool_calls": "a probe declares no functions and the answer is one word",
+    },
 }
 
 

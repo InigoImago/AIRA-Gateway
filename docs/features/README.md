@@ -7,7 +7,7 @@ each FRD's own header is the single source** — this index is generated from th
 and a test fails when they disagree, because feature status kept in two places is feature
 status that goes stale in the copy nobody opens.
 
-**70 of 75 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
+**70 of 76 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
 
 | FRD | Feature | Phase | Status |
 | --- | ------- | ----- | ------ |
@@ -86,3 +86,4 @@ status that goes stale in the copy nobody opens.
 | [606](FRD-606-per-person-consumption.md) | What one person consumed in a use case | 6 (Governance & Analytics) | ✅ Done |
 | [607](FRD-607-retiring-a-use-case.md) | Retiring a use case, and the second decision that removes it | 6 (governance) | ✅ Built |
 | [609](FRD-609-several-regions.md) | A model in several regions, tried in order | 6 | ✅ Built |
+| [610](FRD-610-nothing-spends-outside-a-bucket.md) | Diagnostics in the audit trail, and a concept for where money leaks | 6 | ○ Part 1 built · Part 2 is a proposal for review |
