@@ -82,6 +82,25 @@ jobs:
       - name: Unit tests
         run: npx ng test --watch=false
 
+      # **The browser suite is TypeScript too, and CI did not read it.**
+      #
+      # `make lint-frontend` has type-checked `e2e/` since 2026-08-18, added under a comment saying
+      # *"a rule only a reviewer enforces is one the next file breaks"*. It was added to the
+      # Makefile and not here — so the only thing running it was a person remembering to — and the
+      # next file broke it: `installation-budget.spec.ts` landed on 2026-08-20 calling
+      # `expectNoHorizontalOverflow(page)` with one argument of the two, and `main` was red for a
+      # day. Playwright transpiles rather than type-checks, so the `stack` job below runs the suite
+      # happily either way.
+      #
+      # Its own job step rather than `make lint-frontend`, because this job has already installed
+      # exactly these dependencies and that target would rebuild the console a second time.
+      - name: Browser suite — format and types
+        working-directory: e2e
+        run: |
+          npm ci
+          npx prettier --check "**/*.ts"
+          npx tsc --noEmit -p tsconfig.json
+
   stack:
     name: Stack — integration + browser end-to-end
     runs-on: ubuntu-latest

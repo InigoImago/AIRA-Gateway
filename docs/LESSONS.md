@@ -149,6 +149,18 @@ reading code.
   **A paragraph explaining why a copy is dangerous is evidence that the copy needs a test, not a
   substitute for one.**
 
+  *And the most misleading place to write one down is a test.*
+  `test_compose_lifecycle_covers_the_stack.py` states, in its own docstring, that *"the application
+  services carry `restart: unless-stopped` while the infrastructure does not, so they also come
+  back"* — as an aggravating detail of the `make down` defect it does check. It never asked what the
+  same asymmetry does to a **host restart**, which is the more ordinary of the two events, and
+  nothing did: a daemon restart brought the console, both planes and the consumer back on top of no
+  Postgres, no Kafka and no Keycloak. The console answered, the gateway's container
+  reported `healthy` for five hours, and nobody could log in. A sentence inside a file called
+  `test_…` reads as a checked fact to every later reader, including the one who wrote it. **When a
+  test's prose names a second hazard, that hazard needs its own assertion or it has been
+  documented into invisibility.**
+
 - **A search that finds nothing looks exactly like a search that found nothing.** `grep` skips a
   file it judges *binary* silently — no message, exit status 1 — and `model-release-panel.ts`
   earned that judgement by writing `join('\0')` as **raw NUL bytes**: valid TypeScript, the same
@@ -236,6 +248,15 @@ reading code.
   naming `gpu-b`, `qwen2.5:3b`, `gemini-flash-latest` — inventory only one machine has. **The tell
   is identical: the assertion is about behaviour and the failure is about inventory.**
 
+  *A sixth, and the tell was in `/readyz` all along.* Three browser tests failed on a stack brought
+  back with `make up`: an empty provider listing twice and a `502` once — symptoms that point
+  straight at the console and the gateway. `make up` starts infrastructure and observability;
+  **Ollama is behind the `demo` profile**, so the stack was complete except for the local model,
+  and `/readyz` said so in one line: `degraded: true — upstream reachability: unreachable: local`.
+  **Ask the health endpoint what it thinks before reading a failure as a defect** — this project
+  built one that distinguishes *degraded* from *down* precisely so that question has an answer, and
+  it is the cheapest discriminator between "the code is wrong" and "the machine is missing a part".
+
 - **A copied block whose subject changed.** The block is correct; what it is *about* is not.
   `/v1beta/anomalies` restricted `select(AnomalyEvent)` with the trace view's condition over
   `RequestLog`, so SQLAlchemy added a second table to the FROM clause with no join predicate — a
@@ -260,6 +281,26 @@ reading code.
   written to save. Both of its tests hand it a well-keyed dict. **A rule applied inside a structure
   has to be applied to every part of it**, and the part nobody writes a test for is the one that is
   not the obvious content.
+
+- **A selector narrower than the rule it states.** The stylesheet appeared to have a rule about
+  windows and had one about *one* window. *"One question per row, in a window the width of a form"*
+  was written after the model editor was reported twice, as
+  `.modal--steady .modal__body > form.form-inline > .field` — and both halves of that are narrower
+  than the sentence above them: `modal--steady` occurs **once** in the whole console, and
+  `.modal__body > form` matches only a window that writes its own markup. Every window built the
+  intended way, through the shared `<app-modal>`, projects a wrapper element and has no input for a
+  class, so it was outside the rule **by construction** — the reusable path was the excluded one.
+  Measured: choosing a per-head scope inserts a paragraph, the wrapping row re-packs around it, and
+  four fields move up to 404 px sideways while one grows by 223 px.
+
+  The rule's own comment says the *per-field* version failed because it "has to be remembered at
+  every field added afterwards". Per-window is that sentence one level up, and it was forgotten at
+  every window there is. **Ask what the smallest thing is that the rule is really about** — here a
+  form inside a window, which the stylesheet can see without being told — and scope it to that;
+  a rule keyed on a marker somebody must apply is a rule that is applied where it was written and
+  nowhere else. The same round found the counterpart in the same footer: an existing idiom
+  (`form-actions__spacer`) used in one file and not in the other, so a badge appearing pushed the
+  button that had just been pressed 101 px out from under the cursor.
 
 - **A dead definition is a rule the module appears to have.** `realm_roles` and `_injection_verdict`
   were removed for this reason and it kept recurring: `ratelimit._capacity` documented *"the tests
@@ -289,6 +330,14 @@ reading code.
   *"deleting a use case keeps its request log"*; a reader matching it to a test found the one about
   **retirement**, which never reaches that code — so a genuine gap sat behind a name that looked
   covered. **Name the guard after the code it edits**, not after the neighbouring concept.
+
+  *And a guard nothing runs is a guard nobody has.* The browser suite's `tsc --noEmit` was added to
+  `make lint-frontend` under the words *"a rule only a reviewer enforces is one the next file
+  breaks"* — and was added to the **Makefile** and not to CI, where the frontend job
+  checks `src/` and the stack job runs Playwright, which transpiles rather than type-checks. The
+  next file broke it: `main` was red for a day over one call with one argument of two. A gate has
+  two halves, the check and the thing that runs it, and writing the first is the half that feels
+  like finishing. **Add a gate to the pipeline in the same change that adds the gate.**
 
 ---
 

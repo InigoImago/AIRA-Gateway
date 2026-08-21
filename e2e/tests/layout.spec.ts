@@ -209,9 +209,26 @@ test.describe('Form alignment', () => {
     // become a staircase. Left here as a comment rather than deleted: the next person to look at
     // that window should know it was considered.
 
-    await page.goto(`/use-cases/${slug}?tab=budgets`);
-    await page.click('button:has-text("Add budget")');
-    await expectFormControlsAligned(page, 'add budget');
+    // The **budget window** left this guard the same way the two above did, and for the same
+    // reason: its form is one question per row now (`.modal__body form.form-inline > .field`), so
+    // it has no line that could become a staircase. That rule stopped being an opt-in class after
+    // a sweep measured the window re-packing when a per-head note appears — four fields moving up
+    // to 404 px sideways — and `a window does not re-arrange its fields when a note appears` below
+    // is what holds it. Recorded rather than deleted, like the other two: the next person should
+    // know it was considered.
+    //
+    // The reporting filter row takes its place, so this guard keeps a **wide** multi-control form
+    // to compare. It is the widest one the console has: a preset, two dates, a search and a
+    // breakdown on one line.
+    //
+    // Waited for by the control that makes the row two wide, not by the first `.filter-row` on the
+    // page: the report's breakdown picker renders once the figures arrive, and the helper's own
+    // wait is satisfied by the preset form above it. That is the race its docstring warns about,
+    // met from the other side — the guard refuses a vacuous pass now, so it fails instead of
+    // quietly checking nothing.
+    await page.goto('/reporting');
+    await expect(page.locator('#export-breakdown')).toBeVisible({ timeout: 20_000 });
+    await expectFormControlsAligned(page, 'reporting filters');
   });
 
   test('the model editor is a stack, on every tab', async ({ page }) => {
@@ -309,15 +326,112 @@ test.describe('Form alignment', () => {
     }
   });
 
+  test('a window does not re-arrange its fields when a note appears', async ({ page }) => {
+    /**
+     * Found by sweeping every field on every screen and measuring the buttons before and after
+     * (2026-08-20), after a report that *"the button layout changed in a weird way when the
+     * elements in a field were adjusted"*.
+     *
+     * Choosing a per-head scope inserts an explanatory paragraph above the fields. `.form-inline`
+     * is a **wrapping** row, so the paragraph does not merely push the fields down: the row
+     * re-packs around it and the fields land in different places and at different widths.
+     * Measured on the budget window: `Period` and `Spend limit` moved **404 px to the left**,
+     * `Token limit` 350 px to the right, and `Applies to` grew from 394 px to 617 px.
+     *
+     * Asserted as **horizontal** stability. Downward movement is honest — a window that gained a
+     * paragraph is taller — and demanding otherwise would forbid the paragraph. What a reader
+     * cannot follow is a field that moves sideways while they are reaching for it.
+     */
+    await login(page, USERS.globalAdmin);
+    const slug = uniqueSlug('steady');
+    await createUseCase(page, slug, 'Steady probe');
+    await page.setViewportSize({ width: 1440, height: 900 });
+
+    const fields = async () =>
+      page.locator('.modal__body .field').evaluateAll((nodes) =>
+        nodes.map((node) => {
+          const rect = node.getBoundingClientRect();
+          const label = (node.querySelector('label')?.textContent ?? '').trim().slice(0, 30);
+          return { label, left: Math.round(rect.left), width: Math.round(rect.width) };
+        }),
+      );
+
+    for (const [tab, opener, select, value] of [
+      ['budgets', 'Add budget', '#budget-scope', 'each_member'],
+      ['rate-limits', 'Add rate limit', '#rl-scope', 'each_member'],
+    ] as const) {
+      await page.goto(`/use-cases/${slug}?tab=${tab}`);
+      await page.click(`button:has-text("${opener}")`);
+      await expect(page.locator(select)).toBeVisible();
+
+      const before = await fields();
+      expect(before.length, `${tab}: no fields found to measure`).toBeGreaterThan(2);
+
+      await page.selectOption(select, value);
+      // The note is what makes this worth asserting; without it nothing has changed.
+      await expect(page.locator('.modal__body .callout')).toBeVisible();
+      const after = await fields();
+
+      for (const field of after) {
+        const was = before.find((candidate) => candidate.label === field.label);
+        if (!was) continue;
+        expect(field.left, `${tab}: "${field.label}" moved sideways when the note appeared`).toBe(
+          was.left,
+        );
+        expect(field.width, `${tab}: "${field.label}" changed width when the note appeared`).toBe(
+          was.width,
+        );
+      }
+      await page.keyboard.press('Escape');
+    }
+  });
+
+  test('the check button does not move when its own verdict appears', async ({ page }) => {
+    /**
+     * The same sweep, one window along. Pressing `Check reachability` puts a verdict badge beside
+     * it, and with the footer only `justify-content: flex-end` the badge pushed the button
+     * **101 px to the left** — out from under the cursor that had just pressed it. Cancel and Save
+     * were unaffected, because they are the two the alignment pins.
+     *
+     * The console already had the idiom for this — `form-actions__spacer`, which the smoke-test
+     * footer uses to keep a progress message off its buttons — and this footer did not use it.
+     */
+    await login(page, USERS.globalAdmin);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto('/models');
+    await openModelEditor(page);
+
+    const check = page.getByTestId('editor-check');
+    await page.locator('#model-name').fill('probe-model');
+    const before = await check.boundingBox();
+
+    await check.click();
+    await expect(page.getByTestId('editor-verdict')).toBeVisible({ timeout: 20_000 });
+    const after = await check.boundingBox();
+
+    expect(after?.x, 'the button moved when its own verdict appeared beside it').toBe(before?.x);
+  });
+
   test('forms stay aligned when they wrap on a narrow screen', async ({ page }) => {
     await login(page, USERS.globalAdmin);
     const slug = uniqueSlug('wrap');
     await createUseCase(page, slug, 'Wrap probe');
 
     await page.setViewportSize({ width: 900, height: 800 });
+
+    // **Alignment is asked of a form that still wraps.** The budget window stacks one question per
+    // row now, so at 900 px it has nothing to wrap and this assertion would compare nothing — the
+    // vacuous pass this guard was rewritten to refuse. The reporting filters are a genuine
+    // wrapping row at this width.
+    await page.goto('/reporting');
+    await expect(page.locator('#export-breakdown')).toBeVisible({ timeout: 20_000 });
+    await expectFormControlsAligned(page, 'reporting filters @ 900px');
+    await expectNoHorizontalOverflow(page, 'reporting filters @ 900px');
+
+    // The window keeps the half of this that still applies to it: a stacked form must not make the
+    // page scroll sideways either.
     await page.goto(`/use-cases/${slug}?tab=budgets`);
     await page.click('button:has-text("Add budget")');
-    await expectFormControlsAligned(page, 'add budget @ 900px');
     await expectNoHorizontalOverflow(page, 'add budget @ 900px');
   });
 });

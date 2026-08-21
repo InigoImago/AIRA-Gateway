@@ -414,9 +414,29 @@ $field-label-gap: 0.3rem;
  *
  * Only the form's **own** children: the capabilities tab nests a `.form-inline` inside a fieldset
  * for the per-media-type and per-level token fields, and fifteen of those in a column is a page of
- * scrolling where a row of small numbers is exactly right.
+ * scrolling where a row of small numbers is exactly right. A nested one is a `div`, never a
+ * `form` — HTML forbids that — so requiring `form.form-inline` is what keeps the exemption.
+ *
+ * **Every window, and not by a class somebody has to remember.** This was
+ * `.modal--steady .modal__body > form.form-inline > .field`, and both halves of that selector were
+ * narrower than the rule: `modal--steady` appears **once** in the whole console, and
+ * `.modal__body > form` matches only a window that writes its own markup. Every window built the
+ * intended way — through `<app-modal>`, which projects a `<div modal-body>` wrapper and has no
+ * input for a class — was outside the rule *by construction*.
+ *
+ * Measured on 2026-08-20 on the budget window: choosing *each_member* inserts an explanatory
+ * paragraph, the wrapping row re-packs around it, and four fields jump — `Period` and
+ * `Spend limit` **404 px to the left**, `Token limit` 350 px to the right — while `Applies to`
+ * grows from 394 px to 617 px. The rate-limit window does the same to `Burst` (270 px). Nothing is
+ * misplaced at either moment; the form simply answers a different wrap question before and after,
+ * and the reader's target moves out from under them.
+ *
+ * The comment above says the per-field version failed because it "has to be remembered at every
+ * field added afterwards". Per-window is the same sentence one level up, and it was forgotten at
+ * every window there is. So the rule is now a property of *a form in a window*, which is a thing
+ * the stylesheet can see without being told.
  */
-.modal--steady .modal__body > form.form-inline > .field {
+.modal__body form.form-inline > .field {
   flex-basis: 100%;
 }
 

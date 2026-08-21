@@ -32,6 +32,29 @@ name: aira
 # A deployment that genuinely needs these reachable from elsewhere sets `AIRA_BIND_HOST=0.0.0.0`
 # and has thereby said so once, out loud — which is the same shape as `AIRA_DEMO_MODE` and
 # `AIRA_ALLOWED_REGIONS`: a default that is safe, and an override that is a decision.
+#
+# **The stack comes back whole, or it does not come back.**
+#
+# Every long-running service here declares `restart: unless-stopped`. It did not, and the default
+# is `no` — so this file's services stayed down after a Docker or host restart while
+# `docker-compose.apps.yml`, which has always said `unless-stopped`, brought the gateway,
+# management, the consumer, the relay, retention and the console straight back up.
+#
+# Measured on 2026-08-20 on a machine that had been running for hours: every infrastructure
+# container `Exited (255)` at `16:20:08.93Z` — the same millisecond, which is what a daemon
+# shutdown looks like — and the gateway started again at `16:20:11.13Z`. The result is the worst
+# of the three possible states: the console answers, both planes answer, **nobody can log in**
+# because Keycloak is not there, and `gateway-consumer` crash-loops against an absent Postgres.
+# The gateway's own container reported `healthy` throughout, because liveness is not readiness.
+#
+# The asymmetry was already written down — `test_compose_lifecycle_covers_the_stack.py` says
+# *"the application services carry `restart: unless-stopped` while the infrastructure does not, so
+# they also come back"* — as an aggravating detail of the `make down` defect. Nobody asked the
+# other question, which is what a **host restart** does with the same asymmetry.
+#
+# One-shots keep `restart: "no"` and must: re-running a completed migration or seed on every boot
+# is a different bug. `test_the_stack_comes_back_whole.py` holds both halves, derived from this
+# file's own dependency graph rather than from a list somebody has to maintain.
 
 services:
   postgres:
@@ -55,6 +78,7 @@ services:
       timeout: 5s
       retries: 15
     networks: [aira]
+    restart: unless-stopped
 
   keycloak:
     image: quay.io/keycloak/keycloak:26.1
@@ -111,6 +135,7 @@ services:
       retries: 30
       start_period: 40s
     networks: [aira]
+    restart: unless-stopped
 
   kafka:
     image: apache/kafka:3.9.0
@@ -143,6 +168,7 @@ services:
       retries: 20
       start_period: 20s
     networks: [aira]
+    restart: unless-stopped
 
   schema-registry:
     image: confluentinc/cp-schema-registry:7.8.0
@@ -164,6 +190,7 @@ services:
       retries: 20
       start_period: 20s
     networks: [aira]
+    restart: unless-stopped
 
   vault:
     image: hashicorp/vault:1.18
@@ -184,6 +211,7 @@ services:
       retries: 12
       start_period: 5s
     networks: [aira]
+    restart: unless-stopped
 
   # Shared counter store for rate-limit buckets and budget reservations (ADR-0008 / FRD-405).
   # Deliberately not persisted: these counters are seeded from Postgres, which stays the system
@@ -205,6 +233,7 @@ services:
       timeout: 3s
       retries: 12
     networks: [aira]
+    restart: unless-stopped
 
   # --- Observability (opt-in via the "observability" profile; ADR-0004 / FRD-001) ---
   otel-lgtm:
@@ -218,6 +247,7 @@ services:
       - "${AIRA_BIND_HOST:-127.0.0.1}:${AIRA_PUBLISH_GRAFANA_PORT:-3000}:3000"   # Grafana UI
       - "[${AIRA_BIND_HOST6:-::1}]:${AIRA_PUBLISH_GRAFANA_PORT:-3000}:3000"   # Grafana UI
     networks: [aira]
+    restart: unless-stopped
 
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.157.0
@@ -235,6 +265,7 @@ services:
       otel-lgtm:
         condition: service_started
     networks: [aira]
+    restart: unless-stopped
 
   # --- A real model, locally (opt-in via the "verify" profile; FRD-123) ---
   #
@@ -277,6 +308,7 @@ services:
       timeout: 10s
       retries: 30
     networks: [aira]
+    restart: unless-stopped
 
   # Pulls the models the demo declares. Separate from the server so the server's health check stays
   # honest — a container that is "healthy" only once a multi-hundred-megabyte download finishes

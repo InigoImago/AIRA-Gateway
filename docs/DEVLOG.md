@@ -5,6 +5,100 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Half a stack, and a form that re-packs under the reader (2026-08-21)
+
+> *"Can you go through all the fields in the UI, type something in and look for odd behaviour? We
+> once had the button layout change in a strange way when the elements in a field were adjusted."*
+> And: *"I cannot look at the interface right now, because Keycloak is not reachable."*
+
+**Keycloak was not broken. Half the stack was missing, and the half that was there is the half that
+answers.** Every infrastructure container had `Exited (255)` at `16:20:08.93Z` — the same
+millisecond, which is what a daemon shutdown looks like — and the gateway had started again at
+`16:20:11.13Z`. `docker-compose.apps.yml` has always said `restart: unless-stopped`;
+`docker-compose.yml` said nothing at all, and Compose's default is `no`. So the console answered,
+both planes answered, the gateway's container reported `healthy` for five hours without a database,
+`gateway-consumer` crash-looped against the absent Postgres, and nobody could log in.
+
+The asymmetry was **already written down** — `test_compose_lifecycle_covers_the_stack.py` says *"the
+application services carry `restart: unless-stopped` while the infrastructure does not, so they also
+come back"* — as an aggravating detail of the `make down` defect. Nobody asked what the same
+asymmetry does to a **host restart**, which is the more ordinary of the two events. A fact noticed
+in passing is not a fact anybody is holding. All nine long-running infrastructure services declare
+the policy now, and `test_the_stack_comes_back_whole.py` derives both halves of the rule from the
+compose model's own dependency graph: a service that comes back may not depend on one that stays
+down, transitively; a **job** is stepped through in that walk and must stay `no`, because a
+migration that re-ran on every boot is a different bug. What a job *is* is read off the graph too —
+every edge pointing at it carries `service_completed_successfully`.
+
+**Then the interface, swept rather than read.** Every field on every route, every tab of a use case
+and every window reachable from a button: five values into each text field, every option of each
+select, every checkbox — with the geometry of every visible button measured before and after. Two
+findings, and the second is the reported symptom exactly.
+
+**A form that re-packs when a note appears.** Choosing a per-head scope in the budget window
+inserts an explanatory paragraph, and `.form-inline` is a *wrapping* row: the paragraph does not
+push the fields down, the row re-packs around it. Measured — `Period` and `Spend limit` **404 px to
+the left**, `Token limit` 350 px to the right, `Applies to` from 394 px to 617 px. The rate-limit
+window does the same to `Burst`. Nothing is misplaced at either moment; the form answers a different
+wrap question before and after, and the reader's target moves out from under them.
+
+There was already a rule against this — *"One question per row, in a window the width of a form"* —
+written after the model editor was reported twice. **Both halves of its selector were narrower than
+the rule.** `.modal--steady` appears **once** in the entire console, and `.modal__body > form`
+matches only a window that writes its own markup: every window built the intended way, through
+`<app-modal>`, projects a `<div modal-body>` wrapper and has no input for a class, so it was outside
+the rule *by construction*. The rule's own comment explains that the per-field version failed
+because it "has to be remembered at every field added afterwards" — per-window is the same sentence
+one level up, and it was forgotten at every window there is. It is `.modal__body form.form-inline >
+.field` now: a property of *a form in a window*, which is something the stylesheet can see without
+being told. `.modal--steady` keeps only what it is really about, which is a **tabbed** dialog not
+resizing as its tabs switch.
+
+**And the button that moves out from under the cursor that pressed it.** `Check reachability` puts
+its verdict in the footer beside itself; with `justify-content: flex-end` the new badge pushed the
+button **101 px left**. Cancel and Save were fine — they are the two the alignment pins. The console
+already had the answer, `form-actions__spacer`, which the smoke-test footer uses to keep a progress
+message off its buttons; this footer did not use it. An existing answer applied in one place and not
+the other.
+
+**What held.** The footer defect fixed in August stays fixed: a validation message, a cleared field
+and a sixty-character model name move `Cancel` and `Save` by `dx=0, dw=0`. The pipeline builder
+survived adding all three step types and long values in every field with nothing moving. The
+reporting table's column hints do move when the breakdown changes — that is a table whose columns
+size to their contents, and it is not a defect.
+
+**Found while running the checks rather than by looking for it:** `make lint-frontend` was **red on
+`main`**. The browser suite's `tsc --noEmit` was wired up on 2026-08-18 for exactly the reason it
+exists — *"a rule only a reviewer enforces is one the next file breaks"* — and
+`installation-budget.spec.ts` landed on 2026-08-20 calling `expectNoHorizontalOverflow(page)` with
+one argument of the two. The gate was added and then not run. One call site, one context string.
+
+**What the fix cost, and where it was paid.** Making the stacking rule unconditional took the
+budget window out of `every inline form lines its controls up` — the guard reported *"nothing with
+two controls on a line was found to compare"*, which is exactly what it is written to say when its
+subject stops having rows. That test has been here twice before: the create form and the issue-key
+window both became stacks and both left it with a comment saying so. The budget window leaves the
+same way, and the reporting filter row — a preset, two dates, a search and a breakdown on one line,
+the widest inline form the console has — takes its place, so the guard keeps something wide to
+compare instead of shrinking. Pointing it there needed an explicit wait for `#export-breakdown`:
+the helper's own wait is satisfied by the preset form above it, and the breakdown picker renders
+once the figures arrive. That is the race its docstring warns about, met from the other side —
+because it refuses a vacuous pass now, it failed instead of quietly checking nothing.
+
+**Three failures in the same run were the machine, and were checked rather than assumed.**
+`catalog-import` twice and `agent-traces` once, and neither touches anything this round changed:
+`/readyz` said `degraded: true — upstream reachability: unreachable: local`. `make up` brings up
+infrastructure and observability; **Ollama is behind the `demo` profile**, so a stack recovered with
+`make up` alone has no local model, the provider listing is empty and a generation is a `502`.
+Started it, re-ran the three, all green. Worth writing down because the symptom points at the
+console — an empty picker and a failed request — and the cause is a profile that was not asked for.
+
+Two browser guards added, both watched go red against the unfixed console and green against the
+rebuilt one; one compose guard, watched red against the original file. The sweep itself was
+exploratory and is not kept — what it found is.
+
+---
+
 ## What a value nobody meant to send does: seven findings (2026-08-20)
 
 > *"Go through the tests systematically and check against the code whether they cover real

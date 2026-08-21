@@ -55,7 +55,7 @@ test.describe('Installation budget', () => {
 
     await expect(card).toContainText('$20.000000');
     await expect(card.getByTestId('no-installation-budget')).toHaveCount(0);
-    await expectNoHorizontalOverflow(page);
+    await expectNoHorizontalOverflow(page, 'reporting with an installation budget');
 
     // The same figure, a different session. `itgov` carries `it-steuerung` only.
     await logout(page);

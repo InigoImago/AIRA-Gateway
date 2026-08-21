@@ -1289,6 +1289,21 @@
           {{ checkVerdict(verdict) }}
         </span>
       }
+      <!--
+        The slack sits **here**, between the check and the two decisions, which is what stops the
+        check moving under the cursor that just pressed it.
+
+        Measured on 2026-08-20: pressing `Check reachability` makes the verdict appear beside it,
+        and with the footer only `justify-content: flex-end` the new badge pushed the button
+        **101 px to the left** — Cancel and Save were fine, because they are the ones the alignment
+        pins. That is the same defect the `.field__hint` rule above this file's footer was written
+        for, arriving through the one item in this row that is neither a hint nor a button.
+
+        `form-actions__spacer` rather than a new rule: the console already had this idiom, and the
+        smoke-test footer already puts a progress message on the left of one. An existing answer
+        applied in one place and not the other is the shape `LESSONS.md` §1 opens with.
+      -->
+      <span class="form-actions__spacer"></span>
       @if (formError(); as message) {
         <span class="field__hint field__hint--error grow">{{ message }}</span>
       } @else if (mustCheck()) {
