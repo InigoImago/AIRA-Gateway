@@ -149,6 +149,30 @@ describe('TablePager', () => {
     ).toBe(true);
   });
 
+  it('keeps its two buttons adjacent, so a changing page count cannot move them', () => {
+    /**
+     * **The geometric property, asserted structurally.** The position label sat *between* Previous
+     * and Next; the group is pinned to the right, so Next held still and the label pushed
+     * Previous. A field sweep measured 8 px on the use-case list the moment a search changed the
+     * page count from two digits to one.
+     *
+     * Asserted here rather than in the browser, and that is the point: reproducing the pixel
+     * needs a list long enough to page **and** a search term that changes the count's digit width,
+     * which is a fact about how much demo data a machine happens to hold. A browser test written
+     * that way passed against the unfixed console on the first try — the vacuous pass this
+     * project refuses. What the fix really establishes is that nothing sits between the two
+     * buttons, and that is true of the markup regardless of the data.
+     */
+    const { element } = host();
+    const previous = element.querySelector('[data-testid="pager-previous"]')!;
+    const next = element.querySelector('[data-testid="pager-next"]')!;
+
+    expect(previous).not.toBeNull();
+    expect(next).not.toBeNull();
+    expect(previous.nextElementSibling, 'something sits between the two pager buttons').toBe(next);
+    expect(previous.previousElementSibling?.textContent).toContain('Page 1 of 3');
+  });
+
   it('says a filtered list is filtered, so it cannot read as the whole', () => {
     const harness = host();
     harness.instance.view.search('row-1');

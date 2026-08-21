@@ -93,9 +93,37 @@ infrastructure and observability; **Ollama is behind the `demo` profile**, so a 
 Started it, re-ran the three, all green. Worth writing down because the symptom points at the
 console — an empty picker and a failed request — and the cause is a profile that was not asked for.
 
-Two browser guards added, both watched go red against the unfixed console and green against the
-rebuilt one; one compose guard, watched red against the original file. The sweep itself was
-exploratory and is not kept — what it found is.
+**The sweep was then re-run under every role**, because the first one proved less than it looked
+like: it printed findings and not coverage, so *clean* and *never reached* were the same output.
+Rebuilt to list every control it touches, it covered **192 contexts** — four roles, two widths,
+every route, all eight use-case tabs, every window reachable from a button, and the model editor's
+three tabs. Nothing moves anywhere except the reporting table's column hints, which is a table
+sizing its columns to its contents.
+
+Two things came out of that pass. One was checked and dismissed: a use-case **user** is offered an
+editable *Issue key* window while every other panel is read-only for them, which looks like an
+authority hole and is a decision both planes state — *"only members of this use case may issue one
+— seeing a use case is deliberately not enough"* — with revocation kept to administrators.
+
+The other was real and is the third of the family: **the pager's position label sat between its two
+buttons.** The group is pinned right, so `Next` held still and a page count that gains or loses a
+digit pushed `Previous` — 8 px, on the use-case list under a role that sees enough use cases to have
+more than one page. The label reads before both buttons now, and `.pager__controls` gets
+`margin-left: auto` so the anchor is the same one when the row wraps onto its own line.
+
+**Its guard is a component test, and the reason is the more useful half of this entry.** The
+browser version was written first and *passed against the unfixed console on the first try*:
+reproducing the pixel needs a list long enough to page **and** a search term that changes the page
+count's digit width, which is a fact about how much demo data the machine happens to hold — 917 use
+cases here, all of it debris from earlier runs. That is `LESSONS.md`'s *"it works on a machine that
+has already done the thing by hand"*, arriving in the guard rather than in the code. What the fix
+actually establishes is that **nothing sits between the two buttons**, which is true of the markup
+whatever the data, so that is what is asserted. The pixel measurement stays in this log, where a
+measurement belongs.
+
+Three browser guards added and one component guard, each watched go red against the unfixed console
+and green against the rebuilt one; one compose guard, watched red against the original file. The
+sweeps themselves were exploratory and are not kept — what they found is.
 
 ---
 

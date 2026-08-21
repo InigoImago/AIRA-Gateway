@@ -1287,10 +1287,19 @@ fieldset.bare {
   font-size: 0.8rem;
   color: var(--aira-text-muted);
 }
+/* Pinned to the right **on its own line too**.
+ *
+ * `.pager` is `space-between` and wraps. Unwrapped, that already holds the controls at the right
+ * edge, which is what keeps the two buttons still while the label beside them changes width (see
+ * `table-pager.ts`). Wrapped onto a line of their own — a phone, a narrow panel — a lone flex item
+ * under `space-between` sits at the *start*, and the same label would push both buttons rightwards
+ * instead. The auto margin makes the anchor the same one at every width; a rule that only holds at
+ * one width is not a rule. */
 .pager__controls {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  margin-left: auto;
 }
 .pager__position {
   font-variant-numeric: tabular-nums;

@@ -257,6 +257,15 @@ reading code.
   built one that distinguishes *degraded* from *down* precisely so that question has an answer, and
   it is the cheapest discriminator between "the code is wrong" and "the machine is missing a part".
 
+  *A seventh, and this time it was the **guard** that depended on the inventory.* A browser test for
+  a pager whose buttons must not move needed a list long enough to page **and** a search term that
+  changes the page count's digit width — both facts about how much demo data the machine holds (917
+  use cases here, every one of them debris from earlier runs). It passed against the unfixed console
+  on the first try. The property the fix actually establishes is **structural** — nothing sits
+  between the two buttons — and a component test says that whatever the data. **When a guard needs
+  the world to be a certain size, ask what the fix really established**; the measurement belongs in
+  the log, and the invariant belongs in the test.
+
 - **A copied block whose subject changed.** The block is correct; what it is *about* is not.
   `/v1beta/anomalies` restricted `select(AnomalyEvent)` with the trace view's condition over
   `RequestLog`, so SQLAlchemy added a second table to the FROM clause with no join predicate — a
