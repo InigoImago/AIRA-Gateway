@@ -41,6 +41,23 @@ body {
   padding: 0;
 }
 
+/* **The scrollbar's space is reserved whether or not there is a scrollbar.**
+ *
+ * The second cause of the register's reported jiggling, and the one `table-layout: fixed` cannot
+ * touch: a page that fits the viewport has no scrollbar, and the moment anything grows it — an
+ * opened row, a banner, a hint — one appears, the viewport loses ~15px, and every percentage
+ * width on the page is recomputed against the narrower figure. Columns move, and they move back
+ * when the thing closes.
+ *
+ * This is the same failure the info hint's panel was rewritten for ("the window jiggles"), where
+ * it could also loop: the reflow slid the control out from under the pointer, which closed the
+ * panel, which removed the scrollbar, which put the control back. Fixed there by taking the panel
+ * out of the scroll extent; fixed here, for everything else, by never changing the extent's width.
+ */
+html {
+  scrollbar-gutter: stable;
+}
+
 body {
   font-family:
     system-ui,
@@ -1445,6 +1462,82 @@ tr.is-open > * {
    scans for. */
 .row-openable.is-flagged > td:first-child {
   box-shadow: inset 3px 0 0 var(--aira-danger, #c0392b);
+}
+
+/* A detail entry that is prose rather than a figure. A sentence squeezed into a 160px grid track
+ * is one word per line; these take the row. */
+.detail-grid__wide {
+  grid-column: 1 / -1;
+}
+
+/* ---- the register of processing activities (`FRD-608`) ---------------------------- */
+
+/* **Fixed layout, and the widths declared once in a `<colgroup>`.**
+ *
+ * The register was reported as cluttered *and* unstable, and the instability turned out not to be
+ * where it was looked for. Opening a row moves nothing: a cell spanning every column only widens a
+ * table when it is wider than their sum, and a detail of wrapped prose never is — measured with
+ * one row open and again with all twenty-five, before and after this rule existed.
+ *
+ * **Paging is where the table jiggles.** An automatic table sizes its columns from the rows it is
+ * currently holding, so twenty-five different use cases give twenty-five different column widths.
+ * Measured on the demo installation: `[52, 266, 152, 199, 185]` on the first page against
+ * `[52, 240, 159, 209, 194]` on the third. Every column jumps on a click of Next, on the one
+ * screen whose purpose is reading down a column.
+ *
+ * Either half below stops that on its own — `fixed` sizes from the header row, which is the same
+ * on every page, and the `<colgroup>` states the widths outright. Both are here because they do
+ * different jobs: the `<colgroup>` is where the *design* lives (a caret, a fifth for the name, a
+ * quarter for findings), and `fixed` is what makes those widths authoritative rather than a hint
+ * an unbreakable model id can still override.
+ */
+.table--register {
+  table-layout: fixed;
+  /* Four columns of prose and a caret do not fit on a phone. Below this the card scrolls, which
+   * is what every wide table on this console does — a fixed layout squeezed into 340px is
+   * unreadable rather than merely narrow. */
+  min-width: 44rem;
+}
+.table--register > colgroup > .reg-col--open {
+  width: 2.75rem;
+}
+.table--register > colgroup > .reg-col--case {
+  width: 19%;
+}
+.table--register > colgroup > .reg-col--prompts {
+  width: 8.5rem;
+}
+.table--register > colgroup > .reg-col--finding {
+  width: 26%;
+}
+/* `.reg-col--purpose` is deliberately unset: it takes whatever the other four leave. */
+
+/* Top, not middle. A row whose finding column carries three badges would otherwise centre a
+ * one-line purpose against them, and a column of text that starts at a different height in every
+ * row cannot be read downwards. */
+.table--register td {
+  vertical-align: top;
+}
+
+.reg-slug {
+  font-size: 0.78rem;
+}
+
+/* One line, cut where it runs out — so every collapsed row is the same height and forty of them
+ * can be scanned. Honest only because the whole of it is in the detail one click away. */
+.reg-clamp {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The caret's footprint, fixed. The glyph rotates rather than being swapped for a second glyph,
+ * so nothing on the row can change width when a row opens. */
+.row-open {
+  width: 1.75rem;
+  padding: 0.15rem 0;
+  line-height: 1;
+  text-align: center;
 }
 
 /* ---- a form's fields, and a form's actions ---------------------------------------- */

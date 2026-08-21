@@ -54,6 +54,21 @@ export class RegisterPage implements OnInit {
    *  document it prints incomplete without saying so. */
   protected readonly findingsOnly = signal(false);
 
+  /**
+   * Which rows are open, by slug.
+   *
+   * A **set**, where the request list (`traces-tab`) keeps a single id — and the difference is the
+   * point of this screen rather than a preference. Opening a request fetches its payload, so one
+   * at a time is both cheaper and the only thing a reader can read. Here everything is already
+   * loaded, and the question a register is opened to answer is a *comparison*: two use cases'
+   * models, or their retention, side by side. One-at-a-time would make the reader close the row
+   * they are comparing against.
+   *
+   * Reset on nothing. A row that scrolls out of the page keeps its state, so paging back returns
+   * the reader to what they had open rather than to a collapsed table they have to rebuild.
+   */
+  private readonly opened = signal<ReadonlySet<string>>(new Set());
+
   protected readonly entries = computed(() => this.register()?.use_cases ?? []);
 
   /**
@@ -158,6 +173,20 @@ export class RegisterPage implements OnInit {
     this.view.search(this.search());
   }
 
+  protected isOpen(slug: string): boolean {
+    return this.opened().has(slug);
+  }
+
+  protected toggle(slug: string): void {
+    // A new Set rather than a mutation: a signal holding the same object it held before notifies
+    // nothing, and the row would stay shut until something else on the page happened to render.
+    const next = new Set(this.opened());
+    if (!next.delete(slug)) {
+      next.add(slug);
+    }
+    this.opened.set(next);
+  }
+
   /** What is worth acting on in this row, in the words a reader needs. */
   protected findingsOf(entry: RegisterEntry): string[] {
     const found: string[] = [];
@@ -172,18 +201,6 @@ export class RegisterPage implements OnInit {
       }
     }
     return found;
-  }
-
-  /** Where the catalogue says a model lives, as one line. */
-  protected provenance(entry: RegisterEntry): string {
-    return entry.models
-      .map((model) => {
-        const where = model.regions.length
-          ? model.regions.join(', ')
-          : 'no region (addressed by name)';
-        return `${model.name}: ${model.provider || 'uncatalogued'} · ${where}`;
-      })
-      .join('\n');
   }
 
   protected download(): void {

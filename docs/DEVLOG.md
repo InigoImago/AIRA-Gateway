@@ -5,6 +5,69 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Nine columns, and the jiggle that was not where anybody looked (2026-08-21)
+
+> *"For me the register UI is a bit too cluttered. I would like collapsible elements like the
+> requests have — only the most necessary information on top, and everything visible when expanded.
+> But it is also important that the elements do not jiggle when expanded and that everything is
+> stable."*
+
+The register shipped the same morning and was reported the first time it was opened. Both halves of
+the report were right, and the second half was right about something other than what it named.
+
+**The clutter.** `FRD-608` §2.1 lists eleven columns a governance reader needs, and I rendered all
+eleven. That is the wrong reading of my own argument: the section's case for the screen is that
+governance is a **comparison** activity, and eleven columns is not more information — it is the same
+information arranged so that none of it can be scanned. The row now carries what rows are compared
+*by* — use case, purpose cut to a line, whether prompts are kept and for how long, and any finding —
+and the rest opens in place, on the request list's mechanic (`FRD-505`). Several rows open at once,
+where the request list keeps one: opening a request fetches its payload, and here everything is
+already loaded, so *these two side by side* is a question the screen can now be asked.
+
+The findings column stays on the closed row. A finding you have to open a row to see is a finding
+nobody reads.
+
+**The jiggle, measured.** Three plausible causes, and the one everybody assumes is not the one that
+happens. Each was measured in a real browser, with the fix removed and the frontend rebuilt.
+
+1. *An opened detail resizes the table* — **no.** A cell spanning every column widens a table only
+   when it is wider than their sum, and a detail of wrapped prose never is. The guard I wrote for
+   this passed with `table-layout: fixed` removed, then passed again with the `<colgroup>` removed
+   too, then passed with all twenty-five rows open instead of one. Three rebuilds to establish that
+   the test proved nothing — which is exactly the trap `CLAUDE.md` names: *a test whose setup never
+   reaches the path it is named after.* It is kept, and its comment now says it guards a property
+   rather than a mechanism.
+2. *Paging resizes the table* — **yes, and this is the defect.** An automatic table sizes its
+   columns from the rows it is currently holding, so twenty-five different use cases give
+   twenty-five different column widths. Measured: `[52, 266, 152, 199, 185]` on page one against
+   `[52, 240, 159, 209, 194]` on page three. Every column jumps on a click of Next, on the one
+   screen whose purpose is reading down a column. A `<colgroup>` and `table-layout: fixed` fix it —
+   either alone is sufficient, and they are both there because they do different jobs: the colgroup
+   is where the proportions live, `fixed` is what stops an unbreakable model id overriding them.
+3. *A page that gains a scrollbar reflows narrower* — **yes, and not provable here.** ~15px lost the
+   moment a short page grows past the viewport, re-laying out every percentage width on it; the same
+   failure `InfoHint`'s panel was rewritten for, where it could also loop. `scrollbar-gutter: stable`
+   on the root fixes it for the whole console. Headless Chromium draws **overlay** scrollbars, so
+   `clientWidth` measured 1280 on the register at viewport heights of 400, 3000, 6000 and 9000
+   alike — there is no width to lose and nothing for an assertion to catch. It is guarded in
+   `tools/tests/test_a_growing_page_does_not_reflow.py`, which asserts the declaration and states
+   plainly that it asserts the declaration.
+
+The second guard is the one that earned its place: it also only worked after being sharpened. The
+first version clicked Next **once**, and pages one and two happen to hold use cases of similar
+length — green against the broken build. It walks five pages now, and names the page it parted on.
+
+The caret is one glyph rotated rather than `▸`/`▾` swapped, because the two do not measure the same
+in the fonts a console is read in. The request list swaps them; that is a defect there too, one row
+wide and constant.
+
+Five unit mutations were run against the new guards before any of this was believed — the row
+carrying the detail again, the caret swapped, a `<col>` removed, the detail spanning the wrong
+number of columns, and one-row-at-a-time — and all five went red. Frontend 932 (branch coverage was
+the thing that noticed the detail's own branches had gone unrendered: 91.71% against a gate of 92%,
+fixed with four tests that open a row rather than by moving the gate). Browser 159. Python 95.71%,
+unchanged and untouched.
+
 ## A register of processing activities, and residency that is measured (2026-08-21)
 
 > *"There is still no overview for IT Steuerung where they can list use cases, the description in

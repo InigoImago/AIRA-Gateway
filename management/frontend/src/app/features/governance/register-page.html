@@ -3,9 +3,9 @@
     <div>
       <h2 class="card__title" style="margin: 0">Register of processing activities</h2>
       <p class="muted" style="margin: 0.25rem 0 0">
-        One row per use case: what it is for, how the processing happens, which models it may call
-        and where those live, how long prompts are kept, and where its traffic actually went.
-        Read-only.
+        One row per use case — what it is for, whether prompts are kept, and whether anything
+        disagrees. Open a row for the rest: how the processing happens, which models it may call and
+        where those live, and where its traffic actually went. Read-only.
       </p>
     </div>
   </div>
@@ -169,21 +169,40 @@
         }
       </p>
     } @else {
+      <!--
+        **Four columns and a caret**, where this table began with nine and was reported as
+        cluttered before anybody had used it in anger. Nine columns is not more information; it is
+        the same information arranged so that none of it can be scanned — and the register exists
+        to be scanned, because governance is a comparison activity. What stays on the row is what
+        a reader compares rows *by*: which use case, what for, whether prompts are kept and for how
+        long, and whether anything disagrees. Everything else is a detail *about* one use case,
+        and belongs to the use case somebody opened.
+
+        The mechanic is the request list's (`FRD-505`), for the reason that list gives: opened in
+        place rather than in a drawer, so the row that made somebody open it stays on screen.
+      -->
       <div class="table-wrap">
-        <table data-testid="register-table">
+        <table class="table table--register" data-testid="register-table">
+          <!--
+            The widths, declared once. An automatic table sizes its columns from the rows it is
+            currently holding, so paging to twenty-five different use cases moved every column —
+            measured at up to 26px on the demo installation. Stated here, they stop depending on
+            which rows happen to be on screen. `table-layout: fixed` on the class above is what
+            makes them authoritative; see the stylesheet for which half does what.
+          -->
+          <colgroup>
+            <col class="reg-col--open" />
+            <col class="reg-col--case" />
+            <col class="reg-col--purpose" />
+            <col class="reg-col--prompts" />
+            <col class="reg-col--finding" />
+          </colgroup>
           <thead>
             <tr>
-              <th>Use case</th>
-              <th>Purpose</th>
-              <th>Processing</th>
-              <th>
-                Models · where they live
-                <app-info-hint label="Models · where they live" [wide]="true">
-                  Which models this use case may call, and the region the catalogue addresses each
-                  at. A model with no region is addressed by name alone, which most platforms do.
-                </app-info-hint>
-              </th>
-              <th>
+              <th scope="col"><span class="sr-only">Open</span></th>
+              <th scope="col">Use case</th>
+              <th scope="col">Purpose</th>
+              <th scope="col">
                 Prompts
                 <app-info-hint label="Prompts" [wide]="true">
                   Whether this use case stores what was sent and answered, and for how many days.
@@ -191,74 +210,63 @@
                   is a claim about nothing.
                 </app-info-hint>
               </th>
-              <th>Controls</th>
-              <th>People</th>
-              <th>
-                Processed in
-                <app-info-hint label="Processed in" [wide]="true">
-                  Where requests actually went over the period, read from the audit trail rather
-                  than from the configuration. This is the half that makes residency evidence rather
-                  than a claim.
+              <th scope="col">
+                Finding
+                <app-info-hint label="Finding" [wide]="true">
+                  A disagreement between what was decided and what is: traffic in a region no
+                  released model is catalogued for, or a released model the installation will not
+                  serve. On the row rather than in the detail, because it is the one thing a reader
+                  scans this table for — a finding you have to open a row to see is a finding nobody
+                  reads.
                 </app-info-hint>
               </th>
-              <th>Finding</th>
             </tr>
           </thead>
           <tbody>
             @for (entry of view.rows(); track entry.slug) {
-              <tr [attr.data-testid]="'register-row-' + entry.slug">
+              <tr
+                class="row-openable"
+                [class.is-open]="isOpen(entry.slug)"
+                (click)="toggle(entry.slug)"
+                [attr.data-testid]="'register-row-' + entry.slug"
+              >
+                <td class="table__open">
+                  <!--
+                    One glyph rotated, never two glyphs swapped. `▸` and `▾` are different widths
+                    in most of the fonts a console is read in, so a table that swaps them moves
+                    every cell on the row by a pixel or two each time somebody opens it — the
+                    small, constant jiggle nobody can point at.
+                  -->
+                  <button
+                    type="button"
+                    class="btn btn--sm btn--ghost row-open"
+                    [attr.aria-expanded]="isOpen(entry.slug)"
+                    [attr.aria-label]="
+                      (isOpen(entry.slug) ? 'Hide' : 'Show') + ' the detail for ' + entry.name
+                    "
+                    [attr.data-testid]="'register-open-' + entry.slug"
+                  >
+                    <span class="row-toggle__caret" [class.is-open]="isOpen(entry.slug)">▸</span>
+                  </button>
+                </td>
                 <td>
                   <strong>{{ entry.name }}</strong>
-                  <div class="muted">{{ entry.slug }}</div>
+                  <div class="muted reg-slug">{{ entry.slug }}</div>
                   @if (entry.status === 'retired') {
                     <span class="badge badge--warning" data-testid="retired">retired</span>
                   }
                 </td>
-                <td>{{ entry.purpose || '—' }}</td>
-                <td>{{ entry.processing || '—' }}</td>
-                <td>
-                  @for (model of entry.models; track model.name) {
-                    <div>
-                      {{ model.name }}
-                      <span class="muted">
-                        @if (!model.catalogued) {
-                          — not in the catalogue
-                        } @else {
-                          — {{ model.provider }} ·
-                          {{ model.regions.length ? model.regions.join(', ') : 'no region' }}
-                          @if (!model.approved) {
-                            · not approved
-                          }
-                        }
-                      </span>
-                    </div>
-                  } @empty {
-                    <span class="muted">none released</span>
-                  }
-                </td>
+                <!--
+                  One line, cut where it runs out. The whole of it is in the detail a click away,
+                  which is what makes cutting it honest — every collapsed row is the same height,
+                  and forty of them can be read down the page.
+                -->
+                <td class="reg-clamp">{{ entry.purpose || '—' }}</td>
                 <td>
                   @if (entry.prompts_stored) {
                     kept {{ entry.retention_days }} day(s)
                   } @else {
                     <span class="muted">not stored</span>
-                  }
-                  @if (entry.own_requests_only) {
-                    <div class="muted">members see only their own</div>
-                  }
-                </td>
-                <td>
-                  <div class="muted">
-                    tools {{ entry.tools ? 'on' : 'off' }} · caching
-                    {{ entry.prompt_caching ? entry.cache_ttl : 'off' }} · reasoning
-                    {{ entry.reasoning ? 'on' : 'off' }}
-                  </div>
-                </td>
-                <td>{{ entry.members }} member(s), {{ entry.groups }} group(s)</td>
-                <td>
-                  @for (where of entry.processed_in; track where.region + where.provider) {
-                    <div>{{ where.region }} · {{ where.provider }}: {{ where.requests }}</div>
-                  } @empty {
-                    <span class="muted">no traffic in this period</span>
                   }
                 </td>
                 <td>
@@ -271,6 +279,94 @@
                   }
                 </td>
               </tr>
+              @if (isOpen(entry.slug)) {
+                <tr class="row-detail">
+                  <td colspan="5">
+                    <dl class="detail-grid">
+                      <div class="detail-grid__wide">
+                        <dt>Purpose</dt>
+                        <dd>{{ entry.purpose || '—' }}</dd>
+                      </div>
+                      <div class="detail-grid__wide">
+                        <dt>How the processing happens</dt>
+                        <dd>{{ entry.processing || '—' }}</dd>
+                      </div>
+                      <div class="detail-grid__wide">
+                        <dt>
+                          Models · where they live
+                          <app-info-hint label="Models · where they live" [wide]="true">
+                            Which models this use case may call, and the region the catalogue
+                            addresses each at. A model with no region is addressed by name alone,
+                            which most platforms do.
+                          </app-info-hint>
+                        </dt>
+                        <dd>
+                          @for (model of entry.models; track model.name) {
+                            <div>
+                              {{ model.name }}
+                              <span class="muted">
+                                @if (!model.catalogued) {
+                                  — not in the catalogue
+                                } @else {
+                                  — {{ model.provider }} ·
+                                  {{
+                                    model.regions.length ? model.regions.join(', ') : 'no region'
+                                  }}
+                                  @if (!model.approved) {
+                                    · not approved
+                                  }
+                                }
+                              </span>
+                            </div>
+                          } @empty {
+                            <span class="muted">none released</span>
+                          }
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>
+                          Processed in
+                          <app-info-hint label="Processed in" [wide]="true">
+                            Where requests actually went over the period, read from the audit trail
+                            rather than from the configuration. This is the half that makes
+                            residency evidence rather than a claim.
+                          </app-info-hint>
+                        </dt>
+                        <dd>
+                          @for (where of entry.processed_in; track where.region + where.provider) {
+                            <div>
+                              {{ where.region }} · {{ where.provider }}: {{ where.requests }}
+                            </div>
+                          } @empty {
+                            <span class="muted">no traffic in this period</span>
+                          }
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Requests</dt>
+                        <dd>{{ entry.requests }} in this period</dd>
+                      </div>
+                      <div>
+                        <dt>Controls</dt>
+                        <dd>
+                          tools {{ entry.tools ? 'on' : 'off' }} · caching
+                          {{ entry.prompt_caching ? entry.cache_ttl : 'off' }} · reasoning
+                          {{ entry.reasoning ? 'on' : 'off' }}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>People</dt>
+                        <dd>
+                          {{ entry.members }} member(s), {{ entry.groups }} group(s)
+                          @if (entry.own_requests_only) {
+                            <div class="muted">members see only their own requests</div>
+                          }
+                        </dd>
+                      </div>
+                    </dl>
+                  </td>
+                </tr>
+              }
             }
           </tbody>
         </table>
@@ -293,7 +389,7 @@
           Every request in the period, including traffic that belongs to no use case.
         </p>
         <div class="table-wrap">
-          <table data-testid="register-installation">
+          <table class="table" data-testid="register-installation">
             <thead>
               <tr>
                 <th>Region</th>

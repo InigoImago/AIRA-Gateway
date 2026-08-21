@@ -67,6 +67,9 @@ interface Page {
   load: () => void;
   onSearch: (term: string) => void;
   toggleFindings: (only: boolean) => void;
+  applyPreset: (preset: 'this-month' | 'custom') => void;
+  toggle: (slug: string) => void;
+  isOpen: (slug: string) => boolean;
   download: () => void;
   exporting: () => boolean;
 }
@@ -120,15 +123,127 @@ describe('RegisterPage', () => {
     expect(text()).toContain('Register of processing activities');
   });
 
-  it('puts the whole row on one line: purpose, processing, models, storage, people', () => {
+  it('puts on the closed row only what a reader compares rows by', () => {
+    // Four columns and a caret, where this began with nine. The test is as much about what is
+    // **absent** as about what is there: nine columns is not more information, it is the same
+    // information arranged so none of it can be scanned.
     const { text } = setup();
 
+    expect(text()).toContain('Demo');
     expect(text()).toContain('Answering customer questions');
-    expect(text()).toContain('Prompt to the model');
-    expect(text()).toContain('gemini-2.5-flash');
-    expect(text()).toContain('europe-west1');
     expect(text()).toContain('kept 7 day(s)');
-    expect(text()).toContain('2 member(s), 1 group(s)');
+
+    expect(text()).not.toContain('Prompt to the model');
+    expect(text()).not.toContain('gemini-2.5-flash');
+    expect(text()).not.toContain('2 member(s), 1 group(s)');
+  });
+
+  it('opens a row onto everything the columns no longer carry', () => {
+    const harness = setup();
+    harness.component.toggle('demo-uc');
+    harness.fixture.detectChanges();
+
+    const text = harness.text();
+    expect(text).toContain('Prompt to the model');
+    expect(text).toContain('gemini-2.5-flash');
+    expect(text).toContain('europe-west1');
+    expect(text).toContain('2 member(s), 1 group(s)');
+    expect(text).toContain('12 in this period');
+  });
+
+  it('closes a row it opened, and leaves the others alone', () => {
+    const harness = setup(
+      of(register({ use_cases: [entry({ slug: 'one' }), entry({ slug: 'two' })] })),
+    );
+
+    harness.component.toggle('one');
+    harness.component.toggle('two');
+    harness.fixture.detectChanges();
+    expect(harness.component.isOpen('one')).toBe(true);
+    expect(harness.component.isOpen('two')).toBe(true);
+
+    harness.component.toggle('one');
+    harness.fixture.detectChanges();
+    expect(harness.component.isOpen('one')).toBe(false);
+    expect(harness.component.isOpen('two')).toBe(true);
+  });
+
+  it('lets several rows be open at once — a register is read by comparing', () => {
+    // The deliberate difference from the request list, which keeps one open. Opening a request
+    // fetches its payload; here everything is already loaded, and the question this screen answers
+    // is *these two side by side*. One-at-a-time would close the row being compared against.
+    const harness = setup(
+      of(
+        register({
+          use_cases: [
+            entry({ slug: 'alpha', processing: 'Alpha processing' }),
+            entry({ slug: 'beta', processing: 'Beta processing' }),
+          ],
+        }),
+      ),
+    );
+
+    harness.component.toggle('alpha');
+    harness.component.toggle('beta');
+    harness.fixture.detectChanges();
+
+    expect(harness.text()).toContain('Alpha processing');
+    expect(harness.text()).toContain('Beta processing');
+  });
+
+  it('marks the open row for a screen reader as well as for an eye', () => {
+    const harness = setup();
+    const button = () => harness.testid('register-open-demo-uc');
+
+    expect(button()?.getAttribute('aria-expanded')).toBe('false');
+
+    harness.component.toggle('demo-uc');
+    harness.fixture.detectChanges();
+
+    expect(button()?.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('never swaps the caret for a second glyph, which is a different width', () => {
+    // The small constant jiggle nobody can point at: `▸` and `▾` do not measure the same in the
+    // fonts a console is read in, so a table that swaps them moves every cell on the row. One
+    // glyph, rotated by CSS.
+    const harness = setup();
+    const caret = () =>
+      harness.testid('register-open-demo-uc')?.querySelector('.row-toggle__caret');
+
+    const before = caret()?.textContent;
+    harness.component.toggle('demo-uc');
+    harness.fixture.detectChanges();
+
+    expect(caret()?.textContent).toBe(before);
+    expect(caret()?.classList.contains('is-open')).toBe(true);
+  });
+
+  it('declares a fixed column width for every column, so an open row cannot resize them', () => {
+    // The columns of an automatic table are measured from every cell it holds, the opened detail
+    // included — so opening one row moves the columns of all the others. The guard is structural
+    // rather than visual: a `<col>` per column, and the detail spanning exactly that many.
+    const { element } = setup();
+    const table = element.querySelector('[data-testid="register-table"]');
+    const columns = table?.querySelectorAll('colgroup > col') ?? [];
+    const headers = table?.querySelectorAll('thead th') ?? [];
+
+    expect(columns.length).toBe(headers.length);
+    expect(table?.classList.contains('table--register')).toBe(true);
+  });
+
+  it('spans the detail across exactly the columns above it', () => {
+    // A colspan smaller than the table leaves a phantom column; larger, and some browsers grow
+    // the table by one. Either way the row above stops lining up with the row below.
+    const harness = setup();
+    harness.component.toggle('demo-uc');
+    harness.fixture.detectChanges();
+
+    const table = harness.element.querySelector('[data-testid="register-table"]');
+    const detail = table?.querySelector('.row-detail > td');
+    expect(detail?.getAttribute('colspan')).toBe(
+      String(table?.querySelectorAll('colgroup > col').length),
+    );
   });
 
   it('prints no erasure deadline for a use case that stores nothing', () => {
@@ -140,6 +255,8 @@ describe('RegisterPage', () => {
 
     expect(text()).toContain('not stored');
     expect(text()).not.toContain('day(s)');
+    // And it is on the closed row, because "does this use case keep prompts" is the question the
+    // table is scanned for rather than a detail about one use case.
   });
 
   it('keeps a retired use case in the register and marks it', () => {
@@ -190,6 +307,91 @@ describe('RegisterPage', () => {
 
     expect(harness.testid('register-row-clean')).toBeNull();
     expect(harness.testid('register-row-flagged')).not.toBeNull();
+  });
+
+  it('opens a row that has nothing filled in without printing blanks', () => {
+    // Every one of these is a field a use case is allowed to leave empty, and an empty cell in a
+    // register reads as "not applicable" rather than "nobody wrote it down".
+    const harness = setup(
+      of(
+        register({
+          use_cases: [
+            entry({ purpose: '', processing: '', models: [], processed_in: [], requests: 0 }),
+          ],
+        }),
+      ),
+    );
+    harness.component.toggle('demo-uc');
+    harness.fixture.detectChanges();
+
+    expect(harness.text()).toContain('none released');
+    expect(harness.text()).toContain('no traffic in this period');
+    expect(harness.text()).toContain('—');
+  });
+
+  it('says of each released model whether it is catalogued, where, and whether approved', () => {
+    const harness = setup(
+      of(
+        register({
+          use_cases: [
+            entry({
+              models: [
+                model({ name: 'ghost', catalogued: false }),
+                model({ name: 'unregioned', regions: [], approved: false }),
+              ],
+            }),
+          ],
+        }),
+      ),
+    );
+    harness.component.toggle('demo-uc');
+    harness.fixture.detectChanges();
+
+    const text = harness.text();
+    expect(text).toContain('not in the catalogue');
+    // A model addressed by name alone, which most dialects do — not a missing region.
+    expect(text).toContain('no region');
+    expect(text).toContain('not approved');
+  });
+
+  it('carries the controls and the members-see-their-own rule into the detail', () => {
+    const harness = setup(
+      of(
+        register({
+          use_cases: [
+            entry({
+              tools: true,
+              prompt_caching: true,
+              cache_ttl: '15m',
+              reasoning: true,
+              own_requests_only: true,
+            }),
+          ],
+        }),
+      ),
+    );
+    harness.component.toggle('demo-uc');
+    harness.fixture.detectChanges();
+
+    const text = harness.text();
+    expect(text).toContain('tools on');
+    expect(text).toContain('caching 15m');
+    expect(text).toContain('reasoning on');
+    expect(text).toContain('members see only their own requests');
+  });
+
+  it('asks for a period of its own without reloading until it is given one', () => {
+    // "Custom…" offers two date fields and a Show button. Reloading on the moment the preset
+    // changes would fetch the *old* window and look like the choice did nothing.
+    const harness = setup();
+    expect(harness.calls.length).toBe(1);
+
+    harness.component.applyPreset('custom');
+    harness.fixture.detectChanges();
+
+    expect(harness.calls.length).toBe(1);
+    expect(harness.element.querySelector('#register-from')).not.toBeNull();
+    expect(harness.element.querySelector('#register-to')).not.toBeNull();
   });
 
   it('says when the sweep last ran, and warns when it never has', () => {

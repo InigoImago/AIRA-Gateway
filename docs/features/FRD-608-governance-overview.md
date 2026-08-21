@@ -151,6 +151,46 @@ Section by section:
 | 2.4 erasure as evidence | ✅ | `retention_runs` (migration `0041`); the sweep records each pass inside the same transaction as the deletions it describes, and the register prints the last one — or says there is none |
 | 4 the two planes compared | ✅ (models) | the register reports the gateway's catalogue; the console holds Management's and shows the disagreement. **Use cases are not compared** — see below |
 
+### The shape, corrected after it was used
+
+§2.1's table is eleven columns, and rendering all eleven at once was the wrong reading of it. The
+screen was reported the first time it was opened: *"a bit too cluttered — I would like collapsible
+elements like the requests have, only the most necessary information on top, everything visible
+when expanded, and it is important that nothing jiggles when expanded."*
+
+Eleven columns is not more information; it is the same information arranged so that none of it can
+be scanned — and §2.1's own argument is that governance is a **comparison** activity. So the row
+now carries only what rows are compared *by*, and the rest is a detail about one use case:
+
+| on the row | in the detail |
+| --- | --- |
+| use case (name · slug · retired) | purpose in full, and how the processing happens |
+| purpose, cut to one line | models · where they live |
+| prompts: kept *n* days, or not stored | where it processed, and how many requests |
+| findings | tools · caching · reasoning, members · groups |
+
+The mechanic is the request list's (`FRD-505`): opened in place rather than in a drawer, so the row
+that made somebody open it stays on screen. **Several rows open at once**, where the request list
+keeps one — opening a request fetches its payload, and here everything is loaded already, so the
+question *these two side by side* can actually be asked.
+
+The findings column stays on the row, and that is the one judgement call: a finding you have to
+open a row to see is a finding nobody reads.
+
+#### What "does not jiggle" turned out to mean
+
+Worth recording because the answer was not where it was looked for. Three candidate causes were
+measured in a real browser; **the one everybody assumes is not the one that happens.**
+
+| suspected | measured |
+| --- | --- |
+| an opened detail resizes the table | **no.** A cell spanning every column widens a table only when it is wider than their sum, and a detail of wrapped prose never is. Tested with one row open and with all twenty-five, before and after the fix — green either way. Recorded in the test as the weak property it is. |
+| paging resizes the table | **yes, and badly.** An automatic table sizes its columns from the rows it currently holds: `[52, 266, 152, 199, 185]` on page one against `[52, 240, 159, 209, 194]` on page three. Every column jumps on a click of Next, on the screen whose purpose is reading down a column. Fixed by a `<colgroup>` and `table-layout: fixed`. |
+| a page that gains a scrollbar reflows narrower | **yes, and unprovable here.** ~15px lost the moment a short page grows past the viewport, re-laying out every percentage width — the same failure `InfoHint` was rewritten for. Fixed with `scrollbar-gutter: stable`. Headless Chromium draws *overlay* scrollbars, so `clientWidth` measured 1280 at viewport heights of 400, 3000, 6000 and 9000 alike; guarded in `tools/tests/` with the reason it has to be. |
+
+The caret is one glyph rotated rather than `▸`/`▾` swapped, because the two do not measure the same
+in the fonts a console is read in — the small constant jiggle nobody can point at.
+
 Three decisions taken while building, each of which could have gone the other way:
 
 - **Unknown is not a violation.** A request whose audit row carries no region is reported under its
