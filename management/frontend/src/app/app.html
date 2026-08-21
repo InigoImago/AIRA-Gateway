@@ -82,6 +82,24 @@
     >
   }
   <!--
+    The register of processing activities (`FRD-608`). Offered to an oversight role, and the
+    gateway does **not** restrict it to one: `visible_scope` answers for anybody, so a member who
+    types the URL gets a register of their own use cases rather than a refusal.
+    It is not in everybody's navigation because the value of the screen is **comparison across use
+    cases**, which a member of one cannot do — and everything it would tell them about their own is
+    already on its detail page. Offering it to them would be a tab that looks broken, which is the
+    other half of what `FRD-206` is about.
+  -->
+  @if (hasOversight()) {
+    <a
+      class="aira-nav__item"
+      routerLink="/register"
+      routerLinkActive="is-active"
+      data-testid="nav-register"
+      >Register</a
+    >
+  }
+  <!--
     The tab an oversight role could not previously be given, because there was nothing behind it.
     `FRD-502` built the screen; a tab that does not respond is what `FRD-206` removed.
   -->

@@ -1,0 +1,318 @@
+<div class="stack">
+  <div class="spread">
+    <div>
+      <h2 class="card__title" style="margin: 0">Register of processing activities</h2>
+      <p class="muted" style="margin: 0.25rem 0 0">
+        One row per use case: what it is for, how the processing happens, which models it may call
+        and where those live, how long prompts are kept, and where its traffic actually went.
+        Read-only.
+      </p>
+    </div>
+  </div>
+
+  @if (feedback.error(); as message) {
+    <p class="callout callout--danger" role="alert">{{ message }}</p>
+  }
+
+  <div class="card">
+    <form class="form-inline" (ngSubmit)="load()">
+      <div class="field">
+        <label for="register-preset">Period</label>
+        <select
+          id="register-preset"
+          name="preset"
+          [ngModel]="preset()"
+          (ngModelChange)="applyPreset($event)"
+        >
+          <option value="this-month">This month</option>
+          <option value="last-month">Last month</option>
+          <option value="last-7-days">Last 7 days</option>
+          <option value="last-30-days">Last 30 days</option>
+          <option value="custom">Custom…</option>
+        </select>
+        <span class="field__hint">
+          The period applies to the measured half — where requests went. The configuration is
+          current whatever the period.
+        </span>
+      </div>
+      @if (preset() === 'custom') {
+        <div class="field">
+          <label for="register-from">From</label>
+          <input
+            id="register-from"
+            type="date"
+            name="from"
+            [ngModel]="from()"
+            (ngModelChange)="from.set($event)"
+          />
+        </div>
+        <div class="field">
+          <label for="register-to">To (exclusive)</label>
+          <input
+            id="register-to"
+            type="date"
+            name="to"
+            [ngModel]="to()"
+            (ngModelChange)="to.set($event)"
+          />
+        </div>
+        <button type="submit" class="btn">Show</button>
+      }
+      <div class="field grow">
+        <label for="register-search">Search</label>
+        <input
+          id="register-search"
+          type="search"
+          name="search"
+          placeholder="part of a name, an id, a purpose"
+          [ngModel]="search()"
+          (ngModelChange)="onSearch($event)"
+          data-testid="register-search"
+        />
+      </div>
+      <div class="field">
+        <label for="register-findings">
+          Only rows with a finding
+          <app-info-hint label="Only rows with a finding" [wide]="true">
+            A finding is a disagreement between what was decided and what is: traffic in a region no
+            released model is catalogued for, or a released model the installation will not serve.
+            Off by default — a register is a register first.
+          </app-info-hint>
+        </label>
+        <input
+          id="register-findings"
+          type="checkbox"
+          name="findings"
+          [ngModel]="findingsOnly()"
+          (ngModelChange)="toggleFindings($event)"
+          data-testid="register-findings-only"
+        />
+      </div>
+      <button
+        type="button"
+        class="btn"
+        [disabled]="exporting() || loading()"
+        (click)="download()"
+        data-testid="register-export"
+      >
+        {{ exporting() ? 'Exporting…' : 'Download (CSV)' }}
+      </button>
+    </form>
+  </div>
+
+  @if (register(); as compiled) {
+    <!--
+      The two facts a reader needs before the table: whether they are looking at the whole
+      installation, and whether the erasure this document promises has actually been happening.
+      The second is the one an auditor asks for and the one nothing surfaced before `FRD-608`.
+    -->
+    <div class="card">
+      <p class="muted" style="margin: 0" data-testid="register-scope">
+        @if (seesEverything()) {
+          Every use case in this installation.
+        } @else {
+          The use cases you are a member of. An oversight role sees all of them.
+        }
+      </p>
+      @if (compiled.last_erasure; as erasure) {
+        <p class="muted" style="margin: 0.4rem 0 0" data-testid="register-erasure">
+          Retention last ran {{ erasure.ran_at }} — {{ erasure.payloads_cleared }} payload(s)
+          cleared, {{ erasure.rows_deleted }} row(s) deleted.
+        </p>
+      } @else {
+        <p
+          class="callout callout--warning"
+          style="margin: 0.4rem 0 0"
+          data-testid="register-erasure"
+        >
+          The retention sweep has no recorded pass, so the erasure deadlines below are unverified.
+        </p>
+      }
+    </div>
+  }
+
+  @if (hasDrift()) {
+    @if (catalogueDrift(); as drift) {
+      <!--
+        `FRD-608` §4. Both planes keep a catalogue and one feeds the other over Kafka, so the two
+        lists should be the same list — and nothing compared them until this screen did. Shown only
+        when they disagree: a panel that is always there saying "in agreement" is a panel nobody
+        reads on the day it stops saying that.
+      -->
+      <div class="card" data-testid="register-drift">
+        <h3 class="section-title" style="margin: 0">The two planes disagree about the catalogue</h3>
+        @if (drift.onlyInGateway.length) {
+          <p class="callout callout--warning" style="margin: 0.5rem 0 0">
+            The gateway can serve {{ drift.onlyInGateway.join(', ') }}, and Management has no row
+            for it — so no screen shows it and no role can remove it.
+          </p>
+        }
+        @if (drift.onlyInManagement.length) {
+          <p class="callout callout--warning" style="margin: 0.5rem 0 0">
+            Management has {{ drift.onlyInManagement.join(', ') }} and the gateway has not received
+            it — a configuration change that did not arrive.
+          </p>
+        }
+      </div>
+    }
+  }
+
+  <div class="card">
+    @if (loading()) {
+      <p class="muted" style="margin: 0">Loading the register…</p>
+    } @else if (view.matches().length === 0) {
+      <p class="muted" style="margin: 0" data-testid="register-empty">
+        @if (entries().length === 0) {
+          No use cases are visible to you.
+        } @else {
+          No use case matches this filter.
+        }
+      </p>
+    } @else {
+      <div class="table-wrap">
+        <table data-testid="register-table">
+          <thead>
+            <tr>
+              <th>Use case</th>
+              <th>Purpose</th>
+              <th>Processing</th>
+              <th>
+                Models · where they live
+                <app-info-hint label="Models · where they live" [wide]="true">
+                  Which models this use case may call, and the region the catalogue addresses each
+                  at. A model with no region is addressed by name alone, which most platforms do.
+                </app-info-hint>
+              </th>
+              <th>
+                Prompts
+                <app-info-hint label="Prompts" [wide]="true">
+                  Whether this use case stores what was sent and answered, and for how many days.
+                  Blank where nothing is stored: an erasure deadline for data that was never written
+                  is a claim about nothing.
+                </app-info-hint>
+              </th>
+              <th>Controls</th>
+              <th>People</th>
+              <th>
+                Processed in
+                <app-info-hint label="Processed in" [wide]="true">
+                  Where requests actually went over the period, read from the audit trail rather
+                  than from the configuration. This is the half that makes residency evidence rather
+                  than a claim.
+                </app-info-hint>
+              </th>
+              <th>Finding</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (entry of view.rows(); track entry.slug) {
+              <tr [attr.data-testid]="'register-row-' + entry.slug">
+                <td>
+                  <strong>{{ entry.name }}</strong>
+                  <div class="muted">{{ entry.slug }}</div>
+                  @if (entry.status === 'retired') {
+                    <span class="badge badge--warning" data-testid="retired">retired</span>
+                  }
+                </td>
+                <td>{{ entry.purpose || '—' }}</td>
+                <td>{{ entry.processing || '—' }}</td>
+                <td>
+                  @for (model of entry.models; track model.name) {
+                    <div>
+                      {{ model.name }}
+                      <span class="muted">
+                        @if (!model.catalogued) {
+                          — not in the catalogue
+                        } @else {
+                          — {{ model.provider }} ·
+                          {{ model.regions.length ? model.regions.join(', ') : 'no region' }}
+                          @if (!model.approved) {
+                            · not approved
+                          }
+                        }
+                      </span>
+                    </div>
+                  } @empty {
+                    <span class="muted">none released</span>
+                  }
+                </td>
+                <td>
+                  @if (entry.prompts_stored) {
+                    kept {{ entry.retention_days }} day(s)
+                  } @else {
+                    <span class="muted">not stored</span>
+                  }
+                  @if (entry.own_requests_only) {
+                    <div class="muted">members see only their own</div>
+                  }
+                </td>
+                <td>
+                  <div class="muted">
+                    tools {{ entry.tools ? 'on' : 'off' }} · caching
+                    {{ entry.prompt_caching ? entry.cache_ttl : 'off' }} · reasoning
+                    {{ entry.reasoning ? 'on' : 'off' }}
+                  </div>
+                </td>
+                <td>{{ entry.members }} member(s), {{ entry.groups }} group(s)</td>
+                <td>
+                  @for (where of entry.processed_in; track where.region + where.provider) {
+                    <div>{{ where.region }} · {{ where.provider }}: {{ where.requests }}</div>
+                  } @empty {
+                    <span class="muted">no traffic in this period</span>
+                  }
+                </td>
+                <td>
+                  @for (finding of findingsOf(entry); track finding) {
+                    <div class="badge badge--danger" data-testid="register-finding">
+                      {{ finding }}
+                    </div>
+                  } @empty {
+                    <span class="muted">—</span>
+                  }
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+      <app-table-pager [view]="view" noun="use cases" testid="register-pager" />
+    }
+  </div>
+
+  @if (register(); as compiled) {
+    @if (compiled.processed_in.length) {
+      <!--
+        The installation's own total, including traffic that names no use case: break-glass keys,
+        the console's own model checks, demo traffic. A summary that only added up the rows above
+        would omit exactly the traffic nobody owns, which is the traffic this is most likely to be
+        asked about.
+      -->
+      <div class="card">
+        <h3 class="section-title" style="margin: 0">Where this installation processed requests</h3>
+        <p class="muted" style="margin: 0.25rem 0 0.6rem">
+          Every request in the period, including traffic that belongs to no use case.
+        </p>
+        <div class="table-wrap">
+          <table data-testid="register-installation">
+            <thead>
+              <tr>
+                <th>Region</th>
+                <th>Provider</th>
+                <th>Requests</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (where of compiled.processed_in; track where.region + where.provider) {
+                <tr>
+                  <td>{{ where.region }}</td>
+                  <td>{{ where.provider || 'unknown' }}</td>
+                  <td>{{ where.requests }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      </div>
+    }
+  }
+</div>

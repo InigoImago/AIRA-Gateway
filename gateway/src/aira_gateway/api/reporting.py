@@ -39,6 +39,9 @@ from aira_gateway.payloads import (
     restricted_use_cases,
 )
 from aira_gateway.reporting.csv_export import BREAKDOWNS, filename, render
+from aira_gateway.reporting.register import RegisterService
+from aira_gateway.reporting.register_csv import filename as register_filename
+from aira_gateway.reporting.register_csv import render as render_register
 from aira_gateway.reporting.service import ReportingService, Scope
 from aira_gateway.state import sessionmaker_of, settings_of
 
@@ -247,6 +250,72 @@ def _about_this_caller(restricted: list[str], principal: Principal) -> ColumnEle
             )
         )
     return or_(AnomalyEvent.use_case.notin_(restricted), or_(*own))
+
+
+@router.get("/v1beta/register")
+async def register(
+    request: Request,
+    principal: Principal = Depends(require_principal),
+    start: str | None = Query(default=None, alias="from"),
+    end: str | None = Query(default=None, alias="to"),
+) -> Response:
+    """The register of processing activities (`FRD-608`).
+
+    One row per use case: what it is for, how the processing happens, which models it may call and
+    where those live, whether prompts are kept and for how long, which controls are on, who is a
+    member — **and where its traffic actually went** over the window.
+
+    Behind this module's heading rather than in one of its own, and that is the same argument
+    `api/incidents.py` was split out on, read the other way. The suspension endpoints left because
+    they are bounded by *role*; this one stays because it is bounded by **use case**, by the very
+    same `visible_scope` the report and the trace list use. Two different ways of being safe do not
+    share a file; two endpoints that are safe the same way should.
+
+    Why it is served here at all, when Management authors every configuration field in it: the
+    gateway is where the two halves meet. Its read-model already carries the whole configuration
+    (`UseCaseRead`), and the audit trail is the measurement. Assembling this in Management would
+    mean shipping the audit trail across the planes to reach a half that is already on this side.
+
+    CSV by `Accept`, a rendering of this same result — never a second query (`FRD-602` §5.3).
+    """
+    now = datetime.now(UTC)
+    default_start, default_end = _month_window(now)
+    window_start = _parse(start, "from") if start else default_start
+    window_end = _parse(end, "to") if end else default_end
+
+    if window_end <= window_start:
+        raise GeminiHTTPError(400, "'to' must be after 'from'.", "INVALID_ARGUMENT")
+    if window_end - window_start > timedelta(days=MAX_WINDOW_DAYS):
+        raise GeminiHTTPError(
+            400, f"A register window may span at most {MAX_WINDOW_DAYS} days.", "INVALID_ARGUMENT"
+        )
+
+    fmt = _negotiate(request.headers.get("accept", ""))
+    scope = visible_scope(principal)
+    compiled = await RegisterService(sessionmaker_of(request)).compile(
+        scope, window_start, window_end
+    )
+
+    if fmt == "csv":
+        body = render_register(compiled, window_start.isoformat(), window_end.isoformat())
+        name = register_filename(window_start.isoformat(), window_end.isoformat())
+        return Response(
+            content=body,
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{name}"'},
+        )
+
+    return JSONResponse(
+        {
+            "from": window_start.isoformat(),
+            "to": window_end.isoformat(),
+            # Which of the two empties an empty register is. A caller who is a member of nothing
+            # gets `[]` and `scope: "use_cases"`, not a refusal — the same answer the report and
+            # the findings list give, for the same reason.
+            "scope": "all" if scope is None else "use_cases",
+            **compiled.as_dict(),
+        }
+    )
 
 
 @router.get("/v1beta/anomalies")

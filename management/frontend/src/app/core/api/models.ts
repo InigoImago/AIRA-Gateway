@@ -677,6 +677,93 @@ export interface PersonRow extends ReportRow {
   by_method?: Record<string, ReportRow>;
 }
 
+/**
+ * One model a use case may call, and where the catalogue says it lives (`FRD-608`).
+ *
+ * `catalogued: false` and `approved: false` are two different faults with one consequence — a
+ * model in the configuration that no request will ever reach — and they need different actions,
+ * which is why the register keeps them apart rather than reporting "unavailable".
+ */
+export interface RegisterModel {
+  name: string;
+  provider: string;
+  publisher: string;
+  /** Empty where the platform addresses a model by name alone, which is most of them. */
+  regions: string[];
+  approved: boolean;
+  catalogued: boolean;
+}
+
+/** Where traffic actually went, from the audit trail rather than from the configuration. */
+export interface ProcessedIn {
+  /** `(not applicable)` where the dialect addresses a model by name and has no region. */
+  region: string;
+  provider: string;
+  requests: number;
+}
+
+/** One use case, as the register of processing activities reads it (`FRD-608`). */
+export interface RegisterEntry {
+  slug: string;
+  name: string;
+  status: 'live' | 'retired';
+  purpose: string;
+  processing: string;
+  models: RegisterModel[];
+  prompts_stored: boolean;
+  /** `null` where prompts are not stored: there is no erasure deadline for data never written. */
+  retention_days: number | null;
+  own_requests_only: boolean;
+  tools: boolean;
+  prompt_caching: boolean;
+  cache_ttl: string;
+  reasoning: boolean;
+  members: number;
+  groups: number;
+  requests: number;
+  processed_in: ProcessedIn[];
+  /**
+   * Regions the traffic reached that no released model's catalogue entry names — **the finding**.
+   *
+   * Empty is the ordinary answer, and it is not the same as "nothing ran": `requests` says that.
+   * A row with no region is never here — most dialects address a model by name, and the mock and
+   * local providers run in the container.
+   */
+  unexpected_regions: string[];
+}
+
+/** The last pass of the retention sweep (`FRD-608` §2.4) — erasure as evidence, not a setting. */
+export interface Erasure {
+  ran_at: string;
+  payloads_cleared: number;
+  rows_deleted: number;
+}
+
+/** The register of processing activities (`FRD-608`). */
+export interface Register {
+  from: string;
+  to: string;
+  /** `all` when the caller oversees the installation, otherwise their own use cases. */
+  scope: 'all' | 'use_cases';
+  use_cases: RegisterEntry[];
+  /**
+   * Where the installation processed requests in this period, **including traffic that names no
+   * use case** — break-glass keys, the console's own model checks, demo traffic. Empty for a
+   * caller who does not oversee the installation: that traffic is not theirs to see.
+   */
+  processed_in: ProcessedIn[];
+  /**
+   * Every model **the gateway** holds, for a reader who oversees the installation (`FRD-608` §4).
+   *
+   * The console holds Management's list already; this is the other half of the one comparison this
+   * screen exists to make — *is what we think is configured what is actually running*. Empty for a
+   * caller who oversees nothing: an installation-wide list is not a member's to see.
+   */
+  catalogue: string[];
+  /** `null` when the sweep has no recorded pass — which is a fact, not a zero. */
+  last_erasure: Erasure | null;
+}
+
 export interface Report {
   from: string;
   to: string;

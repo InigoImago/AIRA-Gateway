@@ -364,6 +364,37 @@ class UseCaseRead(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class RetentionRun(Base):
+    """One pass of the retention sweep, and what it removed (`FRD-608` §2.4).
+
+    **Erasure as evidence, not as a setting.** *"Prompts are deleted after N days"* is a claim that
+    a configuration screen can make and a register can print; *"the last pass ran at 03:00 and
+    cleared 1 412 payloads"* is the one an auditor asks for, and it is the difference between a
+    policy document and a record.
+
+    `RetentionService.prune` has returned these two figures since `FRD-404` and **nothing read
+    them** — they went into a log line and out of reach. This table is that log line, kept where
+    the register can ask for it, and it is the whole of what was missing: no new sweep, no new
+    clock, no second definition of what expires.
+
+    Rows accumulate at one per pass — a few a day at most, since this runs on a timer rather than
+    per request. Nothing prunes the pruner: a table of erasure evidence that erased its own history
+    on a schedule would be a joke at its own expense, and at a few hundred rows a year it is
+    cheaper to keep than to reason about.
+    """
+
+    __tablename__ = "retention_runs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    #: When the pass ran, from the same clock the sweep used to decide what had expired — not the
+    #: column default. The two are the same moment in production and only one of them is testable.
+    ran_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    #: Bodies stripped from rows whose metadata was kept (`FRD-404`'s first clock).
+    payloads_cleared: Mapped[int] = mapped_column(Integer, default=0)
+    #: Whole rows removed, where an installation has opted into a record retention.
+    rows_deleted: Mapped[int] = mapped_column(Integer, default=0)
+
+
 class UseCaseMemberRead(Base):
     """Gateway read-model of use-case membership (FRD-204)."""
 

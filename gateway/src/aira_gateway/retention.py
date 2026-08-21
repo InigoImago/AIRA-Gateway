@@ -28,7 +28,7 @@ from sqlalchemy import CursorResult, delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from aira_common.logging import get_logger
-from aira_gateway.db.models import RequestLog, UseCaseRead
+from aira_gateway.db.models import RequestLog, RetentionRun, UseCaseRead
 
 DEFAULT_RETENTION_DAYS = 7
 
@@ -116,6 +116,28 @@ class RetentionService:
                 )
                 deleted = _affected(removed)
 
+            # **The pass leaves a row, and that is the whole of `FRD-608` §2.4.**
+            #
+            # These two figures have been returned since this module was written and read by
+            # nothing: they went into the log line below and out of reach. *"Prompts are deleted
+            # after N days"* is a claim a configuration screen can make; *"the last pass ran at
+            # 03:00 and cleared 1 412 payloads"* is the one an auditor asks for, and the register
+            # cannot print it unless somebody keeps it.
+            #
+            # Written inside the same transaction as the deletions it describes: a record of an
+            # erasure that could commit while the erasure rolled back would be worse than no
+            # record, because somebody would believe it.
+            #
+            # Stamped with `now` rather than a column default, so the moment on the row is the same
+            # moment the sweep used to decide what had expired — the two are identical in
+            # production and only one of them is testable.
+            session.add(
+                RetentionRun(
+                    ran_at=now,
+                    payloads_cleared=cleared,
+                    rows_deleted=deleted,
+                )
+            )
             await session.commit()
 
         outcome = PruneResult(payloads_cleared=cleared, rows_deleted=deleted)

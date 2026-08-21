@@ -39,6 +39,15 @@ export const routes: Routes = [
   // documentation, and a 404 for a screen that moved teaches a reader that the console is unstable.
   { path: 'model-tests', redirectTo: 'pipeline-tests', pathMatch: 'full' },
   {
+    // The register of processing activities (`FRD-608`). Its own route rather than a tab on
+    // reporting: reporting answers *what did it cost*, and this answers *what is being processed
+    // and on what terms* — two documents with two audiences, and folding them would make the one
+    // a compliance function needs a section of the one a budget holder reads.
+    path: 'register',
+    canActivate: [authGuard],
+    loadComponent: () => import('./features/governance/register-page').then((m) => m.RegisterPage),
+  },
+  {
     path: 'security',
     canActivate: [authGuard],
     loadComponent: () => import('./features/security/security-page').then((m) => m.SecurityPage),

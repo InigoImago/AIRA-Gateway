@@ -24,6 +24,7 @@ import {
   ThinkingLevelCheck,
   Page,
   PipelineConfig,
+  Register,
   Report,
   UseCase,
   Suspension,
@@ -372,6 +373,31 @@ export class UseCaseService {
   useCaseReport(slug: string, from: string, to: string): Observable<Report> {
     return this.http.get<Report>(`${GW}/v1beta/reporting`, {
       params: { from, to, use_case: slug },
+    });
+  }
+
+  /**
+   * The register of processing activities (`FRD-608`).
+   *
+   * One row per use case: purpose, processing, released models and where they live, whether
+   * prompts are kept and for how long, the controls, who is a member — and where the traffic
+   * actually went. Scoped by the caller's token, by the very same function the report uses.
+   */
+  register(from: string, to: string): Observable<Register> {
+    return this.http.get<Register>(`${GW}/v1beta/register`, { params: { from, to } });
+  }
+
+  /**
+   * The same register as a spreadsheet (`FRD-608` §2.2).
+   *
+   * A blob for the reason `reportCsv` gives: the endpoint needs the bearer token, and an
+   * `<a href>` carries no Authorization header.
+   */
+  registerCsv(from: string, to: string): Observable<Blob> {
+    return this.http.get(`${GW}/v1beta/register`, {
+      params: { from, to },
+      headers: { Accept: 'text/csv' },
+      responseType: 'blob',
     });
   }
 

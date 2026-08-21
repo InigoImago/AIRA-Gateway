@@ -5,6 +5,90 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## A register of processing activities, and residency that is measured (2026-08-21)
+
+> *"There is still no overview for IT Steuerung where they can list use cases, the description in
+> them, the models used, all the controls like how many days data is stored and so on, and generally
+> how the data processing happens. I do not know yet whether read access to all use cases is enough,
+> or whether a separate view or CSV export would do."*
+
+`FRD-608`, built. The owner's uncertainty was the right one to have, and the answer was unusual:
+**two of the three things they were unsure about already existed.** IT Steuerung already saw every
+use case (`OVERSIGHT_ROLES`), and every field was already stored — `description`, `processing_notes`,
+`store_payloads`, `retention_days`, `allowed_models`, the three capability flags,
+`restrict_members_to_own_requests`. What did not exist was the **shape**: `use-case-list.html`
+rendered two columns, and everything else was one click deeper, one use case at a time.
+
+That distinction decided the whole design. Governance is a **comparison** activity — *which use
+cases store prompts? which keep them longer than thirty days? which were processed outside the EU?*
+— and none of those is answered by opening forty detail pages. So the register is a *reading* of
+data the system already holds, and not a new datapath: nothing in it writes, nothing is authored,
+and no field exists because the register wanted it.
+
+**Served by the gateway, although Management authors every configuration field in it.** The gateway
+is where the two halves meet: `UseCaseRead` already carried the whole configuration, and the audit
+trail is the measurement. Assembling it in Management would have meant shipping the audit trail
+across the planes to reach a half that was already on this side. The route sits behind
+`api/reporting.py`'s heading for the reason the suspension endpoints were moved **out** of it, read
+the other way: those left because they are bounded by *role*; this stays because it is bounded by
+**use case**, by the very same `visible_scope`. Two ways of being safe do not share a file; two
+endpoints safe the same way should.
+
+**The measured half is the point.** Every audit row has carried the region a request actually went
+to since `FRD-115` FR-10, and nothing read it. The register now puts *where processing happened*
+beside *where the configuration says it may*, per use case and installation-wide, and names the
+difference: `unexpected_regions`. `FRD-611` closed the **configuration** door on `global`; this is
+the **measurement**, and a model catalogued in a permitted region and served from another would
+still be invisible without it.
+
+Two rules the measurement needed, both the same rule this project keeps applying to money. *Unknown
+is not a violation*: a row with no region is reported under its provider and never counted as a
+transfer, because most dialects address a model by name and the mock and local providers run in the
+container — counting those would make the finding column always red, which is the reliable way to
+have a finding ignored. And *nothing to compare is not a finding*: a use case whose models name no
+region has no configured residency to disagree with.
+
+**Erasure as evidence** (§2.4). `RetentionService.prune` has returned `payloads_cleared` and
+`rows_deleted` since `FRD-404` and **nothing read them** — they went into a log line and out of
+reach. A new `retention_runs` table (migration `0041`) records each pass, written inside the same
+transaction as the deletions it describes: a record of an erasure that could commit while the
+erasure rolled back would be worse than none, because somebody would believe it. The register prints
+the last pass, or says there is no record — never a zero, which would read as *the sweep ran and
+found nothing*.
+
+**And the two planes compared** (§4). Both keep a catalogue, one feeds the other over Kafka, and
+nothing compared them: the pass that wrote this FRD found `mock-1` in the gateway's read-model with
+no row in Management — a model it could serve that no screen showed and no role could remove. The
+register reports the gateway's list, the console holds Management's, and the screen says when they
+disagree in either direction. Use cases are **not** compared, and the FRD says why: at the 917 rows
+one installation already has, that is a paging question rather than a rendering one.
+
+Three of the owner's five open questions are answered in the FRD, two from the document's own
+argument. Retired use cases are in the register by default and marked — they are still processing
+records for as long as their payloads exist. The exports are produced on demand rather than kept:
+keeping them would make the system the custodian of its own compliance record, which has a retention
+question of its own. *Per organisational unit* stays open and is **not buildable as asked** — there
+is no such field in the data model, and a search box over name, id, purpose and processing is what a
+deployment gets until there is.
+
+**One thing the browser layer taught rather than confirmed.** A use case created a second ago is in
+Management and not yet in the register, because the register reads the gateway and the gateway
+learns over Kafka. That is not a defect to paper over: for a register it is the more honest of the
+two readings — it describes what is *in force* rather than what was last typed — and the test polls
+for it and says so.
+
+**And a guard caught me writing the exact defect it exists for.** The four info hints on the new
+screen were written as `text="…"` attributes, which Angular ignores, so every one of them would have
+opened an empty panel. `LESSONS.md` §1 lists that under *a badge-wearing absent control*, and
+`test_console_info_hints.py` was written after it happened. It failed on the first run of the new
+page — which is what a guard is for, and the reason this one is worth the twenty lines it costs.
+
+Gateway: `reporting/register.py`, `reporting/register_csv.py`, one route, one table, one migration.
+Console: a `Register` screen for an oversight role. 28 hermetic tests, 15 component tests, 6 browser
+tests; the whole browser suite, the Python suite and both linters green.
+
+---
+
 ## Half a stack, and a form that re-packs under the reader (2026-08-21)
 
 > *"Can you go through all the fields in the UI, type something in and look for odd behaviour? We
