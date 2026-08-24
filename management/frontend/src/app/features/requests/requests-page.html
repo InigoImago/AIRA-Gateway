@@ -1,12 +1,18 @@
-<div class="page">
-  <header class="page__head">
-    <div>
-      <h2 class="page__title">Requests</h2>
-      <p class="muted" style="margin: 0.25rem 0 0">
-        Every request across every use case you can see, newest first. Open a row to read what was
-        actually sent — the numbers are on the row, the content is one click away.
-      </p>
-    </div>
+<!--
+  `.stack`, like every other page. This was `<div class="page"><header class="page__head">`
+  with an `<h2 class="page__title">` — three classes that are **defined nowhere in the
+  stylesheet**, so the page was laid out by whatever the browser does with a `div` and an
+  `h2`. What that costs is a gap: `.stack` gives its children `gap: 1rem`, and with no
+  `.page` rule the heading sat flush against the content below it — measured at 0px, on the
+  two pages in the console that used these names and nowhere else.
+-->
+<div class="stack">
+  <header>
+    <h2 class="card__title" style="margin: 0">Requests</h2>
+    <p class="muted" style="margin: 0.25rem 0 0">
+      Every request across every use case you can see, newest first. Open a row to read what was
+      actually sent — the numbers are on the row, the content is one click away.
+    </p>
   </header>
 
   @if (feedback.error(); as error) {

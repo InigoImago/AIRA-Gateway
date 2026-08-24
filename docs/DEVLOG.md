@@ -5,6 +5,78 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## A class that is spelled wrong renders (2026-08-24)
+
+> *"We have had a few problems in the interface — try to smooth them out. In some places elements
+> in windows are put side by side instead of packing them underneath one another, in some places
+> elements are so close together that they have no margin. Try to find all of these and smooth
+> them out."*
+
+A sweep, measured in a real browser rather than looked at: every route at four widths under three
+roles, and every window opened by its own trigger. Two probes — one grouping a window's `.field`
+elements by the line they sit on, one comparing the boxes of adjacent siblings.
+
+**Side by side in a window: exactly one dialog, and it took two fixes.** Eight of the nine windows
+stack. The ninth is `rule-form`, which appears twice — the use case's rules tab and the global rule
+editor — and it laid out *Watch for* 551px beside *Raised about* 263px, then *Above*, *Over
+(minutes)* and *Smallest sample* all on one line.
+
+The interesting part is why the rule that was supposed to prevent this did not, because it failed
+twice for different reasons:
+
+1. The selector read `.modal__body form.form-inline > .field`. The `form.` was written to exempt a
+   `.form-inline` nested in a fieldset — a nested one is a `div`, HTML forbids nesting forms — and
+   it therefore exempts *every* form whose fields live one level down. `rule-form` is
+   `form.form-stack > div.form-inline`, and the outer column exists for a good reason recorded in
+   the stylesheet: it keeps "Create rule" off the field row. **The one window that separated its
+   actions properly was the one window whose fields were never stacked.** The exemption now names a
+   `fieldset`, which is a thing somebody wrote on purpose, rather than `form` versus `div`, which is
+   a coincidence of nesting.
+2. Widening it changed nothing, and the browser said why: `.form-stack .form-inline` is a **grid**,
+   and a grid item ignores `flex-basis`. That grid was itself the fix for *"a rule editor put five
+   controls in a row on a wide screen"* — right on a page, and in an 880px window it is the same
+   complaint one size down. So the grid keeps its equal widths and gets one column in a window.
+   Then it *still* did not stack, and the browser said why again: `.field.grow` asks for
+   `grid-column: span 2`, which beside a single-column template does not widen anything — it makes
+   the grid invent an implicit second track. `grid-template-columns` computed as
+   `527.703px 286.297px`. Three rounds, each one measured, none guessable from the source.
+
+**No margin: three, and then a whole class of them.** The gap probe found `/requests` and
+`/pipeline-tests` with their heading flush against the content at 0px, and on the second the tab
+strip flush against the card as well. The cause was not a missing margin. Both pages open with
+`<div class="page"><header class="page__head">` and an `<h2 class="page__title">` — **none of the
+three exists in any stylesheet**. Every other page uses `.stack`, which gives `gap: 1rem`; these two
+were laid out by whatever the browser does with a bare `div`.
+
+Which is a mistake nothing here could catch. A misspelled class does not fail — it renders, and the
+page looks *nearly* right. Angular does not warn, `tsc` never sees a `class` attribute, and this
+project has no ESLint. So the scan became a test, and it found five more: `.hint` twice where the
+console's small muted line is `.field__hint`; `.badge--ok` on the *Active* rate-limit badge where
+the green one is `.badge--success`; `.table-scroll` twice on the connection panel where the scroll
+container is `.table-wrap`, so two tables had none; and `.right` on a cell of actions where the
+right-aligned one is `.table__actions`. Six names, four files, all rendering.
+
+`tools/tests/test_every_class_the_console_uses_exists.py` now fails on a class no stylesheet
+defines, with an `ALLOWED` list of the fourteen names that are on an element for some other reason
+— each with that reason, and a second assertion that deletes itself when an entry stops being used.
+An allow-list of fourteen on day one is a weak guard and a reviewed one, which is the whole
+difference from the state before it.
+
+The third finding was a red warning callout 4px under its heading on the model-release panel. Fixed
+as a rule — `.section-title + .callout` — rather than as a margin on that paragraph: a heading sits
+close to its caption on purpose, and a bordered box at caption distance reads as attached to the
+heading instead of introduced by it.
+
+**What the sweep did not find**, worth recording because it was looked for: no overlapping elements
+at any of four widths under any of three roles, and no other touching pair. The ten remaining
+zero-gap pairs are a window's head, body and foot, which carry their own padding and a rule between
+them. The six remaining four-pixel pairs are all a heading and its `p.muted` caption, which is the
+distance that is correct.
+
+Both guards were broken on purpose before being believed: the window guard goes red with either
+half of the grid fix removed, and the class guard goes red both on a reintroduced `.badge--ok` and
+on an `ALLOWED` entry no template uses.
+
 ## Nine columns, and the jiggle that was not where anybody looked (2026-08-21)
 
 > *"For me the register UI is a bit too cluttered. I would like collapsible elements like the

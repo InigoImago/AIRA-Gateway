@@ -307,7 +307,20 @@ reading code.
   every window there is. **Ask what the smallest thing is that the rule is really about** — here a
   form inside a window, which the stylesheet can see without being told — and scope it to that;
   a rule keyed on a marker somebody must apply is a rule that is applied where it was written and
-  nowhere else. The same round found the counterpart in the same footer: an existing idiom
+  nowhere else.
+
+  *And then twice more, in the same rule, for reasons the source cannot show you.* Widened to
+  `.modal__body form.form-inline > .field`, it still missed the anomaly rule editor — because the
+  `form.` was itself an exemption, written so a `.form-inline` nested in a fieldset could stay a
+  row, and it therefore exempts **every** form whose fields live one level down. The one window
+  that separated its actions from its fields properly was the one window whose fields never
+  stacked. Naming the exemption `fieldset` — a grouping somebody wrote on purpose — fixed the
+  spelling and changed nothing on screen, because that row is a **grid**, and a grid item ignores
+  `flex-basis`. Given one column, it *still* did not stack: `.field.grow` asks for
+  `grid-column: span 2`, which beside a single-column template does not widen a track, it invents
+  an implicit second one — `grid-template-columns` computed as `527.703px 286.297px`. **A layout
+  rule is believed when the browser has been measured, not when the selector reads correctly**;
+  each of those three was invisible in the stylesheet and obvious in `getComputedStyle`. The same round found the counterpart in the same footer: an existing idiom
   (`form-actions__spacer`) used in one file and not in the other, so a badge appearing pushed the
   button that had just been pressed 101 px out from under the cursor.
 
@@ -324,6 +337,21 @@ reading code.
   asserted `len(reads) >= 8` as a vacuity check. A literal floor makes deleting dead code look like
   breaking a guard, and the cheapest way out is to keep the dead code. **A guard against vacuity is
   written as the property, not as a number** — every accessor in the module is one the parser sees.
+
+- **A name with no definition is a style the page appears to have.** The inverse of the entry
+  above, and worse, because it *renders*. A misspelled class is not an error anywhere: Angular does
+  not warn, `tsc` never sees a `class` attribute, this project has no ESLint, and the element simply
+  gets what the browser gives a bare tag — so the page looks nearly right and survives review, a
+  test suite and a demo. Two whole pages opened with `<div class="page"><header class="page__head">`
+  and an `<h2 class="page__title">`, **none of which exists in any stylesheet**; every other page
+  uses `.stack` and its `gap: 1rem`, and these two had their heading flush against the content at
+  0px. A scan of every class in every template against every rule found five more of the same
+  thing: the small muted line spelled `.hint` where it is `.field__hint`, a green badge spelled
+  `.badge--ok` where it is `.badge--success`, a scroll container spelled `.table-scroll` where it is
+  `.table-wrap` — so two tables had none — and a right-aligned actions cell spelled `.right`.
+  **A vocabulary with no compiler needs a scan**, and its allow-list is the point: fourteen names
+  are on an element for some other reason, each now recorded with that reason instead of being
+  indistinguishable from the six that were mistakes.
 
 - **A guard that cannot fail.** *Four, each caught only by breaking it deliberately:* an Angular
   spec using `import.meta.glob` failed to *load* and Vitest reported "0 tests" inside a green run;

@@ -1,14 +1,20 @@
-<div class="page">
-  <header class="page__head">
-    <div>
-      <h2 class="page__title">Pipeline tests</h2>
-      <p class="muted" style="margin: 0.25rem 0 0">
-        One catalogue of questions, put to a use case's own pipeline, and judged by a person. Every
-        use case is asked all of them, which is what makes two of them comparable. Testing a
-        <em>model</em> is a use case whose pipeline starts there. Nothing here decides whether an
-        answer is good — the rating carries the name of whoever gave it.
-      </p>
-    </div>
+<!--
+  `.stack`, like every other page. This was `<div class="page"><header class="page__head">`
+  with an `<h2 class="page__title">` — three classes that are **defined nowhere in the
+  stylesheet**, so the page was laid out by whatever the browser does with a `div` and an
+  `h2`. What that costs is a gap: `.stack` gives its children `gap: 1rem`, and with no
+  `.page` rule the heading sat flush against the content below it — measured at 0px, on the
+  two pages in the console that used these names and nowhere else.
+-->
+<div class="stack">
+  <header>
+    <h2 class="card__title" style="margin: 0">Pipeline tests</h2>
+    <p class="muted" style="margin: 0.25rem 0 0">
+      One catalogue of questions, put to a use case's own pipeline, and judged by a person. Every
+      use case is asked all of them, which is what makes two of them comparable. Testing a
+      <em>model</em> is a use case whose pipeline starts there. Nothing here decides whether an
+      answer is good — the rating carries the name of whoever gave it.
+    </p>
   </header>
 
   @if (feedback.error(); as error) {

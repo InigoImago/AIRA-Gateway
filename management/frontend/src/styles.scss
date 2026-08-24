@@ -429,10 +429,26 @@ $field-label-gap: 0.3rem;
  * width goes with it — 880 pixels was chosen for a listing of fifty models, and a stack of fields
  * in it is a form using the left half of a window.
  *
- * Only the form's **own** children: the capabilities tab nests a `.form-inline` inside a fieldset
- * for the per-media-type and per-level token fields, and fifteen of those in a column is a page of
- * scrolling where a row of small numbers is exactly right. A nested one is a `div`, never a
- * `form` — HTML forbids that — so requiring `form.form-inline` is what keeps the exemption.
+ * **The exemption is a `fieldset`, and it used to be the word `form`.** The capabilities tab nests
+ * a `.form-inline` inside a fieldset for the per-media-type and per-level token fields, and fifteen
+ * of those in a column is a page of scrolling where a row of small numbers is exactly right. That
+ * exemption was originally spelled `form.form-inline` — a nested row is a `div`, never a `form`,
+ * because HTML forbids nesting them — and the spelling was the bug. It exempts *every* `div` row,
+ * including a form whose fields simply happen to live one level down.
+ *
+ * So the exemption now names what it means. A `fieldset` is a deliberate grouping somebody wrote;
+ * `form` versus `div` was a coincidence of where the markup happened to nest.
+ *
+ * **This correction fixes nothing visible today, and it is kept anyway.** It was written as the fix
+ * for the anomaly rule editor — the one window measured with its fields side by side, *Watch for*
+ * 551px beside *Raised about* 263px and three thresholds on one line — and it did not fix it. That
+ * form's row is not a flex row at all: `.form-stack .form-inline` is a **grid** (see the rule near
+ * `.form-actions`), and a grid item ignores `flex-basis` entirely. The browser said so and the
+ * measurement did not move. The real fix is one rule below.
+ *
+ * Kept because the narrower spelling was still wrong — the next window whose fields sit one level
+ * down in an ordinary flex row would have hit it — and because the only thing it changes today is
+ * a `.form-inline` holding a single field, which already filled its row.
  *
  * **Every window, and not by a class somebody has to remember.** This was
  * `.modal--steady .modal__body > form.form-inline > .field`, and both halves of that selector were
@@ -453,8 +469,39 @@ $field-label-gap: 0.3rem;
  * every window there is. So the rule is now a property of *a form in a window*, which is a thing
  * the stylesheet can see without being told.
  */
-.modal__body form.form-inline > .field {
+.modal__body .form-inline > .field {
   flex-basis: 100%;
+}
+/* The grouping that is allowed to stay a row. Higher specificity than the rule above by one
+ * element selector, so it wins wherever somebody wrote a `fieldset` on purpose. */
+.modal__body fieldset .form-inline > .field {
+  flex-basis: auto;
+}
+
+/* **And the same sentence for the grid**, which is what the rule editor's fields actually are.
+ *
+ * `.form-stack .form-inline` is a grid on purpose: it was itself the fix for *"a rule editor put
+ * five controls in a row on a wide screen and the reader had to hunt for the one they wanted"*, and
+ * it gives every field the same width and a predictable place. That is right on a page. In a window
+ * it is the same complaint one size down — three across in an 880px dialog is still a reader
+ * scanning sideways for the control they want, and it is the only window in the console that does
+ * it, which makes it wrong twice over.
+ *
+ * So: the grid keeps its equal widths and its predictable places, and in a window it has one
+ * column. Not a second layout — the same layout, told how wide the room is. */
+.modal__body .form-stack .form-inline {
+  grid-template-columns: 1fr;
+}
+/* And nothing spans two of them, because there is only one.
+ *
+ * `.field.grow` asks for `grid-column: span 2` — right on a page, where `grow` used to mean "take
+ * the slack" and now means "ask for two tracks". Left in place beside a single-column template it
+ * does not widen anything: it makes the grid **invent an implicit second track** for the item that
+ * asked. Measured with the one-column rule in and this one out: `grid-template-columns` computed as
+ * `527.703px 286.297px` — a two-column grid where the stylesheet had declared one, and the fields
+ * still side by side. */
+.modal__body .form-stack .form-inline .field.grow {
+  grid-column: span 1;
 }
 
 /* A field that grows may not shrink to nothing.
@@ -716,6 +763,22 @@ $field-label-gap: 0.3rem;
   margin-top: 1rem;
   padding-top: 1rem;
   border-top: 1px dashed var(--aira-border);
+}
+
+/* **A heading and a box are not a heading and its subtitle.**
+ *
+ * A `.section-title` is written with a small margin under it because what usually follows is a
+ * muted line explaining it — a caption, which belongs close. A `.callout` is a surfaced box with
+ * its own border and ground, and at the same distance it reads as *attached to the heading* rather
+ * than as the thing the heading introduces. Measured at **4px** on the model-release panel, where
+ * the box in question is the red one that says the use case can call nothing at all.
+ *
+ * A rule rather than a margin on that one paragraph: the next panel to put a callout under a
+ * heading gets it right without anybody remembering, which is the difference this stylesheet keeps
+ * having to relearn. */
+.section-title + .callout,
+.card__title + .callout {
+  margin-top: 0.7rem;
 }
 
 /* ---- progress bar (budget consumption) ------------------------------------------- */
