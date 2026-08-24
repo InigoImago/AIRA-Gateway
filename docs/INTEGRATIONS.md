@@ -140,6 +140,30 @@ The dev realm has it on the SPA client and on the test service accounts. A realm
 only some of them produces a feature that works for some callers and not others, which is the
 hardest shape of all to diagnose.
 
+#### And an audience claim, which Keycloak does not add by itself
+
+> **The access token's `aud` must carry whatever you set as `AIRA_OIDC_AUDIENCE`.**
+
+Outside `AIRA_ENVIRONMENT=local` the gateway and Management both **refuse to start** without an
+audience named ([`ADR-0015`](adr/ADR-0015-a-convenience-default-is-a-production-default.md)): without one, any token
+the realm ever minted is accepted, including one issued to a different client. But a Keycloak access
+token for a public client carries `aud: ["account"]` and **not** the client id, so the value has to
+be put there deliberately:
+
+| Field | Value |
+|---|---|
+| Mapper type | Audience |
+| Included Client Audience | the value you will configure as `AIRA_OIDC_AUDIENCE` |
+| Add to access token | on |
+
+A client scope does the same job and is the better place for it when several clients need it.
+
+The dev realm has **no** audience mapper and needs none — it runs as `local`, where the check is
+skipped so that a laptop works against a realm nobody configured. That is why this requirement was
+missing from this list until an integration meeting asked for it: the gap is invisible from inside
+this stack and surfaces on somebody else's Keycloak, as *every token rejected with 401 against a
+realm that looks entirely correct*.
+
 #### And one that decides whose allowance is whose
 
 > **`preferred_username` should be in the access token** — Keycloak puts it there by default.
@@ -212,10 +236,10 @@ used, so on a fresh installation the first grant of a new group has to be typed.
   realm import, and the failure looks like Keycloak not starting.
 
 > done three role groups named in `AIRA_ROLE_GROUPS` · a **`groups` claim with full paths on
-> every client, including service accounts** — without it nobody holds any role at all · a public
-> PKCE client
-> with pinned URIs · password grant off · issuer reachable from both services · *(optional)* a
-> read-only service account for directory search
+> every client, including service accounts** — without it nobody holds any role at all · an
+> **audience mapper**, without which the services do not start · a public PKCE client
+> with pinned URIs · password grant off · issuer reachable from both services **at the same URL the
+> browser uses** · *(optional)* a read-only service account for directory search
 
 ---
 
