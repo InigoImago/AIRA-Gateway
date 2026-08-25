@@ -572,6 +572,9 @@ class ModelRead(Base):
     addressing: Mapped[Any | None] = mapped_column(JSON(none_as_null=True), nullable=True)
     #: What the price attaches to when the caller-facing name is not the vendor's (ADR-0011 r2).
     underlying_model: Mapped[str] = mapped_column(String(128), default="")
+    #: What the model can hold at once, prompt and answer together (`FRD-132` §11). Published
+    #: as the Gemini model resource's `inputTokenLimit`; never enforced here.
+    context_window: Mapped[int | None] = mapped_column(Integer, nullable=True)
     max_output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     default_max_output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     thinking: Mapped[Any | None] = mapped_column(JSON(none_as_null=True), nullable=True)

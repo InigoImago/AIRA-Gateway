@@ -6,6 +6,7 @@ import { Observable } from 'rxjs';
 import {
   KiraModel,
   ApiKey,
+  CatalogModel,
   Budget,
   BudgetUsage,
   IssuedApiKey,
@@ -21,6 +22,7 @@ import { MeService } from '../../core/api/me.service';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { InfoHint } from '../../core/ui/info-hint';
 import { Modal } from '../../core/ui/modal';
+import { openCodeModel } from './opencode-config';
 import { PageFeedback } from '../../core/ui/page-feedback';
 import { windowFor } from '../../core/ui/periods';
 import { BudgetsTab } from './budgets-tab';
@@ -239,9 +241,7 @@ export class UseCaseDetail implements OnInit {
     // hard-coded, because "declares tool calling" is a measured fact that changes (`FRD-131`).
     this.service.models().subscribe({
       next: (models) =>
-        this.toolModels.set(
-          models.filter((m) => (m.capabilities ?? []).includes('tools')).map((m) => m.name),
-        ),
+        this.toolModels.set(models.filter((m) => (m.capabilities ?? []).includes('tools'))),
       error: () => undefined,
     });
     // The KIRA ids, for the connection block. Loaded here rather than in the panel because the
@@ -458,20 +458,24 @@ export class UseCaseDetail implements OnInit {
             npm: '@ai-sdk/google',
             name: 'AIRA Gateway',
             options: { baseURL: `${window.location.origin}/gw/v1beta`, apiKey: issued.api_key },
-            models: Object.fromEntries(
-              this.toolModels().map((model) => [model, { name: `${model} via AIRA` }]),
-            ),
+            models: Object.fromEntries(this.toolModels().map((m) => [m.name, openCodeModel(m)])),
           },
         },
-        model: `aira/${this.toolModels()[0] ?? 'qwen2.5:3b'}`,
+        model: `aira/${this.toolModels()[0]?.name ?? 'qwen2.5:3b'}`,
       },
       null,
       2,
     );
   }
 
-  /** Models the catalog declares able to call tools — the only ones an assistant can use. */
-  protected readonly toolModels = signal<string[]>([]);
+  /**
+   * Models the catalog declares able to call tools — the only ones an assistant can use.
+   *
+   * The whole catalog entry rather than its name, because the configuration below needs the
+   * limits and the prices too. It used to be a `string[]`, which is why the generated file could
+   * only ever say what a model is *called*.
+   */
+  protected readonly toolModels = signal<CatalogModel[]>([]);
 
   protected downloadOpenCodeConfig(issued: IssuedApiKey): void {
     const blob = new Blob([this.openCodeConfig(issued)], { type: 'application/json' });

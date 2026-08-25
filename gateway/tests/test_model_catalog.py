@@ -335,6 +335,52 @@ async def test_a_declaration_reaches_the_model_list() -> None:
     assert all(m["airaDeclared"] is False for m in others)
 
 
+async def test_the_model_list_publishes_the_two_limits_google_publishes() -> None:
+    """`FRD-132` §11.
+
+    A client sizes a conversation against `inputTokenLimit`, and every assistant's *"12% of the
+    context used"* is that number underneath. AIRA published the output half under an **invented**
+    name — `airaMaxOutputTokens`, beside the standard one — and the input half not at all, so a
+    client written against Google read nothing. Measured: OpenCode resolved
+    `limit: {context: 0, output: 0}` and showed a gauge stuck at 0%.
+
+    The extension stays beside the standard field, carrying the same figure: withdrawing a field a
+    caller has been reading since `FRD-114` is not a tidy-up a compatibility surface gets to do.
+    """
+    from aira_gateway.upstreams.base import ProviderRegistry
+    from aira_gateway.upstreams.mock import MockProvider
+
+    app = _app()
+    app.state.providers = ProviderRegistry([MockProvider("mock-1")])
+    with TestClient(app) as client:
+        await _declare(app, "mock-1", context_window=40960, max_output_tokens=4096)
+        listed = client.get("/v1beta/models").json()["models"][0]
+
+    assert listed["inputTokenLimit"] == 40960
+    assert listed["outputTokenLimit"] == 4096
+    assert listed["airaMaxOutputTokens"] == 4096
+
+
+async def test_a_limit_nobody_declared_is_absent_rather_than_zero() -> None:
+    """**The whole reason this is worth a test.**
+
+    Google omits a limit it has no figure for. A zero is not "unknown" to a client — it is a full
+    context window, and a gauge that divides by it either never moves or reads as complete. So an
+    undeclared model must carry no key at all, and `model_dump()` without `exclude_none` would have
+    sent `null`, which some clients coerce to the same zero.
+    """
+    from aira_gateway.upstreams.base import ProviderRegistry
+    from aira_gateway.upstreams.mock import MockProvider
+
+    app = _app()
+    app.state.providers = ProviderRegistry([MockProvider("mock-1")])
+    with TestClient(app) as client:
+        listed = client.get("/v1beta/models").json()["models"][0]
+
+    assert "inputTokenLimit" not in listed
+    assert "outputTokenLimit" not in listed
+
+
 async def test_a_catalogued_model_is_served_without_being_configured_too() -> None:
     """**The second list, removed** (`FRD-507`).
 

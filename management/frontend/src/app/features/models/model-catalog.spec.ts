@@ -107,6 +107,7 @@ interface Catalog {
   toggleCapability: (c: Capability, on: boolean) => void;
   publisher: { set: (v: string) => void; (): string };
   hosting: { set: (v: string) => void; (): string };
+  contextWindow: { set: (v: number | null) => void; (): number | null };
   maxOutput: { set: (v: number | null) => void; (): number | null };
   kiraId: { set: (v: number | null) => void; (): number | null };
   editorTab: { set: (v: string) => void; (): string };
@@ -657,6 +658,27 @@ describe('ModelCatalog — declarations (FRD-114)', () => {
     expect(sent.max_output_tokens).toBe(64000);
     expect(sent.default_max_output_tokens).toBe(4096);
     expect(sent.deprecated).toBe(true);
+  });
+
+  it('offers the context window, and sends what was typed into it', async () => {
+    /**
+     * `FRD-132` §11, and the half `test_every_model_control_is_reachable.py` cannot see: that guard
+     * asserts a writable serializer field has a payload key, this one asserts the control reaches
+     * it. Neither alone would have caught `numeric_id`, which had no control *and* no key.
+     *
+     * The field exists because a client has nowhere else to learn the figure — an assistant's
+     * "12% of the context used" divides by it, and with nothing declared OpenCode showed 0%.
+     */
+    const page = setup();
+    page.component.showAdd.set(true);
+    page.component.name.set('qwen3:0.6b');
+    page.component.toggleCapability('generate', true);
+    page.component.contextWindow.set(40960);
+    page.component.maxOutput.set(4096);
+    page.lookFirst();
+    page.component.save();
+
+    expect(page.saved[page.saved.length - 1].context_window).toBe(40960);
   });
 
   it('offers the KIRA id, and sends what was typed into it', async () => {

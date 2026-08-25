@@ -30,6 +30,7 @@ _DECLARED_COLUMNS = {
     "platform",
     "addressing",
     "underlying_model",
+    "context_window",
     "max_output_tokens",
     "default_max_output_tokens",
     "thinking",
@@ -104,6 +105,7 @@ async def test_a_declaration_published_by_the_relay_reaches_the_gateway(
                             "capabilities": ["generate", "thinking"],
                             "publisher": "anthropic",
                             "platform": "vertex",
+                            "context_window": 200000,
                             "max_output_tokens": 64000,
                             "default_max_output_tokens": 4096,
                             "thinking": {"modes": ["auto", "limited"], "max_tokens": 32000},
@@ -119,7 +121,7 @@ async def test_a_declaration_published_by_the_relay_reaches_the_gateway(
 
         row = await _wait_for(
             engine,
-            "SELECT capabilities, max_output_tokens, publisher, hosting"
+            "SELECT capabilities, max_output_tokens, publisher, hosting, context_window"
             " FROM model_catalog WHERE model = :name",
             {"name": name},
         )
@@ -128,6 +130,12 @@ async def test_a_declaration_published_by_the_relay_reaches_the_gateway(
         assert row[1] == 64000
         assert row[2] == "anthropic"
         assert row[3] == "managed"
+        # `FRD-132` §11. The newest field on this event, and the one whose absence is silent: the
+        # console offers it, the database stores it, Kafka carries it, and a consumer that has not
+        # been taught the key drops it with no error anywhere. Asserted here as well as in
+        # `tools/tests/test_a_model_event_is_applied_whole.py`, because that one reads source and
+        # this one reads the wire.
+        assert row[4] == 200000
     finally:
         async with engine.begin() as connection:
             await connection.execute(

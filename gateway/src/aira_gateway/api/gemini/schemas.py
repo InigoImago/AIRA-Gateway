@@ -422,9 +422,27 @@ class GeminiModel(BaseModel):
     version: str
     displayName: str
     supportedGenerationMethods: list[str]
+    #: **The two limits the official resource carries** (`FRD-132` §11), and this surface did not.
+    #:
+    #: Google publishes `inputTokenLimit` and `outputTokenLimit` on every model, and a client sizes
+    #: a conversation against the first: a coding assistant's *"12% of the context used"* is that
+    #: number underneath. AIRA had the second all along and published it as `airaMaxOutputTokens` —
+    #: an invented name beside a standard one, which is the one thing a compatibility surface must
+    #: not do, because no client written against Google reads it.
+    #:
+    #: Measured before this existed: OpenCode, pointed at AIRA, resolved
+    #: `limit: {context: 0, output: 0}` and showed a context gauge stuck at 0%.
+    #:
+    #: Omitted when unknown rather than sent as `0`. Google omits them for a model it has no figure
+    #: for, and a zero here is not "unknown" to a client — it is a full context window.
+    inputTokenLimit: int | None = None
+    outputTokenLimit: int | None = None
     # AIRA extensions (FRD-114 §7): a client can discover what a model may be asked to do rather
     # than reading our documentation — and, more usefully, see when nobody has declared it.
     airaCapabilities: list[str] | None = None
+    #: Kept beside `outputTokenLimit`, which now carries the same figure. Removing it would break
+    #: any caller that has been reading it since `FRD-114`, and a compatibility surface does not
+    #: get to withdraw a field to tidy up. New callers should read the standard one.
     airaMaxOutputTokens: int | None = None
     airaDeprecated: bool | None = None
     airaDeclared: bool | None = None

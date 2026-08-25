@@ -481,6 +481,7 @@ _DECLARATION_DEFAULTS: dict[str, Any] = {
     "platform": "",
     "addressing": None,
     "underlying_model": "",
+    "context_window": None,
     "max_output_tokens": None,
     "default_max_output_tokens": None,
     "thinking": None,

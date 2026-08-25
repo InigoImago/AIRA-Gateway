@@ -185,7 +185,8 @@ Management `Model` gains (all nullable, so existing rows stay valid):
 | `platform` | string? | which transport reaches it (`vertex`, `foundry`, …) |
 | `addressing` | JSON? | platform-specific: publisher path, resource + deployment, … (FR-2b) |
 | `underlying_model` | string? | what the price attaches to when the addressing differs (FR-2c) |
-| `max_output_tokens` | int? | FR-2 |
+| `context_window` | int? | what the model holds at once, prompt and answer together — **published, never enforced** (`FRD-132` §11) |
+| `max_output_tokens` | int? | FR-2; may not exceed `context_window` |
 | `default_max_output_tokens` | int? | applied when the caller sets none (FR-2) |
 | `attachments` | JSON? | accepted media types and their token estimates (FR-4a) |
 | `thinking` | JSON? | modes, `min_tokens`/`max_tokens` (for `limited`), default, and `levels`: the vendor's own level **words** (`ADR-0021`, which replaced a level→budget map) |
@@ -202,6 +203,16 @@ the consumer stays idempotent and tolerates the older payload shape during a rol
 - Management `GET/POST /api/v1/models/` — extended payload, write restricted to Global Admin.
 - Gateway `GET /v1beta/models` — reports capabilities and limits alongside the existing fields, so
   a client can discover them rather than reading our documentation.
+
+  **The two limits use Google's own names.** `inputTokenLimit` and `outputTokenLimit` are on the
+  official model resource, and a client written against Google reads those and nothing else. This
+  surface published the output half as `airaMaxOutputTokens` — an invented name beside a standard
+  one — and the input half not at all, until `FRD-132` §11. The `aira…` extension stays and carries
+  the same figure, because withdrawing a field a caller has read is not a tidy-up a compatibility
+  surface performs; the standard pair is what new callers should read.
+
+  A limit nobody declared is **absent**, not `0`: Google omits what it has no figure for, and a
+  zero is a full context window rather than an unknown one to whatever is dividing by it.
 
 ## 8. Security & Privacy
 

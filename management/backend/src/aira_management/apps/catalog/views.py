@@ -60,6 +60,7 @@ def _payload(model: Model) -> dict[str, Any]:
         "platform": model.platform,
         "addressing": model.addressing,
         "underlying_model": model.underlying_model,
+        "context_window": model.context_window,
         "max_output_tokens": model.max_output_tokens,
         "default_max_output_tokens": model.default_max_output_tokens,
         "thinking": model.thinking,

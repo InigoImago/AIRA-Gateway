@@ -237,6 +237,7 @@ def validate_declaration(data: dict[str, Any]) -> list[str]:
     """Every consistency rule, in one call. Returns the problems; empty means consistent."""
     max_output = data.get("max_output_tokens")
     default_output = data.get("default_max_output_tokens")
+    context = data.get("context_window")
 
     errors = [
         *validate_capabilities(data.get("capabilities", [])),
@@ -247,4 +248,9 @@ def validate_declaration(data: dict[str, Any]) -> list[str]:
     ]
     if max_output is not None and default_output is not None and default_output > max_output:
         errors.append("default_max_output_tokens must not exceed max_output_tokens.")
+    # The answer is drawn from the same window as the prompt, so a cap above the window is a
+    # number that cannot happen. Refused where it is written rather than discovered as a vendor
+    # error on somebody's request — the rule the whole of this module exists for (`FRD-114` FR-3).
+    if context is not None and max_output is not None and max_output > context:
+        errors.append("max_output_tokens must not exceed context_window.")
     return errors

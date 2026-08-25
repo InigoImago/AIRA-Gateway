@@ -144,6 +144,11 @@ def _declarations() -> list[dict[str, Any]]:
             # honest ceiling is the window itself. Prompt and answer share it, which makes this a
             # ceiling rather than a promise: 40 960 output tokens are reachable only with an empty
             # prompt, exactly as on any model whose two figures are one.
+            # And now the same figure under its own name (`FRD-132` §11). The comment above says
+            # the two are one on this runtime; until `context_window` existed there was nowhere to
+            # say so, and a client sizing a conversation had to be told by hand — or, as OpenCode
+            # was, not at all.
+            "context_window": 40960,
             "max_output_tokens": 40960,
             "default_max_output_tokens": 512,
             # **Measured, not guessed.** This block was deliberately empty until an integration

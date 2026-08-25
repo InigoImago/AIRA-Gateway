@@ -5,6 +5,79 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The gauge was reading a number nobody had written down (2026-08-25)
+
+> *"When I start OpenCode and connect it to AIRA, I can see that I am talking to AIRA over the
+> Gemini interface, but I cannot see how many tokens were used, and the limits are always at 0%. Do
+> we have the possibility of supplying that information over the official Gemini interface? …The
+> interface should stay like the official one — if it cannot be done, it cannot be done."*
+
+Answered by installing OpenCode and reading both sides, which was the right call: reasoning about it
+gave the wrong answer twice, and the second wrong answer was mine after I had already measured once.
+
+**The tokens were never missing.** A real `opencode run` against `qwen3:0.6b` through the Gemini
+surface — AIRA's audit row `2050 / 26 / 2076`, and OpenCode's own store
+`{"input": 2050, "output": 26, "total": 2076}`. `usageMetadata` is emitted on both exits,
+`@ai-sdk/google` reads it, and the two planes agree to the token.
+
+The streamed shape *is* wrong against Google and turned out not to matter. With an OpenAI-dialect
+upstream the totals arrive on a trailing chunk with no `finishReason`, and every earlier chunk
+carries zeros — the dialect's own convention relayed through a Gemini-shaped fassade. I was ready
+to call that the defect. The SDK takes the last usage it sees, so it is not; fixing it means holding
+the finish chunk, and a latency cost on every stream to tidy a shape no client misreads is the wrong
+trade until one does. Recorded in `FRD-132` §11.1, not changed.
+
+**What was zero was everything OpenCode never asks the API for.** Its resolved model read
+`limit: {context: 0, output: 0}` and `cost: {input: 0, output: 0}` — both from its *configuration
+file*, and the file the console generates at key issuance carried only a display name. A context
+gauge is `used / limit.context`. The hand-written harness in `tools/opencode/` has had
+`"limit": {"context": 32768, "output": 4096}` since `FRD-132` stage A; the generated one never
+inherited it, and nothing compared the two.
+
+So the honest answer to the owner's question is that for this client it does not arise: the fix is
+in a file, not in the surface, and the constraint they set is met by construction.
+
+**But the interface had drifted, and that half is real.** The official Gemini model resource carries
+`inputTokenLimit` and `outputTokenLimit`. AIRA published the second under an **invented** name,
+`airaMaxOutputTokens`, sitting next to the standard one it was not — and the first not at all. A
+client written against Google reads neither. Both standard fields are now filled, `airaMaxOutputTokens`
+stays beside its replacement (withdrawing a field a caller has read since `FRD-114` is not a tidy-up
+a compatibility surface gets to perform), and the list endpoint dumps with `exclude_none` — because
+Google omits a limit it has no figure for and a `0` is not "unknown" to a client, it is a full
+context window. The streamed exit has done that since `FRD-100` and this one had not: the same fact
+at two exits disagreeing, one more time.
+
+**And a field that did not exist.** Neither plane had a context window, so there was nothing to fill
+either `limit.context` or `inputTokenLimit` from. `context_window` now travels the ordinary route —
+model editor → serializer → model event → read-model → Gemini resource → generated config. Nullable,
+nothing backfilled, **not enforced**: the upstream refuses what does not fit, and a second copy of
+that ceiling here would be one more thing to keep true. One rule comes with it, `max_output_tokens`
+may not exceed it, because the answer is drawn from the same window as the prompt.
+
+The local seed declares `40960`, which is the number its own comment had already been explaining:
+on Ollama the window *is* the output ceiling, and until now there was nowhere to say so.
+
+Proved end to end rather than argued: Management row → outbox → Kafka → gateway read-model → the
+Gemini resource answering `inputTokenLimit: 40960`, and OpenCode then resolving
+`limit: {context: 40960, output: 40960}` where it had resolved zeros.
+
+**The dependency the owner asked me to check turned out to be missing entirely.** Management's
+`_payload` and the consumer's `_DECLARATION_DEFAULTS` are hand-written lists in two languages, and
+**nothing compared them** — so adding a field to one and forgetting the other is completely silent:
+console offers it, database stores it, Kafka carries it, read-model does not have it.
+`tools/tests/test_a_model_event_is_applied_whole.py` now fails in both directions, and its own
+vacuity assertion caught the first version reading nothing at all, because `async def` is a
+different AST node than `def`.
+
+Two things noted and not fixed, both in `FRD-132` §11.5. The model editor tells whoever types a
+price it is **US dollars**; `AIRA_CURRENCY` defaults to **EUR** and labels the same numbers in every
+report — a contradiction older than this round. And `thoughtsTokenCount` is sent as `null` on the
+buffered exit where the field's own comment says it is omitted, which is the same `exclude_none`
+question one response along.
+
+Python 95.72%; frontend 941; three mutations on the new properties all went red, plus both
+directions of the event guard.
+
 ## A class that is spelled wrong renders (2026-08-24)
 
 > *"We have had a few problems in the interface — try to smooth them out. In some places elements

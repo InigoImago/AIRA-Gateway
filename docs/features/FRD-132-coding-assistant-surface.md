@@ -262,3 +262,102 @@ Tested at three layers, deliberately: the unit tests fix the *content* (the key,
 model filter, the fallbacks); the e2e test proves the button produces an actual **file** with
 parseable JSON in it — the distinction that `FRD-206` shipped a defect on, when an info button was
 a `title` attribute and rendered nothing at all while every unit test passed.
+
+---
+
+## 11. The numbers a coding assistant shows, and where they come from (2026-08-25)
+
+> *"When I start OpenCode and connect it to AIRA, I can see that I am talking to AIRA over the
+> Gemini interface, but I cannot see how many tokens were used, and the limits are always at 0%.
+> Do we have the possibility of supplying that information over the official Gemini interface? The
+> interface should stay like the official one — if it cannot be done, it cannot be done."*
+
+Answered by installing OpenCode and reading both sides, because reasoning about it gave the wrong
+answer twice.
+
+### 11.1 The tokens were never missing
+
+A real run of `opencode run` against `qwen3:0.6b` through the Gemini surface:
+
+| Source | Figures |
+| --- | --- |
+| AIRA's audit row | `prompt 2050 · completion 26 · total 2076`, status 200 |
+| OpenCode's own store | `{"input": 2050, "output": 26, "total": 2076}` |
+
+`usageMetadata` is emitted on both the buffered and the streamed exit, `@ai-sdk/google` reads it,
+and the two planes agree to the token. **Nothing in the accounting was broken.**
+
+The streamed shape is worth recording since it was suspected: with an upstream speaking the OpenAI
+dialect, the totals arrive on a trailing chunk with no `finishReason`, and every earlier chunk
+carries zeros. That is the dialect's own convention relayed through a Gemini-shaped surface, and it
+is *not* what Google does. It was measured as harmless — the SDK takes the last usage it sees — so
+it is recorded here rather than changed. **Changing it means holding the finish chunk**, and a
+latency cost paid on every stream to tidy a shape no client was misreading is the wrong trade until
+one is.
+
+### 11.2 What was actually zero, and why the API could not have fixed it
+
+Asked what it had resolved for the model, OpenCode answered:
+
+```json
+"limit": { "context": 0, "output": 0 },
+"cost":  { "input": 0, "output": 0, "cache": { "read": 0, "write": 0 } }
+```
+
+**OpenCode does not ask the API for any of that.** It reads `limit` and `cost` from its
+configuration file — and the file §10 generates carried only a display name. A context gauge is
+`used / limit.context`, so it sat at 0% however full the conversation was. The hand-written harness
+in `tools/opencode/` has had `"limit": {"context": 32768, "output": 4096}` since the beginning; the
+generated one never inherited it.
+
+So the honest answer to *"can we supply it over the official interface"* is that for this client the
+question does not arise: the fix is in a file, not in the surface, and the constraint is met by
+construction.
+
+### 11.3 The one thing that *is* the interface, and where we had drifted
+
+The official Gemini model resource carries **`inputTokenLimit`** and **`outputTokenLimit`**. AIRA
+published the second under an invented name — `airaMaxOutputTokens`, sitting beside the standard one
+it was not — and the first not at all. A client written against Google reads neither.
+
+Filling the standard pair is a move **towards** the official shape. Two rules go with it:
+
+- **Absent, never zero.** Google omits a limit it has no figure for, and a `0` is not "unknown" to a
+  client — it is a full context window. The list endpoint now dumps with `exclude_none`, which the
+  streamed exit has done since `FRD-100` and this one had not: the same fact at two exits
+  disagreeing, one more time.
+- **The extension stays.** `airaMaxOutputTokens` keeps carrying the same figure. Withdrawing a field
+  a caller has read since `FRD-114` is not a tidy-up a compatibility surface gets to perform.
+
+### 11.4 The field that did not exist
+
+Neither plane had a **context window**. It is a fact about a vendor's model that this installation
+had never recorded, so `limit.context` and `inputTokenLimit` had nothing to be filled from.
+
+`context_window` is now a catalog field, travelling the ordinary route: the model editor's
+capabilities tab → the serializer → the model event → the gateway's read-model → the Gemini model
+resource, and into the generated configuration. Nullable, nothing backfilled, and **not enforced**:
+the upstream refuses what does not fit, and a second copy of that ceiling here would be one more
+thing to keep true. One consistency rule comes with it — `max_output_tokens` may not exceed it,
+because the answer is drawn from the same window as the prompt.
+
+The local seed declares `40960` for `qwen3:0.6b`, which is the figure its comment had already been
+explaining: on that runtime the window *is* the output ceiling, and until now there was nowhere to
+say so.
+
+### 11.5 What the pass found on the way
+
+- **Nothing compared the two halves of a model event.** Management's `_payload` and the consumer's
+  `_DECLARATION_DEFAULTS` are hand-written lists in different languages, and adding a field to one
+  and forgetting the other is completely silent: the console offers it, the database stores it,
+  Kafka carries it, the read-model does not have it. `tools/tests/test_a_model_event_is_applied_whole.py`
+  now fails in **both** directions — a published field nobody applies, and a default nobody sends.
+- **The price unit is stated two ways.** The model editor tells whoever types a price it is
+  **US dollars**; `AIRA_CURRENCY` defaults to **EUR** and labels the same numbers in every report
+  and CSV. The generated configuration writes the figures straight through, which matches what the
+  person entering them was told — and the contradiction is older than this section and not resolved
+  by it.
+- **`thoughtsTokenCount` is sent as `null`** on the buffered exit, where the field's own comment
+  says it is omitted when zero, *"because Google omits it for a model that did not think and a
+  compatibility surface should not invent a field the original leaves out"*. The streamed exit
+  omits it. Recorded, not fixed: it is the same `exclude_none` question one response along.

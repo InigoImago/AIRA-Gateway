@@ -103,6 +103,24 @@ class Model(models.Model):
     #: What the price attaches to when the addressing is not the model's real name.
     underlying_model = models.CharField(max_length=128, blank=True)
 
+    #: How much the model can hold at once, prompt and answer together (`FRD-132` §11).
+    #:
+    #: Not a limit AIRA enforces — the upstream refuses what does not fit, and a second copy of
+    #: that number here would be one more thing to keep true. It is here because a **client** has
+    #: nowhere else to learn it: the official Gemini model resource carries it as
+    #: `inputTokenLimit`, and a coding assistant shows *how full the conversation is* out of it.
+    #: Left empty it simply is not published, which reads as unknown rather than as zero.
+    context_window = models.PositiveIntegerField(null=True, blank=True)
+
+    #: How much the model can hold at once, prompt and answer together (`FRD-132` §11).
+    #:
+    #: Not a limit AIRA enforces — the upstream refuses what does not fit, and a second copy of
+    #: that number here would be one more thing to keep true. It is here because a **client** has
+    #: nowhere else to learn it: the official Gemini model resource carries it as
+    #: `inputTokenLimit`, and a coding assistant shows *how full the conversation is* out of it.
+    #: Left empty it is simply not published, which reads as unknown rather than as zero.
+    context_window = models.PositiveIntegerField(null=True, blank=True)
+
     max_output_tokens = models.PositiveIntegerField(null=True, blank=True)
     #: Applied when the caller sets no cap. Not polish: Anthropic **requires** ``max_tokens`` on
     #: every request (`FRD-119` §5.3), so without this a caller who omits it — most of them, since

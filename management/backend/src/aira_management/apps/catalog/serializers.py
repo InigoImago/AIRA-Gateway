@@ -33,6 +33,7 @@ class ModelSerializer(serializers.ModelSerializer[Model]):
             "platform",
             "addressing",
             "underlying_model",
+            "context_window",
             "max_output_tokens",
             "default_max_output_tokens",
             "thinking",
@@ -132,6 +133,7 @@ class ModelSerializer(serializers.ModelSerializer[Model]):
                 "thinking",
                 "embedding",
                 "attachments",
+                "context_window",
                 "max_output_tokens",
                 "default_max_output_tokens",
             )

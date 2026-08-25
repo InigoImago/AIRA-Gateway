@@ -928,6 +928,48 @@ describe('UseCaseDetail — retention', () => {
     expect(config.model).toBe('aira/qwen2.5:3b');
   });
 
+  it('carries each model’s limits and prices, which OpenCode cannot ask the API for', () => {
+    /**
+     * `FRD-132` §11. Measured before this existed: OpenCode resolved
+     * `limit: {context: 0, output: 0}` and showed a context gauge stuck at 0%, because those come
+     * from **this file** and it carried only a display name. A gauge is `used / limit.context`.
+     */
+    const { component } = setup({
+      models: of([
+        {
+          name: 'qwen2.5:3b',
+          capabilities: ['tools'],
+          context_window: 32768,
+          max_output_tokens: 4096,
+          input_price_per_million: '0.10',
+          output_price_per_million: '0.40',
+        },
+      ]),
+    });
+    component.issueKey();
+
+    const config = JSON.parse(component.openCodeConfig(component.issued()!));
+
+    expect(config.provider.aira.models['qwen2.5:3b']).toEqual({
+      name: 'qwen2.5:3b via AIRA',
+      limit: { context: 32768, output: 4096 },
+      cost: { input: 0.1, output: 0.4 },
+    });
+  });
+
+  it('leaves a limit out rather than writing a zero the catalog never declared', () => {
+    /** `0` is not "unknown" to a client — it is a full context window, and a gauge divides by it.
+     *  The console must not be the author of that number. */
+    const { component } = setup({
+      models: of([{ name: 'qwen2.5:3b', capabilities: ['tools'] }]),
+    });
+    component.issueKey();
+
+    const config = JSON.parse(component.openCodeConfig(component.issued()!));
+
+    expect(config.provider.aira.models['qwen2.5:3b']).toEqual({ name: 'qwen2.5:3b via AIRA' });
+  });
+
   it('falls back to a named model rather than an empty provider', () => {
     /** A catalog that has not loaded, or has no tool-capable model, must still produce a file
      *  somebody can edit — an empty `models` block is a config that fails with no clue why. */

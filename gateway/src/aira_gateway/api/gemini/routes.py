@@ -100,6 +100,11 @@ async def _described(request: Request, model: schemas.GeminiModel) -> schemas.Ge
     declaration = await catalog_of(request).declaration(model.name.removeprefix("models/"))
     return model.model_copy(
         update={
+            # The standard pair first, then the extension that predates it and carries the same
+            # figure. Both come from the catalog: nothing here asks the upstream, because a
+            # declaration is what this installation decided and a vendor's claim is not (`FRD-131`).
+            "inputTokenLimit": declaration.context_window,
+            "outputTokenLimit": declaration.max_output_tokens,
             "airaCapabilities": sorted(str(c) for c in declaration.capabilities),
             "airaMaxOutputTokens": declaration.max_output_tokens,
             "airaDeprecated": declaration.deprecated,
@@ -116,7 +121,11 @@ async def list_models(request: Request) -> JSONResponse:
         await _described(request, upstream_model_to_gemini(m))
         for m in registry_of(request).models()
     ]
-    return JSONResponse(schemas.ListModelsResponse(models=models).model_dump())
+    # `exclude_none`, so a model with no figure for a limit carries **no field** rather than a
+    # null — which is what Google does, and the difference matters: a client reading `0` sizes a
+    # conversation against a full context window. The streamed exit has done this since `FRD-100`;
+    # this one had not, which is the same fact at two exits disagreeing again.
+    return JSONResponse(schemas.ListModelsResponse(models=models).model_dump(exclude_none=True))
 
 
 @router.get("/v1beta/models/{model}")
@@ -125,7 +134,7 @@ async def get_model(model: str, request: Request) -> Response:
     if upstream_model is None:
         return _error(404, f"Model '{model}' not found.", "NOT_FOUND")
     described = await _described(request, upstream_model_to_gemini(upstream_model))
-    return JSONResponse(described.model_dump())
+    return JSONResponse(described.model_dump(exclude_none=True))
 
 
 #: How a refusal maps onto the closed outcome vocabulary. Anything unmapped is a bug in this

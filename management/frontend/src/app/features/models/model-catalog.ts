@@ -213,6 +213,7 @@ export class ModelCatalog implements OnInit {
   protected readonly publisher = signal('');
   protected readonly platform = signal('');
   protected readonly hosting = signal<'' | 'managed' | 'self_deployed'>('');
+  protected readonly contextWindow = signal<number | null>(null);
   protected readonly maxOutput = signal<number | null>(null);
 
   /**
@@ -617,6 +618,7 @@ export class ModelCatalog implements OnInit {
         addressing: this.regions().length ? { regions: this.regions() } : null,
         platform: this.platform().trim(),
         hosting: this.hosting(),
+        context_window: this.contextWindow(),
         max_output_tokens: this.maxOutput(),
         numeric_id: this.kiraId(),
         default_max_output_tokens: this.defaultOutput(),
@@ -656,6 +658,7 @@ export class ModelCatalog implements OnInit {
     this.regionVerdicts.set({});
     this.platform.set('');
     this.hosting.set('');
+    this.contextWindow.set(null);
     this.maxOutput.set(null);
     this.kiraId.set(null);
     this.defaultOutput.set(null);
@@ -792,6 +795,7 @@ export class ModelCatalog implements OnInit {
         label: 'Capabilities',
         value: model.is_declared ? (model.capabilities ?? []).join(', ') || '—' : 'undeclared',
       },
+      { key: 'context_window', label: 'Context window', value: dash(model.context_window) },
       { key: 'max_output_tokens', label: 'Output cap', value: dash(model.max_output_tokens) },
       {
         key: 'default_max_output_tokens',
@@ -1328,6 +1332,7 @@ export class ModelCatalog implements OnInit {
     this.regions.set(readRegions(model.addressing));
     this.platform.set(model.platform ?? '');
     this.hosting.set(model.hosting ?? '');
+    this.contextWindow.set(model.context_window ?? null);
     this.maxOutput.set(model.max_output_tokens ?? null);
     this.kiraId.set(model.numeric_id ?? null);
     this.defaultOutput.set(model.default_max_output_tokens ?? null);

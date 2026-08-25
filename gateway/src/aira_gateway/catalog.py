@@ -64,6 +64,9 @@ class ModelDeclaration:
     #: gated by this — see :class:`ModelApproved` for why.
     approved: bool = True
     capabilities: frozenset[Capability] = BASELINE_CAPABILITIES
+    #: What the model can hold at once. Carried so the model list can publish it; nothing on
+    #: the request path reads it, because the upstream is the authority on what fits.
+    context_window: int | None = None
     max_output_tokens: int | None = None
     default_max_output_tokens: int | None = None
     thinking: dict[str, Any] | None = None
@@ -404,6 +407,7 @@ def _from_record(model: str, record: ModelRead) -> ModelDeclaration:
         # A row with prices but no capability list is *undeclared*, so it gets the baseline —
         # not an empty set, which would refuse the generation that already works today.
         capabilities=capabilities if declared else BASELINE_CAPABILITIES,
+        context_window=record.context_window,
         max_output_tokens=record.max_output_tokens,
         default_max_output_tokens=record.default_max_output_tokens,
         thinking=record.thinking if isinstance(record.thinking, dict) else None,

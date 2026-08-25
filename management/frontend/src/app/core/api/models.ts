@@ -474,6 +474,14 @@ export interface CatalogModel {
   addressing?: Record<string, unknown> | null;
   /** What the price attaches to when the caller-facing name is not the vendor's. */
   underlying_model?: string;
+  /**
+   * What the model can hold at once, prompt and answer together.
+   *
+   * Not enforced by AIRA — the upstream refuses what does not fit. It exists because a *client*
+   * has nowhere else to learn it: it is the Gemini model resource's `inputTokenLimit`, and a
+   * coding assistant's "12% of the context used" is this number underneath.
+   */
+  context_window?: number | null;
   max_output_tokens?: number | null;
   /** Applied when the caller sets no cap — Anthropic requires one on every request. */
   default_max_output_tokens?: number | null;

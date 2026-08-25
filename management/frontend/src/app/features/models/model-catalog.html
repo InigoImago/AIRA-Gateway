@@ -732,6 +732,28 @@
         }
         @if (editorTab() === 'capabilities') {
           <div class="field">
+            <label for="model-context-window">
+              Context window
+              <app-info-hint label="Context window" [wide]="true">
+                What this model can hold at once, prompt and answer together. AIRA does not enforce
+                it — the platform refuses what does not fit — but a client has nowhere else to learn
+                it, and an assistant showing "how full is this conversation" is dividing by this
+                number. Published as the Gemini model resource's
+                <code>inputTokenLimit</code>. Left blank it is not published at all, which reads as
+                unknown rather than as a window of zero.
+              </app-info-hint>
+            </label>
+            <input
+              id="model-context-window"
+              type="number"
+              min="1"
+              name="context_window"
+              [ngModel]="contextWindow()"
+              (ngModelChange)="contextWindow.set($event)"
+              placeholder="—"
+            />
+          </div>
+          <div class="field">
             <label for="model-max-output">Max output tokens</label>
             <input
               id="model-max-output"

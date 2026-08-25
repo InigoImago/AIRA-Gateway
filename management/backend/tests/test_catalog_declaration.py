@@ -26,11 +26,41 @@ def _declaration(**over: Any) -> dict[str, Any]:
         "thinking": None,
         "embedding": None,
         "attachments": None,
+        "context_window": None,
         "max_output_tokens": None,
         "default_max_output_tokens": None,
     }
     base.update(over)
     return base
+
+
+# -- the context window (`FRD-132` §11) ---------------------------------------------------
+
+
+def test_an_output_cap_above_the_context_window_is_refused() -> None:
+    """The answer is drawn from the same window as the prompt, so a cap above it cannot happen.
+
+    Refused where it is written rather than discovered as a vendor error on somebody's request,
+    which is what this whole module exists for (`FRD-114` FR-3). The pair also decides what the
+    console writes into a coding assistant's configuration, where the two are published together:
+    an impossible pair there is a context gauge that reads over 100%.
+    """
+    errors = validate_declaration(_declaration(context_window=8192, max_output_tokens=16384))
+
+    assert errors == ["max_output_tokens must not exceed context_window."]
+
+
+def test_an_output_cap_equal_to_the_context_window_is_allowed() -> None:
+    """A model that will spend its whole window answering is unusual and not impossible, and the
+    boundary is the half of a comparison that gets written the wrong way round."""
+    assert validate_declaration(_declaration(context_window=8192, max_output_tokens=8192)) == []
+
+
+def test_a_context_window_alone_constrains_nothing() -> None:
+    """Neither figure is required, and a declaration carrying only one of them stays valid — the
+    catalog has never demanded a complete declaration and this must not be where it starts."""
+    assert validate_declaration(_declaration(context_window=40960)) == []
+    assert validate_declaration(_declaration(max_output_tokens=4096)) == []
 
 
 # -- the rule with teeth ------------------------------------------------------------------
