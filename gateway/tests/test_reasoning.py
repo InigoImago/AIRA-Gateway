@@ -83,6 +83,41 @@ def test_the_provider_is_asked_for_thoughts_only_where_the_use_case_allows_it() 
     assert on["generationConfig"]["thinkingConfig"]["includeThoughts"] is True
 
 
+def test_the_served_response_omits_the_thinking_count_rather_than_sending_null() -> None:
+    """The same rule, asserted **on the wire** instead of on the schema.
+
+    The test below already dumped a `UsageMetadata` with `exclude_none` and checked the key was
+    gone. That proves the schema can do it, and the route did not: `canonical_to_gemini(...)
+    .model_dump()` sent `"thoughtsTokenCount": null` on every buffered answer, which is the same
+    invented field the docstring below refuses, wearing a different value.
+
+    Its own comment records the earlier version of exactly this mistake — *"the first version of
+    this asserted that the field exists and is omitted when empty — both true with the mapping
+    handing over `None`, so the mutation that stopped filling it survived"*. One level further
+    out, one more time: what a caller receives is decided by the route, so the route is what is
+    asked.
+    """
+    from fastapi.testclient import TestClient
+
+    from aira_gateway.app import create_app
+    from aira_gateway.config import GatewaySettings
+
+    app = create_app(GatewaySettings(auth_required=False, log_queue_size=0))
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1beta/models/mock-1:generateContent",
+            json={"contents": [{"role": "user", "parts": [{"text": "hallo"}]}]},
+        )
+
+    assert response.status_code == 200, response.text
+    usage = response.json()["usageMetadata"]
+    # The mock does not think, so Google would send no such key at all.
+    assert "thoughtsTokenCount" not in usage, usage
+    # And the three that are always reported are still there — `exclude_none` must not be read as
+    # "send less", only as "do not invent".
+    assert {"promptTokenCount", "candidatesTokenCount", "totalTokenCount"} <= set(usage)
+
+
 def test_the_caller_is_told_what_thinking_cost() -> None:
     """Google reports `thoughtsTokenCount`; this surface recorded it and did not hand it back.
 

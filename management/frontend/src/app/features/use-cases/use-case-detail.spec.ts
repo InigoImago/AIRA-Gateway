@@ -950,10 +950,13 @@ describe('UseCaseDetail — retention', () => {
 
     const config = JSON.parse(component.openCodeConfig(component.issued()!));
 
+    // The limits always; the **prices only in the unit OpenCode displays**, and this harness's
+    // `/v1/me` does not say USD. That is the honest outcome: OpenCode prints a running total with
+    // a `$`, and figures from a euro installation shown as dollars are a number somebody budgets
+    // against, wrong by that morning's exchange rate.
     expect(config.provider.aira.models['qwen2.5:3b']).toEqual({
       name: 'qwen2.5:3b via AIRA',
       limit: { context: 32768, output: 4096 },
-      cost: { input: 0.1, output: 0.4 },
     });
   });
 

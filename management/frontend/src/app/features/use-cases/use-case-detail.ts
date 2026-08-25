@@ -83,6 +83,8 @@ export class UseCaseDetail implements OnInit {
   private readonly service = inject(UseCaseService);
   private readonly confirmService = inject(ConfirmService);
   private readonly meService = inject(MeService);
+  /** Passed down to the budget panel, which must not fetch it for itself. */
+  protected readonly currency = this.meService.currency;
 
   protected readonly useCase = signal<UseCase | null>(null);
   protected readonly members = signal<Membership[]>([]);
@@ -458,7 +460,9 @@ export class UseCaseDetail implements OnInit {
             npm: '@ai-sdk/google',
             name: 'AIRA Gateway',
             options: { baseURL: `${window.location.origin}/gw/v1beta`, apiKey: issued.api_key },
-            models: Object.fromEntries(this.toolModels().map((m) => [m.name, openCodeModel(m)])),
+            models: Object.fromEntries(
+              this.toolModels().map((m) => [m.name, openCodeModel(m, this.currency())]),
+            ),
           },
         },
         model: `aira/${this.toolModels()[0]?.name ?? 'qwen2.5:3b'}`,

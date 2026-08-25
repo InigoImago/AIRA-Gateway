@@ -729,6 +729,7 @@
   @if (tab() === 'budgets') {
     <app-budgets-tab
       [slug]="slug"
+      [currency]="currency()"
       [budgets]="budgets()"
       [usage]="usage()"
       [usageUnavailable]="usageUnavailable()"

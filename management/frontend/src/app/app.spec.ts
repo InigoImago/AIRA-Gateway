@@ -36,7 +36,10 @@ function configure(authenticated: boolean, roles: string[] = []): void {
           },
         },
       },
-      { provide: MeService, useValue: { get: () => of({ ...baseMe, roles }) } },
+      {
+        provide: MeService,
+        useValue: { currency: signal(''), get: () => of({ ...baseMe, roles }) },
+      },
     ],
   });
 }
@@ -158,7 +161,7 @@ describe('App when the identity provider cannot be reached', () => {
             logout: () => {},
           },
         },
-        { provide: MeService, useValue: { get: () => of(baseMe) } },
+        { provide: MeService, useValue: { currency: signal(''), get: () => of(baseMe) } },
       ],
     });
     const fixture = TestBed.createComponent(App);
@@ -227,6 +230,7 @@ describe('App when the console cannot find out who you are', () => {
         {
           provide: MeService,
           useValue: {
+            currency: signal(''),
             get: () =>
               throwError(() => ({
                 status: 500,

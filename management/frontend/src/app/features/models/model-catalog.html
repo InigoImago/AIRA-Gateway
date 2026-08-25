@@ -1,11 +1,20 @@
 <div class="stack">
   <h2 style="margin: 0">Models &amp; prices</h2>
   <p class="muted" style="margin: 0">
-    What each model costs per 1,000,000 tokens, in <strong>US dollars</strong> — every provider on
-    this gateway prices in dollars, so that is the one currency in which these figures need no
-    conversion nobody performed. Input and output are priced separately because every provider bills
-    the two differently. Cost budgets are calculated from these figures; a model without a price
-    still works, but its consumption cannot be costed.
+    What each model costs per 1,000,000 tokens
+    @if (currency(); as unit) {
+      , in <strong>{{ unit }}</strong>
+    }
+    . Input and output are priced separately because every provider bills the two differently. Cost
+    budgets are calculated from these figures; a model without a price still works, but its
+    consumption cannot be costed.
+    <!--
+      The unit comes from `AIRA_CURRENCY`, and this paragraph used to assert *US dollars* on the
+      argument that "every provider on this gateway prices in dollars". That is a claim about
+      vendors rather than about an installation — a reseller contract in euros makes it false —
+      and meanwhile the CSV export labelled these same numbers with the setting, which defaults to
+      `EUR`. Somebody typed dollars into this form and received a file that said euros.
+    -->
   </p>
 
   <!--

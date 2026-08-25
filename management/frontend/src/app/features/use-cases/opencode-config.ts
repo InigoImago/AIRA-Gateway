@@ -43,7 +43,16 @@ function priced(value: string | null | undefined): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-export function openCodeModel(model: CatalogModel): OpenCodeModel {
+/**
+ * The one currency OpenCode's `cost` means.
+ *
+ * models.dev — the catalogue every other provider in OpenCode is described from — quotes US dollars
+ * per million tokens, and OpenCode renders the running total with a `$`. So the figures may be
+ * written through **only** when this installation prices in the same unit.
+ */
+const OPENCODE_CURRENCY = 'USD';
+
+export function openCodeModel(model: CatalogModel, currency: string): OpenCodeModel {
   const entry: OpenCodeModel = { name: `${model.name} via AIRA` };
 
   // **Both or neither.** OpenCode's `limit` is a pair, and half of it is `0` for the other half —
@@ -55,13 +64,18 @@ export function openCodeModel(model: CatalogModel): OpenCodeModel {
   }
 
   // Per 1,000,000 tokens, which is both what the catalog stores and what OpenCode expects, so
-  // there is no arithmetic here to get wrong. The **unit** is the thing worth naming: the model
-  // catalog screen tells whoever types these figures they are US dollars, and OpenCode displays
-  // them as dollars, so the two agree. `AIRA_CURRENCY` labels the same numbers in reports and
-  // defaults to EUR — a contradiction that predates this file and is not resolved by it.
+  // there is no arithmetic to get wrong here. The **unit** is the whole question, and it is why
+  // this takes a currency instead of assuming one: OpenCode prints the running total with a `$`,
+  // so figures from an installation that prices in euros would be displayed as dollars — a number
+  // somebody budgets against, wrong by whatever the exchange rate is that morning.
+  //
+  // No conversion, deliberately. `AIRA_CURRENCY`'s own comment refuses exchange rates for the
+  // reason they are refused everywhere in this system: a rate needs a date per booking, and that
+  // is a standing source of figures nobody can reconcile. Absent is the honest answer; OpenCode
+  // then shows no cost, which is true.
   const input = priced(model.input_price_per_million);
   const out = priced(model.output_price_per_million);
-  if (input !== null && out !== null) {
+  if (input !== null && out !== null && currency.toUpperCase() === OPENCODE_CURRENCY) {
     entry.cost = { input, output: out };
   }
   return entry;

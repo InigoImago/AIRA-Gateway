@@ -43,6 +43,25 @@ export class BudgetsTab {
    * server — an object-level permission is not in the token, and a panel that assumes yes offers
    * buttons that answer 403. */
   readonly canManage = input(false);
+  /**
+   * The unit the spend limit is in.
+   *
+   * An input, not an injection: a panel that fetches for itself is a panel the page's own
+   * tests cannot stand up (`CLAUDE.md` §3), and the parent already holds `/v1/me`.
+   */
+  readonly currency = input('');
+
+  /**
+   * The unit in the label, or nothing at all.
+   *
+   * Assembled here rather than in the template: `Spend limit` and `({{ unit }})` across a control
+   * -flow block render with the block's own whitespace between them, so the label came out as
+   * `Spend limit  (CHF)`. A label is one string; the template should interpolate it, not build it.
+   */
+  protected readonly costUnit = computed(() => {
+    const unit = this.currency();
+    return unit ? ` (${unit})` : '';
+  });
   readonly changed = output<void>();
 
   private readonly service = inject(UseCaseService);

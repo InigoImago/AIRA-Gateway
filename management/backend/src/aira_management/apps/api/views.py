@@ -50,6 +50,18 @@ class MeView(APIView):
                 # refusal they cannot explain.
                 "api_key_default_days": settings.api_key_default_days,
                 "api_key_max_days": settings.api_key_max_days,
+                # **The unit every money figure on this console is in**, for the same reason as
+                # the two above and after the same failure: three screens said *"US dollars"* in
+                # so many words — the model catalog, the use-case budget window and the
+                # installation's — while `AIRA_CURRENCY` labelled the very same numbers `EUR` in
+                # every CSV export, because that setting had exactly one reader in the whole system
+                # and it was on the other plane. Somebody typed dollars into a form and received a
+                # file that said euros.
+                #
+                # The console's argument for hard-coding it was *"every provider on this gateway
+                # prices in dollars"*, which is a claim about vendors and not about an installation
+                # — a reseller contract in euros makes it false, and nothing would have said so.
+                "currency": settings.currency,
                 # Whether to offer the pipeline-tests screen at all, answered with **the permission
                 # class itself** (`ADR-0020`). It is an object-level question — "do you hold
                 # `view_usecase` on anything" — so the console cannot derive it from the roles and

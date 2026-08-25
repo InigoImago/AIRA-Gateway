@@ -5,6 +5,55 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## One setting, three contradictions, and a field invented as a null (2026-08-25)
+
+The two the previous round recorded as noticed-and-not-fixed. Both turned out to be the shape of
+the round that found them: **a fact with two statements of it.**
+
+**`AIRA_CURRENCY` had exactly one reader in the whole system** — the reporting CSV's column header,
+on the gateway — while three console screens said *US dollars* in so many words: the model catalog's
+price paragraph, the use-case budget window, and the installation's. The setting defaults to `EUR`.
+A German installation on defaults therefore invited somebody to type dollars into a form and handed
+them back a file that said euros.
+
+The console's argument was written down and is a claim about **vendors** rather than about an
+installation: *"every provider on this gateway prices in dollars"*. A reseller contract in euros
+makes it false, and nothing would have said so.
+
+`/v1/me` carries it now, beside the API-key policy that is already there for the same stated reason
+— *"so the console states the numbers the server enforces instead of carrying its own copy"* — and
+`MeService` holds it as a signal three screens read. Empty until the first response renders **no
+unit at all**: an unlabelled amount is a reader who asks, a wrongly labelled one is a reader who does
+not. The generated OpenCode configuration uses the same fact to decide something else — prices are
+written only when the installation prices in USD, because OpenCode prints its running total with a
+`$` and `AIRA_CURRENCY`'s own comment refuses exchange rates.
+
+Two things worth keeping from the doing of it. **Seven spec files stub `MeService`, and every double
+was less capable than the thing it replaced** — the moment the service grew a member, 144 tests
+failed on a template error a long way from anything they were testing; `CLAUDE.md` §3 warns about a
+stand-in that is *more* permissive, and this is the same trap facing the other way. And the label
+came out as `Spend limit  (CHF)`, two spaces, because `Spend limit` and `({{ unit }})` across a
+control-flow block render with the block's own whitespace: **a label is one string**, and a template
+should interpolate it rather than assemble it.
+
+**`thoughtsTokenCount` was sent as `null`** on the buffered exit, where the field documents itself as
+*"omitted when zero … because Google omits it for a model that did not think and a compatibility
+surface should not invent a field the original leaves out"*. A null is that invention wearing a
+different value.
+
+The existing test dumped a hand-built `UsageMetadata` with `exclude_none` and checked the key was
+gone — which proves the *schema* can do it. Its own comment records the previous version of the same
+mistake, *"the first version of this asserted that the field exists and is omitted when empty — both
+true with the mapping handing over `None`, so the mutation that stopped filling it survived"*. This
+is that lesson one level further out: what a caller receives is decided by the **route**, so the
+route is what a real request asks now. It is the third exit of that file to need `exclude_none` —
+streamed since `FRD-100`, the model list yesterday — which makes "a fact stated at one exit and
+missing from another" the file's oldest recurring shape rather than an observation about any one of
+them.
+
+Three mutations red before either was believed: the buffered exit sending null again, `MeView`
+answering a literal `USD`, and the budget label hard-coding its unit. Frontend 946; Python 95.7%.
+
 ## The gauge was reading a number nobody had written down (2026-08-25)
 
 > *"When I start OpenCode and connect it to AIRA, I can see that I am talking to AIRA over the

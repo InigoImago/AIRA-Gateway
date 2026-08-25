@@ -48,6 +48,8 @@ const AMOUNT = /^\d+([.,]\d{1,6})?$/;
 export class ModelCatalog implements OnInit {
   private readonly service = inject(UseCaseService);
   private readonly meService = inject(MeService);
+  /** The unit this installation's money figures are in, from the one place that decides it. */
+  protected readonly currency = this.meService.currency;
   private readonly confirmService = inject(ConfirmService);
 
   protected readonly models = signal<CatalogModel[]>([]);

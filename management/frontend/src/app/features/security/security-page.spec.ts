@@ -1,3 +1,4 @@
+import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import { Observable, Subject, of, throwError } from 'rxjs';
@@ -144,6 +145,7 @@ function setup(options: Options = {}) {
       {
         provide: MeService,
         useValue: {
+          currency: signal(''),
           get: () =>
             of({
               username: 'itsec',
@@ -527,7 +529,10 @@ describe('SecurityPage — reading a rule', () => {
             globalRules: () => throwError(() => ({ status: 500 })),
           },
         },
-        { provide: MeService, useValue: { get: () => of({ roles: [] } as unknown as Me) } },
+        {
+          provide: MeService,
+          useValue: { currency: signal(''), get: () => of({ roles: [] } as unknown as Me) },
+        },
         { provide: ConfirmService, useValue: { ask: () => true } },
       ],
     });

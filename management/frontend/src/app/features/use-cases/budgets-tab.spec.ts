@@ -36,6 +36,8 @@ const httpError = (status: number) =>
   throwError(() => ({ status, error: { error: { message: 'refused' } } }));
 
 interface Options {
+  /** What `/v1/me` says this installation prices in. */
+  currency?: string;
   budgets?: Budget[];
   usage?: Record<number, BudgetUsage>;
   usageUnavailable?: boolean;
@@ -81,6 +83,7 @@ function setup(options: Options = {}) {
   // Default to an administrator: most of these cases are about the form. The read-only case is a
   // test of its own, below.
   fixture.componentRef.setInput('canManage', options.canManage ?? true);
+  fixture.componentRef.setInput('currency', options.currency ?? '');
   const changes: number[] = [];
   fixture.componentInstance.changed.subscribe(() => changes.push(1));
   fixture.detectChanges();
@@ -486,15 +489,33 @@ describe('BudgetsTab — a budget per person, and a window to make one in', () =
     expect(harness.text()).toContain('including people who join later');
   });
 
-  it('says which currency a spend limit is in', () => {
-    /** Reported: "Spend Limit ist nicht klar in welcher Währung das ist". Every provider on this
-     *  gateway prices in dollars and the catalog's figures are dollars per million tokens, so a
-     *  budget in anything else would be a conversion nobody performed. */
-    const harness = setup();
+  it('says which currency a spend limit is in, and takes it from the installation', () => {
+    /**
+     * Reported: *"Spend Limit ist nicht klar in welcher Währung das ist"*, and answered with the
+     * literal `USD` — on the argument that every provider prices in dollars, which is a claim
+     * about vendors rather than about an installation. Meanwhile `AIRA_CURRENCY` labelled the same
+     * numbers in every CSV export and defaults to `EUR`.
+     *
+     * Asserted with a currency that is **neither** of those, because a test on `USD` would have
+     * passed against the hard-coded string it replaced and a test on `EUR` would pass against a
+     * default.
+     */
+    const harness = setup({ currency: 'CHF' });
     harness.component.showForm.set(true);
     harness.fixture.detectChanges();
 
-    expect(harness.text()).toContain('Spend limit (USD)');
+    expect(harness.text()).toContain('Spend limit (CHF)');
+  });
+
+  it('says nothing about a currency it has not been told', () => {
+    /** Empty until `/v1/me` answers. An unlabelled amount is a reader who asks; a wrongly labelled
+     *  one is a reader who does not. */
+    const harness = setup({ currency: '' });
+    harness.component.showForm.set(true);
+    harness.fixture.detectChanges();
+
+    expect(harness.text()).toContain('Spend limit');
+    expect(harness.text()).not.toContain('Spend limit (');
   });
 
   it('creates in a window rather than a form unfolding under the list', () => {

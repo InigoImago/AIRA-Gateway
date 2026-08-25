@@ -23,7 +23,7 @@ function model(over: Partial<CatalogModel> = {}): CatalogModel {
 
 describe('openCodeModel', () => {
   it('carries the limits and the prices a client cannot ask the API for', () => {
-    expect(openCodeModel(model())).toEqual({
+    expect(openCodeModel(model(), 'USD')).toEqual({
       name: 'qwen3:0.6b via AIRA',
       limit: { context: 40960, output: 4096 },
       cost: { input: 0.1, output: 0.4 },
@@ -33,39 +33,63 @@ describe('openCodeModel', () => {
   it('omits the limits entirely when the context window is unknown', () => {
     // Not `{context: 0, output: 4096}`. Half a limit is a gauge stuck at 0%, which is the exact
     // thing reported — and worse than no gauge, because it looks like a measurement.
-    const entry = openCodeModel(model({ context_window: null }));
+    const entry = openCodeModel(model({ context_window: null }), 'USD');
 
     expect(entry.limit).toBeUndefined();
     expect(entry.name).toBe('qwen3:0.6b via AIRA');
   });
 
   it('omits the limits when the output cap is unknown', () => {
-    expect(openCodeModel(model({ max_output_tokens: null })).limit).toBeUndefined();
+    expect(openCodeModel(model({ max_output_tokens: null }), 'USD').limit).toBeUndefined();
   });
 
   it('omits the prices when a model is unpriced', () => {
     // An invented price is worse than an absent one (`FRD-403`), and this is the same sentence one
     // file along: a coding assistant showing a running cost of zero for a model that bills is a
     // number somebody budgets against.
-    expect(openCodeModel(model({ input_price_per_million: null })).cost).toBeUndefined();
-    expect(openCodeModel(model({ output_price_per_million: undefined })).cost).toBeUndefined();
+    expect(openCodeModel(model({ input_price_per_million: null }), 'USD').cost).toBeUndefined();
+    expect(
+      openCodeModel(model({ output_price_per_million: undefined }), 'USD').cost,
+    ).toBeUndefined();
   });
 
   it('treats an empty price string as no price, not as free', () => {
-    expect(openCodeModel(model({ input_price_per_million: '   ' })).cost).toBeUndefined();
+    expect(openCodeModel(model({ input_price_per_million: '   ' }), 'USD').cost).toBeUndefined();
   });
 
   it('refuses a price that is not a number rather than writing NaN into the file', () => {
     // `Number('cheap')` is `NaN`, and `JSON.stringify({cost: NaN})` writes `null` — a config file
     // that parses and means nothing.
-    expect(openCodeModel(model({ output_price_per_million: 'cheap' })).cost).toBeUndefined();
+    expect(openCodeModel(model({ output_price_per_million: 'cheap' }), 'USD').cost).toBeUndefined();
+  });
+
+  it('writes no price at all when the installation does not price in dollars', () => {
+    // OpenCode prints the running total with a `$`. Figures from a euro installation displayed as
+    // dollars are a number somebody budgets against, wrong by that morning's exchange rate — and
+    // `AIRA_CURRENCY`'s own comment refuses conversion, because a rate needs a date per booking.
+    const entry = openCodeModel(model(), 'EUR');
+
+    expect(entry.cost).toBeUndefined();
+    // The limits are not money and are unaffected: a context window is a count of tokens.
+    expect(entry.limit).toEqual({ context: 40960, output: 4096 });
+  });
+
+  it('does not care how the currency is spelled', () => {
+    expect(openCodeModel(model(), 'usd').cost).toEqual({ input: 0.1, output: 0.4 });
+  });
+
+  it('writes no price before the console has been told the currency', () => {
+    // Empty until the first `/v1/me`. Guessing "probably dollars" is how the defect this whole
+    // file documents came about.
+    expect(openCodeModel(model(), '').cost).toBeUndefined();
   });
 
   it('keeps a price of zero, which is a price', () => {
     // A locally hosted model genuinely costs nothing per token. Dropping it would be the same
     // mistake as writing zero for unknown, in the other direction.
     expect(
-      openCodeModel(model({ input_price_per_million: '0', output_price_per_million: '0' })).cost,
+      openCodeModel(model({ input_price_per_million: '0', output_price_per_million: '0' }), 'USD')
+        .cost,
     ).toEqual({ input: 0, output: 0 });
   });
 });

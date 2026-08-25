@@ -22,6 +22,14 @@ export interface Me {
   api_key_default_days?: number;
   api_key_max_days?: number;
   /**
+   * The unit every money figure on this console is in (`AIRA_CURRENCY`).
+   *
+   * Read through `MeService.currency`, never copied into a component: three screens used
+   * to say *US dollars* in so many words while the CSV export labelled the same numbers
+   * with this setting, which defaults to `EUR`.
+   */
+  currency?: string;
+  /**
    * Whether to offer the pipeline-tests screen (`ADR-0020`).
    *
    * The server's own `MayRunTests`, because this is an object-level permission and `use_cases`

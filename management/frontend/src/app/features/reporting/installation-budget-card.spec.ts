@@ -1,3 +1,4 @@
+import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { Observable, of, throwError } from 'rxjs';
 import { Budget, Me } from '../../core/api/models';
@@ -57,6 +58,10 @@ function setup(options: Options = {}) {
     },
   };
   const me = {
+    // The double carries every member the real service has. One that is *less* capable than what
+    // it stands in for fails as a template error in every test in the file at once, which is a
+    // long way from the thing being tested.
+    currency: signal(''),
     get: () =>
       options.me ??
       of({

@@ -408,7 +408,20 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
                 # A truncated or unsatisfied document is not data (FRD-112 FR-6). Raised before
                 # the outcome is reported, so a refused answer is released rather than booked.
                 check_structured_result(canonical, canonical_response)
-                payload = canonical_to_gemini(canonical_response).model_dump()
+                # `exclude_none`, and the **third** exit of this file to need saying so.
+                #
+                # `UsageMetadata.thoughtsTokenCount` documents itself as *"omitted when zero rather
+                # than sent as `0`, because Google omits it for a model that did not think and a
+                # compatibility surface should not invent a field the original leaves out"* — and
+                # this exit sent `"thoughtsTokenCount": null`, which is the same invention wearing
+                # a different value. The streamed exit has excluded nulls since `FRD-100` and the
+                # model list since `FRD-132` §11; a fact stated at one exit and missing from
+                # another is this file's oldest recurring shape.
+                #
+                # It reaches the rest of the response too, and every case is Google's own shape: a
+                # text part carries no `functionCall: null`, and a candidate that finished carries
+                # no key for what it did not do.
+                payload = canonical_to_gemini(canonical_response).model_dump(exclude_none=True)
                 acct.served(
                     canonical_response.model,
                     canonical_response.usage,

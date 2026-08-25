@@ -81,13 +81,12 @@
         </div>
         <div class="field">
           <label for="budget-cost">
-            Spend limit (USD)
+            Spend limit{{ costUnit() }}
             <app-info-hint label="Spend limit" testid="budget-cost" [wide]="true">
-              In <strong>US dollars</strong>, because that is what every provider on this gateway
-              prices in — the figures in the model catalog are dollars per million tokens, and a
-              budget in anything else would be a conversion nobody performed. It is the limit most
-              people mean: a token cap has to be re-derived every time a model's price changes,
-              while this one keeps meaning the same thing.
+              In the currency this installation is configured with, which is the same one the model
+              catalog's prices are in — a budget in anything else would be a conversion nobody
+              performed. It is the limit most people mean: a token cap has to be re-derived every
+              time a model's price changes, while this one keeps meaning the same thing.
             </app-info-hint>
           </label>
           <input

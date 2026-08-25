@@ -621,6 +621,12 @@ reading code.
   payload, so a default answered for a control. Both times the tell was identical — the guard kept
   passing under the mutation it was written to catch, which is why a guard is not finished until it
   has been seen to fail.
+- **A label is one string.** `Spend limit` on one line and `({{ unit }})` inside an `@if` on the
+  next renders as `Spend limit  (CHF)`: a control-flow block contributes its own whitespace, and a
+  formatter will put it there whatever the author wrote. Interpolate a label the component
+  assembled — the moment a caption is built *across* template structure, its spacing belongs to the
+  formatter rather than to anybody's intent.
+
 - **A question is a claim that the answer is unknown.** The model editor asked eight things to add
   a model and five of them — provider, publisher, platform, hosting, the KIRA id — had been
   answered one screen earlier, by choosing the provider. An empty box beside a fact the software
@@ -779,6 +785,13 @@ reading code.
   where the real adapter returns a response *with usage* made "the audit row carries what the
   answer reported" a property no test could lose, because the harness never produced one. Both
   times a mutation run found it and no reviewer would have.
+
+  *And the same mismatch in the other direction is loud rather than silent, which is not the same
+  as harmless.* Seven spec files stubbed `MeService` with `{get: () => of(…)}`; the service grew one
+  signal and **144 tests failed at once** on `ctx.currency is not a function` — a template error in
+  files whose subject was budgets, security and the model catalog. Nothing was wrong with any of
+  them. A double is a promise to be the same shape, and a promise kept only until the shape changes
+  is how one added member costs an afternoon of reading stack traces that name the wrong thing.
 - **A test whose setup never reaches the path it is named after.** SQLite enforces no column
   lengths; `TestClient` buffers a streamed body before you can hang up; a *cold* budget counter
   seeds from Postgres and hides a missing write; a fixture whose use case may call nothing can only

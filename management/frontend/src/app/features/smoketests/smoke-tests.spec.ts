@@ -1,3 +1,4 @@
+import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { Observable, Subject, of, throwError } from 'rxjs';
 import { MeService } from '../../core/api/me.service';
@@ -110,7 +111,10 @@ function setup(options: Options = {}) {
       { provide: ConfirmService, useValue: { ask: () => options.confirm ?? true } },
       {
         provide: MeService,
-        useValue: { get: () => of({ roles: options.roles ?? ['it-security'] }) },
+        useValue: {
+          currency: signal(''),
+          get: () => of({ roles: options.roles ?? ['it-security'] }),
+        },
       },
       {
         provide: UseCaseService,
@@ -504,7 +508,10 @@ describe('SmokeTests', () => {
     TestBed.configureTestingModule({
       imports: [SmokeTests],
       providers: [
-        { provide: MeService, useValue: { get: () => of({ roles: ['it-security'] }) } },
+        {
+          provide: MeService,
+          useValue: { currency: signal(''), get: () => of({ roles: ['it-security'] }) },
+        },
         {
           provide: UseCaseService,
           useValue: {
@@ -720,7 +727,10 @@ describe('SmokeTests', () => {
     TestBed.configureTestingModule({
       imports: [SmokeTests],
       providers: [
-        { provide: MeService, useValue: { get: () => of({ roles: ['it-security'] }) } },
+        {
+          provide: MeService,
+          useValue: { currency: signal(''), get: () => of({ roles: ['it-security'] }) },
+        },
         {
           provide: UseCaseService,
           useValue: {
@@ -906,7 +916,10 @@ describe('SmokeTests', () => {
     TestBed.configureTestingModule({
       imports: [SmokeTests],
       providers: [
-        { provide: MeService, useValue: { get: () => of({ roles: ['it-security'] }) } },
+        {
+          provide: MeService,
+          useValue: { currency: signal(''), get: () => of({ roles: ['it-security'] }) },
+        },
         {
           provide: UseCaseService,
           useValue: {

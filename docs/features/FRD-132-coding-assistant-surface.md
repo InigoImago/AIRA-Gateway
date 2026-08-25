@@ -352,12 +352,60 @@ say so.
   and forgetting the other is completely silent: the console offers it, the database stores it,
   Kafka carries it, the read-model does not have it. `tools/tests/test_a_model_event_is_applied_whole.py`
   now fails in **both** directions — a published field nobody applies, and a default nobody sends.
-- **The price unit is stated two ways.** The model editor tells whoever types a price it is
-  **US dollars**; `AIRA_CURRENCY` defaults to **EUR** and labels the same numbers in every report
-  and CSV. The generated configuration writes the figures straight through, which matches what the
-  person entering them was told — and the contradiction is older than this section and not resolved
-  by it.
-- **`thoughtsTokenCount` is sent as `null`** on the buffered exit, where the field's own comment
-  says it is omitted when zero, *"because Google omits it for a model that did not think and a
-  compatibility surface should not invent a field the original leaves out"*. The streamed exit
-  omits it. Recorded, not fixed: it is the same `exclude_none` question one response along.
+- **The price unit was stated two ways**, now one — see §11.6.
+- **`thoughtsTokenCount` was sent as `null`** on the buffered exit — see §11.6.
+
+### 11.6 The two the pass left behind (2026-08-25)
+
+Both were recorded above as noticed-and-not-fixed. Both are fixed now, and both turned out to be
+the same shape as the section they were found in: **a fact with two statements of it.**
+
+#### The currency had one setting and three contradictions
+
+`AIRA_CURRENCY` documents itself as *"currency all prices and cost budgets are expressed in"* and
+defaults to `EUR`. It had **exactly one reader in the whole system** — the reporting CSV's column
+header, on the gateway. Meanwhile three console screens said *US dollars* in so many words: the
+model catalog's price paragraph, the use-case budget window, and the installation's. A German
+installation on defaults therefore invited somebody to type dollars into a form and handed them back
+a file that said euros.
+
+The console's argument for hard-coding it was written down — *"every provider on this gateway prices
+in dollars"* — and it is a claim about **vendors**, not about an installation. A reseller contract in
+euros makes it false and nothing would have said so.
+
+So `/v1/me` carries the currency, beside the API-key policy that is already there for exactly this
+reason (*"so the console states the numbers the server enforces instead of carrying its own copy"*),
+and `MeService` holds it as a signal the three screens read. Empty until the first response, and an
+empty currency renders **no unit at all**: an unlabelled amount is a reader who asks, a wrongly
+labelled one is a reader who does not.
+
+The generated OpenCode configuration takes the same fact and uses it to decide something different:
+prices are written **only when the installation prices in USD**, because OpenCode prints the running
+total with a `$`. No conversion — `AIRA_CURRENCY`'s own comment refuses exchange rates for the reason
+they are refused everywhere here, that a rate needs a date per booking. Absent is the honest answer,
+and OpenCode then shows no cost, which is true.
+
+*Found on the way:* seven spec files stub `MeService`, and every one of those doubles was **less
+capable than the thing it stands in for** — the moment the service grew a member, 144 tests failed
+on a template error a long way from what any of them was testing. `CLAUDE.md` §3 warns about a
+stand-in that is *more* permissive; this is the same trap facing the other way.
+
+#### `thoughtsTokenCount` was invented as a null
+
+`UsageMetadata.thoughtsTokenCount` documents itself as *"omitted when zero rather than sent as `0`,
+because Google omits it for a model that did not think and a compatibility surface should not invent
+a field the original leaves out"* — and the buffered exit sent `"thoughtsTokenCount": null`, which is
+the same invention wearing a different value.
+
+The existing test dumped a hand-built `UsageMetadata` with `exclude_none` and checked the key was
+gone. That proves the *schema* can do it. Its own comment records the previous version of this
+mistake — *"the first version of this asserted that the field exists and is omitted when empty —
+both true with the mapping handing over `None`, so the mutation that stopped filling it survived"* —
+and this is that lesson one level further out: what a caller receives is decided by the **route**, so
+the route is what is asked now, through a real request.
+
+`exclude_none` on that exit reaches the rest of the response too, and every case is Google's own
+shape: a text part carries no `functionCall: null`, and a candidate carries no key for what it did
+not do. It is the **third** exit of this file to need saying so — the streamed one since `FRD-100`,
+the model list since §11.3 — which makes "a fact stated at one exit and missing from another" this
+file's oldest recurring shape rather than an observation about any one of them.

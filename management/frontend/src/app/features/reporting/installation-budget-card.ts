@@ -28,6 +28,20 @@ import { PageFeedback } from '../../core/ui/page-feedback';
 export class InstallationBudgetCard implements OnInit {
   private readonly service = inject(UseCaseService);
   private readonly meService = inject(MeService);
+  /** The unit this installation's money figures are in, from the one place that decides it. */
+  protected readonly currency = this.meService.currency;
+
+  /**
+   * The unit in the label, or nothing at all.
+   *
+   * Assembled here rather than in the template: `Spend limit` and `({{ unit }})` across a control
+   * -flow block render with the block's own whitespace between them, so the label came out as
+   * `Spend limit  (CHF)`. A label is one string; the template should interpolate it, not build it.
+   */
+  protected readonly costUnit = computed(() => {
+    const unit = this.currency();
+    return unit ? ` (${unit})` : '';
+  });
   private readonly confirmService = inject(ConfirmService);
   /** The page's single banner, not one of this panel's own. */
   protected readonly feedback = inject(PageFeedback);

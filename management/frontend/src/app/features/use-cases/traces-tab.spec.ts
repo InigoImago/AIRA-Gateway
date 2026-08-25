@@ -71,7 +71,7 @@ function setup(options: Options = {}) {
       provideRouter([]),
       {
         provide: MeService,
-        useValue: { get: () => of({ roles: options.roles ?? [] }) },
+        useValue: { currency: signal(''), get: () => of({ roles: options.roles ?? [] }) },
       },
       {
         provide: UseCaseService,

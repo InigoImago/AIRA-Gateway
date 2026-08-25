@@ -93,6 +93,29 @@ def test_me_with_valid_token(monkeypatch) -> None:
     assert data["use_cases"] == ["demo-uc"]
 
 
+def test_me_states_the_currency_the_installation_is_configured_with(monkeypatch) -> None:
+    """The unit every money figure on the console is in, from the one setting that decides it.
+
+    Three screens said *"US dollars"* in so many words while `AIRA_CURRENCY` labelled the same
+    numbers in every CSV — a setting with exactly one reader, on the other plane. Asserted against
+    an installation that is **not** on the default, because a test on `EUR` would pass against a
+    hard-coded string too.
+    """
+    from aira_management.config.runtime import get_settings
+
+    from .test_apikeys import override_settings_value
+
+    private, public = _keypair()
+    _use_fake_verifier(monkeypatch, public)
+    token = _token(private)
+
+    with override_settings_value(currency="CHF"):
+        resp = APIClient().get("/api/v1/me", HTTP_AUTHORIZATION=f"Bearer {token}")
+
+    assert resp.json()["currency"] == "CHF"
+    assert get_settings().currency != "CHF", "the override leaked and the assertion proves nothing"
+
+
 def test_provisioning_is_idempotent(monkeypatch) -> None:
     private, public = _keypair()
     _use_fake_verifier(monkeypatch, public)

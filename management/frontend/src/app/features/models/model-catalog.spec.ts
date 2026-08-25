@@ -1,3 +1,4 @@
+import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { Observable, Subject, map, of, throwError } from 'rxjs';
 import { MeService } from '../../core/api/me.service';
@@ -234,7 +235,7 @@ function setup(
   TestBed.configureTestingModule({
     imports: [ModelCatalog],
     providers: [
-      { provide: MeService, useValue: { get: () => of(me) } },
+      { provide: MeService, useValue: { currency: signal(''), get: () => of(me) } },
       { provide: ConfirmService, useValue: { ask: () => options.confirm ?? true } },
       {
         provide: UseCaseService,
