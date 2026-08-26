@@ -5,6 +5,50 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The second stack that was the first one (2026-08-26)
+
+Asked whether the showcase had been *fully* verified after the compose split. It had not: the
+evidence was a `docker compose config` diff, a warm stack that came back up, `showcase_doctor`,
+and 161 browser tests — all against a machine whose volumes had been filling for weeks. Nothing
+covered the run a colleague actually makes, which is the first one.
+
+So a second stack was brought up beside the first: own project name, own container prefix, all
+fourteen ports moved. It came up healthy, every one-shot exited 0, and its Management database was
+**empty** while the seed reported success. It had read and written the *first* stack's Postgres.
+
+**`AIRA_STACK` prefixed every container name and nothing else.** `docker-compose.yml` pinned both
+the Compose project (`name: aira`) and the network (`networks: aira: name: aira`), and a fixed
+network name is shared by every project on the machine. Both stacks joined one bridge, where
+`postgres`, `kafka` and `keycloak` each answer for two containers. The variable exists for exactly
+one purpose — run a second stack — and it did the visible third of the job. `docs/CONFIGURATION.md`
+described it accordingly: *"prefixes every container name"*, which was true and not enough.
+
+A previous round had "proven" the second stack by rendering it and starting one image. That is the
+half that cannot fail. The half that fails needs two stacks resolving the same service name at the
+same time, which is only visible when both are running and one of them writes.
+
+Both now follow `${AIRA_STACK:-aira}`; without the variable nothing changes, and the running stack
+still resolves to `aira`. Three mutations (**604**), each observed `caught` — and the first version
+of the guard let one through, because `"name: ${AIRA_STACK:-aira}\n"` matched the *network's*
+indented line as a substring: a guard reading its neighbour's evidence.
+
+**Then the cold start, properly isolated, end to end.** From nothing: realm imported with redirect
+URIs following the moved console port to `14200` without being told; Vault provisioned; both
+schemas migrated; the seed filling its own database (5 use cases, 6 memberships, 4 keys); the model
+pulled and catalogued on the second seed; a real generation through the Gemini surface to a real
+local model — `promptTokenCount: 23, candidatesTokenCount: 2` — and a complete audit row behind it
+(subject, `api_key`, use case, model, status, latency, trace id, stored payloads, `cost_nanos`,
+credential fingerprint, provider/publisher/region, `outcome: served`) with the spend charged to a
+budget. Then 12 browser tests against the cold console: real Keycloak login, logout, silent token
+refresh, a gateway call with the browser's own session token.
+
+**And the teardown was checked rather than trusted.** It removed five use cases from the cold
+stack, one of them `demo-uc` — which the *suite* had created there, because `ensureUseCase` only
+registers a slug when it had to create it. On the warm stack `demo-uc` predates the suite and was
+untouched, as were `kai-test` and `matrix-test`. The scoping holds in both directions.
+
+---
+
 ## The compose file that was three files in one (2026-08-26)
 
 The request was plain: the Compose file had grown too big with demo data loading, could the core

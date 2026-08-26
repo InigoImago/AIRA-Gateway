@@ -5541,6 +5541,34 @@ MUTATIONS = [
         "  gateway-migrate:\n    depends_on:\n      vault-init-typo:",
         "tools/tests/test_the_core_stack_carries_no_demo.py",
     ),
+    # `AIRA_STACK` is the one variable that lets a second stack run beside the first. It prefixed
+    # every container name and nothing else, so both stacks joined one fixed network and every
+    # service name answered for two containers. Measured: a second stack came up healthy, its own
+    # database stayed empty, and its seed reported success against the first stack's Postgres.
+    Mutation(
+        "CS9",
+        "the compose project name follows AIRA_STACK, so a second stack is its own project",
+        "deploy/compose/docker-compose.yml",
+        "\nname: ${AIRA_STACK:-aira}\n",
+        "\nname: aira\n",
+        "tools/tests/test_the_core_stack_carries_no_demo.py",
+    ),
+    Mutation(
+        "CS10",
+        "the network follows AIRA_STACK, or two stacks share one bridge and one set of names",
+        "deploy/compose/docker-compose.yml",
+        "\n    name: ${AIRA_STACK:-aira}\n",
+        "\n    name: aira\n",
+        "tools/tests/test_the_core_stack_carries_no_demo.py",
+    ),
+    Mutation(
+        "CS11",
+        "every container name follows AIRA_STACK",
+        "deploy/compose/docker-compose.yml",
+        "container_name: ${AIRA_STACK:-aira}-redis",
+        "container_name: aira-redis",
+        "tools/tests/test_the_core_stack_carries_no_demo.py",
+    ),
 ]
 
 
