@@ -156,7 +156,7 @@ showcase: env ## Start the full demo: stack, local model, seeded roles/budgets, 
 	@# idempotent, runs once more against what the pull actually produced.
 	@echo "==> waiting for the model pull to finish"
 	@for i in $$(seq 1 300); do \
-		s=$$(docker inspect -f '{{.State.Status}}' aira-ollama-pull 2>/dev/null || echo gone); \
+		s=$$(docker inspect -f '{{.State.Status}}' $${AIRA_STACK:-aira}-ollama-pull 2>/dev/null || echo gone); \
 		[ "$$s" = "running" ] || break; \
 		sleep 3; \
 	done
@@ -183,7 +183,7 @@ showcase: env ## Start the full demo: stack, local model, seeded roles/budgets, 
 	@# called `admin` and no groups, and concluded the seed had failed — it had not: that console
 	@# signs you in to the *master* realm and the demo lives in `aira`. Two accounts named `admin`
 	@# in two realms, and this block used to name neither.
-	@-KEYCLOAK_URL=http://localhost:$${AIRA_KEYCLOAK_PORT:-8080} \
+	@-KEYCLOAK_URL=$(KEYCLOAK_URL) \
 		KEYCLOAK_REALM_FILE=deploy/compose/keycloak/realms/aira-realm.json \
 		python3 tools/keycloak_demo_realm.py --report
 	@echo ""
@@ -279,8 +279,8 @@ verify-up: env ## Start a real local model (FRD-123) and pull the two verificati
 	@echo "waiting for the endpoint..."
 	@until curl -fsS $(OLLAMA_URL)/api/version >/dev/null 2>&1; do sleep 1; done
 	@echo "pulling models (hundreds of MB, once per machine)..."
-	docker exec aira-ollama ollama pull $(LOCAL_CHAT_MODEL)
-	docker exec aira-ollama ollama pull $(LOCAL_EMBED_MODEL)
+	docker exec $${AIRA_STACK:-aira}-ollama ollama pull $(LOCAL_CHAT_MODEL)
+	docker exec $${AIRA_STACK:-aira}-ollama ollama pull $(LOCAL_EMBED_MODEL)
 	@echo
 	@echo "Point the gateway at it:"
 	@echo "  AIRA_OLLAMA_URL=$(OLLAMA_URL) \\"
@@ -418,7 +418,7 @@ migrate-gateway: ## Apply gateway DB migrations (Alembic)
 
 kafka-topics: ## Create the compacted config-distribution topics (idempotent)
 	@for t in aira.usecases aira.memberships aira.api-keys aira.pipelines aira.budgets aira.rate-limits aira.models aira.anomaly-rules; do \
-		docker exec aira-kafka /opt/kafka/bin/kafka-topics.sh --create --if-not-exists --topic $$t \
+		docker exec $${AIRA_STACK:-aira}-kafka /opt/kafka/bin/kafka-topics.sh --create --if-not-exists --topic $$t \
 			--bootstrap-server $(KAFKA_ADDR) --partitions 1 --replication-factor 1 \
 			--config cleanup.policy=compact; \
 	done

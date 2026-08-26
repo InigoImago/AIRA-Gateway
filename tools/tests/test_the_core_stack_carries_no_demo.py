@@ -22,11 +22,23 @@ The rules below are the ones that would let it rot:
 from __future__ import annotations
 
 import pathlib
+import re
 
 import compose_files
 import yaml
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
+
+#: Read from the files rather than listed here, so a new service is covered the day it is added.
+KNOWN_CONTAINER_SUFFIXES = {
+    name
+    for path in (
+        ROOT / "deploy" / "compose" / "docker-compose.yml",
+        ROOT / "deploy" / "compose" / "docker-compose.apps.yml",
+        ROOT / "deploy" / "compose" / "docker-compose.showcase.yml",
+    )
+    for name in re.findall(r"^  ([a-z][a-z0-9-]*):$", path.read_text(), re.M)
+}
 
 
 def _services(path: pathlib.Path) -> dict[str, dict]:
@@ -166,3 +178,33 @@ def test_a_second_stack_is_isolated_by_one_variable() -> None:
     prefixed = compose.count("container_name: ${AIRA_STACK:-aira}-")
     named = compose.count("container_name:")
     assert prefixed == named, f"{named - prefixed} container(s) do not follow AIRA_STACK"
+
+
+def test_nothing_addresses_a_container_by_a_name_aira_stack_could_move() -> None:
+    """`AIRA_STACK` moves every container name, so anything naming one has to move with it.
+
+    The compose files follow it. The Makefile did not: `make showcase` waits for the model pull
+    with `docker inspect … aira-ollama-pull`, and on a stack with a prefix that container does not
+    exist. `docker inspect` then fails, the fallback says `gone`, the loop breaks on its first
+    iteration, and the seed runs against models that are still downloading — which is precisely
+    the failure the comment above that loop exists to prevent, reintroduced by the one literal
+    underneath it.
+
+    Silent, again: a demo with no models in it is a demo that starts.
+    """
+    offenders: list[str] = []
+    for path in (ROOT / "Makefile", *compose_files.ALL):
+        for number, line in enumerate(path.read_text().splitlines(), 1):
+            stripped = line.strip()
+            if stripped.startswith("#") or stripped.startswith("@#"):
+                continue
+            # Not followed by `:` — `image: aira-gateway:${AIRA_IMAGE_TAG:-dev}` is an *image*
+            # name, and images are shared build artifacts that deliberately do not move with the
+            # stack. A container reference is followed by whitespace or the end of the word.
+            for match in re.finditer(r"(?<![\w${:-])aira-([a-z][a-z0-9-]*)(?![:\w-])", line):
+                if match.group(1) in KNOWN_CONTAINER_SUFFIXES:
+                    offenders.append(f"{path.name}:{number}: {stripped[:80]}")
+    assert not offenders, (
+        f"{offenders}: a container addressed by a literal name. Write "
+        "`${AIRA_STACK:-aira}-<service>` so it follows the variable that moves it."
+    )

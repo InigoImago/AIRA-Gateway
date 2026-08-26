@@ -5569,6 +5569,30 @@ MUTATIONS = [
         "container_name: aira-redis",
         "tools/tests/test_the_core_stack_carries_no_demo.py",
     ),
+    Mutation(
+        "CS12",
+        "the Makefile reads no AIRA_* name that nothing sets",
+        "Makefile",
+        "\t@-KEYCLOAK_URL=$(KEYCLOAK_URL) \\",
+        "\t@-KEYCLOAK_URL=http://localhost:$${AIRA_KEYCLOAK_PORT:-8080} \\",
+        "tools/tests/test_one_owner_for_the_stack_addresses.py",
+    ),
+    Mutation(
+        "CS13",
+        "no container is addressed by a literal name AIRA_STACK would have moved",
+        "Makefile",
+        "docker exec $${AIRA_STACK:-aira}-kafka /opt/kafka/bin/kafka-topics.sh",
+        "docker exec aira-kafka /opt/kafka/bin/kafka-topics.sh",
+        "tools/tests/test_the_core_stack_carries_no_demo.py",
+    ),
+    Mutation(
+        "CS14",
+        "the pull-wait loop names the container of the stack it is starting",
+        "Makefile",
+        "docker inspect -f '{{.State.Status}}' $${AIRA_STACK:-aira}-ollama-pull",
+        "docker inspect -f '{{.State.Status}}' aira-ollama-pull",
+        "tools/tests/test_the_core_stack_carries_no_demo.py",
+    ),
 ]
 
 
