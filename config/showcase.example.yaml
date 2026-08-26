@@ -1,0 +1,267 @@
+# AIRA — the showcase installation, described in one file.
+#
+# ## What this is
+#
+# Every external system AIRA can be connected to, with every setting that decides *how* it is
+# reached — and **no secrets**. Copy it to `config/<your-installation>.yaml`, change the addresses,
+# and render it:
+#
+#     uv run python tools/config_render.py config/my-installation.yaml -o deploy/compose/.env
+#
+# Everything in `config/` except the two examples is invisible to git on purpose: an installation
+# file holds hostnames, project ids and account names, which are not secrets and are still nobody
+# else's business.
+#
+# ## The one rule about secrets
+#
+# A value that authenticates belongs in **HashiCorp Vault** (`FRD-116`), not here. This file names
+# *where* each one comes from and never what it is. The renderer refuses a key it recognises as a
+# secret, so the rule is enforced rather than requested — see `secrets:` at the end.
+#
+# ## How to read a section
+#
+# Each section name is a prefix and each key completes it: `postgres.host` is `AIRA_POSTGRES_HOST`.
+# `core:` is the exception — its keys are used unprefixed, because settings like `AIRA_CURRENCY`
+# belong to no system. `vault:` is the other exception and is documented there.
+#
+# Every key below is checked against the real settings classes by the test suite, so this file
+# cannot describe a variable the product does not have, and cannot omit one silently.
+
+core:
+  # `local` relaxes exactly the checks a laptop needs (`ADR-0007`); anything else demands an OIDC
+  # audience, a real `secret_key`, and Kafka authentication that is not `PLAINTEXT`.
+  environment: local
+  # Well-known accounts with a fixed password, and the one-command seeding this demo is for.
+  # **Never true outside a demonstration.**
+  demo_mode: true
+  debug: false
+  app_name: AIRA Gateway
+  # One installation, one currency. It labels every figure in the console, every CSV column and
+  # the prices in the model catalog — see `docs/DEVLOG.md` for the round where three screens said
+  # something else.
+  currency: EUR
+  # Which Keycloak group confers which AIRA role (`ADR-0017`). Group membership is the **only**
+  # source of a role; a realm role on the same token is not read. Management refuses to start
+  # without a group for `global-admin`.
+  role_groups: global-admin=/aira/global-admins;it-security=/aira/it-security;it-steuerung=/aira/it-steuerung
+  # A caller must name a use case. Turn on **last**, once every client sends one, or traffic that
+  # used to work is refused.
+  require_use_case: false
+  # Whether prompts and answers are stored at all, and for how long, unless a use case says
+  # otherwise (`FRD-404`).
+  store_payloads: true
+  default_retention_days: 7
+  auth_required: true
+  # The three governance controls. Off means *measured and not enforced* — which is the honest way
+  # to introduce them, and the wrong way to leave them.
+  # (`enforce_budgets` off is one of the two named holes in `FRD-610` §3.2.)
+  redact_patterns: ''
+  trust_forwarded_for: false
+  trusted_proxy_hops: 1
+
+enforce:
+  budgets: true
+  rate_limits: true
+  suspensions: true
+
+# Watching traffic for the patterns `FRD-503` describes, and acting on them. `alert` first and
+# `block` later is the order `docs/INTEGRATIONS.md` §9 argues for: a rule is a hypothesis until
+# somebody has watched it be right, and a detector that blocks wrongly once is switched off for
+# ever.
+detect:
+  anomalies: true
+
+anomaly:
+  interval_seconds: 60.0
+
+# What a request is assumed to cost before the answer exists, so a budget can refuse *before* the
+# money is spent rather than after. Too low and a budget is overshot by one request; too high and
+# the last request of a period is refused for an answer that would have fitted.
+budget:
+  estimate_output_tokens: 1024
+
+# ---------------------------------------------------------------------------------------------
+# PostgreSQL — both planes, two databases on one server.
+# ---------------------------------------------------------------------------------------------
+postgres:
+  host: postgres
+  port: 5432
+  db: aira_gateway
+  user: aira
+  # password: → Vault. See `secrets:`.
+
+# ---------------------------------------------------------------------------------------------
+# Keycloak (or any OIDC provider). What the realm must provide is `docs/INTEGRATIONS.md` §2.
+# ---------------------------------------------------------------------------------------------
+oidc:
+  enabled: true
+  # The **same URL the browser uses**. The `iss` claim is compared literally, so a browser on
+  # `https://sso.example.com` and containers on `http://keycloak:8080` means one of the two
+  # rejects every token.
+  issuer: http://localhost:8080/realms/aira
+  # Required outside `local`, and Keycloak does **not** put it in the token by itself: a public
+  # client's `aud` is `["account"]` until an Audience mapper or a client scope says otherwise.
+  audience: aira-gateway
+  # Only when it is not `<issuer>/protocol/openid-connect/certs`.
+  jwks_uri: ''
+  # Several realms at once (`FRD-118`), `issuer|audience|jwks_uri` per entry, `;`-separated.
+  issuers: ''
+  # How far the issuer's clock may run ahead of this host's. At 0 a service one second behind its
+  # issuer refuses **every** freshly minted token, which reads exactly like a wrong secret.
+  clock_skew_seconds: 60
+  # How long past `exp` a token is still accepted. This is the half with a cost, so it is off.
+  expiry_leeway_seconds: 0
+
+# A read-only Keycloak service account, so the console can *search* your groups and people when
+# granting access (`view-users`, `query-groups`, nothing else). Without it the console offers only
+# what it already knows — and says so.
+directory:
+  client_id: ''
+  # client_secret: → Vault.
+
+# ---------------------------------------------------------------------------------------------
+# Apache Kafka — the bus the two planes speak over, and a trust boundary.
+# ---------------------------------------------------------------------------------------------
+kafka:
+  bootstrap_servers: kafka:9092
+  # `PLAINTEXT` is refused outside `local`: the gateway builds the read-model its authorization
+  # comes from out of these topics.
+  security_protocol: PLAINTEXT
+  sasl_mechanism: ''
+  sasl_username: ''
+  # sasl_password: → Vault.
+  ssl_cafile: ''
+
+# ---------------------------------------------------------------------------------------------
+# Redis — rate limits that hold across several gateway instances. Without it they are per-process.
+# ---------------------------------------------------------------------------------------------
+redis:
+  url: redis://redis:6379/0
+
+# ---------------------------------------------------------------------------------------------
+# Model platforms. Configure the ones you have; an absent one is simply not offered.
+# ---------------------------------------------------------------------------------------------
+
+# Self-hosted, OpenAI-compatible (Ollama, vLLM, …). What this demo actually serves.
+ollama:
+  url: http://ollama:11434
+  models: qwen3:0.6b
+  embedding_models: all-minilm
+  # Where the machine physically is, for the residency half of the register (`FRD-608`).
+  region: local
+  timeout_seconds: 120
+
+# Several named OpenAI-compatible servers instead of the single endpoint above (`FRD-123`):
+# `name=url|model,model;name2=url2|model`.
+openai:
+  servers: ''
+
+# Google Agent Platform (formerly Vertex AI) — Gemini and Anthropic, EU-regional.
+vertex:
+  project: ''
+  models: ''
+  default_max_tokens: 4096
+  timeout_seconds: 120
+  # credentials / api_key: → Vault.
+
+# Google AI Studio (the public Gemini API).
+gemini:
+  base_url: https://generativelanguage.googleapis.com
+  models: ''
+
+# Microsoft Foundry / Azure OpenAI.
+foundry:
+  endpoint: ''
+  api_version: '2024-10-21'
+  deployments: ''
+  timeout_seconds: 120
+  # api_key: → Vault.
+
+# Where a model may be served from at all. A model reachable only at `global` is not usable here
+# (`FRD-611`): `global` names no region and guarantees none.
+allowed:
+  regions: europe-west1,europe-west4,europe-north1,local
+  hosts: '*'
+
+# ---------------------------------------------------------------------------------------------
+# Observability — OTLP to a collector, and from there wherever you send it (`ADR-0004`).
+# ---------------------------------------------------------------------------------------------
+otel:
+  enabled: true
+  endpoint: http://otel-collector:4318
+  sample_ratio: 1.0
+
+log:
+  level: INFO
+  json: true
+  queue_size: 1000
+  retention_days: 30
+
+# ---------------------------------------------------------------------------------------------
+# Bounds. Every one of these refuses something, so every one of them is a decision.
+# ---------------------------------------------------------------------------------------------
+max:
+  request_bytes: 1048576
+  auth_failures_per_minute: 60
+  embedding_batch: 64
+  embedding_chars: 32768
+  # A structured-output schema a caller may send: how big, how deep, how many properties.
+  response_schema_bytes: 32768
+  response_schema_depth: 8
+  response_schema_properties: 256
+
+throttle:
+  # Management's own per-user ceiling. A browser suite and a person sharing one account share this.
+  user: 600/minute
+  auth_failures: 60/minute
+
+api:
+  key_default_days: 30
+  key_max_days: 365
+
+cors:
+  origins: http://localhost:4200
+  allow_credentials: true
+
+# ---------------------------------------------------------------------------------------------
+# HashiCorp Vault — where every value this file deliberately omits comes from (`FRD-116`).
+#
+# **These are plain environment variables, not `AIRA_*` settings**, because they are read before
+# the settings exist. The renderer emits them under their own names.
+#
+# Read **once, at startup**, and never on the request path. A configured Vault that cannot be
+# reached is a *boot failure*, never a silent fall back to the environment.
+# ---------------------------------------------------------------------------------------------
+vault:
+  addr: http://vault:8200
+  mount: secret
+  path: aira
+  # Identifies, does not authorise — safe here. The secret-id is the other half and never is.
+  role_id: ''
+  namespace: ''
+  timeout: 10
+
+# ---------------------------------------------------------------------------------------------
+# What is deliberately absent, and where it lives instead.
+#
+# Listed so the file is complete as a description even though it holds none of them. The renderer
+# refuses any of these keys if somebody adds one, which is what makes the omission a rule.
+# ---------------------------------------------------------------------------------------------
+secrets:
+  in_vault:
+    - AIRA_SECRET_KEY                    # Django's signing key
+    - AIRA_POSTGRES_PASSWORD
+    - AIRA_VERTEX_SERVICE_ACCOUNT_JSON   # the whole JSON, as one value
+    - AIRA_VERTEX_API_KEY
+    - AIRA_GOOGLE_API_KEY
+    - AIRA_AZURE_API_KEY
+    - AIRA_FOUNDRY_API_KEY
+    - AIRA_OPENAI_API_KEY
+    - AIRA_KAFKA_SASL_PASSWORD
+    - AIRA_DIRECTORY_CLIENT_SECRET
+  # The one credential Vault cannot supply, because it is what authenticates *to* Vault. An
+  # environment variable in simple deployments; a projected volume on Kubernetes, which is why
+  # `VAULT_SECRET_ID_FILE` exists.
+  outside_vault:
+    - VAULT_SECRET_ID
+    - VAULT_SECRET_ID_FILE

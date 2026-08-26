@@ -52,6 +52,63 @@ exactly as `seed_demo` is, and reachable over no URL at all.
   That is this file's own lesson, repeated by the person who wrote it down: *"the pager browser
   guard passed against the unfixed console — it depended on 917 accumulated demo use cases."*
 
+### What the mutation sweep and the coverage figure each turned up
+
+The owner asked for the file to be gone through variable by variable — *"change the variable and
+see whether it hits, so we know you have covered everything"*. **186 mutations over 81 variables**:
+rename the key, remove it from every example at once, give it a value of the wrong type.
+
+**179 were noticed and seven were not, all of them the `vault:` section.** The cause was a correct
+decision with an unnoticed consequence: `VAULT_*` is exempt from the reality check because those
+names are read *before* the settings exist, and the completeness check walks the settings classes —
+so between them, the one section pointing at the secret store was unguarded. It could have vanished
+from both examples with nothing to say so, leaving an integrator who had configured everything
+except where the credentials come from. Four checks close it, each reading its truth out of
+`secrets.py` and `VaultConfig.from_env` rather than from a list kept here. Second run: 186 of 186.
+
+*And the sweep cost a file.* Its first version wrote the YAML in place and kept the original in
+memory, restored in a `finally` — which a `SIGKILL` walks past. It did, and 250 lines of comment
+went with it, which git could not return because `config/` is deliberately untracked. Rebuilt from
+the intact sister file; the second version copies to disk first. The docstring had named the danger
+without guarding it, which is the shape this repository calls a written-down danger.
+
+**And the coverage figure found the untested destructive command.** 95.72% → 95.27% after
+`purge_test_use_cases` was added, which is the only reason anybody looked: a command whose one
+safety rail is a demo-mode guard, and nothing broke that rail on purpose. Eight tests now do.
+
+Writing them found something larger. `test_a_retired_use_case_is_purged_and_announced` passed alone
+and failed in the suite, with `_subscribers` **empty**: two fixtures ended with
+`events._subscribers.clear()` to remove their own spy, taking the outbox subscriber
+`OutboxConfig.ready()` registers at start-up with it — permanently, for the rest of the session. So
+in a full run, no use-case event reached the outbox at all. A teardown removes what it added.
+
+## One file that points at every external system (2026-08-25)
+
+`config/`, with two examples and everything else invisible to git — `*` with named exceptions,
+which is the safe direction: a `.gitignore` that lists what to hide misses the file created last
+Tuesday. An installation file holds hostnames, project ids and account names; none of that is a
+secret in the sense Vault means, and none of it is anybody else's business.
+
+Two levels, and the shape is the mapping: a section is a prefix, a key completes it, so
+`postgres.host` is `AIRA_POSTGRES_HOST`. `core:` is unprefixed for settings that belong to no
+system, and `vault:` becomes `VAULT_*` because those are read before any settings object exists.
+**78 variables out of one file.**
+
+`tools/config_render.py` renders into `deploy/compose/.env` — into the contract both planes already
+read, rather than beside it. A YAML settings source would have been a *fourth* answer to "where
+does this value come from", read at a different moment on each plane.
+
+**Secrets are refused, not requested.** Asking for that in a comment is what `LESSONS.md` calls a
+written-down danger; the renderer raises, by name, with where the value belongs instead.
+
+The guard checks the examples against the settings classes at four levels, and found **seven real
+errors in the file its author had just written**: two invented keys and five settings the file had
+never heard of. The fourth level is the one that makes this a working file rather than a document —
+the rendered environment is handed to both planes' settings objects with the environment otherwise
+**empty**, so a port that is not a number or a role map the parser refuses fails here instead of at
+somebody's first boot. Empty on purpose: merging the developer's own `AIRA_*` is how *"it works on a
+machine that has already done the thing by hand"* gets shipped.
+
 ## One setting, three contradictions, and a field invented as a null (2026-08-25)
 
 The two the previous round recorded as noticed-and-not-fixed. Both turned out to be the shape of

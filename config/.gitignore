@@ -1,0 +1,16 @@
+# **Everything here is somebody's installation, and installations hold addresses, hostnames,
+# project ids and account names.** None of that is a secret in the sense Vault means, and all of
+# it is exactly what should not arrive in a public repository by being dropped in a folder.
+#
+# So the rule is inverted: nothing in this directory is tracked unless it is named below. A new
+# file is invisible to git until somebody decides otherwise, which is the safe direction — the
+# other one is a `.gitignore` that lists what to hide and misses the file created last Tuesday.
+*
+
+# The examples, which describe an installation nobody runs: the demo stack that ships with this
+# repository, and a single-machine deployment. Both are checked against the real settings classes
+# by `tools/tests/test_the_config_examples_are_real.py`, so they cannot drift into fiction.
+!.gitignore
+!README.md
+!showcase.example.yaml
+!standalone.example.yaml

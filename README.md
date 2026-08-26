@@ -175,6 +175,7 @@ Full picture: [**Architecture**](docs/ARCHITECTURE.md) ·
 | [**Request lifecycle**](docs/REQUEST-LIFECYCLE.md) | Every control, in order, and what skipping one costs |
 | [**Configuration**](docs/CONFIGURATION.md) | Every variable, what it does, what breaks without it |
 | [**Integrations**](docs/INTEGRATIONS.md) | What each connected system must provide |
+| [**Configuration files**](config/README.md) | One YAML per installation, naming every external system — and no secrets |
 | [**Migrating a KIRA client**](docs/MIGRATION-KIRA.md) | Use case, released models, members, key — and `X-AIRA-Use-Case` |
 | [**Pointing a Gemini client at AIRA**](docs/MIGRATION-GEMINI.md) | The same four steps, for `google-genai` and anything that speaks it |
 | [**Operations**](docs/DEPLOYMENT.md) | Running it: topics, jobs, degradation, backups |

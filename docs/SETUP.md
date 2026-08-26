@@ -218,6 +218,21 @@ Each layer exists for what the one below cannot see; the reasoning and the traps
 
 ## 5. Integrated — onto your own infrastructure
 
+> **Start from a configuration file.** [`config/`](../config/) holds one YAML per installation
+> naming every external system AIRA can be connected to, with every setting that decides how it is
+> reached and **no secrets** — those come from Vault (`FRD-116`), and the renderer refuses a key it
+> recognises as one. Copy `standalone.example.yaml`, edit it, and render it into the environment
+> both planes read:
+>
+> ```bash
+> cp config/standalone.example.yaml config/my-installation.yaml
+> uv run python tools/config_render.py config/my-installation.yaml -o deploy/compose/.env
+> ```
+>
+> Everything else in `config/` is invisible to git on purpose. The examples are checked against the
+> settings classes themselves, so they cannot name a variable the product does not have — or omit
+> one it does.
+
 The applications are stateless containers. Point them at your Postgres, your Kafka, your Keycloak
 and your model platforms; nothing else is required.
 
