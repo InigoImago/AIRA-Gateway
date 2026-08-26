@@ -1,4 +1,6 @@
-name: aira
+# The Compose project name, and the network below, both follow `AIRA_STACK` — the same
+# variable that prefixes every container. Set it to run a second stack beside the first.
+name: ${AIRA_STACK:-aira}
 
 # AIRA local infrastructure: Postgres, Keycloak, Kafka, Vault, Redis, observability.
 # The applications are added by `docker-compose.apps.yml`.
@@ -314,5 +316,14 @@ volumes:
 
 networks:
   aira:
-    name: aira
+    # **Named after the stack, not after the product.** `AIRA_STACK` already prefixes every
+    # container name so that a second stack can run beside the first — a demo next to a staging
+    # instance, a cold-start probe next to a working one. It did not reach here, and a fixed
+    # network name is shared by every project on the machine: both stacks join one bridge, and
+    # `postgres`, `kafka` and `keycloak` each resolve to whichever container answers first.
+    #
+    # The failure is silent and total. A second stack comes up healthy, its own database stays
+    # empty, and it reads and writes the *first* stack's Postgres — measured here, with a seed
+    # that reported success against a database that was not its own.
+    name: ${AIRA_STACK:-aira}
     driver: bridge

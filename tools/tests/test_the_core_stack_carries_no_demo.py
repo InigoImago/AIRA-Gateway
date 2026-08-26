@@ -134,3 +134,35 @@ def test_the_showcase_layer_adds_its_edge_without_losing_the_core_ones() -> None
             "file's vault-init edge must both survive the merge; losing either is a cold-start "
             "race that no warm machine will ever show you."
         )
+
+
+def test_a_second_stack_is_isolated_by_one_variable() -> None:
+    """`AIRA_STACK` must namespace **everything**, or a second stack is worse than none.
+
+    It already prefixes every `container_name`, which reads as "set this and run a stack beside
+    the existing one". The project name and the network did not follow, and a fixed network name
+    is shared by every Compose project on the machine: both stacks join one bridge, and
+    `postgres`, `kafka` and `keycloak` resolve to whichever container answers first.
+
+    The failure is silent and total — measured, not imagined. A second stack came up healthy with
+    every container reporting its own name, its own database stayed empty, and its seed reported
+    success against the *first* stack's Postgres. Nothing in either stack said anything was wrong.
+    """
+    compose = compose_files.INFRA.read_text()
+    # Anchored at the start of a line, both of them. Written without the leading newline, the
+    # project's check matched the *network's* indented line as a substring and the mutation that
+    # pins the project name back to a literal went unnoticed — a guard that reads its own
+    # neighbour's evidence.
+    for line, what in (
+        ("\nname: ${AIRA_STACK:-aira}\n", "the compose project"),
+        ("\n    name: ${AIRA_STACK:-aira}\n", "the network"),
+    ):
+        assert line in compose, (
+            f"{what} does not follow AIRA_STACK. Every container_name already does, so a second "
+            "stack looks isolated and shares a bridge with the first — where one service name "
+            "answers for two containers."
+        )
+
+    prefixed = compose.count("container_name: ${AIRA_STACK:-aira}-")
+    named = compose.count("container_name:")
+    assert prefixed == named, f"{named - prefixed} container(s) do not follow AIRA_STACK"

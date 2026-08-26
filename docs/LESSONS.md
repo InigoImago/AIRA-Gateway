@@ -418,6 +418,18 @@ reading code.
   named one by one** — a concession nobody asked for is a hole, and a blanket cannot say which is
   which. The same applies to what a *port* exempts: the dev stack published Postgres, Redis, Kafka
   and a dev-mode Vault on `0.0.0.0` because Compose's `"5432:5432"` means that, and nobody chose it.
+- **A variable that namespaces some of a thing namespaces none of it.** `AIRA_STACK` prefixed
+  every container name so a second stack could run beside the first, and left the Compose project
+  and the network pinned to literals. A fixed network name is shared by every project on the
+  machine, so the second stack came up healthy, kept an empty database, and read and wrote the
+  first one's Postgres — with its seed reporting success. Partial isolation is worse than none:
+  none fails at `docker run`, partial fails silently and at the data layer.
+- **A cold start is a different system from a warm one, and only one of them is what a colleague
+  meets.** Every check that mattered here was green against a machine whose volumes had been
+  filling for weeks: config diffs, a stack that came back up, a doctor, 161 browser tests. The
+  defect above needed two stacks *running at once* with one of them writing — the state no warm
+  check reaches. The earlier "proof" of a second stack had rendered it and started one image,
+  which is the half that cannot fail.
 - **A deployment file is read by somebody who was not here.** `docker-compose.apps.yml` was 38%
   comment, and most of it was the DEVLOG: dates, defect counts, *missing until a named day*, the
   story of four wiring bugs. None of that helps the person wiring AIRA into their own Keycloak —
