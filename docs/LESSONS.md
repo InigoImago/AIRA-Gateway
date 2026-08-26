@@ -418,6 +418,12 @@ reading code.
   named one by one** — a concession nobody asked for is a hole, and a blanket cannot say which is
   which. The same applies to what a *port* exempts: the dev stack published Postgres, Redis, Kafka
   and a dev-mode Vault on `0.0.0.0` because Compose's `"5432:5432"` means that, and nobody chose it.
+- **A comment that states a rule does not enforce the line beneath it.** The pull-wait loop in
+  `make showcase` carries a paragraph explaining why the seed must not run before the model is on
+  disk — directly above `docker inspect … aira-ollama-pull`, a literal that finds nothing on a
+  prefixed stack, so the loop breaks immediately and the seed runs mid-download. The prose was
+  right, adjacent, and load-bearing for nothing. Same family as *a rule only a reviewer enforces
+  is one the next round breaks*; here the reviewer had already written it down.
 - **A variable that namespaces some of a thing namespaces none of it.** `AIRA_STACK` prefixed
   every container name so a second stack could run beside the first, and left the Compose project
   and the network pinned to literals. A fixed network name is shared by every project on the

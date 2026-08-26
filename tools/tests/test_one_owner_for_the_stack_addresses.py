@@ -231,3 +231,45 @@ def test_a_service_with_no_legacy_name_still_resolves(monkeypatch) -> None:
     monkeypatch.setenv("AIRA_PUBLISH_KEYCLOAK_PORT", "18080")
 
     assert stack_addresses.port("keycloak") == 18080
+
+
+def test_the_makefile_reads_no_variable_that_nothing_sets() -> None:
+    """A knob wired to a name that does not exist reads as done, and is worse than an absent one.
+
+    `make showcase` reported the demo realm with
+    `KEYCLOAK_URL=http://localhost:$${AIRA_KEYCLOAK_PORT:-8080}`. `AIRA_KEYCLOAK_PORT` occurred
+    **once in the entire repository** — in that line. Nothing set it, no Compose file interpolated
+    it, no settings class had it, so the report always went to `8080` and on a stack that
+    publishes Keycloak anywhere else it silently reached nothing. The line was `-`-prefixed, so
+    even the failure was swallowed.
+
+    The rule this restates for the Makefile: an `AIRA_*` name it reads must be one that something
+    defines — a Compose file's `${…}`, a settings class, or an assignment in the Makefile itself.
+    The published-address owner already covers *addresses*; this covers the shape one layer out.
+    """
+    makefile = (ROOT / "Makefile").read_text()
+
+    read = set(re.findall(r"\$\$?\{(AIRA_[A-Z0-9_]+)(?::?-[^}]*)?\}", makefile))
+    read |= set(re.findall(r"\$\((AIRA_[A-Z0-9_]+)\)", makefile))
+
+    defined = set(re.findall(r"^\s*(AIRA_[A-Z0-9_]+)\s*[:?+]?=", makefile, re.M))
+    for path in compose_files.ALL:
+        text = path.read_text()
+        defined |= set(re.findall(r"\$\{(AIRA_[A-Z0-9_]+)", text))
+        defined |= set(re.findall(r"^\s*(AIRA_[A-Z0-9_]+):", text, re.M))
+    for settings in (
+        ROOT / "gateway" / "src" / "aira_gateway" / "config.py",
+        ROOT / "management" / "backend" / "src" / "aira_management" / "settings.py",
+    ):
+        if settings.is_file():
+            body = settings.read_text()
+            defined |= {
+                f"AIRA_{name.upper()}" for name in re.findall(r"^\s*([a-z0-9_]+)\s*:", body, re.M)
+            }
+
+    orphans = sorted(read - defined)
+    assert not orphans, (
+        f"{orphans}: read by the Makefile and set by nothing — no compose file interpolates the "
+        "name, no settings class has it, no assignment defines it. Whatever default follows the "
+        "`:-` is the only value that line can ever have."
+    )

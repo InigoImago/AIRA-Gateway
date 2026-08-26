@@ -5,6 +5,46 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## `make showcase` on a stack that is not the default one (2026-08-26)
+
+Asked whether the previous round meant `make showcase` now covers everything. It did not, and the
+distinction matters: what had been verified was the *sequence of steps the target performs*, run by
+hand. The target itself does more — `wait-healthy`, the pull-wait loop, the second seed,
+`demo_wait_ready`, `demo_reset_usage`, `demo_traffic`, the realm report, `showcase_agent`,
+`showcase_try_it` — and four of those had never been run in this round at all.
+
+**Reading it found two defects before running it.**
+
+- `KEYCLOAK_URL=http://localhost:$${AIRA_KEYCLOAK_PORT:-8080}`. `AIRA_KEYCLOAK_PORT` occurred
+  **once in the entire repository**: in that line. Nothing sets it, no Compose file interpolates
+  it, no settings class has it. The realm report therefore always went to `8080`, and on a stack
+  publishing Keycloak anywhere else it reached nothing — silently, because the line is
+  `-`-prefixed. There is an owner for this (`$(KEYCLOAK_URL)`, via `tools/stack_addresses.py`) and
+  it was two characters away.
+- `docker inspect … aira-ollama-pull` in the pull-wait loop, plus `docker exec aira-ollama` twice
+  and `docker exec aira-kafka` once. On a stack with a prefix, `docker inspect` finds nothing, the
+  fallback says `gone`, the loop breaks on its first pass and the second seed runs while the model
+  is still downloading — **which is exactly what the comment above that loop exists to prevent**,
+  reintroduced by the literal underneath it. The result is a demo with no models in it, and it
+  starts.
+
+Two guards, both broken on purpose first: an `AIRA_*` name the Makefile reads must be defined by
+something (a Compose `${…}`, a settings class, an assignment), and no Makefile or Compose line may
+address a container by a literal name — the second had to learn that `image: aira-gateway:${…}` is
+an image, not a container, and images deliberately do not move with the stack.
+
+**Then the target itself, twice.** On the default stack: every step, `served 10, refused 1, failed
+0` — the refusal is the prompt-injection block, which is the point of it. Then on a **moved** stack
+from nothing (`AIRA_STACK=airamoved`, all fourteen ports moved): the same, with the printed URLs
+following the move, the realm report reaching `18080`, and — the proof the pull-wait fix works —
+**2 models catalogued and approved**, which only happens when the second seed runs after the
+download rather than during it. 12 request rows behind the demo traffic. The default stack was
+untouched throughout.
+
+3 mutations added (**607**), each observed `caught`.
+
+---
+
 ## The second stack that was the first one (2026-08-26)
 
 Asked whether the showcase had been *fully* verified after the compose split. It had not: the
