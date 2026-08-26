@@ -1,156 +1,26 @@
-# AIRA applications — overlay on top of docker-compose.yml (infrastructure).
+# AIRA applications — the product. Overlay on docker-compose.yml (infrastructure).
 #
 #   docker compose -f docker-compose.yml -f docker-compose.apps.yml up -d --build
-#   # or, from the repo root:  make up-full
+#   # or, from the repo root:  make up-apps
 #
-# The infrastructure file stays usable on its own for the "run the services from source"
-# workflow; this file adds the five application processes on top of it.
+# Nothing in this file exists for the demo: the development Keycloak realm, the `-dev` Vault and
+# the seeded accounts are in `docker-compose.showcase.yml`, layered on by `make up-full`.
+#
+# Every value is `${AIRA_…:-default}` and the default is the settings class's own, so an empty
+# environment gives you the documented behaviour. Set them in `deploy/compose/.env`, or generate
+# that file from a `config/*.yaml` (see `config/README.md`). Secrets do not belong in either —
+# they come from Vault.
 #
 # Startup order is expressed with conditions rather than sleeps: migrations run to completion
-# before the services that need the schema, and the topic creation runs before the consumer.
+# before the services that need the schema, and topic creation before the consumer.
 
 services:
   # ---- one-shot setup ----------------------------------------------------------------------
 
-  # Keep the development realm matching the file that defines it (see `tools/keycloak_demo_realm.py`).
-  #
-  # Keycloak imports a realm **only if it does not exist**, so every edit to the realm file reaches
-  # a fresh machine and no other. A colleague whose realm predates `ADR-0017` keeps a realm from
-  # before it, and `make showcase` then prints five accounts that Keycloak answers `invalid
-  # username or password` to. The repository already told people to recreate the realm by hand, in
-  # a README — which is a demo that works for whoever wrote it.
-  #
-  # Idle when the realm matches, environment-gated, and it never touches a real directory: AIRA
-  # does not write to one (`FRD-209`). This is the demo stack provisioning its own.
-  keycloak-init:
-    image: python:3.14-slim
-    container_name: ${AIRA_STACK:-aira}-keycloak-init
-    command: ["python", "/tools/keycloak_demo_realm.py"]
-    environment:
-      KEYCLOAK_URL: http://keycloak:8080
-      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
-      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
-      AIRA_ENVIRONMENT: ${AIRA_ENVIRONMENT:-local}
-    volumes:
-      - ../../tools/keycloak_demo_realm.py:/tools/keycloak_demo_realm.py:ro
-      - ./keycloak/realms:/realm:ro
-    depends_on:
-      keycloak:
-        condition: service_healthy
-    networks: [aira]
-    restart: "no"
-
-  # Provision the dev Vault, every start (`FRD-116`).
-  #
-  # The stack's Vault runs `server -dev`, which keeps everything **in memory**: recreate the
-  # container and `secret/aira` is gone. `load_secrets()` then fails closed — correctly, since a
-  # secret store that answers "no such path" is not an outage to shrug off — and every application
-  # container refuses to boot with a message about a Vault path.
-  #
-  # That made `make showcase` depend on somebody having run `make vault-init` *after* the current
-  # Vault container started, which is a trap laid by our own documentation: run the documented
-  # command, then `docker compose down`, and the one command that must always work stops working.
-  # Ordering belongs in the file that owns the ordering, so it is a service with a condition on it
-  # rather than a step in a Makefile target that three other entry points do not run.
-  #
-  # **Guarded by the environment, not by a profile.** A real Vault is provisioned by whoever owns
-  # it, with a policy and an AppRole; this repairs a development server that forgets by design, so
-  # it must never write to a real one. The first version expressed that as `profiles: ["demo"]` —
-  # and a service two non-profiled services depend on cannot itself be behind a profile: without
-  # `--profile demo` compose refuses the whole project as invalid, which took `make up-full`'s
-  # log-dumping fallback in CI with it, at exactly the moment somebody needs the logs.
-  #
-  # So it is always defined and decides for itself, the environment-shaped gating `ADR-0015`
-  # settled: no address means nothing to do, and anything but a local or demo environment means
-  # somebody else owns this Vault.
-  vault-init:
-    image: hashicorp/vault:1.18
-    container_name: ${AIRA_STACK:-aira}-vault-init
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        set -e
-        if [ -z "$$VAULT_ADDR" ]; then
-          echo "no VAULT_ADDR — secrets come from the environment, nothing to provision"
-          exit 0
-        fi
-        case "$${AIRA_ENVIRONMENT:-local}" in
-          local|demo) ;;
-          *)
-            echo "environment '$$AIRA_ENVIRONMENT' — this Vault is somebody else's to provision"
-            exit 0
-            ;;
-        esac
-        # **Never a reason the stack cannot start.** The migrations wait for this service, so a
-        # non-zero exit here stops everything — and provisioning a *development* Vault is not
-        # worth that. If Vault never answers, say so and get out of the way: a deployment that
-        # really needs it then fails in the container that reads the secret, with the message
-        # naming the path, which is the accurate error rather than an ordering one.
-        n=0
-        until vault status >/dev/null 2>&1; do
-          n=$$((n + 1))
-          if [ "$$n" -ge 30 ]; then
-            echo "Vault at $$VAULT_ADDR did not answer; leaving it alone."
-            echo "Nothing provisioned. A service that needs a secret will say which one."
-            exit 0
-          fi
-          sleep 2
-        done
-        # **Only variables that are actually set.** Vault ranks *above* the environment
-        # (`FRD-116`), so writing a key with an empty value does not mean "nothing here" — it
-        # means "the value is the empty string", and it silently wins over the real one. The
-        # first version of this service wrote all three unconditionally and took the stack down
-        # with `no password supplied`, which is the same mistake as `unpriced is not free`, one
-        # layer down: absent and empty are different answers.
-        set --
-        for name in AIRA_GOOGLE_API_KEY AIRA_POSTGRES_PASSWORD AIRA_SECRET_KEY \
-                    AIRA_VERTEX_CREDENTIALS AIRA_VERTEX_API_KEY AIRA_OPENAI_API_KEY; do
-          value=$$(eval echo \$$$$name)
-          [ -n "$$value" ] && set -- "$$@" "$$name=$$value"
-        done
-        # `vault kv put` with no pairs is an error, not an empty write — so a stack with no
-        # secrets configured still needs *something* on the path, because what the readers require
-        # is the path's existence. The note says why it is otherwise empty, in the one place
-        # somebody looking at an empty Vault would go.
-        if [ "$$#" -eq 0 ]; then
-          set -- "note=provisioned by compose; no AIRA_* secret is set in this stack's .env"
-        fi
-        # kv-v2 is already mounted at secret/ by the dev server, so only the path is written.
-        vault kv put "$${VAULT_MOUNT:-secret}/$${VAULT_PATH:-aira}" "$$@" >/dev/null
-        echo "provisioned $${VAULT_MOUNT:-secret}/$${VAULT_PATH:-aira}"
-    environment:
-      # The CLI talks to the server; the app containers use the same address from their own env.
-      VAULT_ADDR: ${VAULT_ADDR:-}
-      VAULT_TOKEN: ${VAULT_TOKEN:-${VAULT_DEV_ROOT_TOKEN_ID:-root}}
-      VAULT_MOUNT: ${VAULT_MOUNT:-secret}
-      VAULT_PATH: ${VAULT_PATH:-aira}
-      AIRA_ENVIRONMENT: ${AIRA_ENVIRONMENT:-local}
-      AIRA_GOOGLE_API_KEY: ${AIRA_GOOGLE_API_KEY:-}
-      AIRA_POSTGRES_PASSWORD: ${AIRA_POSTGRES_PASSWORD:-}
-      AIRA_SECRET_KEY: ${AIRA_SECRET_KEY:-}
-      AIRA_VERTEX_CREDENTIALS: ${AIRA_VERTEX_CREDENTIALS:-}
-      AIRA_VERTEX_API_KEY: ${AIRA_VERTEX_API_KEY:-}
-      AIRA_AZURE_API_KEY: ${AIRA_AZURE_API_KEY:-}
-      AIRA_OPENAI_API_KEY: ${AIRA_OPENAI_API_KEY:-}
-    depends_on:
-      # `service_started`, not `service_healthy`. The migrations wait for *this* service, so
-      # making it wait for a **healthy** Vault put the whole stack behind Vault's health check —
-      # including a deployment that sets no `VAULT_ADDR` and never touches Vault at all. The
-      # script waits for Vault itself, briefly, and gets out of the way if it never answers.
-      vault:
-        condition: service_started
-    networks: [aira]
-    restart: "no"
-
-
   gateway-migrate:
     image: aira-gateway:${AIRA_IMAGE_TAG:-dev}
-    # **Every service that names this image declares how to build it**, including the ones that
-    # only run a second process out of it. A service with `image:` and no `build:` is one compose
-    # *pulls* — and `aira-gateway` exists on no registry, so on a machine without the tag already
-    # in its local store, `make showcase` tried to fetch four images that cannot be fetched. It
-    # worked everywhere the image happened to be lying around, which is every machine that had
-    # run it before, and failed on exactly the first run this target exists for.
+    # Every service naming this image also declares how to build it. `aira-gateway` is on no
+    # registry, and a service with `image:` and no `build:` is one Compose tries to *pull*.
     build: &gateway-build
       context: ../..
       dockerfile: gateway/Dockerfile
@@ -158,26 +28,15 @@ services:
     working_dir: /app/gateway
     command: ["alembic", "upgrade", "head"]
     environment: &gateway-env
-      # **The waiver mechanism, unreachable in this stack until 2026-08-26.** `gateway/security.py`
-      # refuses to start outside `local` unless six things hold, and `AIRA_DEMO_MODE` waives
-      # exactly those six (`WAIVED_BY_A_DEMO` — a list, with a docstring about what it does *not*
-      # waive). None of it could fire: the variable went to `management-seed` alone. The demo
-      # worked only because `AIRA_ENVIRONMENT=local` waives everything, so nothing showed the gap
-      # until a configuration file said `demo` instead and Management refused to migrate.
+      # Outside `AIRA_ENVIRONMENT=local` the services refuse to start unless six hardening
+      # conditions hold. `AIRA_DEMO_MODE=true` waives exactly those six and nothing else — the
+      # list is `WAIVED_BY_A_DEMO` in `gateway/security.py`. Leave it `false` for a real
+      # deployment; it is what lets a showcase run with a published password and no audience.
       AIRA_DEMO_MODE: ${AIRA_DEMO_MODE:-false}
-      # ── Everything else a `config/*.yaml` can set (2026-08-26) ───────────────────────────
+      # ── Everything else a `config/*.yaml` can set ────────────────────────────────────────
       #
-      # **The block that was missing, and it was most of them.** `config/showcase.example.yaml`
-      # renders 86 variables and **47 reached no container**: 45 that no compose file interpolated,
-      # and a handful assigned a literal here. Somebody could set `enforce_budgets: false`, restart,
-      # and watch budgets go on being enforced.
-      #
-      # This file already says the sentence four times — about the Ollama timeout, the Gemini model
-      # list, two more timeouts, and then the whole Vertex adapter: *a knob that is not wired is
-      # worse than an absent one, somebody turns it and believes the result.* A configuration file
-      # offering 86 of them is the reason to stop meeting it one variable at a time.
-      #
-      # Every default below is the settings class's own, so nothing that was true stops being true.
+      # Each default below is the settings class's own. `make config-verify` reports any of these
+      # that your config file sets and no container receives.
       AIRA_ANOMALY_INTERVAL_SECONDS: ${AIRA_ANOMALY_INTERVAL_SECONDS:-60.0}
       AIRA_API_KEY_DEFAULT_DAYS: ${AIRA_API_KEY_DEFAULT_DAYS:-30}
       AIRA_API_KEY_MAX_DAYS: ${AIRA_API_KEY_MAX_DAYS:-180}
@@ -211,17 +70,14 @@ services:
       AIRA_TRUSTED_PROXY_HOPS: ${AIRA_TRUSTED_PROXY_HOPS:-1}
       AIRA_TRUST_FORWARDED_FOR: ${AIRA_TRUST_FORWARDED_FOR:-false}
       AIRA_ENVIRONMENT: ${AIRA_ENVIRONMENT:-local}
-      # ── Secrets from Vault (FRD-116) ──────────────────────────────────────────────────────
+      # ── Secrets from Vault ────────────────────────────────────────────────────────────────
       #
-      # These were **missing until 2026-08-09**, and their absence was silent by construction:
-      # `VaultConfig.configured` is false without an address, `load_secrets()` returns an empty
-      # mapping, and every credential quietly comes from the environment instead. The mechanism
-      # had been built and tested against a real AppRole for three days while the running stack
-      # used none of it — the fourth "two correct halves and no wire" in this repository.
+      # With no `VAULT_ADDR` the loader is inert and every credential comes from the environment
+      # instead — silently. Set the address to turn Vault on.
       #
-      # An address and a role id **identify**; they are not secrets and belong here. The secret-id
-      # is the one value that authorises, and it is read from a file so it never appears in
-      # `docker inspect`, in a process list, or in this file.
+      # An address and a role id **identify** and are not secrets, so they belong here. The
+      # secret-id is the one value that authorises: point `VAULT_SECRET_ID_FILE` at a mounted
+      # file so it never appears in `docker inspect` or a process list.
       VAULT_ADDR: ${VAULT_ADDR:-}
       VAULT_MOUNT: ${VAULT_MOUNT:-secret}
       VAULT_PATH: ${VAULT_PATH:-aira}
@@ -229,10 +85,8 @@ services:
       # A **file**, not a variable. A secret-id in the environment shows up in `docker inspect`,
       # in `/proc/<pid>/environ`, and in any library that dumps its configuration when it panics.
       VAULT_SECRET_ID_FILE: ${VAULT_SECRET_ID_FILE:-}
-      # Passed through because the loader reads them, not because they are recommended.
-      # `VAULT_SECRET_ID` is the file's alternative and the worse one — a secret-id in the
-      # environment is in `docker inspect` and in `/proc/<pid>/environ` — but omitting a variable
-      # the code consults is how this whole feature came to be inert, so it is here and empty.
+      # `VAULT_SECRET_ID` is the file's alternative and the worse one: a secret-id in the
+      # environment is visible in `docker inspect` and `/proc/<pid>/environ`. Prefer the file.
       # `VAULT_NAMESPACE` is Vault Enterprise; `VAULT_TIMEOUT` is seconds.
       VAULT_SECRET_ID: ${VAULT_SECRET_ID:-}
       VAULT_NAMESPACE: ${VAULT_NAMESPACE:-}
@@ -255,40 +109,31 @@ services:
       AIRA_KAFKA_SASL_USERNAME: ${AIRA_KAFKA_SASL_USERNAME:-}
       AIRA_KAFKA_SASL_PASSWORD: ${AIRA_KAFKA_SASL_PASSWORD:-}
       AIRA_KAFKA_SSL_CAFILE: ${AIRA_KAFKA_SSL_CAFILE:-}
-      # Shared counters for rate limits and budget reservations (ADR-0008). Empty disables
+      # Shared counters for rate limits and budget reservations. Empty disables
       # them: limits then hold per process and budgets use the racy read-then-book path.
       AIRA_REDIS_URL: ${AIRA_REDIS_URL:-redis://redis:6379/0}
       AIRA_OIDC_ENABLED: ${AIRA_OIDC_ENABLED:-true}
-      # The issuer is what the *browser* obtained the token from, so it must match the token's
-      # `iss` claim exactly. The JWKS URI is fetched by this container, which cannot reach
-      # "localhost:8080" — hence the in-network override. This split is exactly what
-      # AIRA_OIDC_JWKS_URI exists for.
+      # Two addresses for one server, and they are not interchangeable. The issuer must match
+      # the token's `iss` claim exactly, which is whatever the *browser* obtained it from. The
+      # JWKS URI is fetched by this container, which cannot reach the browser's "localhost" —
+      # leave it empty to use the in-network address, or set it explicitly.
       AIRA_OIDC_ISSUER: ${AIRA_OIDC_ISSUER:-http://localhost:${AIRA_PUBLISH_KEYCLOAK_PORT:-8080}/realms/aira}
       AIRA_OIDC_JWKS_URI: ${AIRA_OIDC_JWKS_URI:-http://keycloak:8080/realms/aira/protocol/openid-connect/certs}
       AIRA_OIDC_AUDIENCE: ${AIRA_OIDC_AUDIENCE:-}
-      # **Authentication, and the one knob that switches it off entirely.** Default `true`, and
-      # passed through so that a laptop demo can set it — it was absent from this file until
-      # 2026-08-16, so setting it in `.env` did nothing at all, which is the "knob that is not
-      # wired" defect noted a few lines below, in its other form.
-      #
-      # `false` serves **every route to anyone who can reach the port**, with no credential and no
-      # use case: the request is charged to no budget, bounded by no use-case rate limit, outside
-      # the model release, and its audit row names nobody. `security.py` refuses to start with it
-      # off unless `AIRA_ENVIRONMENT=local`, and `AIRA_DEMO_MODE` deliberately does **not** waive
-      # that — see `WAIVED_BY_A_DEMO`.
+      # `false` serves **every route to anyone who can reach the port**: no credential, no use
+      # case, charged to no budget, bounded by no rate limit, outside the model release, and an
+      # audit row that names nobody. The gateway refuses to start with it off unless
+      # `AIRA_ENVIRONMENT=local`; `AIRA_DEMO_MODE` does not waive this one.
       AIRA_AUTH_REQUIRED: ${AIRA_AUTH_REQUIRED:-true}
-      # Which Keycloak group confers which AIRA role (`ADR-0017`). Group membership is the **only**
+      # Which Keycloak group confers which AIRA role. Group membership is the **only**
       # source of a role — a realm role on the same token is not read — so an installation that
       # leaves this empty has nobody holding one.
       AIRA_ROLE_GROUPS: ${AIRA_ROLE_GROUPS:-global-admin=/aira/global-admins;it-security=/aira/it-security;it-steuerung=/aira/it-steuerung}
       AIRA_GOOGLE_API_KEY: ${AIRA_GOOGLE_API_KEY:-}
-      # Servers speaking the OpenAI dialect (FRD-123). Empty registers none. The in-network name
-      # is `ollama`, not `localhost` — the same split as the JWKS URI above, and the same reason.
-      # Google AI Studio (`FRD-304`). The key registers the adapter; the model list and base URL
-      # were **not passed through** until 2026-08-10, so an operator could set either and nothing
-      # happened — the third time this file has had that defect, after the three timeouts found on
-      # 2026-08-08. A knob that is not wired is worse than an absent one: somebody turns it and
-      # believes the result.
+      # Servers speaking the OpenAI dialect; empty registers none. Use in-network names
+      # (`ollama`), not `localhost` — same reason as the JWKS URI above.
+      # Google AI Studio. The key registers the adapter; the model list and base URL are
+      # optional overrides.
       AIRA_GEMINI_MODELS: ${AIRA_GEMINI_MODELS:-}
       AIRA_GEMINI_BASE_URL: ${AIRA_GEMINI_BASE_URL:-}
       AIRA_OPENAI_SERVERS: ${AIRA_OPENAI_SERVERS:-}
@@ -296,24 +141,15 @@ services:
       AIRA_OLLAMA_MODELS: ${AIRA_OLLAMA_MODELS:-}
       AIRA_OLLAMA_EMBEDDING_MODELS: ${AIRA_OLLAMA_EMBEDDING_MODELS:-}
       AIRA_OLLAMA_REGION: ${AIRA_OLLAMA_REGION:-}
-      # Missing until 2026-08-08: the setting existed in `config.py` and the compose file never
-      # passed it, so raising it changed nothing and the default was the only value any
-      # containerised deployment could have. A knob that is not wired is worse than an absent one
-      # — somebody turns it and believes the result.
+      # Seconds. Local models on modest hardware need more than the HTTP default.
       AIRA_OLLAMA_TIMEOUT_SECONDS: ${AIRA_OLLAMA_TIMEOUT_SECONDS:-}
       # The same gap, twice more. Neither adapter is configured in this stack, which is exactly why
       # nobody noticed: an unpassed setting is invisible until somebody depends on it.
       AIRA_VERTEX_TIMEOUT_SECONDS: ${AIRA_VERTEX_TIMEOUT_SECONDS:-}
       AIRA_FOUNDRY_TIMEOUT_SECONDS: ${AIRA_FOUNDRY_TIMEOUT_SECONDS:-}
-      # **And a fourth time, for the whole adapter.** Only the timeout above was passed, so Vertex
-      # — the EU-regional platform this product's residency story rests on — could not be
-      # configured through the shipped stack **at all**, with either credential. Found on
-      # 2026-08-17 by setting the key and watching `/readyz` list Mock and Ollama.
-      #
-      # The vault-seed loop below made it worse by naming `AIRA_VERTEX_SERVICE_ACCOUNT_JSON`, which
-      # is not a setting anywhere in this codebase — so the one line that mentioned the credential
-      # was a name nothing reads. A knob that is not wired is worse than an absent one; a knob
-      # wired to a name that does not exist is worse again, because it reads as done.
+      # Vertex AI, the EU-regional platform the residency story rests on. Two ways to
+      # authenticate: an API key, or a service-account JSON via `AIRA_VERTEX_CREDENTIALS_JSON` /
+      # `GOOGLE_APPLICATION_CREDENTIALS`. `/readyz` lists the adapters that came up.
       AIRA_VERTEX_PROJECT: ${AIRA_VERTEX_PROJECT:-}
       AIRA_VERTEX_CREDENTIALS: ${AIRA_VERTEX_CREDENTIALS:-}
       AIRA_VERTEX_API_KEY: ${AIRA_VERTEX_API_KEY:-}
@@ -328,8 +164,6 @@ services:
       AIRA_OTEL_ENDPOINT: ${AIRA_OTEL_ENDPOINT:-http://otel-collector:4318}
       AIRA_LOG_JSON: ${AIRA_LOG_JSON:-true}
     depends_on:
-      vault-init:
-        condition: service_completed_successfully
       postgres:
         condition: service_healthy
     networks: [aira]
@@ -343,26 +177,15 @@ services:
     container_name: ${AIRA_STACK:-aira}-management-migrate
     command: ["python", "manage.py", "migrate", "--noinput"]
     environment: &management-env
-      # **The waiver mechanism, unreachable in this stack until 2026-08-26.** `gateway/security.py`
-      # refuses to start outside `local` unless six things hold, and `AIRA_DEMO_MODE` waives
-      # exactly those six (`WAIVED_BY_A_DEMO` — a list, with a docstring about what it does *not*
-      # waive). None of it could fire: the variable went to `management-seed` alone. The demo
-      # worked only because `AIRA_ENVIRONMENT=local` waives everything, so nothing showed the gap
-      # until a configuration file said `demo` instead and Management refused to migrate.
+      # Outside `AIRA_ENVIRONMENT=local` the services refuse to start unless six hardening
+      # conditions hold. `AIRA_DEMO_MODE=true` waives exactly those six and nothing else — the
+      # list is `WAIVED_BY_A_DEMO` in `gateway/security.py`. Leave it `false` for a real
+      # deployment; it is what lets a showcase run with a published password and no audience.
       AIRA_DEMO_MODE: ${AIRA_DEMO_MODE:-false}
-      # ── Everything else a `config/*.yaml` can set (2026-08-26) ───────────────────────────
+      # ── Everything else a `config/*.yaml` can set ────────────────────────────────────────
       #
-      # **The block that was missing, and it was most of them.** `config/showcase.example.yaml`
-      # renders 86 variables and **47 reached no container**: 45 that no compose file interpolated,
-      # and a handful assigned a literal here. Somebody could set `enforce_budgets: false`, restart,
-      # and watch budgets go on being enforced.
-      #
-      # This file already says the sentence four times — about the Ollama timeout, the Gemini model
-      # list, two more timeouts, and then the whole Vertex adapter: *a knob that is not wired is
-      # worse than an absent one, somebody turns it and believes the result.* A configuration file
-      # offering 86 of them is the reason to stop meeting it one variable at a time.
-      #
-      # Every default below is the settings class's own, so nothing that was true stops being true.
+      # Each default below is the settings class's own. `make config-verify` reports any of these
+      # that your config file sets and no container receives.
       AIRA_API_KEY_DEFAULT_DAYS: ${AIRA_API_KEY_DEFAULT_DAYS:-30}
       AIRA_API_KEY_MAX_DAYS: ${AIRA_API_KEY_MAX_DAYS:-180}
       AIRA_APP_NAME: ${AIRA_APP_NAME:-aira-management}
@@ -375,7 +198,7 @@ services:
       AIRA_THROTTLE_AUTH_FAILURES: ${AIRA_THROTTLE_AUTH_FAILURES:-60/minute}
       AIRA_THROTTLE_USER: ${AIRA_THROTTLE_USER:-600/minute}
       # Same as the gateway's: Management holds the Django SECRET_KEY and the database password,
-      # which are exactly the values `FRD-116` exists to move out of the environment.
+      # which are exactly the values Vault exists to keep out of the environment.
       VAULT_ADDR: ${VAULT_ADDR:-}
       VAULT_MOUNT: ${VAULT_MOUNT:-secret}
       VAULT_PATH: ${VAULT_PATH:-aira}
@@ -383,10 +206,8 @@ services:
       # A **file**, not a variable. A secret-id in the environment shows up in `docker inspect`,
       # in `/proc/<pid>/environ`, and in any library that dumps its configuration when it panics.
       VAULT_SECRET_ID_FILE: ${VAULT_SECRET_ID_FILE:-}
-      # Passed through because the loader reads them, not because they are recommended.
-      # `VAULT_SECRET_ID` is the file's alternative and the worse one — a secret-id in the
-      # environment is in `docker inspect` and in `/proc/<pid>/environ` — but omitting a variable
-      # the code consults is how this whole feature came to be inert, so it is here and empty.
+      # `VAULT_SECRET_ID` is the file's alternative and the worse one: a secret-id in the
+      # environment is visible in `docker inspect` and `/proc/<pid>/environ`. Prefer the file.
       # `VAULT_NAMESPACE` is Vault Enterprise; `VAULT_TIMEOUT` is seconds.
       VAULT_SECRET_ID: ${VAULT_SECRET_ID:-}
       VAULT_NAMESPACE: ${VAULT_NAMESPACE:-}
@@ -413,7 +234,7 @@ services:
       AIRA_OIDC_ISSUER: ${AIRA_OIDC_ISSUER:-http://localhost:${AIRA_PUBLISH_KEYCLOAK_PORT:-8080}/realms/aira}
       AIRA_OIDC_JWKS_URI: ${AIRA_OIDC_JWKS_URI:-http://keycloak:8080/realms/aira/protocol/openid-connect/certs}
       AIRA_OIDC_AUDIENCE: ${AIRA_OIDC_AUDIENCE:-}
-      # Which Keycloak group confers which AIRA role (`ADR-0017`). Group membership is the **only**
+      # Which Keycloak group confers which AIRA role. Group membership is the **only**
       # source of a role — a realm role on the same token is not read — so an installation that
       # leaves this empty has nobody holding one.
       AIRA_ROLE_GROUPS: ${AIRA_ROLE_GROUPS:-global-admin=/aira/global-admins;it-security=/aira/it-security;it-steuerung=/aira/it-steuerung}
@@ -421,46 +242,8 @@ services:
       AIRA_OTEL_ENDPOINT: ${AIRA_OTEL_ENDPOINT:-http://otel-collector:4318}
       AIRA_LOG_JSON: ${AIRA_LOG_JSON:-true}
     depends_on:
-      vault-init:
-        condition: service_completed_successfully
       postgres:
         condition: service_healthy
-    networks: [aira]
-    restart: "no"
-
-  # Demo data (the five role accounts) — only in the `demo` profile. `seed_demo` creates
-  # well-known accounts with a fixed password and refuses to run outside local/demo mode
-  # (ADR-0007), so a real deployment simply omits this profile.
-  management-seed:
-    image: aira-management:${AIRA_IMAGE_TAG:-dev}
-    build: *management-build
-    container_name: ${AIRA_STACK:-aira}-management-seed
-    profiles: ["demo"]
-    command: ["python", "manage.py", "seed_demo"]
-    environment:
-      <<: *management-env
-      AIRA_DEMO_MODE: "true"
-      # The showcase declares the local models, so this container has to know whether there is a
-      # local endpoint at all — it is the gateway's setting, read here only as a *signal*.
-      AIRA_OLLAMA_URL: ${AIRA_OLLAMA_URL:-}
-      AIRA_OPENAI_SERVERS: ${AIRA_OPENAI_SERVERS:-}
-      AIRA_SEED_LOCAL_CHAT_MODEL: ${AIRA_DEMO_CHAT_MODEL:-qwen3:0.6b}
-      AIRA_SEED_LOCAL_EMBED_MODEL: ${AIRA_DEMO_EMBED_MODEL:-all-minilm}
-    depends_on:
-      management-migrate:
-        condition: service_completed_successfully
-      # **Started, not completed.** This used to wait for the pull to *succeed*, so one failed
-      # download — a blocked registry, a flaky minute — meant the seed never ran at all: no demo
-      # accounts, no use cases, no budgets, and a console that comes up empty with nothing saying
-      # why. Reported exactly that way, and the two halves looked unrelated to the person seeing
-      # them.
-      #
-      # `FRD-130`'s rule stands and is now enforced by evidence instead of by ordering: the
-      # `local_models` contribution asks the endpoint which models it actually serves and declares
-      # only those. A model nobody pulled is therefore still never catalogued — and everything
-      # that has nothing to do with models is seeded regardless.
-      ollama-pull:
-        condition: service_started
     networks: [aira]
     restart: "no"
 
@@ -502,7 +285,7 @@ services:
         condition: service_completed_successfully
       keycloak:
         condition: service_healthy
-      # Not strictly required -- the gateway degrades rather than failing without it (ADR-0008)
+      # Not strictly required -- the gateway degrades rather than failing without it
       # -- but starting in the degraded state on every boot would make the fallback the normal
       # case and hide a real outage when one happens.
       redis:
@@ -595,13 +378,9 @@ services:
     environment:
       AIRA_MANAGEMENT_UPSTREAM: ${AIRA_MANAGEMENT_UPSTREAM:-http://management:8002}
       AIRA_GATEWAY_UPSTREAM: ${AIRA_GATEWAY_UPSTREAM:-http://gateway:8001}
-      # What the console's content policy lets it call. Its own origin for `/api` and `/gw`, plus
-      # the Keycloak the token is fetched from — which is deployment configuration, exactly like
-      # `public/runtime-config.js`, and has to agree with it. Set both or neither.
-      # **One variable, two consumers.** The console's entrypoint writes `runtime-config.js` from
-      # this and derives the CSP's `connect-src` from its origin, so moving Keycloak is one change
-      # rather than a JavaScript file inside a built image plus a header somewhere else. The pair
-      # that "has to agree" is now a pair that cannot disagree.
+      # One variable, two consumers: the console's entrypoint writes `runtime-config.js` from
+      # this *and* derives the content policy's `connect-src` from its origin. Moving Keycloak is
+      # therefore one change here, not a JavaScript file inside a built image plus a header.
       AIRA_OIDC_ISSUER: ${AIRA_OIDC_ISSUER:-http://localhost:${AIRA_PUBLISH_KEYCLOAK_PORT:-8080}/realms/aira}
       AIRA_OIDC_CLIENT_ID: ${AIRA_OIDC_CLIENT_ID:-aira-gateway}
       # Only for a deployment that needs something the derivation cannot guess — a second origin,
@@ -611,10 +390,8 @@ services:
       # redeploy of the gateway or of management does not leave this proxy talking to a stale
       # address. Override where the platform provides a different resolver.
       AIRA_DNS_RESOLVER: ${AIRA_DNS_RESOLVER:-127.0.0.11}
-    # The realm's redirect URIs follow this port rather than pinning it: Keycloak substitutes
-    # `${AIRA_CONSOLE_PORT:4200}` on import, and Compose resolves that chain for it beside the
-    # Keycloak service. Moving this therefore moves the login too — which is the whole point of
-    # the variable, and was not true until 2026-08-19.
+    # The realm's redirect URIs follow this port: Keycloak substitutes `${AIRA_CONSOLE_PORT:4200}`
+    # on import. Moving the console therefore moves the login redirect with it.
     ports:
       - "${AIRA_BIND_HOST:-127.0.0.1}:${AIRA_PUBLISH_FRONTEND_PORT:-${AIRA_FRONTEND_PORT:-4200}}:8080"
       - "[${AIRA_BIND_HOST6:-::1}]:${AIRA_PUBLISH_FRONTEND_PORT:-${AIRA_FRONTEND_PORT:-4200}}:8080"

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import pathlib
 
+import compose_files
 import yaml
 
 COMPOSE = pathlib.Path(__file__).resolve().parents[2] / "deploy" / "compose"
@@ -31,7 +32,7 @@ LOCAL_PREFIX = "aira-"
 
 def _services() -> dict[str, dict]:
     services: dict[str, dict] = {}
-    for name in ("docker-compose.yml", "docker-compose.apps.yml"):
+    for name in (f.name for f in compose_files.ALL):
         document = yaml.safe_load((COMPOSE / name).read_text())
         for service, definition in (document.get("services") or {}).items():
             services[f"{name}:{service}"] = definition or {}

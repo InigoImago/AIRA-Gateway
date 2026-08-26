@@ -241,6 +241,12 @@ Each layer exists for what the one below cannot see; the reasoning and the traps
 > container would actually receive, and exits non-zero on any difference. `make up` and
 > `make up-full` run it before starting. See [`config/README.md`](../config/README.md).
 
+**Read `deploy/compose/docker-compose.apps.yml`, and only that.** The stack is three files:
+infrastructure, the applications, and the showcase. The middle one is the product — nothing in it
+exists for the demo, and `make up-apps` starts exactly it. The development Keycloak realm, the
+`-dev` Vault and the seeded accounts are all in `docker-compose.showcase.yml`, which you do not
+use.
+
 The applications are stateless containers. Point them at your Postgres, your Kafka, your Keycloak
 and your model platforms; nothing else is required.
 

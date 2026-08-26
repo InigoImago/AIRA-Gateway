@@ -38,6 +38,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import compose_files
 import yaml
 
 #: Emitted under their own names because they are read before the settings exist.
@@ -328,10 +329,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.verify is not None:
-        root = args.verify.resolve().parent
         problems = verify(
             args.verify,
-            [root / "docker-compose.yml", root / "docker-compose.apps.yml"],
+            # Every file that defines a service, `compose_files` deciding which those are: a
+            # variable reaching *any* container is the question here, and after the showcase
+            # split a two-file list would report the demo's own settings as reaching nothing.
+            list(compose_files.ALL),
         )
         real = [p for p in problems if not p.startswith("note:")]
         for problem in problems:

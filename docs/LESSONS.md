@@ -418,6 +418,23 @@ reading code.
   named one by one** — a concession nobody asked for is a hole, and a blanket cannot say which is
   which. The same applies to what a *port* exempts: the dev stack published Postgres, Redis, Kafka
   and a dev-mode Vault on `0.0.0.0` because Compose's `"5432:5432"` means that, and nobody chose it.
+- **A deployment file is read by somebody who was not here.** `docker-compose.apps.yml` was 38%
+  comment, and most of it was the DEVLOG: dates, defect counts, *missing until a named day*, the
+  story of four wiring bugs. None of that helps the person wiring AIRA into their own Keycloak —
+  and it sat on top of a third of the file that existed only for the demo, which they also had to
+  read to find out it did not apply to them. Two rules, one shape: **the narrative has one home**
+  (the same reason `CLAUDE.md` §6 was cut), and **the file you deploy contains only what you
+  deploy**. Rewriting every comment to the operational half — what the setting does, what breaks
+  if it is wrong — took the three files from 997 to 916 lines with `docker compose config`
+  byte-identical.
+- **A helper that models another tool agrees with it only until the shape changes.** A test merged
+  Compose services with `merged.update(...)` under a docstring saying "the way Compose merges
+  them". True while every service lived in exactly one file; the moment an overlay named a service
+  to add one `depends_on` edge, the real definition was thrown away and two migration jobs read as
+  having no restart policy. And in the same round, a rule written as `theirs <= mine` where it
+  meant `mine <= theirs` had passed for six weeks, because the only pair that could tell the two
+  apart lived in a file that test did not read. **A model of another system is guarded by the case
+  that distinguishes it**, not by the cases both readings agree on.
 - **A precedence nobody checks is a preference, not a hierarchy.** The config file was written to
   rank above the deployment, and did — until the moment something disagreed with it, which is the
   only moment the ranking means anything. Compose fills every gap it is given from `${VAR:-…}`, so

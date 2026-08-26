@@ -5,6 +5,68 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The compose file that was three files in one (2026-08-26)
+
+The request was plain: the Compose file had grown too big with demo data loading, could the core
+be one file and the showcase another. `docker-compose.apps.yml` was **625 lines**, and a third of
+it existed for the demo — a development Keycloak realm, a `-dev` Vault refilled on every start,
+five seeded accounts. Somebody deploying onto their own Keycloak, Vault and Postgres had to work
+out which half applied to them.
+
+**Three files now**, and `deploy/compose/README.md` says which is which: `docker-compose.yml`
+(infrastructure), `docker-compose.apps.yml` (**the product**, `make up-apps`), and
+`docker-compose.showcase.yml` (the demo around it, `make up-full` / `make showcase`).
+
+Two mechanisms made it possible, both measured on a scratch pair before a line of the real files
+moved, because guessing at either would have been expensive:
+
+- **`depends_on` merges additively across `-f` files.** So the two migrations' wait on `vault-init`
+  moves *with* `vault-init` into the showcase file, and the core file no longer names it. This also
+  answers something the old file complained about in its own comments — that a profile was
+  impossible for `vault-init` "because a service two non-profiled services depend on cannot itself
+  be behind a profile". True within one file.
+- **`extends` reaches across files and carries `environment`.** `management-seed` needs
+  `*management-env`, and a YAML anchor does not cross a file. It extends `management-migrate` and
+  not `management`, because `extends` carries `ports` too and the seed would have taken a second
+  claim on 8002.
+
+**Proof the split changed nothing**: `docker compose config` for every profile, before and after,
+differed by three lines — `management-seed` now also waits for `postgres: healthy`, inherited and
+correct. Then the stack was actually started: all six one-shots exited 0, `management-seed`
+included.
+
+**Two defects the split exposed**, neither of them introduced by it:
+
+- `test_the_stack_comes_back_whole.py` merged services with `merged.update(...)` under a docstring
+  claiming "the way Compose merges them". It agreed with Compose only while every service lived in
+  exactly one file. The overlay's four-line `gateway-migrate` threw the real definition away and
+  two migration jobs read as having no restart policy.
+- `test_showcase_is_repeatable.py` had the subset backwards — `theirs <= mine` where the rule is
+  *every profile that enables the dependent must also enable the dependency*, `mine <= theirs`. It
+  passed because the only pair that could tell the two apart is `management-seed` (`demo`)
+  depending on `ollama-pull` (`verify` **or** `demo`), and `ollama-pull` lives in the
+  infrastructure file, which that test did not read. Both directions now have a probe.
+
+**Sixteen places named the Compose files by hand** — the Makefile, `config_render`,
+`stack_addresses` and thirteen tests. `tools/compose_files.py` is now the single owner (`CORE`,
+`SHOWCASE`, `ALL`, `DEMO_ONLY`), the same rule as `tools/stack_addresses.py` one layer up. A
+missed caller would not have failed loudly: it would have read two files where three exist and
+reported that a variable reaches no container when it reaches one in the file it did not read.
+
+**And the comments came out.** Asked for mid-round: the DEVLOG and FRD material in the Compose
+files interests nobody doing an integration. It was 38% of the core file — dates, defect counts,
+"missing until 2026-08-10", FRD citations, the story of four wiring bugs. Every block was rewritten
+to the operational half: what the setting does, what breaks if it is wrong. The three files went
+**997 → 916 lines**, the core file **625 → 402**, and `docker compose config` is byte-identical.
+This is the `CLAUDE.md` §6 shape again — the narrative has one home, and a second copy in the file
+everybody reads first is the copy that stays true while the real one rots.
+
+8 mutations added (**601**), each observed `caught`, including the one for the merge the split
+rests on: layering the showcase must add the dev-Vault edge without dropping the Postgres one, or
+the migrations race a database that is not up — intermittently, on a cold start only.
+
+---
+
 ## The config file that was first, not above (2026-08-26)
 
 > *"It is important that the configs rank above, so that the integration happens without states

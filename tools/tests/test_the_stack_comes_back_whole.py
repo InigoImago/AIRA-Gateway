@@ -33,11 +33,12 @@ from __future__ import annotations
 
 import pathlib
 
+import compose_files
 import yaml
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 COMPOSE = ROOT / "deploy" / "compose"
-FILES = ("docker-compose.yml", "docker-compose.apps.yml")
+FILES = tuple(f.name for f in compose_files.ALL)
 
 #: What a service that is meant to survive a restart must say. Not `always`: an operator who ran
 #: `docker stop` on one service has said something, and `always` would argue with them at the next
@@ -51,11 +52,26 @@ FINISHES = ("no", False)
 
 
 def _services() -> dict[str, dict]:
-    """Both files merged the way Compose merges them, so a cross-file `depends_on` resolves."""
+    """Every file merged the way Compose merges them, so a cross-file `depends_on` resolves.
+
+    **Per key, not per service.** This was `merged.update(...)` — a whole-service replacement —
+    and it agreed with Compose only while every service was defined in exactly one file. The
+    showcase split added `docker-compose.showcase.yml`, which names `gateway-migrate` to add one
+    `depends_on` edge and says nothing else about it; a shallow update threw the other file's
+    definition away, and the restart policy of two migration jobs read as *unset*. The failure
+    was loud, which is the only reason this is a footnote rather than a defect: it claimed the
+    core file had stopped declaring `restart`, which it had not.
+    """
     merged: dict[str, dict] = {}
     for name in FILES:
         document = yaml.safe_load((COMPOSE / name).read_text())
-        merged.update(document.get("services") or {})
+        for service, body in (document.get("services") or {}).items():
+            existing = merged.setdefault(service, {})
+            for key, value in (body or {}).items():
+                if isinstance(value, dict) and isinstance(existing.get(key), dict):
+                    existing[key] = {**existing[key], **value}
+                else:
+                    existing[key] = value
     return merged
 
 

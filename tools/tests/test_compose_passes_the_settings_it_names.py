@@ -26,10 +26,11 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import compose_files
+
 ROOT = Path(__file__).resolve().parents[2]
 COMPOSE = [
-    ROOT / "deploy/compose/docker-compose.yml",
-    ROOT / "deploy/compose/docker-compose.apps.yml",
+    *compose_files.ALL,
 ]
 
 #: Names that belong to Compose itself rather than to any settings class — ports, bind addresses,

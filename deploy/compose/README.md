@@ -20,16 +20,24 @@ demo mode. It is driven from the repo root via the `Makefile` (preferred), or di
 > which supersedes the SigNoz choice in ADR-0002. `make up` includes the `observability` profile;
 > `make up-core` starts infrastructure only.
 
-## Two layers
+## Three layers
 
-`docker-compose.yml` is **infrastructure only**. The applications live in the overlay
-`docker-compose.apps.yml` — gateway, config consumer, management API, outbox relay and the SPA
-behind nginx, built from `gateway/Dockerfile`, `management/backend/Dockerfile` and
-`management/frontend/Dockerfile`.
+| file | what it holds | run it with |
+| --- | --- | --- |
+| `docker-compose.yml` | infrastructure: Postgres, Keycloak, Kafka, Vault, Redis, observability | `make up` |
+| `docker-compose.apps.yml` | **the product**: gateway, config consumer, management API, outbox relay, SPA behind nginx | `make up-apps` |
+| `docker-compose.showcase.yml` | the demo around it: a development realm, a `-dev` Vault refilled on every start, five seeded accounts | `make up-full` / `make showcase` |
+
+Each layer is added with another `-f`; the Makefile targets above already do that. The split
+matters when you are **integrating**: `docker-compose.apps.yml` is the file to read and adapt, and
+nothing in it exists for the demo. `tools/tests/test_the_core_stack_carries_no_demo.py` fails if a
+demo service or a demo dependency reappears there, and `tools/compose_files.py` is the one place
+that decides which file belongs to which combination.
 
 ```bash
 make up        # infrastructure only — for running the apps from source
-make up-full   # infrastructure + all five application containers
+make up-apps   # infrastructure + the application containers, no demo provisioning
+make up-full   # the above + the showcase layer
 ```
 
 See [`docs/DEPLOYMENT.md`](../../docs/DEPLOYMENT.md) for the full picture, including which of

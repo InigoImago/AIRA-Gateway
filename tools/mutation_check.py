@@ -5452,6 +5452,95 @@ MUTATIONS = [
         "        pass",
         "tools/tests/test_the_config_outranks_the_deployment.py",
     ),
+    # ------------------------------------------------------------------------------------------
+    # The showcase split. The core compose file is what somebody deploys onto their own Keycloak,
+    # Vault and Postgres; every demo service left in it is a paragraph they must read to find out
+    # it does not apply to them. The pull back is real — the YAML anchors live in the core file —
+    # so each rule that keeps the split has a mutation.
+    # ------------------------------------------------------------------------------------------
+    Mutation(
+        "CS1",
+        "no demo-only service is defined in the core compose file",
+        "deploy/compose/docker-compose.apps.yml",
+        "\n  kafka-topics:\n    image: apache/kafka:3.9.0",
+        "\n  vault-init:\n    image: alpine\n\n  kafka-topics:\n    image: apache/kafka:3.9.0",
+        "tools/tests/test_the_core_stack_carries_no_demo.py",
+    ),
+    Mutation(
+        "CS2",
+        "the showcase file defines every service named as demo-only",
+        "deploy/compose/docker-compose.showcase.yml",
+        "  keycloak-init:",
+        "  keycloak-init-renamed:",
+        "tools/tests/test_the_core_stack_carries_no_demo.py",
+    ),
+    Mutation(
+        "CS3",
+        "no core service waits on demo provisioning, so the core stack starts alone",
+        "deploy/compose/docker-compose.apps.yml",
+        "      AIRA_ALLOWED_REGIONS: ${AIRA_ALLOWED_REGIONS:-}\n"
+        "      AIRA_OTEL_ENABLED: ${AIRA_OTEL_ENABLED:-false}\n"
+        "      AIRA_OTEL_ENDPOINT: ${AIRA_OTEL_ENDPOINT:-http://otel-collector:4318}\n"
+        "      AIRA_LOG_JSON: ${AIRA_LOG_JSON:-true}\n"
+        "    depends_on:\n      postgres:",
+        "      AIRA_ALLOWED_REGIONS: ${AIRA_ALLOWED_REGIONS:-}\n"
+        "      AIRA_OTEL_ENABLED: ${AIRA_OTEL_ENABLED:-false}\n"
+        "      AIRA_OTEL_ENDPOINT: ${AIRA_OTEL_ENDPOINT:-http://otel-collector:4318}\n"
+        "      AIRA_LOG_JSON: ${AIRA_LOG_JSON:-true}\n"
+        "    depends_on:\n      vault-init:\n        condition: service_completed_successfully\n"
+        "      postgres:",
+        "tools/tests/test_the_core_stack_carries_no_demo.py",
+    ),
+    Mutation(
+        "CS4",
+        "every depends_on target in the core stack is defined by a core file",
+        "deploy/compose/docker-compose.apps.yml",
+        "      AIRA_ALLOWED_REGIONS: ${AIRA_ALLOWED_REGIONS:-}\n"
+        "      AIRA_OTEL_ENABLED: ${AIRA_OTEL_ENABLED:-false}\n"
+        "      AIRA_OTEL_ENDPOINT: ${AIRA_OTEL_ENDPOINT:-http://otel-collector:4318}\n"
+        "      AIRA_LOG_JSON: ${AIRA_LOG_JSON:-true}\n"
+        "    depends_on:\n      postgres:",
+        "      AIRA_ALLOWED_REGIONS: ${AIRA_ALLOWED_REGIONS:-}\n"
+        "      AIRA_OTEL_ENABLED: ${AIRA_OTEL_ENABLED:-false}\n"
+        "      AIRA_OTEL_ENDPOINT: ${AIRA_OTEL_ENDPOINT:-http://otel-collector:4318}\n"
+        "      AIRA_LOG_JSON: ${AIRA_LOG_JSON:-true}\n"
+        "    depends_on:\n      nobody-defines-me:\n        condition: service_started\n"
+        "      postgres:",
+        "tools/tests/test_the_core_stack_carries_no_demo.py",
+    ),
+    Mutation(
+        "CS5",
+        "the showcase file adds to a core service, never restates one",
+        "deploy/compose/docker-compose.showcase.yml",
+        "  gateway-migrate:\n    depends_on:",
+        "  gateway-migrate:\n    image: something-else\n    depends_on:",
+        "tools/tests/test_the_core_stack_carries_no_demo.py",
+    ),
+    Mutation(
+        "CS6",
+        "a service is enabled only by profiles that also enable everything it depends on",
+        "deploy/compose/docker-compose.apps.yml",
+        "  kafka-topics:\n    image: apache/kafka:3.9.0",
+        '  kafka-topics:\n    profiles: ["demo"]\n    image: apache/kafka:3.9.0',
+        "tools/tests/test_showcase_is_repeatable.py",
+    ),
+    Mutation(
+        "CS7",
+        "a compose overlay that adds one edge does not replace the service it names",
+        "tools/tests/test_the_stack_comes_back_whole.py",
+        '        for service, body in (document.get("services") or {}).items():',
+        '        merged.update(document.get("services") or {})\n'
+        "        for service, body in {}.items():",
+        "tools/tests/test_the_stack_comes_back_whole.py",
+    ),
+    Mutation(
+        "CS8",
+        "layering the showcase adds the dev-Vault edge without dropping the Postgres one",
+        "deploy/compose/docker-compose.showcase.yml",
+        "  gateway-migrate:\n    depends_on:\n      vault-init:",
+        "  gateway-migrate:\n    depends_on:\n      vault-init-typo:",
+        "tools/tests/test_the_core_stack_carries_no_demo.py",
+    ),
 ]
 
 

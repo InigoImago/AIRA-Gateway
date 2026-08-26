@@ -27,6 +27,7 @@ import re
 import subprocess
 from pathlib import Path
 
+import compose_files
 import stack_addresses
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -37,8 +38,7 @@ OWNERS = {
     "tools/stack_addresses.py",
     "tools/stack-addresses.cjs",
     # Compose declares the ports; that is the statement everything else derives from.
-    "deploy/compose/docker-compose.yml",
-    "deploy/compose/docker-compose.apps.yml",
+    *(str(f.relative_to(ROOT)) for f in compose_files.ALL),
     "deploy/compose/docker-compose.sandbox.yml",
     "deploy/compose/.env.example",
     # This file quotes the addresses it forbids.
@@ -146,7 +146,7 @@ def test_every_published_variable_is_one_the_owner_knows() -> None:
     needs its address writes a literal — which is where this started.
     """
     declared = set()
-    for name in ("docker-compose.yml", "docker-compose.apps.yml"):
+    for name in (f.name for f in compose_files.ALL):
         text = (ROOT / "deploy" / "compose" / name).read_text()
         declared |= set(re.findall(r"\$\{(AIRA_PUBLISH_[A-Z_]+)", text))
     known = set(stack_addresses.PUBLISHED.values())

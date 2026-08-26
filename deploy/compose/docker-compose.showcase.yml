@@ -1,0 +1,196 @@
+# AIRA showcase — everything the demo needs and a real deployment does not.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.apps.yml \
+#                  -f docker-compose.showcase.yml --profile demo up -d --build
+#   # or, from the repo root:  make up-full   /   make showcase
+#
+# Nothing here belongs in a real deployment: it provisions a development Keycloak realm, refills
+# a `-dev` Vault that forgets its contents on every restart, and seeds five demo accounts with a
+# published password. `docker-compose.apps.yml` is the product; this is the showcase around it.
+#
+# `vault-init` and `keycloak-init` carry no `profiles:` on purpose. Compose rejects the whole
+# project — not the one service — when something outside the active profiles is depended on, so a
+# service the migrations wait for cannot sit behind a profile. They gate themselves on
+# `AIRA_ENVIRONMENT` instead and exit immediately when it is not `local` or `demo`. Layering this
+# file is the opt-in.
+
+services:
+  # ---- the two edges the core file no longer carries ----------------------------------------
+  #
+  # Additive: compose merges these into whatever the core file already declared, so the
+  # migrations keep waiting for Postgres and now also wait for the dev Vault to hold its secrets.
+  gateway-migrate:
+    depends_on:
+      vault-init:
+        condition: service_completed_successfully
+
+  management-migrate:
+    depends_on:
+      vault-init:
+        condition: service_completed_successfully
+
+  # ---- demo provisioning ---------------------------------------------------------------------
+
+  # Keep the development realm matching the file that defines it (`tools/keycloak_demo_realm.py`).
+  #
+  # Keycloak imports a realm **only if it does not exist**, so an edit to the realm file otherwise
+  # reaches new machines and no existing one. This reconciles it on every start, is idle when the
+  # realm already matches, and refuses to touch anything but a local or demo directory.
+  keycloak-init:
+    image: python:3.14-slim
+    container_name: ${AIRA_STACK:-aira}-keycloak-init
+    command: ["python", "/tools/keycloak_demo_realm.py"]
+    environment:
+      KEYCLOAK_URL: http://keycloak:8080
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      AIRA_ENVIRONMENT: ${AIRA_ENVIRONMENT:-local}
+    volumes:
+      - ../../tools/keycloak_demo_realm.py:/tools/keycloak_demo_realm.py:ro
+      - ./keycloak/realms:/realm:ro
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    networks: [aira]
+    restart: "no"
+
+  # Provision the dev Vault, every start.
+  #
+  # The stack's Vault runs `server -dev`, which keeps everything **in memory**: recreate the
+  # container and `secret/aira` is gone. `load_secrets()` then fails closed — correctly, since a
+  # secret store that answers "no such path" is not an outage to shrug off — and every application
+  # container refuses to boot with a message about a Vault path.
+  #
+  # That made `make showcase` depend on somebody having run `make vault-init` *after* the current
+  # Vault container started, which is a trap laid by our own documentation: run the documented
+  # command, then `docker compose down`, and the one command that must always work stops working.
+  # Ordering belongs in the file that owns the ordering, so it is a service with a condition on it
+  # rather than a step in a Makefile target that three other entry points do not run.
+  #
+  # **Guarded by the environment, not by a profile.** A real Vault is provisioned by whoever owns
+  # it, with a policy and an AppRole; this repairs a development server that forgets by design, so
+  # it must never write to a real one. The first version expressed that as `profiles: ["demo"]` —
+  # and a service two non-profiled services depend on cannot itself be behind a profile: without
+  # `--profile demo` compose refuses the whole project as invalid, which took `make up-full`'s
+  # log-dumping fallback in CI with it, at exactly the moment somebody needs the logs.
+  #
+  # It decides for itself: no `VAULT_ADDR` means nothing to do, and any environment but local or
+  # demo means somebody else owns this Vault.
+  vault-init:
+    image: hashicorp/vault:1.18
+    container_name: ${AIRA_STACK:-aira}-vault-init
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        if [ -z "$$VAULT_ADDR" ]; then
+          echo "no VAULT_ADDR — secrets come from the environment, nothing to provision"
+          exit 0
+        fi
+        case "$${AIRA_ENVIRONMENT:-local}" in
+          local|demo) ;;
+          *)
+            echo "environment '$$AIRA_ENVIRONMENT' — this Vault is somebody else's to provision"
+            exit 0
+            ;;
+        esac
+        # **Never a reason the stack cannot start.** The migrations wait for this service, so a
+        # non-zero exit here stops everything — and provisioning a *development* Vault is not
+        # worth that. If Vault never answers, say so and get out of the way: a deployment that
+        # really needs it then fails in the container that reads the secret, with the message
+        # naming the path, which is the accurate error rather than an ordering one.
+        n=0
+        until vault status >/dev/null 2>&1; do
+          n=$$((n + 1))
+          if [ "$$n" -ge 30 ]; then
+            echo "Vault at $$VAULT_ADDR did not answer; leaving it alone."
+            echo "Nothing provisioned. A service that needs a secret will say which one."
+            exit 0
+          fi
+          sleep 2
+        done
+        # **Only variables that are actually set.** Vault ranks *above* the environment
+        # so writing a key with an empty value does not mean "nothing here" — it
+        # means "the value is the empty string", and it silently wins over the real one. The
+        # first version of this service wrote all three unconditionally and took the stack down
+        # with `no password supplied`, which is the same mistake as `unpriced is not free`, one
+        # layer down: absent and empty are different answers.
+        set --
+        for name in AIRA_GOOGLE_API_KEY AIRA_POSTGRES_PASSWORD AIRA_SECRET_KEY \
+                    AIRA_VERTEX_CREDENTIALS AIRA_VERTEX_API_KEY AIRA_OPENAI_API_KEY; do
+          value=$$(eval echo \$$$$name)
+          [ -n "$$value" ] && set -- "$$@" "$$name=$$value"
+        done
+        # `vault kv put` with no pairs is an error, not an empty write — so a stack with no
+        # secrets configured still needs *something* on the path, because what the readers require
+        # is the path's existence. The note says why it is otherwise empty, in the one place
+        # somebody looking at an empty Vault would go.
+        if [ "$$#" -eq 0 ]; then
+          set -- "note=provisioned by compose; no AIRA_* secret is set in this stack's .env"
+        fi
+        # kv-v2 is already mounted at secret/ by the dev server, so only the path is written.
+        vault kv put "$${VAULT_MOUNT:-secret}/$${VAULT_PATH:-aira}" "$$@" >/dev/null
+        echo "provisioned $${VAULT_MOUNT:-secret}/$${VAULT_PATH:-aira}"
+    environment:
+      # The CLI talks to the server; the app containers use the same address from their own env.
+      VAULT_ADDR: ${VAULT_ADDR:-}
+      VAULT_TOKEN: ${VAULT_TOKEN:-${VAULT_DEV_ROOT_TOKEN_ID:-root}}
+      VAULT_MOUNT: ${VAULT_MOUNT:-secret}
+      VAULT_PATH: ${VAULT_PATH:-aira}
+      AIRA_ENVIRONMENT: ${AIRA_ENVIRONMENT:-local}
+      AIRA_GOOGLE_API_KEY: ${AIRA_GOOGLE_API_KEY:-}
+      AIRA_POSTGRES_PASSWORD: ${AIRA_POSTGRES_PASSWORD:-}
+      AIRA_SECRET_KEY: ${AIRA_SECRET_KEY:-}
+      AIRA_VERTEX_CREDENTIALS: ${AIRA_VERTEX_CREDENTIALS:-}
+      AIRA_VERTEX_API_KEY: ${AIRA_VERTEX_API_KEY:-}
+      AIRA_AZURE_API_KEY: ${AIRA_AZURE_API_KEY:-}
+      AIRA_OPENAI_API_KEY: ${AIRA_OPENAI_API_KEY:-}
+    depends_on:
+      # `service_started`, not `service_healthy`. The migrations wait for *this* service, so
+      # making it wait for a **healthy** Vault put the whole stack behind Vault's health check —
+      # including a deployment that sets no `VAULT_ADDR` and never touches Vault at all. The
+      # script waits for Vault itself, briefly, and gets out of the way if it never answers.
+      vault:
+        condition: service_started
+    networks: [aira]
+    restart: "no"
+
+  # Demo data (the five role accounts) — only in the `demo` profile. `seed_demo` creates
+  # well-known accounts with a fixed password and refuses to run outside local/demo mode
+  # so a real deployment simply omits this profile.
+  #
+  # **`extends`, because a YAML anchor does not cross a file.** `*management-env` is forty-odd
+  # settings defined once on `management-migrate`; copying them here would be a second copy to
+  # keep in step, and the first thing to rot would be the one nobody runs outside the demo.
+  # `extends` reaches into the other file and takes image, build and environment with it.
+  #
+  # The base is `management-migrate` and not `management` on purpose: `extends` carries `ports`
+  # too, so extending the running service would give this one-shot a second claim on 8002 and
+  # the seed would fail to start with a port conflict. The migration container is the one-shot
+  # already shaped like this one — no ports, `restart: "no"`, same image, same environment.
+  management-seed:
+    extends:
+      file: docker-compose.apps.yml
+      service: management-migrate
+    container_name: ${AIRA_STACK:-aira}-management-seed
+    profiles: ["demo"]
+    command: ["python", "manage.py", "seed_demo"]
+    environment:
+      AIRA_DEMO_MODE: "true"
+      # The showcase declares the local models, so this container has to know whether there is a
+      # local endpoint at all — it is the gateway's setting, read here only as a *signal*.
+      AIRA_OLLAMA_URL: ${AIRA_OLLAMA_URL:-}
+      AIRA_OPENAI_SERVERS: ${AIRA_OPENAI_SERVERS:-}
+      AIRA_SEED_LOCAL_CHAT_MODEL: ${AIRA_DEMO_CHAT_MODEL:-qwen3:0.6b}
+      AIRA_SEED_LOCAL_EMBED_MODEL: ${AIRA_DEMO_EMBED_MODEL:-all-minilm}
+    depends_on:
+      management-migrate:
+        condition: service_completed_successfully
+      # **Started, not completed.** A failed model download must not stop the seed: everything
+      # that has nothing to do with models would be lost with it, and the console would come up
+      # empty with nothing saying why. Nothing is catalogued that the endpoint does not actually
+      # serve — the seed asks it, rather than assuming the pull worked.
+      ollama-pull:
+        condition: service_started
+    networks: [aira]
+    restart: "no"

@@ -26,11 +26,10 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import compose_files
+
 ROOT = Path(__file__).resolve().parents[2]
-COMPOSE = (
-    ROOT / "deploy" / "compose" / "docker-compose.yml",
-    ROOT / "deploy" / "compose" / "docker-compose.apps.yml",
-)
+COMPOSE = (*compose_files.ALL,)
 
 _V4 = re.compile(r'^\s*- "\$\{AIRA_BIND_HOST:-127\.0\.0\.1\}:(?P<rest>[^"]+)"')
 _V6 = re.compile(r'^\s*- "\[\$\{AIRA_BIND_HOST6:-::1\}\]:(?P<rest>[^"]+)"')
