@@ -35,6 +35,17 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 EXAMPLES = sorted((ROOT / "config").glob("*.example.yaml"))
 
+#: The console's deployment: a static bundle behind nginx, configured at container start rather
+#: than by any settings class (`docs/INTEGRATIONS.md` §7).
+CONSOLE_DEPLOYMENT = (
+    ROOT / "management" / "frontend" / "deploy" / "10-runtime-config.envsh",
+    ROOT / "management" / "frontend" / "deploy" / "default.conf.template",
+)
+#: Names those files mention that an operator does not set. `AIRA_ISSUER_ORIGIN` is a placeholder
+#: **inside `index.html`**, substituted at start-up with the origin derived from the issuer;
+#: `AIRA_CONFIG__` is the JavaScript global the file writes, not a variable at all.
+CONSOLE_DERIVED = {"AIRA_ISSUER_ORIGIN", "AIRA_CONFIG__"}
+
 #: Read before, or outside, the settings classes. Each with the reason it is not a field.
 NOT_A_SETTING = {
     # Vault's own client configuration: read by `aira_common.secrets` before any settings object
@@ -45,6 +56,15 @@ NOT_A_SETTING = {
     "VAULT_ROLE_ID",
     "VAULT_NAMESPACE",
     "VAULT_TIMEOUT",
+    # The console's, written into `runtime-config.js` or the nginx template by its entrypoint.
+    # Real `AIRA_*` variables that no Pydantic class declares — which is exactly why they were
+    # missing from these files until somebody asked whether the console read them, and why
+    # `test_the_examples_configure_the_console` exists below.
+    "AIRA_OIDC_CLIENT_ID",
+    "AIRA_CSP_CONNECT_SRC",
+    "AIRA_MANAGEMENT_UPSTREAM",
+    "AIRA_GATEWAY_UPSTREAM",
+    "AIRA_DNS_RESOLVER",
 }
 
 #: Settings an installation file deliberately does not carry, each with the reason.
@@ -284,4 +304,49 @@ def test_no_example_carries_the_credential_that_authenticates_to_vault(example: 
     assert held == [], (
         f"{example.name} carries {held}. That is what authenticates *to* Vault: an environment "
         "variable in simple deployments, `VAULT_SECRET_ID_FILE` on Kubernetes."
+    )
+
+
+def _console_variables() -> set[str]:
+    """Every `AIRA_*` the console's deployment reads, out of the files that read them."""
+    names: set[str] = set()
+    for path in CONSOLE_DEPLOYMENT:
+        names |= set(re.findall(r"AIRA_[A-Z0-9_]+", path.read_text(encoding="utf-8")))
+    return names - CONSOLE_DERIVED
+
+
+def test_the_console_deployment_is_where_this_expects_it() -> None:
+    for path in CONSOLE_DEPLOYMENT:
+        assert path.is_file(), path
+    found = _console_variables()
+    assert {"AIRA_OIDC_ISSUER", "AIRA_OIDC_CLIENT_ID"} <= found, sorted(found)
+
+
+def test_the_examples_configure_the_console_too() -> None:
+    """**The second category a scan over settings classes cannot see.**
+
+    The console is a static bundle behind nginx, configured at container start: its entrypoint
+    writes `runtime-config.js` from the issuer and the client id, and templates the proxy from the
+    two upstreams and a resolver. Those are real `AIRA_*` variables that **no Pydantic class
+    declares**, so the checks above were blind to them and the examples omitted every one except
+    the issuer — which is in them only because both planes happen to need it too.
+
+    An integrator filling in one of these files would have configured the gateway and Management
+    completely, and had a console that signs people in at whatever realm the image was built
+    against, with a content policy naming the wrong host. Asked, and found, rather than reviewed:
+    *"does the frontend also draw its Keycloak configuration from the config?"*
+
+    Read out of the deployment files, so a variable the console starts or stops reading shows up
+    here instead of as a login that fails only in a browser.
+    """
+    named: set[str] = set()
+    for example in EXAMPLES:
+        named |= set(_rendered(example))
+
+    missing = sorted(_console_variables() - named)
+
+    assert missing == [], (
+        f"the console's deployment reads {missing} and no example names them. Somebody filling in "
+        "one of these files would configure both APIs and leave the console pointed wherever its "
+        "image was built to point."
     )

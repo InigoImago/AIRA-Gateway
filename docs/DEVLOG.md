@@ -52,6 +52,32 @@ exactly as `seed_demo` is, and reachable over no URL at all.
   That is this file's own lesson, repeated by the person who wrote it down: *"the pager browser
   guard passed against the unfixed console — it depended on 917 accumulated demo use cases."*
 
+### And a second category the same scan could not see (2026-08-26)
+
+Asked rather than reviewed: *"does the frontend also draw its configuration for Keycloak from the
+config?"* **It did not.** The issuer was in the file, and only because both planes happen to need it
+too; everything that configures the console alone was missing — `AIRA_OIDC_CLIENT_ID`,
+`AIRA_CSP_CONNECT_SRC`, the two nginx upstreams and `AIRA_DNS_RESOLVER`.
+
+The consequence is the one `docs/INTEGRATIONS.md` §7 already warns about, arrived at from the other
+side: somebody fills the file in, configures both APIs completely, and gets a console that signs
+people in at whatever realm its **image** was built against, with a content policy naming the wrong
+host — a login that fails in the browser and nowhere else.
+
+The guard was blind for the same reason it was blind to `vault:`. It compares against the settings
+classes, and the console is a static bundle behind nginx whose entrypoint writes `runtime-config.js`
+at container start: these are real `AIRA_*` variables that no Pydantic class declares. **Two such
+categories in one file, each found from outside** — one by the owner's mutation sweep, one by the
+owner's question.
+
+`test_the_examples_configure_the_console_too` reads the expectation out of
+`10-runtime-config.envsh` and `default.conf.template` themselves. `AIRA_ISSUER_ORIGIN` looks like a
+sixth and is not: it is a placeholder inside `index.html` that the entrypoint substitutes with the
+origin it derives from the issuer, and it is listed with that reason rather than left to be
+rediscovered.
+
+Re-swept afterwards: **196 mutations over 86 variables, all noticed.**
+
 ### What the mutation sweep and the coverage figure each turned up
 
 The owner asked for the file to be gone through variable by variable — *"change the variable and

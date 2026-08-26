@@ -97,6 +97,9 @@ oidc:
   # Required outside `local`, and Keycloak does **not** put it in the token by itself: a public
   # client's `aud` is `["account"]` until an Audience mapper or a client scope says otherwise.
   audience: aira-gateway
+  # **The console's own client**, and the only setting here that no settings class declares: the
+  # SPA's entrypoint writes it into `runtime-config.js` at container start. One image, any realm.
+  client_id: aira-gateway
   # Only when it is not `<issuer>/protocol/openid-connect/certs`.
   jwks_uri: ''
   # Several realms at once (`FRD-118`), `issuer|audience|jwks_uri` per entry, `;`-separated.
@@ -113,6 +116,30 @@ oidc:
 directory:
   client_id: aira-directory
   # client_secret: → Vault.
+
+# ---------------------------------------------------------------------------------------------
+# The console, which is a static bundle behind nginx and is configured at **deployment** time
+# (`docs/INTEGRATIONS.md` §7). None of these is a settings class: the entrypoint writes
+# `runtime-config.js` from `oidc.issuer` and `oidc.client_id`, and templates the proxy from these.
+# ---------------------------------------------------------------------------------------------
+
+# What the console's content policy lets it call. Left empty it is derived from the issuer's
+# origin, which is the only thing the console calls cross-origin — set it only for something the
+# derivation cannot guess, a second origin or a websocket host. Getting it wrong produces a login
+# that fails **in the browser and nowhere else**.
+csp:
+  connect_src: ''
+
+# Where nginx sends `/api` and `/gw`.
+management:
+  upstream: http://127.0.0.1:8002
+gateway:
+  upstream: http://127.0.0.1:8001
+
+# nginx re-resolves the upstreams on every request through this, so a redeploy of either service
+# does not leave the proxy talking to an address that has moved. Docker's embedded DNS by default.
+dns:
+  resolver: 127.0.0.11
 
 # ---------------------------------------------------------------------------------------------
 # Apache Kafka — the bus the two planes speak over, and a trust boundary.
