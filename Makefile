@@ -97,7 +97,7 @@ MANAGEMENT_PORT := $(lastword $(subst :, ,$(MANAGEMENT_URL)))
 .PHONY: help up up-core down destroy ps logs restart env sync test test-py test-frontend \
         test-integration test-e2e e2e lint lint-py lint-frontend fmt seed seed-reset \
         migrate-gateway kafka-topics relay consume run-gateway run-gateway-oidc run-backend \
-        purge-e2e-use-cases config-verify up-apps \
+        purge-e2e-use-cases config-verify config-check up-apps \
         verify-up verify-down test-verify \
         run-frontend up-full down-full logs-apps build-images ci wait-healthy prune mutants
 
@@ -113,6 +113,18 @@ env: ## Create deploy/compose/.env from the example if missing
 	else \
 		echo "$(ENV_FILE) already exists."; \
 	fi
+
+CONFIG ?= config/showcase.example.yaml
+
+config-check: ## Ask both planes whether they would start with CONFIG=config/<file>.yaml
+	@# **Before anything is deployed, not during a maintenance window.** An environment that is
+	@# not `local` turns on a hardening check per plane and the first time most of them are met is
+	@# when a container exits. This renders the file and hands it to the product's own
+	@# `unsafe_settings`, in a subprocess with only that environment in it.
+	@#
+	@# Exit codes: 1 the file has problems of its own · 2 it does not render · 3 it declares a
+	@# Vault this machine cannot use, which is not the same as an answer.
+	uv run python tools/config_check.py $(CONFIG)
 
 config-verify: ## Check deploy/compose/.env against the config file it came from
 	@# **Not an errand.** Rendering puts a config file's values into `.env`, and Compose fills

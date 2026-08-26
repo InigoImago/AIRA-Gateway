@@ -418,6 +418,13 @@ reading code.
   named one by one** — a concession nobody asked for is a hole, and a blanket cannot say which is
   which. The same applies to what a *port* exempts: the dev stack published Postgres, Redis, Kafka
   and a dev-mode Vault on `0.0.0.0` because Compose's `"5432:5432"` means that, and nobody chose it.
+- **A pre-flight check that blames the file for the checker's environment is one nobody reads.**
+  `make config-check` first reported *"2 things this file has to answer for"* when the only
+  problem was that the machine running it had no Vault secret-id. Three outcomes have to stay
+  apart: the file's own problems, a credential the file deliberately does not carry (Vault's half,
+  split on the renderer's own list so the two cannot drift), and *the question could not be asked*.
+  Folding the third into either of the others is the permissive stand-in in its most tempting
+  form — it makes the tool look decisive.
 - **A comment that states a rule does not enforce the line beneath it.** The pull-wait loop in
   `make showcase` carries a paragraph explaining why the seed must not run before the model is on
   disk — directly above `docker inspect … aira-ollama-pull`, a literal that finds nothing on a

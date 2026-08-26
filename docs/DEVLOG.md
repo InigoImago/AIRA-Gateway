@@ -5,6 +5,53 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## A runbook, and the check its central step needed (2026-08-26)
+
+Asked whether the product is ready for a real integration, and how to proceed. The first half was
+answerable by measurement rather than opinion: `config/integrated.example.yaml` rendered — 86
+settings, `environment: production`, a real issuer and audience, Kafka `SASL_SSL`, TLS on OIDC,
+JWKS and Vault — and handed to **both planes' own `unsafe_settings`**. With Vault declared and no
+secret-id, both fail closed with a message naming what they looked for. Without Vault, exactly two
+refusals: `AIRA_SECRET_KEY` and `AIRA_POSTGRES_PASSWORD`. With those supplied, both accept.
+
+Two refusals, both secrets, both of them names the renderer *refuses to write* into a config file.
+That is the strongest statement available about such a file: complete, and missing only what it
+must never hold.
+
+**The gap was not the product, it was the document.** `docs/DEPLOYMENT.md` — the file somebody
+opens for exactly this — knew nothing about the configuration file, `make config-verify`,
+`make up-apps` or the compose split. `SETUP.md` §5 had been kept in step; this had not, which is
+the two-copies problem in its ordinary form: the copy that is edited stays true and the one nobody
+opens rots. So the runbook went in there as **§0**, not into a seventh document.
+
+**And the runbook needed a command it did not have.** Its central step is *check the configuration
+before it reaches a machine* — and that existed only as a probe run by hand. A runbook step with no
+command is a knob wired to a name that does not exist, which this round had already found twice in
+the Makefile. `tools/config_check.py` and `make config-check CONFIG=…` now do it: render the file,
+hand it to each plane's own checker in a subprocess holding **only** that environment, and keep
+three outcomes apart —
+
+| | |
+| --- | --- |
+| `!` | the file's own problem, exit 1 |
+| `·` | a credential the file deliberately does not carry, split on `config_render.FORBIDDEN` so the two lists cannot drift; Vault's half, not counted against the file |
+| `cannot use it` | Vault declared and unusable here — exit 3, neither a pass nor the file's fault |
+
+The third one was folded into the second in the first version, which reported *"2 things this file
+has to answer for"* about a machine that simply had no secret-id. Keeping it apart is the whole
+value: a check that blames the file for the checker's environment is one a reader learns to ignore.
+
+6 mutations (**613**), each observed `caught` — including the two that matter most, a credential
+counted against the file and a subprocess inheriting this process's environment. The second is the
+one that would make the check worthless while looking green: `env=None` instead of the rendered
+mapping, and a value the deployment will never have fixes the answer.
+
+The runbook names what it does not cover, with the reason: `FRD-127` (several gateway instances —
+read it before planning a cutover if availability is required), `FRD-610` §3.2 (a cost budget is
+blind to a model with no price) and a stream that cannot fall back once a chunk is on the wire.
+
+---
+
 ## `make showcase` on a stack that is not the default one (2026-08-26)
 
 Asked whether the previous round meant `make showcase` now covers everything. It did not, and the

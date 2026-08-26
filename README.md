@@ -178,7 +178,7 @@ Full picture: [**Architecture**](docs/ARCHITECTURE.md) ·
 | [**Configuration files**](config/README.md) | One YAML per installation, naming every external system — and no secrets |
 | [**Migrating a KIRA client**](docs/MIGRATION-KIRA.md) | Use case, released models, members, key — and `X-AIRA-Use-Case` |
 | [**Pointing a Gemini client at AIRA**](docs/MIGRATION-GEMINI.md) | The same four steps, for `google-genai` and anything that speaks it |
-| [**Operations**](docs/DEPLOYMENT.md) | Running it: topics, jobs, degradation, backups |
+| [**Operations**](docs/DEPLOYMENT.md) | Deploying it: §0 is a runbook for an integration, in order, with the command that checks each step. Then topics, jobs, degradation, backups |
 | [**Testing**](docs/TESTING.md) | The four layers and why each exists |
 | [**Gap analysis**](docs/GAP-ANALYSIS.md) | Requirements against what is built |
 | [**Features**](docs/features/README.md) | Every FRD, its status, its document — generated from the FRDs themselves |

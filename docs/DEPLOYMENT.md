@@ -4,6 +4,7 @@ How to bring AIRA up — standalone on one machine, or connected to infrastructu
 run. Every value in here is taken from the code; where something is not implemented yet, this
 document says so rather than describing an intention.
 
+- [0. The runbook — an integration, in order](#0-the-runbook--an-integration-in-order)
 - [1. What actually runs](#1-what-actually-runs)
 - [2. Standalone (one machine)](#2-standalone-one-machine)
 - [3. Integrating with existing infrastructure](#3-integrating-with-existing-infrastructure)
@@ -11,6 +12,163 @@ document says so rather than describing an intention.
 - [5. Preparing Keycloak](#5-preparing-keycloak)
 - [6. Production checklist](#6-production-checklist)
 - [7. Known gaps](#7-known-gaps)
+
+---
+
+## 0. The runbook — an integration, in order
+
+**§3 below is the reference — what each system must provide. This is the procedure**: the order to
+do it in, and the command that says whether each step worked. Every step ends with something you
+can run, because a step whose success you cannot check is a step you will do twice.
+
+The order is not arbitrary, and §9 of [`INTEGRATIONS.md`](INTEGRATIONS.md) gives the reasoning:
+**prices before budgets** (an unpriced model makes a cost budget unenforceable), **alert before
+block** (a detection rule that blocks wrongly once is switched off for ever), and
+**`AIRA_REQUIRE_USE_CASE` last** (turning it on early refuses traffic that used to work).
+
+### Step 0 — one file, before you touch anything
+
+Everything below is driven by one YAML file naming every external system, with **no secrets**.
+Copy the example closest to your case and edit it:
+
+```bash
+cp config/integrated.example.yaml config/my-installation.yaml
+$EDITOR config/my-installation.yaml
+```
+
+> Everything in `config/` except the three examples is invisible to git, on purpose: an
+> installation's hostnames, project ids and account names are not secrets in the sense Vault means,
+> and are exactly what should not reach a public repository by being dropped in a folder.
+
+**Check it before it reaches a machine.** An environment that is not `local` turns on a list of
+hardening checks in each plane, and for most deployments the first time all of them are met is when
+a container exits during a maintenance window:
+
+```bash
+make config-check CONFIG=config/my-installation.yaml
+```
+
+It renders the file and hands it to the gateway's and Management's own `unsafe_settings`, in a
+subprocess holding nothing but that environment. Three outcomes, kept apart on purpose:
+
+| | |
+| --- | --- |
+| `accepts this configuration` | that plane would start |
+| a line marked `!` | the file's own problem — exit 1 |
+| a line marked `·` | a credential the file deliberately does not carry; **Vault** supplies it, and it is not counted against the file |
+| `cannot use it` | the file declares a Vault this machine cannot reach or authenticate to. Not a pass and not the file's fault — exit 3. Add `--without-vault` to check everything else. |
+
+The shipped `integrated.example.yaml` is refused for exactly two things, both marked `·`:
+`AIRA_SECRET_KEY` and `AIRA_POSTGRES_PASSWORD`. That is the strongest statement the check can make
+about a configuration file — complete, and missing only what such a file must never hold.
+
+### Step 1 — PostgreSQL: two databases
+
+Names, roles and the split are in [§3.1](#31-postgresql). AIRA never shares a table between the
+planes, so two databases on one server is the normal arrangement.
+
+```sql
+CREATE DATABASE aira_gateway;
+CREATE DATABASE aira_mgmt;
+```
+
+**Check:** the migrations are the check — they run on every deployment and are the first thing to
+touch the database.
+
+```bash
+make config-check CONFIG=config/my-installation.yaml   # still green with the real host in it
+```
+
+### Step 2 — Keycloak: realm, groups, client, **and the audience mapper**
+
+[§5](#5-preparing-keycloak) has the detail and [`INTEGRATIONS.md` §2](INTEGRATIONS.md) has the
+group model. Three things, and the third is the one that bites:
+
+1. **Groups decide roles.** `AIRA_ROLE_GROUPS` maps a Keycloak group path to each AIRA role; a
+   deployment that names no group for `global-admin` is refused at start-up, because nobody could
+   administer it. Use-case access is a group whose path is `/use-cases/<slug>`.
+2. **A client for the console**, with the console's URL in its redirect URIs and web origins.
+3. **An audience mapper on that client.** Keycloak does **not** add one by itself. Without it the
+   token carries no `aud`, the gateway refuses it, and the console turns in a login loop with
+   nothing saying why. This has cost this project a round twice.
+
+**Check** — the token, not the configuration:
+
+```bash
+curl -s "$ISSUER/.well-known/openid-configuration" | jq -r .issuer
+# then, with a real token from the console's own login:
+python3 -c 'import sys,json,base64; t=sys.argv[1].split(".")[1];   print(json.loads(base64.urlsafe_b64decode(t+"==")))' "$TOKEN" | grep -o "'aud'[^,]*"
+```
+
+`aud` must name what `AIRA_OIDC_AUDIENCE` says. If it does not, the mapper is missing.
+
+### Step 3 — Kafka: eight compacted topics
+
+Names and settings in [`INTEGRATIONS.md` §3](INTEGRATIONS.md). They must be **compacted**: the
+gateway rebuilds its read-model by replaying them, so a topic that expires its records loses
+configuration rather than history.
+
+Authentication is not optional outside `local`: a deployment with
+`AIRA_KAFKA_SECURITY_PROTOCOL=PLAINTEXT` is refused at start-up, because every configuration change
+would cross the broker in the clear and anybody who can reach it could publish their own.
+
+**Check:** `make config-check` covers the setting; the topics themselves are checked by the first
+start — `/readyz` reports Kafka.
+
+### Step 4 — one model platform
+
+Whichever you have ([`INTEGRATIONS.md` §5](INTEGRATIONS.md)). One is enough to start; the catalogue
+is filled in step 7.
+
+### Step 5 — deploy the product
+
+```bash
+uv run python tools/config_render.py config/my-installation.yaml -o deploy/compose/.env
+make up-apps
+```
+
+`docker-compose.apps.yml` is the product and nothing in it exists for the demo — the development
+realm, the `-dev` Vault and the seeded accounts live in `docker-compose.showcase.yml`, which you do
+not deploy.
+
+**Check**, and this is the one that matters:
+
+```bash
+make config-verify        # the deployment runs what the file says, or it says where it does not
+curl -s localhost:8001/readyz | jq        # postgres, kafka, counters, every upstream
+```
+
+`config-verify` is not an errand. Compose fills every gap it is given from `${VAR:-default}`, so a
+value left empty, a variable your file does not name, a `.env` edited afterwards or a source edited
+without re-rendering all end the same way: a stack that starts, healthy, on a value nobody chose.
+`make up-apps` runs the check before starting.
+
+### Step 6 — Vault, and the two secrets
+
+Two values are all the config file deliberately withholds: `AIRA_SECRET_KEY` and
+`AIRA_POSTGRES_PASSWORD`, plus whatever model-platform credential you use. Vault ranks **above** the
+environment on purpose, so a value written there wins over anything a `.env` holds.
+
+**Check:** `make config-check` from a machine that can read the deployment's
+`VAULT_SECRET_ID_FILE`. Exit 0 with no `·` lines means both planes would start on Vault alone.
+
+### Step 7 — governed, then defensible
+
+Then follow [`INTEGRATIONS.md` §9](INTEGRATIONS.md): Redis for shared counters, prices and
+capabilities in the catalogue, the retention worker on a schedule, OTLP, and only then budgets,
+rate limits, anomaly rules in **alert**, and `AIRA_REQUIRE_USE_CASE=true` last of all.
+
+### What this runbook does not cover
+
+- **Several gateway instances** (`FRD-127`). The shape is right — the API, the Kafka consumer, the
+  retention worker and Management's relay are separate containers, `/readyz` distinguishes
+  *degraded* from *not ready*, and no session means no sticky sessions. Two gaps remain, named in
+  that FRD: Compose's fixed `container_name` blocks `--scale`, and the schema rule for two versions
+  serving at once. **If availability is a requirement, read it before planning the cutover.**
+- **A cost budget against a model with no price** (`FRD-610` §3.2). Unpriced traffic is counted
+  apart, which is right for reporting and means *unbounded* for enforcement.
+- **A stream falling back mid-answer.** Conditions are checked before dispatch; once a chunk is on
+  the wire the chain is not retried.
 
 ---
 
@@ -158,6 +316,12 @@ make test-e2e            # browser end-to-end (see e2e/README.md for prerequisit
 ## 3. Integrating with existing infrastructure
 
 Point AIRA at what you already run. Each subsection lists the minimum you have to provide.
+
+> **This is the reference; [§0](#0-the-runbook--an-integration-in-order) is the procedure.** The
+> variables below are set in one place — a `config/*.yaml` rendered into the environment both
+> planes read — not service by service. `make config-check` says whether they would be accepted
+> before anything is deployed, and `make config-verify` says whether the deployment is using them
+> afterwards.
 
 ### 3.1 PostgreSQL
 
