@@ -61,3 +61,6 @@ deploy/compose/docker-compose.sandbox.yml
 
 # Artefact of a live functional run (tools/… scratch), never source.
 matrix-result.json
+
+# The marker `--verify` reads: one path, no secrets. Local to an installation.
+.aira-config-source

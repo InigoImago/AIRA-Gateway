@@ -8,9 +8,11 @@
 *
 
 # The examples, which describe an installation nobody runs: the demo stack that ships with this
-# repository, and a single-machine deployment. Both are checked against the real settings classes
+# repository, a single-machine deployment, and one wired into an organisation's own
+# Keycloak, Vault, Kafka and Postgres. Both are checked against the real settings classes
 # by `tools/tests/test_the_config_examples_are_real.py`, so they cannot drift into fiction.
 !.gitignore
 !README.md
 !showcase.example.yaml
 !standalone.example.yaml
+!integrated.example.yaml

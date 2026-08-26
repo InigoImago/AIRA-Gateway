@@ -5,6 +5,57 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The config file that was first, not above (2026-08-26)
+
+> *"It is important that the configs rank above, so that the integration happens without states
+> where the `.env` or the compose file unexpectedly, or through human or configuration error,
+> takes over unnoticed."*
+
+The previous round had wired all 86 variables through Compose and stated a precedence — Vault,
+then the config file, then a `${VAR:-default}`, then the settings class. That precedence was a
+**claim in a README**. Rendering writes the file's values into `deploy/compose/.env`; Compose then
+fills every gap it is given. Four ways the deployment ends up running on something nobody chose,
+all of them silent, all of them producing a stack that starts and looks healthy:
+
+| | |
+| --- | --- |
+| a value left empty in the file | Compose's `${VAR:-default}` fires on empty as well as unset |
+| a variable the file names that no service takes | the knob turns nothing |
+| `.env` edited after rendering | the readable file is the one people edit |
+| the source edited without re-rendering | both files are internally consistent, one is stale |
+
+**What was built.** `as_env_file` now stamps the rendered file with its source and a SHA-256 of it,
+and `tools/config_render.py --verify` compares source, rendered file, and — through
+`docker compose config`, so the answer is Docker's rather than a re-implementation of Docker's
+substitution rules — what each container would actually receive. `make config-verify` wraps it and
+`make up` / `make up-full` run it before starting, prefixed with `-`: a stack somebody starts by
+hand must still start, the message is the point. Two variables the deployment is allowed to decide
+are named in `COMPOSE_DECIDES` with their reason, because an exemption is a decision.
+
+**The probe that mattered was the one that stayed quiet.** Replacing
+`AIRA_ENFORCE_BUDGETS: ${AIRA_ENFORCE_BUDGETS:-true}` with a literal `"true"` produced no output —
+and that was the check being right: the values agreed, so nothing was wrong. Re-run with the config
+file saying `false`, the literal was caught twice over, and the static guard that needs no daemon
+(`test_every_variable_an_example_renders_reaches_a_container`) named it too. Two nets, no daemon
+required for one of them.
+
+**The correction inside the round.** The first version refused *every* unstamped `.env` — including
+the demo's, which is hand-made on purpose and has no config file above it to disagree with. That
+is a warning on every `make up` of the supported path, which is how a warning stops being read.
+But the takeover cannot be told from the demo by looking at the file: the stamp leaves with the
+file that carried it. So rendering now also drops `deploy/compose/.aira-config-source` — one path,
+never a secret, git-ignored — and the two cases separate: *nothing above me claims otherwise*
+versus *config/showcase.example.yaml no longer decides anything*.
+
+**Measured, against the running stack rather than a fixture**: the demo's hand-made `.env` → a
+note and exit 0; a fresh render → clean; a literal in the compose file disagreeing with the config
+→ `1 difference(s)`, exit 1, `make` reporting `Error 1`. 13 mutations added (**593**), each
+observed `caught`, including the two that would make the check silent in exactly the direction that
+looks safe. `!integrated.example.yaml` was added to `config/.gitignore`, which had been tracking
+the third example while naming only two.
+
+---
+
 ## The suite that filled the demo it ran against (2026-08-25)
 
 > *"Clean up the test suite after it has run; the existing use cases that do not belong to the
@@ -51,6 +102,57 @@ exactly as `seed_demo` is, and reachable over no URL at all.
 
   That is this file's own lesson, repeated by the person who wrote it down: *"the pager browser
   guard passed against the unfixed console — it depended on 917 accumulated demo use cases."*
+
+### More than half the file was inert (2026-08-26)
+
+> *"Check how the docker compose and our new configuration relate — are they separate, or do they
+> affect each other?"* …*"Everything must be tested and checked for whether it has an effect,
+> otherwise there is no point testing it differently."*
+
+They relate through exactly one file, `deploy/compose/.env`, and the coupling was **partial and
+silent**. There is no `env_file` anywhere: each service receives a curated list, so a variable the
+compose files never interpolate reaches no container at all.
+
+Of the **86** an example renders:
+
+| | |
+| --- | --- |
+| honoured | 39 |
+| never interpolated — reach nobody | 45 |
+| assigned a literal in compose, overriding the file | 11 (9 of them also in the row above) |
+| **inert** | **47 of 86** |
+
+Measured on the running gateway: `AIRA_CURRENCY`, `AIRA_ENFORCE_BUDGETS`, `AIRA_REQUIRE_USE_CASE`,
+`AIRA_LOG_LEVEL` and `AIRA_MAX_REQUEST_BYTES` were simply **absent from the container**, and
+`AIRA_POSTGRES_HOST` was hard-coded to `postgres`. Somebody could set `enforce_budgets: false`,
+restart, and watch budgets go on being enforced.
+
+**This is not a new failure here.** `docker-compose.apps.yml` complains about it four times in its
+own comments — the Ollama timeout, the Gemini model list, two more timeouts, and then the whole
+Vertex adapter, which the shipped stack could not configure at all — each time with the same
+sentence: *a knob that is not wired is worse than an absent one, somebody turns it and believes the
+result.* `test_compose_passes_the_settings_it_names.py` guards it for credentials and upstream
+addresses, *"deliberately narrow enough to be true rather than aspirational"*. A file offering 86
+knobs is the reason to stop meeting it one variable at a time.
+
+43 variables passed through to the plane whose settings class declares them, each with that
+class's own default, so nothing that was true stops being true. Seven literals turned into
+overridable defaults. And three the new guard found on its first run: both nginx upstreams, hard
+coded in the frontend service, and `AIRA_POSTGRES_USER`, which compose read from a **different
+variable** (`POSTGRES_USER`, the Postgres container's own) — so a file naming the setting was
+ignored.
+
+**Proved by effect, not by presence**, which is what the owner asked for. `AIRA_MAX_REQUEST_BYTES`
+was one of the dead ones: set to 2048 the gateway answers a 5 000-byte body with **413 Request body
+too large**; without it the same body reaches authentication and comes back **401**; and on the
+commit before this one the name appears in the compose files **zero times**. Then the whole set: a
+config with every number and flag given a non-default value, rendered, and `docker compose config`
+asked what each service would receive — **86 of 86 carried through**, the one apparent exception
+being `AIRA_OIDC_JWKS_URI: ''`, where empty deliberately means *use the in-network default*.
+
+That last one is a trap for somebody else's Keycloak — the issuer is what the browser saw, the JWKS
+is fetched by the container, and leaving it empty on your own infrastructure silently points it at
+the demo's. Now said in all three examples rather than only in a compose comment.
 
 ### Applying the file, which is what actually found the rest (2026-08-26)
 

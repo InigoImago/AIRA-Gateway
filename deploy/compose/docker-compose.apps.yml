@@ -158,6 +158,58 @@ services:
     working_dir: /app/gateway
     command: ["alembic", "upgrade", "head"]
     environment: &gateway-env
+      # **The waiver mechanism, unreachable in this stack until 2026-08-26.** `gateway/security.py`
+      # refuses to start outside `local` unless six things hold, and `AIRA_DEMO_MODE` waives
+      # exactly those six (`WAIVED_BY_A_DEMO` — a list, with a docstring about what it does *not*
+      # waive). None of it could fire: the variable went to `management-seed` alone. The demo
+      # worked only because `AIRA_ENVIRONMENT=local` waives everything, so nothing showed the gap
+      # until a configuration file said `demo` instead and Management refused to migrate.
+      AIRA_DEMO_MODE: ${AIRA_DEMO_MODE:-false}
+      # ── Everything else a `config/*.yaml` can set (2026-08-26) ───────────────────────────
+      #
+      # **The block that was missing, and it was most of them.** `config/showcase.example.yaml`
+      # renders 86 variables and **47 reached no container**: 45 that no compose file interpolated,
+      # and a handful assigned a literal here. Somebody could set `enforce_budgets: false`, restart,
+      # and watch budgets go on being enforced.
+      #
+      # This file already says the sentence four times — about the Ollama timeout, the Gemini model
+      # list, two more timeouts, and then the whole Vertex adapter: *a knob that is not wired is
+      # worse than an absent one, somebody turns it and believes the result.* A configuration file
+      # offering 86 of them is the reason to stop meeting it one variable at a time.
+      #
+      # Every default below is the settings class's own, so nothing that was true stops being true.
+      AIRA_ANOMALY_INTERVAL_SECONDS: ${AIRA_ANOMALY_INTERVAL_SECONDS:-60.0}
+      AIRA_API_KEY_DEFAULT_DAYS: ${AIRA_API_KEY_DEFAULT_DAYS:-30}
+      AIRA_API_KEY_MAX_DAYS: ${AIRA_API_KEY_MAX_DAYS:-180}
+      AIRA_APP_NAME: ${AIRA_APP_NAME:-aira-gateway}
+      AIRA_BUDGET_ESTIMATE_OUTPUT_TOKENS: ${AIRA_BUDGET_ESTIMATE_OUTPUT_TOKENS:-1024}
+      AIRA_CORS_ALLOW_CREDENTIALS: ${AIRA_CORS_ALLOW_CREDENTIALS:-false}
+      AIRA_CORS_ORIGINS: ${AIRA_CORS_ORIGINS:-}
+      AIRA_CURRENCY: ${AIRA_CURRENCY:-EUR}
+      AIRA_DEFAULT_RETENTION_DAYS: ${AIRA_DEFAULT_RETENTION_DAYS:-7}
+      AIRA_DETECT_ANOMALIES: ${AIRA_DETECT_ANOMALIES:-true}
+      AIRA_ENFORCE_BUDGETS: ${AIRA_ENFORCE_BUDGETS:-true}
+      AIRA_ENFORCE_RATE_LIMITS: ${AIRA_ENFORCE_RATE_LIMITS:-true}
+      AIRA_ENFORCE_SUSPENSIONS: ${AIRA_ENFORCE_SUSPENSIONS:-true}
+      AIRA_LOG_LEVEL: ${AIRA_LOG_LEVEL:-INFO}
+      AIRA_LOG_QUEUE_SIZE: ${AIRA_LOG_QUEUE_SIZE:-512}
+      AIRA_LOG_RETENTION_DAYS: ${AIRA_LOG_RETENTION_DAYS:-0}
+      AIRA_MAX_AUTH_FAILURES_PER_MINUTE: ${AIRA_MAX_AUTH_FAILURES_PER_MINUTE:-60}
+      AIRA_MAX_EMBEDDING_BATCH: ${AIRA_MAX_EMBEDDING_BATCH:-256}
+      AIRA_MAX_EMBEDDING_CHARS: ${AIRA_MAX_EMBEDDING_CHARS:-1000000}
+      AIRA_MAX_REQUEST_BYTES: ${AIRA_MAX_REQUEST_BYTES:-8388608}
+      AIRA_MAX_RESPONSE_SCHEMA_BYTES: ${AIRA_MAX_RESPONSE_SCHEMA_BYTES:-32768}
+      AIRA_MAX_RESPONSE_SCHEMA_DEPTH: ${AIRA_MAX_RESPONSE_SCHEMA_DEPTH:-8}
+      AIRA_MAX_RESPONSE_SCHEMA_PROPERTIES: ${AIRA_MAX_RESPONSE_SCHEMA_PROPERTIES:-256}
+      AIRA_OIDC_CLOCK_SKEW_SECONDS: ${AIRA_OIDC_CLOCK_SKEW_SECONDS:-60.0}
+      AIRA_OIDC_EXPIRY_LEEWAY_SECONDS: ${AIRA_OIDC_EXPIRY_LEEWAY_SECONDS:-0.0}
+      AIRA_OIDC_ISSUERS: ${AIRA_OIDC_ISSUERS:-}
+      AIRA_OTEL_SAMPLE_RATIO: ${AIRA_OTEL_SAMPLE_RATIO:-1.0}
+      AIRA_REDACT_PATTERNS: ${AIRA_REDACT_PATTERNS:-}
+      AIRA_REQUIRE_USE_CASE: ${AIRA_REQUIRE_USE_CASE:-true}
+      AIRA_STORE_PAYLOADS: ${AIRA_STORE_PAYLOADS:-true}
+      AIRA_TRUSTED_PROXY_HOPS: ${AIRA_TRUSTED_PROXY_HOPS:-1}
+      AIRA_TRUST_FORWARDED_FOR: ${AIRA_TRUST_FORWARDED_FOR:-false}
       AIRA_ENVIRONMENT: ${AIRA_ENVIRONMENT:-local}
       # ── Secrets from Vault (FRD-116) ──────────────────────────────────────────────────────
       #
@@ -189,12 +241,12 @@ services:
       # no ceremony; `aira_common.secrets` logs a warning every time it is used, because a root
       # token in a deployment is the thing this whole feature exists to avoid.
       VAULT_TOKEN: ${VAULT_TOKEN:-}
-      AIRA_POSTGRES_HOST: postgres
-      AIRA_POSTGRES_PORT: "5432"
-      AIRA_POSTGRES_DB: aira_gateway
-      AIRA_POSTGRES_USER: ${POSTGRES_USER:-aira}
+      AIRA_POSTGRES_HOST: ${AIRA_POSTGRES_HOST:-postgres}
+      AIRA_POSTGRES_PORT: ${AIRA_POSTGRES_PORT:-5432}
+      AIRA_POSTGRES_DB: ${AIRA_POSTGRES_DB:-aira_gateway}
+      AIRA_POSTGRES_USER: ${AIRA_POSTGRES_USER:-${POSTGRES_USER:-aira}}
       AIRA_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aira-local}
-      AIRA_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      AIRA_KAFKA_BOOTSTRAP_SERVERS: ${AIRA_KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
       # How this service authenticates to the broker. PLAINTEXT is the local default and is
       # **refused outside `local`**: the config topics are applied straight into the gateway's
       # read-model, so an unauthenticated broker grants access without a credential.
@@ -206,7 +258,7 @@ services:
       # Shared counters for rate limits and budget reservations (ADR-0008). Empty disables
       # them: limits then hold per process and budgets use the racy read-then-book path.
       AIRA_REDIS_URL: ${AIRA_REDIS_URL:-redis://redis:6379/0}
-      AIRA_OIDC_ENABLED: "true"
+      AIRA_OIDC_ENABLED: ${AIRA_OIDC_ENABLED:-true}
       # The issuer is what the *browser* obtained the token from, so it must match the token's
       # `iss` claim exactly. The JWKS URI is fetched by this container, which cannot reach
       # "localhost:8080" — hence the in-network override. This split is exactly what
@@ -273,8 +325,8 @@ services:
       AIRA_FOUNDRY_DEPLOYMENTS: ${AIRA_FOUNDRY_DEPLOYMENTS:-}
       AIRA_ALLOWED_REGIONS: ${AIRA_ALLOWED_REGIONS:-}
       AIRA_OTEL_ENABLED: ${AIRA_OTEL_ENABLED:-false}
-      AIRA_OTEL_ENDPOINT: http://otel-collector:4318
-      AIRA_LOG_JSON: "true"
+      AIRA_OTEL_ENDPOINT: ${AIRA_OTEL_ENDPOINT:-http://otel-collector:4318}
+      AIRA_LOG_JSON: ${AIRA_LOG_JSON:-true}
     depends_on:
       vault-init:
         condition: service_completed_successfully
@@ -291,6 +343,37 @@ services:
     container_name: ${AIRA_STACK:-aira}-management-migrate
     command: ["python", "manage.py", "migrate", "--noinput"]
     environment: &management-env
+      # **The waiver mechanism, unreachable in this stack until 2026-08-26.** `gateway/security.py`
+      # refuses to start outside `local` unless six things hold, and `AIRA_DEMO_MODE` waives
+      # exactly those six (`WAIVED_BY_A_DEMO` — a list, with a docstring about what it does *not*
+      # waive). None of it could fire: the variable went to `management-seed` alone. The demo
+      # worked only because `AIRA_ENVIRONMENT=local` waives everything, so nothing showed the gap
+      # until a configuration file said `demo` instead and Management refused to migrate.
+      AIRA_DEMO_MODE: ${AIRA_DEMO_MODE:-false}
+      # ── Everything else a `config/*.yaml` can set (2026-08-26) ───────────────────────────
+      #
+      # **The block that was missing, and it was most of them.** `config/showcase.example.yaml`
+      # renders 86 variables and **47 reached no container**: 45 that no compose file interpolated,
+      # and a handful assigned a literal here. Somebody could set `enforce_budgets: false`, restart,
+      # and watch budgets go on being enforced.
+      #
+      # This file already says the sentence four times — about the Ollama timeout, the Gemini model
+      # list, two more timeouts, and then the whole Vertex adapter: *a knob that is not wired is
+      # worse than an absent one, somebody turns it and believes the result.* A configuration file
+      # offering 86 of them is the reason to stop meeting it one variable at a time.
+      #
+      # Every default below is the settings class's own, so nothing that was true stops being true.
+      AIRA_API_KEY_DEFAULT_DAYS: ${AIRA_API_KEY_DEFAULT_DAYS:-30}
+      AIRA_API_KEY_MAX_DAYS: ${AIRA_API_KEY_MAX_DAYS:-180}
+      AIRA_APP_NAME: ${AIRA_APP_NAME:-aira-management}
+      AIRA_CURRENCY: ${AIRA_CURRENCY:-EUR}
+      AIRA_DIRECTORY_CLIENT_ID: ${AIRA_DIRECTORY_CLIENT_ID:-}
+      AIRA_LOG_LEVEL: ${AIRA_LOG_LEVEL:-INFO}
+      AIRA_OIDC_CLOCK_SKEW_SECONDS: ${AIRA_OIDC_CLOCK_SKEW_SECONDS:-60.0}
+      AIRA_OIDC_EXPIRY_LEEWAY_SECONDS: ${AIRA_OIDC_EXPIRY_LEEWAY_SECONDS:-0.0}
+      AIRA_OTEL_SAMPLE_RATIO: ${AIRA_OTEL_SAMPLE_RATIO:-1.0}
+      AIRA_THROTTLE_AUTH_FAILURES: ${AIRA_THROTTLE_AUTH_FAILURES:-60/minute}
+      AIRA_THROTTLE_USER: ${AIRA_THROTTLE_USER:-600/minute}
       # Same as the gateway's: Management holds the Django SECRET_KEY and the database password,
       # which are exactly the values `FRD-116` exists to move out of the environment.
       VAULT_ADDR: ${VAULT_ADDR:-}
@@ -313,12 +396,12 @@ services:
       AIRA_SECRET_KEY: ${AIRA_SECRET_KEY:-dev-insecure-secret-key-change-me}
       AIRA_DEBUG: ${AIRA_DEBUG:-true}
       AIRA_ALLOWED_HOSTS: ${AIRA_ALLOWED_HOSTS:-*}
-      AIRA_POSTGRES_HOST: postgres
-      AIRA_POSTGRES_PORT: "5432"
+      AIRA_POSTGRES_HOST: ${AIRA_POSTGRES_HOST:-postgres}
+      AIRA_POSTGRES_PORT: ${AIRA_POSTGRES_PORT:-5432}
       AIRA_POSTGRES_DB: aira_mgmt
-      AIRA_POSTGRES_USER: ${POSTGRES_USER:-aira}
+      AIRA_POSTGRES_USER: ${AIRA_POSTGRES_USER:-${POSTGRES_USER:-aira}}
       AIRA_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aira-local}
-      AIRA_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      AIRA_KAFKA_BOOTSTRAP_SERVERS: ${AIRA_KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
       # How this service authenticates to the broker. PLAINTEXT is the local default and is
       # **refused outside `local`**: the config topics are applied straight into the gateway's
       # read-model, so an unauthenticated broker grants access without a credential.
@@ -335,8 +418,8 @@ services:
       # leaves this empty has nobody holding one.
       AIRA_ROLE_GROUPS: ${AIRA_ROLE_GROUPS:-global-admin=/aira/global-admins;it-security=/aira/it-security;it-steuerung=/aira/it-steuerung}
       AIRA_OTEL_ENABLED: ${AIRA_OTEL_ENABLED:-false}
-      AIRA_OTEL_ENDPOINT: http://otel-collector:4318
-      AIRA_LOG_JSON: "true"
+      AIRA_OTEL_ENDPOINT: ${AIRA_OTEL_ENDPOINT:-http://otel-collector:4318}
+      AIRA_LOG_JSON: ${AIRA_LOG_JSON:-true}
     depends_on:
       vault-init:
         condition: service_completed_successfully
@@ -510,8 +593,8 @@ services:
       dockerfile: management/frontend/Dockerfile
     container_name: ${AIRA_STACK:-aira}-frontend
     environment:
-      AIRA_MANAGEMENT_UPSTREAM: http://management:8002
-      AIRA_GATEWAY_UPSTREAM: http://gateway:8001
+      AIRA_MANAGEMENT_UPSTREAM: ${AIRA_MANAGEMENT_UPSTREAM:-http://management:8002}
+      AIRA_GATEWAY_UPSTREAM: ${AIRA_GATEWAY_UPSTREAM:-http://gateway:8001}
       # What the console's content policy lets it call. Its own origin for `/api` and `/gw`, plus
       # the Keycloak the token is fetched from — which is deployment configuration, exactly like
       # `public/runtime-config.js`, and has to agree with it. Set both or neither.

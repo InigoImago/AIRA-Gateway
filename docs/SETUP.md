@@ -232,6 +232,14 @@ Each layer exists for what the one below cannot see; the reasoning and the traps
 > Everything else in `config/` is invisible to git on purpose. The examples are checked against the
 > settings classes themselves, so they cannot name a variable the product does not have — or omit
 > one it does.
+>
+> **The file ranks above the deployment, and `make config-verify` is what makes that true rather
+> than intended.** Compose fills every gap it is given from `${VAR:-default}`, so a value left
+> empty, a variable the file does not name, a `.env` edited afterwards, or a source edited without
+> re-rendering all end the same way: a stack that starts, healthy, on a value nobody chose. The
+> check compares the source, the rendered file and — through `docker compose config` — what each
+> container would actually receive, and exits non-zero on any difference. `make up` and
+> `make up-full` run it before starting. See [`config/README.md`](../config/README.md).
 
 The applications are stateless containers. Point them at your Postgres, your Kafka, your Keycloak
 and your model platforms; nothing else is required.

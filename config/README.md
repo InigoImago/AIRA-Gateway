@@ -52,6 +52,48 @@ Two sections are special:
 - **`secrets:`** — prose. A list of what the file deliberately does not hold, ignored by the
   renderer.
 
+## It sits above the deployment, and that is checked
+
+The chain is `config/*.yaml` → `tools/config_render.py` → `deploy/compose/.env` → Compose's
+`${VAR}` interpolation → the container. Precedence, highest first:
+
+| | |
+| --- | --- |
+| 1 | **HashiCorp Vault** — ranked above the environment on purpose (`FRD-116` FR-3) |
+| 2 | **this file** |
+| 3 | a Compose default, `${VAR:-…}`, when the file does not set the variable |
+| 4 | the settings class's own default |
+
+Rank 2 used to be a claim. Compose fills every gap it is given, so a value left empty, a variable
+the file does not name, a `.env` edited after rendering, or a source edited without re-rendering
+all end the same way — the deployment runs on something nobody chose, and **nothing says so**.
+
+So the rendered file is stamped with its source and a hash of it, and there is a command that
+compares all four:
+
+```bash
+make config-verify        # or: uv run python tools/config_render.py --verify deploy/compose/.env
+```
+
+It reports, and exits non-zero on, each of: a source that changed since the render, a rendered file
+edited by hand, a variable the file sets that no service receives, and a variable where a compose
+default would take over. `make up` and `make up-full` run it before starting, so a mismatch is seen
+rather than deployed.
+
+Rendering also drops `deploy/compose/.aira-config-source` — one path, never a secret, ignored by
+git. It answers the question the stamp cannot, because the stamp leaves with the file that carried
+it: *was this deployment ever config-driven?* Replace a rendered `.env` with a hand-written one and
+what remains looks exactly like the demo path, which has no config file and needs none. Without the
+marker the check has one rule for both cases, and either it warns on every demo start-up — the
+surest way to be ignored on the day it is right — or it stays quiet through the takeover it exists
+to catch. With it, the demo says *nothing above me claims otherwise* and the integration says
+*config/showcase.example.yaml no longer decides anything*.
+
+Two variables the deployment is allowed to decide, each named in `COMPOSE_DECIDES` with the reason:
+`AIRA_OIDC_JWKS_URI`, where empty deliberately means *the in-network address*, and
+`AIRA_POSTGRES_DB`, because Management's second database on the same server has no setting of its
+own to name it with.
+
 ## It cannot drift
 
 `tools/tests/test_the_config_examples_are_real.py` checks the examples against the settings classes

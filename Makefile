@@ -86,7 +86,7 @@ MANAGEMENT_PORT := $(lastword $(subst :, ,$(MANAGEMENT_URL)))
 .PHONY: help up up-core down destroy ps logs restart env sync test test-py test-frontend \
         test-integration test-e2e e2e lint lint-py lint-frontend fmt seed seed-reset \
         migrate-gateway kafka-topics relay consume run-gateway run-gateway-oidc run-backend \
-        purge-e2e-use-cases \
+        purge-e2e-use-cases config-verify \
         verify-up verify-down test-verify \
         run-frontend up-full down-full logs-apps build-images ci wait-healthy prune mutants
 
@@ -103,13 +103,25 @@ env: ## Create deploy/compose/.env from the example if missing
 		echo "$(ENV_FILE) already exists."; \
 	fi
 
+config-verify: ## Check deploy/compose/.env against the config file it came from
+	@# **Not an errand.** Rendering puts a config file's values into `.env`, and Compose fills
+	@# every gap from `${VAR:-default}` — so a value left empty, a variable the file does not name,
+	@# a `.env` edited afterwards, or a source edited without re-rendering all end the same way:
+	@# the deployment runs on something nobody chose, and nothing says so. This says so.
+	@#
+	@# `-` where it is called below, because a stack somebody started by hand has no config file
+	@# and must still start; the message is the point, not the exit code.
+	uv run python tools/config_render.py --verify $(ENV_FILE)
+
 up: env ## Start the full stack (infra + observability)
+	@-$(MAKE) --no-print-directory config-verify
 	$(COMPOSE) up -d
 
 up-core: env ## Start only core infra (no observability backend)
 	$(COMPOSE_CORE) up -d
 
 up-full: env ## Start EVERYTHING in containers (infra + gateway, management, consumer, relay, SPA)
+	@-$(MAKE) --no-print-directory config-verify
 	$(COMPOSE_FULL) up -d --build
 	@echo "SPA: $(CONSOLE_URL)   (login ucadmin / demo-password)"
 

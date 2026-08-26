@@ -350,3 +350,58 @@ def test_the_examples_configure_the_console_too() -> None:
         "one of these files would configure both APIs and leave the console pointed wherever its "
         "image was built to point."
     )
+
+
+COMPOSE = (
+    ROOT / "deploy" / "compose" / "docker-compose.yml",
+    ROOT / "deploy" / "compose" / "docker-compose.apps.yml",
+)
+#: Rendered names the Compose stack deliberately does not take from the environment, with the
+#: reason. Keep this short: every entry is a knob an integrator can turn to no effect.
+NOT_TAKEN_BY_COMPOSE = {
+    # Two databases on one server. The gateway's is taken from this variable; Management's
+    # second one is named by the deployment, and there is no second setting to name it with.
+    "AIRA_POSTGRES_DB",
+}
+
+
+def _compose_text() -> str:
+    return "\n".join(path.read_text(encoding="utf-8") for path in COMPOSE)
+
+
+def test_the_compose_files_are_where_this_expects_them() -> None:
+    for path in COMPOSE:
+        assert path.is_file(), path
+    assert "${AIRA_OIDC_ISSUER" in _compose_text()
+
+
+@pytest.mark.parametrize("example", EXAMPLES, ids=lambda p: p.name)
+def test_every_variable_an_example_renders_reaches_a_container(example: Path) -> None:
+    """**A knob that is not wired is worse than an absent one.**
+
+    `docker-compose.apps.yml` says that sentence four times in its own comments — about the Ollama
+    timeout, the Gemini model list, two more timeouts, and then the whole Vertex adapter, which the
+    shipped stack could not configure at all. `test_compose_passes_the_settings_it_names.py` guards
+    it for **credentials and upstream addresses**, deliberately narrow so as to stay true.
+
+    A configuration file is the reason to widen it. Measured when `config/` was introduced: of the
+    86 variables an example renders, **47 reached no container** — 45 that no compose file
+    interpolated and the rest assigned a literal there. Somebody could set `enforce_budgets: false`,
+    restart, and watch budgets go on being enforced, with nothing anywhere saying so.
+
+    Read out of the compose files rather than from a running stack: this has to fail in CI, where
+    there is no stack, and the substitution is decided by the text either way.
+    """
+    text = _compose_text()
+    unwired = sorted(
+        name
+        for name in _rendered(example)
+        if name not in NOT_TAKEN_BY_COMPOSE and f"${{{name}" not in text
+    )
+
+    assert unwired == [], (
+        f"{example.name} renders {unwired}, and no compose file takes them from the environment. "
+        "Somebody filling this in would turn those knobs and get the value the compose file "
+        "hard-codes.\n\nPass each through the service that reads it — the settings class's own "
+        "default is the right fallback — or add it to NOT_TAKEN_BY_COMPOSE with the reason."
+    )

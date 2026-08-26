@@ -5342,6 +5342,116 @@ MUTATIONS = [
         "                    row.response,",
         "management/backend/tests/test_smoketests.py",
     ),
+    # ------------------------------------------------------------------------------------------
+    # The config file ranking above the deployment (`config/README.md`). Every one of these is a
+    # way the stack could run on something nobody chose **while looking perfectly healthy** — the
+    # integrator sees a stack that starts, so the only evidence that anything is wrong is a check
+    # that says so. A silent verifier is worse than none: it converts an unknown into a false yes.
+    # ------------------------------------------------------------------------------------------
+    Mutation(
+        "CV1",
+        "a hand-made `.env` with no config file above it is not reported as a difference",
+        "tools/config_render.py",
+        "        if not marker.is_file():",
+        "        if False:",
+        "tools/tests/test_the_config_outranks_the_deployment.py",
+    ),
+    Mutation(
+        "CV2",
+        "a source edited without re-rendering is reported",
+        "tools/config_render.py",
+        "!= digest_of(source):",
+        "!= digest_of(source) and False:",
+        "tools/tests/test_the_config_outranks_the_deployment.py",
+    ),
+    Mutation(
+        "CV3",
+        "a variable deleted from the rendered file is reported",
+        "tools/config_render.py",
+        "if name not in present:",
+        "if name not in present and False:",
+        "tools/tests/test_the_config_outranks_the_deployment.py",
+    ),
+    Mutation(
+        "CV4",
+        "a rendered file edited by hand is reported",
+        "tools/config_render.py",
+        "elif present[name] != want:",
+        "elif present[name] != want and False:",
+        "tools/tests/test_the_config_outranks_the_deployment.py",
+    ),
+    Mutation(
+        "CV5",
+        "Docker being absent is said, not silently treated as a pass",
+        "tools/config_render.py",
+        '            "note: Docker is not available',
+        '            "quietly nothing at all',
+        "tools/tests/test_the_config_outranks_the_deployment.py",
+    ),
+    Mutation(
+        "CV6",
+        "a variable the file sets and no container receives is reported",
+        "tools/config_render.py",
+        "if values is None:",
+        "if values is None and False:",
+        "tools/tests/test_the_config_outranks_the_deployment.py",
+    ),
+    Mutation(
+        "CV7",
+        "a compose default taking over the file's value is reported",
+        "tools/config_render.py",
+        "elif not any(v.strip()",
+        "elif False and not any(v.strip()",
+        "tools/tests/test_the_config_outranks_the_deployment.py",
+    ),
+    Mutation(
+        "CV8",
+        "the two variables the deployment decides are exempt on purpose",
+        "tools/config_render.py",
+        "if name in COMPOSE_DECIDES:",
+        "if name in ():",
+        "tools/tests/test_the_config_outranks_the_deployment.py",
+    ),
+    Mutation(
+        "CV9",
+        "a difference exits non-zero, so `make up` can act on it",
+        "tools/config_render.py",
+        "            return 1",
+        "            return 0",
+        "tools/tests/test_the_config_outranks_the_deployment.py",
+    ),
+    Mutation(
+        "CV10",
+        "a missing `.env` is named rather than passing as nothing-to-check",
+        "tools/config_render.py",
+        "if not env_file.is_file():",
+        "if False:",
+        "tools/tests/test_the_config_outranks_the_deployment.py",
+    ),
+    Mutation(
+        "CV11",
+        "a source that has been deleted is named",
+        "tools/config_render.py",
+        "if not source.is_file():",
+        "if False:",
+        "tools/tests/test_the_config_outranks_the_deployment.py",
+    ),
+    Mutation(
+        "CV12",
+        "a rendered `.env` replaced by a hand-written one is refused, stamp and all",
+        "tools/config_render.py",
+        "        if not marker.is_file():",
+        "        if marker.is_file() or True:",
+        "tools/tests/test_the_config_outranks_the_deployment.py",
+    ),
+    Mutation(
+        "CV13",
+        "rendering records that this deployment is config-driven, outliving the file it renders",
+        "tools/config_render.py",
+        '        marker.write_text(f"{args.config}\\n", encoding="utf-8")',
+        "        pass",
+        "tools/tests/test_the_config_outranks_the_deployment.py",
+    ),
 ]
 
 
