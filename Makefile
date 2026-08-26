@@ -86,6 +86,7 @@ MANAGEMENT_PORT := $(lastword $(subst :, ,$(MANAGEMENT_URL)))
 .PHONY: help up up-core down destroy ps logs restart env sync test test-py test-frontend \
         test-integration test-e2e e2e lint lint-py lint-frontend fmt seed seed-reset \
         migrate-gateway kafka-topics relay consume run-gateway run-gateway-oidc run-backend \
+        purge-e2e-use-cases \
         verify-up verify-down test-verify \
         run-frontend up-full down-full logs-apps build-images ci wait-healthy prune mutants
 
@@ -318,7 +319,28 @@ wait-healthy: ## Block until the containerised stack answers (after up-full, and
 	$(COMPOSE_FULL) ps; exit 1
 
 test-e2e: ## Run browser end-to-end tests (needs the stack + all services; see e2e/README.md)
-	cd e2e && npm install --silent && npx playwright test
+	@# **Tidied whether or not it passed**, and the ordering here is the whole point. Written as
+	@# two recipe lines first, which make abandons at the first failure — so the one run that
+	@# leaves the most behind, the failing one, was exactly the run that never cleaned up. Measured:
+	@# a red suite left 68 tombstones and a cleared register, which is nothing anybody could name
+	@# again.
+	@#
+	@# Playwright's own teardown *retires* what the suite made (the product's path, `FRD-607`);
+	@# this purges the tombstones, which is a demo-only step and cannot be reached over HTTP.
+	@set -e; \
+	( cd e2e && npm install --silent && npx playwright test ); status=$$?; \
+	$(MAKE) --no-print-directory purge-e2e-use-cases || true; \
+	exit $$status
+
+purge-e2e-use-cases: ## Purge the use cases the browser suite retired (demo installations only)
+	@if [ -s e2e/.artifacts/use-cases.txt ]; then \
+		$(COMPOSE_FULL) exec -T -e AIRA_DEMO_MODE=true management \
+			python -m django purge_test_use_cases --settings=aira_management.config.settings \
+			$$(tr '\n' ' ' < e2e/.artifacts/use-cases.txt) \
+		&& rm -f e2e/.artifacts/use-cases.txt; \
+	else \
+		echo "[purge] no register at e2e/.artifacts/use-cases.txt; nothing to purge"; \
+	fi
 
 e2e: test-e2e
 

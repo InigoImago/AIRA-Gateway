@@ -5,6 +5,53 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The suite that filled the demo it ran against (2026-08-25)
+
+> *"Clean up the test suite after it has run; the existing use cases that do not belong to the
+> suite must not be changed. …And I want a configuration file that points at all the external
+> systems that can be connected, as deep as possible but without secrets."*
+
+The first half came out of the previous round, where the showcase was found buried under **1734
+use cases in Management and 1946 in the gateway's read-model**, four of them the demo's. The
+browser suite calls `createUseCase` ninety times and removed nothing. This project had learned
+that lesson for **models** — `removeModel` exists with the sentence *"test residue makes a real
+figure meaningless, and the residue never stops accumulating"* — and had not learned it for the
+object the suite creates most.
+
+**Remembered, never matched.** `created.ts` writes each slug down at the moment of creation, and
+the teardown removes exactly those. No pattern, no prefix, no "everything that looks generated": a
+person may name a use case whatever they like, and this demo holds two that a person made. That is
+also why `seed_demo --fresh` is not what runs — it deletes everything that is not one of the
+demo's own six, which would have taken them.
+
+Written down **before** the attempt, because a creation that succeeds and then fails its URL
+assertion has still made a use case, and a register written only on success misses exactly the rows
+a failing run produces.
+
+**Retire is the product's path; purge is a demo-only step.** `FRD-607` puts thirty days between
+them, and that rule is untouched: the endpoint still refuses, because *"the party who might want
+the record gone is not the party who may remove it"*. The teardown retires, which takes the rows
+off every screen that lists live use cases. A new management command purges the tombstones, guarded
+exactly as `seed_demo` is, and reachable over no URL at all.
+
+### Three things the first version got wrong
+
+- **Make abandons a target at the first failing line**, so the purge was skipped on precisely the
+  run that leaves the most behind — the red one. Measured: 68 tombstones and a cleared register,
+  which is nothing anybody could name again. The recipe now captures the status, tidies, and
+  re-raises it.
+- **The register was cleared by the teardown**, one stage too early: the purge is a separate
+  process and had nothing left to read. It survives until the purge has run.
+- **My own pager guard died of the tidying.** `paging the register moves no column` walked five
+  pages, which needed 125 use cases — and the demo had them only because nothing cleaned up. With
+  thirteen it went red for want of a pager. Rewritten to filter instead, it went **green with the
+  fix removed**, because thirteen short rows are all about as wide as each other. So it brings its
+  own row now: one use case with a name far wider than any column, created by the test. Red without
+  the fix, green with it, and the same on an empty installation as on a busy one.
+
+  That is this file's own lesson, repeated by the person who wrote it down: *"the pager browser
+  guard passed against the unfixed console — it depended on 917 accumulated demo use cases."*
+
 ## One setting, three contradictions, and a field invented as a null (2026-08-25)
 
 The two the previous round recorded as noticed-and-not-fixed. Both turned out to be the shape of

@@ -17,6 +17,9 @@ const chrome = process.env.AIRA_E2E_CHROME;
 
 export default defineConfig({
   testDir: './tests',
+  // Runs once, in its own process, after every project. See `teardown.ts` for why the suite has
+  // to remove what it creates and why it may only remove *that*.
+  globalTeardown: './teardown.ts',
   // The suite drives shared, stateful services; running files in parallel would make the
   // use-case fixtures collide.
   fullyParallel: false,

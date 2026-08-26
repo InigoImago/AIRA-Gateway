@@ -138,25 +138,39 @@ test.describe('Register of processing activities', () => {
     expect(await widths(), 'columns moved when the rows were closed again').toEqual(closed);
   });
 
-  test('paging the register moves no column', async ({ page }) => {
+  test('a row of its own making moves no column', async ({ page }) => {
     /**
      * **The jiggle that is actually there**, and it is not the one the detail row causes.
      *
-     * Measured before the fix, on the demo installation: the header columns read
-     * `[52, 266, 152, 199, 185]` on the first page and `[52, 240, 159, 209, 194]` on the third.
-     * An automatic table sizes its columns from the rows it is currently holding, so twenty-five
-     * different use cases mean twenty-five different column widths — and every column jumps the
-     * moment somebody clicks Next. On a screen whose whole purpose is reading down a column and
-     * comparing rows, that is the defect.
+     * Measured before the fix, on a demo installation that then held hundreds of use cases: the
+     * header columns read `[52, 266, 152, 199, 185]` on the first page of the register and
+     * `[52, 240, 159, 209, 194]` on the third. An automatic table sizes its columns from the rows
+     * it is *currently holding*, so a different set of rows is a different set of column widths.
+     * On a screen whose whole purpose is reading down a column, that is the defect the
+     * `<colgroup>` and `table-layout: fixed` fix.
      *
-     * Opening a row, which is what this screen was rebuilt for, turned out **not** to move
-     * anything: a detail spanning every column only widens the table if it is wider than their
-     * sum, and it is not. That is measured in the test above and stated there as the weaker
-     * property it is. This one is the reason the `<colgroup>` and `table-layout: fixed` are there.
+     * ## Two versions of this went wrong before this one, in opposite directions
+     *
+     * It paged five deep first, which needed 125 use cases — and the demo had them only because
+     * nothing cleaned up after a browser run. When the suite learned to tidy, the demo went back
+     * to thirteen and the guard went **red** for want of a pager. That is this file's own recorded
+     * lesson repeated by its author: *"the pager browser guard passed against the unfixed console
+     * — it depended on 917 accumulated demo use cases."*
+     *
+     * Rewritten to filter instead of page, it went **green with the fix removed**: thirteen short
+     * rows are all about as wide as each other, so an automatic table sized them the same and
+     * there was nothing to see. A guard that cannot fail is the thing it guards against.
+     *
+     * So it brings its own row. One use case with a name and a purpose far longer than any other
+     * is exactly what an automatic table cannot absorb — and because the row is created here, the
+     * measurement means the same thing on an empty installation and on a busy one.
      */
-    await login(page, USERS.governance);
-    await page.goto('/register');
-    await expect(page.getByTestId('register-table')).toBeVisible({ timeout: 30_000 });
+    await login(page, USERS.globalAdmin);
+    const slug = uniqueSlug('widths');
+    // Far wider than any name this table would otherwise hold, which is exactly what an automatic
+    // layout cannot absorb quietly. The name is enough — it is the first column's content — and
+    // using it keeps the test to one creation and no editing.
+    await createUseCase(page, slug, `Column width probe ${'wide '.repeat(24)}`);
 
     const widths = () =>
       page
@@ -164,26 +178,29 @@ test.describe('Register of processing activities', () => {
         .evaluateAll((cells) =>
           cells.map((cell) => Math.round(cell.getBoundingClientRect().width)),
         );
-    const position = page.locator('[data-testid="register-pager"] .pager__position');
+    const show = async (term: string, expected: string) => {
+      await page.getByTestId('register-search').fill(term);
+      await expect(page.getByTestId(`register-row-${expected}`)).toBeVisible({ timeout: 10_000 });
+      return widths();
+    };
 
-    // **Several pages, not one.** The first version clicked Next once and passed with the fix
-    // removed: pages one and two happen to hold use cases of similar length. The widths first
-    // parted on page three — `[52, 266, 152, 199, 185]` against `[52, 240, 159, 209, 194]` — and a
-    // guard that stops before the case it was written for is the trap this project keeps paying
-    // for. Five pages is 125 use cases of the demo installation's own making.
-    await expect(position).toBeVisible();
-    const first = await widths();
-    const seen: string[] = [];
+    // The register reads the gateway, and the gateway learns over Kafka — the same lag the row
+    // test above polls for, and for the same reason.
+    await expect(async () => {
+      await page.goto('/register');
+      await expect(page.getByTestId('register-table')).toBeVisible({ timeout: 30_000 });
+      await page.getByTestId('register-search').fill(slug);
+      await expect(page.getByTestId(`register-row-${slug}`)).toBeVisible({ timeout: 2_000 });
+    }).toPass({ timeout: 60_000 });
 
-    for (let page_ = 2; page_ <= 5; page_++) {
-      const label = await position.textContent();
-      await page.getByTestId('pager-next').click();
-      await expect(position).not.toHaveText(label ?? '');
-      seen.push(`${await position.textContent()}: ${await widths()}`);
-      expect(await widths(), `columns moved by page ${page_}:\n  ${seen.join('\n  ')}`).toEqual(
-        first,
-      );
-    }
+    const wide = await show(slug, slug);
+    const ordinary = await show('coding-assistant', 'coding-assistant');
+
+    expect(
+      ordinary,
+      `columns moved with the rows on screen:\n  the wide row: ${wide}` +
+        `\n  an ordinary one: ${ordinary}`,
+    ).toEqual(wide);
   });
 
   test('several rows stay open at once — a register is read by comparing', async ({ page }) => {

@@ -1,4 +1,5 @@
 import { Page, expect } from '@playwright/test';
+import { rememberUseCase } from '../created';
 
 /** Demo accounts seeded into the Keycloak realm (deploy/compose/keycloak/realms). */
 export const USERS = {
@@ -91,6 +92,10 @@ export async function expectNoHorizontalOverflow(page: Page, context: string) {
  * anyway because these tests need a slug they chose.
  */
 export async function createUseCase(page: Page, slug: string, name: string) {
+  // Written down **before** the attempt, not after. A creation that succeeds and then fails its
+  // URL assertion has still made a use case, and a register written only on success would leave
+  // exactly the rows a failing run produces — which are the ones most likely to pile up.
+  rememberUseCase(slug);
   await page.goto('/use-cases');
   await page.click('button:has-text("New use case")');
   await page.fill('#uc-name', name);

@@ -803,6 +803,26 @@ reading code.
   found.* And it is the reason the failure is expensive rather than merely wrong — a clear() makes
   a **later, unrelated** test the one that reports it, so the reader starts at the wrong end.
 
+- **A suite that fills the installation it runs against.** The browser suite called
+  `createUseCase` ninety times and removed nothing, and the demo reached **1734 use cases in
+  Management and 1946 in the gateway's read-model** — four of them the demo's. It had already been
+  learned one object along: `removeModel` exists with the sentence *"test residue makes a real
+  figure meaningless, and the residue never stops accumulating"*, because the console counts models
+  with no price over the whole catalogue. The same is true of every count, every list and every
+  register a suite can grow.
+
+  Two rules came out of cleaning it up, and both are about **what a clean-up may touch**. Remove
+  what the run *wrote down*, never what *matches a shape* — a person may name a use case anything,
+  and this demo holds two that a person made. And tidy **whether or not the suite passed**: a
+  recipe written as two lines is abandoned at the first failure, so the run that leaves the most
+  behind is the only one that never cleans up.
+
+  *And the tidying breaks the tests that were living off the mess.* A guard here walked five pages
+  of the register, which needed 125 use cases it had never created; with thirteen it went red for
+  want of a pager. Rewritten to filter instead, it passed with the fix removed, because thirteen
+  short rows are all about as wide as each other. A guard must **make the data it measures** — this
+  one creates a single row wider than any column — or it is measuring the database's history.
+
 - **A test whose setup never reaches the path it is named after.** SQLite enforces no column
   lengths; `TestClient` buffers a streamed body before you can hang up; a *cold* budget counter
   seeds from Postgres and hides a missing write; a fixture whose use case may call nothing can only
