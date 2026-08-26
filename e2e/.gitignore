@@ -2,4 +2,7 @@ node_modules/
 test-results/
 playwright-report/
 blob-report/
-e2e/.artifacts/
+# The register the suite writes and the teardown consumes. Written `e2e/.artifacts/` first,
+# which never matched: a pattern in a `.gitignore` is relative to the directory that file is in,
+# so this one was looking for `e2e/e2e/.artifacts`.
+.artifacts/

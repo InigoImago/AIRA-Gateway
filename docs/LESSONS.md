@@ -792,6 +792,20 @@ reading code.
   files whose subject was budgets, security and the model catalog. Nothing was wrong with any of
   them. A double is a promise to be the same shape, and a promise kept only until the shape changes
   is how one added member costs an afternoon of reading stack traces that name the wrong thing.
+- **A file that offers a knob must be checked against the thing that turns it.** `config/`
+  rendered 86 variables into the environment both planes read, and **47 reached no container**: 45
+  that no compose file interpolated, the rest overridden by a literal there. Nothing failed —
+  `enforce_budgets: false` simply went on enforcing. The compose file already carried the sentence
+  four times, about four different knobs it had met one at a time: *a knob that is not wired is
+  worse than an absent one, somebody turns it and believes the result.* **Offering a knob is a
+  claim, and a claim needs a guard**: every name an example renders must be one the deployment
+  takes from the environment, checked statically so it fails without a stack.
+
+  *And presence is not effect.* The proof that closed it was a knob set to a value and a request
+  refused for it — `AIRA_MAX_REQUEST_BYTES=2048`, a 5 000-byte body, `413`; without it the same
+  body reaches authentication and returns `401`; before the wiring the name was not in the compose
+  files at all.
+
 - **A configuration file is not tested until something is started from it.** Every check on the
   `config/` examples validated *names and values* — against the settings classes, against the
   parsers, and against 196 deliberate mutations. Rendering one and bringing the stack up on it

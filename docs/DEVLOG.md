@@ -52,6 +52,57 @@ exactly as `seed_demo` is, and reachable over no URL at all.
   That is this file's own lesson, repeated by the person who wrote it down: *"the pager browser
   guard passed against the unfixed console — it depended on 917 accumulated demo use cases."*
 
+### More than half the file was inert (2026-08-26)
+
+> *"Check how the docker compose and our new configuration relate — are they separate, or do they
+> affect each other?"* …*"Everything must be tested and checked for whether it has an effect,
+> otherwise there is no point testing it differently."*
+
+They relate through exactly one file, `deploy/compose/.env`, and the coupling was **partial and
+silent**. There is no `env_file` anywhere: each service receives a curated list, so a variable the
+compose files never interpolate reaches no container at all.
+
+Of the **86** an example renders:
+
+| | |
+| --- | --- |
+| honoured | 39 |
+| never interpolated — reach nobody | 45 |
+| assigned a literal in compose, overriding the file | 11 (9 of them also in the row above) |
+| **inert** | **47 of 86** |
+
+Measured on the running gateway: `AIRA_CURRENCY`, `AIRA_ENFORCE_BUDGETS`, `AIRA_REQUIRE_USE_CASE`,
+`AIRA_LOG_LEVEL` and `AIRA_MAX_REQUEST_BYTES` were simply **absent from the container**, and
+`AIRA_POSTGRES_HOST` was hard-coded to `postgres`. Somebody could set `enforce_budgets: false`,
+restart, and watch budgets go on being enforced.
+
+**This is not a new failure here.** `docker-compose.apps.yml` complains about it four times in its
+own comments — the Ollama timeout, the Gemini model list, two more timeouts, and then the whole
+Vertex adapter, which the shipped stack could not configure at all — each time with the same
+sentence: *a knob that is not wired is worse than an absent one, somebody turns it and believes the
+result.* `test_compose_passes_the_settings_it_names.py` guards it for credentials and upstream
+addresses, *"deliberately narrow enough to be true rather than aspirational"*. A file offering 86
+knobs is the reason to stop meeting it one variable at a time.
+
+43 variables passed through to the plane whose settings class declares them, each with that
+class's own default, so nothing that was true stops being true. Seven literals turned into
+overridable defaults. And three the new guard found on its first run: both nginx upstreams, hard
+coded in the frontend service, and `AIRA_POSTGRES_USER`, which compose read from a **different
+variable** (`POSTGRES_USER`, the Postgres container's own) — so a file naming the setting was
+ignored.
+
+**Proved by effect, not by presence**, which is what the owner asked for. `AIRA_MAX_REQUEST_BYTES`
+was one of the dead ones: set to 2048 the gateway answers a 5 000-byte body with **413 Request body
+too large**; without it the same body reaches authentication and comes back **401**; and on the
+commit before this one the name appears in the compose files **zero times**. Then the whole set: a
+config with every number and flag given a non-default value, rendered, and `docker compose config`
+asked what each service would receive — **86 of 86 carried through**, the one apparent exception
+being `AIRA_OIDC_JWKS_URI: ''`, where empty deliberately means *use the in-network default*.
+
+That last one is a trap for somebody else's Keycloak — the issuer is what the browser saw, the JWKS
+is fetched by the container, and leaving it empty on your own infrastructure silently points it at
+the demo's. Now said in all three examples rather than only in a compose comment.
+
 ### Applying the file, which is what actually found the rest (2026-08-26)
 
 > *"I did also ask you to change the variables and run e2e — then you would have noticed."*
