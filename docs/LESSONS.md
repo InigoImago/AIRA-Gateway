@@ -418,6 +418,20 @@ reading code.
   named one by one** — a concession nobody asked for is a hole, and a blanket cannot say which is
   which. The same applies to what a *port* exempts: the dev stack published Postgres, Redis, Kafka
   and a dev-mode Vault on `0.0.0.0` because Compose's `"5432:5432"` means that, and nobody chose it.
+- **A precedence nobody checks is a preference, not a hierarchy.** The config file was written to
+  rank above the deployment, and did — until the moment something disagreed with it, which is the
+  only moment the ranking means anything. Compose fills every gap it is given from `${VAR:-…}`, so
+  a value left empty, a variable the file does not name, a `.env` edited after rendering and a
+  source edited without re-rendering all end identically: the stack starts, healthy, on a value
+  nobody chose. **Rank 2 became true when a command could prove it and fail.** Same shape as
+  *a rule only a reviewer enforces is one the next round breaks*, one layer down.
+- **A check that cries wolf on the supported path is one nobody reads on the day it is right.**
+  The first version refused every `.env` without a render stamp — which is the *demo*, where a
+  hand-made file is correct and there is nothing above it to disagree with. Strictness that fires
+  on the normal case does not add safety, it spends the reader's attention; and the takeover it
+  was meant to catch looks identical, because the stamp leaves with the file that carried it. The
+  fix was to make the deployment's own intent knowable — a marker beside the file saying *this one
+  is config-driven* — so the two cases can be told apart instead of averaged into one warning.
 - **A ceiling nobody can account for is a number somebody raises.** Every bound written here says
   what it is made of — the two use-case reads name their two readers, the session ceiling names
   what it was before. A guard whose figure has no derivation is edited the first time it fails

@@ -5,6 +5,57 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The config file that was first, not above (2026-08-26)
+
+> *"It is important that the configs rank above, so that the integration happens without states
+> where the `.env` or the compose file unexpectedly, or through human or configuration error,
+> takes over unnoticed."*
+
+The previous round had wired all 86 variables through Compose and stated a precedence — Vault,
+then the config file, then a `${VAR:-default}`, then the settings class. That precedence was a
+**claim in a README**. Rendering writes the file's values into `deploy/compose/.env`; Compose then
+fills every gap it is given. Four ways the deployment ends up running on something nobody chose,
+all of them silent, all of them producing a stack that starts and looks healthy:
+
+| | |
+| --- | --- |
+| a value left empty in the file | Compose's `${VAR:-default}` fires on empty as well as unset |
+| a variable the file names that no service takes | the knob turns nothing |
+| `.env` edited after rendering | the readable file is the one people edit |
+| the source edited without re-rendering | both files are internally consistent, one is stale |
+
+**What was built.** `as_env_file` now stamps the rendered file with its source and a SHA-256 of it,
+and `tools/config_render.py --verify` compares source, rendered file, and — through
+`docker compose config`, so the answer is Docker's rather than a re-implementation of Docker's
+substitution rules — what each container would actually receive. `make config-verify` wraps it and
+`make up` / `make up-full` run it before starting, prefixed with `-`: a stack somebody starts by
+hand must still start, the message is the point. Two variables the deployment is allowed to decide
+are named in `COMPOSE_DECIDES` with their reason, because an exemption is a decision.
+
+**The probe that mattered was the one that stayed quiet.** Replacing
+`AIRA_ENFORCE_BUDGETS: ${AIRA_ENFORCE_BUDGETS:-true}` with a literal `"true"` produced no output —
+and that was the check being right: the values agreed, so nothing was wrong. Re-run with the config
+file saying `false`, the literal was caught twice over, and the static guard that needs no daemon
+(`test_every_variable_an_example_renders_reaches_a_container`) named it too. Two nets, no daemon
+required for one of them.
+
+**The correction inside the round.** The first version refused *every* unstamped `.env` — including
+the demo's, which is hand-made on purpose and has no config file above it to disagree with. That
+is a warning on every `make up` of the supported path, which is how a warning stops being read.
+But the takeover cannot be told from the demo by looking at the file: the stamp leaves with the
+file that carried it. So rendering now also drops `deploy/compose/.aira-config-source` — one path,
+never a secret, git-ignored — and the two cases separate: *nothing above me claims otherwise*
+versus *config/showcase.example.yaml no longer decides anything*.
+
+**Measured, against the running stack rather than a fixture**: the demo's hand-made `.env` → a
+note and exit 0; a fresh render → clean; a literal in the compose file disagreeing with the config
+→ `1 difference(s)`, exit 1, `make` reporting `Error 1`. 13 mutations added (**593**), each
+observed `caught`, including the two that would make the check silent in exactly the direction that
+looks safe. `!integrated.example.yaml` was added to `config/.gitignore`, which had been tracking
+the third example while naming only two.
+
+---
+
 ## The suite that filled the demo it ran against (2026-08-25)
 
 > *"Clean up the test suite after it has run; the existing use cases that do not belong to the

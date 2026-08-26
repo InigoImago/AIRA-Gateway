@@ -124,10 +124,14 @@ test.describe('Catalog import', () => {
     await page.goto('/models');
 
     await page.getByTestId('add-model').click();
-    await page.getByTestId('browse-provider').selectOption({ index: 1 });
-    const offer = page.locator('[data-testid^="offered-"]').first();
-    await expect(offer).toBeVisible({ timeout: 20_000 });
-    await offer.click();
+    // Named, not `{ index: 1 }` on the first offering that renders. That version failed roughly
+    // one run in three: the list is fetched live and grows as it arrives, so `.first()` resolves
+    // against a partial render and the node it clicked is gone by the time the click lands — the
+    // editor never opens and the failure reads as "the layout is broken", which it is not.
+    // `offerings-count` appears only once the listing has been answered.
+    await page.getByTestId('browse-provider').selectOption('mock');
+    await expect(page.getByTestId('offerings-count')).toBeVisible({ timeout: 20_000 });
+    await page.getByTestId('offered-mock-1').click();
 
     // The note is on screen — this asserts the fixed layout, not a form that never showed one.
     await expect(page.getByTestId('vendor-filled')).toBeVisible();
