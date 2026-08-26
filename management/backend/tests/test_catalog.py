@@ -31,10 +31,23 @@ def _client(user) -> APIClient:
 
 @pytest.fixture
 def captured_events():
+    """A spy on use-case events, removed again — **and only it**.
+
+    This used to end with `events._subscribers.clear()`, which also removed the subscriber
+    `OutboxConfig.ready()` registers at start-up. The list is module-global and start-up happens
+    once, so from the first use of this fixture onwards **no use-case event reached the outbox for
+    the rest of the session** — every later test asserting an outbox row was either testing nothing
+    or failing for a reason a long way from its subject. Found by the second kind, in a command
+    test that asserted a purge is announced.
+
+    A teardown removes what it added. `clear()` is not a teardown, it is a reset of somebody else's
+    state.
+    """
     captured: list[tuple[str, dict]] = []
-    events.subscribe(lambda t, p: captured.append((t, p)))
+    spy = lambda kind, payload: captured.append((kind, payload))  # noqa: E731
+    events.subscribe(spy)
     yield captured
-    events._subscribers.clear()
+    events.unsubscribe(spy)
 
 
 PRICED = {

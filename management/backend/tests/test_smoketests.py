@@ -675,11 +675,15 @@ def test_seeding_the_use_case_announces_it_to_the_gateway() -> None:
     from aira_management.apps.usecases import events
 
     seen: list[tuple[str, dict]] = []
-    events.subscribe(lambda kind, payload: seen.append((kind, payload)))
+    # Removed by name, not with `clear()`: the list is module-global and holds the outbox
+    # subscriber `OutboxConfig.ready()` registered at start-up. Clearing it took that with it for
+    # the rest of the session — see `test_catalog.captured_events` for the failure that found it.
+    spy = lambda kind, payload: seen.append((kind, payload))  # noqa: E731
+    events.subscribe(spy)
     try:
         seed_test_catalogue(fresh=False)
     finally:
-        events._subscribers.clear()
+        events.unsubscribe(spy)
 
     upserts = [payload for kind, payload in seen if kind == "usecase.upserted"]
 

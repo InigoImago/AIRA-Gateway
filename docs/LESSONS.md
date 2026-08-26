@@ -792,6 +792,17 @@ reading code.
   files whose subject was budgets, security and the model catalog. Nothing was wrong with any of
   them. A double is a promise to be the same shape, and a promise kept only until the shape changes
   is how one added member costs an afternoon of reading stack traces that name the wrong thing.
+- **A teardown that clears instead of removing.** Two fixtures spied on the in-process event hook
+  and ended with `events._subscribers.clear()` — which also removed the subscriber
+  `OutboxConfig.ready()` registers at start-up. The list is module-global and start-up happens
+  once, so from the first use of either fixture **no use-case event reached the outbox for the rest
+  of the session**. Every later test asserting an outbox row was testing nothing, and the one that
+  finally failed was a command test three files away, whose subject was not events at all.
+
+  The shape is the exemption list's, one object along: *remove what you added, never reset what you
+  found.* And it is the reason the failure is expensive rather than merely wrong — a clear() makes
+  a **later, unrelated** test the one that reports it, so the reader starts at the wrong end.
+
 - **A test whose setup never reaches the path it is named after.** SQLite enforces no column
   lengths; `TestClient` buffers a streamed body before you can hang up; a *cold* budget counter
   seeds from Postgres and hides a missing write; a fixture whose use case may call nothing can only
