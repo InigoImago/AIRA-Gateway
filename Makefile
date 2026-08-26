@@ -5,9 +5,21 @@ COMPOSE_DIR := deploy/compose
 # Include the observability profile (OTel Collector + Grafana otel-lgtm) by default.
 COMPOSE := docker compose -f $(COMPOSE_DIR)/docker-compose.yml --profile observability
 COMPOSE_CORE := docker compose -f $(COMPOSE_DIR)/docker-compose.yml
-# Infrastructure + the five application processes, all in containers.
-COMPOSE_FULL := docker compose -f $(COMPOSE_DIR)/docker-compose.yml \
-                -f $(COMPOSE_DIR)/docker-compose.apps.yml \
+
+# The three files, and which combination means what. `tools/compose_files.py` is the same list for
+# Python; `tools/tests/test_one_owner_for_the_stack_addresses.py` fails on a stray literal.
+INFRA_F    := -f $(COMPOSE_DIR)/docker-compose.yml
+APPS_F     := -f $(COMPOSE_DIR)/docker-compose.apps.yml
+SHOWCASE_F := -f $(COMPOSE_DIR)/docker-compose.showcase.yml
+
+# Infrastructure + the application processes: **what a real deployment runs**, and nothing that
+# exists for the demo. Startable on its own — `tools/tests/test_the_core_stack_carries_no_demo.py`
+# fails if a demo service or a demo dependency creeps back into it.
+COMPOSE_APPS := docker compose $(INFRA_F) $(APPS_F) --profile observability
+
+# The above, plus the demo provisioning: a development Keycloak realm, a `-dev` Vault that forgets
+# on every restart, and the seeded accounts.
+COMPOSE_FULL := docker compose $(INFRA_F) $(APPS_F) $(SHOWCASE_F) \
                 --profile observability --profile demo
 
 # Every service this repository can start — both files, every profile.
@@ -34,8 +46,7 @@ COMPOSE_FULL := docker compose -f $(COMPOSE_DIR)/docker-compose.yml \
 # silently this same bug again. A written list has a counterpart instead —
 # `tools/tests/test_compose_lifecycle_covers_the_stack.py` fails when a profile is declared that
 # this line does not name.
-COMPOSE_ALL := docker compose -f $(COMPOSE_DIR)/docker-compose.yml \
-               -f $(COMPOSE_DIR)/docker-compose.apps.yml \
+COMPOSE_ALL := docker compose $(INFRA_F) $(APPS_F) $(SHOWCASE_F) \
                --profile observability --profile demo --profile verify
 ENV_FILE := $(COMPOSE_DIR)/.env
 ENV_EXAMPLE := $(COMPOSE_DIR)/.env.example
@@ -86,7 +97,7 @@ MANAGEMENT_PORT := $(lastword $(subst :, ,$(MANAGEMENT_URL)))
 .PHONY: help up up-core down destroy ps logs restart env sync test test-py test-frontend \
         test-integration test-e2e e2e lint lint-py lint-frontend fmt seed seed-reset \
         migrate-gateway kafka-topics relay consume run-gateway run-gateway-oidc run-backend \
-        purge-e2e-use-cases config-verify \
+        purge-e2e-use-cases config-verify up-apps \
         verify-up verify-down test-verify \
         run-frontend up-full down-full logs-apps build-images ci wait-healthy prune mutants
 
@@ -120,7 +131,11 @@ up: env ## Start the full stack (infra + observability)
 up-core: env ## Start only core infra (no observability backend)
 	$(COMPOSE_CORE) up -d
 
-up-full: env ## Start EVERYTHING in containers (infra + gateway, management, consumer, relay, SPA)
+up-apps: env ## Start the product: infra + the application processes, no demo provisioning
+	@-$(MAKE) --no-print-directory config-verify
+	$(COMPOSE_APPS) up -d --build
+
+up-full: env ## Start EVERYTHING in containers, demo provisioning included (infra + apps + showcase)
 	@-$(MAKE) --no-print-directory config-verify
 	$(COMPOSE_FULL) up -d --build
 	@echo "SPA: $(CONSOLE_URL)   (login ucadmin / demo-password)"

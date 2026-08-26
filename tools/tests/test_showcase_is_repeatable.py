@@ -24,15 +24,27 @@ from __future__ import annotations
 import pathlib
 import re
 
+import compose_files
 import yaml
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-APPS = ROOT / "deploy" / "compose" / "docker-compose.apps.yml"
 MAKEFILE = ROOT / "Makefile"
 
 
 def _services() -> dict[str, dict]:
-    return yaml.safe_load(APPS.read_text())["services"]
+    """Every file, merged per key. This read `docker-compose.apps.yml` alone until the showcase
+    moved into its own file — which is exactly what these tests are about, so reading only the
+    core file would have made them assert that the demo provisioning does not exist."""
+    merged: dict[str, dict] = {}
+    for path in compose_files.ALL:
+        for service, body in (yaml.safe_load(path.read_text()).get("services") or {}).items():
+            existing = merged.setdefault(service, {})
+            for key, value in (body or {}).items():
+                if isinstance(value, dict) and isinstance(existing.get(key), dict):
+                    existing[key] = {**existing[key], **value}
+                else:
+                    existing[key] = value
+    return merged
 
 
 def test_the_dev_vault_is_provisioned_by_the_stack_that_wipes_it() -> None:
@@ -75,10 +87,19 @@ def test_no_service_depends_on_one_a_profile_could_switch_off() -> None:
         mine = set(definition.get("profiles") or [])
         for dependency in definition.get("depends_on") or {}:
             theirs = set(services.get(dependency, {}).get("profiles") or [])
-            # A dependency with no profile is always present. Otherwise it must be enabled by
-            # every profile that enables the dependent — and a dependent with no profile is
-            # enabled by all of them, so any profile on the dependency is a hole.
-            if theirs and (not mine or not theirs <= mine):
+            # A dependency with no profile is always present, so it can never be the hole.
+            # Otherwise **every profile that enables the dependent must also enable the
+            # dependency** — `mine <= theirs`, and a dependent with no profile is enabled by all
+            # of them, which no non-empty `theirs` can cover.
+            #
+            # This read `theirs <= mine`, the subset the wrong way round, and passed for six
+            # weeks: the only pair that could tell the two apart was `management-seed` (`demo`)
+            # depending on `ollama-pull` (`verify` **or** `demo`) — covered, and correct — and
+            # `ollama-pull` lives in the infrastructure file, which this test did not read until
+            # the showcase split made it read all three. With the old direction that pair reads
+            # as broken; with the vault-init case that motivated the test, the old direction is
+            # right by accident and `mine <= theirs` is what actually states the rule.
+            if theirs and (not mine or not mine <= theirs):
                 broken.append(f"{name} -> {dependency}")
 
     assert not broken, (

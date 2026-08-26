@@ -33,12 +33,13 @@ import os
 import re
 from pathlib import Path
 
+import compose_files
+
 ROOT = Path(__file__).resolve().parents[1]
 ENV_FILE = ROOT / "deploy" / "compose" / ".env"
-COMPOSE_FILES = (
-    ROOT / "deploy" / "compose" / "docker-compose.yml",
-    ROOT / "deploy" / "compose" / "docker-compose.apps.yml",
-)
+#: Every file that defines a service — `tools/compose_files.py` owns the list, so the showcase
+#: split cannot leave this module reading two files where three exist.
+COMPOSE_FILES = compose_files.ALL
 
 #: Every service this repository publishes, and the variable that decides its host port. The
 #: defaults are **not** written here — they are read from the Compose files below, so that this

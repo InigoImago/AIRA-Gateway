@@ -36,6 +36,7 @@ from __future__ import annotations
 import pathlib
 import re
 
+import compose_files
 import yaml
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -77,7 +78,7 @@ def _recipe(target: str) -> str:
 
 def _declared_profiles() -> set[str]:
     profiles: set[str] = set()
-    for name in ("docker-compose.yml", "docker-compose.apps.yml"):
+    for name in (f.name for f in compose_files.ALL):
         document = yaml.safe_load((COMPOSE / name).read_text())
         for definition in (document.get("services") or {}).values():
             profiles.update((definition or {}).get("profiles") or [])

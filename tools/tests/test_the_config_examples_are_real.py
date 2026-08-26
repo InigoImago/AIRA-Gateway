@@ -30,6 +30,7 @@ import sys
 from pathlib import Path
 from unittest import mock
 
+import compose_files
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -352,10 +353,7 @@ def test_the_examples_configure_the_console_too() -> None:
     )
 
 
-COMPOSE = (
-    ROOT / "deploy" / "compose" / "docker-compose.yml",
-    ROOT / "deploy" / "compose" / "docker-compose.apps.yml",
-)
+COMPOSE = (*compose_files.ALL,)
 #: Rendered names the Compose stack deliberately does not take from the environment, with the
 #: reason. Keep this short: every entry is a knob an integrator can turn to no effect.
 NOT_TAKEN_BY_COMPOSE = {
