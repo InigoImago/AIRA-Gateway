@@ -52,6 +52,51 @@ exactly as `seed_demo` is, and reachable over no URL at all.
   That is this file's own lesson, repeated by the person who wrote it down: *"the pager browser
   guard passed against the unfixed console — it depended on 917 accumulated demo use cases."*
 
+### Applying the file, which is what actually found the rest (2026-08-26)
+
+> *"I did also ask you to change the variables and run e2e — then you would have noticed."*
+
+Correct, and the correction is the point of this entry. Every check up to here validated the
+examples: names against the settings classes, values against the parsers, 196 mutations. **None of
+it started the product from the file.** Rendered to `deploy/compose/.env`, the stack brought up on
+it alone and the browser suite driven at it, three things came out that no validation could reach.
+
+**1. The example walked into the trap its own repository documents.** The shipped `.env` sets **no**
+`AIRA_OIDC_AUDIENCE` — permitted under `AIRA_ENVIRONMENT=local` — and the file sets one. The dev
+realm has **zero audience mappers**, so every token carries `aud: ["account"]`, every one is
+rejected, and the console loops between the authorization endpoint and the redirect for ever. That
+is `INTEGRATIONS.md` §2's *"the audience mapper Keycloak does not add by itself"*, written three
+days earlier, walked into by its author.
+
+Fixed by giving the realm the mapper rather than by weakening the example: the realm is ours, and a
+demo that relies on `local` being lenient teaches the wrong configuration.
+
+**2. The repair tool made the realm worse.** Forcing a re-import, `keycloak_demo_realm.py` posts the
+file to the **admin API**, which stores whatever JSON it is handed — while Keycloak expands
+`${NAME:default}` only when *it* reads the file at start-up. The realm came back holding
+
+    redirectUris: ["http://localhost:${AIRA_CONSOLE_PORT:4200}/*"]
+
+literally: authorization answers `400` and the login page never renders. A tool whose purpose is
+repair, leaving the realm less usable than it found it — and reachable only by driving a browser at
+a realm it had just "fixed". It expands the placeholders itself now, by Keycloak's rule, default
+included.
+
+**3. The third category is Compose's own defaults, and that is why none of this fails loudly.**
+Enumerating all 139 `AIRA_*` names in tracked code against the 89 settings and the 86 the examples
+name leaves *deployment* variables — `AIRA_BIND_HOST`, `AIRA_STACK`, `AIRA_PUBLISH_*_PORT`, the two
+worker intervals — and a fourth group with no `AIRA_` prefix at all: what the third-party containers
+need for themselves (`POSTGRES_DB`, `KEYCLOAK_ADMIN`). The stack came up regardless, because every
+`${VAR:-default}` in the compose files catches the absence. **Nothing fails; something else is used
+than what the file says** — which for the console was the realm its image was built against.
+
+`AIRA_OIDC_ISSUER_BASE` and `AIRA_OIDC_REALM` looked like the find and are not: derived properties
+of the issuer, with a docstring that says why two settings for one server is two settings to get out
+of step.
+
+Ended green: **161 passed** against a stack configured from the file and nothing else, `69 removed`
+by the teardown and `69 purged` after it.
+
 ### And a second category the same scan could not see (2026-08-26)
 
 Asked rather than reviewed: *"does the frontend also draw its configuration for Keycloak from the

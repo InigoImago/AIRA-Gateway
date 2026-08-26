@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -51,6 +52,38 @@ ENVIRONMENT = os.environ.get("AIRA_ENVIRONMENT", "local")
 
 #: Environments in which this realm is a development fixture rather than somebody's directory.
 DEMO_ENVIRONMENTS = {"local", "demo"}
+
+
+#: Keycloak's own placeholder syntax, `${NAME:default}`, as it appears in the realm file.
+_PLACEHOLDER = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::([^}]*))?\}")
+
+
+def _expanded(value: object) -> object:
+    """Substitute `${NAME:default}` the way Keycloak's own import does.
+
+    **The whole reason this exists.** Keycloak expands these when *it* reads the file at start-up
+    with `--import-realm`; this tool re-imports through the **admin API**, which stores whatever
+    JSON it is handed. So a realm repaired here came back with
+
+        redirectUris: ["http://localhost:${AIRA_CONSOLE_PORT:4200}/*"]
+
+    stored literally — an authorization request then answers `400` and the login page never
+    renders. A repair tool that leaves the realm less usable than it found it is worse than no
+    repair tool, and this was found only by driving a real browser at a realm it had just "fixed".
+
+    The default after the colon is used when the variable is unset, which is Keycloak's rule and
+    the reason the demo works with no environment at all.
+    """
+    if isinstance(value, str):
+        return _PLACEHOLDER.sub(
+            lambda m: os.environ.get(m.group(1), m.group(2) if m.group(2) is not None else ""),
+            value,
+        )
+    if isinstance(value, list):
+        return [_expanded(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _expanded(item) for key, item in value.items()}
+    return value
 
 
 def _request(method: str, path: str, token: str | None = None, body: object = None) -> object:
@@ -194,7 +227,7 @@ def main() -> int:
         print(f"environment '{ENVIRONMENT}' — this realm is somebody else's to manage")
         return 0
 
-    realm = json.loads(open(REALM_FILE).read())  # noqa: SIM115, PTH123 - one read, no deps
+    realm = _expanded(json.loads(open(REALM_FILE).read()))  # noqa: SIM115, PTH123 - one read
     name = realm["realm"]
 
     token = _token()

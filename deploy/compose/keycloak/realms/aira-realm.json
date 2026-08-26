@@ -80,7 +80,7 @@
     {
       "clientId": "aira-gateway",
       "name": "AIRA Gateway (dev)",
-      "description": "Public SPA client (dev). Redirect URIs and web origins are pinned on purpose \u2014 a wildcard on a public client lets an attacker capture the authorization code. See ADR-0007.",
+      "description": "Public SPA client (dev). Redirect URIs and web origins are pinned on purpose — a wildcard on a public client lets an attacker capture the authorization code. See ADR-0007.",
       "enabled": true,
       "publicClient": true,
       "directAccessGrantsEnabled": false,
@@ -107,6 +107,18 @@
             "access.token.claim": "true",
             "userinfo.token.claim": "true",
             "claim.name": "groups"
+          }
+        },
+        {
+          "name": "aira-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "aira-gateway",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
           }
         }
       ]
@@ -137,6 +149,18 @@
             "userinfo.token.claim": "true",
             "claim.name": "groups"
           }
+        },
+        {
+          "name": "aira-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "aira-gateway",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
         }
       ]
     },
@@ -162,6 +186,18 @@
             "access.token.claim": "true",
             "userinfo.token.claim": "true",
             "claim.name": "groups"
+          }
+        },
+        {
+          "name": "aira-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "aira-gateway",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
           }
         }
       ]
@@ -193,6 +229,18 @@
             "userinfo.token.claim": "true",
             "claim.name": "groups"
           }
+        },
+        {
+          "name": "aira-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "aira-gateway",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
         }
       ]
     },
@@ -218,6 +266,18 @@
             "access.token.claim": "true",
             "userinfo.token.claim": "true",
             "claim.name": "groups"
+          }
+        },
+        {
+          "name": "aira-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "aira-gateway",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
           }
         }
       ]
@@ -400,15 +460,15 @@
     "realm": [
       {
         "name": "global-admin",
-        "description": "Global Administrator \u2014 full administration"
+        "description": "Global Administrator — full administration"
       },
       {
         "name": "it-security",
-        "description": "IT Security \u2014 anomaly/incident oversight"
+        "description": "IT Security — anomaly/incident oversight"
       },
       {
         "name": "it-steuerung",
-        "description": "Governance \u2014 organisation-wide read visibility"
+        "description": "Governance — organisation-wide read visibility"
       }
     ]
   }

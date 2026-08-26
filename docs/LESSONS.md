@@ -792,6 +792,20 @@ reading code.
   files whose subject was budgets, security and the model catalog. Nothing was wrong with any of
   them. A double is a promise to be the same shape, and a promise kept only until the shape changes
   is how one added member costs an afternoon of reading stack traces that name the wrong thing.
+- **A configuration file is not tested until something is started from it.** Every check on the
+  `config/` examples validated *names and values* — against the settings classes, against the
+  parsers, and against 196 deliberate mutations. Rendering one and bringing the stack up on it
+  found three things none of that could reach: an audience the demo realm had no mapper for, so
+  the console looped for ever between the authorization endpoint and its redirect; a repair tool
+  that re-imports through the admin API and therefore stores `${NAME:default}` **literally**, where
+  Keycloak's own start-up import would have expanded it; and the reason neither failed loudly —
+  every `${VAR:-default}` in a compose file catches a missing variable, so **nothing breaks, and
+  something other than what the file says is used**. For the console that was the realm its image
+  was built against.
+
+  The first of the three is the sharpest: it is the trap this repository had documented three days
+  earlier, in `INTEGRATIONS.md` §2, walked into by the person who wrote it down.
+
 - **A teardown that clears instead of removing.** Two fixtures spied on the in-process event hook
   and ended with `events._subscribers.clear()` — which also removed the subscriber
   `OutboxConfig.ready()` registers at start-up. The list is module-global and start-up happens
