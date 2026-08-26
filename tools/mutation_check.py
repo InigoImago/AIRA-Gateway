@@ -5593,6 +5593,57 @@ MUTATIONS = [
         "docker inspect -f '{{.State.Status}}' aira-ollama-pull",
         "tools/tests/test_the_core_stack_carries_no_demo.py",
     ),
+    # `make config-check` — asked before a deployment, so that a hardening refusal is met at a
+    # desk instead of in a maintenance window. Each of these makes it answer more permissively
+    # than the service it stands in for, which is the failure mode of every pre-flight check.
+    Mutation(
+        "CC1",
+        "a credential the config file cannot carry is not counted against the file",
+        "tools/config_check.py",
+        "theirs = [p for p in problems if p not in from_vault]",
+        "theirs = list(problems)",
+        "tools/tests/test_a_config_is_checked_before_it_is_deployed.py",
+    ),
+    Mutation(
+        "CC2",
+        "a Vault that is declared and unusable is reported, not treated as an answer",
+        "tools/config_check.py",
+        "if vault_refused:",
+        "if False:",
+        "tools/tests/test_a_config_is_checked_before_it_is_deployed.py",
+    ),
+    Mutation(
+        "CC3",
+        "the planes are asked in the rendered environment and no other",
+        "tools/config_check.py",
+        'env={**environment, "PATH": "/usr/bin:/bin", "PYTHONDONTWRITEBYTECODE": "1"},',
+        "env=None,",
+        "tools/tests/test_a_config_is_checked_before_it_is_deployed.py",
+    ),
+    Mutation(
+        "CC4",
+        "both planes are asked, because half a configuration passes half a check",
+        "tools/config_check.py",
+        "for plane in sorted(PLANES):",
+        'for plane in ["gateway"]:',
+        "tools/tests/test_a_config_is_checked_before_it_is_deployed.py",
+    ),
+    Mutation(
+        "CC5",
+        "a problem the file owns sets the exit code",
+        "tools/config_check.py",
+        "return (1 if own_problems else 0), lines",
+        "return 0, lines",
+        "tools/tests/test_a_config_is_checked_before_it_is_deployed.py",
+    ),
+    Mutation(
+        "CC6",
+        "a config file that does not render is its own answer",
+        "tools/config_check.py",
+        'return 2, [f"error: {exc}"]',
+        "return 0, []",
+        "tools/tests/test_a_config_is_checked_before_it_is_deployed.py",
+    ),
 ]
 
 

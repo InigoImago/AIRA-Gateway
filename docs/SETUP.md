@@ -241,6 +241,9 @@ Each layer exists for what the one below cannot see; the reasoning and the traps
 > container would actually receive, and exits non-zero on any difference. `make up` and
 > `make up-full` run it before starting. See [`config/README.md`](../config/README.md).
 
+**The ordered procedure is [`DEPLOYMENT.md` §0](DEPLOYMENT.md#0-the-runbook--an-integration-in-order)** —
+each step with the command that says whether it worked. What follows here is the shape of it.
+
 **Read `deploy/compose/docker-compose.apps.yml`, and only that.** The stack is three files:
 infrastructure, the applications, and the showcase. The middle one is the product — nothing in it
 exists for the demo, and `make up-apps` starts exactly it. The development Keycloak realm, the
