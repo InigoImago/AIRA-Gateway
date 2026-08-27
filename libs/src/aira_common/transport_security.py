@@ -18,6 +18,7 @@ around is worse than a narrower rule that is kept.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from urllib.parse import urlsplit
 
 #: Hosts whose traffic never reaches a network. `urlsplit` lowercases nothing, so compare folded.
@@ -39,17 +40,32 @@ def is_plaintext(url: str) -> bool:
     return (parts.hostname or "").lower() not in _LOOPBACK
 
 
-def plaintext_problems(named_urls: dict[str, str]) -> list[str]:
+def plaintext_problems(named_urls: Iterable[tuple[str, str]]) -> list[str]:
     """One reason per plaintext URL, naming the setting and what it costs.
 
     Returns reasons rather than raising so a configuration review sees every problem at once —
     the same shape `unsafe_settings` uses on both planes, and the reason a deployment is not four
     attempts long.
+
+    **Pairs, not a mapping, and that is the whole point.** This took a `dict[str, str]`, and one
+    setting can name several URLs: `AIRA_OIDC_ISSUERS` (`FRD-118`) configures a realm per entry,
+    so the gateway built `("AIRA_OIDC_ISSUER", issuer)` once per realm under a comment saying
+    *"every issuer and every key set … a second realm reached over plaintext is the same hole as
+    the first"*. A dict keeps the **last** value per key, so every realm but the last was dropped
+    before this function ever saw it — and with the plaintext realm listed anywhere but last, a
+    production gateway fetching signing keys over `http://` started with nothing to say.
+
+    Measured on 2026-08-26: two issuers, the plaintext one first, `unsafe_settings` returned an
+    empty list. That is the one misconfiguration this module's own docstring calls *"the one that
+    defeats authentication outright"*.
+
+    Taking pairs makes the collapse impossible to write. A caller that hands a `dict` now fails
+    loudly on unpacking rather than quietly checking one of its entries.
     """
     return [
         f"{name} is plaintext HTTP ({url}). "
         "Anything on the network path can read and rewrite it — use https://, or a loopback "
         "address if a sidecar terminates TLS."
-        for name, url in sorted(named_urls.items())
+        for name, url in sorted(named_urls)
         if is_plaintext(url)
     ]

@@ -201,6 +201,40 @@ def test_a_plaintext_identity_provider_refuses_to_start() -> None:
     assert any("AIRA_OIDC_JWKS_URI" in problem for problem in problems)
 
 
+def test_a_plaintext_realm_is_caught_wherever_it_sits_in_the_list() -> None:
+    """**The multi-realm half of the check above, and it was not being made.**
+
+    `unsafe_settings` built its URL list as a `dict` keyed on the setting name, and
+    `AIRA_OIDC_ISSUERS` names that setting once per realm — so the mapping kept the **last** entry
+    and discarded every one before it. A deployment whose plaintext realm was not last therefore
+    fetched signing keys over `http://` and started with nothing to say, on the check the module's
+    own docstring calls the one that defeats authentication outright. Measured on 2026-08-26:
+    two issuers, plaintext first, and `unsafe_settings` returned an empty list.
+
+    The plaintext realm is deliberately **first** here. Last, this test would pass against the
+    defect — which is exactly why the old check never noticed.
+    """
+    problems = unsafe_settings(
+        GatewaySettings(
+            environment="production",
+            auth_required=True,
+            postgres_password="a-real-secret",
+            kafka_security_protocol="SASL_SSL",
+            oidc_enabled=True,
+            oidc_issuers=(
+                "http://kc-old.example/realms/aira|aira-gateway|http://kc-old.example/certs;"
+                "https://kc-new.example/realms/aira|aira-gateway|https://kc-new.example/certs"
+            ),
+        )
+    )
+
+    assert any("http://kc-old.example/realms/aira" in problem for problem in problems)
+    assert any("http://kc-old.example/certs" in problem for problem in problems)
+    assert not any("kc-new" in problem for problem in problems), (
+        "the realm that is correctly configured must not be named"
+    )
+
+
 def test_a_plaintext_jwks_override_is_caught_even_behind_an_https_issuer() -> None:
     problems = unsafe_settings(
         GatewaySettings(

@@ -46,7 +46,7 @@ def test_unset_is_not_a_transport_problem() -> None:
     operator to add TLS to a setting they never filled in."""
     assert is_plaintext("") is False
     assert is_plaintext("   ") is False
-    assert plaintext_problems({"AIRA_OIDC_ISSUER": ""}) == []
+    assert plaintext_problems([("AIRA_OIDC_ISSUER", "")]) == []
 
 
 def test_a_malformed_value_is_not_reported_as_plaintext() -> None:
@@ -58,11 +58,11 @@ def test_a_malformed_value_is_not_reported_as_plaintext() -> None:
 def test_every_plaintext_url_is_reported_at_once_and_named() -> None:
     """A review that reports one problem per attempt is four deployments (`ADR-0015`)."""
     problems = plaintext_problems(
-        {
-            "AIRA_OIDC_ISSUER": "http://kc.example/realms/aira",
-            "VAULT_ADDR": "http://vault.example:8200",
-            "AIRA_OIDC_JWKS_URI": "https://kc.example/certs",
-        }
+        [
+            ("AIRA_OIDC_ISSUER", "http://kc.example/realms/aira"),
+            ("VAULT_ADDR", "http://vault.example:8200"),
+            ("AIRA_OIDC_JWKS_URI", "https://kc.example/certs"),
+        ]
     )
 
     assert len(problems) == 2
@@ -70,3 +70,25 @@ def test_every_plaintext_url_is_reported_at_once_and_named() -> None:
     assert any("VAULT_ADDR" in p for p in problems)
     # The value is echoed so the reader can see *which* of several environments is wrong.
     assert any("http://vault.example:8200" in p for p in problems)
+
+
+def test_one_setting_naming_several_urls_reports_every_one_of_them() -> None:
+    """**Pairs, not a mapping**, and this is the case that distinguishes them.
+
+    `AIRA_OIDC_ISSUERS` (`FRD-118`) configures a realm per entry, so the gateway names
+    `AIRA_OIDC_ISSUER` once per realm. Against a `dict` the last one won and the rest were dropped
+    before this function saw them — so a plaintext realm listed anywhere but last produced no
+    problem at all, on the check this module's docstring calls *the one misconfiguration that
+    defeats authentication outright*.
+
+    The plaintext URL is deliberately **first**, because that is the ordering the collapse hid.
+    """
+    problems = plaintext_problems(
+        [
+            ("AIRA_OIDC_ISSUER", "http://insecure.example/realms/a"),
+            ("AIRA_OIDC_ISSUER", "https://secure.example/realms/b"),
+        ]
+    )
+
+    assert len(problems) == 1
+    assert "http://insecure.example/realms/a" in problems[0]
