@@ -527,7 +527,7 @@ class PipelineEngine:
         rather than typed by a caller, so it is not where personal data arrives — and rewriting it
         would let a redactor quietly edit the instructions the use case is built on.
         """
-        model = config.get("model") or self._default_model()
+        model = config.get("model")
         provider = await self._provider_for(model, declaration_of)
         if provider is None or not model:
             return self._pii_failure(config, "no model is available to redact with", None)
@@ -617,7 +617,7 @@ class PipelineEngine:
         typo — it was the ordinary path, every time, for every use case.
         """
         if config.get("mode") == "llm":
-            model = config.get("model") or self._default_model()
+            model = config.get("model")
             provider = await self._provider_for(model, declaration_of)
             if provider is not None and model is not None:
                 return LlmInjectionClassifier(
@@ -674,7 +674,7 @@ class PipelineEngine:
         default_model = config.get("default_model")
         if not categories:
             return _Routed(None, default_model)
-        model = config.get("model") or self._default_model()
+        model = config.get("model")
         provider = await self._provider_for(model, declaration_of)
         if provider is None or model is None:
             return _Routed(None, default_model)
@@ -717,6 +717,23 @@ class PipelineEngine:
     def _route_text(self, request: CanonicalRequest) -> str:
         return "\n".join(m.text for m in request.messages if m.role in (Role.SYSTEM, Role.USER))
 
-    def _default_model(self) -> str | None:
-        models = self._registry.models()
-        return models[0].name if models else None
+    # `_default_model` stood here until 2026-08-27 and answered "the first model in the registry"
+    # for any step whose configuration named none. Three steps asked it, and what it returned was
+    # a model **nobody chose**: not released to the use case (`FRD-308`), not necessarily approved
+    # for the installation (`FRD-307`), in whatever region its adapter happens to serve
+    # (`FRD-115`). None of those gates sits on a step's own model call — the exemption in
+    # `test_every_dispatch_applies_the_conditions.UNCONDITIONED` justifies itself with *"the model
+    # it may use is bounded by the release, which the pipeline serializer validates every named
+    # model against"*, and that sentence is true of a named model and silent about an unnamed one.
+    #
+    # Measured on 2026-08-27 against the hermetic app: a use case released **only** `mock-embed`,
+    # a `pii_filter` with `config: {}`, and the trace came back `"classifier": "mock-1"` with the
+    # caller's text redacted by it — a 200. Naming `mock-1` in the same step is a 400. The whole
+    # difference between refused and served was whether the escape was written down. Management's
+    # serializer validates the models a pipeline *names*, so a step that names none passes
+    # authoring too: the console's own builder can save it.
+    #
+    # Removed rather than governed, because every step already has a defined answer for "no
+    # provider resolved" and each is the safe one: the redactor **blocks** (`FRD-309`), the LLM
+    # filter falls back to the **heuristic**, and the router uses its configured `default_model`.
+    # Absence of information is not permission — the rule this file's neighbours already keep.

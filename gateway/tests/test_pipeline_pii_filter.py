@@ -440,3 +440,37 @@ async def test_a_step_that_blocks_after_a_redaction_still_stores_the_rewritten_b
         "the refusal's audit row kept the personal data the pii_filter removed"
     )
     assert "<PERSON>" in stored, "and it kept the rewritten prompt rather than no prompt at all"
+
+
+async def test_a_redactor_that_names_no_model_blocks_rather_than_borrowing_one() -> None:
+    """A step that names no model does not quietly redact with whatever is registered.
+
+    Until 2026-08-27 every step asked `_default_model()` when its configuration named none, and
+    the answer was **the first model in the registry** — not released to the use case (`FRD-308`),
+    not necessarily approved for the installation (`FRD-307`), in whatever region its adapter
+    serves (`FRD-115`). No gate sits on a step's own model call: the exemption in
+    `test_every_dispatch_applies_the_conditions.UNCONDITIONED` justifies itself with *"the model
+    it may use is bounded by the release, which the pipeline serializer validates every named
+    model against"* — a sentence about a **named** model, silent about an unnamed one.
+
+    Reachable through the ordinary path, not an exotic one: Management's serializer refuses a
+    pipeline naming a model the use case may not call, and a step naming none names nothing to
+    refuse. The console's own builder can save it.
+
+    Measured on 2026-08-27 against the hermetic app: a use case released **only** `mock-embed`, a
+    `pii_filter` with `config: {}`, and the dry run's trace came back `"classifier": "mock-1"`
+    with the caller's text redacted by it. Naming `mock-1` in that same step is a 400.
+
+    What is left is the answer this step already had for an unreachable model, and it is the loud
+    one: a redactor has no lesser version of itself, so it **blocks** (`FRD-309`).
+    """
+    redactor = _Redactor()
+    engine = PipelineEngine(ProviderRegistry([redactor]))
+    pipeline = Pipeline(
+        steps=(PipelineStep(type=StepType.PII_FILTER, config={}),), fallback_models=()
+    )
+
+    with pytest.raises(PipelineRejected, match="no model is available to redact with"):
+        await engine.run(pipeline, _request(PROMPT))
+
+    assert redactor.asked == [], "the step redacted with a model nobody configured"
