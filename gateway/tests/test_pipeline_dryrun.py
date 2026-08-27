@@ -21,6 +21,12 @@ _URL = "/v1beta/pipeline:dryRun"
 
 
 class _Classifier:
+    #: A test double (`FRD-307`): it serves invented models, so the catalogue-and-approve
+    #: requirement does not apply to it. Declared here since 2026-08-27, when the dry run started
+    #: asking that requirement as well as the release — the same marker `test_pipeline_routes._Echo`
+    #: has carried since the requirement existed.
+    is_test_double = True
+
     def __init__(self, name: str, verdict: str) -> None:
         self._name = name
         self._verdict = verdict
@@ -194,6 +200,139 @@ async def test_a_dry_run_cannot_call_a_model_the_use_case_may_not() -> None:
     assert "expensive-1" in resp.json()["error"]["message"]
     # The point of the test: not merely refused, **not called**.
     assert called == []
+
+
+async def test_a_dry_run_cannot_call_a_model_the_installation_never_approved() -> None:
+    """The release has a third state; the installation's approval does not (2026-08-27).
+
+    `released_for` answers `None` for a use case **nobody has described** — no read-model row at
+    all, or a row written by a Management that predates `FRD-308`. Falling through on that is
+    right: an absent answer is not an absent release, and reading it as one would stop every use
+    case on a half-upgraded stack.
+
+    What fell through with it was `FRD-307`, and that one has no such state — a Global
+    Administrator either catalogued and approved a model or did not. So the endpoint had the use
+    case's gate and not the installation's, and in exactly the window the third state exists to
+    survive, a caller could name an **unapproved** model as a classifier and have it called.
+
+    Measured before the gate existed, hermetically: the same model refused `400` on
+    `:generateContent` and answered inside the dry run's own trace on this endpoint.
+    """
+    called: list[str] = []
+
+    class _Spy(_Classifier):
+        #: **Not** a declared double here, unlike its parent: the whole question is what happens
+        #: to a model the catalogue governs, and a double is exempt from that by design.
+        is_test_double = False
+
+        async def generate(self, request: CanonicalRequest) -> CanonicalResponse:
+            called.append(request.model)
+            return await super().generate(request)
+
+    app = _app(_Spy("unapproved-1", "SAFE"))
+    with TestClient(app, headers={"x-goog-api-key": DEMO_API_KEY}) as client:
+        # No `_release`: the use case has no row, so the release check has nothing to say. This is
+        # the state the gate below is the only thing standing in.
+        resp = client.post(
+            _URL,
+            json={
+                "use_case": "uc",
+                "user": "hi",
+                "pipeline": {
+                    "steps": [
+                        {
+                            "type": "injection_filter",
+                            "config": {"mode": "llm", "model": "unapproved-1"},
+                        }
+                    ]
+                },
+            },
+        )
+
+    assert resp.status_code == 400, resp.text
+    assert "unapproved-1" in resp.json()["error"]["message"]
+    assert "catalog" in resp.json()["error"]["message"]
+    assert called == []
+
+
+@pytest.mark.parametrize(
+    "step",
+    [
+        {"type": "injection_filter", "config": {"mode": "llm", "model": "unapproved-1"}},
+        {"type": "pii_filter", "config": {"model": "unapproved-1"}},
+        {
+            "type": "model_route",
+            "config": {"model": "unapproved-1", "categories": [{"name": "c", "model": "c-1"}]},
+        },
+    ],
+    ids=["injection_filter", "pii_filter", "model_route"],
+)
+async def test_every_step_that_asks_a_model_asks_the_approval_first(step: dict) -> None:
+    """All three, because a check that read one of them would leave two.
+
+    Each step reaches a model of its own — the classifier a filter runs, the classifier a router
+    runs, and the model a redactor rewrites with — and each is a separate line in
+    `classifiers_named_in`. The `pii_filter` line is the one worth naming: it is the step that
+    sends the caller's **personal data** to whatever model is written there, so a gap in it is a
+    gap in the one control whose whole point is where that text goes.
+    """
+    called: list[str] = []
+
+    class _Spy(_Classifier):
+        is_test_double = False
+
+        async def generate(self, request: CanonicalRequest) -> CanonicalResponse:
+            called.append(request.model)
+            return await super().generate(request)
+
+    app = _app(_Spy("unapproved-1", "SAFE"))
+    with TestClient(app, headers={"x-goog-api-key": DEMO_API_KEY}) as client:
+        resp = client.post(
+            _URL, json={"use_case": "uc", "user": "hi", "pipeline": {"steps": [step]}}
+        )
+
+    assert resp.status_code == 400, resp.text
+    assert "unapproved-1" in resp.json()["error"]["message"]
+    assert called == []
+
+
+async def test_a_route_target_is_released_but_never_approval_checked_here() -> None:
+    """The two gates cover different sets, and the difference is not an oversight.
+
+    A dry run **dispatches nothing**. It asks each step's own model — a filter's classifier, a
+    router's classifier, a redactor — and never reaches a category's target, a `default_model` or
+    the fallback chain. The release covers all of them, because a saved pipeline pointing at a
+    model the use case may not call is a configuration that fails later on a screen that looked
+    correct. The installation's approval covers the calls this request actually makes.
+
+    Stretching approval to a target nobody dials would refuse a builder a preview of a pipeline
+    whose classifier is perfectly approved, which is a worse answer than the one dispatch gives.
+    """
+    app = _app(_Classifier("router", "zzq-nomatch"))
+    with TestClient(app, headers={"x-goog-api-key": DEMO_API_KEY}) as client:
+        resp = client.post(
+            _URL,
+            json={
+                "use_case": "uc",
+                "user": "hi",
+                "pipeline": {
+                    "steps": [
+                        {
+                            "type": "model_route",
+                            "config": {
+                                "model": "router",
+                                "categories": [
+                                    {"name": "zzq-nomatch", "model": "never-catalogued"}
+                                ],
+                            },
+                        }
+                    ]
+                },
+            },
+        )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["effective_model"] == "never-catalogued"
 
 
 @pytest.mark.parametrize(
