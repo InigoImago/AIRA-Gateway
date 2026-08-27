@@ -15,6 +15,39 @@ class ModelSerializer(serializers.ModelSerializer[Model]):
     is_priced = serializers.BooleanField(read_only=True)
     is_declared = serializers.BooleanField(read_only=True)
 
+    def validate_name(self, name: str) -> str:
+        """A model's name is its **identity**, and an identity is set once (2026-08-27).
+
+        The same shape as `UseCaseSerializer.validate_slug`, one table along, and with the same
+        cause: the name crosses a Kafka boundary into a database this plane does not own. It keys
+        the gateway's `model_catalog`, it is what a use case's release names (`FRD-308`), what a
+        pipeline step's `config.model` names, what a price attaches to and what every
+        `request_logs.model` records.
+
+        Measured on 2026-08-27 against the running stack: `PATCH` a catalogued model's name, and
+        the gateway ends up holding **both** — the old row intact and still `approved`, the new one
+        beside it — while Management answers `404` for the old. So a rename quietly doubles the
+        installation's approved catalogue and puts one of the two permanently beyond reach:
+        un-approving it, re-pricing it or deleting it can never arrive, because the plane that
+        emits those events has forgotten the name.
+
+        That reopens exactly the loophole `FRD-307` closed. Its own docstring records the first
+        version's mistake — *deleting a declaration made a model usable again* — and the answer was
+        that an uncatalogued model is refused. An orphan is worse than that: it is catalogued,
+        approved, and unreachable.
+
+        The upsert in `ModelViewSet.create` is unaffected: it re-posts the **same** name onto an
+        existing row, which is not a change.
+        """
+        if self.instance is not None and name != self.instance.name:
+            raise serializers.ValidationError(
+                f"A model's name is its identity and cannot be changed. '{self.instance.name}' is "
+                "what the gateway's catalog, every use case's release, every pipeline step and "
+                "every audit row already name. Catalogue the new name as its own model and "
+                "un-approve this one — `display_name` is the field for what people should read."
+            )
+        return name
+
     class Meta:
         model = Model
         fields = [
