@@ -105,11 +105,31 @@ class ModelSerializer(serializers.ModelSerializer[Model]):
             validated_data["numeric_id"] = max(highest or 0, self.KIRA_ID_BASE) + 1
         return super().create(validated_data)
 
+    def _effective(self, attrs: dict[str, Any], field: str) -> Any:
+        """What the field will hold after the save: the incoming value, or the stored one.
+
+        The declaration block below already merges over the instance and says why — *"a PATCH that
+        touches only `max_output_tokens` would be validated against a thinking block it cannot
+        see"*. The price pair three lines above it did not, in the same method: on a partial edit
+        `attrs` carried the one price being changed and the other read as absent, so **every**
+        partial price edit was refused with a sentence about setting both — measured on
+        2026-08-26, `PATCH {"input_price_per_million": "3.00"}` against a model that already had
+        both.
+
+        The rule was stated one layer down and not held one layer up, which is the shape this
+        codebase keeps paying for. Named here so both readers share it.
+        """
+        return attrs.get(field, getattr(self.instance, field, None))
+
     def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
         # A half-priced model would bill one direction and silently ignore the other, which is
         # worse than having no price at all: the figure would look complete and be wrong.
-        has_input = attrs.get("input_price_per_million") is not None
-        has_output = attrs.get("output_price_per_million") is not None
+        #
+        # Asked of the **resulting** model rather than of the edit — see `_effective`. Clearing one
+        # of the two is still refused, because `attrs` then carries an explicit `None` and that is
+        # the value the model ends up with.
+        has_input = self._effective(attrs, "input_price_per_million") is not None
+        has_output = self._effective(attrs, "output_price_per_million") is not None
         if has_input != has_output:
             raise serializers.ValidationError(
                 "Set both the input and the output price, or neither — a model priced in only "
@@ -127,6 +147,9 @@ class ModelSerializer(serializers.ModelSerializer[Model]):
         empty: dict[str, Any] = {"capabilities": [], "hosting": ""}
         declaration = {
             field: attrs.get(field, getattr(self.instance, field, empty.get(field)))
+            # Not `_effective`, because of the `empty` fallback above: a create that never mentions
+            # `capabilities` has no instance to read and must be validated as `[]` rather than as
+            # `None`, or it is refused for saying nothing at all.
             for field in (
                 "capabilities",
                 "hosting",

@@ -3097,7 +3097,9 @@ MUTATIONS = [
         "N3a",
         "a rate rule keeps its sample floor, so one refusal of one is not 100 percent",
         "management/backend/src/aira_management/apps/anomalies/serializers.py",
-        '        elif attrs.get("min_sample", 0) < 1:',
+        # Re-anchored 2026-08-26: a partial edit is validated against the rule that exists, so
+        # the sample floor reads the stored value where the body does not carry one (see `N2b`).
+        '        elif self._effective(attrs, "min_sample", 0) < 1:',
         "        elif False:",
         ANOMALY_RULES,
     ),

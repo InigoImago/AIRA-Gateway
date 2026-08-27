@@ -22,7 +22,11 @@ MAX_STEPS = 32
 MAX_FALLBACK_MODELS = 16
 MAX_PATTERNS = 64
 MAX_PATTERN_LENGTH = 256
-MAX_MODELS = 64
+# `MAX_MODELS = 64` stood here and was read by nothing. It bounded `allow_check`'s list of models,
+# and that step left on 2026-08-11 (see the note above `STEP_TYPES`) — nothing in a pipeline is a
+# list of models any more except the fallback chain, which has its own bound one line down.
+# Removed rather than kept: a named ceiling nothing applies is a bound this module claims and does
+# not have, and it reads as reassurance to whoever adds the next list.
 MAX_MODEL_LENGTH = 128
 MAX_CATEGORIES = 32
 MAX_TEXT_LENGTH = 4_000
