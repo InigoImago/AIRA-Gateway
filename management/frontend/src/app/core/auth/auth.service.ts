@@ -112,14 +112,32 @@ export class AuthService {
    * a second navigation the reader would see.
    */
   private restoreLocation(): void {
-    const target = this.oauth.state;
-    if (!target || typeof window === 'undefined') return;
-    const path = decodeURIComponent(target);
+    const stored = this.oauth.state;
+    if (!stored || typeof window === 'undefined') return;
+    const path = decodeURIComponent(stored);
     // Only a same-origin path, never a URL: `state` survives a round trip through the browser, so
     // treating it as a destination would be an open redirect with extra steps.
-    if (!path.startsWith('/') || path.startsWith('//')) return;
-    if (path !== window.location.pathname + window.location.search) {
-      window.history.replaceState(null, '', path);
+    //
+    // **Resolved rather than pattern-matched.** The guard was `startsWith('/') && !startsWith('//')`,
+    // which is the rule one character narrower than it reads: a URL parser treats `\` as `/` in a
+    // special scheme, so `/\evil.example` is not the protocol-relative form and resolves to one —
+    // `new URL('/\\evil.example', origin).origin` is `https://evil.example`. The two shapes the
+    // test names were refused and the third, which looks least like a URL, was not.
+    //
+    // Asking the browser's own parser is what makes the check the same width as the sentence
+    // above it: whatever `replaceState` would resolve this to is what gets compared, so a fourth
+    // spelling nobody thought of is refused by construction rather than by being listed.
+    if (!path.startsWith('/')) return;
+    let resolved: URL;
+    try {
+      resolved = new URL(path, window.location.origin);
+    } catch {
+      return;
+    }
+    if (resolved.origin !== window.location.origin) return;
+    const target = resolved.pathname + resolved.search;
+    if (target !== window.location.pathname + window.location.search) {
+      window.history.replaceState(null, '', target);
     }
   }
 

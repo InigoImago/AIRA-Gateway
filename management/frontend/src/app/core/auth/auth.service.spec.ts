@@ -173,7 +173,16 @@ describe('AuthService — coming back to where the session ended', () => {
     // `state` survives a round trip through the browser, so treating it as a destination would be
     // an open redirect with extra steps. Both shapes are refused: an absolute URL, and the
     // protocol-relative form that looks like a path and is not.
-    for (const hostile of ['https://evil.example/steal', '//evil.example/steal']) {
+    // `/\evil.example` is the one the pattern-matching guard let through: it is not the
+    // protocol-relative form, and a URL parser resolves it to one anyway — `\` is `/` in a
+    // special scheme. Listed here beside the two shapes that were already refused, because a
+    // guard whose sibling cases are tested and whose third is not is the narrowest kind.
+    for (const hostile of [
+      'https://evil.example/steal',
+      '//evil.example/steal',
+      '/\\evil.example/steal',
+      '/\\/evil.example/steal',
+    ]) {
       const { service } = setup({ state: encodeURIComponent(hostile) });
       await service.init();
       expect(pathNow()).toBe('/');
