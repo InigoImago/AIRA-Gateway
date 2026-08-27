@@ -33,6 +33,7 @@ import { InfoHint } from '../../core/ui/info-hint';
 import { ConfirmService } from '../../core/ui/confirm.service';
 import { TablePager } from '../../core/ui/table-pager';
 import { TableView } from '../../core/ui/table-view';
+import { mayCatalogue } from '../../core/auth/roles';
 
 /** An amount as people type it: "0.075", "10", "10,50". Kept as text end to end. */
 const AMOUNT = /^\d+([.,]\d{1,6})?$/;
@@ -502,7 +503,7 @@ export class ModelCatalog implements OnInit {
   }
 
   /** Only a Global Administrator maintains prices — they follow the provider contract. */
-  protected readonly canEdit = computed(() => this.me()?.roles.includes('global-admin') ?? false);
+  protected readonly canEdit = computed(() => mayCatalogue(this.me()?.roles));
 
   /** Models in the catalog that would make consumption unaccountable. */
   protected readonly unpriced = computed(() => this.models().filter((m) => !m.is_priced));

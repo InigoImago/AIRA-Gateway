@@ -16,6 +16,7 @@ import { MeService } from '../../core/api/me.service';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { ServerTableView } from '../../core/ui/server-table-view';
 import { TablePager } from '../../core/ui/table-pager';
+import { runsTheInstallation } from '../../core/auth/roles';
 
 /** Mirrors the server-side slug validator, so the rule is stated before the request fails. */
 const SLUG_PATTERN = /^[a-z0-9-]+$/;
@@ -101,7 +102,7 @@ export class UseCaseList implements OnInit {
    * Offering the action to somebody the backend will refuse is the same defect as showing member
    * controls to a reader: the console says yes and the server says no.
    */
-  protected readonly canCreate = computed(() => (this.me()?.roles ?? []).includes('global-admin'));
+  protected readonly canCreate = computed(() => runsTheInstallation(this.me()?.roles));
 
   /**
    * Whether this session carries no role at all.

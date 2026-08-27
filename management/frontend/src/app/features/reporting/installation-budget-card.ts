@@ -7,6 +7,7 @@ import { ConfirmService } from '../../core/ui/confirm.service';
 import { InfoHint } from '../../core/ui/info-hint';
 import { Modal } from '../../core/ui/modal';
 import { PageFeedback } from '../../core/ui/page-feedback';
+import { runsTheInstallation } from '../../core/auth/roles';
 
 /**
  * The cap on spend that belongs to no use case (`FRD-610`).
@@ -58,7 +59,7 @@ export class InstallationBudgetCard implements OnInit {
   protected readonly tokens = signal<number | null>(null);
   protected readonly requests = signal<number | null>(null);
 
-  protected readonly canManage = computed(() => this.roles().includes('global-admin'));
+  protected readonly canManage = computed(() => runsTheInstallation(this.roles()));
 
   /**
    * Whether to draw the card at all.
