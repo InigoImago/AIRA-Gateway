@@ -186,7 +186,14 @@ showcase: env ## Start the full demo: stack, local model, seeded roles/budgets, 
 	@# No leading `-`: the traffic decides whether this showcase is worth showing. It swallowed a
 	@# run in which all ten requests were refused and the target still reported success, then
 	@# printed the login table over a demo with nothing in it.
-	uv run python tools/demo_traffic.py
+	@#
+	@# `--assert-controls` is the second half of that, and it took a second run to find: a demo
+	@# can also fail by refusing the two requests it exists to *demonstrate*. Measured
+	@# 2026-08-26 — the injection attempt and the embedding batch both came back `429
+	@# budget_exceeded`, refused by an allowance before the pipeline ran, and this target
+	@# reported success. Only here, never in `showcase-traffic`: that one deliberately skips the
+	@# reset, so reaching a limit is its point rather than its defect.
+	uv run python tools/demo_traffic.py --assert-controls
 	@echo ""
 	@echo "  Start here:"
 	@echo "    Console     $(CONSOLE_URL)   the SPA — everything below is reached from it"

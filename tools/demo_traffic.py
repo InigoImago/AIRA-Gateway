@@ -107,9 +107,59 @@ async def _embed(client: httpx.AsyncClient, slug: str) -> int:
     return response.status_code
 
 
-async def main() -> int:
+#: What the two deliberate requests have to answer for the demo to be showing what it claims.
+#:
+#: `INJECTION_USE_CASE`'s own comment already names half of this hazard — *"it has to be one whose
+#: pipeline actually runs an injection filter, or the demo's most important refusal quietly becomes
+#: a served request"* — and the script guarded only the direction it names. The mirror case is the
+#: one that happened: on 2026-08-26 both requests came back `429 budget_exceeded`, refused by a
+#: **budget** before the pipeline ran, so `refused` counted them and the target reported success
+#: while the demo demonstrated neither control. The run before it recorded `400
+#: blocked_by_pipeline` and `200 served`.
+#:
+#: A refusal is not interchangeable with a refusal. `429` here means the demo's own traffic
+#: exhausted an allowance before reaching the two rows it exists to show — a `make showcase` that
+#: needs the model to have been terse enough that morning.
+INJECTION_BLOCKED = 400
+EMBEDDING_SERVED = 200
+
+
+def _story_not_told(injection_code: int, embedding_code: int) -> list[str]:
+    """Why this run is not the demo, or an empty list when it is."""
+    problems: list[str] = []
+    if injection_code != INJECTION_BLOCKED:
+        problems.append(
+            f"\nthe prompt injection answered {injection_code}, not {INJECTION_BLOCKED}: it was "
+            "not refused by the injection filter.\n"
+            f"  {'429':<5} an allowance ran out first — the demo's own traffic exhausted a budget "
+            "or a rate limit\n"
+            f"  {'200':<5} the filter did not run: this use case's pipeline has no injection step\n"
+            "The blocked row is the most important screen in the walkthrough; without it the demo\n"
+            "shows a governance system that never refuses anything."
+        )
+    if embedding_code != EMBEDDING_SERVED:
+        problems.append(
+            f"\nthe embedding batch answered {embedding_code}, not {EMBEDDING_SERVED}: it is meant "
+            "to be *served*, to show\n"
+            "that a batch is governed, weighed and billed like any other call.\n"
+            f"  {'429':<5} an allowance ran out first (see above)\n"
+            f"  {'400':<5} the embedding model is not released to this use case (`FRD-308`)"
+        )
+    if problems:
+        problems.append(
+            "\n  make showcase-doctor              (checks the chain link by link)\n"
+            "  docker exec aira-postgres psql -U aira -d aira_gateway \\\n"
+            '    -c "select use_case, status, outcome from request_logs order by created_at '
+            'desc limit 10"\n'
+            "                                    (what the audit trail actually recorded)"
+        )
+    return problems
+
+
+async def main(*, assert_controls: bool = False) -> int:
     served = refused = failed = 0
     codes: set[int] = set()
+    injection_code = embedding_code = 0
     async with httpx.AsyncClient(timeout=300.0) as client:
         for slug, prompts in CONVERSATIONS.items():
             for prompt in prompts:
@@ -129,6 +179,7 @@ async def main() -> int:
         code = await _ask(client, INJECTION_USE_CASE, INJECTION)
         codes.add(code)
         refused += 400 <= code < 500
+        injection_code = code
         print(
             f"  {INJECTION_USE_CASE:<14} {code}  <prompt-injection attempt, expected to be blocked>"
         )
@@ -146,6 +197,7 @@ async def main() -> int:
         # that an embedding batch is governed, weighed and billed like any other call.
         code = await _embed(client, EMBEDDING_USE_CASE)
         codes.add(code)
+        embedding_code = code
         # Counted in every column, like every other call. It used to add only to `served`, so a
         # refused embedding left the tally reading "9 served, 1 refused" out of eleven requests
         # and the missing one appeared nowhere — the same shape as the refusals `FRD-122` found
@@ -161,6 +213,11 @@ async def main() -> int:
     print(f"\nserved {served}, refused {refused}, failed {failed}")
     if failed:
         print("a request failed with a 5xx — the demo data is incomplete", file=sys.stderr)
+        return 1
+
+    if assert_controls and (problems := _story_not_told(injection_code, embedding_code)):
+        for line in problems:
+            print(line, file=sys.stderr)
         return 1
 
     # **Nothing served is a failure, even though every individual request behaved.** A fresh
@@ -206,4 +263,8 @@ async def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(asyncio.run(main()))
+    # **Only where a reset precedes it.** `make showcase` clears what earlier runs consumed and
+    # then drives this traffic, so its run *must* tell the whole story. `make showcase-traffic`
+    # deliberately does not reset — it exists for watching the bars fill and a limit be reached —
+    # so there the two requests being refused by an allowance is the point rather than the defect.
+    raise SystemExit(asyncio.run(main(assert_controls="--assert-controls" in sys.argv[1:])))

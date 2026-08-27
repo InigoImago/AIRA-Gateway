@@ -183,12 +183,30 @@ def _budgets() -> list[dict[str, Any]]:
         # rather than a named person — the scope naming one was removed on 2026-08-14 — and this
         # is the shape an administrator wanted anyway: it needs no names and keeps applying to
         # whoever joins.
+        #
+        # **This was `0.000100`, and it was the one figure in this list that had not been
+        # calibrated** — while the docstring above says every one of them was. One run of
+        # `tools/demo_traffic.py` sends six requests to this use case, and what they cost is not a
+        # constant: a 0.6B model's verbosity varies, and the run's served rows have been measured
+        # between 50 600 and 129 400 nanos. The cap sat *inside* that spread, so it fired or did
+        # not depending on how chatty the model happened to feel.
+        #
+        # When it fired it took the two rows the demo exists to show. The injection attempt and
+        # the embedding batch are the last two requests, so both were refused `429
+        # budget_exceeded` before the pipeline ever ran — measured 2026-08-26: the run before it
+        # recorded `400 blocked_by_pipeline` and `200 served`, and this one recorded neither.
+        # A demo that stops demonstrating the injection filter, and says nothing.
+        #
+        # Twice the observed maximum, which is the derivation this figure was missing: one run
+        # lands near half of it whatever the model does, a second reaches it, and it stays well
+        # under the 0.000300 monthly cap above so it is still the tighter of the two per person —
+        # which is the whole point of having it.
         {
             "use_case": "kundenservice",
             "scope": Budget.EACH_MEMBER,
             "subject": "",
             "period": Budget.DAY,
-            "limit_cost": Decimal("0.000100"),
+            "limit_cost": Decimal("0.000250"),
         },
         # Tokens rather than money, for a team that thinks in tokens.
         {
