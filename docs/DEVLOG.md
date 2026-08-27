@@ -11171,3 +11171,177 @@ username spelled out and its `sub` appearing nowhere in the file.
 The route is asserted separately from the rule (`FRD-124`'s lesson): the scope can resolve two
 names perfectly and the **route** can still fail to hand the second one over. Proved by cutting
 that one line and watching the case go red. `S10`, `S11`; `S1` re-anchored.
+
+## 2026-08-26 — an audit of the tests against the code they defend
+
+**What was asked.** Go through every test and the code it covers, ask whether the test actually
+defends the behaviour it names, and look for defects on the way. The final measure was to be the
+showcase: does it do what it says, and is the code secure, readable and extensible.
+
+**Method, and what it found that reading alone would not.** Two passes. A *reading* pass over the
+request path, the auth chain, budgets, rate limits, the pipeline, the consumer and both planes'
+serializers; and a set of *sweeps* — questions about a file rather than about a field, which is
+what `LESSONS.md` §1 records as the only kind that sees a rule stated in three places and not
+inherited by the fourth. The sweeps found more than the reading did.
+
+**Nineteen findings: seventeen fixed, two reported.** Every fix was observed red before and green
+after — the property broken on purpose, the test watched to fail, the fix restored — and each
+carries the mutation that reintroduces it. The two that are reported rather than changed are each a
+decision about scope rather than a defect to fix quietly; they are at the end.
+
+**The two that matter most, because both were silent.**
+
+*A `pii_filter` rewrite never reached the stored payload when a later step blocked.*
+`run_pipeline` assigned `trail.body = _rewritten_body(...)` **after** `engine.run` returned, so a
+`PipelineRejected` from any step following the redactor skipped the line — and the refusal's audit
+row was written from the caller's original body. The personal data the step exists to remove was
+kept, in the one place a retention clock covers, on a request nobody was served. `_rewritten_body`
+was correct and its call site was correct; the wire between them existed on one path of two, and
+the file's three tests all called the function directly. The engine now takes a caller-owned
+`rewrites` list — the shape `decisions` and `model_calls` already use for exactly this reason —
+and the trail is rewritten in the `finally`.
+
+*A plaintext Keycloak realm passed the deployment check unless it happened to be listed last.*
+`plaintext_problems` took a `dict[str, str]`, and the gateway built it with one
+`("AIRA_OIDC_ISSUER", issuer)` pair **per configured realm** (`FRD-118`) under a comment saying
+every issuer is checked. A dict keeps the last value per key. Measured: `environment=production`,
+two issuers, the plaintext one first — `unsafe_settings` returned an empty list, on the check this
+module's own docstring calls *the one misconfiguration that defeats authentication outright*. The
+parameter is a sequence of pairs now, so the collapse cannot be written at any call site.
+
+**A grant on a group did not make an administrator.** `GroupGrantResolver.use_cases` answers
+`{slug: role}` and has a test asserting the role is carried through; `_with_group_grants` used only
+the keys. `payloads.grant_role_in` then re-derived the role from `use_case_members`, where a group
+grant writes no row — so the route `FRD-209` FR-6 leads with produced an administrator the gateway
+read as `user`, refused their colleagues' prompts in a restricted use case and narrowed their trace
+list, while Management (which asks guardian) treated them correctly. Two planes, one question, two
+answers. The resolved pairs travel on the `Principal` now. Six tests, and **one of them is a wire
+test**: the other five construct a `Principal` themselves and all stayed green when the wire was
+cut, which is the whole lesson repeating itself inside its own fix.
+
+**Three defaults that stopped discriminating on a partial update.** `AnomalyRuleSerializer.validate`
+read `attrs.get("kind", REFUSAL_RATE)` and `attrs.get("action", ALERT)`, so on a `PATCH` — which the
+console's own client method is built on and documents — every check below answered about a rule
+nobody has. Three measured consequences: *every* partial edit refused over a `min_sample` the caller
+never sent; a partial edit that did carry it **cleared `action_minutes`** on a throttle rule,
+leaving an incident control the gateway then refuses to enforce while the console still shows it as
+throttling; and a `spend_spike` threshold below 100 accepted, which fires every window forever. The
+catalogue serializer had the same shape one field over — its price pair was checked against the
+edit, so correcting one price of a fully priced model was refused and *clearing* one was accepted.
+Both read the instance now. `rule-form.ts` had been working around the first by always sending the
+whole object, and says so in a comment: a workaround in one client is not a property of an endpoint.
+
+**A model reachable only through the catalogue bypassed both dialect checks.** `SamplingExpressible`
+and `SchemaExpressible` resolved their adapter with `provider_for(model)` — one argument, which
+answers a *configured* model and `None` for one servable because it is catalogued (`FRD-507`
+stage B) — and both read that `None` as "this dialect declares no restriction". Nothing else reads
+`sampling_controls` or `schema_refusal`. Measured: `topK` on a catalogued model, served **200** by a
+dialect that has no `top_k`. The third occurrence of one shape, so the lookup is a named helper
+now. Beside it, the Anthropic mapping's backstop raised a bare `ValueError` where the OpenAI
+mapping raises `DialectUnsupported` — only the second is in `REFUSALS`, so the one path that
+backstop exists for produced `500 Internal error`.
+
+**And the showcase, which is where the audit was supposed to end and did not.** `make showcase`
+ran green and the demo had stopped demonstrating: the prompt-injection attempt and the embedding
+batch both came back `429 budget_exceeded`, refused by an allowance before the pipeline ran. The
+run before it had recorded `400 blocked_by_pipeline` and `200 served`. Both are in `request_logs`,
+one above the other.
+
+The cause is a number without a derivation. `_budgets()`'s docstring says the figures are
+*"calibrated against what the demo traffic actually costs"*; the per-head daily cap was `0.000100`,
+and one run of `demo_traffic.py` costs — measured across eight runs in the audit trail — between
+50 600 and 129 400 nanos. The cap sat **inside** the spread of the demo's own traffic, so whether
+`make showcase` worked depended on how verbose a 0.6B model felt that morning. It is twice the
+observed maximum now, with the derivation written beside it.
+
+The more useful half is the guard. `demo_traffic.py` counted a `429` as `refused` and reported
+success; its own comment had named half the hazard — *"or the demo's most important refusal quietly
+becomes a served request"* — and guarded only that direction. The mirror case is the one that
+fired. `--assert-controls` now fails the run when the injection was not refused **by the filter** or
+the batch was not **served**, and names the two explanations. `make showcase` passes it;
+`make showcase-traffic` deliberately does not, because reaching a limit is that target's point.
+Verified both ways: the fixed showcase records `400 blocked_by_pipeline` and `200 served`, and with
+the cap forced to 1 the same script exits 1 where it used to exit 0.
+
+**And the layer nobody had run in a while.** The live-stack suite came back with twenty-two
+failures, every one of them on the KIRA surface, and the surface was working: one hand-made call
+to the same endpoint with the same key answered `200`. The tests were addressing `model_id: 9001`
+and the catalogue holds the chat model under `1004` — `tools/seed_local_catalog.py` moved it there
+deliberately (*"every document and every example said `1004`, and the one runnable command said
+something else"*), and `conftest.LOCAL_CHAT_MODEL_ID` was introduced in the same round with the
+hazard written out: *"Six tests carried `9001` as a literal, and moving the demo … would have left
+every one of them addressing a model that no longer answers — reported as a `404` about a number,
+which reads as a broken surface rather than as a stale test."* Six were corrected by hand;
+twenty-one were not, and the embedding id was typed nine more times beside them. The paragraph
+predicted its own consequence and the search-and-replace that followed it stopped two files early.
+Every integration test imports the constant now, and a new guard bans a typed id **in that layer
+only** — a hermetic test writes its own catalogue row, so the number is local to it and typing it
+is not a copy of anything. The first, wider version of the guard reported thirteen files that were
+all correct, which is the wolf-crying check `LESSONS.md` §3 names appearing inside a guard written
+against a real defect.
+
+**One guard was rewritten rather than added to.** `test_a_callers_value_is_never_a_server_error.py`
+promises that *"the next endpoint is covered by it on the day it is added"* and carried three
+hand-written lists. Against the served OpenAPI document, seven things were never swept — the whole
+`/v1beta/register` endpoint among them. The query and path sweeps derive from `/openapi.json` now;
+`BODIES` stays hand-written, because what is *wrong* for a body depends on its vocabulary, and it
+gained the comparison in both directions. The gateway itself was clean under the widened sweep,
+which is the answer worth having: the code was right and the guard was not.
+
+**Two guards that were missing rather than wrong.** "Which models does this pipeline name" is
+implemented once per plane — Management refuses a pipeline that *saves* an unreleased model, the
+gateway refuses one a *dry run* would call — and both docstrings end *"the pair is named in each so
+neither is edited alone"*. Nothing compared them, which is `LESSONS.md` §1's *a paragraph
+explaining why a copy is dangerous is evidence the copy needs a test*. They are compared now in
+both of the ways they can drift: what they answer for a document naming a model everywhere one can
+be named, and which keys they look at, read from the source — the half that can see a site only one
+side has learned. And the **integration layer never asked `/readyz`** before blaming the code:
+`test_diagnostics.py` stops the local model on purpose and restarts it in a `finally`, so a run
+interrupted between the two leaves every later test failing `502 ConnectError` at a gateway that is
+working. That discriminator was written down for the *browser* suite; the layer that actually calls
+a model did not have it, and it cost an hour here. It is a `pytest_report_header` now — above the
+first test rather than inferable from the fortieth.
+
+**Also fixed:** an unreachable `burst` guard in the rate-limit serializer, under a comment
+describing a rule the gateway's own tests contradict; `MAX_MODELS`, a bound the pipeline serializer
+claimed and did not have; `EVENT_KINDS`, the third of three anomaly classifications and the only one
+nothing read, now held by a partition test; a `Cache-Control` sentence that carved out health
+probes the code never carved out; the console's post-login redirect guard, which refused
+`//evil.example` and accepted `/\evil.example` — one character narrower than the rule it states;
+`_require_oversight`, whose own first line says *"**Not** the oversight set"* and which guards the
+kill switch at three call sites a reviewer reads by name; and `make showcase-doctor`, which failed
+on a healthy stack every run for everybody, because its duplicate-account heuristic matched any
+eight-character word and the shipped realm creates one ending in `security`.
+
+**Left as a report, not a change.** Two things, for the same reason: each is a decision about
+scope rather than a defect to fix quietly.
+
+`features/models/model-catalog.ts` is 1456 lines and three tabs, which is the shape `CLAUDE.md` §3
+names and `use-case-detail` was split at 1238 for.
+
+And `disabled` thinking is asserted to a **fallback** that has none. `_validated` returns "send no
+parameter" when `disabled` is asked of a model that declares no thinking, because `thinkingBudget:
+0` is a 400 from Google for every model that cannot be switched off — and that correction applies
+to the routed model only. Thinking is resolved once, the chain does not re-resolve per hop, and
+`permitted_by` waves a `disabled` setting past any candidate. Measured: a primary declaring
+`{disabled, auto}`, a fallback declaring no thinking, `permitted_by` → `None`, and the fallback is
+sent `{'thinkingBudget': 0}`. The consequence is bounded — the upstream 400 maps to a visible
+`400 FAILED_PRECONDITION`, not a silent wrong answer — and the honest repair is re-resolving
+thinking per hop, which changes the dispatch path's contract (`Routing` deliberately carries
+addressing and nothing else).
+
+Counts after: 2 920 hermetic Python tests, 946 console tests, **622 mutation properties, all defended** (a full `make
+mutants`, 33 minutes, nothing survived), `make
+lint-py`, `make lint-frontend` and Prettier clean, `make showcase` green with its two control rows
+back in the audit trail, and the live-stack layer at **840 integration tests, 819 passed, 21
+skipped, none failed** — the run that started this last stretch by failing twenty-two of them.
+
+**And a note on method, because it cost more than any single finding.** Twice I read a wall of
+`502 ConnectError` as evidence about the code. The first time I had run an Angular build and a
+mypy pass alongside a suite that was measuring a live model; the second time I had killed that
+suite mid-test — `test_diagnostics.py` was between its deliberate `docker stop aira-ollama` and the
+`finally` that starts it again, so the container simply stayed down. Both times the answer was one
+`curl /readyz` away and I reached for the diff instead. **A measurement taken while you are doing
+something else is not a measurement**, and a live-stack suite is not a thing to interrupt. The
+header added above is the part of that which generalises; the rest is a note to whoever reads this
+next.

@@ -76,18 +76,27 @@ export class UseCaseService {
   private readonly base = `${API}/v1/use-cases/`;
 
   /**
+   * Which use cases this caller may put the catalogue to, and why not where they may not
+   * (`FRD-504`, `ADR-0020`).
+   *
+   * **Three comments stood here and one of them was about this method.** The paragraph about
+   * server-side paging belongs to `listPage` below and had drifted up here; a second described
+   * where a run is booked, which is `startTestRun` two hundred lines down. A doc comment names the
+   * thing beneath it, so a block that moves without its subject is a paragraph that now describes
+   * something else — the shape `LESSONS.md` §1 records for code (*"a copied block whose subject
+   * changed"*), arriving in the prose, where nothing type-checks it.
+   */
+  testAttribution(): Observable<TestAttribution[]> {
+    return this.http.get<TestAttribution[]>(`${API}/v1/test-attribution/`);
+  }
+
+  /**
    * One page of use cases, searched at the server (`FRD-208`).
    *
    * Paged there rather than in the browser because this endpoint computes object-level permissions
    * per row: fetching all of them and slicing locally leaves every one of those computations
    * happening on every load, which is the part that actually takes seconds.
    */
-  /** Where a smoke-test run is booked, and whether this caller may book one. */
-  /** Which use cases this caller may put the catalogue to, and why not where they may not. */
-  testAttribution(): Observable<TestAttribution[]> {
-    return this.http.get<TestAttribution[]>(`${API}/v1/test-attribution/`);
-  }
-
   listPage(query: string, page: number): Observable<Page<UseCase>> {
     const params: Record<string, string | number> = { page };
     if (query) params['q'] = query;

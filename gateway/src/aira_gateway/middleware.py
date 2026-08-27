@@ -226,8 +226,13 @@ class SecurityHeadersMiddleware:
       guessing `application/json`, which is what turns a reflected error message into markup.
     - `Referrer-Policy: no-referrer` — this API is addressed with `?key=<api key>` by every Gemini
       client. Without it, following any link from a response leaks the credential in `Referer`.
-    - `Cache-Control: no-store` on anything that is not a health probe — responses here contain
-      other people's prompts and other people's spend.
+    - `Cache-Control: no-store` — responses here contain other people's prompts and other
+      people's spend. On **every** response, health probes included: this sentence used to carve
+      them out and the code never did, which `test_security_headers` pins in the other direction.
+      Carving them out would also be the wrong rule to hold: a probe is the one response an
+      intermediary is most likely to cache, and a stale `healthz` is a liveness answer about a
+      moment that has passed. A route that has already said something about caching still keeps
+      its own answer — these are defaults, not overrides.
     - `X-Frame-Options: DENY` — nothing served here is meant to be embedded.
 
     **No HSTS and no CSP**: TLS is terminated in front of this service (so the header would be
