@@ -158,6 +158,26 @@ reading code.
   the grouping and the panel were covered and the step that fills them was not. A missing map entry
   at least leaves a gap somebody can see; an unpassed parameter looks exactly like a call.
 
+- **A value nobody wrote is a value nothing checks.** Every governance rule in this system reads
+  what somebody *typed*: Management's serializer validates the models a pipeline **names**, the
+  gateway refuses a model the use case was not **released**, the release check collects *"every
+  model this pipeline could reach, wherever it is written."* A fallback that substitutes a value at
+  runtime is outside all of it by construction, and the substitution is invisible in the artefact
+  being checked. `PipelineEngine._default_model()` answered *"the first model in the registry"* for
+  any step whose configuration named none — so a `pii_filter` with `config: {}` sent the caller's
+  personal data to a model that was not released, not necessarily approved and in no particular
+  region, at a `200`. Naming that same model in that same step is a `400`. **The whole difference
+  between refused and served was whether the escape was written down.**
+
+  Two things generalise. The justification is where it hides: the exemption list that lets a
+  pipeline step call a model without conditions vouches for itself with *"bounded by the release,
+  which the serializer validates every named model against"* — a true sentence about a named model
+  and a silent one about an unnamed one, and a reader checking the claim finds it holds. **When a
+  rule is stated over "what is named", ask what happens when nothing is.** And the repair is
+  usually deletion rather than governance: each step already had a defined answer for *no model
+  resolved*, and each was the safe one — block, fall back to the heuristic, use the configured
+  default. A convenience that reaches around a gate is worth less than the gate.
+
 - **A collection that silently discards is a check that silently stops.** The narrowest relative
   of the wire shape, and the only one where both ends *and* the call site read correctly.
   `plaintext_problems` took a `dict[str, str]`; the gateway built it with one
@@ -648,6 +668,24 @@ reading code.
 ---
 
 ## 4. Models, providers and dispatch
+
+- **Asking a model for one word means reading one word, not searching for it.** The injection
+  classifier gets this right and says why: *"neither word, or **both** … picking a winner would be
+  a precedence rule nobody can predict from outside"* — so an ambiguous reply is `UNDETERMINED`
+  and the step decides what to do about it. The router in the same file did the opposite, matching
+  a category by `name.upper() in answer` — a substring, anywhere, first entry in the operator's
+  list wins. Measured: `NONE`, the instruction's **own** word for *no category fits*, selected a
+  category named `one`; *"not code — use general"* selected `code`, the one the model rejected;
+  *"general or code"* selected `code` again. Not a security hole — the release and the approval
+  still bound where a routed request lands — and the feature defeated, since a `model_route` exists
+  so a cheap question reaches a cheap model.
+
+  Three things a reply parser owes its protocol. Take the **exact** answer first, because a model
+  that obeyed the instruction must not be at the mercy of a rule written for one that did not (and
+  a category may be called `c++`, which no word boundary can express). Match **whole words**, or
+  every short name is a wildcard. And require **exactly one** match: a reply naming two has not
+  answered the question, and deserves the same honest outcome as a reply naming none. The reserved
+  word falls out for free — `NONE` contains `one` only if you were searching.
 
 - **A vendor's capability flag is a claim, not evidence, and one successful call is not a
   capability.** `ollama show` lists `tools` for a model that returns the JSON as prose; a 0.5B

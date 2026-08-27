@@ -205,6 +205,27 @@ where a reader would otherwise be confused, but explaining a drift is not the sa
 A live round found real instances of exactly this: two roles carrying stale memberships from
 declarations that no longer existed.
 
+### 3.9 A `pii_filter` does not reach an embedding — `FRD-309`
+
+`prepare_for_dispatch` runs the pipeline where there is a canonical *generation* to run it over, so
+`:embedContent` and `/kira/api/external/embed` run **no steps at all**. `FRD-300` recorded
+*"Embeddings filtering"* as a non-goal when the pipeline was an injection filter and a router —
+both about a prompt a model will answer, where the reasoning holds. `pii_filter` arrived into the
+same branch a fortnight later and it is not the same decision: its contract is about **where the
+caller's text goes and what is stored**, and an embedding sends the same text to the same class of
+upstream and writes it to the same audit row.
+
+Measured on 2026-08-27 against the hermetic app: one use case, one `pii_filter`, the same sentence —
+redacted on `:generateContent`, stored and sent untouched on both embedding verbs. The console shows
+one switch per use case and not one per verb, so an administrator who enabled it has no way to learn
+where it stops.
+
+Not closed here because closing it is a **feature**: an embedding request carries *N* texts
+(`FRD-113` FR-6), so applying the step is *N* redactor calls per request — a cost, latency and
+batching decision that belongs to whoever owns the scope. What exists instead is a guard,
+`gateway/tests/test_an_embedding_runs_no_pipeline.py`, which fails if the behaviour changes in
+either direction so that the change has to be announced rather than noticed later.
+
 ---
 
 ## 4. Smaller, known, and written down

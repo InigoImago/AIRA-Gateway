@@ -5749,6 +5749,89 @@ MUTATIONS = [
         "return 0, []",
         "tools/tests/test_a_config_is_checked_before_it_is_deployed.py",
     ),
+    # ---- a router reads its classifier's reply rather than searching it (2026-08-27) -----
+    Mutation(
+        "PR1",
+        "a category is named by a whole word, not found anywhere inside the reply",
+        "gateway/src/aira_gateway/pipeline/classifiers.py",
+        'if name and re.search(rf"\\b{re.escape(name.upper())}\\b", answer)',
+        "if name and name.upper() in answer",
+        CLASSIFIERS,
+    ),
+    Mutation(
+        "PR2",
+        "a reply naming two categories has named none",
+        "gateway/src/aira_gateway/pipeline/classifiers.py",
+        "        return found[0] if len(found) == 1 else None",
+        "        return found[0] if found else None",
+        CLASSIFIERS,
+    ),
+    Mutation(
+        "PR3",
+        "the exact answer the instruction asks for is taken before anything cleverer",
+        "gateway/src/aira_gateway/pipeline/classifiers.py",
+        "            if name and answer == name.upper():\n                return name",
+        "            if False:\n                return name",
+        CLASSIFIERS,
+    ),
+    # ---- a pipeline step reaches only the model somebody named (2026-08-27) --------------
+    Mutation(
+        "PD1",
+        "a redactor that names no model blocks rather than borrowing the first in the registry",
+        "gateway/src/aira_gateway/pipeline/engine.py",
+        '        model = config.get("model")\n'
+        "        provider = await self._provider_for(model, declaration_of)\n"
+        "        if provider is None or not model:",
+        '        model = config.get("model") or self._registry.models()[0].name\n'
+        "        provider = await self._provider_for(model, declaration_of)\n"
+        "        if provider is None or not model:",
+        PII,
+    ),
+    Mutation(
+        "PD2",
+        "an LLM filter that names no model falls back to the heuristic, not to any model at hand",
+        "gateway/src/aira_gateway/pipeline/engine.py",
+        '        if config.get("mode") == "llm":\n            model = config.get("model")',
+        '        if config.get("mode") == "llm":\n'
+        '            model = config.get("model") or self._registry.models()[0].name',
+        CLASSIFIERS,
+    ),
+    Mutation(
+        "PD6",
+        "a router that names no classifier is not asked, rather than asking any model at hand",
+        "gateway/src/aira_gateway/pipeline/engine.py",
+        '        model = config.get("model")\n'
+        "        provider = await self._provider_for(model, declaration_of)\n"
+        "        if provider is None or model is None:",
+        '        model = config.get("model") or self._registry.models()[0].name\n'
+        "        provider = await self._provider_for(model, declaration_of)\n"
+        "        if provider is None or model is None:",
+        PIPELINE,
+    ),
+    Mutation(
+        "PD3",
+        "the dry run asks the installation's approval, which has no third state",
+        "gateway/src/aira_gateway/api/pipeline.py",
+        "    for name in classifiers_named_in(payload.pipeline):",
+        "    for name in []:",
+        DRYRUN,
+    ),
+    Mutation(
+        "PD5",
+        "a router's classifier is one of the models the dry run checks",
+        "gateway/src/aira_gateway/api/pipeline.py",
+        '    "model_route": lambda config: bool(config.get("categories")),',
+        '    "model_route": lambda config: False,',
+        DRYRUN,
+    ),
+    Mutation(
+        "PD4",
+        "a redactor's model is one of the classifiers the dry run checks",
+        "gateway/src/aira_gateway/api/pipeline.py",
+        '    "pii_filter": lambda config: True,',
+        '    "pii_filter": lambda config: False,',
+        DRYRUN,
+    ),
 ]
 
 

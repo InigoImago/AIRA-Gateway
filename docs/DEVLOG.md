@@ -5,7 +5,120 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
-## A runbook, and the check its central step needed (2026-08-26)
+## Attacking the gateway API rather than reading it (2026-08-27)
+
+The previous round walked every test against the code it defends. This one asked the opposite
+question — *what gets through* — and answered it by building a governed world in the hermetic app
+and firing at it: two use cases, seven API keys (bound, unbound, revoked, expired, future-dated,
+one bound to a retired use case), memberships by group, by name and by the `/use-cases/<slug>`
+convention, and a real `JwtVerifier` behind an RSA key pair. **Roughly 230 cases across nine
+groups**, all measured rather than reasoned about. The tabular result is below; what follows first
+is the three that were not as designed.
+
+**Most of it was.** Seventeen classic JWT attacks — `alg: none`, the RS256→HS256 confusion with the
+public key as the HMAC secret, a forged `iss`, a wrong audience, a missing `exp`, a future `nbf` —
+all refused, and a token claiming realm B while signed with realm A's key is refused by the
+verifier its own `iss` selected. Twenty-seven key-misuse cases: a revoked key, an expired one, a
+key whose prefix is A's and whose secret is B's, a key naming somebody else's use case by header
+**and** by path, a key bound to a retired use case. Nineteen bearer/membership cases including the
+two the round was asked for — somebody who was never in the use case (`403`) and somebody removed
+from the group or from the member list that granted it (`403`, both routes). Eighty-four
+route×credential cells on the evidence surfaces, and with real traffic in both use cases, every
+credential saw exactly its own rows and `in_scope: false` for the rest. Brute force: five refusals
+then `429`, with a valid credential served throughout.
+
+### A pipeline step reached a model nobody chose
+
+`_default_model()` answered *"the first model in the registry"* for any step whose configuration
+named none, and three steps asked it. What it returned is a model not released to the use case
+(`FRD-308`), not necessarily approved for the installation (`FRD-307`), in whatever region its
+adapter serves (`FRD-115`) — and **no gate sits on a step's own model call**. The exemption in
+`test_every_dispatch_applies_the_conditions.UNCONDITIONED` justifies itself with *"the model it may
+use is bounded by the release, which the pipeline serializer validates every named model against"*,
+which is a true sentence about a named model and a silent one about an unnamed one. Management
+validates the models a pipeline **names**; a step naming none names nothing to refuse, so the
+console's own builder can save it.
+
+Measured: a use case released **only** `mock-embed`, a `pii_filter` with `config: {}`, and the
+trace came back `"classifier": "mock-1"` with the caller's text redacted by it — a `200`. Naming
+`mock-1` in that same step is a `400`. The whole difference between refused and served was whether
+the escape was written down.
+
+Removed rather than governed, because each step already had a defined answer for "no provider
+resolved" and each is the safe one: the redactor **blocks** (`FRD-309`), the LLM filter falls back
+to the **heuristic**, the router uses its configured `default_model`.
+
+### The dry run had the use case's gate and not the installation's
+
+`released_for` answers `None` for a use case nobody has described — no read-model row, or a row
+written by a Management that predates `FRD-308` — and falling through on that is right: an absent
+answer is not an absent release. What fell through with it was `FRD-307`, which has **no third
+state**. So in exactly the window the third state exists to survive, a caller could name an
+unapproved model as a classifier and the endpoint called it: `200` with the model's reply inside
+the dry run's own trace, against `400` for the same model on `:generateContent`.
+
+The approval is now asked of the models the endpoint will **call** — a filter's classifier, a
+router's classifier, a redactor — which is a smaller set than the release covers, because a dry run
+dispatches nothing and never reaches a category's target or the fallback chain. Two gates, two
+questions, and the difference is written down rather than left to be rediscovered.
+
+### A router searched its classifier's reply instead of reading it
+
+`name.upper() in answer` — a substring, anywhere, first category in the operator's list wins.
+Measured:
+
+| the classifier replied | it routed to | why |
+| --- | --- | --- |
+| `NONE` | `one` | `ONE` is inside `NONE` — the protocol's own word for *no category* named one |
+| `not code — use general` | `code` | list order beat the sentence, and chose the category the model **rejected** |
+| `The answer is general or code` | `code` | list order again |
+
+No security hole — the release and the approval still bound where a routed request lands — and the
+feature defeated: a `model_route` exists so a cheap question reaches a cheap model. Now: the exact
+answer first (a category may be named `c++`, which no word boundary can express), then a
+**whole-word** search that must match **exactly one**. A reply naming two has not answered, and
+gets the same honest outcome as a reply naming none.
+
+### Reported, not closed: an embedding runs no pipeline
+
+`prepare_for_dispatch` runs the pipeline where there is a canonical *generation*, so
+`:embedContent` and `/kira/api/external/embed` run no steps at all. `FRD-300` recorded *"Embeddings
+filtering"* as a non-goal when the steps were a filter and a router — both about a prompt a model
+will answer, where the reasoning holds. `pii_filter` arrived into the same branch a fortnight later
+and it is **not the same decision**: its contract is about where the caller's text goes and what is
+stored, and an embedding sends the same text to the same class of upstream and writes it to the
+same audit row. Measured: one use case, one `pii_filter`, the same sentence — redacted on
+`:generateContent`, sent and stored untouched on both embedding verbs, on both surfaces.
+
+Not closed here because closing it is a **feature**: an embedding carries *N* texts (`FRD-113`
+FR-6), so applying the step is *N* redactor calls per request — a cost, latency and batching
+decision that belongs to whoever owns the scope. What went in instead is the announcement it was
+missing: `FRD-309` §2, `docs/REQUEST-LIFECYCLE.md` §4, `docs/GAP-ANALYSIS.md` §3.9, and
+`test_an_embedding_runs_no_pipeline.py`, which fails if the behaviour changes **in either
+direction** so that a change has to be declared rather than noticed later.
+
+### What was measured, by group
+
+| Group | Cases | Result |
+| --- | --- | --- |
+| JWT verification | 17 | as designed |
+| several realms, routing by `iss` | 4 | as designed |
+| roles and groups from claims | 6 | as designed (`realm_access` confers nothing, a prefix or a subgroup is not the group) |
+| API-key misuse | 27 | as designed |
+| bearer membership, incl. removed members | 19 | as designed |
+| pipeline combinations, single and multi-stage | 38 | as designed |
+| the same pipeline on every verb and both surfaces | 21 | **embeddings run none** |
+| dry run against release and approval | 13 | **two escapes, both closed** |
+| router reply parsing | 11 | **three misroutes, closed** |
+| evidence routes × credentials | 84 | as designed |
+| cross-use-case disclosure with real rows | 25 | as designed |
+| governance switches, budget, suspension, brute force | 20 | as designed |
+
+9 mutations (**631**), each observed `caught`. Two survived their first run and are the reason the
+harness exists: a property is only defended where a test looks, and the test for a redactor lived
+in the engine's file rather than the redactor's.
+
+
 
 Asked whether the product is ready for a real integration, and how to proceed. The first half was
 answerable by measurement rather than opinion: `config/integrated.example.yaml` rendered — 86

@@ -43,7 +43,7 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
   inevitably do when both were written from the same mental model — and line coverage cannot see
   a *missing requirement*: a review once found seven real defects behind a green suite at 99%
   coverage. So: **prove a test can fail.** Break the property, watch it go red, restore.
-  `make mutants` (`tools/mutation_check.py`) does this for **622 properties** across auth, budgets,
+  `make mutants` (`tools/mutation_check.py`) does this for **631 properties** across auth, budgets,
   pipeline, retention, the management control plane and the gateway's counters; when
   you fix a bug, add the mutation that reintroduces it. Two traps that cost real defects here:
   a stand-in that is more permissive than the thing it replaces (reuse the real method where you
@@ -198,6 +198,11 @@ requires a test to notice.
   model the catalogue has no price for (unknown is counted apart, which is right for reporting and
   means *unbounded* for enforcement), and the console says nothing when `AIRA_ENFORCE_BUDGETS` is
   off. §3.1, the installation's own budget, is built.
+- **A `pii_filter` does not reach an embedding** (`FRD-309` §2, `GAP-ANALYSIS.md` §3.9). The
+  pipeline runs where there is a canonical *generation*, so both embedding verbs run no steps —
+  inherited from `FRD-300`'s non-goal, written before this step existed. Open because closing it is
+  a feature: an embedding carries *N* texts, so it is *N* redactor calls. Pinned by a test that
+  fails in either direction, so a change has to be announced.
 - **A model reachable only at `global` is not usable here** (`FRD-611`, `ADR-0012` §6). `global`
   names no region and guarantees none, so it is not in the shipped residency default;
   `gemini-3.5-flash` is catalogued, unapproved, and refused where its region is typed. Stated

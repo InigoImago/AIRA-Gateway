@@ -39,6 +39,23 @@ trusts.
 - Guaranteeing that nothing gets through. **The control is exactly as good as the model behind
   it** — measured against `qwen3:0.6b`, which replaced one name and left another. That is why the
   field says *trusted model* and why the step is opt-in per use case.
+- **Embeddings.** `:embedContent` and `/kira/api/external/embed` run **no pipeline at all**, so a
+  use case with this step configured embeds the caller's text unredacted and stores it unredacted.
+  Inherited rather than decided: `FRD-300` listed *"Embeddings filtering"* as a non-goal when the
+  pipeline was a filter and a router, and this step arrived later into the same branch —
+  `prepare_for_dispatch` runs the pipeline `if canonical is not None`, and an embedding request
+  carries no canonical generation.
+
+  Written down here because the console shows one switch per use case and not one per verb, so a
+  reader who has enabled this step has no way to learn where it does not reach. Measured on
+  2026-08-27 against the hermetic app: the same personal text, the same use case, redacted on
+  `:generateContent` and served untouched on both embedding verbs.
+
+  Closing it is a **feature, not a repair**, and the reason is the shape of the request rather than
+  the wiring: an embedding call carries *N* texts (`FRD-113` FR-6), so applying the step means *N*
+  redactor calls per request — a cost, a latency and a batching decision that belongs to whoever
+  owns the scope. `docs/GAP-ANALYSIS.md` carries it as an open item; the pinning test is
+  `gateway/tests/test_an_embedding_runs_no_pipeline.py`.
 
 ## 3. Functional Requirements
 
