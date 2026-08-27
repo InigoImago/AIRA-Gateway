@@ -212,7 +212,53 @@ class AuditTrail:
 #: What may be kept from a pipeline decision. An **allow-list**, not a deny-list: a future step
 #: that records the classifier's explanation would otherwise start persisting model output about a
 #: caller's prompt the day it is added, silently, in a column redaction cannot process.
-SAFE_DECISION_KEYS = frozenset({"step", "action", "flagged", "category", "from", "to", "why"})
+#:
+#: `texts` and `changed` are **counts**, added when a step began running over an embedding batch
+#: (`FRD-113`, 2026-08-27): how many texts the step saw and how many it rewrote. Two integers about
+#: the request's shape, never about its content — which is the test every key here has to pass, and
+#: the reason the list is enumerated rather than inherited.
+SAFE_DECISION_KEYS = frozenset(
+    {"step", "action", "flagged", "category", "from", "to", "why", "texts", "changed"}
+)
+
+
+#: The actions a step reports when it **did** what it is for.
+#:
+#: Anything else a `pii_filter` can say — `blocked`, or `allowed` under `on_failure: allow` — means
+#: it could not apply its rule to that text. The distinction is not cosmetic: it decides whether
+#: the caller's original text may be kept (see :func:`redaction_failed`).
+APPLIED_ACTIONS = frozenset({"redacted", "unchanged", "passed"})
+
+
+def redaction_failed(decisions: list[dict[str, Any]]) -> bool:
+    """Whether a `pii_filter` ran and could not produce a usable rewrite (`FRD-309` FR-3).
+
+    FR-3 is unconditional: *"where the substitution cannot be applied the payload is **dropped**,
+    never kept"*. Only half of that was implemented. `_rewritten_body` drops the payload when a
+    rewrite's own text cannot be found in the wire body — a body it does not understand — and
+    nothing dropped it in the other case, which is the commoner one: **the redactor failed, so
+    there was no rewrite at all**.
+
+    Measured on 2026-08-27 with an unreachable redactor: `400 blocked_by_pipeline` on both
+    `:generateContent` and `:embedContent`, nobody served, and `request_logs.request_payload`
+    holding the caller's name and address on both rows. The same shape as the defect found the day
+    before — personal data kept in the audit row of a request nobody was served — arriving through
+    the other door.
+
+    **`on_failure: allow` drops it too**, and that is the part worth stating. The operator who set
+    that flag chose to keep *serving* when the redactor is down; they did not choose to keep
+    *storing*, and folding two decisions into one flag is how a control comes to mean something
+    nobody asked for. The decision row still records the step, the action and why, so what happened
+    stays visible; what goes is the content the step exists to remove.
+
+    Read off the decisions rather than carried on a flag of its own, because the decisions are
+    already the caller-supplied list that survives a step raising — the same reason `rewrites` is
+    passed in — and a second channel for the same fact is a second thing to forget to pass.
+    """
+    return any(
+        decision.get("step") == "pii_filter" and str(decision.get("action")) not in APPLIED_ACTIONS
+        for decision in decisions
+    )
 
 
 def decision_summary(decisions: list[dict[str, Any]]) -> list[dict[str, Any]] | None:

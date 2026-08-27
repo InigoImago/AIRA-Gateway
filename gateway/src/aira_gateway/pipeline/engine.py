@@ -11,14 +11,22 @@ without raising and returns a full per-step trace for the builder's preview/test
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+import asyncio
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
 from aira_common.models import ThinkingMode
-from aira_gateway.audit import ModelCall
+from aira_gateway.audit import APPLIED_ACTIONS, ModelCall
 from aira_gateway.catalog import ModelDeclaration
-from aira_gateway.core.canonical import CanonicalRequest, Role, TextPart, Thinking
+from aira_gateway.core.canonical import (
+    CanonicalMessage,
+    CanonicalRequest,
+    CanonicalUsage,
+    Role,
+    TextPart,
+    Thinking,
+)
 from aira_gateway.pipeline.classifiers import (
     Classification,
     HeuristicInjectionClassifier,
@@ -148,6 +156,86 @@ class StepEvaluation:
     rewrote: tuple[str, str] | None = None
 
 
+def _one_message(text: str, model: str) -> CanonicalRequest:
+    """One text as the request a step expects to be handed.
+
+    A text about to be embedded *is* a user message as far as a redactor is concerned — it is the
+    thing the caller wrote — so the step needs no new shape and no new rule. `_with_user_text` puts
+    the rewrite back in the same place.
+    """
+    return CanonicalRequest(model=model, messages=[CanonicalMessage(role=Role.USER, text=text)])
+
+
+def _summed(step: str, calls: list[ModelCall]) -> ModelCall | None:
+    """One `ModelCall` for a step that made several — the money exact, the row count sane.
+
+    A batch of 256 texts is 256 upstream calls and **one pipeline step**. Recording them
+    individually would be equally correct about the spend and would put 256 rows named
+    `pipeline:pii_filter` into `request_logs` for a single request, which buries the caller's own
+    row in the trace list somebody opens to find it. The usage is added up, so the price
+    (`FRD-125b`) is the same figure either way; what is lost is a per-text breakdown nobody asked
+    for, and `decisions` says how many texts there were.
+
+    Only calls to **one** model can be summed, which is what a step guarantees: the model comes
+    from the step's configuration, not from the text.
+    """
+    if not calls:
+        return None
+    return ModelCall(
+        step=step,
+        model=calls[0].model,
+        usage=CanonicalUsage(
+            prompt_tokens=sum(call.usage.prompt_tokens for call in calls),
+            completion_tokens=sum(call.usage.completion_tokens for call in calls),
+        ),
+    )
+
+
+def _worst(evaluations: list[StepEvaluation]) -> StepEvaluation | None:
+    """The evaluation that describes what happened to the **request**, not to one text of it.
+
+    A batch is one step over many texts, and its outcome is the least good of them. Taking the
+    first would report `redacted` for a batch in which one text was not — and under
+    `on_failure: allow`, where the failure does not block, nothing else would say so, which is
+    exactly the row `redaction_failed` has to be able to read.
+
+    A refusal wins over a non-refusing failure, because that is what the caller was told.
+    """
+    if not evaluations:
+        return None
+    blocked = next((e for e in evaluations if e.block_reason is not None), None)
+    if blocked is not None:
+        return blocked
+    return next((e for e in evaluations if e.action not in APPLIED_ACTIONS), evaluations[0])
+
+
+def _over_the_batch(
+    step: PipelineStep,
+    evaluations: list[StepEvaluation],
+    notable: StepEvaluation | None,
+) -> dict[str, Any] | None:
+    """What the audit row says about a step that ran over a batch.
+
+    **One decision for the step, not one per text**, and it carries the two numbers a reader of the
+    row actually needs: how many texts it saw and how many it changed. A per-text list would be a
+    256-entry JSON column describing one step, and the interesting fact — *did the redactor do
+    anything, and to how much of this* — would have to be counted out of it.
+
+    The keys `step`, `action` and `why` are the ones the generation path uses, so a reader and a
+    screen do not need a second vocabulary; `texts` and `changed` are added rather than
+    substituted. A refusal reports the refusal, because that is what happened to the request.
+    """
+    if not evaluations or notable is None or notable.decision is None:
+        return None
+    changed = sum(1 for evaluation in evaluations if evaluation.rewrote is not None)
+    return {
+        **notable.decision,
+        "step": str(step.type),
+        "texts": len(evaluations),
+        "changed": changed,
+    }
+
+
 def _filled(template: str, **values: str) -> str:
     """A notice with ``{model}`` / ``{category}`` filled in.
 
@@ -201,6 +289,53 @@ class PipelineOutcome:
     #: *wire body* captured at the surface and the pipeline rewrites the *canonical* request. The
     #: redaction protected the model and not the database — which is the one thing the design said
     #: it must do. Found by reading a row, not by reading the code.
+    rewrites: list[tuple[str, str]] = field(default_factory=list)
+
+
+#: Which steps mean anything for a payload that is only text — an embedding (`FRD-113`).
+#:
+#: An embedding carries texts and gets back vectors. There is no answer to route, and nothing that
+#: will *obey* what the caller wrote. So a step about the **answer** has nothing to act on, and a
+#: step about the **text itself** applies here exactly as it does anywhere else:
+#:
+#: - `model_route` chooses a model to *generate* with. An embedding is not generated.
+#: - `injection_filter` is about a prompt that will be **obeyed**, and an embedding never is —
+#:   blocking here would refuse a corpus for quoting the phrases it exists to index.
+#: - `pii_filter` is about **where the caller's text goes and what is stored**, which is the same
+#:   question for a text being embedded as for one being answered. It runs.
+#:
+#: Until 2026-08-27 the answer was "none of them": `prepare_for_dispatch` runs the pipeline where
+#: there is a canonical *generation*, so both embedding verbs went past the whole stage. `FRD-300`
+#: recorded that as a non-goal when the steps were a filter and a router — where the reasoning
+#: above holds — and `pii_filter` arrived into the same branch a fortnight later, inheriting a
+#: decision that was never made about it. Measured: the same sentence, the same use case, redacted
+#: on `:generateContent` and sent **and stored** untouched on both embedding verbs.
+TEXT_ONLY_STEPS = frozenset({StepType.PII_FILTER})
+
+#: How many texts of a batch are redacted at once.
+#:
+#: A batch may carry `AIRA_MAX_EMBEDDING_BATCH` texts — 256 by default — and each is its own model
+#: call, because a redaction has to be checked per text (`FRD-309` FR-4: empty, or far shorter than
+#: its input, is a failure rather than a rewrite) and one call over a joined batch cannot be. So
+#: sequential would make a large batch unusable, and unbounded would open as many upstream
+#: connections as a caller asked for. This is the middle, and it is a constant rather than a
+#: setting because the number to tune first is the batch size, which already is one.
+REDACTIONS_AT_ONCE = 8
+
+
+@dataclass
+class TextsOutcome:
+    """What the pipeline made of a payload that is only text.
+
+    Deliberately **not** `PipelineOutcome`: that one carries a `CanonicalRequest` and a fallback
+    chain, and an embedding has neither — there is nothing to fall back *to*, which is the same
+    reason `:embedContent` has no dispatch chain. What the two share is the three lists a caller
+    supplies so that what a step spent, decided and rewrote survives a later step refusing.
+    """
+
+    texts: tuple[str, ...]
+    decisions: list[dict[str, Any]] = field(default_factory=list)
+    model_calls: list[ModelCall] = field(default_factory=list)
     rewrites: list[tuple[str, str]] = field(default_factory=list)
 
 
@@ -314,6 +449,88 @@ class PipelineEngine:
             if evaluation.block_reason is not None:
                 raise PipelineRejected(evaluation.block_reason)
         return outcome
+
+    async def run_over_texts(
+        self,
+        pipeline: Pipeline,
+        texts: Sequence[str],
+        *,
+        model: str = "",
+        decisions: list[dict[str, Any]] | None = None,
+        model_calls: list[ModelCall] | None = None,
+        rewrites: list[tuple[str, str]] | None = None,
+        declaration_of: DeclarationOf | None = None,
+    ) -> TextsOutcome:
+        """Run the steps that mean anything for texts alone — an embedding (`TEXT_ONLY_STEPS`).
+
+        The steps themselves are **the same objects** `run` uses, evaluated over a one-message
+        request per text. Not a second implementation of redaction: a stand-in that is more
+        permissive than the thing it replaces is a defect this project has already paid for, and
+        the redactor's failure rule, its `changed` test, its model, its instruction and its
+        thinking all live in `_evaluate_pii_filter`. `model` is carried into the synthetic request
+        for honesty only — the step reads the model from its own configuration.
+
+        ``decisions``, ``model_calls`` and ``rewrites`` are the caller's lists for the same reason
+        `run` takes them: a step that refuses still spent what it took to decide that, and a
+        rewrite that happened before a refusal has to reach the refused request's audit row, or the
+        personal data the step removed is kept by the audit trail alone.
+
+        **A refusal anywhere refuses the request.** Half a batch of vectors is not an answer, and
+        serving the texts that redacted while dropping the one that did not would send exactly the
+        content the step exists to withhold.
+        """
+        outcome = TextsOutcome(
+            texts=tuple(texts),
+            decisions=decisions if decisions is not None else [],
+            model_calls=model_calls if model_calls is not None else [],
+            rewrites=rewrites if rewrites is not None else [],
+        )
+        for step in pipeline.steps:
+            if step.type not in TEXT_ONLY_STEPS:
+                continue
+            evaluations = await self._evaluate_each(step, outcome.texts, model, declaration_of)
+
+            # Spend first, in the order `run` does it: what a step cost is recorded whether or not
+            # it went on to refuse.
+            call = _summed(str(step.type), [e.call for e in evaluations if e.call])
+            if call is not None:
+                outcome.model_calls.append(call)
+            outcome.rewrites.extend(e.rewrote for e in evaluations if e.rewrote is not None)
+
+            notable = _worst(evaluations)
+            decision = _over_the_batch(step, evaluations, notable)
+            if decision is not None:
+                outcome.decisions.append(decision)
+            if notable is not None and notable.block_reason is not None:
+                raise PipelineRejected(notable.block_reason)
+
+            outcome.texts = tuple(
+                evaluation.request.last_user_text() if evaluation.request is not None else text
+                for text, evaluation in zip(outcome.texts, evaluations, strict=True)
+            )
+        return outcome
+
+    async def _evaluate_each(
+        self,
+        step: PipelineStep,
+        texts: Sequence[str],
+        model: str,
+        declaration_of: DeclarationOf | None,
+    ) -> list[StepEvaluation]:
+        """One evaluation per text, a bounded handful at a time — order preserved.
+
+        `asyncio.gather` returns in argument order regardless of completion order, so the results
+        line up with the texts they came from. That matters more here than anywhere else in this
+        file: the vectors come back in the caller's order, and a redaction applied to the wrong
+        text would be silent.
+        """
+        limit = asyncio.Semaphore(REDACTIONS_AT_ONCE)
+
+        async def one(text: str) -> StepEvaluation:
+            async with limit:
+                return await self._evaluate(step, _one_message(text, model), declaration_of)
+
+        return list(await asyncio.gather(*(one(text) for text in texts)))
 
     async def dry_run(
         self,

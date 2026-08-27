@@ -39,6 +39,7 @@ from aira_gateway.audit import (
     AuditTrail,
     Outcome,
     decision_summary,
+    redaction_failed,
     tool_summary,
 )
 from aira_gateway.budgets.errors import BudgetExceeded
@@ -879,8 +880,7 @@ async def run_pipeline(
         # mattered most: a `pii_filter` followed by a blocking step raised past the assignment, so
         # the refusal's audit row kept the caller's original prompt — exactly the data the step
         # exists to remove, in the one place a retention clock covers and a reader can read.
-        if rewrites:
-            trail.body = _rewritten_body(trail.body, rewrites)
+        _keep_only_what_a_redactor_allows(trail, rewrites)
     trail.routed_to(outcome.request.model)
     if outcome.decisions:
         set_span_attributes(
@@ -903,6 +903,80 @@ async def run_pipeline(
     # anyway. The redaction has to protect the database as well as the model, which is the one
     # thing it is for.
     return outcome.request, outcome.fallback_models, tuple(outcome.notices)
+
+
+async def run_pipeline_over_texts(
+    request: Request, embed: CanonicalEmbeddingRequest, trail: AuditTrail
+) -> CanonicalEmbeddingRequest:
+    """Apply the steps that mean anything for texts alone (`FRD-309`, `FRD-113`).
+
+    The sibling of :func:`run_pipeline`, and everything the two share is deliberate rather than
+    copied: the same store, the same engine, the same three caller-supplied lists, and the same
+    `finally` — what a step spent is recorded whether or not a later one refused, and the **stored**
+    request is the rewritten one on every way out.
+
+    What differs is what an embedding is. There is no model to route to and no answer to put a
+    notice in front of, so the engine runs only `TEXT_ONLY_STEPS` and this returns the request with
+    its texts replaced rather than a routed request and a fallback chain.
+
+    Measured before this existed: one use case, one `pii_filter`, the same sentence — redacted on
+    `:generateContent` and sent **and stored** untouched on `:embedContent` and on the KIRA
+    surface's `/embed`. A data-protection control that the console shows as active for a use case,
+    doing nothing on one of its verbs, with nothing anywhere saying so.
+    """
+    store: PipelineStore = request.app.state.pipeline_store
+    engine: PipelineEngine = request.app.state.pipeline_engine
+    use_case = getattr(getattr(request.state, "attribution", None), "use_case", None)
+    pipeline = await store.get(use_case)
+    if pipeline is None:
+        return embed
+    rewrites: list[tuple[str, str]] = []
+    try:
+        outcome = await engine.run_over_texts(
+            pipeline,
+            embed.texts,
+            model=embed.model,
+            decisions=trail.decisions,
+            model_calls=trail.model_calls,
+            rewrites=rewrites,
+            declaration_of=await declared_model(request),
+        )
+    finally:
+        await record_pipeline_calls(request, trail)
+        _keep_only_what_a_redactor_allows(trail, rewrites)
+    if outcome.decisions:
+        _log.info(
+            "pipeline_applied",
+            use_case=use_case,
+            model=embed.model,
+            decisions=outcome.decisions,
+        )
+    return embed.model_copy(update={"texts": list(outcome.texts)})
+
+
+def _keep_only_what_a_redactor_allows(trail: AuditTrail, rewrites: list[tuple[str, str]]) -> None:
+    """What the audit row may keep of a request a `pii_filter` touched (`FRD-309` FR-3).
+
+    Two things, in this order, and both are about the same promise — *what is stored is the
+    rewritten version, and where the substitution cannot be applied the payload is dropped, never
+    kept*:
+
+    - a rewrite that happened is applied to the stored body, on **every** way out of the pipeline
+      including the one where a later step refused;
+    - a redaction that **failed** drops the body entirely, because there is no rewritten version
+      and the original is precisely the content the step exists to remove.
+
+    Only the first was implemented. The second was measured missing on 2026-08-27 with an
+    unreachable redactor: a refused request on both `:generateContent` and `:embedContent`, nobody
+    served, and the caller's name and address in `request_logs` on both rows.
+
+    One function, called from both pipelines' `finally`, because this is a rule about the stored
+    payload and the last time half of it lived at one exit the other exit kept the original.
+    """
+    if rewrites:
+        trail.body = _rewritten_body(trail.body, rewrites)
+    if redaction_failed(trail.decisions):
+        trail.body = None
 
 
 def _rewritten_body(
@@ -1043,6 +1117,16 @@ async def prepare_for_dispatch(
             # Routing sent it somewhere nobody serves. Raised as the shared error so each surface
             # renders it in its own envelope rather than each checking for itself.
             raise GeminiHTTPError(404, f"Model '{canonical.model}' not found.", "NOT_FOUND")
+    elif embed is not None:
+        # **An embedding runs the steps that are about the text** (`TEXT_ONLY_STEPS`), which since
+        # 2026-08-27 is the `pii_filter`. It used to run nothing at all: this branch did not exist,
+        # so a use case that had switched on redaction embedded its callers' text unredacted and
+        # stored it unredacted, on a control the console shows per use case and not per verb.
+        #
+        # Here rather than at each embedding route, for the reason this whole function exists: a
+        # rule written at a surface is a rule the next surface writes differently, and there are
+        # already two of them plus a batch verb.
+        embed = await run_pipeline_over_texts(request, embed, trail)
 
     served = canonical.model if canonical is not None else (embed.model if embed else "")
     declaration = await check_declaration(
