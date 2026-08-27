@@ -27,7 +27,7 @@ import asyncio
 import httpx
 import pytest
 
-from .conftest import GATEWAY_URL
+from .conftest import GATEWAY_URL, LOCAL_CHAT_MODEL_ID
 from .governed import CHAT_MODEL, EMBED_MODEL, GEMINI, MOCK_MODEL, Governed
 
 pytestmark = pytest.mark.integration
@@ -242,7 +242,11 @@ async def test_the_limit_holds_on_both_surfaces(governed: Governed, surface: str
         first = await governed.generate(_body(), model=MOCK_MODEL)
         second = await governed.generate(_body(), model=MOCK_MODEL)
     else:
-        payload = {"request": {"parts": [{"text": "hi"}]}, "model_id": 9001, "maxTokens": 8}
+        payload = {
+            "request": {"parts": [{"text": "hi"}]},
+            "model_id": LOCAL_CHAT_MODEL_ID,
+            "maxTokens": 8,
+        }
         first = await governed.kira("/chat", payload)
         second = await governed.kira("/chat", payload)
 
@@ -389,7 +393,11 @@ async def test_the_budget_holds_on_both_surfaces(governed: Governed, surface: st
         first = await governed.generate(_body(), model=MOCK_MODEL)
         second = await governed.generate(_body(), model=MOCK_MODEL)
     else:
-        payload = {"request": {"parts": [{"text": "hi"}]}, "model_id": 9001, "maxTokens": 8}
+        payload = {
+            "request": {"parts": [{"text": "hi"}]},
+            "model_id": LOCAL_CHAT_MODEL_ID,
+            "maxTokens": 8,
+        }
         first = await governed.kira("/chat", payload)
         second = await governed.kira("/chat", payload)
 

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+import urllib.error
+import urllib.request
 import uuid
 from collections.abc import AsyncIterator
 
@@ -33,6 +36,57 @@ MANAGEMENT_DB = "postgresql+psycopg://aira:aira-local@localhost:5432/aira_mgmt"
 #: path for this layer, and `test_local_model_measurements_agree.py` is what keeps the *other*
 #: seed equal to this one.
 LOCAL_CHAT_MODEL_ID = seed_local_catalog.CHAT_NUMERIC_ID
+
+#: And the embedding model's, for the same reason and from the same owner.
+#:
+#: Added 2026-08-26 with the sweep that found twenty-one typed copies of the *chat* id. `9002` had
+#: not moved, so every literal of it was still correct — which is the only difference between it
+#: and the number beside it, and not a difference anybody would notice on the day it changed.
+LOCAL_EMBED_MODEL_ID = seed_local_catalog.EMBED_NUMERIC_ID
+
+
+def pytest_report_header(config: object) -> list[str]:  # noqa: ARG001
+    """Say what `/readyz` thinks **before** the first test, not after forty of them.
+
+    `LESSONS.md` §1 records this exact discriminator being found the hard way for the browser
+    suite: *"Ask the health endpoint what it thinks before reading a failure as a defect — this
+    project built one that distinguishes degraded from down precisely so that question has an
+    answer, and it is the cheapest discriminator between 'the code is wrong' and 'the machine is
+    missing a part'."* The lesson was written down and the layer that actually calls a model never
+    got the check.
+
+    It cost an hour on 2026-08-26. `test_diagnostics.py` stops `aira-ollama` on purpose and starts
+    it again in a `finally`; a run interrupted between the two leaves the container down, and every
+    later test then fails with `502 Upstream error: ConnectError` — a symptom that points at the
+    gateway, the adapter and the code that was just changed, in that order, and at none of them
+    correctly. `/readyz` had said `unreachable: local` the whole time.
+
+    **Reported, never a refusal.** A stack brought up without the `demo` profile has no local model
+    and is a supported way to run the rest of this layer — the tests that need one skip themselves.
+    Failing here would be a check that cries wolf on a supported path, which `LESSONS.md` §3 says
+    is a check nobody reads on the day it is right. A header line is enough: it puts the answer
+    above the failures instead of leaving it to be inferred from them.
+    """
+    try:
+        with urllib.request.urlopen(f"{GATEWAY_URL}/readyz", timeout=10) as answer:
+            body = json.loads(answer.read())
+    except (urllib.error.URLError, TimeoutError, ValueError, OSError) as exc:
+        return [f"gateway /readyz: unreachable ({type(exc).__name__}) — is the stack up?"]
+
+    fallbacks = body.get("fallbacks") or {}
+    if not body.get("degraded") and not fallbacks:
+        return [f"gateway /readyz: ready, nothing degraded ({body.get('status')})"]
+    lines = [f"gateway /readyz: DEGRADED — {body.get('status')}"]
+    lines += [f"  {name}: {detail}" for name, detail in sorted(fallbacks.items())]
+    lines.append(
+        "  a failure below may be this rather than the code. `docker start aira-ollama` brings the "
+        "local model back;"
+    )
+    lines.append(
+        "  test_diagnostics.py stops it on purpose and restarts it in a `finally`, which an "
+        "interrupted run skips."
+    )
+    return lines
 
 
 async def wait_for_row(engine: AsyncEngine, sql: str, params: dict, timeout: float = 8.0):

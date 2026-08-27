@@ -62,76 +62,94 @@ WEIRD: list[str] = [
     "1e400",
 ]
 
-QUERIES: list[tuple[str, str]] = [
-    ("/v1beta/reporting", "from"),
-    ("/v1beta/reporting", "to"),
-    ("/v1beta/reporting", "breakdown"),
-    ("/v1beta/reporting", "use_case"),
-    ("/v1beta/anomalies", "cursor"),
-    ("/v1beta/anomalies", "use_case"),
-    ("/v1beta/traces", "cursor"),
-    ("/v1beta/traces", "use_case"),
-    ("/v1beta/traces", "outcome"),
-    ("/v1beta/traces", "credential"),
-    ("/v1beta/traces", "source_ip"),
-    ("/v1beta/traces", "subject"),
-    ("/v1beta/traces", "refusals_only"),
-    ("/v1beta/traces", "limit"),
-    ("/v1beta/traces", "mine"),
-]
+#: Paths whose **body** is swept elsewhere, with the file that does it. The two generation
+#: surfaces have vocabularies of their own and a file each; naming them here is what lets the
+#: completeness check below be an assertion rather than a comment.
+BODIES_ELSEWHERE: dict[str, str] = {
+    "/v1beta/models/{resource}": "test_no_silent_drop.py, test_edge_cases.py",
+    "/kira/api/external/chat": "test_kira_surface.py",
+    "/kira/api/external/embed": "test_kira_surface.py",
+    "/kira/api/external/streaming-chat": "test_kira_surface.py",
+}
 
-PATHS: list[str] = [
-    "/v1beta/usage/{}",
-    "/v1beta/traces/{}/payload",
-    "/v1beta/providers/{}/offerings",
-    "/v1beta/models/{}:check",
-    "/v1beta/suspensions/{}",
-]
 
 #: Bodies for the two POST routes that take a hand-written JSON object. The generation surfaces
 #: have their own vocabularies and their own files; these are the ones a console form fills in.
-BODIES: dict[str, list[Any]] = {
-    "/v1beta/suspensions": [
-        {},
-        {"target": "nope", "target_value": "x"},
-        {"target": "subject"},
-        {"target": "subject", "target_value": "x", "action": "quarantine"},
-        {"target": "subject", "target_value": "x", "action": "throttle"},
-        {"target": "subject", "target_value": "x", "minutes": -5},
-        {"target": "subject", "target_value": "x", "minutes": 10**30},
-        {"target": "subject", "target_value": "x", "minutes": True},
-        {"target": "subject", "target_value": "x", "throttle_rpm": "many"},
-        {"target": "subject", "target_value": "x", "throttle_rpm": 10**12},
-        {"target": "use_case", "target_value": "x" * 5000},
-        [1, 2],
-        "text",
-    ],
-    "/v1beta/models/mock-1:checkThinking": [
-        {},
-        {"levels": "not-a-list"},
-        {"levels": [1, 2, 3]},
-        {"levels": ["x" * 5000]},
-        {"modes": {"a": 1}},
-        [1, 2],
-        "text",
-    ],
-    "/v1beta/pipeline:dryRun": [
-        {},
-        {"pipeline": {}},
-        {"pipeline": {"steps": "not-a-list"}},
-        {"pipeline": {"steps": [{"type": "unknown_step"}]}},
-        {"pipeline": {"steps": [{"type": "injection_filter", "config": {"patterns": ["("]}}]}},
-        {"pipeline": {"steps": [{"type": "model_route", "config": {"categories": []}}]}},
-        {"pipeline": {"fallback_models": ["x"] * 500}},
-        {"use_case": "x" * 500},
-        [1, 2],
-        "text",
-    ],
+#: Hand-written bodies, keyed by the **template** the router publishes and carrying the concrete
+#: path to send them to. Keyed by the template so the completeness check above can compare this
+#: list against the document; a concrete path would never match `{model}` and the comparison would
+#: report every entry as stale.
+BODIES: dict[str, tuple[str, list[Any]]] = {
+    "/v1beta/suspensions": (
+        "/v1beta/suspensions",
+        [
+            {},
+            {"target": "nope", "target_value": "x"},
+            {"target": "subject"},
+            {"target": "subject", "target_value": "x", "action": "quarantine"},
+            {"target": "subject", "target_value": "x", "action": "throttle"},
+            {"target": "subject", "target_value": "x", "minutes": -5},
+            {"target": "subject", "target_value": "x", "minutes": 10**30},
+            {"target": "subject", "target_value": "x", "minutes": True},
+            {"target": "subject", "target_value": "x", "throttle_rpm": "many"},
+            {"target": "subject", "target_value": "x", "throttle_rpm": 10**12},
+            {"target": "use_case", "target_value": "x" * 5000},
+            [1, 2],
+            "text",
+        ],
+    ),
+    "/v1beta/models/{model}:checkThinking": (
+        "/v1beta/models/mock-1:checkThinking",
+        [
+            {},
+            {"levels": "not-a-list"},
+            {"levels": [1, 2, 3]},
+            {"levels": ["x" * 5000]},
+            {"modes": {"a": 1}},
+            [1, 2],
+            "text",
+        ],
+    ),
+    "/v1beta/pipeline:dryRun": (
+        "/v1beta/pipeline:dryRun",
+        [
+            {},
+            {"pipeline": {}},
+            {"pipeline": {"steps": "not-a-list"}},
+            {"pipeline": {"steps": [{"type": "unknown_step"}]}},
+            {"pipeline": {"steps": [{"type": "injection_filter", "config": {"patterns": ["("]}}]}},
+            {"pipeline": {"steps": [{"type": "model_route", "config": {"categories": []}}]}},
+            {"pipeline": {"fallback_models": ["x"] * 500}},
+            {"use_case": "x" * 500},
+            [1, 2],
+            "text",
+        ],
+    ),
 }
 
 #: Not JSON at all. `await request.json()` raises a `ValueError`, which is a 400 everywhere it is
 #: caught and a 500 everywhere it is not.
 UNPARSEABLE: list[bytes] = [b"{", b"not json", b"\xff\xfe", b'{"a": Infinity}']
+
+
+#: Methods a sweep may send blind. A `POST` carries a body whose vocabulary decides what is wrong,
+#: which is what `BODIES` is for; a `GET` or a `DELETE` is fully described by its parameters.
+_READ_METHODS = frozenset({"GET", "DELETE"})
+
+
+def _concrete(path: str, names: list[str], value: str) -> str | None:
+    """``path`` with every path parameter filled in, or ``None`` where the value cannot be one.
+
+    An empty or blank segment does not address the route at all — the request 404s on a path that
+    is not the one under test — so it is skipped rather than reported as a pass.
+    """
+    if not names:
+        return path
+    if not value.strip() or "/" in value:
+        return None
+    for name in names:
+        path = path.replace("{" + name + "}", value)
+    return path
 
 
 def _client() -> TestClient:
@@ -149,49 +167,108 @@ async def _catalogue(client: TestClient) -> None:
         await session.commit()
 
 
-def test_the_sweep_reaches_the_endpoints_it_names() -> None:
-    """A guard on the guard: a sweep whose requests all miss their route passes by testing nothing,
-    and this repository has shipped two guards that could not fail (`LESSONS.md` §1).
+def _served(client: TestClient) -> dict[str, dict[str, Any]]:
+    """The routes the application actually publishes, from the document the router produces.
 
-    Asked of the **published document** rather than of a response, because a plain request to any
-    of these can legitimately answer 404 for a reason of its own — a model that is not catalogued,
-    a suspension that does not exist. What must not happen is that the path is not served at all.
-    `/openapi.json` is the artefact the router produces, which is the guard this project prefers
-    over one that reads the source (`LESSONS.md` §1).
+    Read from `/openapi.json` rather than from a list in this file, and that is the correction this
+    sweep needed. It carried three hand-written lists of paths and parameters under a docstring
+    promising that *"the next endpoint is covered by it on the day it is added rather than on the
+    day somebody remembers"* — which was the one thing it could not do. Checked on 2026-08-26
+    against the served document: `/v1beta/register` was not swept at all, nor `traces`'
+    `flagged_only` and `tools_only`, nor `anomalies`' `limit`, nor the `provider`/`publisher`/
+    `region` trio that both model checks take, nor `GET /v1beta/models/{model}`, nor the `DELETE`
+    on a suspension. Seven gaps, in the file whose whole argument is that a per-field test cannot
+    see what a sweep can — **a hand-written list with no counterpart**, which is the failure
+    `LESSONS.md` §1 records six instances of.
+
+    Deriving it also removes the guard-on-the-guard this file used to need: a sweep that asks the
+    router which routes exist cannot ask about a route that does not.
+    """
+    document: dict[str, dict[str, Any]] = client.get("/openapi.json").json()["paths"]
+    return document
+
+
+def _parameters(spec: dict[str, Any], where: str) -> list[str]:
+    return [p["name"] for p in (spec.get("parameters") or []) if p.get("in") == where]
+
+
+def test_the_sweep_reaches_more_than_a_handful_of_routes() -> None:
+    """A guard on the guard, in the only form still worth having: a document that came back empty
+    would make every sweep below pass by asking nothing, and this repository has shipped two
+    guards that could not fail (`LESSONS.md` §1)."""
+    with _client() as client:
+        served = _served(client)
+
+    assert len(served) > 20, f"the router published {len(served)} paths; the sweep asks about those"
+    assert "/v1beta/register" in served, "a sanity anchor on a route added after this file"
+
+
+def test_every_post_body_is_swept_here_or_named_somewhere_else() -> None:
+    """The counterpart, in both directions — the answer this project has reached six times.
+
+    A body this file does not sweep and no other file claims is a body nobody sends a wrong value
+    to; a name here for a route that no longer exists is a claim about a path that is gone. Bodies
+    cannot be derived from the document the way a parameter can — what is *wrong* for one depends
+    on its vocabulary — so this is the list that stays hand-written, and it is the list that gets
+    the comparison.
     """
     with _client() as client:
-        served = set(client.get("/openapi.json").json()["paths"])
+        served = _served(client)
 
-    named = {path for path, _ in QUERIES}
-    # The two POST paths carry a resource in them, so they are matched by their template.
-    named |= {"/v1beta/suspensions", "/v1beta/pipeline:dryRun"}
-    unrouted = {path for path in named if path not in served}
+    # **Every** `POST`, not only those the document gives a `requestBody`. A route that reads
+    # `Request` directly — which is how every hand-written body on this surface is read, and the
+    # reason this file exists — declares no schema, so keying on `requestBody` would have matched
+    # nothing and passed while claiming to compare two lists.
+    posts = {path for path, methods in served.items() if "post" in methods}
+    claimed = set(BODIES) | set(BODIES_ELSEWHERE)
 
-    assert not unrouted, f"the sweep asks about routes that do not exist: {sorted(unrouted)}"
-    assert any(":checkThinking" in path for path in served), "the thinking check moved or went"
+    assert not posts - claimed, (
+        f"these routes take a body nobody sweeps: {sorted(posts - claimed)}. Add cases to "
+        "`BODIES`, or name the file that already does it in `BODIES_ELSEWHERE`."
+    )
+    assert not claimed - posts, (
+        f"these are claimed to take a body and the router publishes none: {sorted(claimed - posts)}"
+    )
 
 
 def test_no_query_parameter_answers_with_a_server_error() -> None:
-    failures: list[tuple[str, str, str, int]] = []
+    failures: list[tuple[str, str, str, str, int]] = []
     with _client() as client:
-        for path, parameter in QUERIES:
-            for value in WEIRD:
-                response = client.get(path, params={parameter: value})
-                if response.status_code >= 500:
-                    failures.append((path, parameter, value, response.status_code))
+        for path, methods in sorted(_served(client).items()):
+            for method, spec in methods.items():
+                if method.upper() not in _READ_METHODS:
+                    continue
+                query = _parameters(spec, "query")
+                if not query:
+                    continue
+                for value in WEIRD:
+                    concrete = _concrete(path, _parameters(spec, "path"), value)
+                    if concrete is None:
+                        continue
+                    for name in query:
+                        response = client.request(method.upper(), concrete, params={name: value})
+                        if response.status_code >= 500:
+                            failures.append((method, path, name, value, response.status_code))
     assert not failures, failures
 
 
 def test_no_path_parameter_answers_with_a_server_error() -> None:
-    failures: list[tuple[str, str, int]] = []
+    failures: list[tuple[str, str, str, int]] = []
     with _client() as client:
-        for template in PATHS:
-            for value in WEIRD:
-                if not value.strip():
+        for path, methods in sorted(_served(client).items()):
+            for method, spec in methods.items():
+                if method.upper() not in _READ_METHODS:
                     continue
-                response = client.get(template.format(value))
-                if response.status_code >= 500:
-                    failures.append((template, value, response.status_code))
+                names = _parameters(spec, "path")
+                if not names:
+                    continue
+                for value in WEIRD:
+                    concrete = _concrete(path, names, value)
+                    if concrete is None:
+                        continue
+                    response = client.request(method.upper(), concrete)
+                    if response.status_code >= 500:
+                        failures.append((method, path, value, concrete, response.status_code))
     assert not failures, failures
 
 
@@ -199,7 +276,7 @@ async def test_no_hand_written_body_answers_with_a_server_error() -> None:
     failures: list[tuple[str, Any, int, str]] = []
     with _client() as client:
         await _catalogue(client)
-        for path, bodies in BODIES.items():
+        for path, bodies in BODIES.values():
             for body in bodies:
                 response = client.post(path, json=body)
                 if response.status_code >= 500:
@@ -212,7 +289,7 @@ async def test_a_body_that_is_not_json_answers_with_a_refusal(raw: bytes) -> Non
     failures: list[tuple[str, int, str]] = []
     with _client() as client:
         await _catalogue(client)
-        for path in BODIES:
+        for path, _bodies in BODIES.values():
             response = client.post(path, content=raw, headers={"content-type": "application/json"})
             if response.status_code >= 500:
                 failures.append((path, response.status_code, response.text[:200]))

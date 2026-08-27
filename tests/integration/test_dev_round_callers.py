@@ -19,7 +19,7 @@ import asyncio
 import httpx
 import pytest
 
-from .conftest import GATEWAY_URL
+from .conftest import GATEWAY_URL, LOCAL_CHAT_MODEL_ID
 from .governed import CHAT_MODEL, EMBED_MODEL, GEMINI, KIRA, MOCK_MODEL, Governed
 
 pytestmark = pytest.mark.integration
@@ -35,7 +35,12 @@ def _body(text: str = "Say OK.", **config: object) -> dict:
 
 
 def _kira_body(text: str = "Say OK.", **fields: object) -> dict:
-    return {"request": {"parts": [{"text": text}]}, "model_id": 9001, "maxTokens": 8, **fields}
+    return {
+        "request": {"parts": [{"text": text}]},
+        "model_id": LOCAL_CHAT_MODEL_ID,
+        "maxTokens": 8,
+        **fields,
+    }
 
 
 def _never_500(response: httpx.Response, label: str) -> None:
@@ -133,7 +138,11 @@ async def test_the_path_selector_reaches_the_same_use_case(
     body = (
         _body()
         if surface == "gemini"
-        else {"request": {"parts": [{"text": "hi"}]}, "model_id": 9001, "maxTokens": 8}
+        else {
+            "request": {"parts": [{"text": "hi"}]},
+            "model_id": LOCAL_CHAT_MODEL_ID,
+            "maxTokens": 8,
+        }
     )
     async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=90.0) as client:
         response = await client.post(path, json=body, headers=governed.headers())

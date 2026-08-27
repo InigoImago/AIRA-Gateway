@@ -19,7 +19,7 @@ import base64
 import httpx
 import pytest
 
-from .conftest import GATEWAY_URL
+from .conftest import GATEWAY_URL, LOCAL_CHAT_MODEL_ID
 from .governed import CHAT_MODEL, EMBED_MODEL, GEMINI, KIRA, MOCK_MODEL, Governed
 
 pytestmark = pytest.mark.integration
@@ -137,7 +137,12 @@ async def test_a_refusal_is_recorded_on_both_surfaces_alike(
         response = await governed.generate(_body())
     else:
         response = await governed.kira(
-            "/chat", {"request": {"parts": [{"text": "hi"}]}, "model_id": 9001, "maxTokens": 8}
+            "/chat",
+            {
+                "request": {"parts": [{"text": "hi"}]},
+                "model_id": LOCAL_CHAT_MODEL_ID,
+                "maxTokens": 8,
+            },
         )
 
     assert response.status_code == 400, response.text[:200]
@@ -222,7 +227,7 @@ async def test_a_document_is_refused_the_same_way_on_the_kira_surface(
                     },
                 ]
             },
-            "model_id": 9001,
+            "model_id": LOCAL_CHAT_MODEL_ID,
             "maxTokens": 8,
         },
     )
@@ -257,7 +262,7 @@ async def test_a_declared_thinking_mode_is_served_on_the_kira_surface(
         "/chat",
         {
             "request": {"parts": [{"text": "hi"}]},
-            "model_id": 9001,
+            "model_id": LOCAL_CHAT_MODEL_ID,
             "maxTokens": 64,
             "thinking": {"mode": mode},
         },
@@ -280,7 +285,7 @@ async def test_an_undeclared_thinking_mode_is_refused_by_name(governed: Governed
         "/chat",
         {
             "request": {"parts": [{"text": "hi"}]},
-            "model_id": 9001,
+            "model_id": LOCAL_CHAT_MODEL_ID,
             "maxTokens": 32,
             "thinking": {"mode": "auto"},
         },
@@ -302,7 +307,7 @@ async def test_a_thinking_model_is_refused_when_the_use_case_may_not_call_it(
         "/chat",
         {
             "request": {"parts": [{"text": "hi"}]},
-            "model_id": 9001,
+            "model_id": LOCAL_CHAT_MODEL_ID,
             "maxTokens": 32,
             "thinking": {"mode": "low"},
         },
@@ -549,7 +554,7 @@ async def test_a_caller_who_hangs_up_mid_stream_is_still_recorded(
         if surface == "gemini"
         else {
             "request": {"parts": [{"text": "Write a long essay about governance."}]},
-            "model_id": 9001,
+            "model_id": LOCAL_CHAT_MODEL_ID,
             "maxTokens": 400,
         }
     )
@@ -596,7 +601,7 @@ async def test_both_streams_record_a_hang_up_with_the_same_status(governed: Gove
             f"{KIRA}/streaming-chat",
             {
                 "request": {"parts": [{"text": "Write a long essay about governance."}]},
-                "model_id": 9001,
+                "model_id": LOCAL_CHAT_MODEL_ID,
                 "maxTokens": 400,
             },
         ),
