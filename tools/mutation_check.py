@@ -105,6 +105,7 @@ MONEY = "libs/tests/test_money.py"
 COST = "gateway/tests/test_cost_budgets.py"
 CATALOG = "management/backend/tests/test_catalog.py"
 IDENTITY = "management/backend/tests/test_an_identity_is_set_once.py"
+CONSOLE_ROLES = "tools/tests/test_the_console_and_the_server_agree_about_roles.py"
 PIPELINE = "gateway/tests/test_pipeline_engine.py gateway/tests/test_pipeline_routes.py"
 CLASSIFIERS = "gateway/tests/test_pipeline_classifiers.py gateway/tests/test_pipeline_engine.py"
 PII = "gateway/tests/test_pipeline_pii_filter.py"
@@ -5756,6 +5757,42 @@ MUTATIONS = [
         'return 2, [f"error: {exc}"]',
         "return 0, []",
         "tools/tests/test_a_config_is_checked_before_it_is_deployed.py",
+    ),
+    # ---- the console asks the server's question, in the server's words (2026-08-27) ------
+    Mutation(
+        "CR1",
+        "a console role list that drifts from the server's is caught",
+        "management/frontend/src/app/core/auth/roles.ts",
+        "const INCIDENT_ROLES = ['it-security', 'global-admin'];",
+        "const INCIDENT_ROLES = ['it-security', 'global-admin', 'it-steuerung'];",
+        CONSOLE_ROLES,
+    ),
+    Mutation(
+        "CR2",
+        "a role the server has never heard of is caught, not silently matched by nobody",
+        "management/frontend/src/app/core/auth/roles.ts",
+        "const SECURITY_ROLES = ['it-security', 'global-admin'];",
+        "const SECURITY_ROLES = ['it-securty', 'global-admin'];",
+        CONSOLE_ROLES,
+    ),
+    Mutation(
+        "CR3",
+        "a component that decides authority from a role slug of its own is caught",
+        "management/frontend/src/app/features/models/model-catalog.ts",
+        "  protected readonly canEdit = computed(() => mayCatalogue(this.me()?.roles));",
+        "  protected readonly canEdit = computed("
+        "() => this.me()?.roles.includes('global-admin') ?? false);",
+        CONSOLE_ROLES,
+    ),
+    Mutation(
+        "CR4",
+        "a role literal in a **template** is caught as well as one in a component",
+        "management/frontend/src/app/app.html",
+        '  @if (hasOversight()) {\n    <a\n      class="aira-nav__item"\n'
+        '      routerLink="/register"',
+        "  @if (hasOversight() || me()?.roles?.includes('it-security')) {\n"
+        '    <a\n      class="aira-nav__item"\n      routerLink="/register"',
+        CONSOLE_ROLES,
     ),
     # ---- an identity that crosses a boundary is set once (2026-08-27) --------------------
     Mutation(

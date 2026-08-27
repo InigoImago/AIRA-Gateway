@@ -5,7 +5,65 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
-## Pen-testing the control plane (2026-08-27)
+## Every view of the console, checked the same way (2026-08-27)
+
+The third plane, and the question has to be translated before it can be asked. A console enforces
+nothing — the server decides, every time, and a disagreement here shows up as a refusal rather than
+as access. So *"wrong roles, no roles, invented security"* becomes: **does each view decide what to
+offer from the system that decides what happens, and does every load say what became of it?**
+
+Twenty-five components over nine routes. **The mechanical half came back clean**: no signal
+rendered in a template without its call, no `[(ngModel)]`, no mutable component state that is not a
+signal — the three zoneless defects `FRD-203` §4 names, each of which only a browser would show.
+And every authority switch already reads the server's own answer: `permissions.can_admin` /
+`can_manage` / `is_member` / `may_call` per use case, `me.roles`, `me.may_test`, and `may_run` per
+use case from `/test-attribution`.
+
+**Four findings, and the first two are one shape.** `core/auth/roles.ts` exists because of a
+measured defect — on 2026-08-07 `it-steuerung` could stop traffic in the gateway while Management
+refused it a global rule, two planes and two answers — and its own first paragraph warns that *"a
+console that restates the list a third time is the same defect with a longer fuse: nothing fails
+when the server's list changes."* Two components restated one anyway (`model-catalog.canEdit`,
+`installation-budget-card.canManage`), and **nothing compared the file's four lists with the
+server's** — the warning had no counterpart, which is `LESSONS.md`'s *a named bound that nothing
+reads*. They agreed that day, which is precisely what makes it worth a guard rather than a
+correction.
+
+Third: `app.hasRole(role: string)` was called by nothing — not by its component, not by its
+template, not by any file. An unreachable helper is a rule the code claims and does not have, and
+this one was the **generic** role check sitting beside two that correctly go through `roles.ts`.
+The next contributor reaching for the obvious-looking one writes the fourth copy.
+
+Fourth: `smoke-tests.refreshRuns()` swallowed two load failures, alone among the loads on that
+screen — the two beside it in the same `ngOnInit` each report through `PageFeedback`, one with a
+403 branch of its own. It is called from `ngOnInit`, so a failed **first** load left the Runs and
+Results tabs empty with nothing saying why — and empty is what that screen looks like before
+anybody has run anything. *An empty state that states the wrong reason is worse than one that
+states none*, written in `reporting.py` about the other plane and true here.
+
+Plus two justifications that stated a **retired** rule. `mayRun` explained itself with `FRD-504`'s
+*whoever may call a model may test one*, and `mayTest` named `MayTestModels` asking for
+`view_usecase` — the server withdrew both on 2026-08-16, and `MayRunTests` says so in as many
+words. Both gates were right, because both ask the server; the reason beside them described the
+rule the server no longer has, which is the more dangerous half — nothing fails, and the next
+reader reasons from it.
+
+### The new test failed its own first audit
+
+`test_the_console_and_the_server_agree_about_roles.py` reads `roles.ts`, compares each list against
+`aira_common.roles` and against `IsGlobalAdmin`/`IsITSecurity`, checks every role it names exists,
+and refuses a role literal anywhere else in the console — `.html` as well as `.ts`, because a
+`@if (hasRole('it-security'))` in a template is the same decision in the same console. 4 mutations
+(**649**), each observed `caught`, including the template one.
+
+The DOM test for the silent loads is not one the harness can run, so it was broken by hand — and
+**it did not go red.** The stub failed both calls at once and the assertion only looked for
+"unreachable", which the *figures* also say, so the runs handler could be put back to swallowing
+its error with the test still green. A test that cannot tell which of two calls reported is a test
+of neither. The stubs now fail separately and each assertion names its own source; measured again:
+947 pass with the fix, exactly one fails without it.
+
+
 
 The same treatment for Management: every surface, every role, and none. Real Keycloak tokens rather
 than fixtures, so the roles arrive through the `groups` claim and the configured mapping

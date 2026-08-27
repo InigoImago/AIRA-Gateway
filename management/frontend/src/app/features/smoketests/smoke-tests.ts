@@ -72,16 +72,22 @@ export class SmokeTests implements OnInit {
 
   private readonly me = signal<{ roles: string[] } | null>(null);
   /**
-   * Whether this caller can start a run at all — which is **membership**, not a role.
+   * Whether this caller can start a run at all — **the server's answer for the use case they
+   * picked**, never a list this screen filters.
    *
-   * The first version asked for an incident role, and the feature was unusable: running needs a
-   * use case to attribute the traffic to, and IT Security is deliberately a member of nothing
-   * (`ADR-0007`). No user could satisfy both. Running the catalogue is making requests; whoever
-   * may call a model may test one. Writing the catalogue stays with IT Security.
+   * `may_run` comes from `/test-attribution`, which asks two things per use case: will the gateway
+   * accept this caller for it, and does its pipeline declare a start model. Both are answers only
+   * the server has, and reading them per use case is what keeps this screen from offering a run
+   * that 403s (`FRD-206`).
    *
-   * What decides it is whether the **gateway** will accept this caller for the use case they
-   * picked, and whether that use case's pipeline declares a start model — both the server's
-   * answers, not a list this screen filters.
+   * **This docstring said "membership, not a role" until 2026-08-27**, and quoted `FRD-504`'s
+   * *whoever may call a model may test one* as the reason. The server retired that sentence on
+   * 2026-08-16 — `MayRunTests` says so in as many words — because a run stopped being about a
+   * model the installation had approved and became a hundred prompts through somebody's pipeline,
+   * spending their budget: a decision **about** the use case rather than work inside it, and so an
+   * administrator's. The gate here was already right, because it asks the server; the reason
+   * beside it described the rule the server no longer has, which is the more dangerous half —
+   * nothing fails, and the next reader reasons from it.
    */
   protected readonly mayRun = computed(() => this.chosen()?.may_run === true);
 
@@ -273,14 +279,29 @@ export class SmokeTests implements OnInit {
     this.refreshRuns();
   }
 
+  /**
+   * The run history and the per-model figures — **and what happens when they cannot be had**.
+   *
+   * Both swallowed their failure until 2026-08-27, alone among the loads on this screen: the two
+   * beside them in `ngOnInit` each report through `PageFeedback`, one of them with a 403 branch of
+   * its own. This is called from `ngOnInit` too, so a failed **first** load left the Runs and
+   * Results tabs empty with nothing saying why — and empty is what this screen looks like before
+   * anybody has run anything. *An empty state that states the wrong reason is worse than one that
+   * states none: the reader concludes the recording is broken, and then distrusts every figure on
+   * the page* — written in `reporting.py` about the other plane, and true here.
+   *
+   * One banner, not two, because `PageFeedback` is the page's single voice: if both calls fail the
+   * reader is told once, about the thing they were looking at.
+   */
   protected refreshRuns(): void {
     this.service.testRuns().subscribe({
       next: (rows) => this.runs.set(rows),
-      error: () => undefined,
+      error: (response: unknown) => this.feedback.fail(response, 'Could not load the runs.'),
     });
     this.service.testStats().subscribe({
       next: (rows) => this.stats.set(rows),
-      error: () => undefined,
+      error: (response: unknown) =>
+        this.feedback.fail(response, 'Could not load the figures per model.'),
     });
   }
 

@@ -158,6 +158,13 @@ reading code.
   the grouping and the panel were covered and the step that fills them was not. A missing map entry
   at least leaves a gap somebody can see; an unpassed parameter looks exactly like a call.
 
+- **A test that cannot tell which of two calls answered is a test of neither.** Written while
+  fixing two silent loads on one screen: the stub broke both, and the assertion looked for a word
+  the *other* one also produced. Green, and it stayed green when the fix under test was reverted —
+  found only by breaking it on purpose, which is the whole reason this project does that. Where a
+  behaviour has two sources, **give each its own distinguishable answer and assert the one you
+  mean**; a shared substring is a passing test with no subject.
+
 - **An identity that crosses a system boundary is set once.** Two planes, two databases, one
   string: a use case's `slug` and a model's `name` are editable fields on the Management side and
   **primary keys** on the gateway side, arriving over Kafka. A rename therefore renames nothing.
