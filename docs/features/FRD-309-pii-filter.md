@@ -39,23 +39,8 @@ trusts.
 - Guaranteeing that nothing gets through. **The control is exactly as good as the model behind
   it** — measured against `qwen3:0.6b`, which replaced one name and left another. That is why the
   field says *trusted model* and why the step is opt-in per use case.
-- **Embeddings.** `:embedContent` and `/kira/api/external/embed` run **no pipeline at all**, so a
-  use case with this step configured embeds the caller's text unredacted and stores it unredacted.
-  Inherited rather than decided: `FRD-300` listed *"Embeddings filtering"* as a non-goal when the
-  pipeline was a filter and a router, and this step arrived later into the same branch —
-  `prepare_for_dispatch` runs the pipeline `if canonical is not None`, and an embedding request
-  carries no canonical generation.
-
-  Written down here because the console shows one switch per use case and not one per verb, so a
-  reader who has enabled this step has no way to learn where it does not reach. Measured on
-  2026-08-27 against the hermetic app: the same personal text, the same use case, redacted on
-  `:generateContent` and served untouched on both embedding verbs.
-
-  Closing it is a **feature, not a repair**, and the reason is the shape of the request rather than
-  the wiring: an embedding call carries *N* texts (`FRD-113` FR-6), so applying the step means *N*
-  redactor calls per request — a cost, a latency and a batching decision that belongs to whoever
-  owns the scope. `docs/GAP-ANALYSIS.md` carries it as an open item; the pinning test is
-  `gateway/tests/test_an_embedding_runs_no_pipeline.py`.
+- Detecting personal data in an **attachment**, including one sent with an embedding. A name
+  inside a PDF survives this step — `FRD-110`'s stated blind spot, not a new one.
 
 ## 3. Functional Requirements
 
@@ -65,6 +50,11 @@ trusts.
   attachments and tool parts are kept.
 - **FR-3 The rewritten prompt is what is stored.** `request_logs.request_payload` carries the
   rewritten body; where the substitution cannot be applied the payload is **dropped**, never kept.
+  Both halves of that, since 2026-08-27: a body whose text cannot be matched is dropped
+  (`_rewritten_body`), **and so is one where the redaction never happened** — measured with an
+  unreachable redactor, a refused request on two verbs kept the caller's name and address on a row
+  nobody was served. `on_failure: allow` drops it as well: that flag says keep *serving*, and
+  keeping *storing* is a second decision nobody made.
 - **FR-4 A rewrite that cannot be trusted is a failure, not a redaction.** Empty, or far shorter
   than its input — a summary, a refusal or a preamble applied would send the model a different
   question than the caller asked, with a 200.
@@ -77,6 +67,21 @@ trusts.
   tool-call answer is recorded (`action: withheld`) rather than passed over.
 - **FR-8** The step's model call is audited and billed as `pipeline:pii_filter` with `requests=0`
   (`FRD-125b`).
+- **FR-9 It reaches an embedding too** (2026-08-27). `:embedContent`, `batchEmbedContents` and the
+  KIRA surface's `/embed` run the steps that are about the **text itself**; a step about the
+  *answer* still does not, and that distinction is `TEXT_ONLY_STEPS`. A router chooses a model to
+  generate with and an embedding is not generated; an injection filter is about a prompt that will
+  be **obeyed** and an embedding never is — blocking there would refuse a corpus for quoting the
+  phrases it exists to index.
+- **FR-10 Every text of a batch is offered to the redactor, and one that cannot be redacted refuses
+  the whole request.** A batch carries *N* texts (`FRD-113` FR-6) and each is its own model call,
+  because FR-4's check is per text and one call over a joined batch could not make it. Half a batch
+  of vectors is not an answer: serving the texts that redacted while dropping the one that did not
+  would send exactly the content this step exists to withhold, with a 200.
+- **FR-11 A batch leaves one decision and one priced row.** The decision carries `texts` and
+  `changed` — counts about the request's shape, never its content, which is what admits them to
+  `SAFE_DECISION_KEYS`. The *N* calls are summed into one `pipeline:pii_filter` row: the same
+  figure of money either way, and a request whose own row is not buried under 256 others.
 
 ## 4. Design
 

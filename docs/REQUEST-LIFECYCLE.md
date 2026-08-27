@@ -173,13 +173,17 @@ so an injection inside a PDF is invisible to every step here. Neither is a bug; 
 difference between "the filter ran" and "the prompt was checked", and a reader who assumes the
 second has been misled by omission.
 
-**And no verb but a generation one runs the pipeline at all.** `:embedContent` and
-`/kira/api/external/embed` go straight past this whole stage — the pipeline runs where there is a
-canonical *generation* to run it over, and an embedding request is not one. `FRD-300` recorded that
-as a non-goal when the steps were a filter and a router; `pii_filter` arrived later into the same
-branch, so a use case that has switched on redaction embeds its callers' text unredacted and stores
-it unredacted. Stated here because the console shows one switch per use case and not one per verb.
-Open: [`FRD-309` §2](features/FRD-309-pii-filter.md), [`docs/GAP-ANALYSIS.md`](GAP-ANALYSIS.md).
+**An embedding runs the steps that are about the text it carries, and not the others.** A step
+about the *answer* has nothing to act on — a router chooses a model to generate with, and an
+injection filter is about a prompt that will be **obeyed**, which an embedding never is. A step
+about the *text itself* applies exactly as it does to a prompt, so a `pii_filter` runs on
+`:embedContent`, `batchEmbedContents` and `/kira/api/external/embed`
+([`FRD-309`](features/FRD-309-pii-filter.md) FR-9). Every text of a batch is offered to the
+redactor and one that cannot be redacted refuses the whole request: half a batch of vectors is not
+an answer. Until 2026-08-27 an embedding ran **no** step at all, so a use case that had switched on
+redaction embedded and stored its callers' text untouched — `FRD-300` recorded embeddings as a
+non-goal when the steps were a filter and a router, and `pii_filter` arrived into the same branch
+later, inheriting a decision that was never made about it.
 
 There is no `allow_check` step: which models a use case may call is a property of the use case
 ([`FRD-308`](features/FRD-308-use-case-model-release.md)), checked as a dispatch condition at every

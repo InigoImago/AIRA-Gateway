@@ -79,7 +79,7 @@ answer first (a category may be named `c++`, which no word boundary can express)
 **whole-word** search that must match **exactly one**. A reply naming two has not answered, and
 gets the same honest outcome as a reply naming none.
 
-### Reported, not closed: an embedding runs no pipeline
+### Closed the same day: an embedding runs no pipeline
 
 `prepare_for_dispatch` runs the pipeline where there is a canonical *generation*, so
 `:embedContent` and `/kira/api/external/embed` run no steps at all. `FRD-300` recorded *"Embeddings
@@ -90,12 +90,58 @@ stored, and an embedding sends the same text to the same class of upstream and w
 same audit row. Measured: one use case, one `pii_filter`, the same sentence — redacted on
 `:generateContent`, sent and stored untouched on both embedding verbs, on both surfaces.
 
-Not closed here because closing it is a **feature**: an embedding carries *N* texts (`FRD-113`
-FR-6), so applying the step is *N* redactor calls per request — a cost, latency and batching
-decision that belongs to whoever owns the scope. What went in instead is the announcement it was
-missing: `FRD-309` §2, `docs/REQUEST-LIFECYCLE.md` §4, `docs/GAP-ANALYSIS.md` §3.9, and
-`test_an_embedding_runs_no_pipeline.py`, which fails if the behaviour changes **in either
-direction** so that a change has to be declared rather than noticed later.
+First written down and pinned, on the reading that closing it is a feature — an embedding carries
+*N* texts (`FRD-113` FR-6), so applying the step is *N* redactor calls per request, which is a
+cost, latency and batching decision. The owner's answer was that the control has to be there, so it
+is: `TEXT_ONLY_STEPS` (`FRD-309` FR-9 to FR-11).
+
+**A step about the text runs wherever text is sent; a step about the answer does not.** A router
+chooses a model to *generate* with and an embedding is not generated; an injection filter is about
+a prompt that will be **obeyed**, and an embedding never is — blocking there would refuse a corpus
+for quoting the phrases it exists to index. Only the `pii_filter` qualifies today, and the rule is
+a named set rather than an `if`, so a fourth step has to answer the question rather than inherit an
+answer, which is how this gap arrived in the first place.
+
+The steps are **the same objects** the generation path runs, evaluated over a one-message request
+per text: a stand-in more permissive than the thing it replaces is a defect this project has
+already paid for, and the redactor's failure rule, its `changed` test, its model, its instruction
+and its thinking all stay in one place. Every text is offered, a bounded eight at a time — a batch
+may carry 256 and `asyncio.gather` keeps them in the caller's order, which matters more here than
+anywhere else in that file because a redaction applied to the wrong text would be silent. One text
+that cannot be redacted refuses the whole request: half a batch of vectors is not an answer, and
+serving the texts that redacted while dropping the one that did not would send exactly the content
+the step exists to withhold, with a 200.
+
+Two shapes are deliberately *not* per text. The decision is **one** for the step, carrying `texts`
+and `changed` — counts about the request's shape and never its content, which is what admitted them
+to `SAFE_DECISION_KEYS`; a 256-entry column describing one step buries the fact somebody opened the
+row for. And the *N* model calls are summed into **one** priced `pipeline:pii_filter` row: the same
+figure of money, and a caller's own row not buried under 256 others.
+
+### And an older hole beside it, on both paths
+
+Closing the first turned up the second. `FRD-309` FR-3 promises *"where the substitution cannot be
+applied the payload is **dropped**, never kept"*, and only half of it was built: `_rewritten_body`
+drops a payload whose text it cannot **match**, and nothing dropped one where the redaction never
+**happened** — which is the commoner case by far.
+
+Measured with an unreachable redactor: `400 blocked_by_pipeline` on `:generateContent` and on
+`:embedContent`, nobody served, and `request_logs.request_payload` holding the caller's name and
+address on both rows. The same shape as F2 the day before — personal data kept in the audit row of
+a request nobody was served — arriving through the other door.
+
+`on_failure: allow` drops it too, and that is the part worth stating: the operator who set that
+flag chose to keep **serving** when the redactor is down. Keeping **storing** is a second decision,
+nobody made it, and one flag meaning both is how a control comes to do something nobody asked for.
+The decision row still records the step, the action and why, so the choice stays reviewable; what
+goes is the content the step exists to remove.
+
+Thirteen further mutations (**641**). Two survived their first run, and the second is the useful
+one: `_worst` — a batch reports the **least good** of its texts — was defended only by a
+single-text case, where the first evaluation *is* the failure. The case it exists for is
+`on_failure: allow` over a batch whose first text redacts and whose second cannot: taking the first
+would report `redacted`, nothing else on the row would say otherwise, and the payload carrying the
+text the redactor could not clean would be kept.
 
 ### What was measured, by group
 
@@ -114,9 +160,9 @@ direction** so that a change has to be declared rather than noticed later.
 | cross-use-case disclosure with real rows | 25 | as designed |
 | governance switches, budget, suspension, brute force | 20 | as designed |
 
-9 mutations (**631**), each observed `caught`. Two survived their first run and are the reason the
-harness exists: a property is only defended where a test looks, and the test for a redactor lived
-in the engine's file rather than the redactor's.
+9 mutations, each observed `caught`. Two survived their first run and are the reason the harness
+exists: a property is only defended where a test looks, and the test for a redactor lived in the
+engine's file rather than the redactor's.
 
 
 

@@ -205,26 +205,27 @@ where a reader would otherwise be confused, but explaining a drift is not the sa
 A live round found real instances of exactly this: two roles carrying stale memberships from
 declarations that no longer existed.
 
-### 3.9 A `pii_filter` does not reach an embedding — `FRD-309`
+### 3.9 ~~A `pii_filter` does not reach an embedding~~ — closed by `FRD-309` FR-9 (2026-08-27)
 
-`prepare_for_dispatch` runs the pipeline where there is a canonical *generation* to run it over, so
-`:embedContent` and `/kira/api/external/embed` run **no steps at all**. `FRD-300` recorded
-*"Embeddings filtering"* as a non-goal when the pipeline was an injection filter and a router —
-both about a prompt a model will answer, where the reasoning holds. `pii_filter` arrived into the
-same branch a fortnight later and it is not the same decision: its contract is about **where the
-caller's text goes and what is stored**, and an embedding sends the same text to the same class of
-upstream and writes it to the same audit row.
+Found and closed the same day. `prepare_for_dispatch` ran the pipeline where there was a canonical
+*generation*, so `:embedContent`, `batchEmbedContents` and the KIRA surface's `/embed` ran no steps
+at all — and a use case that had switched on redaction embedded its callers' text unredacted and
+stored it unredacted, on a control the console shows per use case and not per verb.
 
-Measured on 2026-08-27 against the hermetic app: one use case, one `pii_filter`, the same sentence —
-redacted on `:generateContent`, stored and sent untouched on both embedding verbs. The console shows
-one switch per use case and not one per verb, so an administrator who enabled it has no way to learn
-where it stops.
+Inherited rather than decided: `FRD-300` recorded *"Embeddings filtering"* as a non-goal when the
+pipeline was an injection filter and a router, both of which are about a prompt a model will
+answer. `pii_filter` arrived into the same branch a fortnight later and its contract is a different
+one — **where the caller's text goes and what is stored** — which is the same question for a text
+being embedded as for one being answered.
 
-Not closed here because closing it is a **feature**: an embedding request carries *N* texts
-(`FRD-113` FR-6), so applying the step is *N* redactor calls per request — a cost, latency and
-batching decision that belongs to whoever owns the scope. What exists instead is a guard,
-`gateway/tests/test_an_embedding_runs_no_pipeline.py`, which fails if the behaviour changes in
-either direction so that the change has to be announced rather than noticed later.
+Now `TEXT_ONLY_STEPS`: a step about the text runs wherever text is sent, a step about the answer
+does not. Every text of a batch is offered to the redactor, one that cannot be redacted refuses the
+whole request, and the step leaves one decision and one priced row rather than one per text.
+
+The fix turned up a second, older hole beside it, on **both** paths: FR-3 promises the payload is
+dropped where the substitution cannot be applied, and only the "cannot be matched" half was built.
+A redactor that simply **failed** left the caller's original in `request_logs` — on a request that
+was refused, so nobody was served and the database had it anyway.
 
 ---
 

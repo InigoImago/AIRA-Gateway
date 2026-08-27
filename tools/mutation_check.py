@@ -125,6 +125,7 @@ DIAGNOSTICS = "gateway/tests/test_diagnostics.py"
 PROVIDER_OFFERINGS = "gateway/tests/test_provider_offerings.py"
 RELEASE = "gateway/tests/test_use_case_model_release.py"
 DRYRUN = "gateway/tests/test_pipeline_dryrun.py"
+EMBED_PII = "gateway/tests/test_a_redactor_reaches_an_embedding.py"
 CSV_EXPORT = "gateway/tests/test_csv_export.py"
 THINKING = "gateway/tests/test_thinking.py gateway/tests/test_serving_options.py"
 RESPONSE_SCHEMA = "gateway/tests/test_response_schema.py gateway/tests/test_serving_options.py"
@@ -2169,8 +2170,11 @@ MUTATIONS = [
         "T8",
         "the decisions of a blocked pipeline survive the exception that blocked it",
         "gateway/src/aira_gateway/pipeline/engine.py",
+        # Widened when `run_over_texts` arrived beside `run` and the two now build their outcomes
+        # the same way: the anchor names which of them this property is about.
+        "            fallback_models=pipeline.fallback_models,\n"
         "            decisions=decisions if decisions is not None else [],",
-        "            decisions=[],",
+        "            fallback_models=pipeline.fallback_models,\n            decisions=[],",
         "gateway/tests/test_audit_completeness.py",
     ),
     # ---- reporting (FRD-601) --------------------------------------------------------------
@@ -2923,8 +2927,11 @@ MUTATIONS = [
         "Z6",
         "a model call the pipeline made leaves its own audit row",
         "gateway/src/aira_gateway/api/serving.py",
+        # Widened for the same reason as `T8`: `run_pipeline_over_texts` has the same `finally`,
+        # and `Z6b` below is that one's own entry rather than this one's second match.
+        "        # let `:embedContent` slip past the pre-dispatch gate.\n"
         "        await record_pipeline_calls(request, trail)",
-        "        pass",
+        "        # let `:embedContent` slip past the pre-dispatch gate.\n        pass",
         ACCOUNTING,
     ),
     Mutation(
@@ -4902,8 +4909,8 @@ MUTATIONS = [
         "P12b",
         "the stored request is the rewritten one on the **refused** path as well",
         "gateway/src/aira_gateway/api/serving.py",
-        "        if rewrites:\n            trail.body = _rewritten_body(trail.body, rewrites)",
-        "        pass",
+        "    if rewrites:\n        trail.body = _rewritten_body(trail.body, rewrites)",
+        "    pass",
         PII,
     ),
     Mutation(
@@ -5748,6 +5755,94 @@ MUTATIONS = [
         'return 2, [f"error: {exc}"]',
         "return 0, []",
         "tools/tests/test_a_config_is_checked_before_it_is_deployed.py",
+    ),
+    # ---- a redactor reaches an embedding, and a failed one keeps nothing (2026-08-27) ----
+    Mutation(
+        "PE1",
+        "an embedding runs the steps that are about the text it carries",
+        "gateway/src/aira_gateway/api/serving.py",
+        "        embed = await run_pipeline_over_texts(request, embed, trail)",
+        "        pass",
+        EMBED_PII,
+    ),
+    Mutation(
+        "Z6b",
+        "a model call the **embedding** pipeline made leaves its own audit row",
+        "gateway/src/aira_gateway/api/serving.py",
+        "    finally:\n"
+        "        await record_pipeline_calls(request, trail)\n"
+        "        _keep_only_what_a_redactor_allows(trail, rewrites)\n"
+        "    if outcome.decisions:",
+        "    finally:\n"
+        "        _keep_only_what_a_redactor_allows(trail, rewrites)\n"
+        "    if outcome.decisions:",
+        EMBED_PII,
+    ),
+    Mutation(
+        "PE2",
+        "a step about an answer does not run on an embedding",
+        "gateway/src/aira_gateway/pipeline/engine.py",
+        "            if step.type not in TEXT_ONLY_STEPS:\n                continue",
+        "            if False:\n                continue",
+        EMBED_PII,
+    ),
+    Mutation(
+        "PE3",
+        "every text of a batch is offered to the redactor, in order",
+        "gateway/src/aira_gateway/pipeline/engine.py",
+        "        return list(await asyncio.gather(*(one(text) for text in texts)))",
+        "        return [await one(texts[0])] * len(texts) if texts else []",
+        EMBED_PII,
+    ),
+    Mutation(
+        "PE4",
+        "one text that cannot be redacted refuses the whole batch",
+        "gateway/src/aira_gateway/pipeline/engine.py",
+        "            if notable is not None and notable.block_reason is not None:\n"
+        "                raise PipelineRejected(notable.block_reason)",
+        "            if False:\n                raise PipelineRejected(str(notable))",
+        EMBED_PII,
+    ),
+    Mutation(
+        "PE5",
+        "a redaction that failed leaves no payload behind",
+        "gateway/src/aira_gateway/api/serving.py",
+        "    if redaction_failed(trail.decisions):\n        trail.body = None",
+        "    if False:\n        trail.body = None",
+        EMBED_PII + " " + PII,
+    ),
+    Mutation(
+        "PE6",
+        "serving anyway under on_failure=allow is not storing anyway",
+        "gateway/src/aira_gateway/audit.py",
+        '        decision.get("step") == "pii_filter" '
+        'and str(decision.get("action")) not in APPLIED_ACTIONS',
+        '        decision.get("step") == "pii_filter" and str(decision.get("action")) == "blocked"',
+        EMBED_PII,
+    ),
+    Mutation(
+        "PE7",
+        "a batch reports the least good of its texts, not the first",
+        "gateway/src/aira_gateway/pipeline/engine.py",
+        "    return next((e for e in evaluations if e.action not in APPLIED_ACTIONS), evaluations[0])",
+        "    return evaluations[0]",
+        EMBED_PII,
+    ),
+    Mutation(
+        "PE8",
+        "the decision says how much of the batch the step changed",
+        "gateway/src/aira_gateway/pipeline/engine.py",
+        '        "texts": len(evaluations),\n        "changed": changed,',
+        '        "texts": len(evaluations),\n        "changed": 0,',
+        EMBED_PII,
+    ),
+    Mutation(
+        "PE9",
+        "a batch is billed for every call it made, not for one of them",
+        "gateway/src/aira_gateway/pipeline/engine.py",
+        "            prompt_tokens=sum(call.usage.prompt_tokens for call in calls),",
+        "            prompt_tokens=calls[0].usage.prompt_tokens,",
+        EMBED_PII,
     ),
     # ---- a router reads its classifier's reply rather than searching it (2026-08-27) -----
     Mutation(

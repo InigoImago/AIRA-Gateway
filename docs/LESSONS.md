@@ -178,6 +178,33 @@ reading code.
   resolved*, and each was the safe one — block, fall back to the heuristic, use the configured
   default. A convenience that reaches around a gate is worth less than the gate.
 
+- **A non-goal is about the feature that was there when it was written.** `FRD-300` recorded
+  *"Embeddings filtering"* as a non-goal, and it was right: the pipeline was an injection filter
+  and a router, both about a prompt a model will **answer**, and an embedding is not answered.
+  `pii_filter` arrived into the same branch a fortnight later with a different contract — *where
+  the caller's text goes and what is stored* — and inherited a decision nobody had made about it.
+  Measured: the same sentence, the same use case, redacted on `:generateContent` and sent **and
+  stored** untouched on both embedding verbs, on both surfaces, while the console showed one switch
+  per use case and none per verb.
+
+  The repair is not the branch, it is the **named set**: `TEXT_ONLY_STEPS` says which steps mean
+  anything for a payload that is only text, so a fourth step has to answer that question instead of
+  inheriting an answer from the shape of an `if`. **When a feature joins an existing stage, re-read
+  the stage's non-goals as claims about the new feature** — they were true about its neighbours.
+
+- **A promise with two halves is usually built with one.** `FRD-309` FR-3: *"where the substitution
+  cannot be applied the payload is dropped, never kept."* Two ways it cannot be applied — the body
+  does not contain the text the step rewrote, and **the redaction never happened** — and only the
+  first was implemented, which is the rarer of the two. An unreachable redactor blocked the request
+  and left the caller's name and address in `request_logs`, on a row nobody was served.
+
+  The same family as the `pii_filter` rewrite that reached the model and not the database, one door
+  along: both are *a data-protection control whose served path is right, which is what makes the
+  other path invisible*. Reading a requirement sentence as a **list of cases** and asking which one
+  the code branches on is cheap; noticing it later costs a stored prompt. And where a flag looks
+  like it settles one of the cases, check what it actually names: `on_failure: allow` says keep
+  **serving**, and keeping **storing** is a second decision nobody made.
+
 - **A collection that silently discards is a check that silently stops.** The narrowest relative
   of the wire shape, and the only one where both ends *and* the call site read correctly.
   `plaintext_problems` took a `dict[str, str]`; the gateway built it with one
