@@ -5,7 +5,77 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
-## Attacking the gateway API rather than reading it (2026-08-27)
+## Pen-testing the control plane (2026-08-27)
+
+The same treatment for Management: every surface, every role, and none. Real Keycloak tokens rather
+than fixtures, so the roles arrive through the `groups` claim and the configured mapping
+(`ADR-0017`), and the tenancy positions are real object grants reached through a real group
+(`FRD-209`). **Two findings, one class.**
+
+### An identity that crosses a boundary was mutable on one side
+
+A use case's `slug` and a catalogued model's `name` are both editable strings on this plane and
+**primary keys on the other**. Management owns a row; the gateway owns a different database, fed
+over Kafka, keyed on the string this plane sends. A rename here renames nothing — it abandons one
+object and starts another, and only this side is told.
+
+Measured against the running stack. One `PATCH` by a **use-case administrator** on their own use
+case, holding no organisation-wide role at all:
+
+| | |
+| --- | --- |
+| Management | knows only the new slug — `404` for the old |
+| gateway `use_cases` | **two rows**, the old one intact and with **no tombstone** |
+| gateway `api_keys` | still bound to the old slug, still active |
+| gateway `pipeline_configs`, `rate_limits` | still on the old slug, still enforcing |
+| the key issued beforehand | **still served, `200`** |
+
+So one field moves a fully provisioned use case out of the control plane's sight while it goes on
+serving traffic. Retirement cannot reach it: `FRD-607` writes the tombstone for the *new* slug, so
+`refuse_if_retired` never fires — which is the one thing that feature exists to prevent, and its
+own docstring says so (*"retiring a compromised use case has to stop the traffic, or it is a filing
+action"*). Nor can a key revocation, a budget, a limit or a purge. The audit trail splits and
+reporting follows half of it. And the Keycloak group `/use-cases/<old>` keeps granting data-plane
+access to the orphan, because that convention resolves from the token alone.
+
+One `PATCH` on a model, by a Global Administrator: the gateway ends up holding **both** names, the
+old one still `approved`, while Management answers `404` for it. That reopens the loophole
+`FRD-307` closed — its docstring records the first version's mistake, *deleting a declaration made
+a model usable again*, and an orphan is worse: catalogued, approved, and permanently beyond the
+reach of the plane that could un-approve it.
+
+Refused rather than made read-only, because `read_only` answers `200` with the old value and a
+caller who patches a slug and reads `200` believes they renamed it (`FRD-124`).
+
+### What held
+
+The role matrix itself, over 164 live cells — sixteen use-case routes and six installation
+surfaces across eight positions. The oversight roles read everything and write nothing (PRD §154),
+including no API key: that is data-plane access, deliberately withheld from the roles that see
+every use case. An outsider gets `404` for every route of a use case rather than `403`, so the
+refusal does not confirm the slug. Field-level authorisation holds too: releasing an unapproved
+model is refused **by name** (`FRD-307`/`FRD-308`), `retention_days` is bounded at both ends, and
+`deleted_at` and invented fields are ignored. The three delete-by-id routes all filter by use case,
+so there is no IDOR on a nested id. And the question catalogue asks per object —
+`_use_case_the_caller_may_run` exists precisely because a class permission cannot see one.
+
+### Two things the round established rather than fixed
+
+**`IsGlobalAdminOrUseCaseAdministrator` is not a role gate.** It asks whether somebody administers
+*any* use case, which is a fact about the whole installation's grants. The first version of the
+live matrix granted `/aira/it-security` administration in one cell and asserted two cells later
+that IT Security is excluded from the directory — the test disproved its own premise. The matrix
+now grants a group nobody in it holds, and the directory row asserts only the two stable ends.
+
+**IT Security cannot see the retired list** (`403`), while IT Steuerung can. The gateway made the
+opposite correction on 2026-08-08 — *"`is_oversight`, not `is_governance` … the role whose job is
+investigating an incident saw an empty screen"* — but `FRD-607` FR-4 says *visible to governance
+roles* in as many words. That is the specification, so it is now asserted rather than widened:
+changing who may see it is a decision somebody takes, not a line somebody edits.
+
+4 mutations (**645**), each observed `caught`.
+
+
 
 The previous round walked every test against the code it defends. This one asked the opposite
 question — *what gets through* — and answered it by building a governed world in the hermetic app

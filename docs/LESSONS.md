@@ -158,6 +158,33 @@ reading code.
   the grouping and the panel were covered and the step that fills them was not. A missing map entry
   at least leaves a gap somebody can see; an unpassed parameter looks exactly like a call.
 
+- **An identity that crosses a system boundary is set once.** Two planes, two databases, one
+  string: a use case's `slug` and a model's `name` are editable fields on the Management side and
+  **primary keys** on the gateway side, arriving over Kafka. A rename therefore renames nothing.
+  It abandons one object and starts another, and only the plane that did it knows.
+
+  Measured: one `PATCH` by a use-case administrator on their own use case left the gateway holding
+  the old row intact — no tombstone, keys still bound and still served `200`, pipeline and limits
+  still enforcing — while Management answered `404` for it. Every control that reaches the data
+  plane by naming a slug then reaches nothing: retirement, revocation, budgets, limits, purge. The
+  same `PATCH` on a model left the installation with two approved catalogue entries, one of them
+  permanently unreachable.
+
+  Two things generalise. **The test is "does this string leave the process", not "is this field
+  user-visible"** — a display name is free to change precisely because nothing keys on it, which
+  is why the refusal points at `name`/`display_name` as the field that does the job. And **refuse,
+  do not ignore**: `read_only` answers `200` with the old value, and a caller who patches an
+  identity and reads `200` believes it changed.
+
+- **A permission that asks about the installation is not a role.**
+  `IsGlobalAdminOrUseCaseAdministrator` reads "does this person administer *any* use case", which
+  is a fact about the whole grant table rather than about the caller's token or this request. A
+  live RBAC matrix written against it granted a group administration in one cell and asserted the
+  same group's exclusion two cells later — **the test disproved its own premise**, and it took a
+  failure to notice, because the assertion looked like every other role assertion beside it. When
+  a predicate's answer depends on state any other actor can change, assert only the ends that
+  cannot move and say in the test why the middle is not asserted.
+
 - **A value nobody wrote is a value nothing checks.** Every governance rule in this system reads
   what somebody *typed*: Management's serializer validates the models a pipeline **names**, the
   gateway refuses a model the use case was not **released**, the release check collects *"every

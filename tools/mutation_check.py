@@ -104,6 +104,7 @@ MGMT_SETTINGS = (
 MONEY = "libs/tests/test_money.py"
 COST = "gateway/tests/test_cost_budgets.py"
 CATALOG = "management/backend/tests/test_catalog.py"
+IDENTITY = "management/backend/tests/test_an_identity_is_set_once.py"
 PIPELINE = "gateway/tests/test_pipeline_engine.py gateway/tests/test_pipeline_routes.py"
 CLASSIFIERS = "gateway/tests/test_pipeline_classifiers.py gateway/tests/test_pipeline_engine.py"
 PII = "gateway/tests/test_pipeline_pii_filter.py"
@@ -5755,6 +5756,39 @@ MUTATIONS = [
         'return 2, [f"error: {exc}"]',
         "return 0, []",
         "tools/tests/test_a_config_is_checked_before_it_is_deployed.py",
+    ),
+    # ---- an identity that crosses a boundary is set once (2026-08-27) --------------------
+    Mutation(
+        "ID1",
+        "a use case's slug cannot be edited after it is created",
+        "management/backend/src/aira_management/apps/usecases/serializers.py",
+        "        if self.instance is not None and slug != self.instance.slug:",
+        "        if False:",
+        IDENTITY,
+    ),
+    Mutation(
+        "ID2",
+        "a slug sent unchanged is not a rename, so a full-document update still works",
+        "management/backend/src/aira_management/apps/usecases/serializers.py",
+        "        if self.instance is not None and slug != self.instance.slug:",
+        "        if self.instance is not None:",
+        IDENTITY,
+    ),
+    Mutation(
+        "ID3",
+        "a catalogued model's name cannot be edited after it is created",
+        "management/backend/src/aira_management/apps/catalog/serializers.py",
+        "        if self.instance is not None and name != self.instance.name:",
+        "        if False:",
+        IDENTITY,
+    ),
+    Mutation(
+        "ID4",
+        "the upsert by name is not read as a rename",
+        "management/backend/src/aira_management/apps/catalog/serializers.py",
+        "        if self.instance is not None and name != self.instance.name:",
+        "        if self.instance is not None:",
+        IDENTITY,
     ),
     # ---- a redactor reaches an embedding, and a failed one keeps nothing (2026-08-27) ----
     Mutation(
