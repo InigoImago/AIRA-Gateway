@@ -2760,6 +2760,26 @@ MUTATIONS = [
         NO_SILENT_DROP,
     ),
     Mutation(
+        "Y3b",
+        "a model reachable only through the catalogue still takes its dialect's check",
+        "gateway/src/aira_gateway/requirements.py",
+        "    return registry.provider_for(model, declaration.provider, declaration.publisher)",
+        "    return registry.provider_for(model)",
+        NO_SILENT_DROP,
+    ),
+    Mutation(
+        "Y3c",
+        "a control a dialect has no word for is a named refusal, never a 500",
+        "gateway/src/aira_gateway/upstreams/vertex/anthropic_mapping.py",
+        "            raise DialectUnsupported(\n"
+        "                f\"The Anthropic Messages API has {why}; '{name}' cannot be honoured.\"\n"
+        "            )",
+        "            raise ValueError(\n"
+        "                f\"The Anthropic Messages API has {why}; '{name}' cannot be honoured.\"\n"
+        "            )",
+        NO_SILENT_DROP,
+    ),
+    Mutation(
         "Y4",
         "a candidate whose dialect cannot express a control is skipped, not served without it",
         "gateway/src/aira_gateway/api/serving.py",
@@ -3094,6 +3114,26 @@ MUTATIONS = [
         ANOMALY_RULES,
     ),
     Mutation(
+        "C0b",
+        "a price pair is checked against the model the edit produces, not against the edit",
+        "management/backend/src/aira_management/apps/catalog/serializers.py",
+        "        return attrs.get(field, getattr(self.instance, field, None))",
+        "        return attrs.get(field)",
+        CATALOG,
+    ),
+    Mutation(
+        "N2b",
+        "a partial edit is validated against the rule that exists, not against a default",
+        "management/backend/src/aira_management/apps/anomalies/serializers.py",
+        "        if field in attrs:\n"
+        "            return attrs[field]\n"
+        "        if self.instance is not None:\n"
+        "            return getattr(self.instance, field, default)\n"
+        "        return default",
+        "        return attrs.get(field, default)",
+        ANOMALY_RULES,
+    ),
+    Mutation(
         "N3a",
         "a rate rule keeps its sample floor, so one refusal of one is not 100 percent",
         "management/backend/src/aira_management/apps/anomalies/serializers.py",
@@ -3403,6 +3443,22 @@ MUTATIONS = [
         '    if principal.may_act_on_incidents:\n        return "incident"',
         '    if False:\n        return "incident"',
         "gateway/tests/test_payload_access.py",
+    ),
+    Mutation(
+        "N46b",
+        "a grant on a group makes an administrator, the same as a grant naming a person",
+        "gateway/src/aira_gateway/payloads.py",
+        "    return strongest([role for role in (dict(principal.grants).get(use_case), row) if role])",  # noqa: E501
+        "    return strongest([role for role in (None, row) if role])",
+        "gateway/tests/test_payload_access.py",
+    ),
+    Mutation(
+        "N46c",
+        "the role the grant resolver worked out reaches the principal that carries it",
+        "gateway/src/aira_gateway/auth/dependencies.py",
+        "    return replace(principal, use_cases=merged, grants=tuple(sorted(granted.items())))",
+        "    return replace(principal, use_cases=merged)",
+        "gateway/tests/test_group_grants.py",
     ),
     Mutation(
         "N47",
@@ -3899,6 +3955,39 @@ MUTATIONS = [
         "    if not settings.auth_required:",
         "    if False:",
         DEPLOYMENT_SAFETY,
+    ),
+    Mutation(
+        "S1b",
+        "a caller's date on the register is a refusal, never a server error",
+        "gateway/src/aira_gateway/api/reporting.py",
+        # The **register**'s pair; the report's identical pair two hundred lines up is `S1a`'s
+        # subject. Both spellings exist because the sweep that defends them is derived from the
+        # served document now, and `/v1beta/register` is the endpoint it could not see before.
+        '    window_start = _parse(start, "from") if start else default_start\n'
+        '    window_end = _parse(end, "to") if end else default_end\n'
+        "\n"
+        "    if window_end <= window_start:\n"
+        "        raise GeminiHTTPError(400, \"'to' must be after 'from'.\", \"INVALID_ARGUMENT\")\n"
+        "    if window_end - window_start > timedelta(days=MAX_WINDOW_DAYS):\n"
+        "        raise GeminiHTTPError(\n"
+        '            400, f"A register window may span at most {MAX_WINDOW_DAYS} days.", "INVALID_ARGUMENT"',  # noqa: E501
+        "    window_start = datetime.fromisoformat(start) if start else default_start\n"
+        "    window_end = datetime.fromisoformat(end) if end else default_end\n"
+        "\n"
+        "    if window_end <= window_start:\n"
+        "        raise GeminiHTTPError(400, \"'to' must be after 'from'.\", \"INVALID_ARGUMENT\")\n"
+        "    if window_end - window_start > timedelta(days=MAX_WINDOW_DAYS):\n"
+        "        raise GeminiHTTPError(\n"
+        '            400, f"A register window may span at most {MAX_WINDOW_DAYS} days.", "INVALID_ARGUMENT"',  # noqa: E501
+        "gateway/tests/test_a_callers_value_is_never_a_server_error.py",
+    ),
+    Mutation(
+        "H3b",
+        "every configured realm's URLs are checked, not just the last one named",
+        "libs/src/aira_common/transport_security.py",
+        "        for name, url in sorted(named_urls)",
+        "        for name, url in sorted(dict(named_urls).items())",
+        f"{DEPLOYMENT_SAFETY} libs/tests/test_transport_security.py",
     ),
     Mutation(
         "H4",
@@ -4807,6 +4896,14 @@ MUTATIONS = [
         "gateway/src/aira_gateway/api/serving.py",
         "        if needle not in text:\n            return None",
         "        if needle not in text:\n            return body",
+        PII,
+    ),
+    Mutation(
+        "P12b",
+        "the stored request is the rewritten one on the **refused** path as well",
+        "gateway/src/aira_gateway/api/serving.py",
+        "        if rewrites:\n            trail.body = _rewritten_body(trail.body, rewrites)",
+        "        pass",
         PII,
     ),
     Mutation(
