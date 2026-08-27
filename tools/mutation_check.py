@@ -2763,7 +2763,13 @@ MUTATIONS = [
         "Y4",
         "a candidate whose dialect cannot express a control is skipped, not served without it",
         "gateway/src/aira_gateway/api/serving.py",
-        "        checks.append(SamplingExpressible(registry_of(request), canonical.sampling_requested))",
+        # Re-anchored 2026-08-26: the requirement gained the catalogue, so a model reachable
+        # only by being catalogued takes its dialect's check too (see `Y3b`).
+        "        checks.append(\n"
+        "            SamplingExpressible(\n"
+        "                registry_of(request), canonical.sampling_requested, catalog_of(request)\n"
+        "            )\n"
+        "        )",
         "        pass",
         NO_SILENT_DROP,
     ),

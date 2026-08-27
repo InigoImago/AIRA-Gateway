@@ -369,11 +369,17 @@ async def requirements_for(request: Request, canonical: CanonicalRequest | None)
         checks.append(StructuredOutputSupported(catalog_of(request)))
         # Whether the *model* offers structured output, and whether the *dialect* can carry this
         # particular schema, are two questions — `ADR-0011` rule 3 in its usual shape.
-        checks.append(SchemaExpressible(registry_of(request), canonical.response_schema))
+        checks.append(
+            SchemaExpressible(registry_of(request), canonical.response_schema, catalog_of(request))
+        )
     if canonical is not None and canonical.thinking is not None:
         checks.append(ThinkingHonoured(catalog_of(request), canonical.thinking))
     if canonical is not None and canonical.sampling_requested:
-        checks.append(SamplingExpressible(registry_of(request), canonical.sampling_requested))
+        checks.append(
+            SamplingExpressible(
+                registry_of(request), canonical.sampling_requested, catalog_of(request)
+            )
+        )
     if canonical is not None and canonical.tools:
         checks.append(ToolsSupported(catalog_of(request)))
     return permits(checks)
@@ -844,12 +850,18 @@ async def run_pipeline(
     # The engine appends into the trail's list, so a step that blocks still leaves behind the
     # decisions taken before it — including the routing that sent the request to the step that
     # refused it.
+    rewrites: list[tuple[str, str]] = []
     try:
         outcome = await engine.run(
             pipeline,
             canonical,
             decisions=trail.decisions,
             model_calls=trail.model_calls,
+            # Supplied for the same reason as the two lists above, and it is the one whose
+            # absence *stored* something rather than losing it: a rewrite that happened before a
+            # later step blocked has to reach the row of the request that was refused, or the
+            # personal data the step removed is kept by the audit trail alone.
+            rewrites=rewrites,
             # So a step can call a model the **catalog** knows and configuration does not
             # (`FRD-507` stage B). Without it an LLM filter fell back to the heuristic and a
             # router routed nowhere, both while the builder showed them active.
@@ -862,6 +874,13 @@ async def run_pipeline(
         # function — the alternative was a hook at each surface's boundary, which is the shape that
         # let `:embedContent` slip past the pre-dispatch gate.
         await record_pipeline_calls(request, trail)
+        # **The stored request is the rewritten one — whichever way the pipeline ended.** Applied
+        # here rather than after the `try`, because the path that skipped it is the one where it
+        # mattered most: a `pii_filter` followed by a blocking step raised past the assignment, so
+        # the refusal's audit row kept the caller's original prompt — exactly the data the step
+        # exists to remove, in the one place a retention clock covers and a reader can read.
+        if rewrites:
+            trail.body = _rewritten_body(trail.body, rewrites)
     trail.routed_to(outcome.request.model)
     if outcome.decisions:
         set_span_attributes(
@@ -876,13 +895,13 @@ async def run_pipeline(
             model=outcome.request.model,
             decisions=outcome.decisions,
         )
-    if outcome.rewrites:
-        # **The stored request is the rewritten one.** Measured before this existed: the model was
-        # sent the redacted prompt and `request_logs` kept the original, because the payload comes
-        # from the wire body captured at the surface while the pipeline rewrites the canonical
-        # request. The redaction protected the model and not the database, which is the one thing
-        # it was for.
-        trail.body = _rewritten_body(trail.body, outcome.rewrites)
+    # The rewrite reaches `trail.body` in the `finally` above, on every way out of the pipeline
+    # rather than only on this one. Measured before that existed: the model was sent the redacted
+    # prompt and `request_logs` kept the original, because the payload comes from the wire body
+    # captured at the surface while the pipeline rewrites the canonical request — and then, once
+    # this line was here and correct, the *refused* path walked past it and kept the original
+    # anyway. The redaction has to protect the database as well as the model, which is the one
+    # thing it is for.
     return outcome.request, outcome.fallback_models, tuple(outcome.notices)
 
 

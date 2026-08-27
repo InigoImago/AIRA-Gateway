@@ -266,6 +266,7 @@ class PipelineEngine:
         *,
         decisions: list[dict[str, Any]] | None = None,
         model_calls: list[ModelCall] | None = None,
+        rewrites: list[tuple[str, str]] | None = None,
         declaration_of: DeclarationOf | None = None,
     ) -> PipelineOutcome:
         """Run the configured steps.
@@ -279,6 +280,15 @@ class PipelineEngine:
         still spent whatever it took to decide that, and a caller-supplied list means the spend
         survives the exception exactly as the decisions do (`FRD-125`).
 
+        ``rewrites`` is the same idea a third time, and for the sharpest reason of the three: a
+        `pii_filter` that has already removed personal data, followed by a step that *blocks*,
+        raised out of here with the rewrite reachable only through the outcome nobody receives —
+        so the refusal's audit row stored the caller's original prompt, personal data and all.
+        Measured on 2026-08-26 against the hermetic app: a `pii_filter` + blocking
+        `injection_filter` pipeline, and `request_logs.request_payload` carried the name the step
+        had just replaced. The served path was right, which is what made it invisible; a caller
+        supplying the list is what makes both paths right by construction.
+
         ``declaration_of`` is how a step reaches a model the **catalog** knows and configuration
         does not (`FRD-507` stage B). Without it such a step finds no provider and does less.
         """
@@ -287,6 +297,7 @@ class PipelineEngine:
             fallback_models=pipeline.fallback_models,
             decisions=decisions if decisions is not None else [],
             model_calls=model_calls if model_calls is not None else [],
+            rewrites=rewrites if rewrites is not None else [],
         )
         for step in pipeline.steps:
             evaluation = await self._evaluate(step, outcome.request, declaration_of)
