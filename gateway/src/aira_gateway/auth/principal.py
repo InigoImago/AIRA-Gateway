@@ -53,6 +53,24 @@ class Principal:
     #: validator is synchronous and has no database. The paths are the raw fact; which use cases
     #: they reach is a decision made one layer out, where the grants are.
     groups: tuple[str, ...] = ()
+    #: ``(use_case, role)`` for every grant the read-model resolved for this caller (`FRD-209`).
+    #:
+    #: **The role, not only the slug.** `GroupGrantResolver.use_cases` answers with a
+    #: `{slug: role}` mapping — its own test asserts that the granted role is carried through —
+    #: and `_with_group_grants` used only the keys. So an administrator whose grant is on a
+    #: *group*, which is the route `FR-6` exists for and the one the owner asked for by name, was
+    #: read by the gateway as a plain member: `payloads.grant_role_in` re-derived the role from
+    #: `use_case_members` alone, where a group grant writes no row.
+    #:
+    #: Measured on 2026-08-26: a `/ai/kundenservice` grant of `admin` on `uc-a` resolved to
+    #: `"user"`. In a use case that restricts members to their own requests that administrator is
+    #: then refused their colleagues' prompts and shown a narrowed trace list — while Management,
+    #: which asks guardian, correctly treats them as an administrator. Two planes, one question,
+    #: two answers.
+    #:
+    #: Empty where no resolver ran (an API key, or a token that names nothing to look up), which
+    #: is why the member-row lookup stays: this is an *additional* source, not a replacement.
+    grants: tuple[tuple[str, str], ...] = ()
 
     @property
     def person(self) -> str | None:

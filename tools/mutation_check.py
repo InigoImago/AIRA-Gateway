@@ -3252,7 +3252,7 @@ MUTATIONS = [
         # Disambiguated 2026-08-12: a second endpoint (`FRD-506`'s reachability check) asks the
         # same predicate, so the bare line matched twice and the harness edits the first. It
         # happened to be the intended one; that it did was luck, and the next endpoint to ask this
-        # question would have moved it. Anchored on the refusal `_require_oversight` raises, which
+        # question would have moved it. Anchored on the refusal `_require_an_incident_role` raises,
         # only the kill switch has.
         "    if not principal.may_act_on_incidents:\n        raise GeminiHTTPError(\n            403,\n"
         '            "Only IT Security or a Global Administrator may suspend or restore access.",',

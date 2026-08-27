@@ -36,7 +36,7 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
-from aira_common.access import GrantRole
+from aira_common.access import GrantRole, strongest
 from aira_gateway.auth.principal import Principal
 from aira_gateway.db.models import RequestLog, UseCaseMemberRead, UseCaseRead
 
@@ -223,10 +223,20 @@ async def grant_role_in(session: AsyncSession, principal: Principal, use_case: s
             )
         )
     ).scalar_one_or_none()
-    # Membership by the `/use-cases/<slug>` group convention carries no row and no role, and it is
+    # **Both routes a grant can arrive by, and the stronger wins.** A grant on a *group* writes no
+    # row in `use_case_members` — that is what makes it a group grant — so reading that table
+    # alone answered `user` for somebody an administrator had deliberately made an administrator,
+    # which is `FR-6`'s whole point. The role the resolver worked out travels on the principal
+    # (`Principal.grants`); this is the second source, for a credential no resolver ran for.
+    #
+    # `strongest` rather than a comparison written here: being granted twice over is being
+    # granted, and which row was read first is not a thing an access decision may depend on
+    # (`aira_common.access`). It also answers `user` for an empty list, which is the case below.
+    #
+    # Membership by the `/use-cases/<slug>` convention carries no row and no role, and it is
     # membership all the same (`FRD-102`). It grants the lesser of the two, because a grant that
     # was never written down cannot be read as the stronger one.
-    return str(row) if row else GrantRole.USER.value
+    return strongest([role for role in (dict(principal.grants).get(use_case), row) if role])
 
 
 async def may_read_payload(
@@ -342,4 +352,10 @@ async def restricted_use_cases(session: AsyncSession, principal: Principal) -> l
             )
         ).scalars()
     }
+    # **And the administrators whose grant is on a group**, which writes no row in the table above.
+    # The same omission as in `grant_role_in`, one screen over and with a wider blast radius: this
+    # decides the whole *list*, so a group-granted administrator saw a trace view narrowed to their
+    # own traffic — the figures about their own use case, withheld from the person who administers
+    # it. Read off the principal for the reason stated there: the resolver already worked it out.
+    administered |= {slug for slug, role in principal.grants if role == GrantRole.ADMIN.value}
     return sorted(restricted_slugs - administered)
