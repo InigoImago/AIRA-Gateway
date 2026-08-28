@@ -31,6 +31,18 @@ reading code.
   **read by no code on any path**, so the console offered a mode whose every use was refused.
   **Test the wire, not the ends.**
 
+  *A seventh, and it names the trap that catches the fix.* `GroupGrantResolver.use_cases` answers
+  `{slug: role}` — with a test asserting the role is carried through — and `_with_group_grants`
+  took `.keys()`. `payloads.grant_role_in` then re-derived the role from `use_case_members`, where
+  a **group** grant writes no row, so the route `FRD-209` FR-6 leads with produced an administrator
+  the gateway read as a plain member: refused their colleagues' prompts in a use case that
+  restricts members to their own, and shown a narrowed trace list, while Management (which asks
+  guardian) treated them correctly. The trap is what happened next: six tests were written for the
+  fix and **five of them construct a `Principal` themselves**, so cutting the wire again left all
+  five green. A test that builds the object under test is a test of the reader, however faithfully
+  it fills the object in — the sixth had to drive the layer that *populates* it. When you fix a
+  wire, the test that proves it has to start upstream of the wire.
+
   *A constant is an end too.* `pipeline/config.MAX_MODEL_LENGTH` — *"the same ceiling Management's
   serializer applies"* — sat beside a comment naming three ways into that parser which bypass
   Management, and was read by nothing; `foundry.DEFAULT_API_VERSION` documented the pinned Azure
@@ -119,6 +131,25 @@ reading code.
   of an artefact does with it, not only whether the artefact is well-formed. Prefixed, never
   stripped and never refused — a row quietly missing from a governance document is worse than an
   odd-looking one.
+- **A search-and-replace that stops two files early leaves the shape it was fixing.**
+  `tools/seed_local_catalog.py` moved the demo's chat model onto the predecessor's own id, and
+  `tests/integration/conftest.py` was given `LOCAL_CHAT_MODEL_ID` in the same round with the hazard
+  written out in full: *"Six tests carried `9001` as a literal, and moving the demo … would have
+  left every one of them addressing a model that no longer answers — reported as a `404` about a
+  number, which reads as a broken surface rather than as a stale test."* Six were corrected.
+  **Twenty-one were not**, in six other files, and the embedding id was typed nine more times
+  beside them. The consequence arrived exactly as that paragraph described it: a live-stack run in
+  which every KIRA test failed while one hand-made call to the same endpoint answered `200`, and an
+  hour spent reading a correct gateway as a broken surface.
+
+  Two things generalise. **The fix for a copied constant is not to correct the copies, it is to
+  make the next one impossible** — the paragraph explaining the danger existed, and it protected
+  the six files somebody happened to have open. And **scope the ban to where the number is somebody
+  else's**: the first version of the guard covered every test layer and reported thirteen files
+  that were all correct, because a hermetic test writes its own catalogue row and the number is
+  local to it. A guard written against a real defect can still cry wolf, and then it is the guard
+  that gets deleted.
+
 - **A default argument is a silent one** — the wire shape's worst variant, because there is nothing
   *missing* to notice. `resolve()` had taken a `direct` argument since the vocabulary was written,
   with tests of its own; both planes called it with two arguments, so a grant naming a person was
@@ -126,6 +157,106 @@ reading code.
   fix for it: deleting `username=username` from the write survived the whole suite — the column,
   the grouping and the panel were covered and the step that fills them was not. A missing map entry
   at least leaves a gap somebody can see; an unpassed parameter looks exactly like a call.
+
+- **A test that cannot tell which of two calls answered is a test of neither.** Written while
+  fixing two silent loads on one screen: the stub broke both, and the assertion looked for a word
+  the *other* one also produced. Green, and it stayed green when the fix under test was reverted —
+  found only by breaking it on purpose, which is the whole reason this project does that. Where a
+  behaviour has two sources, **give each its own distinguishable answer and assert the one you
+  mean**; a shared substring is a passing test with no subject.
+
+- **An identity that crosses a system boundary is set once.** Two planes, two databases, one
+  string: a use case's `slug` and a model's `name` are editable fields on the Management side and
+  **primary keys** on the gateway side, arriving over Kafka. A rename therefore renames nothing.
+  It abandons one object and starts another, and only the plane that did it knows.
+
+  Measured: one `PATCH` by a use-case administrator on their own use case left the gateway holding
+  the old row intact — no tombstone, keys still bound and still served `200`, pipeline and limits
+  still enforcing — while Management answered `404` for it. Every control that reaches the data
+  plane by naming a slug then reaches nothing: retirement, revocation, budgets, limits, purge. The
+  same `PATCH` on a model left the installation with two approved catalogue entries, one of them
+  permanently unreachable.
+
+  Two things generalise. **The test is "does this string leave the process", not "is this field
+  user-visible"** — a display name is free to change precisely because nothing keys on it, which
+  is why the refusal points at `name`/`display_name` as the field that does the job. And **refuse,
+  do not ignore**: `read_only` answers `200` with the old value, and a caller who patches an
+  identity and reads `200` believes it changed.
+
+- **A permission that asks about the installation is not a role.**
+  `IsGlobalAdminOrUseCaseAdministrator` reads "does this person administer *any* use case", which
+  is a fact about the whole grant table rather than about the caller's token or this request. A
+  live RBAC matrix written against it granted a group administration in one cell and asserted the
+  same group's exclusion two cells later — **the test disproved its own premise**, and it took a
+  failure to notice, because the assertion looked like every other role assertion beside it. When
+  a predicate's answer depends on state any other actor can change, assert only the ends that
+  cannot move and say in the test why the middle is not asserted.
+
+- **A value nobody wrote is a value nothing checks.** Every governance rule in this system reads
+  what somebody *typed*: Management's serializer validates the models a pipeline **names**, the
+  gateway refuses a model the use case was not **released**, the release check collects *"every
+  model this pipeline could reach, wherever it is written."* A fallback that substitutes a value at
+  runtime is outside all of it by construction, and the substitution is invisible in the artefact
+  being checked. `PipelineEngine._default_model()` answered *"the first model in the registry"* for
+  any step whose configuration named none — so a `pii_filter` with `config: {}` sent the caller's
+  personal data to a model that was not released, not necessarily approved and in no particular
+  region, at a `200`. Naming that same model in that same step is a `400`. **The whole difference
+  between refused and served was whether the escape was written down.**
+
+  Two things generalise. The justification is where it hides: the exemption list that lets a
+  pipeline step call a model without conditions vouches for itself with *"bounded by the release,
+  which the serializer validates every named model against"* — a true sentence about a named model
+  and a silent one about an unnamed one, and a reader checking the claim finds it holds. **When a
+  rule is stated over "what is named", ask what happens when nothing is.** And the repair is
+  usually deletion rather than governance: each step already had a defined answer for *no model
+  resolved*, and each was the safe one — block, fall back to the heuristic, use the configured
+  default. A convenience that reaches around a gate is worth less than the gate.
+
+- **A non-goal is about the feature that was there when it was written.** `FRD-300` recorded
+  *"Embeddings filtering"* as a non-goal, and it was right: the pipeline was an injection filter
+  and a router, both about a prompt a model will **answer**, and an embedding is not answered.
+  `pii_filter` arrived into the same branch a fortnight later with a different contract — *where
+  the caller's text goes and what is stored* — and inherited a decision nobody had made about it.
+  Measured: the same sentence, the same use case, redacted on `:generateContent` and sent **and
+  stored** untouched on both embedding verbs, on both surfaces, while the console showed one switch
+  per use case and none per verb.
+
+  The repair is not the branch, it is the **named set**: `TEXT_ONLY_STEPS` says which steps mean
+  anything for a payload that is only text, so a fourth step has to answer that question instead of
+  inheriting an answer from the shape of an `if`. **When a feature joins an existing stage, re-read
+  the stage's non-goals as claims about the new feature** — they were true about its neighbours.
+
+- **A promise with two halves is usually built with one.** `FRD-309` FR-3: *"where the substitution
+  cannot be applied the payload is dropped, never kept."* Two ways it cannot be applied — the body
+  does not contain the text the step rewrote, and **the redaction never happened** — and only the
+  first was implemented, which is the rarer of the two. An unreachable redactor blocked the request
+  and left the caller's name and address in `request_logs`, on a row nobody was served.
+
+  The same family as the `pii_filter` rewrite that reached the model and not the database, one door
+  along: both are *a data-protection control whose served path is right, which is what makes the
+  other path invisible*. Reading a requirement sentence as a **list of cases** and asking which one
+  the code branches on is cheap; noticing it later costs a stored prompt. And where a flag looks
+  like it settles one of the cases, check what it actually names: `on_failure: allow` says keep
+  **serving**, and keeping **storing** is a second decision nobody made.
+
+- **A collection that silently discards is a check that silently stops.** The narrowest relative
+  of the wire shape, and the only one where both ends *and* the call site read correctly.
+  `plaintext_problems` took a `dict[str, str]`; the gateway built it with one
+  `("AIRA_OIDC_ISSUER", issuer)` pair **per configured realm** (`FRD-118`), under a comment saying
+  *"every issuer and every key set — a second realm reached over plaintext is the same hole as the
+  first."* A mapping keeps the last value per key. Measured: `environment=production`, two issuers,
+  the plaintext one **first** — and `unsafe_settings` returned an empty list, on the check the
+  module's own docstring calls *the one misconfiguration that defeats authentication outright*.
+
+  Nothing is missing from the source: the comment is right, the loop is right, the function is
+  right. The loss happens in the *type*, between the two. Two things generalise. **A key that
+  repeats is not a key** — a name that identifies a setting does not identify an occurrence of one,
+  and the moment a setting can be given more than once, a mapping keyed on its name is a silent
+  `distinct`. And **the fix belongs in the signature, not at the call site**: taking a sequence of
+  pairs makes the collapse impossible to write anywhere, where fixing the one caller would have
+  left the next one to rediscover it. The test that distinguishes the two readings puts the bad
+  entry **first**; put last, it passes against the defect, which is precisely why the existing
+  tests did not see it.
 
 - **A hand-written list with no counterpart.** A set has no opinion about what it does not
   contain, so a missing entry announces itself through nothing. *Six instances:* Kafka topics
@@ -257,6 +388,19 @@ reading code.
   built one that distinguishes *degraded* from *down* precisely so that question has an answer, and
   it is the cheapest discriminator between "the code is wrong" and "the machine is missing a part".
 
+  *And the sentence above was written, and still not applied where it was needed.*
+  `test_diagnostics.py` stops `aira-ollama` on purpose and starts it again in a `finally`; a run
+  interrupted between the two leaves it down, and every later test fails `502 Upstream error:
+  ConnectError` — a symptom that points at the gateway, the adapter, and the code that was just
+  changed, in that order, and at none of them correctly. `/readyz` had been saying
+  `unreachable: local` the whole time, to nobody: the paragraph above was written about the
+  **browser** suite, and the layer that actually calls a model had no such check. **A lesson is
+  applied where it was learned unless somebody carries it**, and the carrying has to be mechanical
+  or it is another sentence — the reading is now a `pytest_report_header`, above the first test
+  rather than inferable from the fortieth. Reported and never a refusal: a stack without the `demo`
+  profile legitimately has no local model, and failing there would be the wolf-crying check §3
+  names.
+
   *A seventh, and this time it was the **guard** that depended on the inventory.* A browser test for
   a pager whose buttons must not move needed a list long enough to page **and** a search term that
   changes the page count's digit width — both facts about how much demo data the machine holds (917
@@ -337,6 +481,17 @@ reading code.
   asserted `len(reads) >= 8` as a vacuity check. A literal floor makes deleting dead code look like
   breaking a guard, and the cheapest way out is to keep the dead code. **A guard against vacuity is
   written as the property, not as a number** — every accessor in the module is one the parser sees.
+
+  *And a check that reports success is not the same as a check that passed.* `make showcase` ran
+  green while the demo had stopped demonstrating: `demo_traffic.py` counts a `429` as `refused`,
+  and the two requests it drives **in order to be refused by a control** were being refused by a
+  *budget* instead. Both readings are "a refusal"; only one of them is the demo. The script's own
+  comment had named half the hazard — *"or the demo's most important refusal quietly becomes a
+  served request"* — and guarded that direction alone, so the mirror case walked past a sentence
+  written about it. **A refusal is not interchangeable with a refusal**: where a script exists to
+  show that a *particular* control fired, it has to assert which one, and the two explanations are
+  different enough that the failure message can name both. Same shape as *a comment predicting a
+  future gap is not a plan*, one step worse: here the comment predicted the gap it was standing in.
 
 - **A name with no definition is a style the page appears to have.** The inverse of the entry
   above, and worse, because it *renders*. A misspelled class is not an error anywhere: Angular does
@@ -478,6 +633,18 @@ reading code.
   what it is made of — the two use-case reads name their two readers, the session ceiling names
   what it was before. A guard whose figure has no derivation is edited the first time it fails
   rather than investigated.
+
+  *And a bound that sits inside the natural spread of what it measures fails by coin toss.* The
+  showcase's per-head daily cap was `0.000100` in a list whose docstring says every figure is
+  *"calibrated against what the demo traffic actually costs"* — it was the one that was not. A run
+  of `demo_traffic.py` cost, measured across eight runs in the audit trail, between 50 600 and
+  129 400 nanos: a 0.6B model's verbosity is not a constant, and the cap lay in the middle of the
+  range. So `make showcase` worked or did not depending on how chatty the model felt that morning,
+  and when it did not it took the two rows the demo exists to show — the injection attempt and the
+  embedding batch came back `429 budget_exceeded`, refused by an allowance before the pipeline ever
+  ran. **A limit calibrated against a mean is calibrated against nothing**; take the observed
+  maximum and say so beside the figure. The tell was in the neighbouring entries: every other cap
+  in that list carried its derivation in a comment, and this one carried none.
 - **Absent and empty are different answers.** `${VAR:-}` overrode a working default with an empty
   string; Vault ranks above the environment, so writing an unset secret made the empty string win;
   `None` (nothing has said) is not `[]` (somebody released nothing) is not a list — folding the
@@ -488,6 +655,22 @@ reading code.
 - **An enum member is not a specification.** `throttle` had no rate; `payload_size` had no byte
   figure. A configuration schema is only proved by the code that consumes it.
 - **A default on a discriminator stops discriminating** at the first hurried call site.
+
+  *And a validator's default is read against the wrong subject entirely.* Two serializers asked
+  `attrs.get(field, DEFAULT)` in `validate()`, which is the **edit** — so on a `PATCH` every check
+  below answered about an entity nobody has. `AnomalyRuleSerializer` defaulted `kind` to
+  `refusal_rate` and `action` to `alert` whatever the row said, and the three consequences were all
+  different: *every* partial edit refused over a `min_sample` the caller had not sent; one that did
+  carry it **cleared `action_minutes`** on a `throttle` rule, so the gateway then correctly declined
+  to enforce a rule the console still displayed as throttling; and a `spend_spike` threshold below
+  100 was accepted, which fires every window for ever. The catalogue's price pair had the same shape
+  one field over — correcting one price of a fully priced model was refused, and *clearing* one was
+  accepted, so the rule was broken in both directions at once. **Ask what the field will hold after
+  the save, not what the request mentioned**; the declaration check five lines below the price pair
+  already did, and said why, in the same method. And note where it was found: not in either
+  serializer, but in the console, where `rule-form.ts` sends the whole object on every edit under a
+  comment explaining that a partial one *"would be checked against the default instead"*. **A
+  workaround in one client is not a property of the endpoint** — it is a report nobody filed.
 - **Deprecation warns, revocation blocks.** Conflating them removes the ability to announce a
   retirement.
 - **Off has to be said out loud** — but only where there is something to switch off. A model that
@@ -546,6 +729,24 @@ reading code.
 ---
 
 ## 4. Models, providers and dispatch
+
+- **Asking a model for one word means reading one word, not searching for it.** The injection
+  classifier gets this right and says why: *"neither word, or **both** … picking a winner would be
+  a precedence rule nobody can predict from outside"* — so an ambiguous reply is `UNDETERMINED`
+  and the step decides what to do about it. The router in the same file did the opposite, matching
+  a category by `name.upper() in answer` — a substring, anywhere, first entry in the operator's
+  list wins. Measured: `NONE`, the instruction's **own** word for *no category fits*, selected a
+  category named `one`; *"not code — use general"* selected `code`, the one the model rejected;
+  *"general or code"* selected `code` again. Not a security hole — the release and the approval
+  still bound where a routed request lands — and the feature defeated, since a `model_route` exists
+  so a cheap question reaches a cheap model.
+
+  Three things a reply parser owes its protocol. Take the **exact** answer first, because a model
+  that obeyed the instruction must not be at the mercy of a rule written for one that did not (and
+  a category may be called `c++`, which no word boundary can express). Match **whole words**, or
+  every short name is a wildcard. And require **exactly one** match: a reply naming two has not
+  answered the question, and deserves the same honest outcome as a reply naming none. The reserved
+  word falls out for free — `NONE` contains `one` only if you were searching.
 
 - **A vendor's capability flag is a claim, not evidence, and one successful call is not a
   capability.** `ollama show` lists `tools` for a model that returns the JSON as prose; a 0.5B

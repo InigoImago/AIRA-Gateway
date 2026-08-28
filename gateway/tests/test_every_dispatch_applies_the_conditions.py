@@ -62,7 +62,13 @@ UNCONDITIONED: dict[str, str] = {
         "administrator named in the pipeline configuration, and the conditions are about what may "
         "serve the caller. It is still audited and billed as `pipeline:<step>` with `requests=0` "
         "(`FRD-125b`), which is the accountability question, and the model it may use is bounded "
-        "by the release the pipeline serializer validates against (`FRD-308`)."
+        "by the release the pipeline serializer validates against (`FRD-308`). **That bound was "
+        "true of a named model and silent about an unnamed one** until 2026-08-27: a step whose "
+        "configuration named none asked `PipelineEngine._default_model()`, which answered *the "
+        "first model in the registry* — outside the release, outside the approval and outside the "
+        "residency list, because all three are checked against what somebody wrote. The fallback "
+        "is gone; a step reaches only the model in its own configuration, and one that names none "
+        "degrades (the LLM filter falls back to the heuristic, the router to its `default_model`)."
     ),
     "pipeline/classifiers.py:rewrite:generate": (
         "The pipeline's redactor (`FRD-309`), and the same argument as the classifier above: it is "
@@ -71,7 +77,11 @@ UNCONDITIONED: dict[str, str] = {
         "`pipeline:pii_filter` with `requests=0` (`FRD-125b`), and the model it may use is bounded "
         "by the release, which the pipeline serializer validates every named model against "
         "(`FRD-308`) — `_models_named_in` reads `config.model`, so this step needed no separate "
-        "rule and gets no separate hole."
+        "rule and gets no separate hole. The sentence above applies here and was sharpest here: a "
+        "`pii_filter` with `config: {}` sent the caller's **personal data** to the first model in "
+        "the registry at a 200, where naming that model in the same step is a 400. Since the "
+        "fallback went, `config.model` really is the only model this step can reach, which is what "
+        "the sentence claimed all along."
     ),
     "api/incidents.py:_accepts:generate": (
         "The console's *Ask the model* button (`ADR-0021`), and it is a question **about the "

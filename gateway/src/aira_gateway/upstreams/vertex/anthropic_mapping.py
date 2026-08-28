@@ -85,7 +85,17 @@ def _add_sampling(body: dict[str, Any], request: CanonicalRequest) -> None:
             # A backstop behind the dispatch chain, which skips this candidate first. Kept because
             # the requirement and the mapping have to agree, and on the day they disagree the
             # mapping is the one holding the request.
-            raise ValueError(f"The Anthropic Messages API has {why}; '{name}' cannot be honoured.")
+            #
+            # **`DialectUnsupported`, not `ValueError`** — the same exception the OpenAI mapping
+            # raises for its own missing control, one file over. That type is in `serving.REFUSALS`
+            # precisely so a declaration a dialect cannot honour arrives as a named `400` rather
+            # than as `500 Internal error`; a bare `ValueError` escapes that list, so the one day
+            # this backstop is reached it told the caller the gateway had broken. The rule was
+            # stated on one dialect and not inherited by the other, which is the shape this
+            # codebase keeps paying for.
+            raise DialectUnsupported(
+                f"The Anthropic Messages API has {why}; '{name}' cannot be honoured."
+            )
 
 
 def canonical_to_anthropic(request: CanonicalRequest, *, max_tokens: int) -> dict[str, Any]:

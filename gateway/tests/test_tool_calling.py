@@ -832,11 +832,21 @@ def test_a_schema_this_dialect_cannot_express_skips_the_candidate() -> None:
     from aira_gateway.upstreams.vertex.anthropic_mapping import schema_refusal
 
     class _Registry:
-        def provider_for(self, model: str):  # noqa: ANN202, ARG002
+        # The **real** signature, three arguments. A stand-in narrower than the thing it replaces
+        # is how this project has already lost a defect: the requirement resolves a catalogued
+        # model through `(provider, publisher)`, and a stub that only takes a name would make this
+        # test pass against a version that had stopped doing so.
+        def provider_for(self, model: str, provider: str = "", publisher: str = ""):  # noqa: ANN202, ARG002
             return type("P", (), {"schema_refusal": staticmethod(schema_refusal)})()
 
+    class _Catalog:
+        async def declaration(self, model: str):  # noqa: ANN202
+            from aira_gateway.catalog import ModelDeclaration
+
+            return ModelDeclaration(name=model)
+
     constrained = parse_schema({"type": "STRING", "pattern": "^x+$"})
-    refusal = asyncio.run(SchemaExpressible(_Registry(), constrained).refusal("claude"))
+    refusal = asyncio.run(SchemaExpressible(_Registry(), constrained, _Catalog()).refusal("claude"))
 
     assert refusal is not None
     assert "pattern" in refusal

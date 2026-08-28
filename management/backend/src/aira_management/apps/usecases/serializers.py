@@ -105,6 +105,46 @@ class UseCaseSerializer(serializers.ModelSerializer[UseCase]):
             )
         return models
 
+    def validate_slug(self, slug: str) -> str:
+        """The slug is the use case's **identity**, and an identity is set once (2026-08-27).
+
+        It is not a display name. It keys the gateway's whole read-model — `use_cases`,
+        `api_keys.use_case`, `pipeline_configs`, `budgets`, `rate_limits`, `use_case_members`,
+        `use_case_groups`, every `request_logs` row — it is what an API key is bound to, and it is
+        the second half of the Keycloak convention `/use-cases/<slug>` (`FRD-102`), which grants
+        data-plane access **from the token alone**, touching no table this plane owns.
+
+        Renaming it therefore does not rename anything. It **abandons** one use case and starts
+        another, and only this plane learns which. Measured on 2026-08-27 against the running
+        stack, one `PATCH` by a use-case administrator on their own use case:
+
+            Management                    knows only the new slug (404 for the old)
+            gateway `use_cases`           two rows — the old one intact, no tombstone
+            gateway `api_keys`            still bound to the old slug, still active
+            gateway `pipeline_configs`    still on the old slug, still enforcing
+            the key issued before it      **still served, 200**
+
+        So a use-case administrator can, with one field, move a fully provisioned use case out of
+        the control plane's sight while it keeps serving traffic. Retirement cannot reach it —
+        `FRD-607` writes the tombstone for the *new* slug, so `refuse_if_retired` never fires and
+        the keys go on working, which is the one thing that feature exists to prevent. Nor can a
+        key revocation, a budget, a limit, or a purge. The audit trail splits in two and reporting
+        follows only half of it.
+
+        Refused rather than silently ignored, which is what `read_only` would do: a caller who
+        `PATCH`es a slug and is answered `200` with the old one believes they renamed it. *A value
+        silently transformed is worse than one refused, because only the refusal is visible*
+        (`FRD-124`).
+        """
+        if self.instance is not None and slug != self.instance.slug:
+            raise serializers.ValidationError(
+                f"A use case's slug is its identity and cannot be changed. '{self.instance.slug}' "
+                "is what the gateway's read-model, its API keys, its audit rows and the Keycloak "
+                "group '/use-cases/<slug>' all name. Retire this use case and create the one you "
+                "want instead — the name and description are yours to edit."
+            )
+        return slug
+
     class Meta:
         model = UseCase
         fields = [

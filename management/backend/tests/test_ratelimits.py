@@ -144,6 +144,51 @@ def test_a_limit_of_zero_is_refused() -> None:
     assert resp.status_code == 400
 
 
+def test_a_burst_below_the_sustained_rate_is_a_configuration_not_a_mistake() -> None:
+    """The property that was being silently claimed and never held.
+
+    The serializer carried `if burst and burst < 1: raise` — unreachable for a non-negative integer
+    — under a comment saying a burst below the per-minute figure was *"almost certainly a
+    mistake"*. Neither the guard nor the sentence was true, and the pair is worse than either: a
+    reader implementing what the comment says would refuse the ordinary way to shape traffic.
+
+    600 a minute with a burst of 5 is ten a second and at most five at once. That is what a token
+    bucket is **for**, and the gateway's own tests configure exactly this pair on purpose. It has
+    to be authorable, so it is asserted rather than left to a comment.
+    """
+    admin = _user("admin1", "global-admin")
+    _make_uc(admin, "demo-uc")
+
+    resp = _client(admin).post(
+        f"{BASE}demo-uc/rate-limits/",
+        {"scope": "use_case", "limit_rpm": 600, "burst": 5},
+        format="json",
+    )
+
+    assert resp.status_code == 201
+    limit = RateLimit.objects.get(use_case__slug="demo-uc")
+    assert (limit.limit_rpm, limit.burst) == (600, 5)
+
+
+def test_a_negative_burst_is_refused_by_the_field_that_bounds_it() -> None:
+    """And the bound that *is* real is where a bound belongs — on the model.
+
+    Asserted here because the removed branch was the only thing in this file that looked like it
+    answered for a nonsensical burst, and deleting a guard without checking what it was standing
+    in front of is how a real one goes missing with it.
+    """
+    admin = _user("admin1", "global-admin")
+    _make_uc(admin, "demo-uc")
+
+    resp = _client(admin).post(
+        f"{BASE}demo-uc/rate-limits/",
+        {"scope": "use_case", "limit_rpm": 60, "burst": -1},
+        format="json",
+    )
+
+    assert resp.status_code == 400
+
+
 def test_members_may_read_but_not_set_limits() -> None:
     admin = _user("admin1", "global-admin")
     usecase = _make_uc(admin, "demo-uc")

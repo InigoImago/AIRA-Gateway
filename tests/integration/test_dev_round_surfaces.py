@@ -24,7 +24,7 @@ import json
 import httpx
 import pytest
 
-from .conftest import GATEWAY_URL
+from .conftest import GATEWAY_URL, LOCAL_CHAT_MODEL_ID, LOCAL_EMBED_MODEL_ID
 from .governed import CHAT_MODEL, EMBED_MODEL, GEMINI, KIRA, MOCK_MODEL, Governed
 
 pytestmark = pytest.mark.integration
@@ -40,7 +40,12 @@ def _gemini(text: str = "Say OK.", **config: object) -> dict:
 
 
 def _kira(text: str = "Say OK.", **fields: object) -> dict:
-    return {"request": {"parts": [{"text": text}]}, "model_id": 9001, "maxTokens": 16, **fields}
+    return {
+        "request": {"parts": [{"text": text}]},
+        "model_id": LOCAL_CHAT_MODEL_ID,
+        "maxTokens": 16,
+        **fields,
+    }
 
 
 def _envelope(response: httpx.Response, surface: str) -> str:
@@ -94,7 +99,7 @@ async def test_every_verb_leaves_exactly_one_audit_row_naming_itself(
         response = (
             await governed.kira("/chat", _kira())
             if operation == "chat"
-            else await governed.kira("/embed", {"text": "x", "model_id": 9002})
+            else await governed.kira("/embed", {"text": "x", "model_id": LOCAL_EMBED_MODEL_ID})
         )
 
     assert response.status_code == 200, response.text
@@ -167,7 +172,9 @@ async def test_both_surfaces_record_a_generation_identically(governed: Governed)
 
 async def test_both_surfaces_record_an_embedding_identically(governed: Governed) -> None:
     assert (await governed.embed({"content": {"parts": [{"text": "x"}]}})).status_code == 200
-    assert (await governed.kira("/embed", {"text": "x", "model_id": 9002})).status_code == 200
+    assert (
+        await governed.kira("/embed", {"text": "x", "model_id": LOCAL_EMBED_MODEL_ID})
+    ).status_code == 200
     rows = await governed.wait_for_rows(2)
     by_api = {row["api"]: row for row in rows}
 
@@ -183,7 +190,7 @@ async def test_the_same_text_embeds_to_the_same_vector_on_both_surfaces(
     type, a prefix, a separator — would return a different vector for the same input, and nothing
     in either response would say so."""
     gemini = await governed.embed({"content": {"parts": [{"text": "governance"}]}})
-    kira = await governed.kira("/embed", {"text": "governance", "model_id": 9002})
+    kira = await governed.kira("/embed", {"text": "governance", "model_id": LOCAL_EMBED_MODEL_ID})
 
     assert gemini.status_code == 200 and kira.status_code == 200
     assert gemini.json()["embedding"]["values"] == pytest.approx(kira.json()["vector"], abs=1e-6)
@@ -411,8 +418,10 @@ async def test_a_kira_list_is_one_embedding_and_the_surfaces_differ_deliberately
     Asserted together because the difference is exactly the kind a migrating caller would otherwise
     discover as "the numbers changed".
     """
-    kira = await governed.kira("/embed", {"text": ["gover", "nance"], "model_id": 9002})
-    joined = await governed.kira("/embed", {"text": "governance", "model_id": 9002})
+    kira = await governed.kira(
+        "/embed", {"text": ["gover", "nance"], "model_id": LOCAL_EMBED_MODEL_ID}
+    )
+    joined = await governed.kira("/embed", {"text": "governance", "model_id": LOCAL_EMBED_MODEL_ID})
 
     assert kira.status_code == 200 and joined.status_code == 200
     assert "vector" in kira.json() and "vectors" not in kira.json()
@@ -422,18 +431,26 @@ async def test_a_kira_list_is_one_embedding_and_the_surfaces_differ_deliberately
 @pytest.mark.parametrize(
     ("body", "code"),
     [
-        pytest.param({"text": "", "model_id": 9002}, "EMPTY_EMBEDDING_INPUT", id="empty-string"),
-        pytest.param({"text": [], "model_id": 9002}, "EMPTY_EMBEDDING_INPUT", id="empty-list"),
         pytest.param(
-            {"text": ["", ""], "model_id": 9002}, "EMPTY_EMBEDDING_INPUT", id="nothing-but-empties"
+            {"text": "", "model_id": LOCAL_EMBED_MODEL_ID},
+            "EMPTY_EMBEDDING_INPUT",
+            id="empty-string",
         ),
         pytest.param(
-            {"text": "ok", "model_id": 9002, "task_type": "NONSENSE"},
+            {"text": [], "model_id": LOCAL_EMBED_MODEL_ID}, "EMPTY_EMBEDDING_INPUT", id="empty-list"
+        ),
+        pytest.param(
+            {"text": ["", ""], "model_id": LOCAL_EMBED_MODEL_ID},
+            "EMPTY_EMBEDDING_INPUT",
+            id="nothing-but-empties",
+        ),
+        pytest.param(
+            {"text": "ok", "model_id": LOCAL_EMBED_MODEL_ID, "task_type": "NONSENSE"},
             "INVALID_EMBEDDING_TASK_TYPE",
             id="invented-task-type",
         ),
         pytest.param(
-            {"text": "ok", "model_id": 9002, "task_type": "RETRIEVAL_QUERY"},
+            {"text": "ok", "model_id": LOCAL_EMBED_MODEL_ID, "task_type": "RETRIEVAL_QUERY"},
             "INVALID_EMBEDDING_TASK_TYPE",
             id="task-type-the-model-never-declared",
         ),
@@ -488,7 +505,7 @@ async def test_asking_a_language_model_to_embed_is_refused_by_name(
     if surface == "gemini":
         response = await governed.embed({"content": {"parts": [{"text": "x"}]}}, model=CHAT_MODEL)
     else:
-        response = await governed.kira("/embed", {"text": "x", "model_id": 9001})
+        response = await governed.kira("/embed", {"text": "x", "model_id": LOCAL_CHAT_MODEL_ID})
 
     assert response.status_code == expect_code, response.text[:300]
     assert CHAT_MODEL in _envelope(response, surface)
@@ -565,10 +582,16 @@ async def test_a_malformed_gemini_body_is_refused_and_never_a_500(
     [
         pytest.param({}, "nothing at all", id="empty-object"),
         pytest.param({"request": {"parts": [{"text": "hi"}]}}, "no model id", id="no-model-id"),
-        pytest.param({"model_id": 9001}, "no request", id="no-request"),
-        pytest.param({"request": "hi", "model_id": 9001}, "a string request", id="string-request"),
+        pytest.param({"model_id": LOCAL_CHAT_MODEL_ID}, "no request", id="no-request"),
         pytest.param(
-            {"request": {"parts": [{}]}, "model_id": 9001}, "an empty part", id="empty-part"
+            {"request": "hi", "model_id": LOCAL_CHAT_MODEL_ID},
+            "a string request",
+            id="string-request",
+        ),
+        pytest.param(
+            {"request": {"parts": [{}]}, "model_id": LOCAL_CHAT_MODEL_ID},
+            "an empty part",
+            id="empty-part",
         ),
         pytest.param(
             {"request": {"parts": [{"text": "hi"}]}, "model_id": "nine"},
@@ -576,7 +599,11 @@ async def test_a_malformed_gemini_body_is_refused_and_never_a_500(
             id="model-id-not-a-number",
         ),
         pytest.param(
-            {"request": {"parts": [{"text": "hi"}]}, "model_id": 9001, "temperature": "warm"},
+            {
+                "request": {"parts": [{"text": "hi"}]},
+                "model_id": LOCAL_CHAT_MODEL_ID,
+                "temperature": "warm",
+            },
             "a temperature that is not a number",
             id="temperature-not-a-number",
         ),

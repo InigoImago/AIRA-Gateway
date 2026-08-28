@@ -280,3 +280,55 @@ def test_auto_assignment_does_not_collide_with_what_is_already_there(captured_ev
 
     assert generated.status_code == 201, generated.data
     assert generated.data["numeric_id"] > 99999
+
+
+def test_a_partial_price_edit_is_checked_against_the_model_it_will_produce() -> None:
+    """The pair rule is about the **model**, not about the edit.
+
+    `validate` asked `attrs.get(...)` for both prices, and a `PATCH` carries only what changed — so
+    correcting one price on a fully priced model read as *"one price given, the other absent"* and
+    was refused with a sentence telling the caller to set both, which they already had. Measured on
+    2026-08-26.
+
+    The declaration check five lines below it in the same method already merged over the instance
+    and explains why. The rule was written down one layer down and not held one layer up.
+    """
+    client = _client(_user("ga", Role.GLOBAL_ADMIN))
+    created = client.post(
+        BASE,
+        {
+            "name": "priced-1",
+            "input_price_per_million": "1.00",
+            "output_price_per_million": "2.00",
+        },
+        format="json",
+    )
+    assert created.status_code in (200, 201), created.data
+
+    response = client.patch(f"{BASE}priced-1/", {"input_price_per_million": "3.00"}, format="json")
+
+    assert response.status_code == 200, response.data
+    model = Model.objects.get(name="priced-1")
+    assert model.input_price_per_million == Decimal("3.000000")
+    assert model.output_price_per_million == Decimal("2.000000"), "the other price was not touched"
+
+
+def test_clearing_one_price_of_a_pair_is_still_refused() -> None:
+    """The half of the rule the fix must not lose. An explicit `null` **is** the resulting value,
+    so a model left priced in one direction is refused exactly as it was before — reading the
+    instance is about a field the caller did not mention, never about one they did."""
+    client = _client(_user("ga", Role.GLOBAL_ADMIN))
+    client.post(
+        BASE,
+        {
+            "name": "priced-2",
+            "input_price_per_million": "1.00",
+            "output_price_per_million": "2.00",
+        },
+        format="json",
+    )
+
+    response = client.patch(f"{BASE}priced-2/", {"output_price_per_million": None}, format="json")
+
+    assert response.status_code == 400
+    assert Model.objects.get(name="priced-2").output_price_per_million == Decimal("2.000000")

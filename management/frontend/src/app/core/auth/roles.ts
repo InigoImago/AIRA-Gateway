@@ -43,6 +43,35 @@ export function maySetStandards(roles: readonly string[] | undefined): boolean {
 /** Roles that write security-level configuration (the server's `IsITSecurity`). */
 const SECURITY_ROLES = ['it-security', 'global-admin'];
 
+/**
+ * Roles that may declare a model, price it and release it into the catalogue.
+ *
+ * The server's `CATALOG_ROLES`, which `MayCatalogueModels` is built from — and which has its own
+ * name there for the reason it has one here: it is *"the same set as `IsGlobalAdmin` today, and a
+ * separate name anyway"*, because two questions that happen to share an answer must not be one
+ * question. Written out by hand in `model-catalog.ts` until 2026-08-27, which is the third copy
+ * this file exists to prevent, inside the file that says so.
+ */
+const CATALOG_ROLES = ['global-admin'];
+
+/** The single role that runs the installation (the server's `IsGlobalAdmin`). */
+const INSTALLATION_ROLES = ['global-admin'];
+
+/**
+ * May this caller declare a model and release it for use (the server's `MayCatalogueModels`)?
+ */
+export function mayCatalogue(roles: readonly string[] | undefined): boolean {
+  return (roles ?? []).some((role) => CATALOG_ROLES.includes(role));
+}
+
+/**
+ * May this caller change what the **installation** does — its own budget, and creating a use case
+ * (the server's `IsGlobalAdmin`)?
+ */
+export function runsTheInstallation(roles: readonly string[] | undefined): boolean {
+  return (roles ?? []).some((role) => INSTALLATION_ROLES.includes(role));
+}
+
 /** Does this caller see every use case, whether or not they may change anything in one? */
 export function hasOversight(roles: readonly string[] | undefined): boolean {
   return (roles ?? []).some((role) => OVERSIGHT_ROLES.includes(role));

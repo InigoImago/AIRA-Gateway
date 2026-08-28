@@ -131,7 +131,7 @@ def _whole(body: dict[str, Any], field: str, *, minimum: int, maximum: int) -> i
     return number
 
 
-def _require_oversight(principal: Principal) -> None:
+def _require_an_incident_role(principal: Principal) -> None:
     """Only an incident role may stop traffic by hand (`FRD-503` FR-6).
 
     The same roles that may author a global rule (`FRD-500` FR-8), for the same reason: a
@@ -139,6 +139,15 @@ def _require_oversight(principal: Principal) -> None:
     that is a visibility predicate, and it includes IT Steuerung, which PRD §154 gives every figure
     and no write anywhere. Asking the two planes the same question and getting different answers is
     how this was found.
+
+    **And the name said the opposite of the paragraph above it.** This was `_require_oversight`
+    until 2026-08-26 — the predicate was corrected when the defect was found and the name was
+    left, so three call sites read as though IT Steuerung could lift a suspension while the body
+    refused them. That is the same shape one turn later than the entry `LESSONS.md` §1 records
+    (*"`is_governance` left on two call sites after `visible_scope` was corrected … on both of
+    which the message already said oversight"*): a reviewer at a call site sees the name, not the
+    body, so a name that contradicts its own first line is a review that cannot be done from the
+    call site.
     """
     if principal.method == "demo":
         # Authentication is switched off entirely; there is no identity to authorise, and the
@@ -158,7 +167,7 @@ def _require_oversight(principal: Principal) -> None:
 async def list_suspensions(
     request: Request, principal: Principal = Depends(require_principal)
 ) -> JSONResponse:
-    _require_oversight(principal)
+    _require_an_incident_role(principal)
     sessionmaker = sessionmaker_of(request)
     async with sessionmaker() as session:
         stmt = select(AccessSuspension).order_by(AccessSuspension.created_at.desc()).limit(200)
@@ -179,7 +188,7 @@ async def create_suspension(
     the problem, and "traffic is doing something alarming" and "the pipeline between the planes is
     unhealthy" are not independent events (`FRD-503` §4.3).
     """
-    _require_oversight(principal)
+    _require_an_incident_role(principal)
     body = await _body_of(request)
 
     target = str(body.get("target") or "")
@@ -250,7 +259,7 @@ async def lift_suspension(
     suspension_id: str, request: Request, principal: Principal = Depends(require_principal)
 ) -> JSONResponse:
     """Lift one. The row is kept and stamped, never deleted (`FRD-503` FR-8)."""
-    _require_oversight(principal)
+    _require_an_incident_role(principal)
     sessionmaker = sessionmaker_of(request)
     async with sessionmaker() as session:
         row = await session.get(AccessSuspension, suspension_id)

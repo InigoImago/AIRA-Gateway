@@ -321,12 +321,42 @@ class LlmCategoryRouter:
         except UpstreamError:
             return Routing(None)
         call = ModelCall(step="model_route", model=self._model, usage=response.usage)
-        answer = response.text.strip().upper()
-        for category in self._categories:
-            name = category.get("name", "")
-            if name and name.upper() in answer:
-                return Routing(name, call, response.text)
-        return Routing(None, call, response.text)
+        return Routing(self._matched(response.text), call, response.text)
+
+    def _matched(self, reply: str) -> str | None:
+        """Which category this reply names, or ``None`` if it does not name exactly one.
+
+        It used to be `name.upper() in answer` — a **substring** anywhere in the reply, first
+        category in list order wins. Three ways that goes wrong, all measured on 2026-08-27:
+
+            reply "NONE"                     → category `one`
+            reply "not code — use general"   → category `code`
+            reply "The answer is general or code" → category `code`
+
+        The first is the worst: `NONE` is this classifier's **own protocol** for "none clearly
+        fit" (`_ROUTER_INSTRUCTION`), so the one answer reserved for *no category* selected a
+        category, and it did so for any name that happens to sit inside it. The other two decide
+        by position in the operator's list rather than by what the model said — a router that
+        prefers whichever category was typed first is not classifying.
+
+        So: whole words, and **exactly one** of them. A reply naming two categories has not
+        answered the question it was asked, and the honest outcome is the same as naming none —
+        the configured `default_model`, recorded as `no_category_matched`, which is a router to
+        look at rather than a routing to trust. Tolerance for the shapes a model really produces —
+        punctuation, a code fence, a trailing newline, a leading "I would say:" — is what the word
+        boundary buys; tolerance for a sentence that argues with itself is not tolerance.
+        """
+        answer = reply.strip().upper()
+        names = [str(category.get("name", "")) for category in self._categories]
+        # The exact answer the instruction asks for, before anything cleverer is tried: a model
+        # that did as it was told must not be at the mercy of a rule written for one that did not.
+        for name in names:
+            if name and answer == name.upper():
+                return name
+        found = [
+            name for name in names if name and re.search(rf"\b{re.escape(name.upper())}\b", answer)
+        ]
+        return found[0] if len(found) == 1 else None
 
     async def classify(self, text: str) -> str | None:
         """The category alone, for callers with nothing to bill.

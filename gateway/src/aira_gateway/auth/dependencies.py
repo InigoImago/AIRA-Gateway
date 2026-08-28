@@ -81,7 +81,13 @@ async def _with_group_grants(request: Request, principal: Principal) -> Principa
     if not granted:
         return principal
     merged = tuple(dict.fromkeys([*principal.use_cases, *granted]))
-    return replace(principal, use_cases=merged)
+    # **The roles travel with the slugs.** This took `granted.keys()` and dropped the values, so
+    # the one thing the resolver works out that a later reader cannot — *as what* — was computed,
+    # tested (`test_the_granted_role_is_carried_through`) and thrown away here. `payloads` then
+    # asked `use_case_members`, where a **group** grant writes no row, and answered "user" for an
+    # administrator. Carried rather than re-derived, because re-deriving it is what produced two
+    # answers to one question in the first place.
+    return replace(principal, use_cases=merged, grants=tuple(sorted(granted.items())))
 
 
 async def require_principal(request: Request) -> Principal:

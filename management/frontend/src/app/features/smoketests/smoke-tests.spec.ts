@@ -75,6 +75,12 @@ interface Options {
   results?: TestResult[];
   stats?: TestModelStats[];
   askFails?: boolean;
+  /** Make the **run history** fail on its own, so the screen has to say so about the runs. */
+  runsFail?: boolean;
+  /** Make the **per-model figures** fail on their own — separately, because a stub that breaks
+   *  both cannot tell which of the two reported, and the first version of this test passed with
+   *  the runs handler put back to swallowing its error. */
+  statsFail?: boolean;
   /** Make every catalogue write fail, so the screen has to say so. */
   catalogueFails?: boolean;
   /** An empty catalogue, so the screen has to say that rather than showing nothing. */
@@ -152,8 +158,20 @@ function setup(options: Options = {}) {
                     },
                   ],
                 ),
-          testRuns: () => of([RUN]),
-          testStats: () => of(options.stats ?? []),
+          testRuns: () =>
+            options.runsFail
+              ? throwError(() => ({
+                  status: 500,
+                  error: { error: { message: 'the run store is unreachable' } },
+                }))
+              : of([RUN]),
+          testStats: () =>
+            options.statsFail
+              ? throwError(() => ({
+                  status: 500,
+                  error: { error: { message: 'the figures are unreachable' } },
+                }))
+              : of(options.stats ?? []),
           runResults: () => of(options.results ?? [result(), result({ id: 11, topic: 'PII' })]),
           startRun: (useCase: string) => {
             calls.push(`startRun:${useCase}`);
@@ -244,6 +262,36 @@ describe('SmokeTests', () => {
     expect(element.querySelector('[data-testid="tab-catalogue"]')).toBeNull();
     // And it is not reported as a broken page on top of it.
     expect(element.querySelector('.callout--danger')).toBeNull();
+  });
+
+  it('says why the run history is empty when it could not be loaded', () => {
+    /** The two loads on this screen that swallowed their failure until 2026-08-27, alone among
+     *  its loads — the catalogue and the attribution beside them each report through
+     *  `PageFeedback`, one with a 403 branch of its own.
+     *
+     *  `refreshRuns()` is called from `ngOnInit`, so this is the **first** load, and an empty runs
+     *  table is exactly what this screen looks like before anybody has run anything. *An empty
+     *  state that states the wrong reason is worse than one that states none: the reader concludes
+     *  the recording is broken, and then distrusts every figure on the page.* Here it stated no
+     *  reason at all and read as "no runs yet", which is a confident false statement on the tab
+     *  whose whole purpose is the history. */
+    const runs = setup({ runsFail: true });
+    const said = runs.element.querySelector('.callout--danger')?.textContent ?? '';
+    // **The run store's own words**, not the figures'. The first version broke both stubs at once
+    // and asserted only that the banner said "unreachable" — which the *figures* also say, so the
+    // test stayed green with the runs handler put back to swallowing its error. A test that cannot
+    // tell which of two calls reported is a test of neither.
+    expect(said).toContain('the run store is unreachable');
+    // The server's own wording, not a generic fallback — `core/api/error-message.ts`'s whole point.
+    expect(said).not.toContain('Something went wrong');
+    // And the screen is still a screen: the reader can move to a tab that did load.
+    expect(runs.element.querySelector('[data-testid="tab-catalogue"]')).not.toBeNull();
+
+    // The figures are a second call and a second silence, so they get their own assertion.
+    const stats = setup({ statsFail: true });
+    expect(stats.element.querySelector('.callout--danger')?.textContent ?? '').toContain(
+      'the figures are unreachable',
+    );
   });
 
   it('reports a load that genuinely failed as a failure, not as a refusal', () => {

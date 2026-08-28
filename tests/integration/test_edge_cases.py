@@ -26,7 +26,7 @@ from typing import Any
 import httpx
 import pytest
 
-from .conftest import GATEWAY_URL, LOCAL_CHAT_MODEL_ID, Fixture
+from .conftest import GATEWAY_URL, LOCAL_CHAT_MODEL_ID, LOCAL_EMBED_MODEL_ID, Fixture
 
 pytestmark = pytest.mark.integration
 
@@ -622,11 +622,11 @@ async def test_the_kira_surface_refuses_in_the_predecessors_shape(
 @pytest.mark.parametrize(
     ("body", "expect"),
     [
-        ({"text": "", "model_id": 9002}, (422,)),
-        ({"text": [], "model_id": 9002}, (422,)),
-        ({"text": "ok", "model_id": 9002, "task_type": "NONSENSE"}, (422,)),
-        ({"text": 42, "model_id": 9002}, (422,)),
-        ({"model_id": 9002}, (422,)),
+        ({"text": "", "model_id": LOCAL_EMBED_MODEL_ID}, (422,)),
+        ({"text": [], "model_id": LOCAL_EMBED_MODEL_ID}, (422,)),
+        ({"text": "ok", "model_id": LOCAL_EMBED_MODEL_ID, "task_type": "NONSENSE"}, (422,)),
+        ({"text": 42, "model_id": LOCAL_EMBED_MODEL_ID}, (422,)),
+        ({"model_id": LOCAL_EMBED_MODEL_ID}, (422,)),
         ({"text": "ok"}, (422,)),
     ],
 )
@@ -655,8 +655,10 @@ async def test_a_list_is_joined_into_one_embedding_rather_than_many(
     element is acceptable input. It is not, and the test below is why; the join is the same
     property with a part that carries something.
     """
-    joined = await _post(fixture, f"{KIRA}/embed", {"text": ["ok", "!"], "model_id": 9002})
-    plain = await _post(fixture, f"{KIRA}/embed", {"text": "ok!", "model_id": 9002})
+    joined = await _post(
+        fixture, f"{KIRA}/embed", {"text": ["ok", "!"], "model_id": LOCAL_EMBED_MODEL_ID}
+    )
+    plain = await _post(fixture, f"{KIRA}/embed", {"text": "ok!", "model_id": LOCAL_EMBED_MODEL_ID})
 
     assert joined.status_code == 200, joined.text[:300]
     assert plain.status_code == 200, plain.text[:300]
@@ -677,7 +679,9 @@ async def test_a_blank_element_in_a_list_is_refused_rather_than_absorbed(
     surface now. Whitespace counts: three spaces contribute nothing to a vector either.
     """
     for text in (["ok", ""], ["ok", "   "], [""], []):
-        response = await _post(fixture, f"{KIRA}/embed", {"text": text, "model_id": 9002})
+        response = await _post(
+            fixture, f"{KIRA}/embed", {"text": text, "model_id": LOCAL_EMBED_MODEL_ID}
+        )
 
         assert response.status_code == 422, f"{text!r}: {response.text[:200]}"
         assert response.json()["code"], response.text[:200]

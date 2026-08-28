@@ -19,7 +19,7 @@ import httpx
 import pytest
 from sqlalchemy import text
 
-from .conftest import GATEWAY_URL
+from .conftest import GATEWAY_URL, LOCAL_CHAT_MODEL_ID
 
 pytestmark = pytest.mark.integration
 
@@ -27,7 +27,7 @@ MODEL = "qwen3:0.6b"
 #: The KIRA surface addresses models by integer id (`FRD-107`). A real one, because the finding
 #: only shows up *past* attribution: the first version of this test used id 1 and every identity
 #: came back `MODEL_NOT_FOUND` — which reads exactly like a refusal and is not one.
-MODEL_ID = 9001
+MODEL_ID = LOCAL_CHAT_MODEL_ID
 SHORT = {"generationConfig": {"maxOutputTokens": 8}}
 
 

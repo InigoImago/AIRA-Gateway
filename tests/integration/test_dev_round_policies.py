@@ -20,7 +20,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from .conftest import GATEWAY_URL
+from .conftest import GATEWAY_URL, LOCAL_CHAT_MODEL_ID
 from .governed import CHAT_MODEL, EMBED_MODEL, GEMINI, MOCK_MODEL, Governed
 
 pytestmark = pytest.mark.integration
@@ -196,7 +196,11 @@ async def test_the_filter_applies_to_both_surfaces(governed: Governed, surface: 
     else:
         response = await governed.kira(
             "/chat",
-            {"request": {"parts": [{"text": INJECTION}]}, "model_id": 9001, "maxTokens": 16},
+            {
+                "request": {"parts": [{"text": INJECTION}]},
+                "model_id": LOCAL_CHAT_MODEL_ID,
+                "maxTokens": 16,
+            },
         )
 
     assert response.status_code == 400, response.text[:300]

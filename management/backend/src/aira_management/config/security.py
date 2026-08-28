@@ -80,11 +80,11 @@ def unsafe_settings(settings: ManagementSettings) -> list[str]:
         )
     problems.extend(
         plaintext_problems(
-            {
-                "AIRA_OIDC_ISSUER": settings.oidc_issuer,
-                "AIRA_OIDC_JWKS_URI": settings.jwks_uri() if settings.oidc_issuer else "",
-                "VAULT_ADDR": os.environ.get("VAULT_ADDR", ""),
-            }
+            [
+                ("AIRA_OIDC_ISSUER", settings.oidc_issuer),
+                ("AIRA_OIDC_JWKS_URI", settings.jwks_uri() if settings.oidc_issuer else ""),
+                ("VAULT_ADDR", os.environ.get("VAULT_ADDR", "")),
+            ]
         )
     )
     if settings.oidc_issuer.strip() and not settings.oidc_audience.strip():

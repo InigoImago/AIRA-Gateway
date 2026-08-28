@@ -12,7 +12,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from .conftest import GATEWAY_URL
+from .conftest import GATEWAY_URL, LOCAL_CHAT_MODEL_ID
 
 pytestmark = pytest.mark.integration
 
@@ -63,7 +63,8 @@ async def test_the_chat_endpoint_is_mounted_and_authenticated() -> None:
     compatibility surface accidentally left open would be the worst kind of regression."""
     async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=30.0) as client:
         response = await client.post(
-            f"{BASE}/chat", json={"request": {"parts": [{"text": "hi"}]}, "model_id": 1004}
+            f"{BASE}/chat",
+            json={"request": {"parts": [{"text": "hi"}]}, "model_id": LOCAL_CHAT_MODEL_ID},
         )
 
     assert response.status_code != 404, "the KIRA surface is not mounted"

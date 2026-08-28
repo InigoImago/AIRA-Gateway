@@ -104,6 +104,8 @@ MGMT_SETTINGS = (
 MONEY = "libs/tests/test_money.py"
 COST = "gateway/tests/test_cost_budgets.py"
 CATALOG = "management/backend/tests/test_catalog.py"
+IDENTITY = "management/backend/tests/test_an_identity_is_set_once.py"
+CONSOLE_ROLES = "tools/tests/test_the_console_and_the_server_agree_about_roles.py"
 PIPELINE = "gateway/tests/test_pipeline_engine.py gateway/tests/test_pipeline_routes.py"
 CLASSIFIERS = "gateway/tests/test_pipeline_classifiers.py gateway/tests/test_pipeline_engine.py"
 PII = "gateway/tests/test_pipeline_pii_filter.py"
@@ -125,6 +127,7 @@ DIAGNOSTICS = "gateway/tests/test_diagnostics.py"
 PROVIDER_OFFERINGS = "gateway/tests/test_provider_offerings.py"
 RELEASE = "gateway/tests/test_use_case_model_release.py"
 DRYRUN = "gateway/tests/test_pipeline_dryrun.py"
+EMBED_PII = "gateway/tests/test_a_redactor_reaches_an_embedding.py"
 CSV_EXPORT = "gateway/tests/test_csv_export.py"
 THINKING = "gateway/tests/test_thinking.py gateway/tests/test_serving_options.py"
 RESPONSE_SCHEMA = "gateway/tests/test_response_schema.py gateway/tests/test_serving_options.py"
@@ -2169,8 +2172,11 @@ MUTATIONS = [
         "T8",
         "the decisions of a blocked pipeline survive the exception that blocked it",
         "gateway/src/aira_gateway/pipeline/engine.py",
+        # Widened when `run_over_texts` arrived beside `run` and the two now build their outcomes
+        # the same way: the anchor names which of them this property is about.
+        "            fallback_models=pipeline.fallback_models,\n"
         "            decisions=decisions if decisions is not None else [],",
-        "            decisions=[],",
+        "            fallback_models=pipeline.fallback_models,\n            decisions=[],",
         "gateway/tests/test_audit_completeness.py",
     ),
     # ---- reporting (FRD-601) --------------------------------------------------------------
@@ -2760,10 +2766,36 @@ MUTATIONS = [
         NO_SILENT_DROP,
     ),
     Mutation(
+        "Y3b",
+        "a model reachable only through the catalogue still takes its dialect's check",
+        "gateway/src/aira_gateway/requirements.py",
+        "    return registry.provider_for(model, declaration.provider, declaration.publisher)",
+        "    return registry.provider_for(model)",
+        NO_SILENT_DROP,
+    ),
+    Mutation(
+        "Y3c",
+        "a control a dialect has no word for is a named refusal, never a 500",
+        "gateway/src/aira_gateway/upstreams/vertex/anthropic_mapping.py",
+        "            raise DialectUnsupported(\n"
+        "                f\"The Anthropic Messages API has {why}; '{name}' cannot be honoured.\"\n"
+        "            )",
+        "            raise ValueError(\n"
+        "                f\"The Anthropic Messages API has {why}; '{name}' cannot be honoured.\"\n"
+        "            )",
+        NO_SILENT_DROP,
+    ),
+    Mutation(
         "Y4",
         "a candidate whose dialect cannot express a control is skipped, not served without it",
         "gateway/src/aira_gateway/api/serving.py",
-        "        checks.append(SamplingExpressible(registry_of(request), canonical.sampling_requested))",
+        # Re-anchored 2026-08-26: the requirement gained the catalogue, so a model reachable
+        # only by being catalogued takes its dialect's check too (see `Y3b`).
+        "        checks.append(\n"
+        "            SamplingExpressible(\n"
+        "                registry_of(request), canonical.sampling_requested, catalog_of(request)\n"
+        "            )\n"
+        "        )",
         "        pass",
         NO_SILENT_DROP,
     ),
@@ -2897,8 +2929,11 @@ MUTATIONS = [
         "Z6",
         "a model call the pipeline made leaves its own audit row",
         "gateway/src/aira_gateway/api/serving.py",
+        # Widened for the same reason as `T8`: `run_pipeline_over_texts` has the same `finally`,
+        # and `Z6b` below is that one's own entry rather than this one's second match.
+        "        # let `:embedContent` slip past the pre-dispatch gate.\n"
         "        await record_pipeline_calls(request, trail)",
-        "        pass",
+        "        # let `:embedContent` slip past the pre-dispatch gate.\n        pass",
         ACCOUNTING,
     ),
     Mutation(
@@ -3088,10 +3123,32 @@ MUTATIONS = [
         ANOMALY_RULES,
     ),
     Mutation(
+        "C0b",
+        "a price pair is checked against the model the edit produces, not against the edit",
+        "management/backend/src/aira_management/apps/catalog/serializers.py",
+        "        return attrs.get(field, getattr(self.instance, field, None))",
+        "        return attrs.get(field)",
+        CATALOG,
+    ),
+    Mutation(
+        "N2b",
+        "a partial edit is validated against the rule that exists, not against a default",
+        "management/backend/src/aira_management/apps/anomalies/serializers.py",
+        "        if field in attrs:\n"
+        "            return attrs[field]\n"
+        "        if self.instance is not None:\n"
+        "            return getattr(self.instance, field, default)\n"
+        "        return default",
+        "        return attrs.get(field, default)",
+        ANOMALY_RULES,
+    ),
+    Mutation(
         "N3a",
         "a rate rule keeps its sample floor, so one refusal of one is not 100 percent",
         "management/backend/src/aira_management/apps/anomalies/serializers.py",
-        '        elif attrs.get("min_sample", 0) < 1:',
+        # Re-anchored 2026-08-26: a partial edit is validated against the rule that exists, so
+        # the sample floor reads the stored value where the body does not carry one (see `N2b`).
+        '        elif self._effective(attrs, "min_sample", 0) < 1:',
         "        elif False:",
         ANOMALY_RULES,
     ),
@@ -3246,7 +3303,7 @@ MUTATIONS = [
         # Disambiguated 2026-08-12: a second endpoint (`FRD-506`'s reachability check) asks the
         # same predicate, so the bare line matched twice and the harness edits the first. It
         # happened to be the intended one; that it did was luck, and the next endpoint to ask this
-        # question would have moved it. Anchored on the refusal `_require_oversight` raises, which
+        # question would have moved it. Anchored on the refusal `_require_an_incident_role` raises,
         # only the kill switch has.
         "    if not principal.may_act_on_incidents:\n        raise GeminiHTTPError(\n            403,\n"
         '            "Only IT Security or a Global Administrator may suspend or restore access.",',
@@ -3395,6 +3452,22 @@ MUTATIONS = [
         '    if principal.may_act_on_incidents:\n        return "incident"',
         '    if False:\n        return "incident"',
         "gateway/tests/test_payload_access.py",
+    ),
+    Mutation(
+        "N46b",
+        "a grant on a group makes an administrator, the same as a grant naming a person",
+        "gateway/src/aira_gateway/payloads.py",
+        "    return strongest([role for role in (dict(principal.grants).get(use_case), row) if role])",  # noqa: E501
+        "    return strongest([role for role in (None, row) if role])",
+        "gateway/tests/test_payload_access.py",
+    ),
+    Mutation(
+        "N46c",
+        "the role the grant resolver worked out reaches the principal that carries it",
+        "gateway/src/aira_gateway/auth/dependencies.py",
+        "    return replace(principal, use_cases=merged, grants=tuple(sorted(granted.items())))",
+        "    return replace(principal, use_cases=merged)",
+        "gateway/tests/test_group_grants.py",
     ),
     Mutation(
         "N47",
@@ -3891,6 +3964,39 @@ MUTATIONS = [
         "    if not settings.auth_required:",
         "    if False:",
         DEPLOYMENT_SAFETY,
+    ),
+    Mutation(
+        "S1b",
+        "a caller's date on the register is a refusal, never a server error",
+        "gateway/src/aira_gateway/api/reporting.py",
+        # The **register**'s pair; the report's identical pair two hundred lines up is `S1a`'s
+        # subject. Both spellings exist because the sweep that defends them is derived from the
+        # served document now, and `/v1beta/register` is the endpoint it could not see before.
+        '    window_start = _parse(start, "from") if start else default_start\n'
+        '    window_end = _parse(end, "to") if end else default_end\n'
+        "\n"
+        "    if window_end <= window_start:\n"
+        "        raise GeminiHTTPError(400, \"'to' must be after 'from'.\", \"INVALID_ARGUMENT\")\n"
+        "    if window_end - window_start > timedelta(days=MAX_WINDOW_DAYS):\n"
+        "        raise GeminiHTTPError(\n"
+        '            400, f"A register window may span at most {MAX_WINDOW_DAYS} days.", "INVALID_ARGUMENT"',  # noqa: E501
+        "    window_start = datetime.fromisoformat(start) if start else default_start\n"
+        "    window_end = datetime.fromisoformat(end) if end else default_end\n"
+        "\n"
+        "    if window_end <= window_start:\n"
+        "        raise GeminiHTTPError(400, \"'to' must be after 'from'.\", \"INVALID_ARGUMENT\")\n"
+        "    if window_end - window_start > timedelta(days=MAX_WINDOW_DAYS):\n"
+        "        raise GeminiHTTPError(\n"
+        '            400, f"A register window may span at most {MAX_WINDOW_DAYS} days.", "INVALID_ARGUMENT"',  # noqa: E501
+        "gateway/tests/test_a_callers_value_is_never_a_server_error.py",
+    ),
+    Mutation(
+        "H3b",
+        "every configured realm's URLs are checked, not just the last one named",
+        "libs/src/aira_common/transport_security.py",
+        "        for name, url in sorted(named_urls)",
+        "        for name, url in sorted(dict(named_urls).items())",
+        f"{DEPLOYMENT_SAFETY} libs/tests/test_transport_security.py",
     ),
     Mutation(
         "H4",
@@ -4802,6 +4908,14 @@ MUTATIONS = [
         PII,
     ),
     Mutation(
+        "P12b",
+        "the stored request is the rewritten one on the **refused** path as well",
+        "gateway/src/aira_gateway/api/serving.py",
+        "    if rewrites:\n        trail.body = _rewritten_body(trail.body, rewrites)",
+        "    pass",
+        PII,
+    ),
+    Mutation(
         "P13",
         "a redactor that failed refuses rather than passing the original through",
         "gateway/src/aira_gateway/pipeline/engine.py",
@@ -5643,6 +5757,246 @@ MUTATIONS = [
         'return 2, [f"error: {exc}"]',
         "return 0, []",
         "tools/tests/test_a_config_is_checked_before_it_is_deployed.py",
+    ),
+    # ---- the console asks the server's question, in the server's words (2026-08-27) ------
+    Mutation(
+        "CR1",
+        "a console role list that drifts from the server's is caught",
+        "management/frontend/src/app/core/auth/roles.ts",
+        "const INCIDENT_ROLES = ['it-security', 'global-admin'];",
+        "const INCIDENT_ROLES = ['it-security', 'global-admin', 'it-steuerung'];",
+        CONSOLE_ROLES,
+    ),
+    Mutation(
+        "CR2",
+        "a role the server has never heard of is caught, not silently matched by nobody",
+        "management/frontend/src/app/core/auth/roles.ts",
+        "const SECURITY_ROLES = ['it-security', 'global-admin'];",
+        "const SECURITY_ROLES = ['it-securty', 'global-admin'];",
+        CONSOLE_ROLES,
+    ),
+    Mutation(
+        "CR3",
+        "a component that decides authority from a role slug of its own is caught",
+        "management/frontend/src/app/features/models/model-catalog.ts",
+        "  protected readonly canEdit = computed(() => mayCatalogue(this.me()?.roles));",
+        "  protected readonly canEdit = computed("
+        "() => this.me()?.roles.includes('global-admin') ?? false);",
+        CONSOLE_ROLES,
+    ),
+    Mutation(
+        "CR4",
+        "a role literal in a **template** is caught as well as one in a component",
+        "management/frontend/src/app/app.html",
+        '  @if (hasOversight()) {\n    <a\n      class="aira-nav__item"\n'
+        '      routerLink="/register"',
+        "  @if (hasOversight() || me()?.roles?.includes('it-security')) {\n"
+        '    <a\n      class="aira-nav__item"\n      routerLink="/register"',
+        CONSOLE_ROLES,
+    ),
+    # ---- an identity that crosses a boundary is set once (2026-08-27) --------------------
+    Mutation(
+        "ID1",
+        "a use case's slug cannot be edited after it is created",
+        "management/backend/src/aira_management/apps/usecases/serializers.py",
+        "        if self.instance is not None and slug != self.instance.slug:",
+        "        if False:",
+        IDENTITY,
+    ),
+    Mutation(
+        "ID2",
+        "a slug sent unchanged is not a rename, so a full-document update still works",
+        "management/backend/src/aira_management/apps/usecases/serializers.py",
+        "        if self.instance is not None and slug != self.instance.slug:",
+        "        if self.instance is not None:",
+        IDENTITY,
+    ),
+    Mutation(
+        "ID3",
+        "a catalogued model's name cannot be edited after it is created",
+        "management/backend/src/aira_management/apps/catalog/serializers.py",
+        "        if self.instance is not None and name != self.instance.name:",
+        "        if False:",
+        IDENTITY,
+    ),
+    Mutation(
+        "ID4",
+        "the upsert by name is not read as a rename",
+        "management/backend/src/aira_management/apps/catalog/serializers.py",
+        "        if self.instance is not None and name != self.instance.name:",
+        "        if self.instance is not None:",
+        IDENTITY,
+    ),
+    # ---- a redactor reaches an embedding, and a failed one keeps nothing (2026-08-27) ----
+    Mutation(
+        "PE1",
+        "an embedding runs the steps that are about the text it carries",
+        "gateway/src/aira_gateway/api/serving.py",
+        "        embed = await run_pipeline_over_texts(request, embed, trail)",
+        "        pass",
+        EMBED_PII,
+    ),
+    Mutation(
+        "Z6b",
+        "a model call the **embedding** pipeline made leaves its own audit row",
+        "gateway/src/aira_gateway/api/serving.py",
+        "    finally:\n"
+        "        await record_pipeline_calls(request, trail)\n"
+        "        _keep_only_what_a_redactor_allows(trail, rewrites)\n"
+        "    if outcome.decisions:",
+        "    finally:\n"
+        "        _keep_only_what_a_redactor_allows(trail, rewrites)\n"
+        "    if outcome.decisions:",
+        EMBED_PII,
+    ),
+    Mutation(
+        "PE2",
+        "a step about an answer does not run on an embedding",
+        "gateway/src/aira_gateway/pipeline/engine.py",
+        "            if step.type not in TEXT_ONLY_STEPS:\n                continue",
+        "            if False:\n                continue",
+        EMBED_PII,
+    ),
+    Mutation(
+        "PE3",
+        "every text of a batch is offered to the redactor, in order",
+        "gateway/src/aira_gateway/pipeline/engine.py",
+        "        return list(await asyncio.gather(*(one(text) for text in texts)))",
+        "        return [await one(texts[0])] * len(texts) if texts else []",
+        EMBED_PII,
+    ),
+    Mutation(
+        "PE4",
+        "one text that cannot be redacted refuses the whole batch",
+        "gateway/src/aira_gateway/pipeline/engine.py",
+        "            if notable is not None and notable.block_reason is not None:\n"
+        "                raise PipelineRejected(notable.block_reason)",
+        "            if False:\n                raise PipelineRejected(str(notable))",
+        EMBED_PII,
+    ),
+    Mutation(
+        "PE5",
+        "a redaction that failed leaves no payload behind",
+        "gateway/src/aira_gateway/api/serving.py",
+        "    if redaction_failed(trail.decisions):\n        trail.body = None",
+        "    if False:\n        trail.body = None",
+        EMBED_PII + " " + PII,
+    ),
+    Mutation(
+        "PE6",
+        "serving anyway under on_failure=allow is not storing anyway",
+        "gateway/src/aira_gateway/audit.py",
+        '        decision.get("step") == "pii_filter" '
+        'and str(decision.get("action")) not in APPLIED_ACTIONS',
+        '        decision.get("step") == "pii_filter" and str(decision.get("action")) == "blocked"',
+        EMBED_PII,
+    ),
+    Mutation(
+        "PE7",
+        "a batch reports the least good of its texts, not the first",
+        "gateway/src/aira_gateway/pipeline/engine.py",
+        "    return next((e for e in evaluations if e.action not in APPLIED_ACTIONS), evaluations[0])",
+        "    return evaluations[0]",
+        EMBED_PII,
+    ),
+    Mutation(
+        "PE8",
+        "the decision says how much of the batch the step changed",
+        "gateway/src/aira_gateway/pipeline/engine.py",
+        '        "texts": len(evaluations),\n        "changed": changed,',
+        '        "texts": len(evaluations),\n        "changed": 0,',
+        EMBED_PII,
+    ),
+    Mutation(
+        "PE9",
+        "a batch is billed for every call it made, not for one of them",
+        "gateway/src/aira_gateway/pipeline/engine.py",
+        "            prompt_tokens=sum(call.usage.prompt_tokens for call in calls),",
+        "            prompt_tokens=calls[0].usage.prompt_tokens,",
+        EMBED_PII,
+    ),
+    # ---- a router reads its classifier's reply rather than searching it (2026-08-27) -----
+    Mutation(
+        "PR1",
+        "a category is named by a whole word, not found anywhere inside the reply",
+        "gateway/src/aira_gateway/pipeline/classifiers.py",
+        'if name and re.search(rf"\\b{re.escape(name.upper())}\\b", answer)',
+        "if name and name.upper() in answer",
+        CLASSIFIERS,
+    ),
+    Mutation(
+        "PR2",
+        "a reply naming two categories has named none",
+        "gateway/src/aira_gateway/pipeline/classifiers.py",
+        "        return found[0] if len(found) == 1 else None",
+        "        return found[0] if found else None",
+        CLASSIFIERS,
+    ),
+    Mutation(
+        "PR3",
+        "the exact answer the instruction asks for is taken before anything cleverer",
+        "gateway/src/aira_gateway/pipeline/classifiers.py",
+        "            if name and answer == name.upper():\n                return name",
+        "            if False:\n                return name",
+        CLASSIFIERS,
+    ),
+    # ---- a pipeline step reaches only the model somebody named (2026-08-27) --------------
+    Mutation(
+        "PD1",
+        "a redactor that names no model blocks rather than borrowing the first in the registry",
+        "gateway/src/aira_gateway/pipeline/engine.py",
+        '        model = config.get("model")\n'
+        "        provider = await self._provider_for(model, declaration_of)\n"
+        "        if provider is None or not model:",
+        '        model = config.get("model") or self._registry.models()[0].name\n'
+        "        provider = await self._provider_for(model, declaration_of)\n"
+        "        if provider is None or not model:",
+        PII,
+    ),
+    Mutation(
+        "PD2",
+        "an LLM filter that names no model falls back to the heuristic, not to any model at hand",
+        "gateway/src/aira_gateway/pipeline/engine.py",
+        '        if config.get("mode") == "llm":\n            model = config.get("model")',
+        '        if config.get("mode") == "llm":\n'
+        '            model = config.get("model") or self._registry.models()[0].name',
+        CLASSIFIERS,
+    ),
+    Mutation(
+        "PD6",
+        "a router that names no classifier is not asked, rather than asking any model at hand",
+        "gateway/src/aira_gateway/pipeline/engine.py",
+        '        model = config.get("model")\n'
+        "        provider = await self._provider_for(model, declaration_of)\n"
+        "        if provider is None or model is None:",
+        '        model = config.get("model") or self._registry.models()[0].name\n'
+        "        provider = await self._provider_for(model, declaration_of)\n"
+        "        if provider is None or model is None:",
+        PIPELINE,
+    ),
+    Mutation(
+        "PD3",
+        "the dry run asks the installation's approval, which has no third state",
+        "gateway/src/aira_gateway/api/pipeline.py",
+        "    for name in classifiers_named_in(payload.pipeline):",
+        "    for name in []:",
+        DRYRUN,
+    ),
+    Mutation(
+        "PD5",
+        "a router's classifier is one of the models the dry run checks",
+        "gateway/src/aira_gateway/api/pipeline.py",
+        '    "model_route": lambda config: bool(config.get("categories")),',
+        '    "model_route": lambda config: False,',
+        DRYRUN,
+    ),
+    Mutation(
+        "PD4",
+        "a redactor's model is one of the classifiers the dry run checks",
+        "gateway/src/aira_gateway/api/pipeline.py",
+        '    "pii_filter": lambda config: True,',
+        '    "pii_filter": lambda config: False,',
+        DRYRUN,
     ),
 ]
 

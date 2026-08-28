@@ -396,3 +396,99 @@ def test_the_flag_is_on_the_row_so_the_table_can_show_it_without_asking_again() 
         "flagged": True,
         "blocked": True,
     }
+
+
+# == an administrator is an administrator however the grant reached them ==========================
+#
+# `FRD-209` FR-6 is the owner's sentence: *"I want to add any group from Keycloak and any user as
+# well, and give them admin or user rights — I do not want to have to make a group named after the
+# use case."* Two of those three routes wrote a row in `use_case_members`, and this module read
+# only that table — so the **group** route, the one the sentence leads with, produced an
+# administrator the gateway treated as a plain member.
+
+
+GROUP_ADMIN = Principal(
+    subject="uuid-of-boss",
+    method="oidc",
+    username="boss",
+    use_cases=("uc-a",),
+    groups=("/ai/kundenservice",),
+    grants=(("uc-a", "admin"),),
+)
+
+
+async def test_a_group_granted_administrator_is_read_as_an_administrator(sessions) -> None:
+    """The role the resolver worked out, arriving where the decision is made.
+
+    A grant on a group writes no row in `use_case_members` — that is what makes it a group grant —
+    and `grant_role_in` read that table alone. Measured on 2026-08-26: `admin` on
+    `/ai/kundenservice` for `uc-a` resolved to `"user"`.
+    """
+    from aira_gateway.payloads import grant_role_in
+
+    async with sessions() as session:
+        assert await grant_role_in(session, GROUP_ADMIN, "uc-a") == "admin"
+
+
+async def test_a_member_row_and_a_group_grant_take_the_stronger_of_the_two(sessions) -> None:
+    """Being granted twice over is being granted, and which source was read first is not a thing
+    an access decision may depend on (`aira_common.access`)."""
+    from aira_gateway.payloads import grant_role_in
+
+    async with sessions() as session:
+        session.add(UseCaseMemberRead(use_case_slug="uc-a", subject="boss", role="user"))
+        await session.commit()
+
+    async with sessions() as session:
+        assert await grant_role_in(session, GROUP_ADMIN, "uc-a") == "admin"
+
+
+async def test_a_group_grant_of_user_does_not_become_an_administrator(sessions) -> None:
+    """The other direction — the fix must widen nothing it was not asked to widen."""
+    from aira_gateway.payloads import grant_role_in
+
+    plain = Principal(
+        subject="uuid-of-alice",
+        method="oidc",
+        username="alice",
+        use_cases=("uc-a",),
+        groups=("/ai/kundenservice",),
+        grants=(("uc-a", "user"),),
+    )
+    async with sessions() as session:
+        assert await grant_role_in(session, plain, "uc-a") == "user"
+
+
+async def test_a_restricted_use_case_does_not_narrow_a_group_granted_administrator(
+    sessions,
+) -> None:
+    """The wider blast radius of the same omission: this decides the whole trace **list**, so the
+    person who administers a use case was shown only their own traffic in it."""
+    from aira_gateway.payloads import restricted_use_cases
+
+    async with sessions() as session:
+        session.add(UseCaseRead(slug="uc-a", name="A", restrict_members_to_own_requests=True))
+        await session.commit()
+
+    async with sessions() as session:
+        assert await restricted_use_cases(session, GROUP_ADMIN) == []
+
+
+async def test_a_restricted_use_case_still_narrows_a_group_granted_member(sessions) -> None:
+    """And still narrows the reader it is for, or the fix has removed the control."""
+    from aira_gateway.payloads import restricted_use_cases
+
+    plain = Principal(
+        subject="uuid-of-alice",
+        method="oidc",
+        username="alice",
+        use_cases=("uc-a",),
+        groups=("/ai/kundenservice",),
+        grants=(("uc-a", "user"),),
+    )
+    async with sessions() as session:
+        session.add(UseCaseRead(slug="uc-a", name="A", restrict_members_to_own_requests=True))
+        await session.commit()
+
+    async with sessions() as session:
+        assert await restricted_use_cases(session, plain) == ["uc-a"]

@@ -359,3 +359,118 @@ async def test_no_routing_notice_where_nothing_matched() -> None:
     outcome = await _engine(_Redactor()).run(pipeline, _request())
 
     assert outcome.notices == []
+
+
+async def test_a_step_that_blocks_after_a_redaction_still_stores_the_rewritten_body() -> None:
+    """**The half the three tests above could not see: the request that is refused.**
+
+    `_rewritten_body` was correct, its call site was correct, and the wire between them existed
+    only on the served path. A `pii_filter` that removes a name, followed by any step that blocks,
+    raised out of `PipelineEngine.run` — past the assignment that puts the rewrite on the trail —
+    so the refusal's audit row was written from the caller's **original** body. Measured on
+    2026-08-26 against the hermetic app: `request_logs.request_payload` carried the name the step
+    had just replaced, on a request nobody was served.
+
+    The direction matters. A served request keeping the original is a leak; a *refused* one keeping
+    it is the same leak with nothing to show for it — no answer was produced, and the only artefact
+    the request left behind is the row holding the data the use case configured a step to remove.
+
+    Driven end to end rather than through the engine, because the defect was in neither end: the
+    engine did rewrite, `_rewritten_body` did substitute, and the two were joined on one path of
+    two (`LESSONS.md` §1, *test the wire, not the ends*).
+    """
+    from fastapi.testclient import TestClient
+    from sqlalchemy import select
+
+    from aira_gateway.app import create_app
+    from aira_gateway.audit import Outcome
+    from aira_gateway.config import GatewaySettings
+    from aira_gateway.db.models import ModelRead, RequestLog
+
+    class _Store:
+        async def get(self, use_case: object) -> Pipeline:
+            return Pipeline(
+                steps=(
+                    PipelineStep(type=StepType.PII_FILTER, config={"model": "trusted"}),
+                    PipelineStep(
+                        type=StepType.INJECTION_FILTER,
+                        config={
+                            "mode": "heuristic",
+                            "action": "block",
+                            "use_builtins": False,
+                            # Matches what the redactor produced, so the block happens **after**
+                            # the rewrite — which is the only ordering that can show the defect.
+                            "patterns": ["<PERSON>"],
+                        },
+                    ),
+                ),
+                fallback_models=(),
+            )
+
+    app = create_app(GatewaySettings(auth_required=False, log_queue_size=0))
+    registry = ProviderRegistry([_Redactor()])
+    app.state.providers = registry
+    # The engine keeps its own registry reference from construction; replacing only `providers`
+    # would leave it resolving against the original one.
+    app.state.pipeline_engine = PipelineEngine(registry)
+    app.state.pipeline_store = _Store()
+
+    with TestClient(app) as client:
+        async with app.state.db_sessionmaker() as session:
+            session.add(ModelRead(model="trusted", capabilities=["generate"]))
+            await session.commit()
+
+        response = client.post(
+            "/v1beta/models/trusted:generateContent",
+            json={"contents": [{"role": "user", "parts": [{"text": PROMPT}]}]},
+        )
+        assert response.status_code == 400, "the injection filter refuses the redacted prompt"
+
+        async with app.state.db_sessionmaker() as session:
+            rows = list((await session.execute(select(RequestLog))).scalars())
+
+    # Two rows: the redactor's own call (`pipeline:pii_filter`, `FRD-125`) and the caller's
+    # refusal. The second is the one this test is about, and naming it here is what stops the
+    # assertion below passing because some *other* 400 refused the request earlier.
+    caller = [row for row in rows if not row.operation.startswith("pipeline:")]
+    assert [row.outcome for row in caller] == [Outcome.BLOCKED_BY_PIPELINE]
+
+    stored = str([row.request_payload for row in rows])
+    assert "Mustermann" not in stored, (
+        "the refusal's audit row kept the personal data the pii_filter removed"
+    )
+    assert "<PERSON>" in stored, "and it kept the rewritten prompt rather than no prompt at all"
+
+
+async def test_a_redactor_that_names_no_model_blocks_rather_than_borrowing_one() -> None:
+    """A step that names no model does not quietly redact with whatever is registered.
+
+    Until 2026-08-27 every step asked `_default_model()` when its configuration named none, and
+    the answer was **the first model in the registry** — not released to the use case (`FRD-308`),
+    not necessarily approved for the installation (`FRD-307`), in whatever region its adapter
+    serves (`FRD-115`). No gate sits on a step's own model call: the exemption in
+    `test_every_dispatch_applies_the_conditions.UNCONDITIONED` justifies itself with *"the model
+    it may use is bounded by the release, which the pipeline serializer validates every named
+    model against"* — a sentence about a **named** model, silent about an unnamed one.
+
+    Reachable through the ordinary path, not an exotic one: Management's serializer refuses a
+    pipeline naming a model the use case may not call, and a step naming none names nothing to
+    refuse. The console's own builder can save it.
+
+    Measured on 2026-08-27 against the hermetic app: a use case released **only** `mock-embed`, a
+    `pii_filter` with `config: {}`, and the dry run's trace came back `"classifier": "mock-1"`
+    with the caller's text redacted by it. Naming `mock-1` in that same step is a 400.
+
+    What is left is the answer this step already had for an unreachable model, and it is the loud
+    one: a redactor has no lesser version of itself, so it **blocks** (`FRD-309`).
+    """
+    redactor = _Redactor()
+    engine = PipelineEngine(ProviderRegistry([redactor]))
+    pipeline = Pipeline(
+        steps=(PipelineStep(type=StepType.PII_FILTER, config={}),), fallback_models=()
+    )
+
+    with pytest.raises(PipelineRejected, match="no model is available to redact with"):
+        await engine.run(pipeline, _request(PROMPT))
+
+    assert redactor.asked == [], "the step redacted with a model nobody configured"

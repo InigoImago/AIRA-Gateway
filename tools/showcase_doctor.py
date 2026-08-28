@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import urllib.error
 import urllib.parse
@@ -125,6 +126,27 @@ def check_identity() -> None:
     )
 
 
+#: What Management appends when a directory subject changes underneath a binding: `f"{preferred}-
+#: {subject[:8]}"` (`apps/api/authentication.py`), so the suffix is the first eight characters of a
+#: **UUID** — hexadecimal, and nothing else.
+#:
+#: **It was `len(...) == 8`, and that is any eight-letter word.** The shipped realm creates
+#: `service-account-aira-integration-tests-security`, whose last segment is `security`: eight
+#: characters, entirely legitimate, and reported as a duplicate on every run of this tool against a
+#: healthy stack — `make showcase-doctor` exited 1 and printed *"1 thing(s) to fix"* about an
+#: account this repository itself ships.
+#:
+#: That is the failure `LESSONS.md` §3 names: **a check that cries wolf on the supported path is
+#: one nobody reads on the day it is right.** A doctor whose one finding is always wrong teaches
+#: its reader to skip the section, which is the section that would have named a real duplicate.
+_DUPLICATE_SUFFIX = re.compile(r"^[0-9a-f]{8}$")
+
+
+def is_duplicated_username(username: str) -> bool:
+    """Whether this name is the one Management invents for a second account on a changed subject."""
+    return "-" in username and bool(_DUPLICATE_SUFFIX.match(username.rsplit("-", 1)[-1]))
+
+
 def check_management() -> None:
     print("\nManagement — the use cases the console lists, and who may see them")
     try:
@@ -151,10 +173,8 @@ def check_management() -> None:
     )
     for line in groups:
         username = line.split(" -> ")[0]
-        # A suffixed username is the signature of a subject that changed underneath a binding.
-        suffixed = "-" in username and len(username.rsplit("-", 1)[-1]) == 8
-        say(not suffixed, f"user {line}")
-        if suffixed:
+        say(not is_duplicated_username(username), f"user {line}")
+        if is_duplicated_username(username):
             blame(
                 f"'{username}' is a duplicate created after a Keycloak subject changed.",
                 "See deploy/compose/README.md — rebind api_oidcidentity.subject, do not delete the "

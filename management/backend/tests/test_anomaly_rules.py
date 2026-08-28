@@ -405,3 +405,123 @@ def test_the_byte_figure_travels_to_the_gateway(captured_events) -> None:
 
     published = [p for kind, p in captured_events if kind == "anomaly_rule.upserted"]
     assert published[-1]["parameter"] == 500_000
+
+
+# == a partial edit is about the rule that exists, not about a default ============================
+#
+# `validate` read `attrs.get("kind", REFUSAL_RATE)` and `attrs.get("action", ALERT)`, so on a
+# `PATCH` — which carries only what changed — every check below it answered about a rule nobody
+# has. The endpoint is a `ModelViewSet`, the console's own client method is a `PATCH`, and its
+# docstring is explicit that this is the intended shape: *"a rule has thirteen fields and most
+# edits touch one of them"*.
+
+
+def _global_throttle(client, **over) -> int:
+    body = {
+        "name": "throttle probers",
+        "kind": RuleKind.REFUSAL_RATE.value,
+        "window_minutes": 15,
+        "threshold": 40,
+        "min_sample": 20,
+        "action": RuleAction.THROTTLE.value,
+        "target": RuleTarget.SUBJECT.value,
+        "action_minutes": 60,
+        "throttle_rpm": 5,
+    }
+    body.update(over)
+    response = client.post(GLOBAL, body, format="json")
+    assert response.status_code == 201, response.data
+    return int(response.data["id"])
+
+
+def test_a_partial_edit_keeps_the_expiry_of_an_automatic_action() -> None:
+    """**The expensive one.** `action` defaulted to `alert` on a `PATCH`, and an alert keeps no
+    expiry — so the branch that clears `action_minutes` ran against a `throttle` rule.
+
+    The row then says `throttle` with no expiry, the event ships that to the gateway, and
+    `service._act` refuses to carry it out (`not rule.action_minutes` → `detected_not_enforced`).
+    Which is the right refusal and the wrong situation: the console goes on displaying the rule as
+    throttling, so an incident control was switched off by a rename. Measured at 2026-08-26 —
+    `action_minutes` came back `None` from a `PATCH` whose body was a name.
+    """
+    sec = _user("sec", "it-security")
+    rule_id = _global_throttle(_client(sec))
+
+    response = _client(sec).patch(f"{GLOBAL}{rule_id}/", {"name": "renamed"}, format="json")
+
+    assert response.status_code == 200, response.data
+    rule = AnomalyRule.objects.get(pk=rule_id)
+    assert (rule.name, rule.action) == ("renamed", RuleAction.THROTTLE.value)
+    assert rule.action_minutes == 60, "the rename removed the expiry from an automatic throttle"
+    assert rule.throttle_rpm == 5, "and the rate it throttles to"
+
+
+def test_a_partial_edit_is_not_refused_over_a_field_it_did_not_send() -> None:
+    """The symptom that made every other one invisible: with `kind` defaulted to a rate kind, the
+    sample floor was demanded of a body that carried no sample — so **every** partial edit was
+    refused, whatever it changed, with a message about a field the caller never mentioned.
+
+    Asserted for an event kind, where the stored rule legitimately has no sample at all.
+    """
+    sec = _user("sec", "it-security")
+    created = _client(sec).post(
+        GLOBAL,
+        _rule(name="new address", kind=RuleKind.NEW_SOURCE_IP.value, threshold=1, min_sample=0),
+        format="json",
+    )
+    assert created.status_code == 201, created.data
+
+    response = _client(sec).patch(
+        f"{GLOBAL}{created.data['id']}/", {"enabled": False}, format="json"
+    )
+
+    assert response.status_code == 200, response.data
+    assert AnomalyRule.objects.get(pk=created.data["id"]).enabled is False
+
+
+def test_a_partial_edit_checks_the_threshold_against_the_kind_the_rule_actually_has() -> None:
+    """A ratio is a multiple of the previous window, so a threshold at or below 100 fires on
+    traffic that did not grow — every window, forever. With `kind` defaulted to a rate kind, that
+    check asked the wrong question and the rate check answered instead."""
+    sec = _user("sec", "it-security")
+    created = _client(sec).post(
+        GLOBAL,
+        _rule(
+            name="spend spike",
+            kind=RuleKind.SPEND_SPIKE.value,
+            threshold=200,
+            window_minutes=60,
+        ),
+        format="json",
+    )
+    assert created.status_code == 201, created.data
+
+    response = _client(sec).patch(
+        f"{GLOBAL}{created.data['id']}/", {"threshold": 50}, format="json"
+    )
+
+    assert response.status_code == 400
+    # **Named**, not merely refused. Under the defect this endpoint refused *every* partial edit
+    # over `min_sample`, so "it was a 400" is a verdict this test would have reached without the
+    # threshold ever being looked at — the shape where a guard keeps passing for the wrong reason.
+    assert "threshold" in str(response.data), response.data
+    assert AnomalyRule.objects.get(pk=created.data["id"]).threshold == 200
+
+
+def test_changing_an_action_away_from_throttle_leaves_no_rate_behind() -> None:
+    """The counterpart, and the reason the clearing branches are not simply deleted: a rate on an
+    `alert` is a number the row carries, the event ships and nothing reads."""
+    sec = _user("sec", "it-security")
+    rule_id = _global_throttle(_client(sec))
+
+    response = _client(sec).patch(
+        f"{GLOBAL}{rule_id}/", {"action": RuleAction.ALERT.value}, format="json"
+    )
+
+    assert response.status_code == 200, response.data
+    rule = AnomalyRule.objects.get(pk=rule_id)
+    assert (rule.action, rule.action_minutes, rule.throttle_rpm) == (
+        RuleAction.ALERT.value,
+        None,
+        None,
+    )

@@ -215,33 +215,54 @@ def test_a_dry_run_still_answers_when_nothing_released_can_generate() -> None:
 
 def test_a_dry_run_still_honours_a_model_the_caller_named() -> None:
     """The inference is a *default*, not an override: an operator asking "what happens to
-    `gemini-2.5-pro` here" must get an answer about that model."""
+    `gemini-2.5-pro` here" must get an answer about that model.
+
+    Both halves in one test, because the claim is a **difference**: the same pipeline, once with a
+    model named and once without, and `effective_model` has to follow the caller rather than the
+    configuration. Read off `effective_model` rather than the route step's `from` — the step
+    reports `from` only when it reroutes, and a router whose category does not match reports the
+    model it left alone, which made the assertion depend on a classifier's answer rather than on
+    the rule being tested.
+    """
     from fastapi.testclient import TestClient
 
     from aira_gateway.app import create_app
     from aira_gateway.config import GatewaySettings
 
+    pipeline = {
+        "steps": [
+            {
+                "type": "model_route",
+                "config": {
+                    "model": "mock-1",
+                    # A name no classifier reply can contain by accident: the router matches a
+                    # category by **substring**, and a one-letter name matches the mock's own
+                    # prose. What is being tested here is which model the run starts from, not
+                    # whether a category matched.
+                    "categories": [
+                        {"name": "zzq-nomatch", "description": "d", "model": "elsewhere"}
+                    ],
+                },
+            }
+        ]
+    }
     app = create_app(GatewaySettings(auth_required=False, log_queue_size=0))
     with TestClient(app) as client:
-        response = client.post(
+        named = client.post(
             "/v1beta/pipeline:dryRun",
             json={
                 "use_case": "uc",
                 "user": "hi",
                 "model": "named-by-the-caller",
-                "pipeline": {
-                    "steps": [
-                        {
-                            "type": "model_route",
-                            "config": {"categories": [{"name": "c", "model": "elsewhere"}]},
-                        }
-                    ]
-                },
+                "pipeline": pipeline,
             },
         )
+        inferred = client.post(
+            "/v1beta/pipeline:dryRun",
+            json={"use_case": "uc", "user": "hi", "pipeline": pipeline},
+        )
 
-    assert response.status_code == 200
-    # The pipeline would have *inferred* `elsewhere` had the caller named nothing. What matters is
-    # which model the run actually started from — read off the route step's own `from`.
-    route = next(e for e in response.json()["trace"] if e["type"] == "model_route")
-    assert route["detail"]["from"] == "named-by-the-caller"
+    assert named.status_code == 200, named.text
+    assert named.json()["effective_model"] == "named-by-the-caller"
+    # The same pipeline, nothing named: now the configuration is the only thing left to guess from.
+    assert inferred.json()["effective_model"] == "elsewhere"

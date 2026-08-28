@@ -1,3 +1,5 @@
+import pytest
+
 from aira_common.models import ThinkingMode
 from aira_gateway.core.canonical import (
     CanonicalRequest,
@@ -155,6 +157,72 @@ async def test_router_returns_none_when_unmatched() -> None:
 
 async def test_router_fails_open_on_upstream_error() -> None:
     assert await LlmCategoryRouter(_BoomProvider("x"), "guard", _CATS).classify("x") is None
+
+
+#: A list whose names sit inside one another and inside the protocol's own reserved word. Written
+#: this way on purpose: `one` is a substring of `NONE`, and `code` and `general` both appear in a
+#: sentence that chooses between them.
+_TRAPS = [
+    {"name": "one", "description": "d", "model": "m1"},
+    {"name": "code", "description": "d", "model": "m2"},
+    {"name": "general", "description": "d", "model": "m3"},
+]
+
+
+@pytest.mark.parametrize(
+    ("reply", "expected"),
+    [
+        # What the instruction asks for, and the shapes a real model wraps it in.
+        ("code", "code"),
+        ("CODE\n", "code"),
+        ("```code```", "code"),
+        ("I would say: general.", "general"),
+        ("one", "one"),
+        # `NONE` is this classifier's own word for "none clearly fit" (`_ROUTER_INSTRUCTION`).
+        # It used to select `one`, which is inside it — the one answer reserved for *no category*
+        # choosing a category, for any name that happens to sit in the letters of the word.
+        ("NONE", None),
+        ("none", None),
+        ("Ich denke: keine passt (NONE)", None),
+        # A reply that names two has not answered the question. It used to answer with whichever
+        # the **operator typed first**, which is a router deciding by list order rather than by
+        # what the model said — and in the first of these, by the category the model rejected.
+        ("not code — use general", None),
+        ("The answer is general or code", None),
+        # And a reply naming none of them still names none of them.
+        ("something else entirely", None),
+    ],
+)
+async def test_the_router_reads_the_reply_rather_than_searching_it(
+    reply: str, expected: str | None
+) -> None:
+    """A category is named by a **whole word**, and by exactly one of them (2026-08-27).
+
+    Measured against `name.upper() in answer`, the rule this replaces: eleven replies, three of
+    them routed to a model the reply did not choose. None of it is a security hole — the release
+    and the approval still bound where a routed request can land — and all of it defeats the
+    feature, which exists so a cheap question reaches a cheap model.
+    """
+    router = LlmCategoryRouter(_StubProvider(reply), "guard", _TRAPS)
+    assert await router.classify("x") == expected
+
+
+@pytest.mark.parametrize("name", ["c++", "#dringend", "(intern)", "f#"])
+async def test_a_category_a_word_boundary_cannot_express_still_matches_exactly(name: str) -> None:
+    """Why the exact-answer branch is not redundant beside the word-boundary one.
+
+    A category name is whatever an operator typed into a box, and `\bc\+\+\b` cannot match
+    `C++` — the trailing boundary wants a word character after the `+` and there is none. A model
+    that did exactly as it was told, answering with the category name and nothing else, would then
+    be read as having named no category at all.
+
+    So the exact answer is taken first and the search is the fallback, not the other way round: a
+    model that obeyed the instruction must not be at the mercy of a rule written for one that did
+    not.
+    """
+    categories = [{"name": name, "description": "d", "model": "m"}]
+    router = LlmCategoryRouter(_StubProvider(name), "guard", categories)
+    assert await router.classify("x") == name
 
 
 async def test_a_dangerous_pattern_in_the_read_model_is_not_compiled() -> None:

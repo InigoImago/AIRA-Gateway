@@ -205,6 +205,28 @@ where a reader would otherwise be confused, but explaining a drift is not the sa
 A live round found real instances of exactly this: two roles carrying stale memberships from
 declarations that no longer existed.
 
+### 3.9 ~~A `pii_filter` does not reach an embedding~~ — closed by `FRD-309` FR-9 (2026-08-27)
+
+Found and closed the same day. `prepare_for_dispatch` ran the pipeline where there was a canonical
+*generation*, so `:embedContent`, `batchEmbedContents` and the KIRA surface's `/embed` ran no steps
+at all — and a use case that had switched on redaction embedded its callers' text unredacted and
+stored it unredacted, on a control the console shows per use case and not per verb.
+
+Inherited rather than decided: `FRD-300` recorded *"Embeddings filtering"* as a non-goal when the
+pipeline was an injection filter and a router, both of which are about a prompt a model will
+answer. `pii_filter` arrived into the same branch a fortnight later and its contract is a different
+one — **where the caller's text goes and what is stored** — which is the same question for a text
+being embedded as for one being answered.
+
+Now `TEXT_ONLY_STEPS`: a step about the text runs wherever text is sent, a step about the answer
+does not. Every text of a batch is offered to the redactor, one that cannot be redacted refuses the
+whole request, and the step leaves one decision and one priced row rather than one per text.
+
+The fix turned up a second, older hole beside it, on **both** paths: FR-3 promises the payload is
+dropped where the substitution cannot be applied, and only the "cannot be matched" half was built.
+A redactor that simply **failed** left the caller's original in `request_logs` — on a request that
+was refused, so nobody was served and the database had it anyway.
+
 ---
 
 ## 4. Smaller, known, and written down

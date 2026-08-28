@@ -302,6 +302,32 @@ class ThinkingHonoured:
         return permitted_by(self._setting, await self._catalog.declaration(model))
 
 
+async def adapter_for(
+    registry: ProviderRegistry, catalog: ModelCatalog, model: str
+) -> object | None:
+    """The adapter that will actually serve ``model`` — configuration **or** catalogue.
+
+    The two requirements below are about the *dialect*, so both have to reach the same adapter the
+    dispatch chain will. Both asked `provider_for(model)` with no second argument, which resolves a
+    model named in configuration and answers ``None`` for one that is servable **because it is
+    catalogued** (`FRD-507` stage B) — and both read that ``None`` as *no restriction*, so the
+    check was skipped entirely for exactly the models the catalogue was made the authority on.
+
+    Measured on 2026-08-26 against the hermetic app: an adapter owning a provider name, a model
+    catalogued to it, `topK` on the request — served **200** by a dialect that has no `top_k`,
+    which is the silent degradation this whole module exists to refuse. On the Anthropic dialect it
+    is worse than a wrong answer: `_add_sampling` raises there, so the request the requirement
+    should have skipped becomes a 500 instead.
+
+    The third occurrence of one shape. `PipelineEngine._provider_for` and
+    `prepare_for_dispatch` each had to learn the same thing, and both wrote down the same reason:
+    *a lookup by name alone reads "nothing" as "quietly do less"*. Written once here so the fourth
+    reader inherits it rather than rediscovering it.
+    """
+    declaration = await catalog.declaration(model)
+    return registry.provider_for(model, declaration.provider, declaration.publisher)
+
+
 class SamplingExpressible:
     """The candidate's dialect must be able to express every sampling control this request sets.
 
@@ -318,14 +344,17 @@ class SamplingExpressible:
     to be refused rather than absorbed.
     """
 
-    def __init__(self, registry: ProviderRegistry, requested: frozenset[str]) -> None:
+    def __init__(
+        self, registry: ProviderRegistry, requested: frozenset[str], catalog: ModelCatalog
+    ) -> None:
         self._registry = registry
         self._requested = requested
+        self._catalog = catalog
 
     async def refusal(self, model: str) -> str | None:
         if not self._requested:
             return None
-        provider = self._registry.provider_for(model)
+        provider = await adapter_for(self._registry, self._catalog, model)
         if provider is None:
             return None  # dispatch already reports an unserved model, and says it better
         # Undeclared means unsupported, as everywhere else. An adapter that omits the attribute
@@ -356,12 +385,15 @@ class SchemaExpressible:
     schema the caller *sent* and not the one they *meant*.
     """
 
-    def __init__(self, registry: ProviderRegistry, schema: ResponseSchema) -> None:
+    def __init__(
+        self, registry: ProviderRegistry, schema: ResponseSchema, catalog: ModelCatalog
+    ) -> None:
         self._registry = registry
         self._schema = schema
+        self._catalog = catalog
 
     async def refusal(self, model: str) -> str | None:
-        provider = self._registry.provider_for(model)
+        provider = await adapter_for(self._registry, self._catalog, model)
         if provider is None:
             return None  # dispatch already reports an unserved model, and says it better
         # Absent means "no limits this dialect knows of", which is the honest default: every

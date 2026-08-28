@@ -35,14 +35,24 @@ from aira_gateway.anomalies.suspensions import SuspensionService
 from aira_gateway.db.base import build_sessionmaker
 from aira_gateway.db.models import AnomalyRuleRead
 
-from .conftest import GATEWAY_URL, MANAGEMENT_URL, wait_for_row
+from .conftest import GATEWAY_URL, LOCAL_CHAT_MODEL_ID, MANAGEMENT_URL, wait_for_row
 
 pytestmark = pytest.mark.integration
 
 #: The chat model the demo stack serves. Small on purpose: what is under test is the gateway.
 MODEL = "qwen3:0.6b"
 #: The same model as the predecessor addresses it: by integer id, from the catalog.
-KIRA_MODEL_ID = 9001
+#:
+#: **Imported, not typed.** This was `KIRA_MODEL_ID = 9001`, and the seed moved the chat model onto
+#: the predecessor's own id — `tools/seed_local_catalog.py` says why: *"every document and every
+#: example said `1004`, and the one runnable command said something else."* The literal stayed
+#: here, so fourteen tests addressed a number no model answers to and the gateway refused them
+#: `422 MODEL_NOT_FOUND` — correctly, and reported as a broken KIRA surface.
+#:
+#: `conftest.LOCAL_CHAT_MODEL_ID` exists for exactly this and says so: *"Six tests carried `9001`
+#: as a literal, and moving the demo onto the predecessor's own id would have left every one of
+#: them addressing a model that no longer answers."* Six were corrected; this was the seventh.
+KIRA_MODEL_ID = LOCAL_CHAT_MODEL_ID
 #: Enough output for a sentence, few enough tokens that sixty requests stay quick.
 SHORT = {"generationConfig": {"maxOutputTokens": 16}}
 

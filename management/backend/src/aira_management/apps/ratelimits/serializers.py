@@ -33,9 +33,23 @@ class RateLimitSerializer(serializers.ModelSerializer[RateLimit]):
         subject = ""
         attrs["subject"] = subject
 
-        # A burst below the sustained rate is almost certainly a mistake, and a quiet one: the
-        # bucket would refuse traffic the configured per-minute figure promises to allow.
-        burst = attrs.get("burst") or 0
-        if burst and burst < 1:
-            raise serializers.ValidationError({"burst": "Must be at least 1 when set."})
+        # **Nothing more is checked here, and that is the correction.** This carried
+        # `if burst and burst < 1: raise` under a comment saying *"a burst below the sustained rate
+        # is almost certainly a mistake"* — and both halves were wrong.
+        #
+        # The branch could not fire: `burst` is a `PositiveIntegerField`, so it is a non-negative
+        # integer, and `burst != 0 and burst < 1` describes no integer at all. A guard that cannot
+        # fail is the shape this project breaks every new guard on purpose to avoid, and this one
+        # had never been broken.
+        #
+        # The rule the comment stated would have been worse than absent, because a burst **below**
+        # the per-minute figure is the ordinary way to shape traffic rather than a mistake: 600/min
+        # with a burst of 5 means ten a second, at most five at once, which is exactly what a
+        # bucket is for. The gateway's own tests configure that pair deliberately. Refusing it
+        # would have taken away the control and left the rate.
+        #
+        # What actually bounds the field is on the model — `PositiveIntegerField` plus
+        # `MaxValueValidator(1_000_000)` — where a bound belongs, and `limit_rpm`'s
+        # `MinValueValidator(1)` is what stops a limit of zero switching a use case off by
+        # accident.
         return attrs

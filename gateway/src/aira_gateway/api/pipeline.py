@@ -24,6 +24,7 @@ So the rule the rest of the request path has is the rule here:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
@@ -34,6 +35,7 @@ from aira_gateway.api.gemini.errors import gemini_error_response as _error
 from aira_gateway.api.gemini.routes import refusal_response as _refusal
 from aira_gateway.api.serving import (
     REFUSALS,
+    catalog_of,
     declared_model,
     guard_before_work,
     record_pipeline_calls,
@@ -46,6 +48,7 @@ from aira_gateway.auth.principal import Principal
 from aira_gateway.core.canonical import CanonicalMessage, CanonicalRequest, Role
 from aira_gateway.pipeline.config import Pipeline
 from aira_gateway.pipeline.engine import PipelineEngine
+from aira_gateway.requirements import ModelApproved
 from aira_gateway.upstreams.base import ProviderRegistry
 
 router = APIRouter(tags=["pipeline"])
@@ -85,6 +88,51 @@ def models_named_in(pipeline: dict[str, Any]) -> list[str]:
             if isinstance(category, dict) and category.get("model"):
                 named.append(str(category["model"]))
     named.extend(str(name) for name in pipeline.get("fallback_models") or [] if name)
+    return list(dict.fromkeys(named))
+
+
+#: Whether a step of this kind reaches a model of its own, given its configuration.
+#:
+#: A table rather than a chain of `elif`s, because the question each line answers — *does this step
+#: call anything* — is one a fourth step will have to answer too, and a chain is where the fourth
+#: one gets forgotten. A step whose kind is absent here calls nothing.
+ASKS_A_MODEL: dict[str, Callable[[dict[str, Any]], bool]] = {
+    # Always: rewriting is the whole step.
+    "pii_filter": lambda config: True,
+    # Only in `llm` mode; the heuristic asks nobody and costs nothing (`classifiers.py`).
+    "injection_filter": lambda config: config.get("mode") == "llm",
+    # Only with categories to choose between; without them the step falls straight to its default.
+    "model_route": lambda config: bool(config.get("categories")),
+}
+
+
+def classifiers_named_in(pipeline: dict[str, Any]) -> list[str]:
+    """The models this endpoint will actually **call**, which is a smaller set than it may name.
+
+    `models_named_in` above answers "what could this pipeline reach", and the release is checked
+    against all of it — rightly, because a saved pipeline routing to a model the use case may not
+    call is a configuration that fails later, at dispatch, on a screen that looked correct.
+
+    A dry run dispatches nothing. It runs the steps, so it asks each step's own model: the
+    classifier an LLM filter runs, the classifier a router runs, and the model a redactor rewrites
+    with. It never reaches a category's target, a `default_model` or the fallback chain — those
+    are named on the way to a dispatch that does not happen here.
+
+    The distinction matters because the two gates ask different questions of it. "May this use case
+    call that model" is about the whole configuration. "May this installation use that model at
+    all" is about the calls this request makes, and stretching it to cover a target nobody dials
+    would refuse a builder a preview of a pipeline whose *classifier* is perfectly approved.
+    """
+    named: list[str] = []
+    for step in pipeline.get("steps") or []:
+        if not isinstance(step, dict):
+            continue
+        config = step.get("config") or {}
+        if not isinstance(config, dict) or not config.get("model"):
+            continue
+        asks = ASKS_A_MODEL.get(str(step.get("type")))
+        if asks is not None and asks(config):
+            named.append(str(config["model"]))
     return list(dict.fromkeys(named))
 
 
@@ -196,6 +244,28 @@ async def dry_run(
                 "administrator of the use case releases them.",
                 "FAILED_PRECONDITION",
             )
+
+    # **And the installation's own gate, which has no third state** (`FRD-307`), asked of the
+    # models this endpoint will actually call.
+    #
+    # The release above is a fact about a use case, so "nobody has told us" is a real answer and
+    # falling through on it is right (`released_for`). Approval is a fact about the installation:
+    # a Global Administrator either catalogued and approved this model or did not, and there is no
+    # partially-upgraded state in which the answer is unknown. Asked separately for exactly that
+    # reason — folding it into the branch above would make the unconditional gate conditional on
+    # the conditional one.
+    #
+    # Measured on 2026-08-27 against the hermetic app, before this existed: a use case whose
+    # read-model row predates `FRD-308` (`allowed_models is None` — the upgrade the third state
+    # exists to survive), a pipeline naming `mock-unapproved` as its classifier, and the trace
+    # came back carrying that model's reply. The same model on `:generateContent` is a 400. The
+    # endpoint had the use case's gate and not the installation's, so the one decision a request
+    # is never allowed to argue with was the one it could walk around.
+    approved = ModelApproved(catalog_of(request), registry)
+    for name in classifiers_named_in(payload.pipeline):
+        refused = await approved.refusal(name)
+        if refused is not None:
+            return _error(400, refused, "FAILED_PRECONDITION")
     messages: list[CanonicalMessage] = []
     if payload.system:
         messages.append(CanonicalMessage(role=Role.SYSTEM, text=payload.system))

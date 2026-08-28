@@ -84,9 +84,14 @@ export class App implements OnInit {
     window.location.reload();
   }
 
-  protected hasRole(role: string): boolean {
-    return this.me()?.roles.includes(role) ?? false;
-  }
+  // `hasRole(role: string)` stood here until 2026-08-27 and was called by nothing — not by this
+  // component, not by its template, not by any other file. An unreachable helper is a rule the
+  // code claims and does not have, and this one claimed the wrong rule twice over: it was the
+  // **generic** role check, sitting beside `hasOversight()` and `mayInvestigate()`, which both go
+  // through `core/auth/roles.ts`. A contributor reaching for the obvious-looking one would have
+  // written the fourth copy of a role list inside the console whose one-definition file exists to
+  // prevent the third. Removed rather than wired up: the questions this console asks are the four
+  // in `roles.ts`, and "does this person hold an arbitrary role" is not one of them.
 
   /**
    * Whether this caller may see the security console — **seeing**, not acting.
@@ -113,11 +118,17 @@ export class App implements OnInit {
   /**
    * Whether to offer the pipeline-tests screen (`ADR-0020`).
    *
-   * **The server's answer, not a role list.** `MayTestModels` asks an object-level question — do
-   * you hold `view_usecase` on anything — and the only fields here that look like an answer are
-   * the roles and `use_cases`, which carries the `/use-cases/<slug>` group convention alone. A
-   * predicate written from those would hide the screen from everybody who reaches a use case
-   * through a *grant*, silently, which is `FRD-206`'s defect inverted.
+   * **The server's answer, not a role list.** `MayRunTests` asks an object-level question — do
+   * you **administer** anything (owner's rule, 2026-08-16; it asked for membership before that) —
+   * and the only fields here that look like an answer are the roles and `use_cases`, which carries
+   * the `/use-cases/<slug>` group convention alone. A predicate written from those would hide the
+   * screen from everybody who reaches a use case through a *grant*, silently, which is
+   * `FRD-206`'s defect inverted.
+   *
+   * The class was `MayTestModels` and asked for `view_usecase` when this was written, and this
+   * sentence went on saying so after both changed. It decides nothing — the field does — which is
+   * exactly why it could drift unnoticed: a stale reason beside a correct line is read as the
+   * reason, and the next person to touch the gate reasons from it.
    *
    * `?? false` rather than `?? true`: an older backend that does not send the field offers nothing
    * rather than offering an entry that 403s.

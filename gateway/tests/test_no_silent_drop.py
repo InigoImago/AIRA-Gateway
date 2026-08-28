@@ -263,8 +263,30 @@ def test_the_openai_dialect_refuses_top_k_rather_than_dropping_it() -> None:
 
 @pytest.mark.parametrize("field", ["seed", "presence_penalty", "frequency_penalty"])
 def test_the_anthropic_dialect_refuses_what_the_messages_api_has_no_word_for(field: str) -> None:
-    with pytest.raises(ValueError, match=field):
+    """The same backstop as the one above, and it has to refuse in the same **type**.
+
+    It raised a bare `ValueError`, which is not in `serving.REFUSALS` — so where the OpenAI
+    dialect's identical backstop produced a named `400 FAILED_PRECONDITION`, this one produced
+    `500 Internal error` and sent the reader to the logs of a working service. A rule stated on one
+    dialect and not inherited by the other, over the one line whose whole job is to be reached on
+    the day a declaration is wrong.
+    """
+    with pytest.raises(DialectUnsupported, match=field):
         canonical_to_anthropic(_canonical(**{field: 1}), max_tokens=100)
+
+
+class _BareCatalog:
+    """Says nothing about any model — the ordinary case for a *configured* one.
+
+    Handed to `SamplingExpressible` because the requirement now resolves the adapter through the
+    catalogue as well as through configuration (`FRD-507` stage B): a model servable only because
+    it was catalogued used to resolve to `None` here and have its dialect check **skipped**.
+    """
+
+    async def declaration(self, model: str):  # noqa: ANN202
+        from aira_gateway.catalog import ModelDeclaration
+
+        return ModelDeclaration(name=model)
 
 
 class _Provider:
@@ -293,7 +315,7 @@ class _Undeclared(_Provider):
 
 async def test_a_candidate_whose_dialect_cannot_express_the_control_is_skipped_by_name() -> None:
     registry = ProviderRegistry([_Provider(frozenset({"top_p"}))])
-    requirement = SamplingExpressible(registry, frozenset({"top_p", "seed"}))
+    requirement = SamplingExpressible(registry, frozenset({"top_p", "seed"}), _BareCatalog())
 
     refusal = await requirement.refusal("m")
 
@@ -304,19 +326,20 @@ async def test_a_candidate_whose_dialect_cannot_express_the_control_is_skipped_b
 
 async def test_a_candidate_that_can_express_everything_asked_for_is_not_skipped() -> None:
     registry = ProviderRegistry([_Provider(frozenset({"top_p", "seed"}))])
-    assert await SamplingExpressible(registry, frozenset({"top_p"})).refusal("m") is None
+    requirement = SamplingExpressible(registry, frozenset({"top_p"}), _BareCatalog())
+    assert await requirement.refusal("m") is None
 
 
 async def test_a_request_that_sets_nothing_never_skips_anybody() -> None:
     registry = ProviderRegistry([_Provider(frozenset())])
-    assert await SamplingExpressible(registry, frozenset()).refusal("m") is None
+    assert await SamplingExpressible(registry, frozenset(), _BareCatalog()).refusal("m") is None
 
 
 async def test_an_adapter_that_declares_nothing_refuses_rather_than_allows() -> None:
     """Undeclared means unsupported — the catalog's rule, applied to dialects. The alternative is
     that the one adapter somebody forgot is the one that silently drops everything."""
     registry = ProviderRegistry([_Undeclared()])
-    refusal = await SamplingExpressible(registry, frozenset({"top_p"})).refusal("m")
+    refusal = await SamplingExpressible(registry, frozenset({"top_p"}), _BareCatalog()).refusal("m")
     assert refusal is not None and "top_p" in refusal
 
 
@@ -629,3 +652,76 @@ def test_a_candidate_that_cannot_be_addressed_is_skipped_not_a_server_error() ->
         )
 
     assert "us-central1" in str(caught.value)
+
+
+async def test_a_model_reachable_only_through_the_catalogue_still_takes_the_dialect_check() -> None:
+    """**The half every test above could not see: a model the configuration never named.**
+
+    `SamplingExpressible` and `SchemaExpressible` resolved their adapter with
+    `provider_for(model)` — one argument — which answers a model listed in configuration and
+    answers `None` for one that is servable **because it is catalogued** (`FRD-507` stage B). Both
+    read that `None` as *this dialect declares no restriction*, so the check was skipped for
+    exactly the models the catalogue was made the authority on.
+
+    Measured on 2026-08-26 against the hermetic app: an adapter owning a provider name and naming
+    no model, a model catalogued to it, `topK` on the request — **200**, from a dialect that has no
+    `top_k`. That is the silent degradation this whole file exists to refuse, and on the Anthropic
+    dialect it is worse than a wrong answer: its `_add_sampling` raises, so the candidate the
+    requirement should have skipped becomes a `500`.
+
+    Driven through the route rather than against the requirement, because the requirement's own
+    unit tests all register their model by name — which is the one shape that cannot show this.
+    """
+    from aira_gateway.db.models import ModelRead
+
+    class _CataloguedOnly:
+        """Owns a provider name, names no model in configuration. Its dialect has `top_p` only."""
+
+        serves_provider = "acme"
+        serves_publisher = ""
+        sampling_controls = frozenset({"top_p"})
+
+        def __init__(self) -> None:
+            self.reached = False
+
+        def models(self):  # noqa: ANN202
+            return []
+
+        async def generate(self, request):  # noqa: ANN001, ANN202
+            from aira_gateway.core.canonical import CanonicalResponse, CanonicalUsage
+
+            self.reached = True
+            return CanonicalResponse(
+                model=request.model,
+                text="ok",
+                finish_reason="stop",
+                usage=CanonicalUsage(prompt_tokens=1, completion_tokens=1),
+            )
+
+        async def stream_generate(self, request):  # noqa: ANN001, ANN202
+            raise NotImplementedError
+            yield  # pragma: no cover
+
+        async def embed(self, request):  # noqa: ANN001, ANN202
+            return [[0.0]]
+
+    provider = _CataloguedOnly()
+    app = create_app(GatewaySettings(auth_required=False, log_queue_size=0))
+    app.state.providers = ProviderRegistry([provider])
+
+    with TestClient(app) as client:
+        async with app.state.db_sessionmaker() as session:
+            session.add(
+                ModelRead(model="acme-1", provider="acme", approved=True, capabilities=["generate"])
+            )
+            await session.commit()
+
+        response = client.post(
+            "/v1beta/models/acme-1:generateContent",
+            json=_base(topK=5, maxOutputTokens=10),
+        )
+
+    assert not provider.reached, "a dialect with no top_k was handed a request that sets it"
+    assert response.status_code == 400
+    assert response.json()["error"]["status"] == "FAILED_PRECONDITION"
+    assert "top_k" in response.json()["error"]["message"]

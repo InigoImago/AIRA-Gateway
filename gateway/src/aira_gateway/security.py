@@ -156,18 +156,26 @@ def unsafe_settings(settings: GatewaySettings) -> list[str]:
     # keeps working against a local Keycloak (`ADR-0015`).
     problems.extend(
         plaintext_problems(
-            {
-                name: value
+            [
+                (name, value)
                 for name, value in (
                     # Every issuer and every key set, for the reason above: the JWKS is where
                     # signing keys come from, and a second realm reached over plaintext is the
                     # same hole as the first.
+                    #
+                    # **A list, not a dict.** This was a dict comprehension keyed on `name`, and
+                    # both names repeat once per configured realm — so it kept the *last* issuer
+                    # and the *last* key set and silently dropped the rest. Measured on
+                    # 2026-08-26: a plaintext realm listed before a secure one produced no problem
+                    # at all, on the check this module calls the one that defeats authentication
+                    # outright. `plaintext_problems` takes pairs now, so the collapse cannot be
+                    # written here or anywhere else.
                     *(("AIRA_OIDC_ISSUER", issuer) for issuer, _, _ in settings.issuers()),
                     *(("AIRA_OIDC_JWKS_URI", uri) for _, _, uri in settings.issuers()),
                     ("VAULT_ADDR", os.environ.get("VAULT_ADDR", "")),
                 )
                 if name not in waived
-            }
+            ]
         )
     )
     return problems

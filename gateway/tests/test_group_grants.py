@@ -323,3 +323,38 @@ async def test_a_token_naming_nobody_and_holding_nothing_is_left_alone(sessions)
     principal = Principal(subject="kc-uuid-2", method="oidc", username=None, groups=())
 
     assert (await _with_group_grants(request, principal)).use_cases == ()  # type: ignore[arg-type]
+
+
+async def test_the_role_the_resolver_worked_out_reaches_the_principal(sessions) -> None:
+    """**The wire, not the ends.**
+
+    `test_the_granted_role_is_carried_through` above proves the resolver answers with a role.
+    `_with_group_grants` then took `granted.keys()` and dropped the values, so the one fact only
+    this layer can establish — *as what* — was computed, asserted, and discarded one call later.
+    `payloads.grant_role_in` re-derived it from `use_case_members`, where a group grant writes no
+    row, and answered `user` for an administrator.
+
+    Both ends were individually correct and individually tested, which is exactly why nothing
+    failed. Removing `grants=` from the call below leaves every other test in this file and every
+    test in `test_payload_access.py` green — those construct a `Principal` themselves — so this
+    assertion is the only thing standing between the two halves.
+    """
+    from types import SimpleNamespace
+
+    from aira_gateway.auth.dependencies import _with_group_grants
+    from aira_gateway.auth.principal import Principal
+
+    await _grant(sessions, "uc-a", "/ai/kundenservice", "admin")
+    request = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(group_grants=GroupGrantResolver(sessions)))
+    )
+    principal = Principal(
+        subject="kc-uuid-3", method="oidc", username="boss", groups=("/ai/kundenservice",)
+    )
+
+    resolved = await _with_group_grants(request, principal)  # type: ignore[arg-type]
+
+    assert resolved.use_cases == ("uc-a",)
+    assert resolved.grants == (("uc-a", "admin"),), (
+        "the slug reached the principal and the role it was granted with did not"
+    )

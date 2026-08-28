@@ -15,6 +15,39 @@ class ModelSerializer(serializers.ModelSerializer[Model]):
     is_priced = serializers.BooleanField(read_only=True)
     is_declared = serializers.BooleanField(read_only=True)
 
+    def validate_name(self, name: str) -> str:
+        """A model's name is its **identity**, and an identity is set once (2026-08-27).
+
+        The same shape as `UseCaseSerializer.validate_slug`, one table along, and with the same
+        cause: the name crosses a Kafka boundary into a database this plane does not own. It keys
+        the gateway's `model_catalog`, it is what a use case's release names (`FRD-308`), what a
+        pipeline step's `config.model` names, what a price attaches to and what every
+        `request_logs.model` records.
+
+        Measured on 2026-08-27 against the running stack: `PATCH` a catalogued model's name, and
+        the gateway ends up holding **both** — the old row intact and still `approved`, the new one
+        beside it — while Management answers `404` for the old. So a rename quietly doubles the
+        installation's approved catalogue and puts one of the two permanently beyond reach:
+        un-approving it, re-pricing it or deleting it can never arrive, because the plane that
+        emits those events has forgotten the name.
+
+        That reopens exactly the loophole `FRD-307` closed. Its own docstring records the first
+        version's mistake — *deleting a declaration made a model usable again* — and the answer was
+        that an uncatalogued model is refused. An orphan is worse than that: it is catalogued,
+        approved, and unreachable.
+
+        The upsert in `ModelViewSet.create` is unaffected: it re-posts the **same** name onto an
+        existing row, which is not a change.
+        """
+        if self.instance is not None and name != self.instance.name:
+            raise serializers.ValidationError(
+                f"A model's name is its identity and cannot be changed. '{self.instance.name}' is "
+                "what the gateway's catalog, every use case's release, every pipeline step and "
+                "every audit row already name. Catalogue the new name as its own model and "
+                "un-approve this one — `display_name` is the field for what people should read."
+            )
+        return name
+
     class Meta:
         model = Model
         fields = [
@@ -105,11 +138,31 @@ class ModelSerializer(serializers.ModelSerializer[Model]):
             validated_data["numeric_id"] = max(highest or 0, self.KIRA_ID_BASE) + 1
         return super().create(validated_data)
 
+    def _effective(self, attrs: dict[str, Any], field: str) -> Any:
+        """What the field will hold after the save: the incoming value, or the stored one.
+
+        The declaration block below already merges over the instance and says why — *"a PATCH that
+        touches only `max_output_tokens` would be validated against a thinking block it cannot
+        see"*. The price pair three lines above it did not, in the same method: on a partial edit
+        `attrs` carried the one price being changed and the other read as absent, so **every**
+        partial price edit was refused with a sentence about setting both — measured on
+        2026-08-26, `PATCH {"input_price_per_million": "3.00"}` against a model that already had
+        both.
+
+        The rule was stated one layer down and not held one layer up, which is the shape this
+        codebase keeps paying for. Named here so both readers share it.
+        """
+        return attrs.get(field, getattr(self.instance, field, None))
+
     def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
         # A half-priced model would bill one direction and silently ignore the other, which is
         # worse than having no price at all: the figure would look complete and be wrong.
-        has_input = attrs.get("input_price_per_million") is not None
-        has_output = attrs.get("output_price_per_million") is not None
+        #
+        # Asked of the **resulting** model rather than of the edit — see `_effective`. Clearing one
+        # of the two is still refused, because `attrs` then carries an explicit `None` and that is
+        # the value the model ends up with.
+        has_input = self._effective(attrs, "input_price_per_million") is not None
+        has_output = self._effective(attrs, "output_price_per_million") is not None
         if has_input != has_output:
             raise serializers.ValidationError(
                 "Set both the input and the output price, or neither — a model priced in only "
@@ -127,6 +180,9 @@ class ModelSerializer(serializers.ModelSerializer[Model]):
         empty: dict[str, Any] = {"capabilities": [], "hosting": ""}
         declaration = {
             field: attrs.get(field, getattr(self.instance, field, empty.get(field)))
+            # Not `_effective`, because of the `empty` fallback above: a create that never mentions
+            # `capabilities` has no instance to read and must be validated as `[]` rather than as
+            # `None`, or it is refused for saying nothing at all.
             for field in (
                 "capabilities",
                 "hosting",

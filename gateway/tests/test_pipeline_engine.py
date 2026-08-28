@@ -19,11 +19,16 @@ class _Guard:
     def __init__(self, name: str, verdict: str = "SAFE") -> None:
         self._name = name
         self._verdict = verdict
+        #: How often a step actually asked. Nought is the assertion for a step that names no
+        #: model: "it was not asked" and "it was asked and answered harmlessly" look identical
+        #: from the outcome alone, and only one of them is the rule.
+        self.calls = 0
 
     def models(self) -> list[UpstreamModel]:
         return [UpstreamModel(self._name, self._name, ("generateContent",))]
 
     async def generate(self, request: CanonicalRequest) -> CanonicalResponse:
+        self.calls += 1
         return CanonicalResponse(
             model=self._name,
             text=self._verdict,
@@ -184,10 +189,72 @@ async def test_a_router_that_matched_nothing_is_distinguishable_from_one_that_ma
     assert decision["category"] == ""
 
 
-async def test_llm_filter_uses_default_model_when_unspecified() -> None:
-    # mode=llm without an explicit model → first registered model classifies
-    with pytest.raises(PipelineRejected):
-        await _engine(_Guard("mock-1", "INJECTION")).run(_filter({"mode": "llm"}), _request("hi"))
+async def test_an_llm_filter_that_names_no_model_falls_back_to_the_heuristic() -> None:
+    """A step that names no model does not borrow one (2026-08-27).
+
+    It used to classify with `registry.models()[0]` — a model nobody chose, not released to the
+    use case and not necessarily approved for the installation, on a call that applies neither
+    gate. `_default_model` is gone; what is left is the degradation the LLM filter already had for
+    an unreachable model, which is the heuristic.
+
+    So the guard asks the classifier that *would* have been used to answer INJECTION and asserts
+    the request is served anyway: the model was not asked. `"hi"` matches no built-in pattern, so
+    the heuristic passes it.
+    """
+    guard = _Guard("mock-1", "INJECTION")
+    outcome = await _engine(guard).run(_filter({"mode": "llm"}), _request("hi"))
+
+    assert guard.calls == 0, "the step called a model it was never configured with"
+    assert not outcome.model_calls
+    decision = next(d for d in outcome.decisions if d["step"] == "injection_filter")
+    assert decision["flagged"] is False
+
+
+async def test_a_router_that_names_no_classifier_is_not_asked() -> None:
+    """The third step, and the third face of the same rule.
+
+    A router with no classifier model used to ask the first model in the registry — and a router's
+    prompt carries the **system instruction and the whole user text** (`_route_text`), so the model
+    nobody chose saw more of the request than the filter's classifier does.
+
+    Left as it was for an unreachable classifier: `not_asked`, recorded as such, and the
+    configured `default_model` still applies. The decision row is the point — "the classifier could
+    not be reached" and "no category matched" are different facts and were once the same row.
+    """
+    guard = _Guard("mock-1", "code")
+    pipeline = Pipeline(
+        steps=(
+            PipelineStep(
+                type=StepType.MODEL_ROUTE,
+                config={"categories": [{"name": "code", "model": "c-1"}], "default_model": "d-1"},
+            ),
+        )
+    )
+    outcome = await _engine(guard).run(pipeline, _request("hi", model="mock-1"))
+
+    assert guard.calls == 0
+    decision = next(d for d in outcome.decisions if d["step"] == "model_route")
+    assert decision["why"] == "classifier_failed"
+    # The default still applies — a router that could not be asked is not a router that did nothing.
+    assert outcome.request.model == "d-1"
+
+
+async def test_a_redactor_that_names_no_model_blocks_rather_than_borrowing_one() -> None:
+    """The same rule where its failure mode is the loud one (`FRD-309`).
+
+    A `pii_filter` has no lesser version of itself, so "no model is available" blocks by default —
+    which is the right answer and was unreachable while any step could fall back to the first
+    model in the registry. Management's serializer validates the models a pipeline *names*, so a
+    step naming none passes authoring: this is savable from the console's own builder.
+    """
+    guard = _Guard("mock-1", "redacted")
+    with pytest.raises(PipelineRejected, match="no model is available to redact with"):
+        await _engine(guard).run(
+            Pipeline(steps=(PipelineStep(type=StepType.PII_FILTER, config={}),)),
+            _request("Max Mustermann"),
+        )
+
+    assert guard.calls == 0
 
 
 # ---- dry run ----------------------------------------------------------------------------

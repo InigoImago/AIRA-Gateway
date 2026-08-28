@@ -173,6 +173,18 @@ so an injection inside a PDF is invisible to every step here. Neither is a bug; 
 difference between "the filter ran" and "the prompt was checked", and a reader who assumes the
 second has been misled by omission.
 
+**An embedding runs the steps that are about the text it carries, and not the others.** A step
+about the *answer* has nothing to act on — a router chooses a model to generate with, and an
+injection filter is about a prompt that will be **obeyed**, which an embedding never is. A step
+about the *text itself* applies exactly as it does to a prompt, so a `pii_filter` runs on
+`:embedContent`, `batchEmbedContents` and `/kira/api/external/embed`
+([`FRD-309`](features/FRD-309-pii-filter.md) FR-9). Every text of a batch is offered to the
+redactor and one that cannot be redacted refuses the whole request: half a batch of vectors is not
+an answer. Until 2026-08-27 an embedding ran **no** step at all, so a use case that had switched on
+redaction embedded and stored its callers' text untouched — `FRD-300` recorded embeddings as a
+non-goal when the steps were a filter and a router, and `pii_filter` arrived into the same branch
+later, inheriting a decision that was never made about it.
+
 There is no `allow_check` step: which models a use case may call is a property of the use case
 ([`FRD-308`](features/FRD-308-use-case-model-release.md)), checked as a dispatch condition at every
 hop. As a step it ran once, before routing — so a route or a fallback went straight past it.
@@ -181,7 +193,14 @@ Every model a pipeline names — the classifier a filter runs, the classifier a 
 category's target, the default target, the fallback chain — must be **released to the use case**.
 Refused when the pipeline is saved and again at dispatch, and the builder offers only those. The
 dry run follows the same rule and the membership rule with it: it calls a real model, so it belongs
-to a use case exactly as a request does.
+to a use case exactly as a request does — and it asks the installation's own approval
+([`FRD-307`](features/FRD-307-model-catalog.md)) of every model it will *call*, which the release
+alone could not: the release has a "nobody has told us" state and approval has none.
+
+**A step reaches only the model written in its own configuration.** One that names none used to
+borrow the first model in the registry — a model nobody chose, which no gate covers, since none of
+these conditions sits on a step's *own* call. It degrades instead: the redactor blocks, the LLM
+filter falls back to the heuristic, the router uses its `default_model`.
 
 Then a `fallback_models` chain. **A pipeline model call is a first-class request**: it leaves its own
 audit row named `pipeline:<step>`, priced, and booked against the budget **as a request** — it
