@@ -2,6 +2,7 @@ import { HttpClient } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable, map } from 'rxjs';
 import {
+  AccessChange,
   AnomalyEvent,
   AnomalyPage,
   AnomalyRule,
@@ -146,8 +147,8 @@ export class UseCaseService {
    * one into a path segment produces a route that works until somebody has a group two levels
    * deep.
    */
-  revokeGroup(slug: string, groupPath: string): Observable<void> {
-    return this.http.delete<void>(`${this.base}${seg(slug)}/groups/revoke/`, {
+  revokeGroup(slug: string, groupPath: string): Observable<AccessChange> {
+    return this.http.delete<AccessChange>(`${this.base}${seg(slug)}/groups/revoke/`, {
       params: { group_path: groupPath },
     });
   }
@@ -161,8 +162,15 @@ export class UseCaseService {
     return this.http.post<Membership>(`${this.base}${seg(slug)}/members/`, { username, role });
   }
 
-  removeMember(slug: string, username: string): Observable<void> {
-    return this.http.delete<void>(`${this.base}${seg(slug)}/members/${seg(username)}/`);
+  /**
+   * Take somebody's access away — and, with it, the keys that rested on it.
+   *
+   * The answer carries `revoked_keys` because the server revokes them (`FRD-613`): a removal that
+   * silently deactivated two of somebody's credentials would be a control whose whole effect the
+   * screen cannot state, which is the `FRD-206` shape read backwards.
+   */
+  removeMember(slug: string, username: string): Observable<AccessChange> {
+    return this.http.delete<AccessChange>(`${this.base}${seg(slug)}/members/${seg(username)}/`);
   }
 
   apiKeys(slug: string): Observable<ApiKey[]> {

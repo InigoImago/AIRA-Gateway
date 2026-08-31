@@ -215,7 +215,11 @@ async def guard_before_work(request: Request, *, units: int = 1) -> None:
     suspensions: SuspensionService = suspensions_of(request)
     rate_limits: RateLimitService = rate_limits_of(request)
     budgets: BudgetService = budgets_of(request)
-    throttles = await suspensions.check(use_case, subject, credential)
+    # `caller` as well as `subject`: a suspension naming a **person** has to stop them whichever
+    # credential they hold, and the two disagree about the subject (`FRD-613`). The credential
+    # target stays the credential, which is what makes "block this leaked key" a different act
+    # from "stop this person".
+    throttles = await suspensions.check(use_case, subject, credential, caller)
     await rate_limits.check(
         use_case,
         caller,

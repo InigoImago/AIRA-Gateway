@@ -74,6 +74,15 @@ def usecases_from_group_paths(groups: Iterable[str]) -> tuple[str, ...]:
     """
     slugs: list[str] = []
     for group in groups:
+        if not isinstance(group, str):
+            # **A claim is not a type.** A signed token is trustworthy about who issued it and
+            # says nothing about the shape of `groups`; a realm mapper that emits an object or a
+            # number per group is a misconfiguration, and this used to answer it with
+            # `AttributeError` — raised inside token validation, so **every request from that
+            # caller was a 500**. Management's `_token_groups` has filtered since it was written
+            # and says why: *"a realm misconfiguration must not stop authentication, it must stop
+            # authority."* The same rule, on the plane that had not inherited it.
+            continue
         if group.startswith(USE_CASE_GROUP_PREFIX):
             slug = group[len(USE_CASE_GROUP_PREFIX) :].strip("/").split("/")[-1]
             if slug:

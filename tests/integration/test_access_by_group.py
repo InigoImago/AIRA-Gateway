@@ -233,7 +233,12 @@ async def test_revoking_the_group_takes_the_access_away(
     await _grant(admin_token, slug, DEPARTMENT)
     assert slug in await _visible(member_token)
 
-    assert (await _revoke(admin_token, slug, DEPARTMENT)).status_code == 204
+    # `200` with `revoked_keys`, not `204`: revoking a grant also revokes every key of this
+    # use case whose owner no longer holds one (`FRD-613`), and a removal that silently
+    # deactivated a credential would be a control whose effect the screen cannot state.
+    revoked = await _revoke(admin_token, slug, DEPARTMENT)
+    assert revoked.status_code == 200, revoked.text
+    assert "revoked_keys" in revoked.json()
 
     assert slug not in await _visible(member_token)
 

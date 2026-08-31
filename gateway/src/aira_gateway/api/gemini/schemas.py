@@ -262,7 +262,9 @@ _REQUEST_NOT_SERVED = {
 #: What every provider accepts as a function name. Checked **here**, at our boundary, so a caller
 #: gets an error naming the field instead of a provider error naming nothing — the same argument
 #: `FRD-112` makes for parsing a schema rather than forwarding it blindly.
-_FUNCTION_NAME = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+#: `\Z`, for the reason `auth/attribution._SLUG` states: `$` also matches before a trailing
+#: newline, and this name is written into the audit row and the span attributes of every tool call.
+_FUNCTION_NAME = re.compile(r"^[A-Za-z0-9_-]{1,64}\Z")
 
 
 class FunctionDeclaration(BaseModel):

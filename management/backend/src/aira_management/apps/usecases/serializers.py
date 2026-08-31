@@ -210,7 +210,10 @@ class GrantGroupSerializer(serializers.Serializer[Any]):
     #: A token's `groups` claim never contains it — every path Keycloak reports starts with a
     #: name — so a grant on `/` can only ever be inert, while reading to a person as "the whole
     #: realm". A grant that cannot match anything is exactly what this validation exists to catch.
-    group_path = serializers.RegexField(r"^/[^\s/][^\s]{0,253}$", max_length=255)
+    #: `\Z` rather than `$`: Python's `$` matches before a trailing newline, so `/ai/vertrieb\n`
+    #: passed a validator that exists to stop a grant naming a path Keycloak never emits — which
+    #: is silently inert, which is exactly what it is here to catch.
+    group_path = serializers.RegexField(r"^/[^\s/][^\s]{0,253}\Z", max_length=255)
     role = serializers.ChoiceField(
         choices=[UseCaseMembership.ADMIN, UseCaseMembership.USER],
         default=UseCaseMembership.USER,

@@ -1,7 +1,7 @@
 import { Component, DestroyRef, OnInit, inject, input, output, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Observable, Subject, Subscription, debounceTime, distinctUntilChanged } from 'rxjs';
-import { DirectoryEntry, GroupGrant, Membership } from '../../core/api/models';
+import { AccessChange, DirectoryEntry, GroupGrant, Membership } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { ConfirmService } from '../../core/ui/confirm.service';
 import { InfoHint } from '../../core/ui/info-hint';
@@ -9,6 +9,21 @@ import { PageFeedback } from '../../core/ui/page-feedback';
 
 /** How long to wait after the last keystroke before asking the directory. */
 const TYPING_PAUSE_MS = 250;
+
+/**
+ * What else the removal did, in the sentence that reports it.
+ *
+ * Ending somebody's access revokes the API keys of this use case that rested on it (`FRD-613`) —
+ * the half of offboarding that actually reaches a model. Saying nothing about it would leave the
+ * reader believing they had only edited a list, and would hide the one consequence they might
+ * need to tell somebody about.
+ */
+function keysRevoked(change: AccessChange | null | undefined): string {
+  const keys = change?.revoked_keys ?? [];
+  if (keys.length === 0) return '';
+  const noun = keys.length === 1 ? 'API key' : 'API keys';
+  return ` ${keys.length} ${noun} revoked with it: ${keys.join(', ')}.`;
+}
 
 /**
  * Who can reach this use case, and as what (`FRD-209`).
@@ -133,8 +148,8 @@ export class AccessPanel implements OnInit {
     if (!this.confirmService.ask(question)) return;
     this.feedback.run(this.service.revokeGroup(this.slug(), grant.group_path), {
       failure: 'Could not revoke this group.',
-      success: () => {
-        this.feedback.succeed(`${grant.group_path} revoked.`);
+      success: (change: AccessChange) => {
+        this.feedback.succeed(`${grant.group_path} revoked.${keysRevoked(change)}`);
         this.load();
         this.changed.emit();
       },
@@ -145,8 +160,8 @@ export class AccessPanel implements OnInit {
     if (!this.confirmService.ask(`Remove ${member.username} from this use case?`)) return;
     this.feedback.run(this.service.removeMember(this.slug(), member.username), {
       failure: 'Could not remove this person.',
-      success: () => {
-        this.feedback.succeed(`${member.username} removed.`);
+      success: (change: AccessChange) => {
+        this.feedback.succeed(`${member.username} removed.${keysRevoked(change)}`);
         this.changed.emit();
       },
     });

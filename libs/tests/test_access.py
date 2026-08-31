@@ -159,3 +159,26 @@ def test_the_two_kinds_are_named_the_same_on_both_planes() -> None:
     # A slug typed twice is a slug that disagrees with itself eventually.
     assert str(SubjectKind.GROUP) == "group"
     assert str(SubjectKind.USER) == "user"
+
+
+def test_a_group_that_is_not_a_path_is_skipped_rather_than_raising() -> None:
+    """A `groups` claim is not a type (`FRD-613`).
+
+    A signed token is trustworthy about who issued it and says nothing about the shape of its
+    claims: a realm mapper configured to emit group *objects*, or a numeric id, is a
+    misconfiguration — and this answered it with `AttributeError`, raised inside token validation,
+    which is a **500 on every request that caller makes** rather than a role they do not get.
+
+    Asked of this function directly and not through a validator. Both planes narrow the claim
+    before calling, so a test one layer up passes with the guard removed — which is exactly what
+    `make mutants` reported: the property looked defended and the defence was somebody else's.
+    """
+    assert usecases_from_group_paths([7, None, {"path": "/use-cases/uc-b"}, "/use-cases/uc-a"]) == (
+        "uc-a",
+    )
+
+
+def test_a_grant_row_is_matched_by_the_paths_a_token_carries() -> None:
+    """The other half of the same tolerance: `resolve` builds a set from whatever it is given, and
+    a non-string in it simply matches no grant."""
+    assert resolve([7, "/ai/x"], [("/ai/x", "uc-a", "admin")]) == {"uc-a": "admin"}

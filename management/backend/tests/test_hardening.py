@@ -228,12 +228,44 @@ def test_a_lost_race_returns_the_winners_user_rather_than_a_500() -> None:
     assert OidcIdentity.objects.filter(subject=subject).count() == 1
 
 
-def test_existing_unbound_user_is_adopted_on_first_login() -> None:
-    """Accounts created before the binding existed keep their permissions."""
-    legacy = get_user_model().objects.create(username="legacy")
-    adopted = _provision("sub-legacy", "legacy")
-    assert adopted.pk == legacy.pk
-    assert OidcIdentity.objects.get(subject="sub-legacy").user_id == legacy.pk
+def test_an_invited_account_is_claimed_on_first_login() -> None:
+    """An account somebody created *for* this person is theirs the first time they arrive.
+
+    The seed and the member picker both create accounts before their owner has ever signed in, so
+    something has to recognise them by name once. That is what an invitation is
+    (`apps.api.models.PendingIdentity`), and it is consumed by the claim.
+    """
+    from aira_management.apps.api.models import PendingIdentity
+
+    invited = get_user_model().objects.create(username="newcomer")
+    PendingIdentity.objects.create(user=invited, invited_by="boss")
+
+    claimed = _provision("sub-newcomer", "newcomer")
+
+    assert claimed.pk == invited.pk
+    assert OidcIdentity.objects.get(subject="sub-newcomer").user_id == invited.pk
+    assert not PendingIdentity.objects.filter(user=invited).exists(), (
+        "an invitation that can be redeemed twice is not an invitation"
+    )
+
+
+def test_an_uninvited_account_is_never_claimed_by_a_matching_name() -> None:
+    """The takeover this replaced (`FRD-613`).
+
+    `_provision_user` used to adopt **any** unbound account whose username matched the token's
+    `preferred_username`. Measured on 2026-08-30: a token with an arbitrary `sub` and
+    `preferred_username: "admin"` was handed the seeded `admin` account, its memberships and its
+    object permissions. Nothing had to be compromised and nothing recorded that it happened.
+    """
+    from aira_management.apps.api.models import PendingIdentity
+
+    theirs = get_user_model().objects.create(username="admin")
+
+    stranger = _provision("sub-stranger", "admin")
+
+    assert stranger.pk != theirs.pk
+    assert stranger.get_username() != "admin"
+    assert not PendingIdentity.objects.exists()
 
 
 def test_reused_username_does_not_inherit_the_previous_account() -> None:

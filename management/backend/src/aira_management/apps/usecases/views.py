@@ -27,14 +27,17 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 
 from aira_common.apikeys import generate_api_key
+from aira_common.directory import DirectoryUnavailable
 from aira_common.roles import Role
 from aira_management.apps.anomalies.models import AnomalyRule
 from aira_management.apps.anomalies.serializers import AnomalyRuleSerializer
 from aira_management.apps.anomalies.views import upsert_use_case_rule
+from aira_management.apps.api.models import PendingIdentity
 from aira_management.apps.apikeys.models import ApiKey
 from aira_management.apps.apikeys.serializers import ApiKeySerializer, IssueApiKeySerializer
 from aira_management.apps.budgets.models import Budget
 from aira_management.apps.budgets.serializers import BudgetSerializer
+from aira_management.apps.directory.service import known_person
 from aira_management.apps.pipelines.models import PipelineConfig
 from aira_management.apps.pipelines.serializers import PipelineConfigSerializer
 from aira_management.apps.ratelimits.models import RateLimit
@@ -49,6 +52,7 @@ from aira_management.apps.usecases.access import (
     VIEW as _VIEW_PERM,
 )
 from aira_management.apps.usecases.access import (
+    holds_a_grant,
     is_member,
     may_admin,
     may_call_queryset,
@@ -124,10 +128,97 @@ def _snapshot(usecase: UseCase) -> dict[str, Any]:
 
 
 def _resolve_user(username: str) -> Any:
+    """The local account for ``username``, which must already exist.
+
+    Used where a *removal* names somebody: taking access away from a name nobody has is a no-op
+    dressed as an action, and the caller is better told the name is wrong.
+    """
     user = get_user_model().objects.filter(username=username).first()
     if user is None:
         raise ValidationError({"username": [f"Unknown user '{username}'."]})
     return user
+
+
+def _resolve_or_invite(username: str, *, invited_by: str) -> Any:
+    """The local account for ``username``, **creating an invited one** if there is none yet.
+
+    This is `FRD-209` FR-4 finally holding on the half it never did. The picker offers everybody
+    the *directory* knows and this resolved only against people who had already signed in, so
+    granting access to a new colleague answered `Unknown user 'x'` — a control the console offers
+    and the server refuses, which is `FRD-206`'s defect on the one route the person-grant half of
+    `FRD-209` exists for. Measured on 2026-08-30 against a freshly seeded stack.
+
+    An account is created **only for a name the directory confirms**, and it carries an invitation
+    rather than a binding (`apps.api.models.PendingIdentity`): there is no `sub` to bind to until
+    they arrive. That confirmation is the whole of the guard `_resolve_owner` already states in
+    words — *"a credential attached to a username nobody has is an accountability chain ending in
+    a string"* — and it applies to a membership for the same reason.
+
+    Three outcomes, kept apart because they send three different people to fix them: the directory
+    has no such person (the typist's), no directory is configured (the operator's), and the
+    directory could not be reached (nobody's, yet).
+    """
+    user = get_user_model().objects.filter(username=username).first()
+    if user is not None:
+        return user
+    try:
+        found = known_person(username)
+    except DirectoryUnavailable:
+        raise ValidationError(
+            {
+                "username": [
+                    f"There is no user '{username}' here yet, and the directory could not be "
+                    "asked whether there is one. Either configure the directory client "
+                    "(AIRA_DIRECTORY_CLIENT_ID / _SECRET) or have them sign in to the console "
+                    "once, which creates the account."
+                ]
+            }
+        ) from None
+    if found is None:
+        raise ValidationError({"username": [f"The directory knows no user '{username}'."]})
+    with transaction.atomic():
+        created = get_user_model().objects.create(username=found.id, email=found.detail[:254])
+        PendingIdentity.objects.create(user=created, invited_by=invited_by[:150])
+    return created
+
+
+def _revoke_keys_without_access(usecase: UseCase) -> list[str]:
+    """Revoke every active key of ``usecase`` whose owner no longer holds a grant on it.
+
+    **Access ending has to end the credential that rested on it.** Removing somebody from a use
+    case took away their console view, their guardian permissions and the membership row the
+    gateway reads — and left every API key they held for that use case active, bound to that use
+    case, and serving traffic against its budget until it happened to expire (up to
+    `AIRA_API_KEY_MAX_DAYS`, 180 days by default). Measured on 2026-08-30: a removed member's key
+    answered `200` on the surface they had just been removed from.
+
+    That is the offboarding hole in its plainest form. Every other consequence of the removal was
+    immediate and complete; the one that actually reaches a model was not, and the screen said
+    nothing, so whoever removed them believed access had ended.
+
+    Asked as *"does this owner still hold a grant"* rather than *"was this the person removed"*,
+    because the same sentence has to be true after a **group** grant is revoked — where nobody was
+    named at all and a key's owner may have been reaching the use case only through that group.
+    Somebody who also holds a direct membership keeps their keys, which is `FRD-209` FR-5 one
+    layer down: revoking one route must not silently close another.
+
+    Deliberately **not** a deletion. Revocation is terminal and dated on both planes (`ADR-0007`),
+    and a key that stops working is a fact an investigation asks about later.
+    """
+    revoked: list[str] = []
+    keys = ApiKey.objects.filter(use_case=usecase, is_active=True).select_related("owner")
+    for key in keys:
+        if holds_a_grant(key.owner, usecase):
+            continue
+        key.is_active = False
+        key.revoked_at = timezone.now()
+        key.save(update_fields=["is_active", "revoked_at"])
+        emit(
+            "api_key.revoked",
+            {"prefix": key.prefix, "use_case": usecase.slug, "status": "revoked"},
+        )
+        revoked.append(key.prefix)
+    return revoked
 
 
 def _budget_payload(budget: Budget, slug: str) -> dict[str, Any]:
@@ -300,16 +391,33 @@ class UseCaseViewSet(viewsets.ModelViewSet[UseCase]):
         carries, and the issuer is the human, which is the fact that signing in *as* the technical
         user destroys.
 
-        Two refusals, and both matter more than the feature:
+        Three refusals, and each matters more than the feature:
 
+        - naming **somebody else** is an administrator's act. Any member could do it, and a name in
+          this field is not decoration: the gateway resolves a key to its owner, so the key acts
+          with the owner's standing in the use case, spends the owner's per-person allowance, and
+          writes the owner's name into every audit row. Measured on 2026-08-30 — a use-case *user*
+          issued a key owned by that use case's administrator and read every stored prompt in a use
+          case set to show each member their own, with the access recorded against the
+          administrator. Nothing in the chain was a bug on its own; the choice of owner was the
+          whole of it, and it was open to anybody.
         - an unknown name is refused rather than created, because a credential attached to a
           username nobody has is an accountability chain ending in a string;
-        - somebody with no access to this use case is refused, or the owner column becomes a place
-          to put a colleague's name — which is `FRD-604`'s own defect with the sign reversed.
+        - somebody with no **grant** on this use case is refused, or the owner column becomes a
+          place to put a colleague's name — which is `FRD-604`'s own defect with the sign reversed.
+          `holds_a_grant`, not `is_member`: the latter says yes to a Global Administrator who is a
+          member of nothing, and an owner has to be somebody whose access can end.
         """
         caller: Any = self.request.user
         if not requested or requested == caller.get_username():
             return caller, ""
+
+        if not may_manage(caller, usecase):
+            raise PermissionDenied(
+                "Only an administrator of this use case may issue a key owned by somebody else. "
+                "A key acts with its owner's standing, spends their allowance and carries their "
+                "name in the audit trail."
+            )
 
         owner = get_user_model().objects.filter(username=requested).first()
         if owner is None:
@@ -321,7 +429,7 @@ class UseCaseViewSet(viewsets.ModelViewSet[UseCase]):
                     ]
                 }
             )
-        if not is_member(owner, usecase):
+        if not holds_a_grant(owner, usecase):
             raise ValidationError(
                 {
                     "owner": [
@@ -417,7 +525,9 @@ class UseCaseViewSet(viewsets.ModelViewSet[UseCase]):
             raise PermissionDenied("You cannot manage members of this use case.")
         payload = AddMemberSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
-        user = _resolve_user(payload.validated_data["username"])
+        user = _resolve_or_invite(
+            payload.validated_data["username"], invited_by=request.user.get_username()
+        )
         role = payload.validated_data["role"]
 
         with transaction.atomic():
@@ -491,9 +601,16 @@ class UseCaseViewSet(viewsets.ModelViewSet[UseCase]):
                 # revoking one route must not silently close another (`FRD-209` FR-5).
                 _revoke(group, usecase)
             emit("use_case_group.revoked", {"slug": usecase.slug, "group": path})
-        return Response(status=status.HTTP_204_NO_CONTENT)
+            revoked = _revoke_keys_without_access(usecase)
+        return Response({"revoked_keys": revoked}, status=status.HTTP_200_OK)
 
-    @action(detail=True, methods=["delete"], url_path="members/(?P<username>[^/.]+)")
+    #: `[^/]+`, and the dot is the point. It was `[^/.]+` — the router's default, which exists to
+    #: keep `.json` format suffixes routable — so **any username containing a dot was unaddressable
+    #: by this route**: `DELETE …/members/vadim.scheibe/` answered `404`, on the single most
+    #: ordinary shape a directory hands out (`first.last`). Percent-encoding does not help, because
+    #: the path is decoded before it is matched. Format suffixes on a `DELETE` are worth nothing;
+    #: being able to remove a colleague is worth a great deal.
+    @action(detail=True, methods=["delete"], url_path="members/(?P<username>[^/]+)")
     def remove_member(
         self, request: Request, slug: str | None = None, username: str | None = None
     ) -> Response:
@@ -504,8 +621,13 @@ class UseCaseViewSet(viewsets.ModelViewSet[UseCase]):
         with transaction.atomic():
             UseCaseMembership.objects.filter(use_case=usecase, user=user).delete()
             _revoke(user, usecase)
-            emit("membership.removed", {"slug": usecase.slug, "username": username})
-        return Response(status=status.HTTP_204_NO_CONTENT)
+            # **The name as it is stored, not as it was typed.** The consumer keys
+            # `use_case_members` on this string, and the route's own capture is whatever survived
+            # URL routing — one character different and the gateway keeps a membership Management
+            # has removed.
+            emit("membership.removed", {"slug": usecase.slug, "username": user.get_username()})
+            revoked = _revoke_keys_without_access(usecase)
+        return Response({"revoked_keys": revoked}, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["get", "post"], url_path="api-keys")
     def api_keys(self, request: Request, slug: str | None = None) -> Response:

@@ -37,7 +37,14 @@ USE_CASE_PATH_KEY = "aira_use_case_path"
 # A client-supplied selector must look like a Management use-case slug (same charset and length
 # as ``UseCase.slug``). Rejecting anything else keeps unvalidated client input out of the audit
 # log, the read-model lookups, and the trace attributes (ADR-0007).
-_SLUG = re.compile(r"^[a-z0-9-]{1,64}$")
+#
+# **`\Z`, not `$`.** In Python `$` also matches *before a trailing newline*, so `"uc-a\n"` passed
+# a check whose whole purpose is that nothing but `[a-z0-9-]` reaches a stored column, a structured
+# log line and a span attribute. A newline in a log line is the oldest injection there is, and the
+# slug would then match no use case — a caller with an unbound break-glass key could write a
+# fabricated second line into the audit trail's own log. One character, and it is the character
+# that makes the sentence above true.
+_SLUG = re.compile(r"^[a-z0-9-]{1,64}\Z")
 
 
 def is_valid_use_case(slug: str) -> bool:

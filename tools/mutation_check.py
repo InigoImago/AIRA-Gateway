@@ -174,6 +174,20 @@ SURFACE_PARITY = (
 )
 MODE_PARSE = "gateway/tests/test_thinking.py gateway/tests/test_kira_surface.py"
 
+#: The readers of a caller's identity, all of them. Wide on purpose: the whole lesson of
+#: `FRD-613` is that these properties are held by *different* files from the ones the code sits
+#: beside — the suspension rule fails in the sweep, not in `test_suspensions.py`.
+IDENTITY_SWEEP = (
+    "gateway/tests/test_one_identity_across_credentials.py "
+    "gateway/tests/test_the_identity_boundary_takes_any_value.py "
+    "gateway/tests/test_own_requests_are_the_persons.py "
+    "gateway/tests/test_payload_access.py"
+)
+ACCESS_LIFECYCLE = (
+    "management/backend/tests/test_access_ends_completely.py "
+    "management/backend/tests/test_apikeys.py"
+)
+
 SERVING_OPTIONS = (
     "gateway/tests/test_serving_options.py gateway/tests/test_kira_surface.py "
     "gateway/tests/test_vertex.py gateway/tests/test_gemini_upstream.py"
@@ -778,8 +792,8 @@ MUTATIONS = [
         "A8",
         "a use-case selector must match the Management slug charset",
         "gateway/src/aira_gateway/auth/attribution.py",
-        '_SLUG = re.compile(r"^[a-z0-9-]{1,64}$")',
-        '_SLUG = re.compile(r"^.*$")',
+        '_SLUG = re.compile(r"^[a-z0-9-]{1,64}\\Z")',
+        '_SLUG = re.compile(r"^.*\\Z")',
         f"{HARDENING} {ATTRIBUTION}",
     ),
     Mutation(
@@ -831,8 +845,8 @@ MUTATIONS = [
         "G4",
         "removing a membership revokes the permissions it granted",
         "management/backend/src/aira_management/apps/usecases/views.py",
-        "            _revoke(user, usecase)\n            emit(",
-        "            emit(",
+        "            _revoke(user, usecase)\n            # **The name as it is stored",
+        "            # **The name as it is stored",
         MGMT_RBAC,
     ),
     Mutation(
@@ -857,11 +871,16 @@ MUTATIONS = [
     ),
     Mutation(
         "G7",
-        "a subject already bound to a user is never reachable by reusing its username",
+        # **Re-anchored 2026-08-30** (`FRD-613`). It guarded the narrower half of a rule that has
+        # since been replaced outright: `_provision_user` used to adopt any *unbound* account whose
+        # username matched, and this mutation removed the "unbound" half. The whole "by name" half
+        # is gone now — an account is claimable only where somebody **invited** it — so the
+        # property to defend is that the invitation is required, not that a binding is checked.
+        "an account nobody invited is claimed by nobody, however its name matches",
         "management/backend/src/aira_management/apps/api/authentication.py",
-        "        if existing is not None and not OidcIdentity.objects.filter(user=existing).exists():",
-        "        if existing is not None:",
-        MGMT_HARDENING,
+        "                    .filter(user__username=preferred)",
+        "                    .filter(user__username__in=[preferred, preferred])  # any match",
+        f"{MGMT_HARDENING} management/backend/tests/test_an_identity_is_claimed_once.py",
     ),
     Mutation(
         "G8",
@@ -1450,10 +1469,17 @@ MUTATIONS = [
         # iterable — so it would report this property as defended while testing a different one.
         # `or []` handles absence correctly and mishandles malformation, which isolates the rule
         # this mutation is about. Verified: with it, only the malformed-claim cases fail.
+        #
+        # **Re-anchored 2026-08-30.** The narrowing moved into a comprehension in the same
+        # statement, because narrowing the *list* was not enough: a list containing a non-string
+        # reached `usecases_from_group_paths`, which called `.startswith` on it —
+        # `AttributeError` inside token validation, which is a 500 on every request that caller
+        # makes. Two of the three readers filtered and the third did not.
         "gateway/src/aira_gateway/auth/oidc.py",
-        "        groups = raw_groups if isinstance(raw_groups, list) else []",
-        "        groups = raw_groups or []",
-        "gateway/tests/test_auth_oidc.py",
+        "        groups = (\n            [path for path in raw_groups if isinstance(path, str)]",
+        "        groups = (\n            list(raw_groups)",
+        "gateway/tests/test_auth_oidc.py gateway/tests/"
+        "test_the_identity_boundary_takes_any_value.py",
     ),
     Mutation(
         # **Re-anchored 2026-08-09** (`ADR-0017`). It named `realm_roles(claims)`, which no longer
@@ -5796,7 +5822,7 @@ MUTATIONS = [
     ),
     # ---- an identity that crosses a boundary is set once (2026-08-27) --------------------
     Mutation(
-        "ID1",
+        "PID1",
         "a use case's slug cannot be edited after it is created",
         "management/backend/src/aira_management/apps/usecases/serializers.py",
         "        if self.instance is not None and slug != self.instance.slug:",
@@ -5804,7 +5830,7 @@ MUTATIONS = [
         IDENTITY,
     ),
     Mutation(
-        "ID2",
+        "PID2",
         "a slug sent unchanged is not a rename, so a full-document update still works",
         "management/backend/src/aira_management/apps/usecases/serializers.py",
         "        if self.instance is not None and slug != self.instance.slug:",
@@ -5812,7 +5838,7 @@ MUTATIONS = [
         IDENTITY,
     ),
     Mutation(
-        "ID3",
+        "PID3",
         "a catalogued model's name cannot be edited after it is created",
         "management/backend/src/aira_management/apps/catalog/serializers.py",
         "        if self.instance is not None and name != self.instance.name:",
@@ -5820,7 +5846,7 @@ MUTATIONS = [
         IDENTITY,
     ),
     Mutation(
-        "ID4",
+        "PID4",
         "the upsert by name is not read as a rename",
         "management/backend/src/aira_management/apps/catalog/serializers.py",
         "        if self.instance is not None and name != self.instance.name:",
@@ -5997,6 +6023,91 @@ MUTATIONS = [
         '    "pii_filter": lambda config: True,',
         '    "pii_filter": lambda config: False,',
         DRYRUN,
+    ),
+    # ---- one person, one identity (`FRD-613`) --------------------------------------------------
+    #
+    # Eight properties from the round that swept every reader of a caller's identity. Each is a
+    # defect that was live on 2026-08-30, expressed as the one-line edit that puts it back — which
+    # is what this file is for: *"when you fix a bug, add the mutation that reintroduces it."*
+    Mutation(
+        "ONE1",
+        "a suspension naming a person stops them whichever credential they hold",
+        "gateway/src/aira_gateway/anomalies/suspensions.py",
+        "        return row.target_value in {name for name in (subject, person) if name}",
+        "        return subject is not None and row.target_value == subject",
+        IDENTITY_SWEEP,
+    ),
+    Mutation(
+        "ONE2",
+        "the kill switch is handed the person as well as the subject",
+        "gateway/src/aira_gateway/api/serving.py",
+        "    throttles = await suspensions.check(use_case, subject, credential, caller)",
+        "    throttles = await suspensions.check(use_case, subject, credential)",
+        IDENTITY_SWEEP,
+    ),
+    Mutation(
+        "ONE3",
+        "a rule about a person measures both of their credentials together",
+        "gateway/src/aira_gateway/anomalies/evaluator.py",
+        "    RuleTarget.SUBJECT: _PERSON,",
+        "    RuleTarget.SUBJECT: RequestLog.subject,",
+        IDENTITY_SWEEP,
+    ),
+    Mutation(
+        "ONE4",
+        "the trace query finds a person's rows in either alphabet",
+        "gateway/src/aira_gateway/payloads.py",
+        "    if person:\n        # Written as indexable disjuncts",
+        "    if person and person != principal.subject:\n        # Written as indexable disjuncts",
+        IDENTITY_SWEEP,
+    ),
+    Mutation(
+        "ONE5",
+        "a group claim carrying something that is not a path confers nothing rather than a 500",
+        "libs/src/aira_common/access.py",
+        "        if not isinstance(group, str):",
+        "        if False:",
+        "libs/tests/test_access.py",
+    ),
+    Mutation(
+        "ONE6",
+        "a selector is anchored at the end of the string, not before a trailing newline",
+        "gateway/src/aira_gateway/auth/attribution.py",
+        '_SLUG = re.compile(r"^[a-z0-9-]{1,64}\\Z")',
+        '_SLUG = re.compile(r"^[a-z0-9-]{1,64}$")',
+        IDENTITY_SWEEP,
+    ),
+    Mutation(
+        "ONE7",
+        "ending somebody's access revokes the keys that rested on it",
+        "management/backend/src/aira_management/apps/usecases/views.py",
+        "        if holds_a_grant(key.owner, usecase):\n            continue",
+        "        if True:\n            continue",
+        ACCESS_LIFECYCLE,
+    ),
+    Mutation(
+        "ONE8",
+        "naming somebody else as a key's owner is an administrator's act",
+        "management/backend/src/aira_management/apps/usecases/views.py",
+        "        if not may_manage(caller, usecase):",
+        "        if False:",
+        ACCESS_LIFECYCLE,
+    ),
+    Mutation(
+        "ONE9",
+        "the seed leaves nobody a superuser, so authority stays the directory's answer",
+        "management/backend/src/aira_management/apps/seed/contributions/roles_and_users.py",
+        "            user.is_superuser = False",
+        "            user.is_superuser = user.is_superuser",
+        "management/backend/tests/test_seed.py",
+    ),
+    Mutation(
+        "ONE10",
+        "a claim too long for its column does not become a 500 on a first sign-in",
+        "management/backend/src/aira_management/apps/api/authentication.py",
+        "    if text and len(text) <= USERNAME_MAX_LENGTH:",
+        "    if text:",
+        "management/backend/tests/test_an_identity_is_claimed_once.py",
     ),
 ]
 

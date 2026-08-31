@@ -43,6 +43,15 @@ reading code.
   it fills the object in — the sixth had to drive the layer that *populates* it. When you fix a
   wire, the test that proves it has to start upstream of the wire.
 
+  *An eighth, and it was caught by the harness rather than by the round that created it.*
+  `FRD-613` widened the kill switch to stop a person whichever credential they hold, tested it
+  against `SuspensionService.check` — and the mutation that removes the **argument** from
+  `guard_before_work` survived. The service knew; the gate did not hand it over. The round whose
+  entire subject was this shape wrote the test at the end rather than at the wire, which is
+  evidence that knowing the rule is not the same as applying it under time pressure: the only
+  reliable defence is the mutation, and the only reliable place for the test is **upstream of the
+  wire**.
+
   *A constant is an end too.* `pipeline/config.MAX_MODEL_LENGTH` — *"the same ceiling Management's
   serializer applies"* — sat beside a comment naming three ways into that parser which bypass
   Management, and was read by nothing; `foundry.DEFAULT_API_VERSION` documented the pinned Azure
@@ -339,6 +348,27 @@ reading code.
   `person()` fell back to the subject: **a fixture that makes two things equal is a fixture that
   cannot tell them apart.** Give the stand-in the shape production has.
 
+  *And doing the grep is a different act from writing that the grep is the answer.* This entry has
+  ended with **"correct the definition, then grep for the comparison"** since it was written. The
+  definition (`scopes.person`) was corrected three rounds before `FRD-613`; the grep, when it was
+  finally done, found **eight more readers**, five of them wrong: a `subject` suspension stopped
+  one of a person's two credentials, the detector grouped one person into two buckets so sixty
+  refusals split thirty/thirty never crossed a threshold of fifty, a payload read was recorded
+  under whichever alphabet the reader's credential used, a suspension's author was a directory id
+  naming nobody a human can look up, and `own_requests` disagreed with the predicate it is
+  documented to match. **A remedy written in an instruction is not a remedy applied**, and the gap
+  between the two was three rounds and five live defects. If an entry here ends in a verb, the
+  round that adds it should have already done it.
+
+  *The narrowest of them, and the one that shows why a fixture cannot be trusted to be neutral.*
+  `own_requests` guards its widening with `if person and person != principal.subject` — an
+  optimisation that is a no-op for every caller except the one whose subject **is** their name,
+  which is exactly an API-key holder. So the query dropped the clauses reaching rows written in
+  the other alphabet while `is_own_request` beside it kept applying them, and the two forms of one
+  rule — with a docstring promising a test that they agree — returned different sets. It was found
+  by writing that test with a fixture in which the subject and the name differ. **An equality that
+  is "obviously" incidental is a branch**, and a fixture that makes two things equal cannot see it.
+
   *And fixing one reader does not fix the question.* `_member_key` was corrected to `person`;
   `payloads._authority` two functions below, the trace list's restriction and the `mine=true`
   filter went on asking `row.subject == principal.subject`, so a member of a use case that shows
@@ -349,9 +379,35 @@ reading code.
   identity read in two alphabets has as many sites as there are readers, and the one that keeps
   passing is the one whose fixture cannot see the difference.
 
+- **A guard somebody else already applied looks exactly like a guard.** `aira_common.access`
+  skips a group path that is not a string, because a `groups` claim that carries an object is a
+  realm misconfiguration and used to be an `AttributeError` **inside token validation** — a 500 on
+  every request that caller makes rather than a role they do not get. Both planes narrow the claim
+  before calling it, so the test written for the tolerance passed with the tolerance deleted, and
+  `make mutants` said so. Two things generalise: **test a shared function at the shared function**,
+  because a caller's own narrowing is not the property; and a survivor here does not always mean a
+  missing test — sometimes it means the rule is enforced in three places and only the two you did
+  not write are running.
+
+  *And the mirror image, from the same round.* `test_mutation_anchors` refused the change because
+  one anchor matched **two** places: `is_member` and a new `holds_a_grant` were two copies of one
+  rule, five minutes old, and its message already said the right answer is to remove the
+  duplication rather than widen the anchor. A harness that only reports coverage would have said
+  nothing; this one noticed a defect in code written that hour.
+
 - **Returns silently for something unknown.** *Three instances:* `record_to_outbox` for an
   unmapped event type; a seed loop's `continue` past a rule naming a use case it does not create;
   a missing Kafka topic. **An unknown input is an error, not a no-op.**
+
+- **A validator is only as narrow as its anchor.** Python's `$` matches at the end of the string
+  *and before a trailing newline*, so `^[a-z0-9-]{1,64}$` accepts `"kundenservice\n"` — on the
+  three validators whose entire purpose is that a string carries nothing but a restricted character
+  set: the use-case slug (a **primary key on the other plane**, emitted over Kafka and printed into
+  every audit row), a Keycloak group path (where the extra character makes the grant match nothing,
+  silently, which is the failure that validator exists to catch), and the gateway's own selector
+  (which reaches a structured log line). All three had been read and reviewed repeatedly; the
+  character that made them wrong is one nobody reads. **Anchor with `\Z` wherever `$` is meant as
+  "the end".**
 
 - **An instruction with no destination.** The console said a rule "is changed on that use case"
   and there was no such panel; `docs/deployment/showcase.md` ended with `make down-full-volumes`,

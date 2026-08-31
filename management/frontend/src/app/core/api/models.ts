@@ -139,6 +139,18 @@ export interface Membership {
   created_at?: string;
 }
 
+/**
+ * What ending somebody's access actually did.
+ *
+ * Removing a member — or revoking a group grant — also revokes every API key of this use case
+ * whose owner no longer holds a grant on it (`FRD-613`). A key outliving the access it rested on
+ * was the offboarding hole; a screen that cannot say a credential was revoked is the next one, so
+ * the prefixes come back and the panel names them.
+ */
+export interface AccessChange {
+  revoked_keys: string[];
+}
+
 export interface ApiKey {
   prefix: string;
   label: string;

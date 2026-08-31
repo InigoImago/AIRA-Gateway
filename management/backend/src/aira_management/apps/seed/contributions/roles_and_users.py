@@ -6,14 +6,16 @@ so re-running produces the same state. ``fresh`` removes existing demo users fir
 
 from __future__ import annotations
 
+from typing import Any
+
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
 
+from aira_management.apps.api.models import OidcIdentity, PendingIdentity
 from aira_management.apps.seed.registry import SeedResult, register
 from aira_management.roles import Role
 
 DEMO_DOMAIN = "demo.aira"
-DEMO_PASSWORD = "demo-password"
 
 #: The demo people, and the organisation-wide role each holds — `None` for the two who hold none.
 #:
@@ -58,22 +60,39 @@ def seed_roles_and_users(fresh: bool) -> SeedResult:
     role_groups = list(groups.values())
 
     users_created = 0
+    invited = 0
     # `held` rather than `role`: the loop above binds `role` to a `Role`, and this one to a role
     # **or none**. Reusing the name made mypy right about something a reader would also trip on.
     for username, held in DEMO_USERS.items():
-        is_admin = held is Role.GLOBAL_ADMIN
         user, created = user_model.objects.get_or_create(
             username=username,
-            defaults={
-                "email": f"{username}@{DEMO_DOMAIN}",
-                "is_staff": is_admin,
-                "is_superuser": is_admin,
-            },
+            defaults={"email": f"{username}@{DEMO_DOMAIN}"},
         )
         if created:
-            user.set_password(DEMO_PASSWORD)
-            user.save()
             users_created += 1
+        # **No `is_superuser`, no `is_staff`, and no password** — set, and then cleared here on
+        # every run, because an installation that ran an older seed is carrying all three.
+        #
+        # The flag was the whole of `ADR-0017` undone in one column. `may_admin` and `may_manage`
+        # ask `user.has_perm(…, usecase)`, and Django answers **True for every permission** to a
+        # superuser before any backend is consulted — guardian's `get_objects_for_user` short-
+        # circuits the same way. So the seeded `admin` administered every use case that would ever
+        # exist, from a fact stored *here* rather than read from the directory: taking the role
+        # group away in Keycloak removed the role and changed nothing about what they could do.
+        # That is precisely the second answer to "who may do what" this project abolished roles
+        # to avoid, and it outranked the first.
+        #
+        # The password is inert — there is no session login, no admin site and no password
+        # backend on this API (`config/settings.py`) — which is exactly why it should not be
+        # there: a known credential on the most privileged account in the installation, kept
+        # against the day somebody adds the login that would make it work. Console sign-in is
+        # Keycloak's, and the realm keeps its own demo passwords.
+        stale = [field for field in ("is_staff", "is_superuser") if getattr(user, field, False)]
+        if stale or user.has_usable_password():
+            user.is_staff = False
+            user.is_superuser = False
+            user.set_unusable_password()
+            user.save(update_fields=["is_staff", "is_superuser", "password"])
         # **Only the role groups.** This was `groups.set([...])`, which also removed the `kc:/…`
         # groups `sync_user_roles` writes from the token at every request — so running the seed
         # silently un-granted every demo user's use-case access until their next request repaired
@@ -81,6 +100,7 @@ def seed_roles_and_users(fresh: bool) -> SeedResult:
         user.groups.remove(*role_groups)
         if held is not None:
             user.groups.add(groups[held])
+        invited += int(_invite(user))
 
     return {
         "groups": len(Role),
@@ -88,4 +108,23 @@ def seed_roles_and_users(fresh: bool) -> SeedResult:
         "groups_retired": groups_retired,
         "users": len(DEMO_USERS),
         "users_created": users_created,
+        "invited": invited,
     }
+
+
+def _invite(user: Any) -> bool:
+    """Make this seeded account claimable by whoever signs in under its name — **once**.
+
+    The demo's whole point is that `ucadmin` in Keycloak and `ucadmin` here are the same person,
+    and nothing else can say so: the realm is a fixture this seed does not read, and a `sub` it
+    cannot know. So the account carries an invitation, and the first token bearing that
+    `preferred_username` consumes it (`apps.api.models.PendingIdentity`).
+
+    **Never for an account that has already been claimed.** Re-running the seed must not reopen a
+    binding that exists — that would be the takeover this replaced, reissued by a maintenance
+    command. The `OidcIdentity` is the evidence, and its absence is the condition.
+    """
+    if OidcIdentity.objects.filter(user=user).exists():
+        return False
+    _, created = PendingIdentity.objects.get_or_create(user=user)
+    return bool(created)
