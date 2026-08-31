@@ -1,0 +1,75 @@
+# The collector, with a second destination — for trying a SIEM (or anything else) alongside.
+#
+# **A copy of `collector-config.yaml` plus one exporter.** Not an overlay: the Collector merges
+# nothing, a `--config` is the whole configuration, so a second destination means a second file.
+# Keeping it beside the first makes the difference between them readable in one `diff`, which is
+# the only reason this duplication is acceptable.
+#
+# `LAB_SIEM_ENDPOINT` has no default here **and none in Compose either** — the lab overlay refuses
+# to start without it. That is deliberate: an exporter pointing nowhere does not fail, it *retries*
+# with growing backoff (measured: 24 s, 36 s, 44 s) while holding telemetry in memory, and the only
+# symptom is a line in the collector's log nobody is reading.
+#
+# What arrives is OTLP/JSON — the protobuf-JSON mapping, nested `resourceSpans[].scopeSpans[]…`,
+# not one flat event per line. Whether your SIEM parses that is the question to answer *before*
+# wiring this up; `docs/features/FRD-616-the-audit-trail-as-an-event-stream.md` says what the
+# content is and, more importantly, what it is not.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 80
+    spike_limit_percentage: 25
+  resource:
+    attributes:
+      - key: collector
+        value: aira-otel-collector
+        action: insert
+  batch: {}
+
+exporters:
+  otlp_grpc/lgtm:
+    endpoint: otel-lgtm:4317
+    tls:
+      insecure: true
+  debug:
+    verbosity: normal
+  # The second destination. **Fan-out, not replacement**: Grafana keeps working, so a SIEM that is
+  # unreachable costs you nothing you already had.
+  otlphttp/lab:
+    endpoint: ${env:LAB_SIEM_ENDPOINT}
+    encoding: json
+    tls:
+      insecure_skip_verify: ${env:LAB_SIEM_INSECURE}
+    # Whatever your SIEM authenticates with. Empty is fine for a first reachability test.
+    headers:
+      authorization: ${env:LAB_SIEM_AUTHORIZATION}
+    retry_on_failure:
+      enabled: true
+      max_elapsed_time: 300s
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [otlp_grpc/lgtm, debug, otlphttp/lab]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [otlp_grpc/lgtm, otlphttp/lab]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [otlp_grpc/lgtm, debug, otlphttp/lab]
+  telemetry:
+    logs:
+      level: info

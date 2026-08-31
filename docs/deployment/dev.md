@@ -169,4 +169,39 @@ make destroy            # stop and delete the volumes
 
 ---
 
+## Trying something alongside, without changing the stack
+
+A fourth Compose file exists for experiments: reaching a machine on your network, sending telemetry
+somewhere else, adding an exporter. `make up-lab` is the only thing that adds it.
+
+```bash
+make up-lab LAB_SIEM_ENDPOINT=http://t-siem-otel:4318 \
+            LAB_HOST_ALIAS=t-siem-otel LAB_HOST_IP=10.20.30.40
+```
+
+That starts the ordinary stack with `deploy/compose/docker-compose.lab.yml` layered on: the
+collector runs a second configuration that fans out to your endpoint **beside** Grafana, and
+`extra_hosts` gives it the name. Undoing the experiment is leaving the file out.
+
+Three things worth knowing, all of them measured rather than assumed:
+
+- **Adding DNS settings does not cost you the internal network.** On a user-defined bridge, every
+  container resolves through Docker's embedded server at `127.0.0.11`, and `dns:` / `dns_search:`
+  set what *it* forwards to and appends — they do not replace it. With `--dns 9.9.9.9` a container
+  on this stack still resolved `postgres` and `otel-collector` by name.
+- **`LAB_SIEM_ENDPOINT` has no default and Compose refuses without it.** An exporter with nowhere
+  to send does not fail, it retries with growing backoff while holding telemetry in memory, and
+  the only symptom is a line in a log nobody reads.
+- **The overlay configures; it never adds a service.** A component that exists only under
+  `make up-lab` is invisible to every check that reads the three stack files, which is a fork of
+  the stack wearing an overlay's name. `tools/tests/test_the_lab_is_never_part_of_the_stack.py`
+  holds all three rules, and `tools/compose_files.py` records why the file is in none of the
+  stack's lists.
+
+What the telemetry actually contains — and why a SIEM wants something else — is
+[`FRD-615`](../features/FRD-615-a-trace-crosses-the-bus.md) §9 and
+[`FRD-616`](../features/FRD-616-the-audit-trail-as-an-event-stream.md).
+
+---
+
 Next: [Showcase](showcase.md) · [Standalone](standalone.md) · [Integrated](integrated.md)

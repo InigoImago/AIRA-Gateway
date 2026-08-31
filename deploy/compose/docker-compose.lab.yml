@@ -1,0 +1,61 @@
+# Trying something alongside the stack, without touching the stack.
+#
+# **Opt-in by being an extra `-f`, and that is the whole design.** The reference stack is described
+# by three files and `tools/compose_files.py` decides which is which (read its docstring: a split
+# is cheap to make and expensive to get wrong, because sixteen places named the files by hand).
+# This is a **fourth**, deliberately in none of those lists — `make up-lab` is the only thing that
+# adds it, and an experiment that goes wrong is undone by leaving one `-f` out.
+#
+#     make up-lab LAB_SIEM_ENDPOINT=http://t-siem-otel:4318
+#
+# It exists because the two questions people actually have — *"can this reach a machine on my
+# network"* and *"what would that machine receive"* — are both answered by editing the reference
+# stack, and then the reference stack is no longer what the documentation describes.
+#
+# ## Reaching a host that is not in this network
+#
+# Containers on a user-defined bridge always resolve through Docker's embedded DNS at 127.0.0.11,
+# and `dns:` / `dns_search:` do **not** replace it — they set what it forwards to and what it
+# appends. Measured against this stack: with `--dns 9.9.9.9 --dns-search intern.example` the
+# container still resolved `postgres` and `otel-collector` by name. So none of the three ways below
+# can cost you the internal network; they differ only in what they can find.
+#
+# 1. `extra_hosts` — a name straight into `/etc/hosts`. No DNS involved, so nothing to break. Best
+#    where the address is stable, which a SIEM's usually is.
+# 2. `dns_search` — makes a short name like `t-siem-otel` resolve as `t-siem-otel.intern.example`.
+#    Needs the resolver the **daemon** uses to know that name; that is where this fails, never the
+#    Compose network.
+# 3. `dns` — only when the daemon's resolver is not the one that knows your hosts.
+#
+# And the simplest: use the fully-qualified name and change nothing here.
+
+services:
+  otel-collector:
+    # The same collector with one destination more. See the file for why a second config rather
+    # than an overlay, and for what OTLP/JSON actually is.
+    volumes:
+      - ./otel/collector-config.lab.yaml:/etc/otelcol-contrib/config.yaml:ro
+    environment:
+      # **No default, on purpose.** An exporter with nowhere to send retries with growing backoff
+      # and holds telemetry in memory; the failure is a log line nobody reads. Compose refuses to
+      # start instead, and says what to set.
+      LAB_SIEM_ENDPOINT: ${LAB_SIEM_ENDPOINT:?set it to your SIEM OTLP endpoint, e.g. make up-lab LAB_SIEM_ENDPOINT=http://t-siem-otel:4318}
+      LAB_SIEM_AUTHORIZATION: ${LAB_SIEM_AUTHORIZATION:-}
+      LAB_SIEM_INSECURE: ${LAB_SIEM_INSECURE:-false}
+    extra_hosts:
+      # The host this stack runs on, for a SIEM you have port-forwarded there.
+      - "host.docker.internal:host-gateway"
+      # One machine on your network, by name. The defaults are deliberately nowhere — `.invalid`
+      # never resolves (RFC 2606) and `192.0.2.0/24` is unroutable test space (RFC 5737) — so the
+      # entry is inert until you mean it:
+      #
+      #     make up-lab LAB_SIEM_ENDPOINT=http://t-siem-otel:4318 \
+      #                 LAB_HOST_ALIAS=t-siem-otel LAB_HOST_IP=10.20.30.40
+      - "${LAB_HOST_ALIAS:-unset.invalid}:${LAB_HOST_IP:-192.0.2.1}"
+    # Uncomment where a **short** name has to resolve through your own DNS rather than being
+    # pinned above. Neither line can cost you container-name resolution — see the header.
+    #
+    # dns_search:
+    #   - intern.example
+    # dns:
+    #   - 10.20.30.1

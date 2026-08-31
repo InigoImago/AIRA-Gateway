@@ -91,6 +91,11 @@ back-pressure the reader's problem rather than ours. It needs an endpoint per re
 authenticated service account, and it makes completeness the *reader's* responsibility — which for
 an audit feed is the wrong way round.
 
+(b) can be tried today without touching the reference stack:
+`make up-lab LAB_SIEM_ENDPOINT=…` layers a collector configuration that fans out to your endpoint
+in OTLP/JSON beside Grafana (`docs/deployment/dev.md`). What arrives is what §1 describes, which is
+the point of being able to look before building anything.
+
 **Recommendation: (a), with (b) available.** Kafka because the reliability semantics are already
 decided and already operated here; OTLP as the low-ceremony option for an installation that has a
 collector and modest requirements.

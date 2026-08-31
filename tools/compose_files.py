@@ -48,6 +48,22 @@ SHOWCASE: tuple[Path, ...] = (INFRA, APPS, SHOWCASE_ONLY)
 #: Every file that defines a service, for checks that must not miss one.
 ALL: tuple[Path, ...] = SHOWCASE
 
+#: An overlay for trying something **alongside** the stack — a SIEM, a host on your network, a
+#: second exporter. `make up-lab` is the only thing that adds it.
+#:
+#: **Deliberately in none of the lists above, and named here so that is a decision rather than an
+#: oversight.** It is not `CORE`, because a real deployment does not run experiments; it is not
+#: `SHOWCASE`, because the walkthrough must be the same everywhere; and it is not `ALL`, because
+#: `ALL` answers *"does any container receive this variable"* about the **product's** settings, and
+#: this file's variables (`LAB_*`) are Compose knobs that deliberately live outside the `AIRA_*`
+#: contract — putting them in that list would make a check about the product answer about a
+#: laboratory.
+#:
+#: The rule this encodes is `tools/tests/test_the_lab_is_never_part_of_the_stack.py`, and it exists
+#: for the reason the module docstring gives: a fourth file nobody registered is one that thirteen
+#: tests quietly do not read.
+LAB: tuple[Path, ...] = (COMPOSE_DIR / "docker-compose.lab.yml",)
+
 #: Services that exist only for the demo. The core file must contain none of them — a rule with a
 #: test, because the cheapest way to undo this split is to add "just one" demo service back where
 #: the anchors happen to be.

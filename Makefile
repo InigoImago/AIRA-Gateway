@@ -11,6 +11,9 @@ COMPOSE_CORE := docker compose -f $(COMPOSE_DIR)/docker-compose.yml
 INFRA_F    := -f $(COMPOSE_DIR)/docker-compose.yml
 APPS_F     := -f $(COMPOSE_DIR)/docker-compose.apps.yml
 SHOWCASE_F := -f $(COMPOSE_DIR)/docker-compose.showcase.yml
+# The laboratory overlay: never in the lists above, added by `make up-lab` alone. See
+# `tools/compose_files.py` for why being a fourth file is the point rather than an omission.
+LAB_F      := -f $(COMPOSE_DIR)/docker-compose.lab.yml
 
 # Infrastructure + the application processes: **what a real deployment runs**, and nothing that
 # exists for the demo. Startable on its own — `tools/tests/test_the_core_stack_carries_no_demo.py`
@@ -156,6 +159,20 @@ up-core: env ## Start only core infra (no observability backend)
 up-apps: env ## Start the product: infra + the application processes, no demo provisioning
 	@-$(MAKE) --no-print-directory config-verify
 	$(COMPOSE_APPS) up -d --build
+
+up-lab: env ## Start the stack with the laboratory overlay (LAB_SIEM_ENDPOINT=... required)
+	@# For trying something **alongside** the stack — a SIEM, a machine on your network, a second
+	@# exporter — without editing the files the documentation describes. The overlay is a fourth
+	@# `-f`, so undoing an experiment is leaving it out.
+	@#
+	@# Compose refuses to start without `LAB_SIEM_ENDPOINT`, on purpose: an exporter pointing
+	@# nowhere retries with growing backoff and holds telemetry in memory, and the only symptom is
+	@# a log line nobody reads.
+	@-$(MAKE) --no-print-directory config-verify
+	docker compose $(INFRA_F) $(APPS_F) $(LAB_F) --profile observability up -d --build
+	@echo ""
+	@echo "  Laboratory overlay active. The reference stack is unchanged; drop $(LAB_F) to leave."
+	@echo "  Sending to: $${LAB_SIEM_ENDPOINT:-(unset — Compose will have refused)}"
 
 up-full: env ## Start EVERYTHING in containers, demo provisioning included (infra + apps + showcase)
 	@-$(MAKE) --no-print-directory config-verify
