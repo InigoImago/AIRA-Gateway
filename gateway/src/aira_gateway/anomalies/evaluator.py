@@ -33,11 +33,26 @@ class Finding:
     detail: str
 
 
+#: **Who a `subject` rule is about**, in the one alphabet a person has.
+#:
+#: `RequestLog.subject` is what the credential called itself: a directory id for an OIDC token, the
+#: owner's username for an API key. Grouping by it filed one human under two names, so a person
+#: doing sixty refusals — thirty through their key, thirty through their browser — never crossed a
+#: rule set at fifty, and the two halves of them were invisible to each other. `RequestLog.username`
+#: is the name recorded beside the subject (`FRD-606`); reading the name where there is one and the
+#: subject otherwise is :func:`aira_gateway.scopes.person` asked of a stored row, which is already
+#: how a per-head budget, the trace list and the payload gate decide who somebody is.
+#:
+#: `nullif` because SQL reads an empty string as a value and `person` reads it as absence: no writer
+#: produces one today (`auth/oidc.py` stores `None` for a blank claim), and the two spellings of one
+#: rule have to agree for reasons that do not depend on that staying true.
+_PERSON = func.coalesce(func.nullif(RequestLog.username, ""), RequestLog.subject)
+
 #: The column each target groups by. A rule's target is what its action lands on, so it is also
 #: what the measurement has to be *per* — a refusal rate averaged over a whole use case says
 #: nothing about the one caller producing it.
 _GROUP_BY = {
-    RuleTarget.SUBJECT: RequestLog.subject,
+    RuleTarget.SUBJECT: _PERSON,
     RuleTarget.CREDENTIAL: RequestLog.credential,
     RuleTarget.USE_CASE: RequestLog.use_case,
 }

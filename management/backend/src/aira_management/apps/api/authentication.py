@@ -15,6 +15,8 @@ from typing import Any
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import AbstractBaseUser
+from django.contrib.auth.validators import UnicodeUsernameValidator
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, transaction
 from rest_framework.authentication import BaseAuthentication
 from rest_framework.exceptions import AuthenticationFailed, Throttled
@@ -22,7 +24,7 @@ from rest_framework.request import Request
 
 from aira_common.oidc import JwtVerifier, build_jwks_client
 from aira_management.apps.api.attempts import FailedAuthentications
-from aira_management.apps.api.models import OidcIdentity
+from aira_management.apps.api.models import OidcIdentity, PendingIdentity
 from aira_management.config.runtime import get_settings
 from aira_management.rbac import sync_user_groups, sync_user_roles
 
@@ -97,11 +99,19 @@ class KeycloakJWTAuthentication(BaseAuthentication):
 
         Resolution order:
         1. an existing ``OidcIdentity`` for this ``sub`` — the authoritative binding;
-        2. otherwise a user with the token's ``preferred_username`` that is *not yet bound* to
-           another subject (trust on first use, so accounts that predate this binding keep
-           their permissions), which then gets bound;
+        2. otherwise an account somebody **invited** under this ``preferred_username``
+           (:class:`PendingIdentity`), which is then bound and the invitation consumed;
         3. otherwise a fresh user, whose username is suffixed if the preferred one is taken by
            somebody else's identity.
+
+        **Step 2 used to be "any unbound account with this name", and that was the hole.** Trust on
+        first use is a reasonable rule when the account was created *for* the person arriving; it is
+        an account takeover when it was created for anybody else. Measured on 2026-08-30: a token
+        with an arbitrary `sub` and `preferred_username: "admin"` was handed the seeded `admin`
+        account together with its memberships and object permissions. Nothing was compromised to do
+        it and nothing recorded that it had happened — the claim simply went to whoever asked first.
+        An invitation is the same trust made **explicit, one-shot and attributable**, and an account
+        nobody invited is now claimable by nobody.
 
         **The first request from a new person is more than one request.** The console loads
         `/api/v1/me` and `/api/v1/use-cases/` at the same moment, so two requests carrying the same
@@ -122,18 +132,35 @@ class KeycloakJWTAuthentication(BaseAuthentication):
             return identity.user
 
         user_model = get_user_model()
-        preferred = str(claims.get("preferred_username") or subject)
-        email = claims.get("email", "")
+        preferred = safe_username(claims.get("preferred_username"), subject)
+        email = safe_email(claims.get("email"))
 
         try:
             with transaction.atomic():
-                existing = user_model.objects.filter(username=preferred).first()
-                if existing is not None and not OidcIdentity.objects.filter(user=existing).exists():
-                    OidcIdentity.objects.create(subject=subject, user=existing)
-                    return existing
+                invited = (
+                    PendingIdentity.objects.select_related("user")
+                    .filter(user__username=preferred)
+                    .first()
+                )
+                if invited is not None:
+                    existing_user = invited.user
+                    OidcIdentity.objects.create(subject=subject, user=existing_user)
+                    # Consumed, not kept. A second person carrying the same name later is a
+                    # stranger, and an invitation that can be redeemed twice is not an invitation.
+                    invited.delete()
+                    return existing_user
 
-                username = preferred if existing is None else f"{preferred}-{subject[:8]}"
+                taken = user_model.objects.filter(username=preferred).exists()
+                username = preferred if not taken else _suffixed(preferred, subject)
                 user = user_model.objects.create(username=username, email=email)
+                # **No password, and said so.** `objects.create` leaves the column empty, and
+                # Django reads an empty password as *usable* — so every provisioned account
+                # carried a credential of a kind, against the day somebody adds the login this API
+                # deliberately does not have (no sessions, no admin site, bearer tokens only).
+                # Keycloak owns authentication here; an account that could ever be signed into
+                # another way would be a second answer to "who is this".
+                user.set_unusable_password()
+                user.save(update_fields=["password"])
                 OidcIdentity.objects.create(subject=subject, user=user)
                 return user
         except IntegrityError:
@@ -148,3 +175,54 @@ class KeycloakJWTAuthentication(BaseAuthentication):
                 # trail comes to name two people who are one.
                 raise
             return identity.user
+
+
+#: What Django will actually store. A `username` column is `varchar(150)` and a name longer than
+#: that is a `DataError` from the driver — a **500 on somebody's first sign-in**, on a value the
+#: caller does not control and cannot shorten. SQLite enforces no length, which is why the hermetic
+#: suite could never see it (`LESSONS.md` §1).
+USERNAME_MAX_LENGTH = 150
+#: Django's own `EmailField` width. Bounded here for the same reason and with the same consequence.
+EMAIL_MAX_LENGTH = 254
+
+
+def safe_username(claimed: object, subject: str) -> str:
+    """The username to store for ``claimed``, falling back to the subject.
+
+    Three things a directory may hand over that this column cannot take, and all three arrive on
+    the **first** request of somebody who has done nothing wrong:
+
+    - a name longer than the column;
+    - a name containing characters Django's own validator refuses — a `/` in particular, which
+      would also make the member-removal route unable to address them;
+    - no name at all.
+
+    The fallback is the **subject**, which is unique, stable and always storable. It is deliberately
+    not a mangled version of the claimed name: silently rewriting somebody's name produces an
+    account whose identity nobody can search for, where a subject at least says plainly that the
+    directory gave us nothing usable.
+    """
+    text = claimed.strip() if isinstance(claimed, str) else ""
+    if text and len(text) <= USERNAME_MAX_LENGTH:
+        try:
+            UnicodeUsernameValidator()(text)
+        except DjangoValidationError:
+            pass
+        else:
+            return text
+    return subject[:USERNAME_MAX_LENGTH]
+
+
+def safe_email(claimed: object) -> str:
+    """The address to store, bounded to the column. Never a reason to refuse a sign-in."""
+    return claimed.strip()[:EMAIL_MAX_LENGTH] if isinstance(claimed, str) else ""
+
+
+def _suffixed(preferred: str, subject: str) -> str:
+    """A distinct username for somebody whose preferred one belongs to another identity.
+
+    Truncated so the result still fits the column: `preferred` may already be at the limit, and a
+    suffix appended past it is the very `DataError` :func:`safe_username` exists to prevent.
+    """
+    tail = f"-{subject[:8]}"
+    return f"{preferred[: USERNAME_MAX_LENGTH - len(tail)]}{tail}"

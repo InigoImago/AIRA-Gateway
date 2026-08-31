@@ -1,7 +1,7 @@
 import { Component, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { Observable, of, throwError } from 'rxjs';
-import { DirectoryResults, GroupGrant, Membership } from '../../core/api/models';
+import { AccessChange, DirectoryResults, GroupGrant, Membership } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { ConfirmService } from '../../core/ui/confirm.service';
 import { PageFeedback } from '../../core/ui/page-feedback';
@@ -50,6 +50,8 @@ interface Options {
   canManage?: boolean;
   members?: Membership[];
   confirmAnswer?: boolean;
+  removeMember?: Observable<AccessChange>;
+  revokeGroup?: Observable<AccessChange>;
 }
 
 function setup(options: Options = {}) {
@@ -73,7 +75,7 @@ function setup(options: Options = {}) {
           },
           revokeGroup: (slug: string, path: string) => {
             calls.push(`revokeGroup:${slug}:${path}`);
-            return of(undefined);
+            return options.revokeGroup ?? of({ revoked_keys: [] });
           },
           addMember: (slug: string, username: string, role: string) => {
             calls.push(`addMember:${slug}:${username}:${role}`);
@@ -81,7 +83,7 @@ function setup(options: Options = {}) {
           },
           removeMember: (slug: string, username: string) => {
             calls.push(`removeMember:${slug}:${username}`);
-            return of(undefined);
+            return options.removeMember ?? of({ revoked_keys: [] });
           },
         },
       },
@@ -104,6 +106,10 @@ function setup(options: Options = {}) {
     searches,
     panel,
     host: fixture.componentInstance,
+    // The panel renders no banner of its own: outcomes go through the **page's** single
+    // `PageFeedback`, which is what a reader actually sees (one banner per page, not one per
+    // panel). So the notice is read where it is written.
+    notice: () => fixture.debugElement.injector.get(PageFeedback).notice(),
     text: () => element.textContent ?? '',
     testid: (id: string) => element.querySelector(`[data-testid="${id}"]`),
     click: (selector: string) => {
@@ -333,6 +339,36 @@ describe('AccessPanel — revoking', () => {
 
     expect(harness.calls).toContain('removeMember:uc-a:ada');
     expect(harness.host.changes()).toBe(1);
+  });
+
+  it('names the credentials the removal revoked with it', () => {
+    // Ending somebody's access revokes the API keys of this use case that rested on it
+    // (`FRD-613`). A removal that silently deactivated two of somebody's credentials would be a
+    // control whose whole effect the screen cannot state — `FRD-206` read backwards — and the
+    // person doing it is often the one who has to tell somebody the key stopped working.
+    const harness = setup({ removeMember: of({ revoked_keys: ['aabb1122', 'ccdd3344'] }) });
+    harness.click('[aria-label="Remove ada"]');
+
+    expect(harness.notice()).toContain('2 API keys revoked with it');
+    expect(harness.notice()).toContain('aabb1122');
+    expect(harness.notice()).toContain('ccdd3344');
+  });
+
+  it('says nothing about keys when the removal revoked none', () => {
+    // The ordinary case, and it must not gain a sentence: a reader who is told about credentials
+    // every time stops reading the times it matters.
+    const harness = setup();
+    harness.click('[aria-label="Remove ada"]');
+
+    expect(harness.notice()).toBe('ada removed.');
+  });
+
+  it('names them for a revoked group too, where nobody was named at all', () => {
+    const harness = setup({ revokeGroup: of({ revoked_keys: ['eeff5566'] }) });
+    harness.click('[aria-label="Revoke /ai/kundenservice"]');
+
+    expect(harness.notice()).toContain('1 API key revoked with it');
+    expect(harness.notice()).toContain('eeff5566');
   });
 });
 

@@ -40,25 +40,47 @@ def may_manage(user: Any, usecase: UseCase) -> bool:
     return has_role(user, Role.GLOBAL_ADMIN) or user.has_perm(MANAGE, usecase)
 
 
-def is_member(user: Any, usecase: UseCase) -> bool:
-    """True if the caller is an actual member of the use case (or a global admin).
+def holds_a_grant(user: Any, usecase: UseCase) -> bool:
+    """True if a **grant** puts this person inside the use case — no role blanket.
 
-    Deliberately *not* the same as "may see it": the oversight roles (global-admin, it-steuerung,
-    it-security) get organisation-wide read visibility through ``scope_queryset``, and read
-    visibility must never imply the right to act inside a use case (ADR-0007).
+    The two things that can be **taken away**: a membership row naming them, and a group grant
+    matching a path their last token carried. A group grant makes somebody a member without any row
+    naming them — that is the point of `FRD-209`, and asking only about direct rows here let the
+    console offer an API key to somebody the server would refuse, which is the `FRD-206` defect
+    wearing a new hat.
+
+    Separate from :func:`is_member` because a Global Administrator may act everywhere, so that one
+    says yes for somebody who is a member of nothing. That is right where it is used and wrong
+    wherever the question is *whose* the use case is:
+
+    - a credential is owned by somebody the use case can be asked about, and an owner who is only
+      "allowed to act anywhere" is the accountability chain ending in a string that `FRD-604`
+      refuses one sentence earlier;
+    - when access ends, the keys that rested on it end with it — and a blanket that never ends
+      would keep every key alive (`FRD-613`).
     """
-    if has_role(user, Role.GLOBAL_ADMIN):
-        return True
     if not getattr(user, "is_authenticated", False):
         return False
     if UseCaseMembership.objects.filter(use_case=usecase, user=user).exists():
         return True
-    # A group grant makes somebody a member without any row naming them — that is the point of
-    # `FRD-209`. Asking only about direct rows here would have let the console offer an API key to
-    # somebody the server would refuse, which is the `FRD-206` defect wearing a new hat.
     return UseCaseGroupGrant.objects.filter(
         use_case=usecase, group_path__in=held_group_paths(user)
     ).exists()
+
+
+def is_member(user: Any, usecase: UseCase) -> bool:
+    """True if the caller may act inside the use case — a grant, or a Global Administrator.
+
+    Deliberately *not* the same as "may see it": the oversight roles (global-admin, it-steuerung,
+    it-security) get organisation-wide read visibility through ``scope_queryset``, and read
+    visibility must never imply the right to act inside a use case (ADR-0007).
+
+    Written as the blanket **plus** :func:`holds_a_grant` rather than repeating its two queries.
+    They were two copies of one rule for as long as it took `test_mutation_anchors` to notice that
+    a mutation aimed at one of them matched both — which is the same finding this file's own
+    docstring opens with, arriving from the harness instead of from a reviewer.
+    """
+    return has_role(user, Role.GLOBAL_ADMIN) or holds_a_grant(user, usecase)
 
 
 def may_call_queryset(user: Any, queryset: QuerySet[UseCase]) -> QuerySet[UseCase]:

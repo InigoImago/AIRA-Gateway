@@ -34,7 +34,13 @@ def test_seed_creates_groups_and_users() -> None:
     assert summary["users_created"] == len(DEMO_USERS)
 
     admin = user_model.objects.get(username="admin")
-    assert admin.is_superuser and admin.is_staff
+    # **Not a superuser, and not staff.** `may_admin`/`may_manage` ask `user.has_perm(…, usecase)`,
+    # and Django answers True to a superuser before any backend runs — so the flag administered
+    # every use case from a fact stored here rather than read from the directory, and removing the
+    # role group in Keycloak took the role away and changed nothing (`FRD-613`).
+    assert not admin.is_superuser
+    assert not admin.is_staff
+    assert not admin.has_usable_password()
     assert admin.groups.filter(name=str(Role.GLOBAL_ADMIN)).exists()
 
     # `ucuser` and `ucadmin` hold **no organisation-wide role**, and that is the point of them.
@@ -124,3 +130,52 @@ def test_the_seed_removes_the_groups_of_roles_that_no_longer_exist() -> None:
 
     assert not Group.objects.filter(name__in=["use-case-admin", "use-case-user"]).exists()
     assert Group.objects.filter(pk=survivor.pk).exists()
+
+
+def test_re_seeding_takes_away_a_superuser_flag_an_older_seed_left_behind() -> None:
+    """The seed **clears** the flags, it does not merely stop setting them (`FRD-613`).
+
+    An installation that ran an older seed is carrying `is_superuser` on its `admin` account right
+    now, and that flag is `ADR-0017` undone in one column: `may_admin` and `may_manage` ask
+    `user.has_perm(…, usecase)`, Django answers True to a superuser before any backend runs, and
+    guardian's `get_objects_for_user` short-circuits the same way. So the account administered
+    every use case that would ever exist from a fact stored *here* — and removing the role group in
+    Keycloak took the role away and changed nothing.
+
+    A fix that only stops creating the flag leaves every existing installation exactly as it was,
+    which is the half of a correction nobody notices is missing.
+    """
+    seed_roles_and_users(fresh=False)
+    user_model = get_user_model()
+    stale = user_model.objects.get(username="admin")
+    stale.is_superuser = True
+    stale.is_staff = True
+    stale.set_password("demo-password")
+    stale.save()
+
+    seed_roles_and_users(fresh=False)
+
+    repaired = user_model.objects.get(username="admin")
+    assert not repaired.is_superuser
+    assert not repaired.is_staff
+    assert not repaired.has_usable_password()
+
+
+def test_the_seed_invites_its_demo_people_and_does_not_reopen_a_claimed_one() -> None:
+    """The demo's whole point is that `ucadmin` in Keycloak and `ucadmin` here are the same person,
+    and nothing else can say so: the realm is a fixture this seed does not read, and a `sub` it
+    cannot know. So the account carries an invitation — and re-running the seed must not reopen one
+    that has already been claimed, which would be the takeover reissued by a maintenance command.
+    """
+    from aira_management.apps.api.models import OidcIdentity, PendingIdentity
+
+    seed_roles_and_users(fresh=False)
+    assert PendingIdentity.objects.count() == len(DEMO_USERS)
+
+    claimed = get_user_model().objects.get(username="ucadmin")
+    PendingIdentity.objects.filter(user=claimed).delete()
+    OidcIdentity.objects.create(subject="sub-ucadmin", user=claimed)
+
+    seed_roles_and_users(fresh=False)
+
+    assert not PendingIdentity.objects.filter(user=claimed).exists()

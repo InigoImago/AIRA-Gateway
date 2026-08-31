@@ -19,7 +19,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db.models import Q
 from rest_framework.permissions import IsAuthenticated
@@ -28,28 +27,13 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from aira_common.access import SubjectKind
-from aira_common.directory import (
-    SEARCH_LIMIT,
-    DirectoryEntry,
-    DirectoryUnavailable,
-    KeycloakDirectory,
-)
+from aira_common.directory import SEARCH_LIMIT, DirectoryEntry, DirectoryUnavailable
 from aira_common.logging import get_logger
+from aira_management.apps.directory.service import build_directory as _build_directory
 from aira_management.apps.usecases.models import UseCaseGroupGrant
 from aira_management.rbac import IsGlobalAdminOrUseCaseAdministrator
 
 _log = get_logger("aira_management.directory")
-
-
-def _build_directory() -> KeycloakDirectory | None:
-    """The configured Keycloak directory, or ``None`` when there is no admin client."""
-    base = getattr(settings, "AIRA_OIDC_ISSUER_BASE", "") or ""
-    realm = getattr(settings, "AIRA_OIDC_REALM", "") or ""
-    client_id = getattr(settings, "AIRA_DIRECTORY_CLIENT_ID", "") or ""
-    secret = getattr(settings, "AIRA_DIRECTORY_CLIENT_SECRET", "") or ""
-    if not (base and realm and client_id and secret):
-        return None
-    return KeycloakDirectory(base, realm, client_id, secret)
 
 
 def _known_locally(query: str) -> list[DirectoryEntry]:

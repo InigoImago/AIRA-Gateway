@@ -181,19 +181,35 @@ def own_requests(principal: Principal) -> ColumnElement[bool]:
     """
     person = principal.person
     own: list[ColumnElement[bool]] = [RequestLog.subject == principal.subject]
-    if person and person != principal.subject:
-        # Written as two indexable disjuncts rather than as
-        # `coalesce(username, subject) = person`, which is the same set of rows and reaches neither
-        # index: this runs on the largest table here, under the page `ix_request_logs_use_case_page`
-        # was added for. The second clause is the pre-`FRD-606` row, which has no name and whose
-        # subject is the only thing it can be recognised by.
+    if person:
+        # Written as indexable disjuncts rather than as `coalesce(username, subject) = person`,
+        # which is the same set of rows and reaches neither index: this runs on the largest table
+        # here, under the page `ix_request_logs_use_case_page` was added for.
+        #
+        # **The name clause is unconditional, and that was the bug.** It sat behind
+        # `person != principal.subject`, which is false for exactly one caller — somebody holding
+        # an **API key**, whose subject already *is* their username. So the query dropped the two
+        # clauses that reach rows written in the *other* alphabet, while `is_own_request` beside it
+        # kept applying them: the predicate said a row was theirs and the query did not return it.
+        # Reading their own traffic through their own key, in a use case that shows each member
+        # their own requests, a person saw an empty list and a `403` on the payload of a row they
+        # could see listed a moment earlier under their token.
+        #
+        # Found by asserting the two forms select the same rows — the check the docstring already
+        # promised — with a fixture in which the subject and the name are *not* the same string.
+        # A fixture that makes two things equal cannot tell them apart (`LESSONS.md` §1).
         own.append(RequestLog.username == person)
+    if person and person != principal.subject:
         own.append(
             and_(
                 # `IS NULL` **or** empty, because `_row_person` reads the name for its truth and
                 # SQL does not. No writer produces an empty name today — `auth/oidc.py` stores
                 # `None` for a blank claim — and the two forms of this one rule have to agree for
                 # reasons that do not depend on that staying true.
+                #
+                # Still conditional, and here the condition is exact rather than incidental: where
+                # the person *is* the subject this clause is the first one narrowed, so adding it
+                # would be a third scan for rows already selected.
                 or_(RequestLog.username.is_(None), RequestLog.username == ""),
                 RequestLog.subject == person,
             )

@@ -36,7 +36,9 @@ class _StoppedCaller:
     def __init__(self, limit_rpm: int = 1) -> None:
         self._limit_rpm = limit_rpm
 
-    async def check(self, use_case: Any, subject: Any, credential: Any) -> list[Throttle]:
+    async def check(
+        self, use_case: Any, subject: Any, credential: Any, person: Any = None
+    ) -> list[Throttle]:
         return [
             Throttle(label="suspension subject:ada", key="suspension:1", limit_rpm=self._limit_rpm)
         ]

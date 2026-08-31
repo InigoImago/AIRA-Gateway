@@ -676,6 +676,9 @@ async def trace_payload(
                 request_log_id=row.id,
                 use_case=row.use_case or "",
                 subject=principal.subject,
+                # The name beside the subject, so the record of a read can be joined to the person
+                # who made it rather than to the credential they happened to use (`FRD-613`).
+                username=principal.username,
                 ground=verdict.ground,
             )
         )
@@ -687,6 +690,7 @@ async def trace_payload(
         request_log_id=row.id,
         use_case=row.use_case,
         subject=principal.subject,
+        person=principal.person,
         ground=verdict.ground,
     )
     return JSONResponse({**body, "available": True, "ground": verdict.ground})

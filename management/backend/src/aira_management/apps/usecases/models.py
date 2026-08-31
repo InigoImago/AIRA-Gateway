@@ -27,8 +27,14 @@ DEFAULT_RETENTION_DAYS = 7
 #: feature the GDPR asks about (`FRD-404`).
 PURGE_AFTER_DAYS = 30
 
+#: **`\Z`, not `$`.** Python's `$` also matches before a trailing newline, so `"kundenservice\n"`
+#: satisfied a validator whose whole job is that a slug carries nothing but `[a-z0-9-]` — and this
+#: string is a **primary key on the other plane** (`FRD-613`, `LESSONS.md`): it is emitted over
+#: Kafka, written into the gateway's read model, used as a group-path suffix and printed into every
+#: audit row. The same one-character correction is applied to `group_path` and to the gateway's own
+#: selector, because the trap is the anchor rather than the pattern.
 slug_validator = RegexValidator(
-    regex=r"^[a-z0-9-]+$",
+    regex=r"^[a-z0-9-]+\Z",
     message="Use lowercase letters, digits, and hyphens only.",
 )
 

@@ -81,15 +81,38 @@ class SuspensionService:
         return [row for row in self._cached if _still_applies(row, moment)]
 
     async def check(
-        self, use_case: str | None, subject: str | None, credential: str | None
+        self,
+        use_case: str | None,
+        subject: str | None,
+        credential: str | None,
+        person: str | None = None,
     ) -> list[Throttle]:
-        """Raise :class:`Suspended` if this caller is blocked; return any throttles that apply."""
+        """Raise :class:`Suspended` if this caller is blocked; return any throttles that apply.
+
+        ``person`` is the name the same human is known by whichever credential they used
+        (:func:`aira_gateway.scopes.person`), and it is here because **a kill switch aimed at a
+        person was stopping half of them**. The two credentials answer "who is this" in different
+        alphabets — an OIDC token's subject is a directory id, an API key's is its owner's
+        username — so a suspension typed from a trace row stopped exactly the kind of credential
+        that row happened to come from. Measured on 2026-08-30: `target_value: "alice"` blocked
+        her key and served her browser.
+
+        A **credential** target still matches the credential alone, and that separation is the
+        point of having three targets: *"block this leaked key"* must not stop the person holding
+        it, and *"stop this person"* must not depend on which of their credentials they reach for.
+        """
         if not self._enforce:
             return []
         matching = [
             row
             for row in await self.active()
-            if _matches(row, use_case=use_case, subject=subject, credential=credential)
+            if _matches(
+                row,
+                use_case=use_case,
+                subject=subject,
+                credential=credential,
+                person=person,
+            )
         ]
         blocks = [row for row in matching if row.action == RuleAction.BLOCK.value]
         if blocks:
@@ -103,6 +126,11 @@ class SuspensionService:
                 author=row.author,
             )
             raise Suspended(
+                # The message names the author, and it is now a **name**. It was
+                # `user:{principal.subject}` — a directory id for a console user, which answers the
+                # caller's first question ("who did this, so I can ask them") with a string nobody
+                # can look anybody up by. Every other record of a person's act here already keeps
+                # the name: `granted_by`, `deleted_by`, `issued_by`, `RequestLog.username`.
                 f"Access for this {row.target.replace('_', ' ')} is suspended ({row.author}).",
                 retry_after=retry_after,
                 reason=row.reason or row.author,
@@ -133,13 +161,22 @@ def _still_applies(row: AccessSuspension, moment: datetime) -> bool:
 
 
 def _matches(
-    row: AccessSuspension, *, use_case: str | None, subject: str | None, credential: str | None
+    row: AccessSuspension,
+    *,
+    use_case: str | None,
+    subject: str | None,
+    credential: str | None,
+    person: str | None = None,
 ) -> bool:
     if row.use_case is not None and row.use_case != use_case:
         return False
     target = RuleTarget(row.target)
     if target is RuleTarget.SUBJECT:
-        return subject is not None and row.target_value == subject
+        # **Either alphabet.** The same widening `payloads.own_requests` and the findings list
+        # already make, applied to the control that actually stops traffic — an identity read in
+        # two alphabets has as many readers as there are comparisons, and this was the one where a
+        # miss meant a caller kept being served (`LESSONS.md` §1).
+        return row.target_value in {name for name in (subject, person) if name}
     if target is RuleTarget.CREDENTIAL:
         return credential is not None and row.target_value == credential
     return use_case is not None and row.target_value == use_case

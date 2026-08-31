@@ -294,7 +294,12 @@ def test_add_list_and_remove_member() -> None:
     assert any(x["username"] == "m" for x in listed)
     assert _client(member).get(f"{BASE}uc/").status_code == 200
 
-    assert _client(admin).delete(f"{BASE}uc/members/m/").status_code == 204
+    # `200` with the credentials the removal took away, not `204`: access ending revokes the keys
+    # that rested on it (`FRD-613`), and a removal that silently revoked two of somebody's keys
+    # would be a control whose effect the screen cannot state.
+    removed = _client(admin).delete(f"{BASE}uc/members/m/")
+    assert removed.status_code == 200
+    assert removed.json() == {"revoked_keys": []}
     assert _client(member).get(f"{BASE}uc/").status_code == 404
 
 

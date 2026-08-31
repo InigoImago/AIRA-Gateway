@@ -243,7 +243,11 @@ async def create_suspension(
         # A person may suspend indefinitely, because a person can also lift it. A rule cannot,
         # which is why an automatic one always expires (`ADR-0014` §2).
         expires_at=(datetime.now(UTC) + timedelta(minutes=minutes) if minutes else None),
-        author=f"user:{principal.subject}",
+        # **The person, not the directory id.** A suspension's author is read by whoever reviews
+        # the decision, and `user:9f1c3e2a-…` names nobody a human can look up — while every other
+        # record of this person (`granted_by`, `deleted_by`, `issued_by`, `RequestLog.username`)
+        # already keeps the name. The subject remains the fallback for a token that carries none.
+        author=f"user:{principal.person or principal.subject}",
         reason=str(body.get("reason") or "")[:500],
     )
     sessionmaker = sessionmaker_of(request)
@@ -267,7 +271,7 @@ async def lift_suspension(
             raise GeminiHTTPError(404, "No such suspension.", "NOT_FOUND")
         if row.lifted_at is None:
             row.lifted_at = datetime.now(UTC)
-            row.lifted_by = f"user:{principal.subject}"
+            row.lifted_by = f"user:{principal.person or principal.subject}"
             await session.commit()
         payload = as_dict(row)
     suspensions_of(request).invalidate()

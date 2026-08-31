@@ -99,7 +99,16 @@ class OidcValidator:
         if not subject:
             return None
         raw_groups = claims.get("groups")
-        groups = raw_groups if isinstance(raw_groups, list) else []
+        # **Filtered once, here.** This kept the raw list and each of the three readers below
+        # decided for itself: two of them dropped non-strings and the third — the
+        # `/use-cases/<slug>` convention — called `.startswith` on whatever was in it. One realm
+        # emitting a group as an object was an `AttributeError` inside token validation, which is
+        # a 500 for every request that caller makes rather than a role they do not get.
+        groups = (
+            [path for path in raw_groups if isinstance(path, str)]
+            if isinstance(raw_groups, list)
+            else []
+        )
         # `azp` (authorized party) is the client the token was issued to; `client_id` appears on
         # client-credentials tokens. Either answers "which system", which is a different question
         # from `sub` — the same person's token from two applications should not look identical in
@@ -126,10 +135,8 @@ class OidcValidator:
             # `auth/grants.py`. Union, not replacement: this route keeps working, including when
             # the read-model cannot be read.
             use_cases=usecases_from_group_paths(groups),
-            groups=tuple(str(group) for group in groups if isinstance(group, str)),
-            roles=roles_from_groups(
-                (str(group) for group in groups if isinstance(group, str)), self._role_groups
-            ),
+            groups=tuple(groups),
+            roles=roles_from_groups(groups, self._role_groups),
         )
 
 

@@ -79,6 +79,32 @@ class KeycloakDirectory:
         # trap this project has already fallen into.
         self._http = client or httpx.Client(timeout=TIMEOUT_SECONDS)
 
+    def find_user(self, username: str) -> DirectoryEntry | None:
+        """The one person with exactly this username, or ``None``.
+
+        Separate from :meth:`search` because the two answer different questions and only one of
+        them may be approximate. A search populates a picker and a substring match is a help; this
+        decides whether an **account** is created for a name somebody typed, and a substring match
+        there would attach a credential and a membership to the wrong person. Keycloak's
+        `exact=true` is what makes it the same question the grant is about.
+        """
+        wanted = username.strip()
+        if not wanted:
+            return None
+        rows = self._get(self._token(), "/users", {"username": wanted, "exact": "true", "max": 2})
+        for row in rows:
+            found = row.get("username")
+            if isinstance(found, str) and found == wanted:
+                parts = (row.get("firstName"), row.get("lastName"))
+                name = " ".join(part for part in parts if isinstance(part, str)).strip()
+                return DirectoryEntry(
+                    kind=SubjectKind.USER,
+                    id=found,
+                    label=name or found,
+                    detail=str(row.get("email") or ""),
+                )
+        return None
+
     def search(self, query: str) -> list[DirectoryEntry]:
         """Groups and users matching ``query``, groups first.
 

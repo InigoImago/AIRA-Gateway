@@ -5,6 +5,91 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Who is this caller, asked of everything that answers it (2026-08-30)
+
+`FRD-613`. Not a feature: the owner asked for a sweep of *"every aspect that has to do with auth"*,
+naming the two things the code already knew were fragile — references to a username, and budgeting
+per person in a use case — and asking for a hundred and fifty more cases besides.
+
+The method was the one `LESSONS.md` §1 prescribes and this project had not yet carried out.
+**Correct the definition, then grep for the comparison.** `scopes.person` was corrected three
+rounds ago; the grep had never been done. Every reader of a caller's identity in both planes was
+listed, and each was asked the same question with the same two credentials — a token whose subject
+is a directory id and a key whose subject is its owner's username. Fixtures where those two strings
+are equal cannot tell them apart, so none of the existing ones could have found any of this.
+
+**Fourteen defects, four of them serious.** The four compose into two stories rather than four.
+
+*An account somebody else could have.* `_provision_user` adopted **any** unbound Django account
+whose username matched the token's `preferred_username` — trust on first use, documented, and
+available to whoever asked first. The account it would most obviously be used on is the seeded
+`admin`, which carried `is_superuser`; and `is_superuser` short-circuits `user.has_perm` *and*
+guardian's `get_objects_for_user`, so the claim would have survived every role sync the directory
+could perform. Taking the group away in Keycloak removes the role and changes nothing about what
+that account can do — which is `ADR-0017` undone in one column, stored on the plane whose entire
+design says authority is the directory's answer. Measured: a token with an arbitrary `sub` and
+`preferred_username: "admin"` came back holding the seeded account.
+
+*A credential that speaks as somebody else, and outlives them.* Any **member** of a use case could
+issue an API key naming another member as its `owner`, and a key acts with its owner's standing:
+`payloads.grant_role_in` reads `use_case_members` by the person, so a key owned by the use case's
+administrator read every stored prompt in a use case configured to show each member only their own
+— with the access recorded, correctly by its own rules, against the administrator. And removing
+somebody from a use case took away their console view, their object permissions and the membership
+row the gateway reads, and left every key they held for it **active, bound and serving** until it
+happened to expire. Every consequence of a removal was immediate except the one that reaches a
+model.
+
+Ten more, each small and each a reader nobody had visited: a `subject` suspension stopped one of a
+person's two credentials; the detector grouped one person into two buckets, so sixty refusals split
+thirty/thirty never crossed a threshold of fifty; `own_requests` and `is_own_request` — one rule in
+two forms, with a docstring promising a test that they agree — disagreed for exactly the caller
+whose subject *is* their name; a username containing a dot could not be removed at all, `first.last`
+being the commonest shape a directory hands out; somebody the directory offers in the picker could
+not be granted access until they had signed in, which is `FRD-209` FR-4 never having worked; a
+`preferred_username` past 150 characters was a `DataError` on Postgres and silently fine on SQLite;
+a `groups` claim containing a non-string was an `AttributeError` **inside token validation**, so a
+realm's mapper misconfiguration is a 500 on every request that caller makes rather than a role they
+do not get; and `^…$` accepted a trailing newline in the use-case slug, the group path and the
+selector — on a string that is a **primary key on the other plane**.
+
+### What the fixes are, in one line each
+
+An **invitation** (`PendingIdentity`) replaces trust on first use: created deliberately, recording
+who made it, claimed once, deleted by the claim — and it is also what lets an administrator grant
+access to a colleague who has not signed in yet, because those were the same missing idea. The seed
+creates them, and **clears** `is_staff`, `is_superuser` and the password on the accounts it owns,
+so an installation running an older seed is repaired by the next run. Naming somebody else as a
+key's owner is an administrator's act, and the owner must hold a grant that can be taken away.
+Ending access revokes the keys that rested on it, asked as *"does this owner still hold a grant"* so
+the same sentence is true after a **group** grant is revoked. The kill switch and the detector read
+the person. `\Z` replaces `$` in three validators. A payload read records the reader's name beside
+their subject.
+
+### 248 cases, ten mutations, and three of the ten survived
+
+Five new files and three extended ones. The mutations are the interesting part, because **three
+were caught by nothing on their first run** — and each survivor is a shape this file has recorded
+before, arriving in the tests written to close it:
+
+- the kill-switch property was asserted on `SuspensionService.check`, which already knew; the half
+  that was missing is the **argument at the call site** in `guard_before_work`. Two correct halves
+  and no wire, in the round whose whole subject is that shape.
+- the malformed-claim tolerance was asserted through `OidcValidator`, which now narrows the list
+  *before* calling the shared function — so the guard inside `aira_common.access` could be deleted
+  with every test still green. A property defended by somebody else's guard looks exactly like a
+  property defended.
+- the superuser property was asserted on a fresh database, where the flag is already absent. The
+  case that matters is the installation that ran the **older** seed, and a fix that only stops
+  creating the flag leaves every existing one exactly as it was.
+
+A fourth thing the harness found without being asked: `test_mutation_anchors` refused the round
+because one anchor now matched **two** places — `is_member` and the new `holds_a_grant` were two
+copies of one rule, five minutes old. Its own message says the right answer is to remove the
+duplication rather than widen the anchor, and it was right.
+
+---
+
 ## Every view of the console, checked the same way (2026-08-27)
 
 The third plane, and the question has to be translated before it can be asked. A console enforces

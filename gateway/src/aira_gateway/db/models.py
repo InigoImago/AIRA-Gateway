@@ -216,6 +216,14 @@ class PayloadAccess(Base):
     use_case: Mapped[str] = mapped_column(String(64), default="", index=True)
     #: Who read it.
     subject: Mapped[str] = mapped_column(String(255), index=True)
+    #: What that reader was **called** — the same pairing `RequestLog` keeps (`FRD-606`).
+    #:
+    #: `subject` is what the credential called itself, and the two credentials spell it
+    #: differently: a directory id for somebody signed in, their username for somebody using a
+    #: key. So one person's reads were filed under two names, and *"who has read this use case's
+    #: prompts"* — the question this table exists to answer — could not be asked of a person.
+    #: NULL where the credential names nobody, and on every row written before this column.
+    username: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     #: On what authority — `incident`, `use_case_admin` or `use_case_member`. Two people may read
     #: the same prompt for entirely different reasons, and a review asks which.
     ground: Mapped[str] = mapped_column(String(32), default="")

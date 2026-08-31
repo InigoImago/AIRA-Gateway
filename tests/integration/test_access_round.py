@@ -541,7 +541,12 @@ async def test_35_the_trace_view_scopes_to_what_the_group_reaches(
 
 async def test_36_revoking_removes_the_grant_from_the_list(slug, admin_token) -> None:
     await _grant(admin_token, slug, DEPARTMENT)
-    assert (await _revoke(admin_token, slug, DEPARTMENT)).status_code == 204
+    # `200` with `revoked_keys`, not `204`: revoking a grant also revokes every key of this
+    # use case whose owner no longer holds one (`FRD-613`), and a removal that silently
+    # deactivated a credential would be a control whose effect the screen cannot state.
+    revoked = await _revoke(admin_token, slug, DEPARTMENT)
+    assert revoked.status_code == 200, revoked.text
+    assert "revoked_keys" in revoked.json()
     assert await _grants(admin_token, slug) == []
 
 

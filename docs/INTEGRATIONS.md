@@ -190,7 +190,8 @@ written down rather than left implied. The name in the token is not only a label
 | which use cases a caller reaches, where a grant names a **person** rather than a group | `FRD-209` §2.1 |
 | whose per-head budget and rate limit the request counts against | [`ADR-0019`](adr/ADR-0019-an-allowance-belongs-to-a-person.md) |
 | whether the payload view treats somebody as an administrator of their use case | `FRD-505` |
-| which Django account a new `sub` binds to on first sign-in | `ADR-0007` |
+| whether a **kill switch** aimed at a person stops both of their credentials | `FRD-613` §3 |
+| which invited Django account a new `sub` claims on first sign-in | `ADR-0007`, `FRD-613` |
 
 With *Edit username* on, a user can rename themselves to a colleague's name and inherit each of
 those. Everything else AIRA reads from a token — the subject, the groups — is Keycloak's to set and
@@ -203,6 +204,19 @@ on paper and absent in practice, which this project refuses to ship. If your rea
 username editing, grant access by **group** only and expect one person's allowances to follow the
 name rather than the human.
 
+#### To stop a person, name them by their username
+
+> **A suspension targeting a `subject` must carry the name, not the directory id.**
+
+An API key never carries a `sub` — Management issues it against a *username*, so that is the only
+identity on the wire — while a browser session carries both. A suspension typed as a directory id
+therefore stops that person's **tokens** and serves their key, which is a kill switch that appears
+to work. Typed as the username it stops both.
+
+The trace list shows the name in its own column beside the subject, which is the value to copy.
+This is not something the gateway can close for you: joining a directory id to a username needs a
+question put to the directory, and the request path may not ask one ([`FRD-204`](features/FRD-204-config-distribution-kafka.md)).
+
 #### Searching your directory (optional)
 
 To let the console **search** your groups and users when granting access, give AIRA a read-only
@@ -210,9 +224,16 @@ service account and set `AIRA_DIRECTORY_CLIENT_ID` / `AIRA_DIRECTORY_CLIENT_SECR
 `view-users` and `query-groups` on the realm — nothing else, and it is never used for anything but
 a search.
 
-Without it the console still works: it offers the people who have signed in and the groups already
-granted somewhere, and **says that is what it is showing**. It cannot invent a group nobody has
-used, so on a fresh installation the first grant of a new group has to be typed.
+Without it the console still works, with one real limit. It offers the people who have signed in
+and the groups already granted somewhere, and **says that is what it is showing**; it cannot invent
+a group nobody has used, so on a fresh installation the first grant of a new group has to be typed.
+
+> **And granting a *person* who has never signed in needs this client.** AIRA creates their account
+> — with an invitation their first token claims (`FRD-613`) — only for a username the directory
+> confirms, because an account created for a name nobody has is an accountability chain ending in
+> a string. Without the client the console says so and names both ways out: configure it, or have
+> the colleague sign in once, which creates the account. Granting a **group** needs none of this
+> and is unaffected.
 
 ### Clients
 
