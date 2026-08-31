@@ -139,6 +139,16 @@ config-verify: ## Check deploy/compose/.env against the config file it came from
 up: env ## Start the full stack (infra + observability)
 	@-$(MAKE) --no-print-directory config-verify
 	$(COMPOSE) up -d
+	@# **The one address this target starts and nothing named.** `GRAFANA_URL` was defined beside
+	@# the other seven and read by nothing, so the backend this target brings up had no way in
+	@# except knowing the port — which is `LESSONS.md`'s *a named bound that nothing reads*, in the
+	@# file that defines it. Printed with the condition attached, because the collector and Grafana
+	@# are healthy whether or not anything sends: an empty Explore view looks identical to a broken
+	@# one, and the difference is a flag that is off by default.
+	@echo ""
+	@echo "  Traces, metrics and logs:  $(GRAFANA_URL)   (Explore -> Tempo)"
+	@echo "  The applications export only with AIRA_OTEL_ENABLED=true in deploy/compose/.env;"
+	@echo "  without it the backend runs and receives nothing."
 
 up-core: env ## Start only core infra (no observability backend)
 	$(COMPOSE_CORE) up -d

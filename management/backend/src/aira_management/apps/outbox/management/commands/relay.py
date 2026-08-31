@@ -33,6 +33,9 @@ async def _publish(producer: Producer, pending: list[OutboxEvent]) -> list[int]:
                     key=event.key,
                     event_type=event.event_type,
                     payload=event.payload,
+                    # The context of the request that caused it, not this process's (which has
+                    # none). Without it the message carries no trace at all — see the column.
+                    traceparent=event.traceparent,
                 )
             )
             published_ids.append(event.pk)

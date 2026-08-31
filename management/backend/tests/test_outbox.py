@@ -101,3 +101,25 @@ def test_relay_no_pending_events() -> None:
 
 def test_build_producer_returns_aiokafka_producer() -> None:
     assert isinstance(relay.build_producer(), AiokafkaProducer)
+
+
+def test_an_event_carries_the_trace_of_the_request_that_caused_it() -> None:
+    """`FRD-615`. An outbox breaks the causal chain on purpose — the row is written inside the
+    request and published by another process minutes later — so the context has to be *stored*
+    here or there is nothing left to publish it under. Reading the ambient context at publish time
+    is what the producer did, and a publisher has no span."""
+    from opentelemetry.sdk.trace import TracerProvider
+
+    tracer = TracerProvider().get_tracer("test")
+    with tracer.start_as_current_span("PATCH /api/v1/use-cases/uc-a"):
+        record_to_outbox("usecase.upserted", {"slug": "uc-a"})
+
+    row = OutboxEvent.objects.get(event_type="usecase.upserted")
+    assert row.traceparent.startswith("00-")
+
+
+def test_an_event_with_no_request_behind_it_carries_no_trace() -> None:
+    """The seed and every management command. Blank is the honest answer — there was no caller —
+    and the consumer gives such a message a trace of its own rather than dropping it."""
+    record_to_outbox("usecase.upserted", {"slug": "uc-b"})
+    assert OutboxEvent.objects.get(event_type="usecase.upserted").traceparent == ""

@@ -9,7 +9,10 @@ without a collector.
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
+from dataclasses import dataclass
+from typing import Any
 
 from opentelemetry import metrics, trace
 from opentelemetry._logs import set_logger_provider
@@ -26,6 +29,7 @@ from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.sdk.trace.sampling import ParentBased, TraceIdRatioBased
+from opentelemetry.trace import Status, StatusCode
 from opentelemetry.util.types import Attributes
 
 KafkaHeaders = list[tuple[str, bytes]]
@@ -188,6 +192,32 @@ def kafka_headers_from_context() -> KafkaHeaders:
     return [(key, value.encode()) for key, value in carrier.items()]
 
 
+def traceparent_from_context() -> str:
+    """The W3C ``traceparent`` for the current span, or ``""`` when none is active.
+
+    **For a context that has to be stored rather than sent.** A transactional outbox breaks the
+    causal chain on purpose: the console's request writes a row and returns, and a *separate
+    process* publishes it seconds later. `kafka_headers_from_context` reads the ambient span, and
+    in that publisher there is none — so it injected nothing, on every event, in every deployment
+    (`FRD-615`). Captured where the span exists, carried in the row, restored at publish.
+    """
+    carrier: dict[str, str] = {}
+    inject(carrier)
+    return carrier.get("traceparent", "")
+
+
+def kafka_headers_for(traceparent: str = "") -> KafkaHeaders:
+    """Trace headers for a message: the **stored** context, or the current span's.
+
+    One function rather than a branch at the call site, because the two cases are one question —
+    *which trace does this message belong to* — and a producer that had to choose would be a
+    producer where one of the two answers is eventually forgotten.
+    """
+    if traceparent:
+        return [("traceparent", traceparent.encode())]
+    return kafka_headers_from_context()
+
+
 def context_from_kafka_headers(headers: KafkaHeaders | None) -> Context:
     """Extract an OTel context from Kafka-style headers for the consumer side."""
     carrier = {
@@ -195,6 +225,59 @@ def context_from_kafka_headers(headers: KafkaHeaders | None) -> Context:
         for key, value in (headers or [])
     }
     return extract(carrier)
+
+
+@dataclass(slots=True)
+class Processing:
+    """The handle a consumer marks its outcome on. Yielded by :func:`consuming`."""
+
+    _span: Any
+
+    def failed(self, exc: BaseException) -> None:
+        """Record that this message could not be applied.
+
+        The consumer catches every exception on purpose — one bad event must not take the whole
+        consumer down (`worker.apply_one_message`) — so nothing propagates out of the `with` block
+        for the span to notice. Without this the failure is a log line and the trace is green,
+        which is the state that teaches somebody to trust the trace view least.
+        """
+        self._span.record_exception(exc)
+        self._span.set_status(Status(StatusCode.ERROR, type(exc).__name__))
+
+
+@contextmanager
+def consuming(
+    destination: str, headers: KafkaHeaders | None, attributes: Mapping[str, object] | None = None
+) -> Iterator[Processing]:
+    """Continue the producer's trace while one message is processed.
+
+    **The other end of a wire that had only one.** `kafka_headers_from_context` has put a
+    `traceparent` on every message since `FRD-001`, and `context_from_kafka_headers` — the function
+    that takes it off again — was read by nothing but its own test. So a configuration change made
+    in the console produced a span in Management, the message carried the context correctly, and
+    the gateway's application of it appeared as nothing at all: the one thing tracing across two
+    planes is *for* did not hold. Two correct halves and no wire, the shape `LESSONS.md` §1 lists.
+
+    Named for the messaging conventions rather than for us: `"<destination> process"` is what a
+    trace backend groups on, so these spans sit beside every other queue consumer somebody
+    operates rather than in a shape only this project uses.
+
+    A no-op when observability is off — `get_tracer` then returns the API's non-recording
+    implementation, so this costs a function call and changes nothing.
+    """
+    tracer = trace.get_tracer("aira_common.messaging")
+    with tracer.start_as_current_span(
+        f"{destination} process",
+        context=context_from_kafka_headers(headers),
+        kind=trace.SpanKind.CONSUMER,
+    ) as span:
+        span.set_attribute("messaging.system", "kafka")
+        span.set_attribute("messaging.destination.name", destination)
+        span.set_attribute("messaging.operation", "process")
+        for key, value in (attributes or {}).items():
+            if isinstance(value, str | int | float | bool):
+                span.set_attribute(key, value)
+        yield Processing(span)
 
 
 def build_resource_attributes(service_name: str, environment: str) -> Attributes:

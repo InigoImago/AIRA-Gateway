@@ -19,6 +19,7 @@ from aira_common.kafka import (
     RATE_LIMIT_TOPIC,
     USECASE_TOPIC,
 )
+from aira_common.observability import traceparent_from_context
 from aira_management.apps.outbox.models import OutboxEvent
 
 _TOPIC_FOR = {
@@ -95,4 +96,13 @@ def record_to_outbox(event_type: str, payload: dict[str, Any]) -> None:
     discriminator = _ALSO_IDENTIFIED_BY.get(event_type)
     if discriminator is not None:
         key = f"{key}|{payload.get(discriminator, '')}"
-    OutboxEvent.objects.create(topic=topic, key=key, event_type=event_type, payload=payload)
+    OutboxEvent.objects.create(
+        topic=topic,
+        key=key,
+        event_type=event_type,
+        payload=payload,
+        # **Captured here because here is where a span exists.** This runs inside the view's
+        # transaction, under Django's instrumented request; the relay that publishes the row runs
+        # in another process minutes later, under nothing (`FRD-615`).
+        traceparent=traceparent_from_context(),
+    )

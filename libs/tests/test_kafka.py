@@ -1,4 +1,11 @@
-from aira_common.kafka import USECASE_TOPIC, InMemoryProducer, KafkaRecord, KafkaSecurity
+from aira_common.kafka import (
+    EVENT_TYPE_HEADER,
+    USECASE_TOPIC,
+    AiokafkaProducer,
+    InMemoryProducer,
+    KafkaRecord,
+    KafkaSecurity,
+)
 
 
 async def test_in_memory_producer_records() -> None:
@@ -61,3 +68,47 @@ def test_the_protocol_is_read_case_insensitively() -> None:
     assert KafkaSecurity(protocol="sasl_ssl").is_plaintext is False
     assert KafkaSecurity(protocol="sasl_ssl").client_kwargs()["security_protocol"] == "SASL_SSL"
     assert KafkaSecurity(protocol="  PLAINTEXT  ").is_plaintext is True
+
+
+async def test_the_producer_publishes_under_the_stored_context_not_its_own() -> None:
+    """The line that actually goes on the wire, driven rather than described (`FRD-615`).
+
+    `kafka_headers_for` has its own tests and they pass whether or not the producer calls it with
+    the record's context — which `make mutants` reported the moment the mutation was written:
+    replacing `kafka_headers_for(record.traceparent)` with `kafka_headers_for()` broke nothing,
+    because every test stopped one call short of the wire. `send` is `# pragma: no cover` for its
+    aiokafka I/O; the header construction above it is ours, and this is where it is checked.
+
+    The relay is given a span of its own here on purpose: that is the case where the two answers
+    differ, and publishing under the **publisher's** trace instead of the request's is exactly the
+    silent version of the defect this closed.
+    """
+    from opentelemetry.sdk.trace import TracerProvider
+
+    class _Broker:
+        def __init__(self) -> None:
+            self.headers: list[tuple[str, bytes]] = []
+
+        async def send_and_wait(self, topic, value, key, headers):  # noqa: ANN001, ARG002
+            self.headers = headers
+
+    stored = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+    producer = AiokafkaProducer("localhost:9092")
+    broker = _Broker()
+    producer._producer = broker  # noqa: SLF001 — the transport, replaced; the code under test is real
+
+    tracer = TracerProvider().get_tracer("test")
+    with tracer.start_as_current_span("relay-loop"):
+        await producer.send(
+            KafkaRecord(
+                topic=USECASE_TOPIC,
+                key="uc-a",
+                event_type="usecase.upserted",
+                payload={"slug": "uc-a"},
+                traceparent=stored,
+            )
+        )
+
+    sent = dict(broker.headers)
+    assert sent["traceparent"].decode() == stored
+    assert sent[EVENT_TYPE_HEADER].decode() == "usecase.upserted"

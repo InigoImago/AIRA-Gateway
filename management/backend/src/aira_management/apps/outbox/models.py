@@ -10,6 +10,20 @@ class OutboxEvent(models.Model):
     key = models.CharField(max_length=255, blank=True)
     event_type = models.CharField(max_length=64)
     payload = models.JSONField()
+    #: The W3C trace context of the request that caused this event (`FRD-615`).
+    #:
+    #: **An outbox breaks the causal chain on purpose**, and that is what broke the trace. The
+    #: console's request writes this row inside its own transaction and returns; a *separate
+    #: process* publishes it seconds later, with no span of its own — so the producer read an
+    #: empty ambient context and put no `traceparent` on the message at all, on every event, in
+    #: every deployment. The producer looked correct, the consumer looked correct, and nothing
+    #: joined the two planes.
+    #:
+    #: 55 characters by the specification; the column is wider so a future version of the format
+    #: is a stored string rather than a truncated one that resolves to nothing. Blank where there
+    #: was no request behind the event — the seed, a management command — which is honest rather
+    #: than missing: there was no caller to attribute it to.
+    traceparent = models.CharField(max_length=128, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     published_at = models.DateTimeField(null=True, blank=True)
 

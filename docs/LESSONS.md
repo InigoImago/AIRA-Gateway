@@ -52,6 +52,16 @@ reading code.
   reliable defence is the mutation, and the only reliable place for the test is **upstream of the
   wire**.
 
+  *An eighth, and the injecting end was the one that looked right.* `FRD-615`: trace context has
+  been propagated on Kafka headers since `FRD-001`, with both ends written and a round-trip test,
+  and no trace ever crossed the bus. The consumer read nothing — expected, once looked for. The
+  producer wrote nothing either, and that half is the lesson: `kafka_headers_from_context()` reads
+  the **ambient** span, and an outbox breaks the causal chain on purpose, so the relay that
+  publishes has no span and the injection produced an empty carrier on every event in every
+  deployment. **A call that reads implicit state is a call whose correctness depends on where it
+  runs**, and "where it runs" is exactly what an outbox changes. Asked of a context, a queue or a
+  transaction: is the thing this reads still in scope in the process that will actually run it?
+
   *A constant is an end too.* `pipeline/config.MAX_MODEL_LENGTH` — *"the same ceiling Management's
   serializer applies"* — sat beside a comment naming three ways into that parser which bypass
   Management, and was read by nothing; `foundry.DEFAULT_API_VERSION` documented the pinned Azure

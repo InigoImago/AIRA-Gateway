@@ -26,6 +26,7 @@ from aira_common.kafka import (
     USECASE_TOPIC,
 )
 from aira_common.logging import get_logger
+from aira_common.observability import consuming
 from aira_gateway.config import GatewaySettings
 from aira_gateway.consumer.apply import apply_event
 from aira_gateway.db.base import build_engine, build_sessionmaker
@@ -78,20 +79,39 @@ async def apply_one_message(
             offset=getattr(message, "offset", None),
         )
         return None
-    try:
-        async with sessionmaker() as session:
-            await apply_event(session, event_type, message.value)
-    except Exception as exc:  # noqa: BLE001 — see the docstring: never take the consumer down
-        _log.error(
-            "config_event_failed",
-            event_type=event_type,
-            topic=getattr(message, "topic", None),
-            partition=getattr(message, "partition", None),
-            offset=getattr(message, "offset", None),
-            error=str(exc),
-            error_type=type(exc).__name__,
-        )
-        return None
+    topic = getattr(message, "topic", None)
+    # **The far end of the trace.** The producer has put a `traceparent` on every message since
+    # `FRD-001`; nothing here ever read it, so the work this event causes belonged to no trace and
+    # the two planes could not be followed through one (`FRD-615`). A no-op when observability is
+    # off.
+    with consuming(
+        str(topic or "aira"),
+        message.headers,
+        {
+            "aira.event_type": event_type,
+            "messaging.kafka.offset": getattr(message, "offset", None),
+            "messaging.kafka.partition": getattr(message, "partition", None),
+        },
+    ) as processing:
+        try:
+            async with sessionmaker() as session:
+                await apply_event(session, event_type, message.value)
+        except Exception as exc:  # noqa: BLE001 — see the docstring: never take the consumer down
+            # Marked on the span as well as logged. The `except` is what keeps one bad event from
+            # taking the consumer down, and it is also what stops the failure reaching the span on
+            # its own — a trace that stays green while the log says otherwise is worse than no
+            # trace, because somebody reads the green one.
+            processing.failed(exc)
+            _log.error(
+                "config_event_failed",
+                event_type=event_type,
+                topic=topic,
+                partition=getattr(message, "partition", None),
+                offset=getattr(message, "offset", None),
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
+            return None
     return event_type
 
 
