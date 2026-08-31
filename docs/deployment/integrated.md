@@ -138,6 +138,29 @@ process starts at all:
 The control plane refuses to boot outside `local` with a development `SECRET_KEY`, `DEBUG=true`, or
 `ALLOWED_HOSTS=*`. That is intentional and is not configurable.
 
+### One file instead of forty variables
+
+The table above is what a deployment must get right. Setting them one at a time is how a deployment
+comes to run on a value nobody chose, so there is a file:
+[`config/integrated.example.yaml`](../../config/integrated.example.yaml) — every setting under a
+section, with the comments that say what each one refuses.
+
+```bash
+make config-check CONFIG=config/integrated.example.yaml     # would both planes start?
+uv run python tools/config_render.py config/integrated.example.yaml -o deploy/compose/.env
+make config-verify                                          # is that what is actually running?
+```
+
+**The file ranks above the deployment, and `config-verify` is what makes that a fact rather than an
+intention.** Compose fills every gap from `${VAR:-default}`, so a value left empty or a `.env`
+edited afterwards runs on a default silently.
+
+**Credentials are refused, not requested.** `config_render.py` raises on a password or an API key:
+they come from Vault (§4). And the infrastructure containers' own variables — `POSTGRES_PASSWORD`,
+`KEYCLOAK_ADMIN_PASSWORD`, `KC_DB_PASSWORD` — are not AIRA settings and are not in the file. Their
+Compose defaults are **development values**; a deployment that leaves them unset is running on
+`aira-local` and `admin`. That is what §10 is for.
+
 ---
 
 ## 6. Ingress and TLS

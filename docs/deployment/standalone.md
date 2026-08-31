@@ -114,6 +114,28 @@ silently unbounded.
 
 ---
 
+## What is configurable here
+
+`make up-full` creates `deploy/compose/.env` from the example, and that is what the stack runs on.
+The file an integrator edits is [`config/standalone.example.yaml`](../../config/standalone.example.yaml)
+— one YAML, every setting under a section, comments saying what each one refuses.
+
+It does nothing until it is rendered into the environment both planes read:
+
+```bash
+uv run python tools/config_render.py config/standalone.example.yaml -o deploy/compose/.env
+make up-full
+make config-verify      # does the deployment run what the file says?
+```
+
+**What it does not carry:** credentials, which `config_render.py` refuses rather than emits — they
+belong in Vault (`FRD-116`) — and the infrastructure containers' own settings (`POSTGRES_PASSWORD`,
+`KEYCLOAK_ADMIN`, `AIRA_BIND_HOST`, the `AIRA_PUBLISH_*` ports), which are not AIRA settings.
+Compose fills those from the development defaults in `docker-compose.yml`. That is fine for a
+workshop machine and is the thing [Integrated](integrated.md) must not inherit.
+
+---
+
 ## Stopping and starting again
 
 ```bash

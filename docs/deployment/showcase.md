@@ -454,6 +454,65 @@ make destroy             # stop everything and delete the data
 
 ---
 
+## What is configurable here
+
+The showcase runs on `deploy/compose/.env`, which `make up-full` copies from
+`deploy/compose/.env.example` on first start. Everything this walkthrough shows can be changed
+there — but the **file an integrator is meant to edit** is
+[`config/showcase.example.yaml`](../../config/showcase.example.yaml): one YAML with every setting
+under a section, comments explaining what each one refuses, and secrets deliberately absent.
+
+Editing that file changes nothing on its own. It is **rendered** into the environment both planes
+already read:
+
+```bash
+uv run python tools/config_render.py config/showcase.example.yaml -o deploy/compose/.env
+make up-full            # or `make showcase`, to redo the walkthrough
+```
+
+And afterwards:
+
+```bash
+make config-verify      # does the deployment run what the file says?
+```
+
+`config-verify` is not an errand. Compose fills every gap it is given from `${VAR:-default}`, so a
+value left empty, a variable the file does not name, or a `.env` edited by hand all end the same
+way — the stack runs on something nobody chose, and nothing says so.
+
+### What the file does not carry
+
+Rendering emits the `AIRA_*` contract and nothing else. Two kinds of value are therefore absent,
+and the difference between them matters:
+
+- **Credentials, refused on purpose.** `config_render.py` raises rather than emitting a password or
+  an API key: those belong in HashiCorp Vault (`FRD-116`), which is what the `secrets:` section of
+  the example points at.
+- **The infrastructure containers' own settings**, which are not AIRA settings at all —
+  `POSTGRES_PASSWORD`, `KEYCLOAK_ADMIN`, `KC_DB_PASSWORD`, `VAULT_DEV_ROOT_TOKEN_ID`,
+  `AIRA_BIND_HOST`, the `AIRA_PUBLISH_*` ports. Compose fills these from the defaults written into
+  `docker-compose.yml` — `aira-local`, `admin`, `127.0.0.1` — which are **development values**, and
+  which is exactly right for this walkthrough and exactly wrong anywhere else. `ADR-0015` is why
+  the gateway refuses to start on any of them outside a `local` environment.
+
+### Telemetry, as an example of what this buys
+
+`config/showcase.example.yaml` already carries:
+
+```yaml
+otel:
+  enabled: true
+  endpoint: http://otel-collector:4318
+```
+
+`enabled` is the switch that decides whether the applications export at all — with it off, the
+collector and Grafana run, receive nothing, and show an empty screen that looks exactly like a
+broken one. `endpoint` is where the **applications** send, which is the collector; where the
+collector sends *onward* is `deploy/compose/otel/collector-config.yaml` and is deliberately not an
+AIRA setting, so it is not in this file. `FRD-615` §6 records what that costs.
+
+---
+
 ## When something goes wrong
 
 **The model pull fails or hangs.** The registry may be unreachable from your network. Everything
