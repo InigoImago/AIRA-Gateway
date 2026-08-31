@@ -12,7 +12,7 @@ import json
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from aira_common.observability import kafka_headers_from_context
+from aira_common.observability import kafka_headers_for
 
 USECASE_TOPIC = "aira.usecases"
 MEMBERSHIP_TOPIC = "aira.memberships"
@@ -86,6 +86,14 @@ class KafkaRecord:
     key: str
     event_type: str
     payload: dict[str, Any]
+    #: The W3C trace context of the request that **caused** this event, where one was captured.
+    #:
+    #: An outbox publishes from a different process, minutes later, with no span of its own — so
+    #: the ambient context at publish time is empty and injecting it produced nothing at all. The
+    #: causing request's context is stored on the outbox row and restored here, which is what makes
+    #: a console change and the gateway applying it one trace (`FRD-615`). Empty for anything
+    #: published outside a request, which is honest: there was no caller.
+    traceparent: str = ""
 
 
 class Producer(Protocol):
@@ -136,7 +144,7 @@ class AiokafkaProducer:
 
     async def send(self, record: KafkaRecord) -> None:  # pragma: no cover
         headers = [(EVENT_TYPE_HEADER, record.event_type.encode("utf-8"))]
-        headers.extend(kafka_headers_from_context())
+        headers.extend(kafka_headers_for(record.traceparent))
         await self._producer.send_and_wait(
             record.topic, value=record.payload, key=record.key.encode("utf-8"), headers=headers
         )

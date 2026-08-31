@@ -183,6 +183,12 @@ IDENTITY_SWEEP = (
     "gateway/tests/test_own_requests_are_the_persons.py "
     "gateway/tests/test_payload_access.py"
 )
+#: The bus is two processes and a table, so the property lives in three files at once.
+TRACE_BUS = (
+    "gateway/tests/test_a_trace_crosses_the_bus.py "
+    "management/backend/tests/test_outbox.py libs/tests/test_observability.py "
+    "libs/tests/test_kafka.py"
+)
 ACCESS_LIFECYCLE = (
     "management/backend/tests/test_access_ends_completely.py "
     "management/backend/tests/test_apikeys.py"
@@ -6100,6 +6106,39 @@ MUTATIONS = [
         "            user.is_superuser = False",
         "            user.is_superuser = user.is_superuser",
         "management/backend/tests/test_seed.py",
+    ),
+    # ---- a trace crosses the bus (`FRD-615`) ---------------------------------------------------
+    Mutation(
+        "BUS1",
+        "the consumer continues the trace the message came from",
+        "gateway/src/aira_gateway/consumer/worker.py",
+        "        message.headers,\n        {",
+        "        None,  # context dropped\n        {",
+        TRACE_BUS,
+    ),
+    Mutation(
+        "BUS2",
+        "the context of the causing request is stored on the outbox row",
+        "management/backend/src/aira_management/apps/outbox/subscriber.py",
+        "        traceparent=traceparent_from_context(),",
+        '        traceparent="",',
+        "management/backend/tests/test_outbox.py",
+    ),
+    Mutation(
+        "BUS3",
+        "the stored context is what the message is published under, not the publisher's",
+        "libs/src/aira_common/kafka.py",
+        "        headers.extend(kafka_headers_for(record.traceparent))",
+        "        headers.extend(kafka_headers_for())",
+        TRACE_BUS,
+    ),
+    Mutation(
+        "BUS4",
+        "an event that could not be applied is red in the trace, not only in the log",
+        "gateway/src/aira_gateway/consumer/worker.py",
+        "            processing.failed(exc)",
+        "            pass  # failure left off the span",
+        TRACE_BUS,
     ),
     Mutation(
         "ONE10",

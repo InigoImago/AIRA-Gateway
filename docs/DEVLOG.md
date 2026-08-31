@@ -5,6 +5,55 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## A trace that stopped at the bus, and a URL nothing printed (2026-08-31)
+
+`FRD-615`, and it started as a question rather than a round: *what actually goes over OTel, and how
+do I look at it?*
+
+**Looking at it turned out to be the smaller half.** The whole observability chain was up and
+healthy — collector and `otel-lgtm` both running for nineteen hours — with `AIRA_OTEL_ENABLED=false`
+in every application container. So Grafana answered on its port and showed an empty Explore view,
+which looks exactly like a broken one. `GRAFANA_URL` had been defined in the Makefile beside seven
+other addresses and **read by nothing**, so the one target that starts that backend never named it:
+`LESSONS.md`'s *a named bound that nothing reads*, in the file that defines it. `make up` now prints
+it with the condition attached, and `deploy/compose/.env.example` carries the flag with the reason.
+
+**The larger half was found by reading what would be sent.** `FRD-001` propagates trace context on
+Kafka headers; both ends existed and were tested, with a round-trip test written the same day. The
+trace still stopped dead at the bus, and it was broken in two places rather than one.
+
+The consumer never read it — `context_from_kafka_headers` was called by nothing but its own test,
+and `apply_one_message` opened no span at all. And **the producer never wrote it either**, which is
+the part worth keeping: `kafka_headers_from_context()` reads the *ambient* span, and an outbox
+breaks the causal chain on purpose — the console's request writes a row and returns, and the relay
+publishes it seconds later, in another process, with no span. The injection produced an empty
+carrier on every event in every deployment. The line looked correct and did nothing.
+
+Nobody could have noticed, because the flag above meant the chain was never exercised.
+
+The context is now **stored** on the outbox row where the span exists, restored at publish, and the
+consumer opens a `CONSUMER` span parented to it — `"<topic> process"`, with the partition and
+offset somebody needs to find the message. A failed event is marked on the span as well as logged,
+because the `except` that keeps one bad event from taking the consumer down is also what stops the
+failure reaching the trace.
+
+### BUS3 survived twice, for two different reasons
+
+Both are traps `mutation_check.py`'s own notes name, arriving in the same hour.
+
+The property is *"the message is published under the **stored** context, not the publisher's"*. It
+was first asserted on `kafka_headers_for` directly — one call short of the producer that uses it,
+which is the same "test the end, not the wire" that this whole entry is about. With a test driving
+`AiokafkaProducer.send` it **still** survived, because `TRACE_BUS` did not name the file that test
+lives in: *"name every file whose tests you expect to fail — not the file the code lives beside."*
+
+Also recorded, because a reader will look for both and find neither: **tokens and cost are not
+metrics** (`get_meter` appears nowhere; the figures are span attributes and rows in `request_logs`),
+and **AIRA's own log lines are not exported** — structlog writes to stdout past the standard
+library, so the OTLP handler carries framework records only.
+
+---
+
 ## Who is this caller, asked of everything that answers it (2026-08-30)
 
 `FRD-613`. Not a feature: the owner asked for a sweep of *"every aspect that has to do with auth"*,
