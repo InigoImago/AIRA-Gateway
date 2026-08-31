@@ -12,6 +12,7 @@ string some source file writes.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -60,3 +61,25 @@ def test_the_dashboard_asks_for_no_payload() -> None:
     text = DASHBOARD.read_text().lower()
     for forbidden in ("payload", "prompt", "request_payload", "response_payload", "content"):
         assert f"aira.{forbidden}" not in text
+
+
+def test_the_file_owns_the_dashboard() -> None:
+    """`allowUiUpdates: false`, and it is not a preference (`FRD-615` §7).
+
+    With UI updates allowed, Grafana keeps its own copy the moment its stored version reaches the
+    file's — and the provisioner then **skips the file silently**, with `POST
+    /api/admin/provisioning/dashboards/reload` still answering `200`. Measured: a fourth panel
+    added here never appeared, Grafana served three panels at its own version 4 while the file
+    said 3, and every check short of counting the panels in the running Grafana passed.
+
+    A dashboard that ships with the code has to be owned by the code. Somebody who wants it
+    different changes this file, which is also how the change reaches everybody else.
+    """
+    provisioning = (DASHBOARD.parent.parent / "provisioning-dashboards.yaml").read_text()
+    assert "allowUiUpdates: false" in provisioning
+
+
+def test_the_dashboard_carries_no_version_of_its_own() -> None:
+    """Grafana owns the number once the file owns the dashboard, and a hand-maintained version in
+    a repository is one more thing to forget — which is exactly how the panel above went missing."""
+    assert "version" not in json.loads(DASHBOARD.read_text())
