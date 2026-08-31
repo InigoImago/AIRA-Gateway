@@ -10,6 +10,18 @@ dependencies = [
     "psycopg[binary]>=3.2",
     "django-guardian>=2.4",
     "opentelemetry-instrumentation-django>=0.50b0",
+    # **And the ASGI half of it, which is not a transitive dependency.** This service is served by
+    # uvicorn, so every request is an ASGI request — and `_DjangoMiddleware` opens with
+    # `if not _is_asgi_supported and is_asgi_request: return`, where `_is_asgi_supported` is an
+    # `ImportError` guard around exactly this package. Without it the instrumentation installs
+    # cleanly, the middleware sits in the chain, and it returns on every request without a span
+    # (`FRD-615`).
+    #
+    # The third time this workspace has shipped an image missing a package it resolved locally by
+    # accident: `pyjwt` and `httpx` are recorded in `libs/pyproject.toml` for the same reason. Here
+    # the accident is `opentelemetry-instrumentation-fastapi`, a **gateway** dependency, which
+    # pulls this in — so the whole dev environment has it and the management image never did.
+    "opentelemetry-instrumentation-asgi>=0.50b0",
     # Django ships only `runserver`, which is explicitly not for production. The ASGI app in
     # config/asgi.py needs a real server to be deployable at all.
     "uvicorn[standard]>=0.32",

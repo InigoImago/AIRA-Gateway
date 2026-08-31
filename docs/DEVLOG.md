@@ -37,6 +37,48 @@ offset somebody needs to find the message. A failed event is marked on the span 
 because the `except` that keeps one bad event from taking the consumer down is also what stops the
 failure reaching the trace.
 
+### Then it was switched on, and found four more
+
+The change above was written, tested and merged with the flag **off**. Turning it on produced a
+trace from the gateway and nothing else, and every step of finding out why was another defect of
+the same family.
+
+The **control plane exported no request span, ever**: `DjangoInstrumentor` instruments by inserting
+a middleware into `settings.MIDDLEWARE`, and the call sat in `settings.py` above the
+`MIDDLEWARE = [...]` assignment — inside the import Django performs to build the settings object.
+It read a list that did not exist yet and the assignment forty lines below replaced its work.
+Instrumentation moved to `ApiConfig.ready()`.
+
+And it **still** would have exported nothing: `_DjangoMiddleware` returns immediately for an ASGI
+request unless `opentelemetry-instrumentation-asgi` is importable, and the management image did not
+have it. Management is served by uvicorn, so that is every request. Third time this workspace has
+shipped an image missing a package the dev environment resolved by accident — `pyjwt` and `httpx`
+are recorded in `libs/pyproject.toml` for the same reason, and here the accident was a **gateway**
+dependency pulling it in.
+
+Then: the **background processes configured no telemetry at all**. `configure_observability` lived
+in `create_app` and nowhere else, so the consumer and the retention sweep had no tracer provider
+and discarded every span before building it. The consumer span this whole round is about was
+therefore inert in the deployment — written, tested, merged, exporting nothing.
+
+And one of mine, kept for what it says about the tiers: the migration adding
+`payload_access.username` named the table `payload_accesses`. The whole hermetic suite passed,
+because that tier builds its schema with `create_all` **from the models** and never runs a
+migration; the real Postgres refused it in half a second.
+
+Four findings, one sentence: **a control that is off has not been tested, it has been skipped.**
+
+### And then it could not be found
+
+Grafana ships four datasources and no view of this system; `otel-lgtm` leaves the drop-in dashboard
+provider commented out in its own `sample.yaml`. The reward for switching telemetry on was an empty
+Explore screen. `deploy/compose/grafana/` now provisions one dashboard — requests, refusals,
+configuration reaching the gateway — with a test comparing every attribute its panels ask for
+against what the code writes, and asserting that none of them asks for a payload.
+
+Measured end to end afterwards, on the running stack: a `PATCH` in the console and the gateway
+applying it, **one trace, two services**, 1.2 seconds apart.
+
 ### BUS3 survived twice, for two different reasons
 
 Both are traps `mutation_check.py`'s own notes name, arriving in the same hour.

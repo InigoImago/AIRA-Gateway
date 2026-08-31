@@ -1,0 +1,124 @@
+{
+  "uid": "aira-overview",
+  "title": "AIRA \u2014 what went through, and what it did",
+  "tags": [
+    "aira"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 2,
+  "refresh": "30s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "type": "text",
+      "title": "",
+      "gridPos": {
+        "h": 4,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "**Every request the gateway served, and every configuration change that reached it.** Click a row to open the trace.\n\nA request's own id comes back on the `x-trace-id` response header \u2014 paste it into *Explore \u2192 Tempo \u2192 TraceID* to go straight to one. Search indexes a minute behind; an id resolves at once.\n\nPrompts and responses are **not** here and never will be: they are in `request_logs`, behind the use case's storage switch, its retention clock and a role check (`FRD-505`)."
+      }
+    },
+    {
+      "type": "table",
+      "title": "Requests through the gateway",
+      "description": "One row per model call: who, which use case, which model, how it ended.",
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 4
+      },
+      "datasource": {
+        "type": "tempo",
+        "uid": "tempo"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "tempo",
+            "uid": "tempo"
+          },
+          "queryType": "traceql",
+          "query": "{ span.aira.operation != nil } | select(span.aira.use_case, span.aira.model, span.aira.outcome, span.aira.status, span.aira.total_tokens, span.aira.subject)",
+          "limit": 50,
+          "tableType": "spans"
+        }
+      ],
+      "options": {
+        "showHeader": true
+      }
+    },
+    {
+      "type": "table",
+      "title": "Refused, and why",
+      "description": "Everything a control stopped \u2014 a budget, a rate limit, the pipeline, a suspension. `aira.outcome` is the closed vocabulary from `FRD-122`, so this is the same word the audit trail and the reports use.",
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 13
+      },
+      "datasource": {
+        "type": "tempo",
+        "uid": "tempo"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "tempo",
+            "uid": "tempo"
+          },
+          "queryType": "traceql",
+          "query": "{ span.aira.outcome != \"served\" } | select(span.aira.use_case, span.aira.model, span.aira.outcome, span.aira.status, span.aira.subject)",
+          "limit": 50,
+          "tableType": "spans"
+        }
+      ],
+      "options": {
+        "showHeader": true
+      }
+    },
+    {
+      "type": "table",
+      "title": "Configuration reaching the gateway",
+      "description": "The other plane's half. A change made in the console and the gateway applying it are one trace (`FRD-615`), so this answers *when did it take effect* \u2014 and a red row is an event the consumer could not apply.",
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 22
+      },
+      "datasource": {
+        "type": "tempo",
+        "uid": "tempo"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "tempo",
+            "uid": "tempo"
+          },
+          "queryType": "traceql",
+          "query": "{ span.messaging.operation = \"process\" } | select(span.aira.event_type, span.messaging.destination.name, span.messaging.kafka.offset)",
+          "limit": 50,
+          "tableType": "spans"
+        }
+      ],
+      "options": {
+        "showHeader": true
+      }
+    }
+  ]
+}

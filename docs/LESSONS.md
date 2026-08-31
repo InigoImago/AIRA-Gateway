@@ -425,6 +425,20 @@ reading code.
   did not create. **`FRD-206` one indirection out** — not a button that 403s, a sentence pointing
   nowhere.
 
+- **A control that is off has not been tested, it has been skipped.** `AIRA_OTEL_ENABLED` defaults
+  to false, and switching it on for the first time found **four** defects in the path behind it,
+  each of which had been there for as long as the flag: Django instrumented from a place that ran
+  before `MIDDLEWARE` existed, so the control plane exported no span ever; a middleware that
+  returns silently for ASGI requests without a package the image did not carry; background
+  processes that configured no telemetry at all, which made a *just-merged* consumer span inert in
+  the deployment; and a migration naming a table that does not exist, which the hermetic tier
+  cannot see because it builds its schema from the models with `create_all`.
+
+  Every one of them passed every check the project had, because a disabled feature's code path is
+  not reached by anything. **The switch is part of the surface**: a default-off control needs at
+  least one test, one environment, or one measured run with it *on*, or "it is off by default" is
+  just where the untested code lives.
+
 - **A badge-wearing absent control.** A control displayed as active and doing nothing. *Five:* the
   LLM injection filter set to `block` and passing everything; a `member` rate limit matching an
   OIDC caller's name and therefore nobody; `routerLinkActive` never imported, so the nav marker had

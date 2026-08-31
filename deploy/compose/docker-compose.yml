@@ -203,6 +203,13 @@ services:
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
+    # A dashboard of our own, provisioned rather than imported by hand (`FRD-615`). The image
+    # ships RED-metric dashboards and leaves the drop-in provider commented out in its own
+    # `sample.yaml`; without one, somebody who has just switched telemetry on lands on a Grafana
+    # with four datasources and no view of their own system.
+    volumes:
+      - ./grafana/provisioning-dashboards.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/aira.yaml:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards/aira:ro
     ports:
       - "${AIRA_BIND_HOST:-127.0.0.1}:${AIRA_PUBLISH_GRAFANA_PORT:-3000}:3000"   # Grafana UI
       - "[${AIRA_BIND_HOST6:-::1}]:${AIRA_PUBLISH_GRAFANA_PORT:-3000}:3000"   # Grafana UI

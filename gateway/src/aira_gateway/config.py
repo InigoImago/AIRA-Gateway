@@ -8,8 +8,11 @@ from __future__ import annotations
 
 from aira_common.config import BaseAiraSettings
 from aira_common.kafka import KafkaSecurity
+from aira_common.logging import configure_logging
+from aira_common.observability import configure_observability
 from aira_common.oidc import DEFAULT_CLOCK_SKEW_SECONDS, DEFAULT_EXPIRY_LEEWAY_SECONDS
 from aira_common.roles import Role, parse_role_groups
+from aira_gateway import __version__
 
 
 def _default_jwks_uri(issuer: str) -> str:
@@ -360,3 +363,28 @@ class GatewaySettings(BaseAiraSettings):
             host, _, port = first.rpartition(":")
             return host or "localhost", int(port)
         return first or "localhost", 9092
+
+
+def configure_worker(settings: GatewaySettings) -> bool:
+    """Logging and OpenTelemetry for a process that is **not** the API (`FRD-615`).
+
+    `create_app` has configured both since `FRD-001`, and the three background processes — the
+    config consumer, the retention sweep, and anything that joins them — never called anything at
+    all. They therefore had no tracer provider, so `trace.get_tracer` handed back the API's
+    non-recording implementation and every span they opened was discarded before it was built.
+
+    Found the hard way: the consumer span that makes a configuration change one trace across both
+    planes was written, tested, and **inert in the deployment**, because the process it runs in
+    exports nothing. A wire is not closed until the process at each end is one that can speak.
+
+    Returns whether telemetry was configured, so a caller can say so.
+    """
+    configure_logging(settings.log_level, json_output=settings.log_json)
+    return configure_observability(
+        service_name=settings.app_name,
+        service_version=__version__,
+        environment=settings.environment,
+        endpoint=settings.otel_endpoint,
+        enabled=settings.otel_enabled,
+        sample_ratio=settings.otel_sample_ratio,
+    )

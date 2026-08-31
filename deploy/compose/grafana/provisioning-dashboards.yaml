@@ -1,0 +1,19 @@
+# Make the AIRA dashboard appear on its own (`FRD-615`).
+#
+# `otel-lgtm` ships RED-metric dashboards and leaves the drop-in provider commented out in its own
+# `sample.yaml`. Without it, a reader who has just turned telemetry on lands on a Grafana with four
+# datasources, no view of their own system, and has to know that the way in is Explore -> Tempo ->
+# Search. The data was there and nothing pointed at it — which is `FRD-206`'s defect wearing an
+# operations hat.
+apiVersion: 1
+
+providers:
+  - name: AIRA
+    orgId: 1
+    folder: AIRA
+    type: file
+    disableDeletion: false
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards/aira
+      foldersFromFilesStructure: false

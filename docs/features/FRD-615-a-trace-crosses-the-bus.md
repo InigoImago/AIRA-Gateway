@@ -96,7 +96,62 @@ this harness's own notes name:
    in. *"When you add a mutation, name every file whose tests you expect to fail — not the file the
    code lives beside."*
 
-## 6. What is still true after this
+## 6. Turning it on found four more
+
+The change above was written, tested and merged with the flag off. Switching it on — which nobody
+had done — produced a trace from the gateway and **nothing else at all**, and each step of finding
+out why was a separate defect of the same family.
+
+**The control plane exported no request span, ever.** `DjangoInstrumentor` instruments by inserting
+a middleware into `settings.MIDDLEWARE`, and the call sat in `settings.py` *above* the
+`MIDDLEWARE = [...]` assignment — inside the very import Django performs to build the settings
+object. It read a `MIDDLEWARE` that did not exist yet and the assignment forty lines below replaced
+whatever it had done. Measured: `settings.MIDDLEWARE` held our three entries and no OpenTelemetry
+one; Tempo had seen `aira-gateway` and never `aira-management`. Instrumentation now runs from
+`ApiConfig.ready()`, which is the documented place and the only one late enough.
+
+**And it would still have exported nothing.** `_DjangoMiddleware` opens with
+`if not _is_asgi_supported and is_asgi_request: return`, where `_is_asgi_supported` is an
+`ImportError` guard around `opentelemetry-instrumentation-asgi` — a package the management image
+did not have. Management is served by uvicorn, so *every* request is an ASGI request: the
+middleware would have been in the chain and returned before creating a span, silently. This is the
+**third** time this workspace has shipped an image missing a package it resolved locally by
+accident; `libs/pyproject.toml` records `pyjwt` and `httpx` for the same reason. Here the accident
+was `opentelemetry-instrumentation-fastapi`, a *gateway* dependency, which pulls it in.
+
+**The background processes configured no telemetry at all.** `configure_observability` was called
+in `create_app` and nowhere else, so the config consumer and the retention sweep had no tracer
+provider — `trace.get_tracer` handed back the API's non-recording implementation and every span
+they opened was discarded before it was built. The consumer span this whole document is about was
+therefore **inert in the deployment**: written, tested, merged, and exporting nothing.
+`config.configure_worker` is now what a process that is not the API starts up with.
+
+**And a mistake of mine, kept because of what it says about the test tiers.** The migration adding
+`payload_access.username` named the table `payload_accesses`. Every hermetic test passed, because
+the hermetic tier builds its schema with `create_all` **from the models** and never runs a
+migration; the real Postgres refused it in half a second. A migration is only checked by
+`tests/integration/test_the_gateway_migrations_match_its_models.py`, which needs a live database —
+so a migration written without one is a migration nobody has run.
+
+The four together are one sentence: **a control that is off has not been tested, it has been
+skipped.** Every part of this path looked correct under a suite that never exercised it.
+
+## 7. Seeing it without knowing where to look
+
+Grafana ships four datasources and no view of this system, and `otel-lgtm` leaves the drop-in
+dashboard provider commented out in its own `sample.yaml`. So the reward for turning telemetry on
+was an empty Explore screen and the need to know that the way in is *Explore → Tempo → Search*.
+
+`deploy/compose/grafana/` now provisions one dashboard — requests, refusals, and configuration
+reaching the gateway — and `tools/tests/test_the_dashboard_asks_for_attributes_that_exist.py`
+compares every attribute its panels ask for against what the code writes, because a renamed
+attribute leaves a panel returning nothing and an empty panel reads as *"nothing happened"*.
+
+It also asserts that no panel asks for a payload. Prompts and responses are behind a storage
+switch, a retention clock and a role check (`FRD-505`, `ADR-0016`); a panel that surfaced one would
+route around all three in a Grafana everybody who operates the stack can read.
+
+## 8. What is still true after this
 
 Two things a reader will look for and not find, neither of them changed here:
 

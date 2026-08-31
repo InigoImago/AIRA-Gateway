@@ -205,10 +205,14 @@ class RetentionService:
 
 
 async def _run() -> PruneResult:  # pragma: no cover - thin process wrapper
-    from aira_gateway.config import GatewaySettings
+    from aira_gateway.config import GatewaySettings, configure_worker
     from aira_gateway.db.base import build_engine, build_sessionmaker
 
     settings = GatewaySettings()
+    # The same reason the consumer does it: a background process that configures nothing has no
+    # tracer provider and no structured logging, and an erasure nobody can see afterwards is the
+    # one thing this sweep must not be (`FRD-615`).
+    configure_worker(settings)
     engine = build_engine(settings.database_url(use_sqlite=False))
     try:
         service = RetentionService(
