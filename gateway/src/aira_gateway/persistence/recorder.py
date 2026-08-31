@@ -21,6 +21,29 @@ from aira_gateway.persistence.writer import PendingLog
 from aira_gateway.state import settings_of, writer_of
 
 
+def _tool_attributes(tool_calls: dict[str, Any] | None) -> dict[str, object]:
+    """The tool figures, as span attributes. Empty when the request offered and called nothing.
+
+    Absent rather than zero for a request with no tools at all: `aira.tools.offered = 0` on every
+    ordinary chat request would put three attributes on the overwhelming majority of spans to say
+    nothing, and it would make *"which traffic uses tools"* a comparison rather than an existence
+    check. A request that offered functions always carries them, including one that was refused.
+    """
+    if not tool_calls:
+        return {}
+    called = list(tool_calls.get("called") or [])
+    attributes: dict[str, object] = {
+        "aira.tools.offered": int(tool_calls.get("declared") or 0),
+        "aira.tools.called": len(called),
+    }
+    if called:
+        # Joined, because a span attribute is a primitive here (`set_span_attributes` takes
+        # `str | int | float | bool`) and the one question an investigator asks of a flagged agent
+        # turn is *which* function it reached for.
+        attributes["aira.tools.names"] = ", ".join(called)
+    return attributes
+
+
 def client_ip(request: Request) -> str | None:
     """Return the client IP for the audit trail (FRD-105, PRD FR-GW-9).
 
@@ -128,6 +151,22 @@ async def record_request(
             "aira.source_ip": source_ip,
             "aira.total_tokens": usage.total_tokens if usage else None,
             "aira.cost_nanos": cost_nanos,
+            # **How many functions this request offered, and how many the model asked for.**
+            #
+            # Both numbers are already in the audit row (`audit.tool_summary`) and neither was on
+            # the span, so the question an agent deployment is actually judged by — *this thing is
+            # handed forty tools and uses two* — could be asked of one request in a database and
+            # not of the traffic in a trace view. `offered` is set before anything can refuse, so
+            # a request that offered ten functions and was then stopped by a budget still says so;
+            # that is the whole difference between **offered none** and **offered ten, asked for
+            # none** (`FRD-131` FR-7).
+            #
+            # Names, never arguments: a function name is declared by the client application, an
+            # argument is the caller's content and belongs under `store_payloads`, the retention
+            # clock and `FRD-406`. The audit column has drawn that line since it was written and
+            # this is the same line, one surface out — a span attribute has no retention clock at
+            # all.
+            **_tool_attributes(tool_calls),
             # Residency, per request. A configuration claim that nothing records is a claim
             # nobody can check afterwards (FRD-115 FR-10).
             "aira.upstream.provider": provenance[0] if provenance else None,

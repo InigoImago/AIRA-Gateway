@@ -162,3 +162,38 @@ Two things a reader will look for and not find, neither of them changed here:
   `PrintLoggerFactory`, past the standard library, so the OTLP log handler on the root logger
   carries framework records only — uvicorn, Django, library warnings. `payload_read`,
   `request_suspended` and `oidc_token_rejected` are in the container log, not in Loki.
+
+## 9. How many tools were offered, and how many were used
+
+Both numbers have been in the audit row since `FRD-131` — `tool_summary` writes
+`{"declared": n, "called": [names]}` — and neither was on the span. So the question an agent
+deployment is actually judged by, **this thing is handed forty tools and uses two**, could be asked
+of one request in a database and not of the traffic in a trace view.
+
+Three attributes, and they are absent rather than zero on a request with no tools: putting
+`aira.tools.offered = 0` on the overwhelming majority of spans says nothing, and it turns *"which
+traffic uses tools"* from an existence check into a comparison.
+
+| Attribute | |
+| --- | --- |
+| `aira.tools.offered` | how many functions the request declared |
+| `aira.tools.called` | how many the model asked for |
+| `aira.tools.names` | which ones, joined — only when there were any |
+
+**Offered is recorded before anything can refuse.** That is where the value is: measured live on
+the running stack, two refusals of a request declaring two functions —
+
+```
+outcome=invalid_request   offered=2  called=0  use_case=demo-uc          (tools not enabled)
+outcome=no_capable_model  offered=2  called=0  use_case=coding-assistant (model cannot call them)
+```
+
+— which is the difference between *offered none* and *offered ten, asked for none*, and is what
+makes *"somebody keeps trying to use tools here"* answerable. A dashboard panel asks the same
+question of the last hour.
+
+**Names, never arguments.** A function name is declared by the client application; an argument is
+the caller's content and belongs under `store_payloads`, inside the retention clock and behind
+`FRD-406`. The audit column has drawn that line since it was written, and a span attribute has no
+retention clock at all — so the line matters more here, not less.
+

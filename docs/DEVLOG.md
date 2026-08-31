@@ -79,6 +79,16 @@ against what the code writes, and asserting that none of them asks for a payload
 Measured end to end afterwards, on the running stack: a `PATCH` in the console and the gateway
 applying it, **one trace, two services**, 1.2 seconds apart.
 
+### And, since the trace was open: how many tools
+
+`FRD-615` §9. `tools_declared` and the called names have been in the audit row since `FRD-131` and
+were on no span, so *"this agent is handed forty tools and uses two"* was a question you could ask
+of one row in a database and not of the traffic. Three attributes now, absent rather than zero when
+a request has no tools — and `offered` is set before any control can refuse, which is where the
+value is. Measured live: two refusals of a request declaring two functions, both recording
+`offered=2, called=0`, one because the use case has tool calling off and one because the model
+cannot call them. Names only; arguments stay under the storage switch.
+
 ### BUS3 survived twice, for two different reasons
 
 Both are traps `mutation_check.py`'s own notes name, arriving in the same hour.
