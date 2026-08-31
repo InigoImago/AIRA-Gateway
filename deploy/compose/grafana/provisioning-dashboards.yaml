@@ -13,7 +13,15 @@ providers:
     folder: AIRA
     type: file
     disableDeletion: false
-    allowUiUpdates: true
+    # **False, and this is the whole reason the dashboard is in the repository.**
+    #
+    # With UI updates allowed, Grafana keeps its own copy the moment its stored version reaches the
+    # file's, and the provisioner then *skips* the file — silently, with `reload` answering `200`.
+    # Measured: a fourth panel added to the file never appeared, Grafana served three panels at its
+    # own version 4 while the file said version 3, and every check short of counting the panels
+    # passed. A dashboard that ships with the code has to be owned by the code; somebody who wants
+    # it different changes the file, which is also how the change reaches everybody else.
+    allowUiUpdates: false
     options:
       path: /var/lib/grafana/dashboards/aira
       foldersFromFilesStructure: false

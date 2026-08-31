@@ -147,6 +147,14 @@ reaching the gateway — and `tools/tests/test_the_dashboard_asks_for_attributes
 compares every attribute its panels ask for against what the code writes, because a renamed
 attribute leaves a panel returning nothing and an empty panel reads as *"nothing happened"*.
 
+**`allowUiUpdates: false`, and that is not a preference.** With UI updates allowed, Grafana keeps
+its own copy the moment its stored version reaches the file's, and the provisioner then **skips the
+file silently** — `reload` still answers `200`. Measured: a fourth panel added to the file never
+appeared, Grafana served three panels at its own version 4 while the file said 3, and every check
+short of counting the panels *in the running Grafana* passed. Reported by the person looking at the
+screen, which is the only place it was visible. A dashboard that ships with the code is owned by
+the code.
+
 It also asserts that no panel asks for a payload. Prompts and responses are behind a storage
 switch, a retention clock and a role check (`FRD-505`, `ADR-0016`); a panel that surfaced one would
 route around all three in a Grafana everybody who operates the stack can read.
