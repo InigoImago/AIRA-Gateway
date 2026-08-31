@@ -17,6 +17,8 @@ from aira_management.config.security import effective_debug, enforce_safe_settin
 
 _settings = get_settings()
 configure_logging(_settings.log_level, json_output=_settings.log_json)
+# The **providers** only. Django is instrumented from `apps.api.ApiConfig.ready()`, because
+# that instrumentation inserts a middleware and `MIDDLEWARE` is assigned forty lines below.
 setup_observability(_settings)
 
 # Refuse to boot a non-local deployment that still carries the development defaults (ADR-0007).

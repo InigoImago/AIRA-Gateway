@@ -27,7 +27,7 @@ from aira_common.kafka import (
 )
 from aira_common.logging import get_logger
 from aira_common.observability import consuming
-from aira_gateway.config import GatewaySettings
+from aira_gateway.config import GatewaySettings, configure_worker
 from aira_gateway.consumer.apply import apply_event
 from aira_gateway.db.base import build_engine, build_sessionmaker
 
@@ -123,6 +123,11 @@ async def _apply_one(  # pragma: no cover - a thin alias over the tested functio
 
 async def run_consumer(settings: GatewaySettings) -> None:  # pragma: no cover
     from aiokafka import AIOKafkaConsumer
+
+    # **Before the first message.** Without this the process has no tracer provider, so the
+    # span `apply_one_message` opens is discarded before it is built and a configuration
+    # change stops being one trace at the bus after all (`FRD-615`).
+    configure_worker(settings)
 
     engine = build_engine(settings.database_url(use_sqlite=False))
     # **No `create_all` here.** `gateway-migrate` runs `alembic upgrade head` and this worker waits
