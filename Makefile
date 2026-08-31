@@ -174,6 +174,19 @@ up-lab: env ## Start the stack with the laboratory overlay (LAB_SIEM_ENDPOINT=..
 	@echo "  Laboratory overlay active. The reference stack is unchanged; drop $(LAB_F) to leave."
 	@echo "  Sending to: $${LAB_SIEM_ENDPOINT:-(unset — Compose will have refused)}"
 
+lab-status: ## Did the laboratory endpoint receive anything? (counts + the last failures)
+	@# **"No errors" and "it arrived" are different statements**, and only one of them can be read
+	@# off a log: the collector logs a delivery failure and says nothing at all about a success, at
+	@# any level. So this reads the collector's own metrics — `sent` against `send_failed`, per
+	@# exporter — and prints the recent failures underneath, which carry the endpoint and the
+	@# reason. Both halves, because a zero in the first is explained by the second.
+	@uv run python tools/lab_status.py
+
+lab-logs: ## Follow the collector while the laboratory overlay is running
+	@# `LAB_LOG_LEVEL=debug` in deploy/compose/.env makes the export attempts themselves visible;
+	@# at `info` only the failures are.
+	docker logs -f $${AIRA_STACK:-aira}-otel-collector
+
 up-full: env ## Start EVERYTHING in containers, demo provisioning included (infra + apps + showcase)
 	@-$(MAKE) --no-print-directory config-verify
 	$(COMPOSE_FULL) up -d --build

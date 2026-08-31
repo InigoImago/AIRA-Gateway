@@ -42,6 +42,16 @@ services:
       LAB_SIEM_ENDPOINT: ${LAB_SIEM_ENDPOINT:?set it to your SIEM OTLP endpoint, e.g. make up-lab LAB_SIEM_ENDPOINT=http://t-siem-otel:4318}
       LAB_SIEM_AUTHORIZATION: ${LAB_SIEM_AUTHORIZATION:-}
       LAB_SIEM_INSECURE: ${LAB_SIEM_INSECURE:-false}
+      # How loud the collector is about itself. `debug` shows the export attempts; `info` shows
+      # only the failures, which is enough most of the time.
+      LAB_LOG_LEVEL: ${LAB_LOG_LEVEL:-info}
+      # What the `debug` exporter prints about traffic **arriving**: basic | normal | detailed.
+      LAB_DEBUG_VERBOSITY: ${LAB_DEBUG_VERBOSITY:-normal}
+    ports:
+      # The collector's own metrics — `sent` against `send_failed`, per exporter. Published so
+      # `make lab-status` can ask from outside the network, and bound to loopback like everything
+      # else this stack publishes.
+      - "${AIRA_BIND_HOST:-127.0.0.1}:${LAB_METRICS_PORT:-8889}:8889"
     extra_hosts:
       # The host this stack runs on, for a SIEM you have port-forwarded there.
       - "host.docker.internal:host-gateway"

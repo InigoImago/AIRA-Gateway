@@ -183,6 +183,37 @@ That starts the ordinary stack with `deploy/compose/docker-compose.lab.yml` laye
 collector runs a second configuration that fans out to your endpoint **beside** Grafana, and
 `extra_hosts` gives it the name. Undoing the experiment is leaving the file out.
 
+### Did it arrive?
+
+```bash
+make lab-status     # counts per exporter, and the reason when something failed
+make lab-logs       # follow the collector
+```
+
+**"No errors" and "it arrived" are different statements**, and only one of them can be read off a
+log: the collector logs a delivery failure and says nothing at all about a success, at any level.
+`lab-status` therefore reads its own counters — `delivered` against `failed`, per exporter — and
+prints the reason underneath. Measured against a name that does not resolve:
+
+```
+otlphttp/lab has delivered nothing.
+It is still retrying — `send_failed` counts a give-up, not an attempt.
+
+Why, in the collector's own words:
+  … Post "http://t-siem-otel:4318/v1/traces":
+  dial tcp: lookup t-siem-otel on 127.0.0.11:53: no such host
+```
+
+That an exporter which has delivered nothing is **missing from the table** rather than zero in it
+is not a display quirk: `send_failed` counts a *give-up*, and the retry sender does not give up
+until `max_elapsed_time`. For the first five minutes an unreachable endpoint produces no row at
+all, so the absence is stated in words.
+
+Every knob is a `LAB_*` variable — set it in `deploy/compose/.env` or on the command line, both
+work. `deploy/compose/.env.example` lists them with what each decides. They are deliberately not
+`AIRA_*`: they configure Compose, not the product, and a laboratory knob in the settings contract
+would be a setting the code does not have.
+
 Three things worth knowing, all of them measured rather than assumed:
 
 - **Adding DNS settings does not cost you the internal network.** On a user-defined bridge, every

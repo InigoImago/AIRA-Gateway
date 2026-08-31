@@ -41,7 +41,10 @@ exporters:
     tls:
       insecure: true
   debug:
-    verbosity: normal
+    # `LAB_DEBUG_VERBOSITY`: `basic` counts, `normal` one line per span, `detailed` every
+    # attribute. This is what *arrived at the collector* — not what was delivered onward, which is
+    # a different question and is answered by the metrics below.
+    verbosity: ${env:LAB_DEBUG_VERBOSITY}
   # The second destination. **Fan-out, not replacement**: Grafana keeps working, so a SIEM that is
   # unreachable costs you nothing you already had.
   otlphttp/lab:
@@ -72,4 +75,19 @@ service:
       exporters: [otlp_grpc/lgtm, debug, otlphttp/lab]
   telemetry:
     logs:
-      level: info
+      # `LAB_LOG_LEVEL`. At `info` a delivery **failure** is already a line — the retry sender says
+      # so with the endpoint and the interval. A **success** says nothing at any level, which is
+      # why the metrics below exist: "no errors" and "it arrived" are different statements, and
+      # only one of them can be read off a log.
+      level: ${env:LAB_LOG_LEVEL}
+    metrics:
+      # The collector's own figures, on 8889. `otelcol_exporter_sent_spans` against
+      # `otelcol_exporter_send_failed_spans`, **per exporter**, is the only thing in this stack
+      # that answers *did it arrive* rather than *did anything complain*. `make lab-status` reads
+      # them; the port is published so you can too.
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 0.0.0.0
+                port: 8889
