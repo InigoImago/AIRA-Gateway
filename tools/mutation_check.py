@@ -6036,6 +6036,22 @@ MUTATIONS = [
     # defect that was live on 2026-08-30, expressed as the one-line edit that puts it back — which
     # is what this file is for: *"when you fix a bug, add the mutation that reintroduces it."*
     Mutation(
+        "BUS5",
+        "the span says how many tools were offered and how many were used",
+        "gateway/src/aira_gateway/persistence/recorder.py",
+        "            **_tool_attributes(tool_calls),",
+        "            # tool figures dropped",
+        "gateway/tests/test_the_trace_says_how_many_tools.py",
+    ),
+    Mutation(
+        "BUS6",
+        "what a request offered is recorded even when it is then refused",
+        "gateway/src/aira_gateway/persistence/recorder.py",
+        '        "aira.tools.offered": int(tool_calls.get("declared") or 0),',
+        '        "aira.tools.offered": len(called),',
+        "gateway/tests/test_the_trace_says_how_many_tools.py",
+    ),
+    Mutation(
         "ONE1",
         "a suspension naming a person stops them whichever credential they hold",
         "gateway/src/aira_gateway/anomalies/suspensions.py",

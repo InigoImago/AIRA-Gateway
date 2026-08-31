@@ -6,7 +6,7 @@
   ],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 2,
+  "version": 3,
   "refresh": "30s",
   "time": {
     "from": "now-1h",
@@ -112,6 +112,37 @@
           },
           "queryType": "traceql",
           "query": "{ span.messaging.operation = \"process\" } | select(span.aira.event_type, span.messaging.destination.name, span.messaging.kafka.offset)",
+          "limit": 50,
+          "tableType": "spans"
+        }
+      ],
+      "options": {
+        "showHeader": true
+      }
+    },
+    {
+      "type": "table",
+      "title": "Agents \u2014 offered against used",
+      "description": "How many functions a request handed the model, and how many it asked for. `offered` is recorded before anything can refuse, so a request stopped by a control still says it wanted tools \u2014 which is what makes 'offered ten, asked for none' different from 'offered none' (FRD-131 FR-7). Names only; arguments are caller content and stay under the storage switch and the retention clock.",
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 31
+      },
+      "datasource": {
+        "type": "tempo",
+        "uid": "tempo"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "tempo",
+            "uid": "tempo"
+          },
+          "queryType": "traceql",
+          "query": "{ span.aira.tools.offered > 0 } | select(span.aira.use_case, span.aira.model, span.aira.tools.offered, span.aira.tools.called, span.aira.tools.names, span.aira.outcome)",
           "limit": 50,
           "tableType": "spans"
         }
