@@ -21,6 +21,7 @@ import time
 from collections.abc import Callable, Sequence
 from typing import Any, Protocol
 
+from aira_common.integration_debug import watch
 from aira_common.logging import get_logger
 
 _log = get_logger("aira_common.counters")
@@ -140,12 +141,18 @@ class RedisRunner:
         if now < self._unavailable_until:
             raise CountersUnavailable("Counter store is in a failed state; not retrying yet.")
         try:
-            client = self._connect()
-            registered = self._scripts.get(script)
-            if registered is None:
-                registered = client.register_script(script)
-                self._scripts[script] = registered
-            result = await registered(keys=list(keys), args=list(args))
+            # Watched at the *call*, not per counter, and successes included: "is Redis answering,
+            # and how slowly" is the question here, and a channel that only spoke up on failure
+            # would leave a store that answers in 400 ms indistinguishable from one that answers
+            # in 4 — which is the difference between a working gateway and one whose every
+            # request pays for it (`FRD-617` §3.3).
+            with watch("redis", "script", target=self._url, keys=len(keys)):
+                client = self._connect()
+                registered = self._scripts.get(script)
+                if registered is None:
+                    registered = client.register_script(script)
+                    self._scripts[script] = registered
+                result = await registered(keys=list(keys), args=list(args))
         except CountersUnavailable:
             raise
         except Exception as exc:  # redis errors, DNS, timeouts — all mean "not usable right now"

@@ -19,6 +19,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from aira_common.counters import DegradationLog, build_runner
 from aira_common.errors import AiraError, ErrorDetail, ErrorResponse
+from aira_common.integration_debug import configure_integration_debug
 from aira_common.logging import configure_logging, get_logger
 from aira_common.observability import (
     configure_observability,
@@ -89,6 +90,10 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
     # locally and are the whole attack surface anywhere else (`gateway/security.py`).
     enforce_safe_settings(settings)
     configure_logging(settings.log_level, json_output=settings.log_json)
+    # Before the first exporter and the first token, because both are watched call sites
+    # (`FRD-617`). Empty means off, which is what an installation that is not being
+    # integrated runs.
+    configure_integration_debug(settings.debug_integrations)
     otel_enabled = configure_observability(
         service_name=settings.app_name,
         service_version=__version__,

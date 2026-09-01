@@ -758,8 +758,10 @@ MUTATIONS = [
         "A3",
         "a token from the wrong issuer is rejected",
         "libs/src/aira_common/oidc.py",
-        "                issuer=self._issuer,",
-        "                # issuer intentionally dropped",
+        # Two lines, because `FRD-617` gave `issuer=self._issuer,` a second home at the same
+        # indentation — the `oidc_jwks_unavailable` line — and the harness edits the first match.
+        "                algorithms=self._algorithms,\n                issuer=self._issuer,",
+        "                algorithms=self._algorithms,\n                # issuer dropped",
         AUTH,
     ),
     Mutation(
@@ -5642,11 +5644,17 @@ MUTATIONS = [
         "      AIRA_OTEL_ENABLED: ${AIRA_OTEL_ENABLED:-false}\n"
         "      AIRA_OTEL_ENDPOINT: ${AIRA_OTEL_ENDPOINT:-http://otel-collector:4318}\n"
         "      AIRA_LOG_JSON: ${AIRA_LOG_JSON:-true}\n"
+        "      # One line per call to a system that is not ours, while one is being integrated\n"
+        "      # (`FRD-617`). Empty is off. Names: otel, kafka, auth, vault, redis, postgres, all.\n"
+        "      AIRA_DEBUG_INTEGRATIONS: ${AIRA_DEBUG_INTEGRATIONS:-}\n"
         "    depends_on:\n      postgres:",
         "      AIRA_ALLOWED_REGIONS: ${AIRA_ALLOWED_REGIONS:-}\n"
         "      AIRA_OTEL_ENABLED: ${AIRA_OTEL_ENABLED:-false}\n"
         "      AIRA_OTEL_ENDPOINT: ${AIRA_OTEL_ENDPOINT:-http://otel-collector:4318}\n"
         "      AIRA_LOG_JSON: ${AIRA_LOG_JSON:-true}\n"
+        "      # One line per call to a system that is not ours, while one is being integrated\n"
+        "      # (`FRD-617`). Empty is off. Names: otel, kafka, auth, vault, redis, postgres, all.\n"
+        "      AIRA_DEBUG_INTEGRATIONS: ${AIRA_DEBUG_INTEGRATIONS:-}\n"
         "    depends_on:\n      vault-init:\n        condition: service_completed_successfully\n"
         "      postgres:",
         "tools/tests/test_the_core_stack_carries_no_demo.py",
@@ -5659,11 +5667,17 @@ MUTATIONS = [
         "      AIRA_OTEL_ENABLED: ${AIRA_OTEL_ENABLED:-false}\n"
         "      AIRA_OTEL_ENDPOINT: ${AIRA_OTEL_ENDPOINT:-http://otel-collector:4318}\n"
         "      AIRA_LOG_JSON: ${AIRA_LOG_JSON:-true}\n"
+        "      # One line per call to a system that is not ours, while one is being integrated\n"
+        "      # (`FRD-617`). Empty is off. Names: otel, kafka, auth, vault, redis, postgres, all.\n"
+        "      AIRA_DEBUG_INTEGRATIONS: ${AIRA_DEBUG_INTEGRATIONS:-}\n"
         "    depends_on:\n      postgres:",
         "      AIRA_ALLOWED_REGIONS: ${AIRA_ALLOWED_REGIONS:-}\n"
         "      AIRA_OTEL_ENABLED: ${AIRA_OTEL_ENABLED:-false}\n"
         "      AIRA_OTEL_ENDPOINT: ${AIRA_OTEL_ENDPOINT:-http://otel-collector:4318}\n"
         "      AIRA_LOG_JSON: ${AIRA_LOG_JSON:-true}\n"
+        "      # One line per call to a system that is not ours, while one is being integrated\n"
+        "      # (`FRD-617`). Empty is off. Names: otel, kafka, auth, vault, redis, postgres, all.\n"
+        "      AIRA_DEBUG_INTEGRATIONS: ${AIRA_DEBUG_INTEGRATIONS:-}\n"
         "    depends_on:\n      nobody-defines-me:\n        condition: service_started\n"
         "      postgres:",
         "tools/tests/test_the_core_stack_carries_no_demo.py",
@@ -6228,6 +6242,159 @@ MUTATIONS = [
         '            "aira.api.surface": api,',
         "            # surface intentionally left off the span",
         "gateway/tests/test_the_span_says_what_the_request_was.py",
+    ),
+    # --- FRD-617: what a call to another system says about itself ---------------------------
+    Mutation(
+        "ID1",
+        "a misspelled system name refuses the process rather than watching nothing",
+        "libs/src/aira_common/integration_debug.py",
+        "        raise UnknownIntegration(",
+        "        return frozenset(wanted)\n        raise UnknownIntegration(",
+        "libs/tests/test_integration_debug.py",
+    ),
+    Mutation(
+        "ID2",
+        "a call that failed is reported as failed, not as a slow success",
+        "libs/src/aira_common/integration_debug.py",
+        '        collected["outcome"] = "timeout" if _is_timeout(exc) else "failed"',
+        '        collected["outcome"] = "ok"',
+        "libs/tests/test_integration_debug.py",
+    ),
+    Mutation(
+        "ID3",
+        "a timeout is told apart from a refusal",
+        "libs/src/aira_common/integration_debug.py",
+        '        if isinstance(seen, TimeoutError) or "Timeout" in type(seen).__name__:',
+        "        if False:",
+        "libs/tests/test_integration_debug.py",
+    ),
+    Mutation(
+        "ID16",
+        "a timeout a client wrapped in its own type is still reported as a timeout",
+        "libs/src/aira_common/integration_debug.py",
+        "        seen = seen.__cause__  # type: ignore[assignment]",
+        "        seen = None  # type: ignore[assignment]",
+        "libs/tests/test_integration_debug.py",
+    ),
+    Mutation(
+        "ID4",
+        "a credential in an address never reaches a debug line",
+        "libs/src/aira_common/integration_debug.py",
+        "        key: (redact_target(value) if key in _URL_FIELDS and isinstance(value, str) else value)",
+        "        key: value",
+        "libs/tests/test_integration_debug.py libs/tests/test_the_state_stores_say_what_they_answered.py",
+    ),
+    Mutation(
+        "ID5",
+        "a password in a URL's authority is redacted, not only one in its query",
+        "libs/src/aira_common/observability.py",
+        '    return f"{scheme}{marker}{user}:{REDACTED}@{host}{slash}{path}"',
+        "    return value",
+        "libs/tests/test_integration_debug.py gateway/tests/test_the_channel_is_wired_to_what_it_names.py",
+    ),
+    Mutation(
+        "ID6",
+        "off is off: nothing is written for a system nobody is watching",
+        "libs/src/aira_common/integration_debug.py",
+        "    if system not in _watched:\n        return\n    try:",
+        "    if not _watched:\n        return\n    try:",
+        "libs/tests/test_integration_debug.py",
+    ),
+    Mutation(
+        "ID14",
+        "off is off: a watched call site yields the shared no-op for a system nobody watches",
+        "libs/src/aira_common/integration_debug.py",
+        "    if system not in _watched:\n        yield _IGNORED",
+        "    if not _watched:\n        yield _IGNORED",
+        "libs/tests/test_integration_debug.py",
+    ),
+    Mutation(
+        "OT7",
+        "an OTLP export that answers FAILURE is reported as a failure",
+        "libs/src/aira_common/observability.py",
+        '                call.failed(f"exporter returned {name}")',
+        "                pass",
+        "libs/tests/test_a_line_about_otel_does_not_travel_by_otel.py",
+    ),
+    Mutation(
+        "OT8",
+        "a line about OTel does not travel by OTel",
+        "libs/src/aira_common/logging.py",
+        "    if not isinstance(event, str) or _hold_back.get():",
+        "    if not isinstance(event, str):",
+        "libs/tests/test_a_line_about_otel_does_not_travel_by_otel.py",
+    ),
+    Mutation(
+        "OT9",
+        "the OTel SDK's own explanation of a failed export reaches a terminal",
+        "libs/src/aira_common/observability.py",
+        "    logger.addHandler(SdkDiagnostics())",
+        "    pass",
+        "libs/tests/test_a_line_about_otel_does_not_travel_by_otel.py",
+    ),
+    Mutation(
+        "ID7",
+        "an unreachable identity provider is not reported as a rejected token",
+        "libs/src/aira_common/oidc.py",
+        "        except jwt.PyJWKClientConnectionError as exc:",
+        "        except jwt.PyJWKSetError as exc:",
+        "libs/tests/test_when_the_identity_provider_is_gone.py",
+    ),
+    Mutation(
+        "ID15",
+        "a malformed bearer token is a 401, not an unhandled exception",
+        "libs/src/aira_common/oidc.py",
+        "        except jwt.PyJWTError as exc:\n            # Not an outage.",
+        "        except jwt.PyJWKClientError as exc:\n            # Not an outage.",
+        "libs/tests/test_when_the_identity_provider_is_gone.py",
+    ),
+    Mutation(
+        "ID8",
+        "the JWKS fetch is bounded, rather than taking PyJWT's thirty seconds",
+        "libs/src/aira_common/oidc.py",
+        "    return PyJWKClient(jwks_uri, timeout=timeout)",
+        "    return PyJWKClient(jwks_uri)",
+        "libs/tests/test_when_the_identity_provider_is_gone.py",
+    ),
+    Mutation(
+        "ID9",
+        "token validation does not run on the event loop",
+        "gateway/src/aira_gateway/auth/dependencies.py",
+        "        principal = await asyncio.to_thread(validator.validate, token)",
+        "        principal = validator.validate(token)",
+        "gateway/tests/test_token_validation_does_not_hold_the_event_loop.py",
+    ),
+    Mutation(
+        "ID10",
+        "a published record says which partition and offset it landed on",
+        "libs/src/aira_common/kafka.py",
+        "            call.note(\n                partition=",
+        "            _unused = (\n                partition=",
+        "libs/tests/test_kafka_says_what_it_sent.py",
+    ),
+    Mutation(
+        "ID11",
+        "connecting to the broker is a watched call",
+        "libs/src/aira_common/kafka.py",
+        '            "producer.start",',
+        '            "producer.unwatched",',
+        "libs/tests/test_kafka_says_what_it_sent.py",
+    ),
+    Mutation(
+        "ID12",
+        "an event arriving on the bus is reported, not only one that could not be applied",
+        "gateway/src/aira_gateway/consumer/worker.py",
+        '                "consumer.receive",',
+        '                "consumer.unwatched",',
+        "gateway/tests/test_the_channel_is_wired_to_what_it_names.py",
+    ),
+    Mutation(
+        "ID13",
+        "a database that cannot be reached is reported",
+        "gateway/src/aira_gateway/db/base.py",
+        '        if not (getattr(context, "is_disconnect", False) or context.connection is None):',
+        "        if True:",
+        "gateway/tests/test_the_channel_is_wired_to_what_it_names.py",
     ),
 ]
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import model_validator
+from pydantic import field_validator, model_validator
 from pydantic.fields import FieldInfo
 from pydantic_settings import (
     BaseSettings,
@@ -178,6 +178,34 @@ class BaseAiraSettings(BaseSettings):
 
     otel_sample_ratio: float = 1.0
     """Trace sampling ratio (parent-based); 1.0 = sample everything."""
+
+    debug_integrations: str = ""
+    """Which external systems to narrate one line per call for (`FRD-617`).
+
+    A comma-separated selection from `otel`, `kafka`, `auth`, `vault`, `redis`, `postgres` — or
+    `all`. **Empty is off and is the default**, which is what a working installation runs; this
+    exists for the days when something is being integrated and *"did we send it, and did it
+    arrive"* has no answer anywhere.
+
+    Off is genuinely off: a call site then costs one set membership test and emits nothing. On
+    needs no second switch — the lines go out at `INFO`, so nobody has to discover that
+    `AIRA_LOG_LEVEL=DEBUG` is also required before the feature appears to work.
+    """
+
+    @field_validator("debug_integrations")
+    @classmethod
+    def _integrations_are_known(cls, value: str) -> str:
+        """A misspelled system name refuses the process, rather than watching nothing.
+
+        `LESSONS.md` §3: a setting that silently means nothing is worse than one that is missing,
+        because the operator concludes the *feature* is broken and stops using it. Imported here
+        rather than at module scope so that reading settings does not pull in the OpenTelemetry
+        SDK by way of the logging module.
+        """
+        from aira_common.integration_debug import parse_systems
+
+        parse_systems(value)
+        return value
 
 
 def _is_non_string_field(model: type[BaseSettings], name: str) -> bool:

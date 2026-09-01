@@ -34,6 +34,7 @@ from typing import Any
 
 import httpx
 
+from aira_common.integration_debug import watch
 from aira_common.logging import get_logger
 
 _log = get_logger("aira_common.secrets")
@@ -182,13 +183,21 @@ class VaultClient:
             )
 
         try:
-            response = self._client.post(
-                f"{self._config.address}/v1/auth/approle/login",
-                json={"role_id": self._config.role_id, "secret_id": secret_id},
-                headers={"X-Vault-Namespace": self._config.namespace}
-                if self._config.namespace
-                else {},
-            )
+            with watch(
+                "vault", "login", target=self._config.address, secret_id_source=source
+            ) as call:
+                response = self._client.post(
+                    f"{self._config.address}/v1/auth/approle/login",
+                    json={"role_id": self._config.role_id, "secret_id": secret_id},
+                    headers={"X-Vault-Namespace": self._config.namespace}
+                    if self._config.namespace
+                    else {},
+                )
+                # The **status**, never the body: a Vault error response echoes the request, and
+                # this request carries a secret-id.
+                call.note(status=response.status_code)
+                if response.status_code != httpx.codes.OK:
+                    call.failed(f"HTTP {response.status_code}")
         except httpx.HTTPError as exc:
             raise VaultUnavailable(
                 f"Vault at {self._config.address} is unreachable ({type(exc).__name__})."
@@ -218,7 +227,17 @@ class VaultClient:
         """
         url = f"{self._config.address}/v1/{self._config.mount}/data/{self._config.path}"
         try:
-            response = self._client.get(url, headers=self._headers(token))
+            with watch(
+                "vault",
+                "read",
+                target=url,
+                mount=self._config.mount,
+                path=self._config.path,
+            ) as call:
+                response = self._client.get(url, headers=self._headers(token))
+                call.note(status=response.status_code)
+                if response.status_code != httpx.codes.OK:
+                    call.failed(f"HTTP {response.status_code}")
         except httpx.HTTPError as exc:
             raise VaultUnavailable(
                 f"Vault at {self._config.address} is unreachable ({type(exc).__name__})."

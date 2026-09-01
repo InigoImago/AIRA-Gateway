@@ -5,6 +5,103 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## One line per call to a system that is not ours (2026-09-01)
+
+The owner spent a day unable to see why OTLP pushes were failing, with Vault, Kafka and Keycloak
+still to integrate, and asked for a switchable channel that says what went out to an external
+system and whether it arrived — timeouts included, and fully switchable off once it works.
+`FRD-617`, `ADR-0022`.
+
+### Why there was nothing to look at, precisely
+
+Everything this system says about itself describes a request it **received**. The calls it makes
+were visible only where a caller happened to log a failure, and never when they went well — the
+shape `tools/lab_status.py` was written for one layer out: *"no errors" and "it arrived" are
+different statements*, and only the first can be read off a log.
+
+For OTel it was worse than absent. The SDK reports an export failure — with the endpoint and the
+reason — on a stdlib logger under `opentelemetry.*`. That propagates to the root logger, and with
+`AIRA_OTEL_ENABLED=true` **the only handler there is the OTLP one**. So the sentence explaining why
+the exporter could not post was queued for export *through the exporter that could not post*, and
+reached no terminal, no file and no collector. `logging.lastResort` is no help — it prints only
+when a record finds *no* handler, and this one found the broken one. That is the whole mechanism
+behind the day that prompted this.
+
+### What was built
+
+`aira_common.integration_debug`: `watch(system, operation, **fields)` times a call and emits one
+structured line — system, operation, outcome, duration, the caller's fields, and on failure the
+exception type and message. `AIRA_DEBUG_INTEGRATIONS` selects from a closed vocabulary — `otel`,
+`kafka`, `auth`, `vault`, `redis`, `postgres`, or `all`. Empty is the default and costs one
+frozenset membership test per call site. The lines are `INFO`/`WARNING` rather than `DEBUG`, so
+there is no second switch to discover.
+
+Wired at the call that actually crosses the boundary: the three OTLP exporters (wrapped, so a
+`FAILURE` *returned as a value* is not reported as a slow success), `AiokafkaProducer.start/send/
+stop` and the consumer's `start`/receive, the JWKS fetch, Vault's AppRole login and KV read, the
+Redis script call, and SQLAlchemy's `connect`/`handle_error` plus Django's `connection_created`.
+
+Two things had to hold that are not obvious. A line about `otel` must not enter the OTLP log
+pipeline, or reporting a failed log export produces a record queued for export — so the channel
+marks those lines local-only and `logging.hold_back_from_export` takes them off the bridge to the
+export logger. And the SDK's own `opentelemetry.*` logger stops propagating and is relayed to
+stdout instead, which is the fix for the paragraph above.
+
+### Three defects found on the way, two of them mine
+
+**An unreachable Keycloak was indistinguishable from a bad token.** `PyJWKClientError` is a
+`PyJWTError`, so the JWKS fetch sat inside the same `try` as the decode: a refused connection, a
+DNS failure and a read timeout all came out as `oidc_token_rejected` at `INFO` and a `401`. The
+moment the identity provider goes away was reported to every operator as *every user's credential
+is suddenly invalid*. Split: `oidc_jwks_unavailable` at `WARNING`, naming the URI and saying in
+words that this is not the callers' credentials.
+
+**And under it, a blocking call on the event loop.** `build_jwks_client` passed no timeout, so
+PyJWT's default of 30 s applied, and `PyJWKClient` fetches with `urllib` — synchronously, from
+`resolve_principal`, which is an `async` dependency. A Keycloak that accepts connections and does
+not answer therefore froze *every* concurrent request on the worker for thirty seconds, including
+the ones authenticating with an API key and the ones asking `/readyz`. Now 5 s and
+`asyncio.to_thread`; `test_token_validation_does_not_hold_the_event_loop.py` measures concurrency
+rather than reading the source, and goes red when the `to_thread` is removed.
+
+**A `500` I introduced, found by the demonstration.** Splitting the fetch out of `verify` narrowed
+what its `except` covered, and `PyJWKClient` parses the token to find its `kid` *before* fetching —
+so a malformed bearer raised `DecodeError` out of `verify()`. A `401` had become a `500`, for a
+value any client can send. Found within a minute of pointing the demonstration script at a
+hand-written token; not found by seven new tests, all of which used well-formed ones. `LESSONS.md`
+§1's *a caller's own value must never become a server error*, arrived at from the inside this time.
+
+### Measured against wrong ports, dead hosts and a socket that never answers
+
+Nine scenarios, each producing the line it should (`FRD-617` §7). Two of them changed the design:
+
+- **A wrapped timeout read as a refusal.** `PyJWKClient` raises `PyJWKClientConnectionError` for a
+  refused connection *and* for a read timeout, so `outcome` said `failed` for both — the field
+  meant to separate "the port is wrong" from "something is swallowing the packets" separated
+  nothing on the one system where that is asked per request. `_is_timeout` now walks `__cause__`,
+  bounded at three. Measured after: `timeout 2009ms` against `failed 0.6ms`, same exception type.
+- **A Redis password is in the authority, not the query.** `redact_url_query` cannot see
+  `redis://aira:s3cret@host`. `redact_url_credentials` and `redact_target` were added beside it,
+  and the channel redacts any address it is handed.
+
+And the property the owner asked for last: the same run with `AIRA_DEBUG_INTEGRATIONS=` produces
+not one line from the channel.
+
+### What the guards caught
+
+The channel's writer was called `emit`, and `emit("…")` is this codebase's word for publishing a
+configuration event — two guards read the source for it, and both failed on `postgres`. Renamed to
+`report`. `test_mutation_anchors` then caught an anchor that had become ambiguous because
+`issuer=self._issuer,` gained a second home at the same indentation, and four compose anchors that
+my new environment line sat inside. Each of those is a check doing exactly what it was written for.
+
+Seventeen new mutations (`ID1`–`ID16`, `OT7`–`OT9`); the harness now defends **690** properties.
+One survived on the first run — the gate inside `report`, which `watch` refuses in front of, so
+nothing had ever reached it — and one more after that, the no-op handle while a *different* system
+is watched. Both now have tests written for the case rather than for the happy path.
+
+---
+
 ## What a stream sends, and in which encoding (2026-09-01)
 
 Two questions asked of yesterday's wiring: does telemetry still leave when the response is a

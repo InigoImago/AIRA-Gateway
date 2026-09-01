@@ -12,7 +12,7 @@ import logging
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from opentelemetry import metrics, trace
 from opentelemetry._logs import set_logger_provider
@@ -66,25 +66,38 @@ def configure_observability(
     )
     base = endpoint.rstrip("/")
 
+    # **Before the first exporter exists.** What the SDK says about a failed export must stop
+    # propagating to the root logger, because the handler installed there a few lines below is the
+    # OTLP one — see :class:`SdkDiagnostics` for what that cost.
+    route_sdk_diagnostics()
+
+    traces = f"{base}/v1/traces"
+    metrics_endpoint = f"{base}/v1/metrics"
+    logs = f"{base}/v1/logs"
+
     tracer_provider = TracerProvider(
         resource=resource, sampler=ParentBased(TraceIdRatioBased(sample_ratio))
     )
     tracer_provider.add_span_processor(
-        BatchSpanProcessor(OTLPSpanExporter(endpoint=f"{base}/v1/traces"))
+        BatchSpanProcessor(watched_export(OTLPSpanExporter(endpoint=traces), "traces", traces))
     )
     trace.set_tracer_provider(tracer_provider)
 
     meter_provider = MeterProvider(
         resource=resource,
         metric_readers=[
-            PeriodicExportingMetricReader(OTLPMetricExporter(endpoint=f"{base}/v1/metrics"))
+            PeriodicExportingMetricReader(
+                watched_export(
+                    OTLPMetricExporter(endpoint=metrics_endpoint), "metrics", metrics_endpoint
+                )
+            )
         ],
     )
     metrics.set_meter_provider(meter_provider)
 
     logger_provider = LoggerProvider(resource=resource)
     logger_provider.add_log_record_processor(
-        BatchLogRecordProcessor(OTLPLogExporter(endpoint=f"{base}/v1/logs"))
+        BatchLogRecordProcessor(watched_export(OTLPLogExporter(endpoint=logs), "logs", logs))
     )
     set_logger_provider(logger_provider)
     # Bridge stdlib logging (framework logs) to OTLP; structlog app logs keep their
@@ -92,6 +105,148 @@ def configure_observability(
     logging.getLogger().addHandler(LoggingHandler(logger_provider=logger_provider))
 
     _configured = True
+    return True
+
+
+class WatchedExport:
+    """An OTLP exporter that says what each export attempt did (`FRD-617` §3.1).
+
+    The SDK hands a batch to an exporter on a background thread and keeps the answer to itself: a
+    success is reported nowhere at any log level, and a failure is reported on a stdlib logger
+    whose only handler — with OTLP logging on — is the exporter that just failed. So the question
+    *"did anything actually get through"* had no answer inside the process at all, and
+    `tools/lab_status.py` answers only the leg **after** this one.
+
+    Written by delegation rather than by subclassing, because the three signals do not share a
+    base: `SpanExporter.export(spans)`, `LogExporter.export(batch)` and
+    `MetricExporter.export(metrics_data, timeout_millis, **kwargs)` differ in signature, and
+    `PeriodicExportingMetricReader` reaches past the interface entirely to read
+    `_preferred_temporality` and `_preferred_aggregation` off whatever it is given. `__getattr__`
+    forwarding satisfies all of that without this module knowing which of the three it holds.
+
+    **Always wrapped, gated per call.** The alternative — wrap only when the channel is on — makes
+    the wiring itself conditional on a setting read at start-up, and this project has paid for
+    exactly that shape often enough to name it (`LESSONS.md` §1). `watch` costs one set membership
+    test when nobody is watching, and an export happens on a timer, not per request.
+    """
+
+    __slots__ = ("_endpoint", "_exporter", "_signal")
+
+    def __init__(self, exporter: Any, signal: str, endpoint: str) -> None:
+        self._exporter = exporter
+        self._signal = signal
+        self._endpoint = endpoint
+
+    def __getattr__(self, name: str) -> Any:
+        # `_exporter` itself is a slot, so it is found by normal lookup and never arrives here —
+        # except before `__init__` has run, where forwarding would recurse until the stack ends.
+        if name == "_exporter":
+            raise AttributeError(name)
+        return getattr(self._exporter, name)
+
+    def export(self, *args: Any, **kwargs: Any) -> Any:
+        from aira_common.integration_debug import watch
+
+        with watch(
+            "otel", "export", signal=self._signal, target=self._endpoint, items=_batch_size(args)
+        ) as call:
+            result = self._exporter.export(*args, **kwargs)
+            # **The failure that raises nothing.** An OTLP exporter answers `FAILURE` as a *value*
+            # after it has exhausted its own retries, so a channel watching only for exceptions
+            # would report every unsuccessful export as a success that took a while — which is the
+            # exact reassurance this feature exists to stop giving.
+            name = getattr(result, "name", str(result))
+            call.note(result=name)
+            if name != "SUCCESS":
+                call.failed(f"exporter returned {name}")
+            return result
+
+
+def watched_export[Exporter](exporter: Exporter, signal: str, endpoint: str) -> Exporter:
+    """Wrap ``exporter`` in :class:`WatchedExport`, keeping its type for the SDK's signature.
+
+    The cast is the one place this file is less than honest with the type checker, and it is a true
+    statement about run time: `WatchedExport` forwards every attribute it does not define, so it is
+    a structural stand-in for whichever of the three exporter protocols it holds. The three
+    protocols have no common base — `SpanExporter`, `MetricExporter` and `LogExporter` are
+    unrelated classes with different `export` signatures — so the alternative is three casts at
+    three call sites, and a cast repeated three times is one that is eventually written a fourth
+    time around something that is *not* a stand-in.
+    """
+    return cast(Exporter, WatchedExport(exporter, signal, endpoint))
+
+
+def _batch_size(args: tuple[Any, ...]) -> int | None:
+    """How many items this export carried, where that is a countable thing.
+
+    Spans and log records arrive as a sequence; metrics arrive as a `MetricsData` tree that has no
+    meaningful single count. `None` rather than `0` for the third: "we did not count" and "there
+    was nothing" are different statements, the same distinction `FRD-117`'s prober draws between
+    unprobed and healthy.
+    """
+    if not args:
+        return None
+    try:
+        return len(args[0])
+    except TypeError:
+        return None
+
+
+class SdkDiagnostics(logging.Handler):
+    """Print what the OpenTelemetry SDK says about itself, instead of posting it to itself.
+
+    **The mechanism behind a whole day of not being able to see why OTLP pushes failed.** The SDK
+    reports an export failure — with the endpoint and the underlying error — on a stdlib logger
+    under `opentelemetry.*`. That record propagates to the root logger, and with
+    `AIRA_OTEL_ENABLED=true` the only handler there is :class:`LoggingHandler`, the OTLP one. So
+    the sentence explaining why the exporter could not post was queued for export **through the
+    exporter that could not post**, and reached no terminal, no file and no collector.
+    `logging.lastResort` is no help: it prints only when a record finds *no* handler, and this one
+    found the broken one.
+
+    So the `opentelemetry` tree stops propagating and comes here instead, where it is written to
+    stdout like every other line and marked local-only so it cannot re-enter the pipeline it is
+    about.
+
+    Its level is left alone deliberately — inherited, so `WARNING` and above, which is what the SDK
+    uses for the things worth reading. Lowering it to see successful exports would buy every
+    instrumentation library's `DEBUG` chatter as well, and successful exports are already reported,
+    with a duration, by :class:`WatchedExport`.
+    """
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            # Imported here, not at module scope: `aira_common.logging` imports this module for
+            # the access-log redaction, and a second edge the other way is an import cycle.
+            from aira_common.logging import get_logger
+
+            log = get_logger("opentelemetry.sdk")
+            say = log.warning if record.levelno >= logging.WARNING else log.info
+            say(
+                "otel_sdk",
+                level=record.levelname,
+                logger=record.name,
+                message=redact_url_query(record.getMessage())[:400],
+                local_only=True,
+            )
+        except Exception:  # noqa: BLE001 — a diagnostic must never be the reason something fails
+            return
+
+
+def route_sdk_diagnostics() -> bool:
+    """Send the `opentelemetry` logger tree to stdout rather than into OTLP. Idempotent.
+
+    Returns whether it installed the handler, so a caller can say so and a test can assert it
+    without reading the logging module's private state.
+    """
+    logger = logging.getLogger("opentelemetry")
+    if any(isinstance(handler, SdkDiagnostics) for handler in logger.handlers):
+        return False
+    logger.addHandler(SdkDiagnostics())
+    # Nothing under `opentelemetry` may reach the root logger, because the root logger is where the
+    # OTLP handler lives. This is the whole fix; the handler above is what keeps the records
+    # readable once they stop going there.
+    logger.propagate = False
     return True
 
 
@@ -168,6 +323,44 @@ def redact_url_query(value: str) -> str:
         return value
     path, _, query = value.partition("?")
     return f"{path}?{redact_query_string(query)}"
+
+
+def redact_url_credentials(value: str) -> str:
+    """Replace a ``user:password@`` in a URL's authority with the user alone.
+
+    The **other** place a credential hides in a URL, and the one `redact_url_query` cannot see. A
+    Gemini key rides in the query string; a Redis, AMQP or Postgres URL carries its password in the
+    authority — `redis://aira:s3cret@redis:6379/0` is the ordinary spelling, and it is the value of
+    `AIRA_REDIS_URL` in any deployment that authenticates.
+
+    Written against the `scheme://` marker rather than with `urlsplit`, because two of the three
+    readers of this family are handed a **request line** (`GET /v1/x?y HTTP/1.1`) rather than a
+    URL, and a parser confident enough to find an authority in that is one that will eventually
+    mangle a path. No marker, no authority, nothing to do.
+    """
+    marker = "://"
+    if marker not in value:
+        return value
+    scheme, _, rest = value.partition(marker)
+    authority, slash, path = rest.partition("/")
+    if "@" not in authority:
+        return value
+    userinfo, _, host = authority.rpartition("@")
+    # The user is kept: "which account did we connect as" is exactly the question an integration
+    # is debugging, and it is not the secret half.
+    user = userinfo.partition(":")[0]
+    return f"{scheme}{marker}{user}:{REDACTED}@{host}{slash}{path}"
+
+
+def redact_target(value: str) -> str:
+    """Both halves, for an address that is about to be written to a log line.
+
+    `aira_common.integration_debug` reports *where* a call went, and the addresses it is handed
+    come from six different clients — an OTLP endpoint, a broker list, a JWKS URI, a Vault path, a
+    Redis URL. Between them they use both hiding places, so the one function that takes a target
+    applies both rules rather than leaving each call site to know which kind it holds.
+    """
+    return redact_url_credentials(redact_url_query(value))
 
 
 def _redact_arg(value: object) -> object:

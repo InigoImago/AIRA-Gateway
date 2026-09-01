@@ -14,6 +14,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from aira_common.integration_debug import watch
 from aira_common.kafka import (
     ANOMALY_RULE_TOPIC,
     API_KEY_TOPIC,
@@ -32,6 +33,11 @@ from aira_gateway.consumer.apply import apply_event
 from aira_gateway.db.base import build_engine, build_sessionmaker
 
 _log = get_logger("aira_gateway.consumer")
+
+#: The consumer group both the client and the `FRD-617` line name. One constant, because a
+#: diagnostic that reports a different group than the one that subscribed is a diagnostic that
+#: sends somebody to look at the wrong consumer lag.
+GROUP_ID = "aira-gateway"
 
 
 def decode_event_type(headers: list[tuple[str, bytes]] | None) -> str | None:
@@ -115,10 +121,43 @@ async def apply_one_message(
     return event_type
 
 
-async def _apply_one(  # pragma: no cover - a thin alias over the tested function
-    sessionmaker: async_sessionmaker[AsyncSession], message: Any
-) -> None:
-    await apply_one_message(sessionmaker, message)
+async def consume_forever(
+    consumer: Any, sessionmaker: async_sessionmaker[AsyncSession], target: str = ""
+) -> int:
+    """Start the consumer, apply everything that arrives, and stop it. Returns messages seen.
+
+    Split out of `run_consumer` so the loop can be driven with a fake broker. What is being tested
+    is not the `async for` — it is that the three `FRD-617` call sites exist and are reached:
+    `consumer.start()` is where a SASL mechanism, a trust store and a broker address are first
+    proven against reality, and the receive line is the only place that says *an event arrived at
+    all*. `run_consumer` around this is client construction and nothing else.
+
+    ``target`` is the broker address, carried for the line rather than read back off the client —
+    aiokafka spells it differently in different versions, and a diagnostic that guesses at a
+    private attribute is one that quietly starts saying `None`.
+    """
+    with watch("kafka", "consumer.start", target=target, group=GROUP_ID):
+        await consumer.start()
+    seen = 0
+    try:
+        async for message in consumer:
+            seen += 1
+            # `apply_one_message` swallows its own failures on purpose — one bad event must not
+            # take the consumer down — so this `watch` will almost never see an exception. The
+            # `applied` field is what carries the difference; the failure itself is already a
+            # `config_event_failed` line and a red span.
+            with watch(
+                "kafka",
+                "consumer.receive",
+                topic=getattr(message, "topic", None),
+                partition=getattr(message, "partition", None),
+                offset=getattr(message, "offset", None),
+            ) as call:
+                applied = await apply_one_message(sessionmaker, message)
+                call.note(event_type=applied, applied=applied is not None)
+        return seen
+    finally:
+        await consumer.stop()
 
 
 async def run_consumer(settings: GatewaySettings) -> None:  # pragma: no cover
@@ -147,7 +186,7 @@ async def run_consumer(settings: GatewaySettings) -> None:  # pragma: no cover
         ANOMALY_RULE_TOPIC,
         MODEL_TOPIC,
         bootstrap_servers=settings.kafka_bootstrap_servers,
-        group_id="aira-gateway",
+        group_id=GROUP_ID,
         auto_offset_reset="earliest",
         value_deserializer=lambda value: json.loads(value.decode("utf-8")),
         # The consumer authenticates with the same settings the relay publishes under. An
@@ -155,12 +194,9 @@ async def run_consumer(settings: GatewaySettings) -> None:  # pragma: no cover
         # authorization is read from — see `KafkaSecurity`.
         **settings.kafka_security().client_kwargs(),
     )
-    await consumer.start()
     try:
-        async for message in consumer:
-            await _apply_one(sessionmaker, message)
+        await consume_forever(consumer, sessionmaker, settings.kafka_bootstrap_servers)
     finally:
-        await consumer.stop()
         await engine.dispose()
 
 

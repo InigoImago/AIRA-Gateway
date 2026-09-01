@@ -12,6 +12,7 @@ environment ([§7](#7-secrets-from-vault)).
 | Jump to                                                       |                                                |
 | ------------------------------------------------------------- | ---------------------------------------------- |
 | [1 Common](#1-common-to-both-services)                        | logging, environment, currency, tracing        |
+| [1a Integration debugging](#1a-watching-a-call-to-another-system) | one line per call to another system        |
 | [2 Gateway](#2-gateway)                                       | the data plane                                 |
 | [3 Model platforms](#3-model-platforms)                       | Vertex, Foundry, OpenAI-compatible, Gemini API |
 | [4 Management](#4-management)                                 | the control plane                              |
@@ -34,8 +35,55 @@ environment ([§7](#7-secrets-from-vault)).
 | `AIRA_OTEL_ENABLED`                                            | `false`                                                    | OTLP export of traces, metrics and logs.                                                                                                                                          |
 | `AIRA_OTEL_ENDPOINT`                                           | `http://localhost:4318`                                    | Collector endpoint (HTTP/protobuf).                                                                                                                                               |
 | `AIRA_OTEL_SAMPLE_RATIO`                                       | `1.0`                                                      | 1.0 = every trace.                                                                                                                                                                |
+| `AIRA_DEBUG_INTEGRATIONS`                                      | _(empty)_                                                  | One log line per call to another system, while you are wiring one up. See [§1a](#1a-watching-a-call-to-another-system) — empty is off, and off is what a working installation runs. |
 | `AIRA_POSTGRES_HOST` / `_PORT` / `_DB` / `_USER` / `_PASSWORD` | `localhost` / `5432` / _(differs)_ / `aira` / `aira-local` | **Two different databases** — see the note below.                                                                                                                                 |
 | `AIRA_KAFKA_BOOTSTRAP_SERVERS`                                 | `localhost:29092`                                          |                                                                                                                                                                                   |
+
+### 1a. Watching a call to another system
+
+`AIRA_DEBUG_INTEGRATIONS` turns on one structured log line per call this service makes to a system
+that is not ours ([`FRD-617`](features/FRD-617-watching-the-wire-to-another-system.md),
+[`ADR-0022`](adr/ADR-0022-a-call-to-another-system-says-so.md)). It exists for the days when
+something is being integrated and *"did we send it, and did it arrive"* has no answer anywhere.
+
+```bash
+AIRA_DEBUG_INTEGRATIONS=            # off — the default
+AIRA_DEBUG_INTEGRATIONS=otel        # one system
+AIRA_DEBUG_INTEGRATIONS=kafka,auth  # several
+AIRA_DEBUG_INTEGRATIONS=all         # every one of them
+```
+
+| Name | What gets a line |
+| --- | --- |
+| `otel` | Every OTLP export: the signal, how many items, the endpoint, the duration, and whether the collector took it. Plus whatever the OpenTelemetry SDK itself says about a failure. |
+| `kafka` | Connecting to the broker (which is where a SASL mechanism, a trust store and an address are first proven), each record with the partition and offset it landed on, and each event that arrives at the consumer. |
+| `auth` | The JWKS fetch against the identity provider — its duration, and the reason when it fails. |
+| `vault` | The AppRole login and the KV read: the status Vault gave, the path, and where the secret-id came from. Never a value. |
+| `redis` | Each counter script: the duration, and the reason when the store is not usable. |
+| `postgres` | A new physical connection, and a failure to establish one. **Not** a line per statement — those are in the trace. |
+
+There is no second switch. The lines are `INFO` (`WARNING` when the call failed), so
+`AIRA_DEBUG_INTEGRATIONS` alone is enough; you do not also need `AIRA_LOG_LEVEL=DEBUG`.
+
+A name this build does not know **refuses the process at start-up**, with the valid names in the
+message — rather than starting up and watching nothing, which reads like a broken feature.
+
+What a line looks like, and what it never carries:
+
+```json
+{"system": "otel", "operation": "export", "outcome": "failed", "signal": "traces",
+ "target": "http://otel-collector:4318/v1/traces", "items": 12, "duration_ms": 5003.7,
+ "error_type": "ConnectTimeout", "error": "timed out", "event": "integration_call",
+ "level": "warning"}
+```
+
+No payload, no token, no secret value, no message body, no bound SQL parameter. Addresses are
+redacted in both places a credential hides in one — a `?key=` parameter and a `user:password@`
+authority — so `redis://aira:REDACTED@redis:6379/0` is what reaches the log.
+
+**Lines about `otel` go to stdout only** and are never exported over OTLP. A report that a log
+export failed would otherwise become a log record queued for export.
+
 
 ### How this service authenticates to Kafka
 

@@ -9,9 +9,11 @@ is propagated on Kafka headers.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from aira_common.integration_debug import watch
 from aira_common.observability import kafka_headers_for
 
 USECASE_TOPIC = "aira.usecases"
@@ -119,32 +121,76 @@ class InMemoryProducer:
 
 
 class AiokafkaProducer:
-    """Real aiokafka-backed producer (integration-tested)."""
+    """Real aiokafka-backed producer.
+
+    **The client is built by an injected factory**, and that is not a testing nicety. `start()` is
+    where a `security_protocol`, a SASL mechanism, a username, a trust store and a broker address
+    are all first tested against reality at once, and it was three lines with no logging and a
+    `# pragma: no cover` — so the one call in this system where a Kafka credential is proven had
+    no unit test and said nothing when it failed. The factory lets the whole path be driven with a
+    fake broker, which is what makes the `FRD-617` lines below a wire that is tested rather than
+    two ends that both look right (`LESSONS.md` §1).
+    """
 
     def __init__(
-        self, bootstrap_servers: str, security: KafkaSecurity | None = None
-    ) -> None:  # pragma: no cover
+        self,
+        bootstrap_servers: str,
+        security: KafkaSecurity | None = None,
+        *,
+        factory: Callable[..., Any] | None = None,
+    ) -> None:
         self._bootstrap_servers = bootstrap_servers
         self._security = security or KafkaSecurity()
+        self._factory = factory or _aiokafka_producer
         self._producer: Any = None
 
-    async def start(self) -> None:  # pragma: no cover
-        from aiokafka import AIOKafkaProducer
+    async def start(self) -> None:
+        with watch(
+            "kafka",
+            "producer.start",
+            target=self._bootstrap_servers,
+            protocol=self._security.protocol,
+        ):
+            self._producer = self._factory(
+                bootstrap_servers=self._bootstrap_servers,
+                value_serializer=lambda value: json.dumps(value).encode("utf-8"),
+                **self._security.client_kwargs(),
+            )
+            await self._producer.start()
 
-        self._producer = AIOKafkaProducer(
-            bootstrap_servers=self._bootstrap_servers,
-            value_serializer=lambda value: json.dumps(value).encode("utf-8"),
-            **self._security.client_kwargs(),
-        )
-        await self._producer.start()
-
-    async def stop(self) -> None:  # pragma: no cover
+    async def stop(self) -> None:
         if self._producer is not None:
-            await self._producer.stop()
+            with watch("kafka", "producer.stop", target=self._bootstrap_servers):
+                await self._producer.stop()
 
-    async def send(self, record: KafkaRecord) -> None:  # pragma: no cover
+    async def send(self, record: KafkaRecord) -> None:
         headers = [(EVENT_TYPE_HEADER, record.event_type.encode("utf-8"))]
         headers.extend(kafka_headers_for(record.traceparent))
-        await self._producer.send_and_wait(
-            record.topic, value=record.payload, key=record.key.encode("utf-8"), headers=headers
-        )
+        with watch(
+            "kafka",
+            "producer.send",
+            target=self._bootstrap_servers,
+            topic=record.topic,
+            key=record.key,
+            event_type=record.event_type,
+            traced=bool(record.traceparent),
+        ) as call:
+            metadata = await self._producer.send_and_wait(
+                record.topic, value=record.payload, key=record.key.encode("utf-8"), headers=headers
+            )
+            # **Where it landed**, which `send_and_wait` has always returned and this discarded.
+            # A partition and an offset are what somebody takes to `kafka-console-consumer` when
+            # the far end says it never saw the event; without them the producer's word is the
+            # only evidence that anything was published.
+            call.note(
+                partition=getattr(metadata, "partition", None),
+                offset=getattr(metadata, "offset", None),
+            )
+
+
+def _aiokafka_producer(**kwargs: Any) -> Any:  # pragma: no cover - the real client, by name
+    """The default factory. Imported here so aiokafka stays absent from a process that never
+    produces — the management API imports this module for its topic names alone."""
+    from aiokafka import AIOKafkaProducer
+
+    return AIOKafkaProducer(**kwargs)

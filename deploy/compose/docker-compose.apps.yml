@@ -163,6 +163,9 @@ services:
       AIRA_OTEL_ENABLED: ${AIRA_OTEL_ENABLED:-false}
       AIRA_OTEL_ENDPOINT: ${AIRA_OTEL_ENDPOINT:-http://otel-collector:4318}
       AIRA_LOG_JSON: ${AIRA_LOG_JSON:-true}
+      # One line per call to a system that is not ours, while one is being integrated
+      # (`FRD-617`). Empty is off. Names: otel, kafka, auth, vault, redis, postgres, all.
+      AIRA_DEBUG_INTEGRATIONS: ${AIRA_DEBUG_INTEGRATIONS:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -241,6 +244,9 @@ services:
       AIRA_OTEL_ENABLED: ${AIRA_OTEL_ENABLED:-false}
       AIRA_OTEL_ENDPOINT: ${AIRA_OTEL_ENDPOINT:-http://otel-collector:4318}
       AIRA_LOG_JSON: ${AIRA_LOG_JSON:-true}
+      # One line per call to a system that is not ours, while one is being integrated
+      # (`FRD-617`). Empty is off. Names: otel, kafka, auth, vault, redis, postgres, all.
+      AIRA_DEBUG_INTEGRATIONS: ${AIRA_DEBUG_INTEGRATIONS:-}
     depends_on:
       postgres:
         condition: service_healthy

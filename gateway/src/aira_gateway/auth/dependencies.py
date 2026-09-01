@@ -6,6 +6,7 @@ same resolver. On failure a Gemini-shaped 401 is raised.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 
 from fastapi import Depends, Request
@@ -51,7 +52,13 @@ async def resolve_principal(request: Request) -> Principal | None:
     # Otherwise treat it as an OIDC bearer (JWT), if OIDC is configured.
     validator: OidcValidator | None = request.app.state.oidc_validator
     if validator is not None:
-        principal = validator.validate(token)
+        # **Off the event loop** (`FRD-617` §3.4). `validate` verifies an RS256 signature and, on a
+        # cold start or after a key rotation, fetches the JWKS — and `PyJWKClient` fetches with
+        # `urllib`, synchronously. Called directly from this coroutine, a Keycloak that accepts
+        # connections and does not answer stalled every concurrent request on the worker for the
+        # length of that fetch, not just this one: `/readyz` included, and requests authenticating
+        # with an API key included. A bounded timeout alone would only have shortened the stall.
+        principal = await asyncio.to_thread(validator.validate, token)
         return await _with_group_grants(request, principal) if principal else None
     return None
 

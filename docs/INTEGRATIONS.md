@@ -28,6 +28,44 @@ graph LR
 
 ---
 
+## 0. When it does not work: watching the wire
+
+Read this before section 1, because it is what turns the rest of this document into a loop you can
+close. Every system below is reached over a network, with credentials, and every one of them fails
+silently in at least one of its modes. `AIRA_DEBUG_INTEGRATIONS` makes each call say what it did:
+
+```bash
+AIRA_DEBUG_INTEGRATIONS=all      # while you are wiring something up
+AIRA_DEBUG_INTEGRATIONS=kafka    # or just the one you are working on
+AIRA_DEBUG_INTEGRATIONS=         # off — and off is what a working installation runs
+```
+
+One line per call, on stdout with the rest of the service log — what went where, how long it took,
+and the far end's own words when it failed:
+
+```json
+{"system": "kafka", "operation": "producer.start", "outcome": "failed", "duration_ms": 64.5,
+ "target": "broker-a:9093", "protocol": "SASL_SSL", "error_type": "KafkaConnectionError",
+ "error": "Unable to bootstrap from [('broker-a', 9093, AddressFamily.AF_INET)]",
+ "event": "integration_call", "level": "warning"}
+```
+
+`outcome` separates **`timeout`** from **`failed`** deliberately: a refusal is a wrong address, port
+or credential and is fixed in configuration; a timeout is a firewall, a hung process or a route that
+goes nowhere and is fixed by looking at the network. No line carries a payload, a token or a secret
+value, and addresses are redacted in both places a credential hides in one.
+
+Names: `otel`, `kafka`, `auth`, `vault`, `redis`, `postgres`, or `all`. A name this build does not
+know refuses the process at start-up rather than watching nothing. Full reference:
+[`CONFIGURATION.md` §1a](CONFIGURATION.md#1a-watching-a-call-to-another-system);
+the reasoning: [`FRD-617`](features/FRD-617-watching-the-wire-to-another-system.md),
+[`ADR-0022`](adr/ADR-0022-a-call-to-another-system-says-so.md).
+
+For the leg **after** the collector — what your OTLP collector managed to forward onward — the
+counters are in `make lab-status` (§6).
+
+---
+
 ## 1. PostgreSQL
 
 **Two databases**, one per plane. They are not interchangeable.

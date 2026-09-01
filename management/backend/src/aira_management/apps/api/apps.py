@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from django.apps import AppConfig
 
-from aira_management.config.observability import instrument_django
+from aira_management.config.observability import instrument_django, watch_database_connections
 from aira_management.config.runtime import get_settings
 
 
@@ -24,3 +24,8 @@ class ApiConfig(AppConfig):
         """
         if get_settings().otel_enabled:
             instrument_django()
+        # Unconditional, because the channel decides per line and `AIRA_DEBUG_INTEGRATIONS` is
+        # read at start-up in `settings.py`: a receiver connected only when a flag was on would
+        # make the wiring itself conditional on a setting, which is the shape this project keeps
+        # paying for (`LESSONS.md` §1). Off, the receiver returns on one set membership test.
+        watch_database_connections()

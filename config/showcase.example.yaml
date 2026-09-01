@@ -35,6 +35,13 @@ core:
   # **Never true outside a demonstration.**
   demo_mode: true
   debug: false
+  # One log line per call to a system that is not ours, while you are wiring one up (`FRD-617`).
+  # Empty is off and is what a working installation runs. Names: otel, kafka, auth, vault, redis,
+  # postgres — or `all`. A name this build does not know refuses the process at start-up, rather
+  # than starting and watching nothing.
+  #
+  #     debug_integrations: otel,kafka
+  debug_integrations: ""
   app_name: AIRA Gateway
   # One installation, one currency. It labels every figure in the console, every CSV column and
   # the prices in the model catalog — see `docs/DEVLOG.md` for the round where three screens said

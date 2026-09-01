@@ -7,6 +7,7 @@ gateway needs for its readiness checks and (later) persistence and eventing.
 from __future__ import annotations
 
 from aira_common.config import BaseAiraSettings
+from aira_common.integration_debug import configure_integration_debug
 from aira_common.kafka import KafkaSecurity
 from aira_common.logging import configure_logging
 from aira_common.observability import configure_observability
@@ -380,6 +381,9 @@ def configure_worker(settings: GatewaySettings) -> bool:
     Returns whether telemetry was configured, so a caller can say so.
     """
     configure_logging(settings.log_level, json_output=settings.log_json)
+    # The worker is where Kafka is actually spoken, so it is the process where the channel is most
+    # often wanted — and the one a `create_app`-shaped fix would have missed (`FRD-617`).
+    configure_integration_debug(settings.debug_integrations)
     return configure_observability(
         service_name=settings.app_name,
         service_version=__version__,

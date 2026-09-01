@@ -35,6 +35,7 @@ from typing import Any, Protocol
 import jwt
 from jwt import PyJWKClient
 
+from aira_common.integration_debug import watch
 from aira_common.logging import get_logger
 
 _log = get_logger("aira_common.oidc")
@@ -51,6 +52,19 @@ DEFAULT_EXPIRY_LEEWAY_SECONDS = 0.0
 #: A tolerance above this is not skew tolerance, it is a second lifetime — Keycloak's own access
 #: tokens live 300 seconds at this realm.
 MAX_TOLERANCE_SECONDS = 300.0
+
+#: How long the JWKS fetch may take before it is abandoned (`FRD-617` §3.4).
+#:
+#: **Five seconds, against PyJWT's default of thirty.** `PyJWKClient` fetches with `urllib`, which
+#: is synchronous, and `resolve_principal` calls `validate` from an `async` dependency — so before
+#: this the gateway ran that fetch on its event loop with a thirty-second ceiling. A Keycloak that
+#: accepts connections and does not answer therefore stalled *every* concurrent request on the
+#: worker, including the ones authenticating with an API key and the ones asking `/readyz`. The
+#: thread in `resolve_principal` is the other half of the fix; this is the bound on how long a
+#: thread can be held.
+#:
+#: The key set is cached, so this is paid on a cold start and on a key rotation, not per request.
+DEFAULT_JWKS_TIMEOUT_SECONDS = 5.0
 
 
 class ToleranceOutOfRange(ValueError):
@@ -97,10 +111,63 @@ class JwtVerifier:
             expiry_leeway_seconds, "AIRA_OIDC_EXPIRY_LEEWAY_SECONDS"
         )
 
+    @property
+    def _jwks_uri(self) -> str:
+        """Where the key set is fetched from, for the log line. `""` for an injected fake."""
+        return str(getattr(self._jwks, "uri", "") or "")
+
+    def _signing_key(self, token: str) -> Any:
+        """Fetch the key this token was signed with, or None — **saying which kind of None**.
+
+        `PyJWKClientError` is a subclass of `PyJWTError`, so before `FRD-617` this call sat inside
+        the same `try` as the decode below and a refused connection, a DNS failure and a read
+        timeout against the identity provider all came out as `oidc_token_rejected` at `INFO`, and
+        as a `401`. That is the moment Keycloak goes away being reported to every operator as
+        *every user's credential is suddenly invalid* — a sentence that sends whoever reads it to
+        the wrong system entirely.
+
+        The split is by *which* `PyJWKClientError`: a connection error is the provider, and any
+        other one — most often "no key matching this `kid`" — is the token, which is also what the
+        multi-issuer probe in `OidcValidator.validate` depends on to move on to the next realm.
+        """
+        try:
+            with watch("auth", "jwks.fetch", target=self._jwks_uri, issuer=self._issuer):
+                return self._jwks.get_signing_key_from_jwt(token)
+        except jwt.PyJWKClientConnectionError as exc:
+            _log.warning(
+                "oidc_jwks_unavailable",
+                issuer=self._issuer,
+                jwks_uri=self._jwks_uri,
+                error=str(exc),
+                error_type=type(exc).__name__,
+                detail=(
+                    "The identity provider's key set could not be fetched, so every token is "
+                    "being refused as a 401. This is not the callers' credentials."
+                ),
+            )
+            return None
+        except jwt.PyJWTError as exc:
+            # Not an outage. Two shapes reach here and both are the *token*: a key set that was
+            # read and holds no key for this `kid` (`PyJWKClientError`), and a token `PyJWKClient`
+            # could not even parse to find the `kid` in — `DecodeError`, which it raises before
+            # any fetch happens.
+            #
+            # **The second is why this catches `PyJWTError` and not `PyJWKClientError`.** Splitting
+            # the fetch out of `verify` narrowed what the fetch's own `except` covered, and a
+            # malformed bearer token — a truncated header, a stray character, anything a client can
+            # send — then propagated out of `verify()` as an unhandled exception: a `500` where the
+            # answer had always been `401`. Found by pointing the demonstration at a hand-written
+            # token, which is exactly the value a caller sends. `LESSONS.md` §1: a caller's own
+            # value must never become a server error.
+            _log.info("oidc_token_rejected", reason=type(exc).__name__, detail=str(exc))
+            return None
+
     def verify(self, token: str) -> dict[str, Any] | None:
         """Return the verified claims, or None if the token is invalid/expired."""
+        signing_key = self._signing_key(token)
+        if signing_key is None:
+            return None
         try:
-            signing_key = self._jwks.get_signing_key_from_jwt(token)
             claims: dict[str, Any] = jwt.decode(
                 token,
                 signing_key.key,
@@ -145,6 +212,10 @@ class JwtVerifier:
         return claims
 
 
-def build_jwks_client(jwks_uri: str) -> PyJWKClient:
-    """Build a caching JWKS client for the given URI."""
-    return PyJWKClient(jwks_uri)
+def build_jwks_client(jwks_uri: str, timeout: float = DEFAULT_JWKS_TIMEOUT_SECONDS) -> PyJWKClient:
+    """Build a caching JWKS client for the given URI, with a **bounded** fetch.
+
+    The timeout was PyJWT's default of thirty seconds because nothing was passed — see
+    :data:`DEFAULT_JWKS_TIMEOUT_SECONDS` for what that cost on an async request path.
+    """
+    return PyJWKClient(jwks_uri, timeout=timeout)

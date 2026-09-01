@@ -62,6 +62,18 @@ reading code.
   runs**, and "where it runs" is exactly what an outbox changes. Asked of a context, a queue or a
   transaction: is the thing this reads still in scope in the process that will actually run it?
 
+  *A ninth, and the missing wire was a **handler**.* `configure_observability` attaches the OTLP
+  `LoggingHandler` to the root logger, and the OpenTelemetry SDK reports every export failure — with
+  the endpoint and the reason — on a stdlib logger under `opentelemetry.*` that propagates there. So
+  with telemetry on, the only handler that sentence could reach was **the exporter that had just
+  failed**, and `logging.lastResort` does not cover it: it prints only when a record finds *no*
+  handler, and this one found the broken one. A collector on the wrong port therefore produced a
+  perfectly ordinary-looking service and no diagnosis anywhere, for as long as the flag had existed.
+  The general form is worth carrying: **a diagnostic that travels by the thing it describes has no
+  route on the day it is needed.** Ask, of anything that reports on a transport — a log about
+  logging, an alert about the alert pipeline, a health check that writes to the database it is
+  checking — which path it takes when the subject is broken.
+
   *A constant is an end too.* `pipeline/config.MAX_MODEL_LENGTH` — *"the same ceiling Management's
   serializer applies"* — sat beside a comment naming three ways into that parser which bypass
   Management, and was read by nothing; `foundry.DEFAULT_API_VERSION` documented the pinned Azure
@@ -137,6 +149,19 @@ reading code.
   question that can see a rule stated in three places and not inherited by the two routes written
   afterwards. A per-field test proves a field; a sweep proves the ones nobody thought to name
   (`test_a_callers_value_is_never_a_server_error.py`).
+
+  *An eighth, and this one was created by a fix rather than found by one.* `FRD-617` split the JWKS
+  fetch out of `JwtVerifier.verify` so that an unreachable Keycloak could be told apart from a bad
+  token — and thereby narrowed what the fetch's `except` covered, from `PyJWTError` to
+  `PyJWKClientError`. `PyJWKClient` parses a token to find its `kid` **before** it fetches anything,
+  so a truncated bearer now raised `DecodeError` straight out of `verify()`: a `401` that had held
+  since `FRD-101` became a `500`, for a value any client can send. Seven tests were written for that
+  round and every one of them used a well-formed token; the demonstration found it in a minute, with
+  a token typed by hand. **Narrowing an `except` is widening what escapes**, and the question to ask
+  of a `try` you are splitting is not *what do I now catch* but *what used to be caught here that no
+  longer is*. The cheap counterpart: when the value under test is one a caller supplies, one of the
+  cases has to be malformed — a suite that only ever presents well-formed input is a suite that
+  agrees with its author about what the input looks like.
 
 - **An export is not read, it is executed.** A CSV cell beginning with `=`, `+`, `-` or `@` is a
   formula to Excel, LibreOffice and Sheets, and both exports here hand one straight through: the

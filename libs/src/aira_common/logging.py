@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+from contextvars import ContextVar
 from typing import Any
 
 import structlog
@@ -48,6 +49,36 @@ def add_trace_context(
 #: "a reader will look for and not find". A note is not a wire.
 EXPORT_LOGGER = "aira.app"
 
+#: The event-dict key a caller sets to keep a line **out of the OTLP log pipeline** while leaving
+#: it on stdout unchanged (`FRD-617` §3.2).
+#:
+#: It exists for exactly one shape: a line *about* the thing that ships lines. A report that a span
+#: export failed becomes a log record, which is queued for export, which fails, which produces
+#: another report — a trickle that never lets the pipeline go quiet and makes "did my logs get
+#: through" a question that answers itself. `aira_common.integration_debug` marks its `otel` events
+#: with this; nothing else needs it.
+LOCAL_ONLY_KEY = "local_only"
+
+#: How the flag reaches :func:`forward_to_stdlib`, which runs **after** the renderer and therefore
+#: sees a string rather than the event dict. A context variable rather than a module global because
+#: several threads log at once — each thread carries its own context, so one thread's local-only
+#: line cannot suppress another thread's ordinary one. Set on every line by
+#: :func:`hold_back_from_export`, so a value can never outlive the call that set it.
+_hold_back: ContextVar[bool] = ContextVar("aira_log_hold_back", default=False)
+
+
+def hold_back_from_export(
+    _logger: Any, _method_name: str, event_dict: structlog.typing.EventDict
+) -> structlog.typing.EventDict:
+    """structlog processor: take :data:`LOCAL_ONLY_KEY` off the event and remember it.
+
+    Placed immediately before the renderer, so the flag is gone by the time the line is rendered —
+    stdout shows an ordinary line, with no marker explaining a mechanism the reader does not need.
+    """
+    _hold_back.set(bool(event_dict.pop(LOCAL_ONLY_KEY, False)))
+    return event_dict
+
+
 #: structlog's method name → the stdlib level to emit at. `exception` is `error` with a traceback
 #: and has no entry in `getLevelNamesMapping`; `msg` is structlog's own generic method. Both would
 #: otherwise fall to `INFO`, and a severity that understates is how an alert stops firing.
@@ -72,7 +103,7 @@ def forward_to_stdlib(_logger: Any, method_name: str, event: Any) -> Any:
     reader needs is in the body, which is the rendered event with all of its keys, and the
     `trace_id` in it is what ties the line to its request.
     """
-    if not isinstance(event, str):
+    if not isinstance(event, str) or _hold_back.get():
         return event
     level = _METHOD_LEVELS.get(method_name, _LEVELS.get(method_name.upper(), logging.INFO))
     with contextlib.suppress(Exception):
@@ -118,6 +149,9 @@ def configure_logging(level: str = "INFO", *, json_output: bool = True) -> None:
         structlog.processors.TimeStamper(fmt="iso", utc=True),
         structlog.processors.StackInfoRenderer(),
         structlog.processors.format_exc_info,
+        # Last before the renderer: it has to see the event dict, and what it takes off must not
+        # reach the rendered line.
+        hold_back_from_export,
     ]
     renderer: structlog.typing.Processor = (
         structlog.processors.JSONRenderer() if json_output else structlog.dev.ConsoleRenderer()
