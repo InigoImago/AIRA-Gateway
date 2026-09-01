@@ -48,13 +48,21 @@ sequenceDiagram
 
 ## 2. Before any route: the middleware
 
-Three things run outside the application, in this order (outermost first):
+Four things run outside the application, in this order (outermost first):
 
-| Middleware              | Does                                            | If it refuses              |
-| ----------------------- | ----------------------------------------------- | -------------------------- |
-| `TraceIdMiddleware`     | puts `x-trace-id` on **every** response         | —                          |
-| `UseCasePathMiddleware` | reads `/uc/<slug>` from the path                | 400 on an invalid slug     |
-| body-size ceiling       | counts bytes, enforces `AIRA_MAX_REQUEST_BYTES` | **413**, and records a row |
+| Middleware                 | Does                                            | If it refuses              |
+| -------------------------- | ----------------------------------------------- | -------------------------- |
+| `TraceIdMiddleware`        | puts `x-trace-id` on **every** response         | —                          |
+| `SecurityHeadersMiddleware`| `nosniff` · `no-referrer` · `DENY` · `no-store` | —                          |
+| body-size ceiling          | counts bytes, enforces `AIRA_MAX_REQUEST_BYTES` | **413**, and records a row |
+| `UseCasePathMiddleware`    | reads `/uc/<slug>` from the path                | 400 on an invalid slug     |
+
+**The order of the last two is the whole of what it buys**, and this table had it the other way
+round with the security headers missing altogether. The ceiling is enforced by wrapping `receive`,
+so nothing above it buffers anything either way; what the order decides is **which responses carry
+the headers**. With the ceiling outermost, the two answers that never reach a route — a 413 and a
+500 — came out bare: no `nosniff`, no `no-store` and no trace id, which is precisely the pair
+`TraceIdMiddleware` exists for.
 
 The last one has two exits — a declared `Content-Length` that is too large, and a body that lies and
 is cut off mid-read — and **both record an audit row** under the outcome `request_too_large`. That
@@ -81,14 +89,19 @@ graph LR
     key --> bound["Key is bound to a use case<br/><i>no selector needed</i>"]
     oidc --> groups["Use cases from Keycloak groups<br/><i>/use-cases/&lt;slug&gt;</i>"]
 
-    bound --> attr["Attribution:<br/>subject · credential · use case · roles"]
+    bound --> attr["Attribution:<br/>subject · credential · use case<br/>roles from groups only"]
     groups --> attr
 ```
 
 - An **API key** (`aira_<prefix>_<secret>`, hashed at rest) is bound to its use case. A mismatched
   `/uc` selector or `X-AIRA-Use-Case` header is a **403**, not a silent override.
-- An **OIDC bearer** carries realm roles and group memberships. Use-case membership comes from the
-  group `/use-cases/<slug>`; a non-member gets 403.
+- An **OIDC bearer** carries **group memberships, and roles are read from those and from nothing
+  else** ([`ADR-0017`](adr/ADR-0017-a-role-is-held-through-a-group.md)): `AIRA_ROLE_GROUPS` maps a
+  group path to a role, and a realm role assigned directly grants **nothing**. This line said
+  *"carries realm roles and group memberships"* until 2026-08-31 — the same sentence
+  `aira_common/roles.py` opens by naming as a defect it had already made, surviving in the document
+  a reader reaches for first. Use-case membership comes from a group grant or from the
+  `/use-cases/<slug>` convention; a non-member gets 403.
 - The **credential identity** (an API key's prefix, or the OIDC client id) travels onto the audit
   row separately from the subject. Without it, five keys issued for one use case by one person are
   one identity in the log, and a leaked key can be revoked but its blast radius cannot be assessed.
@@ -303,7 +316,7 @@ every `return` is a fact eventually forgotten at one of them.
 
 ```mermaid
 graph LR
-    row["audit row written"] -->|"marks the scope touched"| tick["Anomaly timer<br/><i>evaluates only what changed</i>"]
+    row["audit row written"] -->|"the evaluator reads the rows"| tick["Anomaly timer<br/><i>evaluates only what changed</i>"]
     tick --> find{"threshold crossed?"}
     find -->|"no"| nothing["nothing"]
     find -->|"yes"| ev["anomaly_event<br/><i>observed · threshold · sample</i>"]

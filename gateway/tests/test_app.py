@@ -20,7 +20,12 @@ def test_create_app_without_settings_uses_defaults() -> None:
     assert app.state.settings.app_name == "aira-gateway"
 
 
-def test_create_app_instruments_when_otel_enabled() -> None:
+def test_create_app_instruments_when_otel_enabled(instrumentation_restored: None) -> None:
+    """The fixture is the point of the signature: `create_app` now also instruments httpx and
+    SQLAlchemy (`FRD-117` FR-5), and those patch **modules**. Without putting them back, this test
+    left every later one in the session wrapped, queueing spans for a collector nothing answers —
+    and made the test that measures those spans a no-op, because an instrumentor is a singleton
+    that refuses a second `instrument()` without a word."""
     app = create_app(GatewaySettings(otel_enabled=True, otel_endpoint="http://localhost:4318"))
     client = TestClient(app)
     assert client.get("/healthz").status_code == 200

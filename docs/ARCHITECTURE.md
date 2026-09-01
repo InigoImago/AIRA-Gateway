@@ -68,8 +68,10 @@ graph TB
     style aira fill:#4f46e5,color:#fff,stroke:#4338ca
 ```
 
-**The five roles** are the ones the realm defines and both planes enforce
-([`FRD-201`](features/FRD-201-keycloak-rbac.md), [`ADR-0009`](adr/ADR-0009-gateway-knows-roles.md)).
+**The three organisation-wide roles** are conferred by **group membership** and by nothing else
+([`ADR-0017`](adr/ADR-0017-a-role-is-held-through-a-group.md), amending
+[`ADR-0009`](adr/ADR-0009-gateway-knows-roles.md)); both planes resolve the same `groups` claim
+through `AIRA_ROLE_GROUPS`, and a realm role assigned directly grants nothing.
 Two distinctions inside them cost real defects and are therefore explicit:
 
 | Question | Predicate | Who |

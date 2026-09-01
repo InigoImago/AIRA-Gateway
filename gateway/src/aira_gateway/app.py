@@ -73,6 +73,7 @@ from aira_gateway.ratelimit.service import RateLimitService
 from aira_gateway.reporting.service import ReportingService
 from aira_gateway.routes.health import router as health_router
 from aira_gateway.security import enforce_safe_settings
+from aira_gateway.telemetry import instrument_outgoing_calls
 from aira_gateway.upstreams.base import ProviderRegistry, Upstream
 from aira_gateway.upstreams.foundry import build_foundry_upstreams
 from aira_gateway.upstreams.gemini import build_gemini_upstream
@@ -230,6 +231,12 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
         FastAPIInstrumentor.instrument_app(app, server_request_hook=redact_span_query)
+        # And what this gateway **calls** (`FRD-117` FR-5): the model, and the database read that
+        # decides whether it is allowed. Specified in that FRD's §5.3, recorded there as delivered
+        # from 2026-08-06, and never written — so a trace of a request that spent nine seconds
+        # inside a model was one span, nine seconds long, with nothing underneath it. See
+        # `telemetry.py` for the credential that had to not leak on the way in.
+        instrument_outgoing_calls(engine)
 
     # Middleware runs **outermost-last**, and the order below is the whole of what that buys.
     #

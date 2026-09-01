@@ -16,6 +16,7 @@ its own routes. Everything here is about the request, not about how it was spell
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
@@ -52,7 +53,7 @@ from aira_gateway.core.canonical import (
     CanonicalResponse,
     CanonicalUsage,
 )
-from aira_gateway.core.schema import SchemaBounds, SchemaRejected
+from aira_gateway.core.schema import ResponseSchema, SchemaBounds, SchemaRejected
 from aira_gateway.db.models import UseCaseRead
 from aira_gateway.embedding import EmbeddingBounds, EmbeddingRejected
 from aira_gateway.embedding import estimated_tokens as embedding_tokens
@@ -1017,6 +1018,62 @@ def _rewritten_body(
     return rewritten
 
 
+def schema_digest(schema: ResponseSchema) -> str:
+    """A stable short name for one schema, for the span (`FRD-112` §9).
+
+    Enough to group *the same schema* across requests — "structured requests are slower" is a
+    question about a shape somebody sends repeatedly — and not enough to reconstruct one, which is
+    why it is a digest rather than the schema. `exclude_none` and `sort_keys` because two callers
+    who spell the same schema with the fields in a different order are asking the same question.
+    """
+    normalised = json.dumps(
+        schema.model_dump(exclude_none=True, by_alias=True), sort_keys=True, default=str
+    )
+    return hashlib.sha256(normalised.encode("utf-8")).hexdigest()[:16]
+
+
+def describe_on_the_span(
+    canonical: CanonicalRequest | None, embed: CanonicalEmbeddingRequest | None
+) -> None:
+    """What this request *is*, on its own span (`FRD-110`, `FRD-112`, `FRD-113` §9).
+
+    Three Observability sections each named a handful of attributes and **none of them was set**.
+    The consequence is not a missing figure: it is somebody building a panel from the document and
+    getting an empty one, which reads as *nothing happened* rather than as a wrong query.
+    `LESSONS.md` §7 — *a claim no test can reach is a claim that will be wrong*, and an
+    Observability section is exactly the kind nothing reads back against the code.
+
+    **Here rather than at a surface**, for the reason this module exists: a fact recorded at one
+    surface is a fact the next surface records differently, and this is the one function both of
+    them and every verb pass through (`FRD-126`).
+
+    Absent, never zero — `set_span_attributes` drops a `None`, so a value nobody resolved leaves
+    no attribute. An unset `dimensions` rendered as `0` is a figure nobody asked for, and
+    `attachment_bytes = 0` on every ordinary chat request turns *"which traffic carries
+    documents"* from an existence check into a comparison
+    (`persistence/recorder._tool_attributes` made the same decision first).
+
+    The embedding figures are the **resolved** ones — a model with a declared default puts that on
+    the span, because what is worth recording is what was sent rather than what was typed.
+    """
+    attributes: dict[str, object] = {}
+    if canonical is not None:
+        attributes["aira.request.parts"] = sum(len(message.parts) for message in canonical.messages)
+        attachments = canonical.attachments
+        if attachments:
+            attributes["aira.request.attachment_bytes"] = sum(
+                len(part.data) for part in attachments
+            )
+        if canonical.response_schema is not None:
+            attributes["aira.response_schema"] = True
+            attributes["aira.response_schema.digest"] = schema_digest(canonical.response_schema)
+    if embed is not None:
+        attributes["aira.embedding.batch_size"] = embed.size
+        attributes["aira.embedding.task_type"] = embed.task_type
+        attributes["aira.embedding.dimensions"] = embed.dimensions
+    set_span_attributes(attributes)
+
+
 @dataclass(slots=True)
 class Prepared:
     """Everything the pre-dispatch sequence decided, handed over in one piece."""
@@ -1169,6 +1226,10 @@ async def prepare_for_dispatch(
             else 0
         ),
     )
+    # Last, so the shape on the span is the one that will actually be dispatched — a pipeline
+    # may have rewritten the request, and a span describing what the caller sent while the row
+    # describes what was served is two answers to one question.
+    describe_on_the_span(canonical, embed)
     return Prepared(canonical, embed, fallbacks, declaration, reservation, notices)
 
 

@@ -251,6 +251,15 @@ vocabulary if that surface is built):
   a slow request was slow because it carried 6 MiB, without recording anything about the content.
 - The audit row records the same, per §5.4.
 
+**Built on 2026-08-31, not with the feature.** Both were named here and set by nothing, which is
+the shape `LESSONS.md` §7 records for an Observability section: a claim no test can reach is a
+claim that will be wrong. They are set in `prepare_for_dispatch` — the one function both surfaces
+and every verb pass through (`FRD-126`) — rather than at a surface, because a shape attribute
+written at one surface is one the next surface does not write. `attachment_bytes` is **absent**
+rather than zero on a request that carries none, for the reason the tool figures are
+(`persistence/recorder._tool_attributes`): a zero on every ordinary request turns *"which traffic
+carries documents"* from an existence check into a comparison.
+
 ## 10. Testing & Acceptance Criteria
 
 - **Unit** — the surface: valid base64 decoded; invalid rejected; each allow-listed type accepted;

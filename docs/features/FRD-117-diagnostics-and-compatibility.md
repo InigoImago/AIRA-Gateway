@@ -59,7 +59,8 @@ ask us about.
   down, and taking it out of the load balancer would help nobody.
 - **FR-4 `x-trace-id` on every response**, including error responses.
 - **FR-5 Outgoing calls are traced.** HTTPX and SQLAlchemy instrumented, so an upstream call and a
-  query are spans with durations.
+  query are spans with durations — and no credential of ours reaches one (§5.3). *Recorded as built
+  in §10a from 2026-08-06 and actually built on 2026-08-31; see §5.3.*
 - **FR-6 CORS, configured explicitly.** An allow-list of origins from configuration, default empty.
   Not `*` — see §5.4.
 - **FR-7 OpenAPI 3.0 alongside 3.1**, with configurable `x-`extensions in `info`.
@@ -98,10 +99,41 @@ The probe result feeds the existing `DegradationLog` from `FRD-405`, so there is
 
 ### 5.3 Tracing the call that matters
 
-`HTTPXClientInstrumentor` and `SQLAlchemyInstrumentor`, enabled with the existing OTel switch.
-SQLAlchemy is instrumented with statement text **hidden** — the predecessor does the same, and it
-is right: a bound parameter can carry a prompt fragment or a subject identifier, and spans are
-exported to a system with different access control from the database.
+`HTTPXClientInstrumentor` and `SQLAlchemyInstrumentor`, enabled with the existing OTel switch —
+`gateway/telemetry.py`, called from `create_app` beside the FastAPI instrumentation.
+
+**Two things this section stated and did not have, both corrected on 2026-08-31.**
+
+*It was not built at all.* Neither package was a declared dependency and neither instrumentor was
+ever called, while §10a below recorded FR-5 as delivered and `GAP-ANALYSIS.md` row 21 repeated it.
+So a trace of a request that spent nine seconds inside a model was one span, nine seconds long,
+with nothing underneath it — and *"is the gateway slow or is the model slow"*, the first question
+anybody asks of a gateway, was not answerable from the trace. `LESSONS.md` §7: **an FRD that cites
+a control as an existing fact is not a check that it exists.**
+
+*And the sentence about SQLAlchemy described a mechanism that does not exist.* "Statement text
+**hidden**" is not an option the instrumentation has. What it records is the statement with its
+**placeholders** — measured on the running stack: `WHERE budgets.use_case = %(use_case_1)s` — and
+never the parameter values — SQLAlchemy hands the two
+to the event hook separately and only the first is read. The reason the requirement was written
+for — *"a bound parameter can carry a prompt fragment or a subject identifier, and spans are
+exported to a system with different access control from the database"* — is therefore met, and
+`test_a_database_read_appears_as_a_span_carrying_no_bound_value` is what keeps it met rather than
+this paragraph.
+
+**The credential this had to not leak, which the original section did not consider.** Wiring httpx
+in has an outbound mirror of the hazard `ADR-0007` answered for the inbound direction: the Gemini
+dialect authenticates with `?key=<api key>`, `upstreams/gemini.py` puts **this installation's own**
+key there on every call, and the instrumentation records the request URL verbatim (its `redact_url`
+removes `user:password@` and nothing else). Measured before the wiring shipped: the key in
+`http.url` on every model call, on its way to a trace backend a different set of people can read.
+It goes through the same `SENSITIVE_QUERY_PARAMS` list as the server span and the access log — one
+definition of *what is a credential in a URL*, now read by three places.
+
+The hook has to be given **twice**: the instrumentation selects `async_request_hook` for an
+`AsyncClient` and silently drops it unless it is a coroutine function, and every upstream adapter
+here uses `AsyncClient`. A sync-only hook looks exactly like a working redaction and redacts
+nothing, which is why the test drives an async client and asserts on the attribute.
 
 `x-trace-id` (FR-4) is set by middleware from the active span, on every response including errors —
 which requires it to sit outside the exception handlers, or the responses that most need
@@ -172,7 +204,13 @@ readiness signal that reflects the dependency the service exists for.
 
 ## 10a. What was built (2026-08-06)
 
-FR-1 through FR-6. **FR-7 (a second OpenAPI 3.0 document) is not built**, and that is a choice
+FR-1 through FR-4 and FR-6. **FR-5 was recorded here as built and was not** — the correction is
+in §5.3, and it is worth keeping in the record because of *how* it survived: every reader of this
+document and of `GAP-ANALYSIS.md` row 21 inherited the belief from a sentence, and the only thing
+that would have caught it is a test that asks the spans. There is one now
+(`gateway/tests/test_outgoing_calls_are_traced.py`).
+
+**FR-7 (a second OpenAPI 3.0 document) is not built**, and that is a choice
 rather than an omission: it exists for a legacy API portal that this deployment does not have, and
 a generated document nobody reads is a thing that silently stops matching the routes. It is a
 half-day whenever a portal actually needs it.

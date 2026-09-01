@@ -46,6 +46,7 @@ feature is observable by default.
 - **FR-5 Context propagation**: W3C Trace Context over HTTP; inject/extract `traceparent` on **Kafka**
   message headers (producer injects, consumer extracts) so async flows stay linked.
 - **FR-6 Correlation in logs**: structured logs carry `trace_id`/`span_id`; logs shipped via OTLP.
+  *Half of this was true for a year* — see §5a.
 - **FR-7 Sampling**: parent-based, ratio sampler; ratio configurable (default 1.0 locally).
 - **FR-8 Metrics baseline**: request latency/count/error metrics auto-exported for both services.
 - **FR-9 Toggle**: observability is enabled via `otel_enabled`; when off (or endpoint empty) the SDK
@@ -65,6 +66,29 @@ feature is observable by default.
   providers, the OTLP exporters, resource attributes, propagators, and a structlog processor that
   injects trace context into logs. Both Python services call it at startup.
 - **Kafka propagation helpers** in `aira_common` inject/extract W3C context to/from message headers.
+
+### 5a. The half of FR-6 that was not wired (corrected 2026-08-31)
+
+`configure_observability` has attached an OTLP `LoggingHandler` to the **root** logger since this
+FRD shipped, and `configure_logging` configured structlog with `PrintLoggerFactory` — which writes
+to stdout and creates no `logging.LogRecord` at all. So every line this system writes about itself
+(`rate_limited`, `oidc_token_rejected`, `config_event_failed`, `unhandled_error`) went to stdout
+and nowhere else. The Compose stack collects no container output — there is no filelog receiver in
+`otel/collector-config.yaml` and no log shipper beside it — and `uvicorn.access` is configured by
+uvicorn with `propagate: False`, so not even the access log reached the root handler. Loki received
+start-up lines. **Traces and metrics arrived; logs were the signal nobody had**, under a diagram in
+§5 of this document that says `logs (Loki)`.
+
+Two correct halves and no wire, the shape `LESSONS.md` §1 lists — and a *documented* one: the
+2026-08-31 DEVLOG entry records it in passing as something "a reader will look for and not find",
+which is a note rather than a fix, and the acceptance criterion in §10 stayed unmet.
+
+The wire is one processor, after the renderer, in `aira_common.logging`: the finished line is
+handed to a stdlib logger (`aira.app`) that propagates to the root, and returned unchanged for
+`PrintLogger` to write. **One rendering, two sinks** — stdout is byte-for-byte what it was, and no
+second definition of what a log line looks like. The exported record's trace correlation is the
+OTel handler's own, taken from the active span, which is the same span the `trace_id` in the JSON
+line names.
 
 ## 6. Data Model
 - None (telemetry is stored inside `otel-lgtm`'s bundled stores, out of scope for our schema).

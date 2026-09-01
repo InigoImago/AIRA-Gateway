@@ -1,8 +1,9 @@
 """A demo somebody can walk through, one role at a time (FRD-130).
 
-`seed_demo` already created the five roles and one user each — which lets you *log in* as every
-role and see five empty screens. This contribution gives each of them something to look at, and
-picks the content so that the differences between the roles are visible rather than described:
+`seed_demo` already created the three role groups and the five demo users — which lets you *log
+in* as every role and see five empty screens. This contribution gives each of them something to
+look at, and picks the content so that the differences between the roles are visible rather than
+described:
 
     global-admin   sees every use case, and is the only role that may price a model
     it-steuerung   sees every use case and the whole spend report — and may change none of it

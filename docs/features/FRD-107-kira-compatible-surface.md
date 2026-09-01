@@ -259,6 +259,17 @@ never served — that is when the document is needed.
 
 `aira.api.surface = "kira"` on spans and audit rows; reporting can break down by it (§5.6).
 
+This surface's spans carried **none** of the attribution attributes either — `aira.subject`,
+`aira.auth_method`, `aira.use_case`, `aira.credential` — because it resolves its own attribution
+(§5.3) and the code that put them on the span lived in the *other* surface's dependency. Corrected
+on 2026-09-01 by giving the act one owner; see `FRD-102` §9.
+
+The audit row and the reporting breakdown were built with the surface; the **span attribute was
+not**, from the day this was written until 2026-08-31 — so a trace could not tell the two surfaces
+apart at all, and *"which of my clients has migrated"* was a question for the database only. Set
+once, in `persistence/recorder.py`, beside the other `aira.*` attributes and off the same `api`
+argument the row already carries: one value, two sinks, no second place to forget it.
+
 ## 10. Testing & Acceptance Criteria
 
 - **Contract tests** — one per endpoint, asserting the response shape field by field against

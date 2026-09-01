@@ -10,13 +10,13 @@ from dataclasses import replace
 
 from fastapi import Depends, Request
 
-from aira_common.observability import set_span_attributes
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.auth.attempts import record_failed_authentication
 from aira_gateway.auth.attribution import (
     USE_CASE_HEADER_NAME,
     USE_CASE_PATH_FORM,
     Attribution,
+    attribute,
     is_valid_use_case,
     resolve_use_case,
 )
@@ -225,13 +225,4 @@ async def require_attribution(
         credential=principal.credential,
         issuer=principal.issuer,
     )
-    request.state.attribution = attribution
-    set_span_attributes(
-        {
-            "aira.subject": attribution.subject,
-            "aira.auth_method": attribution.method,
-            "aira.use_case": attribution.use_case,
-            "aira.credential": attribution.credential,
-        }
-    )
-    return attribution
+    return attribute(request, attribution)

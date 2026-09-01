@@ -20,6 +20,7 @@ from dataclasses import dataclass
 
 from fastapi import Request
 
+from aira_common.observability import set_span_attributes
 from aira_gateway.scopes import person as person_key
 
 USE_CASE_HEADER = "x-aira-use-case"
@@ -89,6 +90,38 @@ class Attribution:
 # concludes the gateway still honours a realm role, and one who copies its defensive shape
 # reintroduces the second mechanism `ADR-0017` existed to remove. The rule that replaced it is
 # `aira_common.roles.roles_from_groups`, and it is the only one.
+
+
+def attribute(request: Request, attribution: Attribution) -> Attribution:
+    """Attach ``attribution`` to the request **and to its span**. One act, because it was two.
+
+    Putting it on `request.state` is what lets `record_request` write the audit row; putting it on
+    the span is what lets a trace be filtered by *who*, *which use case* and *which credential*
+    (`FRD-101` §9, `FRD-102` §9). Those were two statements at one of the four places a request is
+    attributed, and one statement at the other three.
+
+    Measured on the running stack on 2026-09-01: a Gemini request's span carried
+    `aira.subject`/`aira.auth_method`; the **same request on the KIRA surface carried neither**, and
+    nor did `pipeline:dryRun` or the console's model check. All four write an audit row, so the
+    figures were in the database and the trace could not be filtered by them — and the provisioned
+    dashboard selects `span.aira.use_case` and `span.aira.subject`, so those columns were simply
+    empty for every request that did not come in through the Gemini surface.
+
+    The shape `LESSONS.md` §1 lists twice over: *a rule restated on a second surface*, and *a fact
+    applied at each `return` is missing from one of them*. The answer this project keeps arriving
+    at is the same one — extract the act, so the next surface cannot half-perform it.
+    `test_every_attribution_reaches_the_span.py` fails on a site that assigns the state directly.
+    """
+    request.state.attribution = attribution
+    set_span_attributes(
+        {
+            "aira.subject": attribution.subject,
+            "aira.auth_method": attribution.method,
+            "aira.use_case": attribution.use_case,
+            "aira.credential": attribution.credential,
+        }
+    )
+    return attribution
 
 
 def resolve_use_case(request: Request) -> str | None:

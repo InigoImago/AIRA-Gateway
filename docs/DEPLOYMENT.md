@@ -704,14 +704,26 @@ things in your own realm.
 | Valid redirect URIs  | your SPA origin, e.g. `https://aira.example.com/*`       | **never `*`** — a wildcard lets an attacker redirect the code to a site they control |
 | Web origins          | your SPA origin                                          |                                                                                      |
 
-### 5.2 The five realm roles
+### 5.2 The three roles, each conferred by a group
 
 `global-admin`, `it-security`, `it-steuerung`. There is no use-case role: administering or
 belonging to a use case is a grant on that use case (`ADR-0017`, `FRD-209`).
 
-Keycloak is the **source of truth** for roles (FRD-201): on every authenticated request the token's
-`realm_access.roles` are synced onto the user's Django groups. A role that exists only in Django is
-removed at the next login.
+**A role is held through a Keycloak group**, and `AIRA_ROLE_GROUPS` says which group confers which
+role:
+
+```
+AIRA_ROLE_GROUPS=global-admin=/aira/global-admins;it-security=/aira/it-security;it-steuerung=/aira/it-steuerung
+```
+
+The paths are yours, the match is exact, and a name that is not one of the three is refused at
+start-up. **A Keycloak realm role grants nothing** — neither plane reads `realm_access.roles`, and
+that inertness is the guarantee `ADR-0017` was written to obtain. This section said the opposite
+until 2026-08-31.
+
+Keycloak is the **source of truth** (FRD-201): on every authenticated request the roles the token's
+**groups** confer are synced onto the user's Django groups, and a role that exists only in Django
+is removed at the next login.
 
 ### 5.3 A groups mapper
 
@@ -726,13 +738,17 @@ The gateway derives use-case membership from group paths, so the token must carr
 
 ### 5.4 Groups per use case
 
-Membership for the **data plane** is the group `/use-cases/<slug>`. A user who is a member of a
-use case in the Management UI but not in the matching Keycloak group can administer it, but
-cannot send requests through the gateway for it — and does not see its consumption numbers.
+**Three routes reach a use case, and the convention below is only the first** (`FRD-209`):
 
-> This split is a known rough edge, not a design goal: use cases are administered in Management,
-> while the gateway authorizes OIDC callers from Keycloak groups. Until they are reconciled (see
-> [Known gaps](#7-known-gaps)), create the group when you create the use case.
+1. the group `/use-cases/<slug>`, which needs no configuration at all;
+2. a grant on **any group path your realm already uses**, given in the console;
+3. a grant naming **one person**, where no group fits.
+
+Routes 2 and 3 are replicated to the gateway over Kafka and read on every request, so a member
+added in the console can call the gateway for that use case without anybody creating a group named
+after it. This section described route 1 as the only one, under a note calling the split *"a known
+rough edge … until they are reconciled"* — it was reconciled by `FRD-209`, and the note outlived
+it.
 
 ---
 
@@ -835,7 +851,7 @@ Stated plainly, because a deployment guide that hides them wastes your time:
 | ~~**Vault is not used by any code**~~                          | —                                                                                                             | **Closed** by `FRD-116`: `aira_common.secrets` reads AppRole + KV-v2 and ranks Vault above the environment for both planes                                                                                      |
 | **Schema Registry is not used**                                | Events are plain JSON with an `event_type` header                                                             | Runs in the stack, unused                                                                                                                                                                                       |
 | ~~**SPA configuration is build-time**~~                        | —                                                                                                             | **Closed** on 2026-08-08: `public/runtime-config.js` ships with the bundle and sets the issuer and client id. Replace it per environment (volume mount, `ConfigMap`, or a `sed` in the entrypoint) — no rebuild |
-| **Kafka has no auth/TLS settings**                             | A broker requiring SASL/TLS needs a code change                                                               | `aira_common.kafka` takes bootstrap servers only                                                                                                                                                                |
+| ~~**Kafka has no auth/TLS settings**~~                         | —                                                                                                             | **Closed** by `ADR-0018`: `aira_common.kafka.KafkaSecurity` takes protocol, SASL mechanism and credentials and a CA file (`AIRA_KAFKA_SECURITY_PROTOCOL` and friends), and both planes refuse to start on PLAINTEXT outside `local` |
 | **The relay is not a daemon**                                  | Must be scheduled externally, or configuration never propagates                                               | By design (transactional outbox), but unscheduled by default                                                                                                                                                    |
-| **Membership is split** between Management and Keycloak groups | Consumption views and data-plane access need the Keycloak group; the UI membership alone is not enough        | ADR-0007 addendum, follow-up recorded                                                                                                                                                                           |
-| **No content redaction**                                       | Payloads are stored verbatim until their retention period expires; nothing masks sensitive values inside them | `NoOpRedactor`; retention itself is done (FRD-404)                                                                                                                                                              |
+| ~~**Membership is split** between Management and Keycloak groups~~ | —                                                                                                         | **Closed** by `FRD-209`: a grant on any group path, or on one person, is replicated to the gateway over Kafka and read on every request — no group named after the use case is needed (§5.4)                     |
+| **PII is not masked in stored payloads**                       | A prompt is kept as the caller wrote it, business content included, until retention removes it               | **Credentials are** masked (`FRD-406`, `build_redactor`); the PII half is **declined** rather than pending (`ADR-0016`) — the sensitive content and the useful content are the same content, so reads are gated by role and recorded instead |

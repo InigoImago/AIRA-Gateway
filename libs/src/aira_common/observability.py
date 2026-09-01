@@ -153,11 +153,25 @@ class AccessLogRedaction(logging.Filter):
         return True
 
 
-def _redact_arg(value: object) -> object:
-    if not isinstance(value, str) or "?" not in value:
+def redact_url_query(value: str) -> str:
+    """Return ``value`` — a URL or a request line — with credential-bearing parameters replaced.
+
+    The one definition, read by three places that each have a URL and must not export it as
+    written: the access log (above), the **inbound** server span (`gateway/app.redact_span_query`)
+    and the **outbound** client span (`gateway/telemetry.redact_client_span_url`, `FRD-117` FR-5).
+    The third arrived on 2026-08-31 with httpx instrumentation, and it is the one where the
+    credential is *ours*: `upstreams/gemini.py` authenticates with ``?key=<api key>`` on every
+    call. A fourth reader spelling this out again is how one of them comes to redact a shorter
+    list than the others.
+    """
+    if "?" not in value:
         return value
     path, _, query = value.partition("?")
     return f"{path}?{redact_query_string(query)}"
+
+
+def _redact_arg(value: object) -> object:
+    return redact_url_query(value) if isinstance(value, str) else value
 
 
 #: The loggers that emit a request line. Named rather than filtered at the root, because a filter

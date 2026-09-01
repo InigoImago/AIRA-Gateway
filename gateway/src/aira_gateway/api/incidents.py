@@ -28,7 +28,7 @@ from aira_common.models import ThinkingMode
 from aira_gateway.anomalies.suspensions import AccessSuspension, as_dict
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.audit import Outcome
-from aira_gateway.auth.attribution import Attribution, is_valid_use_case
+from aira_gateway.auth.attribution import Attribution, attribute, is_valid_use_case
 from aira_gateway.auth.dependencies import require_principal
 from aira_gateway.auth.principal import Principal
 from aira_gateway.catalog import ModelCatalog
@@ -489,12 +489,15 @@ def _attribute_diagnostic(request: Request, principal: Principal) -> None:
     `request.state.attribution`. Set here rather than by widening the dependency, because widening
     it would make every diagnostic *look like* a use case's request one refactor later.
     """
-    request.state.attribution = Attribution(
-        subject=principal.subject,
-        method=principal.method,
-        use_case=None,
-        credential=principal.credential,
-        username=principal.username,
+    attribute(
+        request,
+        Attribution(
+            subject=principal.subject,
+            method=principal.method,
+            use_case=None,
+            credential=principal.credential,
+            username=principal.username,
+        ),
     )
 
 

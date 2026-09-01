@@ -177,6 +177,15 @@ reading code.
   the grouping and the panel were covered and the step that fills them was not. A missing map entry
   at least leaves a gap somebody can see; an unpassed parameter looks exactly like a call.
 
+  *And an argument a library **discards** looks exactly like one it uses.*
+  `HTTPXClientInstrumentor.instrument` takes `request_hook` and `async_request_hook`, and keeps the
+  second only `if iscoroutinefunction(...)` — a plain function passed there is dropped without a
+  word. Every upstream adapter in this gateway uses `AsyncClient`, so a sync-only redaction hook
+  would have been a redaction that never ran, on a span carrying **our own** upstream API key. The
+  call site reads identically either way. **Where a library selects an argument by inspecting it,
+  the test has to drive the path that selects it**, which is why the guard makes a real async call
+  and asserts on the attribute rather than on the wiring.
+
 - **A test that cannot tell which of two calls answered is a test of neither.** Written while
   fixing two silent loads on one screen: the stub broke both, and the assertion looked for a word
   the *other* one also produced. Green, and it stayed green when the fix under test was reverted —
@@ -299,6 +308,14 @@ reading code.
   **A paragraph explaining why a copy is dangerous is evidence that the copy needs a test, not a
   substitute for one.**
 
+  *And the DEVLOG is not a fix either.* The round that switched telemetry on closed with
+  *"AIRA's own log lines are not exported — structlog writes to stdout past the standard library"*,
+  recorded because *"a reader will look for both and find neither"*. It is an accurate sentence
+  about an unmet acceptance criterion in an FRD whose header says **Done** (`FRD-001` FR-6, §10),
+  and it left the third of the observability baseline missing for another day. **Writing a gap down
+  moves it out of the place that would have made somebody fix it** — a note reads as a decision,
+  and nothing in a log is ever re-read against the code.
+
   *And the most misleading place to write one down is a test.*
   `test_compose_lifecycle_covers_the_stack.py` states, in its own docstring, that *"the application
   services carry `restart: unless-stopped` while the infrastructure does not, so they also come
@@ -330,6 +347,22 @@ reading code.
   was corrected to `is_oversight`, on both of which the *message* already said "oversight";
   `is_catastrophic` copied privately into the redactor and left behind when the shared one grew.
   **Extract the rule, or write the comparison test.**
+
+  *And a **path** is a surface too, when four of them attribute a request.* `require_attribution`
+  put the caller on the span; the KIRA surface's own resolver, `pipeline:dryRun` and the console's
+  model check each built the same `Attribution`, assigned it to `request.state` and stopped — so
+  every figure was on the audit row and the *trace* could be filtered by who only for the one
+  surface. Found in a trace view rather than in the source, because in the source all four look
+  like the same three lines. **Where a fact has two destinations, make attaching it one act**: the
+  split is what let three of the four perform half of it.
+
+  *A direction is a surface too.* `redact_span_query` has kept `?key=` out of the **inbound** span
+  since `ADR-0007`, and `AccessLogRedaction` out of the access log — and the moment client
+  instrumentation was switched on, the same query string went out on a **client** span with the
+  installation's own upstream key in it, because a caller's credential and ours had never been the
+  same question. The redaction that already existed covered every place the credential could
+  arrive and none of the places it departs. **Ask of any rule about data at a boundary whether the
+  boundary has two sides.**
 
   *A rule can also be stated one layer up and not held below.* `record_request` removed the
   `api="gemini"` default and documented at length why — and `PendingLog.api` and
@@ -588,7 +621,7 @@ reading code.
   are on an element for some other reason, each now recorded with that reason instead of being
   indistinguishable from the six that were mistakes.
 
-- **A guard that cannot fail.** *Four, each caught only by breaking it deliberately:* an Angular
+- **A guard that cannot fail.** *Five, each caught only by breaking it deliberately:* an Angular
   spec using `import.meta.glob` failed to *load* and Vitest reported "0 tests" inside a green run;
   an alignment guard queried a container the case it named did not use; a parser that matched
   nothing; and a **mutation** whose edit had become a no-op — `mode is not ThinkingMode.DISABLED`
@@ -597,6 +630,16 @@ reading code.
   on purpose before it is believed** — the first three were silently wrong in the same direction,
   passing; the fourth was wrong in the other, and that is the more expensive one, because it sends
   the next reader to write a test that already exists.
+
+  *A fifth, of the fourth's variety, and it was reported about a **security** property.* `G7` —
+  *"an account nobody invited is claimed by nobody, however its name matches"* — was re-anchored
+  the day the account-takeover fix landed, onto
+  `.filter(user__username__in=[preferred, preferred])`, which is **the same query** as the
+  `.filter(user__username=preferred)` it replaces. So the harness reported `SURVIVED` about a rule
+  `test_an_uninvited_account_is_claimed_by_nobody` had defended since the hour it was written, on
+  the one finding of a 665-property run — which is where a reader's whole attention goes. **A
+  mutation is a claim that an edit changes behaviour; write it and watch it be caught, or it is a
+  test that has never been observed to fail wearing the costume of the tool that catches those.**
 
   *And a guard's own description is part of it.* `M29` anchors in `_purge_usecase` and read
   *"deleting a use case keeps its request log"*; a reader matching it to a test found the one about
@@ -1087,6 +1130,16 @@ reading code.
   every reader after it inherited the belief. The same shape as `CLAUDE.md` claiming an ESLint this
   repository never had: **the more confidently a rule is referenced in passing, the less likely
   anybody checks it.** When a decision record cites a mechanism, grep for its reader.
+
+  *And an FRD's own §10a is the most authoritative place to be wrong.* `FRD-117` FR-5 —
+  *"outgoing calls are traced, HTTPX and SQLAlchemy instrumented"* — was specified in §5.3,
+  recorded in §10a as *"FR-1 through FR-6"* built, and repeated in `GAP-ANALYSIS.md` row 21.
+  Neither package was a declared dependency of anything. A gateway's most valuable span is the
+  **upstream call**, and for three weeks the trace of a nine-second request was one span nine
+  seconds long with nothing underneath it. Two things generalise past the instrumentation: a
+  *"what was built"* section is a claim like any other and rots the same way, and the same
+  paragraph named a mechanism the library does not have (*"statement text hidden"* is not an
+  option) — **when a document describes how a third-party tool is configured, read the tool.**
 - **A guard that asserts an *absence* goes vacuous the moment the spelling changes**, and passes
   louder than ever. Three were found in one afternoon: `assert "curl -fsS http://localhost:8001/
   readyz" not in showcase` and `assert "4200" in target` both stopped checking anything when the

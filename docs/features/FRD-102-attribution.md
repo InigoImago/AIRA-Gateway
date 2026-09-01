@@ -68,7 +68,17 @@ request ─▶ UseCasePathMiddleware (strip /uc/<slug>) ─▶ require_principal
   in logs; only subject id + use case in span attributes.
 
 ## 9. Observability
-- Span attributes `aira.subject`, `aira.use_case`, `aira.auth_method`; these flow to Grafana (FRD-001).
+- Span attributes `aira.subject`, `aira.use_case`, `aira.auth_method` and `aira.credential`; these
+  flow to Grafana (FRD-001).
+- **On every path that attributes a request, which was one of four until 2026-09-01.** A request is
+  attributed in four places — the Gemini surface's dependency, the KIRA surface's own resolver,
+  `pipeline:dryRun` and the console's model check — and only the first also put the facts on the
+  span. All four write an audit row, so the figures were in the database while the *trace* could
+  not be filtered by any of them, and the provisioned dashboard's `span.aira.use_case` and
+  `span.aira.subject` columns were empty for three quarters of the traffic.
+  `auth.attribution.attribute` is now the one act, and
+  `gateway/tests/test_every_attribution_reaches_the_span.py` fails on a fifth site that assigns
+  `request.state.attribution` itself.
 
 ## 10. Testing & Acceptance Criteria
 - **Tests** (hermetic): group→use-case extraction; selector precedence (header over path);
