@@ -40,15 +40,20 @@ users, and never changes a Keycloak group.
 Read [`../INTEGRATIONS.md` §2](../INTEGRATIONS.md#2-keycloak-or-another-oidc-provider) and do
 exactly what it says. The three things people get wrong:
 
-1. **The five realm roles must exist with the exact names** — `global-admin`, `it-security`,
-   `it-steuerung`, `use-case-admin`, `use-case-user`. A role that is spelled differently is simply
-   not held. See [`../ROLES.md`](../ROLES.md).
+1. **A group must confer each role, and `AIRA_ROLE_GROUPS` must name it** — `global-admin`,
+   `it-security`, `it-steuerung`, mapped to whatever group paths your realm uses. **A Keycloak
+   *realm role* grants nothing**: neither plane reads `realm_access.roles` (`ADR-0017`). This step
+   said the opposite until 2026-08-31, and named two roles that were abolished on 2026-08-09 —
+   following it produced an installation where nobody held a role, with no error anywhere. See
+   [`../ROLES.md`](../ROLES.md).
 2. **The `groups` mapper must be on every client that reaches AIRA**, including service accounts. A
    token with no `groups` claim grants nothing through a group, and nothing anywhere says so.
 3. **Redirect URIs and web origins must be pinned** to your console hostname. `*` is refused.
 
 Verify before moving on: obtain a token for a test user and check that the claims contain
-`realm_access.roles`, `groups`, `exp`, `iat`, `sub` and your audience.
+`groups` — with **full paths**, and including the path `AIRA_ROLE_GROUPS` names for their role —
+plus `exp`, `iat`, `sub` and your audience. `realm_access.roles` is not read and its presence
+proves nothing.
 
 ---
 

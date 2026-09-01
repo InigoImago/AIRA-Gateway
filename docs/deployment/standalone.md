@@ -46,8 +46,9 @@ make ps
 make seed
 ```
 
-Creates the five realm roles and one demo user per role. Sign in at <http://localhost:4200> as
-`admin` / `demo-password`.
+Creates the three role groups and five demo users — `admin`, `itsec` and `itgov` holding one
+role each, `ucadmin` and `ucuser` holding none and reaching use cases through grants instead. Sign
+in at <http://localhost:4200> as `admin` / `demo-password`.
 
 ---
 

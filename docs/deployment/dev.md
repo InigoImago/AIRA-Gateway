@@ -65,7 +65,7 @@ make ps
 Both planes have their own database and their own migration tool. Run all four; each is idempotent.
 
 ```bash
-make seed              # control plane: migrate, then create the five roles and demo users
+make seed              # control plane: migrate, then create the role groups and demo users
 make migrate-gateway   # gateway: Alembic migrations
 make kafka-topics      # the compacted config topics
 ```

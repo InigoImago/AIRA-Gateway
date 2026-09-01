@@ -6,28 +6,41 @@ function, that function is named, so a reader can check the claim rather than tr
 There are **two independent axes**, and almost every misunderstanding about AIRA's permissions comes
 from collapsing them:
 
-1. **Realm roles** — five of them, held in Keycloak. They say what somebody is in the organisation:
-   a global administrator, IT Security, governance, a use-case administrator, a use-case user.
+1. **Organisation-wide roles** — three of them, held **through a Keycloak group**. They say what
+   somebody is in the organisation: a global administrator, IT Security, governance.
 2. **Grants on a use case** — `admin` or `user`, held per use case. They say what somebody may do
    _inside_ one, and they are given to a person or to a Keycloak group.
 
-A realm role never grants access inside a use case, and a grant never confers an organisation-wide
-power. `ADR-0007` states the rule and `apps/usecases/access.py` implements it:
+An organisation-wide role never grants access inside a use case, and a grant never confers an
+organisation-wide power. `ADR-0007` states the rule and `apps/usecases/access.py` implements it:
 
 > Read visibility must never imply the right to act inside a use case.
 
 ---
 
-## 1. The five realm roles
+## 1. The three organisation-wide roles
 
 Keycloak is the source of truth. Neither service stores a role decision of its own; both read the
-same `realm_access.roles` claim from the same token (`ADR-0009`, `libs/src/aira_common/roles.py`).
+same **`groups`** claim from the same token and resolve it through `AIRA_ROLE_GROUPS`
+(`ADR-0009`, `ADR-0017`, `libs/src/aira_common/roles.py`).
 
-| Role                      | Realm role name | In one sentence                                                                     |
-| ------------------------- | --------------- | ----------------------------------------------------------------------------------- |
-| Global Administrator      | `global-admin`  | Runs the installation. The only role that may catalogue and release models.         |
-| IT Security               | `it-security`   | Investigates and stops. Sees every use case, may act in an incident, reads content. |
-| IT Steuerung (Governance) | `it-steuerung`  | Oversees. Sees every use case and every figure, changes nothing, reads no content.  |
+> **A Keycloak realm role grants nothing.** Neither plane reads `realm_access.roles`; assigning one
+> directly has no effect anywhere, and that inertness is the guarantee `ADR-0017` was written to
+> obtain rather than an oversight.
+
+This section said the opposite until 2026-08-31 — *"five of them … both read the same
+`realm_access.roles` claim"* — which is, word for word, the paragraph
+`libs/src/aira_common/roles.py` opens by naming as a defect it had already corrected **in the
+module**. The correction never reached the document a reader opens first, and §5 below sent an
+operator to configure realm roles that grant nobody anything, silently. *Correct the definition,
+then grep for the comparison* (`LESSONS.md` §1) — the grep, here, is
+`tools/tests/test_the_roles_document_names_the_roles_that_exist.py`.
+
+| Role                      | Name in `AIRA_ROLE_GROUPS` | In one sentence                                                          |
+| ------------------------- | -------------------------- | ------------------------------------------------------------------------ |
+| Global Administrator      | `global-admin`             | Runs the installation. The only role that may catalogue and release models. |
+| IT Security               | `it-security`              | Investigates and stops. Sees every use case, may act in an incident, reads content. |
+| IT Steuerung (Governance) | `it-steuerung`             | Oversees. Sees every use case and every figure, changes nothing, reads no content. |
 
 There is **no** use-case role. Administering or belonging to a use case is a **grant on that use
 case** (`ADR-0017`, `FRD-209`), held by a Keycloak group, not a badge a person carries. Two roles
@@ -185,13 +198,26 @@ exists so an installation can be recovered when the control plane is unavailable
 
 ## 5. Setting the roles up
 
-Roles are Keycloak realm roles. The dev realm under `deploy/compose/keycloak/realms/` creates all
-five and five matching demo users.
+**A role is held through a group, and `AIRA_ROLE_GROUPS` is what maps one to the other**
+(`ADR-0017`). The dev realm under `deploy/compose/keycloak/realms/` creates the three groups the
+shipped default names — `/aira/global-admins`, `/aira/it-security`, `/aira/it-steuerung` — and the
+demo users that belong to them:
 
-For your own realm, see [`INTEGRATIONS.md`](INTEGRATIONS.md) — it lists what the realm must provide:
-the five roles, a `groups` mapper on every client that reaches AIRA, and the redirect URIs and web
-origins for the console.
+```
+AIRA_ROLE_GROUPS=global-admin=/aira/global-admins;it-security=/aira/it-security;it-steuerung=/aira/it-steuerung
+```
 
-Management syncs a caller's realm roles onto Django groups on every request (`FRD-201`), so Keycloak
-remains the only place a role is granted or removed. Changing a role there takes effect on the
+The paths are yours: `/it/security-team` is as good as `/aira/it-security`, and one role may be
+conferred by several groups (`it-security=/a/one,/b/two`). The match is **exact** — a sub-group does
+not inherit — and a name that is not one of the three roles is refused at start-up rather than
+ignored.
+
+Two things the realm has to provide, and both fail silently if they are missing: a
+**group-membership mapper** emitting `groups` with **full paths**, on every client that reaches
+AIRA, and a group named in `AIRA_ROLE_GROUPS` for `global-admin` — Management refuses to start
+outside `local` without one. [`INTEGRATIONS.md`](INTEGRATIONS.md) §2 is the full list.
+
+Management syncs the roles a caller's **groups** confer onto Django groups on every request
+(`FRD-201`, `rbac.sync_user_roles`), so the directory remains the only place a role is granted or
+removed — and every role is *removed* as well as added, so leaving the group takes effect on the
 caller's next token.

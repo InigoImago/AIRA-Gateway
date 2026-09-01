@@ -1,4 +1,4 @@
-"""Phase 0 seed contribution: the five roles (as Groups) and one demo user each.
+"""Phase 0 seed contribution: the three roles (as Groups) and the five demo users.
 
 Deterministic and idempotent: users are keyed by a fixed username, groups by role name,
 so re-running produces the same state. ``fresh`` removes existing demo users first.
