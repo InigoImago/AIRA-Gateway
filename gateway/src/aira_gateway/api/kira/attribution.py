@@ -42,6 +42,7 @@ from aira_gateway.auth.attribution import (
     USE_CASE_HEADER_NAME,
     USE_CASE_PATH_FORM,
     Attribution,
+    attribute,
     is_valid_use_case,
     resolve_use_case,
 )
@@ -91,13 +92,14 @@ def resolve(request: Request, principal: Principal) -> Attribution:
             f"bypass every budget and limit. Name one with {_HOW_TO_SELECT}.",
         )
 
-    attribution = Attribution(
-        subject=principal.subject,
-        method=principal.method,
-        username=principal.username,
-        use_case=selected,
-        credential=principal.credential,
-        issuer=principal.issuer,
+    return attribute(
+        request,
+        Attribution(
+            subject=principal.subject,
+            method=principal.method,
+            username=principal.username,
+            use_case=selected,
+            credential=principal.credential,
+            issuer=principal.issuer,
+        ),
     )
-    request.state.attribution = attribution
-    return attribution

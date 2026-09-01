@@ -348,6 +348,14 @@ reading code.
   `is_catastrophic` copied privately into the redactor and left behind when the shared one grew.
   **Extract the rule, or write the comparison test.**
 
+  *And a **path** is a surface too, when four of them attribute a request.* `require_attribution`
+  put the caller on the span; the KIRA surface's own resolver, `pipeline:dryRun` and the console's
+  model check each built the same `Attribution`, assigned it to `request.state` and stopped — so
+  every figure was on the audit row and the *trace* could be filtered by who only for the one
+  surface. Found in a trace view rather than in the source, because in the source all four look
+  like the same three lines. **Where a fact has two destinations, make attaching it one act**: the
+  split is what let three of the four perform half of it.
+
   *A direction is a surface too.* `redact_span_query` has kept `?key=` out of the **inbound** span
   since `ADR-0007`, and `AccessLogRedaction` out of the access log — and the moment client
   instrumentation was switched on, the same query string went out on a **client** span with the

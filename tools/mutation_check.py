@@ -6212,6 +6212,16 @@ MUTATIONS = [
         "gateway/tests/test_the_span_says_what_the_request_was.py",
     ),
     Mutation(
+        "OT6",
+        "every path that attributes a request says so on the span, not only on the row",
+        "gateway/src/aira_gateway/auth/attribution.py",
+        """    request.state.attribution = attribution
+    set_span_attributes(""",
+        """    request.state.attribution = attribution
+    _unused = (""",
+        "gateway/tests/test_every_attribution_reaches_the_span.py",
+    ),
+    Mutation(
         "OT5",
         "a span says which surface the request came in on",
         "gateway/src/aira_gateway/persistence/recorder.py",

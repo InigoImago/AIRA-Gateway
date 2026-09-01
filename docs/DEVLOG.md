@@ -5,6 +5,76 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## What a stream sends, and in which encoding (2026-09-01)
+
+Two questions asked of yesterday's wiring: does telemetry still leave when the response is a
+**stream**, and can it be sent as **JSON**. Both were answered by measurement against the running
+stack, and the first found a defect neither question was about.
+
+### A stream delivers, and one span in it measures the wrong thing
+
+Driven on both surfaces, `alt=sse` and `/kira/api/external/streaming-chat`. The server span is
+complete — every `aira.*` attribute, the token count, the cost — and it is written from inside the
+generator's `finally`, so the context is still current when the audit runs. The cancelled case
+survives too: a caller hung up mid-stream produced `aira.outcome = client_gone`, `aira.status =
+499` **on the span**, beside `http.status_code = 200`, which is the wire status and the distinction
+`Accounting.status` exists for. That is `accounting`'s `asyncio.shield` visible in telemetry.
+
+    gemini  streamGenerateContent  server 15788ms  served       upstream client span   272ms
+    gemini  streamGenerateContent  server  2808ms  client_gone  upstream client span  2700ms
+    kira    streaming-chat         server   694ms  served       upstream client span   274ms
+
+**The upstream span covers time to first byte, not the answer.** The httpx instrumentation ends its
+span when `handle_async_request` returns, and for a streamed call that is when the *headers*
+arrive: 272 ms of a 15 788 ms request. So on the streaming path the question yesterday's change was
+made to answer — *is the gateway slow or is the model slow* — is still not answerable from the
+span tree; the 15.5 seconds of generation sit inside the server span and are attributed to nothing.
+
+Recorded rather than closed, and deliberately: it is the library behaving correctly (the HTTP
+exchange *is* over when the headers arrive), and covering the generation means a span this project
+opens around the chunk loop in the one layer both surfaces share. That is a feature, not a
+correction, and it is a small one whenever somebody wants it.
+
+### And three of the four attribution sites never reached the span
+
+Found in the trace, not in the code: a KIRA request's span carried no `aira.subject` and no
+`aira.auth_method`, where the Gemini request beside it carried both.
+
+A request is attributed in **four** places — the Gemini surface's dependency, the KIRA surface's
+own resolver (`FRD-107` §5.3), `pipeline:dryRun`, and the console's model check — and only the
+first also put the facts on the span. All four write an audit row, so every figure was in the
+database and the *trace* could not be filtered by who, which use case or which credential. The
+provisioned dashboard selects `span.aira.use_case` and `span.aira.subject`: those columns were
+empty for three quarters of the traffic, and an empty column reads as *nothing to show*.
+
+Two shapes at once, both in `LESSONS.md` §1 — *a rule restated on a second surface*, and *a fact
+applied at each `return` is missing from one of them* — and the same answer as every other time:
+`auth.attribution.attribute` is now the one act that attaches an attribution, and
+`test_every_attribution_reaches_the_span.py` fails on a fifth site that assigns
+`request.state.attribution` itself. Both halves of that guard were observed failing against the
+reverted code.
+
+### JSON: yes at two of the three hops, and never at ours
+
+- **Out of AIRA**: no. `opentelemetry-exporter-otlp-proto-http` hard-codes
+  `Content-Type: application/x-protobuf`; `opentelemetry-python` ships no `http/json` exporter, so
+  the applications speak protobuf (or gRPC) to the collector and that is not configurable.
+- **Into the collector**: yes. A hand-made OTLP/JSON payload posted to `:4318/v1/traces` with
+  `Content-Type: application/json` was accepted (`200 {"partialSuccess":{}}`), picked up the
+  `resource` processor's `collector` attribute, and was in Tempo — so anything that speaks OTLP/JSON
+  can already send to this stack.
+- **Out of the collector**: yes, and already configured. `otlphttp/lab` in
+  `collector-config.lab.yaml` carries `encoding: json`; measured end to end through a throwaway
+  collector on the same network, protobuf in and `Content-Type: application/json` (gzip) out, with
+  the `aira.*` attributes intact. The body is the protobuf-JSON mapping — nested
+  `resourceSpans[].scopeSpans[].spans[].attributes[]`, key and value in separate fields — which is
+  what `FRD-616` §5(b) warns about and now shows.
+
+Measured with two containers on the `aira` network and removed again; the running stack was not
+touched.
+
+---
+
 ## The three signals, and the two that were not arriving (2026-08-31)
 
 A review round, asked for as *"work through the project, go through all the tests and check whether

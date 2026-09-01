@@ -42,7 +42,7 @@ from aira_gateway.api.serving import (
     released_for,
 )
 from aira_gateway.audit import AuditTrail
-from aira_gateway.auth.attribution import Attribution
+from aira_gateway.auth.attribution import Attribution, attribute
 from aira_gateway.auth.dependencies import require_principal, use_case_refusal
 from aira_gateway.auth.principal import Principal
 from aira_gateway.core.canonical import CanonicalMessage, CanonicalRequest, Role
@@ -276,12 +276,15 @@ async def dry_run(
     # credential every other row is. Set here rather than by the middleware because this endpoint
     # takes its use case from the body — and `record_pipeline_calls` reads it from one place, so a
     # second way of passing it would be a second way of forgetting it.
-    request.state.attribution = Attribution(
-        subject=principal.subject,
-        method=principal.method,
-        username=principal.username,
-        use_case=payload.use_case,
-        credential=principal.credential,
+    attribute(
+        request,
+        Attribution(
+            subject=principal.subject,
+            method=principal.method,
+            username=principal.username,
+            use_case=payload.use_case,
+            credential=principal.credential,
+        ),
     )
     # **The controls that do not need to know a model**, which is the same three the served path
     # takes before anything is spent: a suspension, the rate limits, and whether the budget is

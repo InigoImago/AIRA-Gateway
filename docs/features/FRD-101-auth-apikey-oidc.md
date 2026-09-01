@@ -101,8 +101,10 @@ request ─▶ extract credential (Bearer / x-goog-api-key / ?key=) ─▶ Princ
   rate-limits it (`AIRA_MAX_AUTH_FAILURES_PER_MINUTE`), and every failure is logged.
 - **Named `aira.auth_method` and `aira.subject`** as built, not `auth.method` / `principal.subject`
   as this line first said — `FRD-102` set them when it made attribution a first-class concept, and
-  they are written in one place (`auth/dependencies.py`) alongside `aira.use_case` and
-  `aira.credential`. Corrected here rather than in a reader's head: a document naming an attribute
+  they are written in one place (`auth.attribution.attribute`) alongside `aira.use_case` and
+  `aira.credential`. That place was `auth/dependencies.py` until 2026-09-01, which is to say it was
+  the *Gemini* surface's dependency and not the other three paths that attribute a request — see
+  `FRD-102` §9. Corrected here rather than in a reader's head: a document naming an attribute
   nothing sets sends somebody to query for it.
 
 ## 10. Testing & Acceptance Criteria

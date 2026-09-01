@@ -91,6 +91,26 @@ back-pressure the reader's problem rather than ours. It needs an endpoint per re
 authenticated service account, and it makes completeness the *reader's* responsibility — which for
 an audit feed is the wrong way round.
 
+**And the shape is now measured rather than described.** A span exported by an AIRA process —
+`Content-Type: application/x-protobuf`, which is the only encoding `opentelemetry-python`'s
+OTLP/HTTP exporter has — arrives at an endpoint behind `otlphttp/lab` as
+`Content-Type: application/json`, gzip-compressed, and decompresses to:
+
+```json
+{"resourceSpans":[{"resource":{"attributes":[…,{"key":"service.name","value":{"stringValue":"…"}},
+ {"key":"collector","value":{"stringValue":"aira-otel-collector"}}]},
+ "scopeSpans":[{"scope":{"name":"…"},"spans":[{"traceId":"6e66…","spanId":"85c8…",
+ "name":"…","kind":1,"startTimeUnixNano":"…","endTimeUnixNano":"…",
+ "attributes":[{"key":"aira.model","value":{"stringValue":"qwen3:0.6b"}},
+ {"key":"aira.outcome","value":{"stringValue":"served"}}],"status":{}}]}]}]}
+```
+
+That is the nesting this section warns about, in full: `aira.model` is at
+`resourceSpans[].scopeSpans[].spans[].attributes[]` with the key and the value in separate fields,
+not `{"aira.model": "qwen3:0.6b"}`. **The conversion is the collector's, not ours** — an
+installation that wants a flat event shape puts a `transform` processor in front of the exporter,
+and this document's §1 is the list of what those events would have to contain.
+
 (b) can be tried today without touching the reference stack:
 `make up-lab LAB_SIEM_ENDPOINT=…` layers a collector configuration that fans out to your endpoint
 in OTLP/JSON beside Grafana (`docs/deployment/dev.md`). What arrives is what §1 describes, which is
