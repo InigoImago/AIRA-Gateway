@@ -112,6 +112,7 @@ async def test_the_figures_reach_the_span_through_the_recorder() -> None:
     keeps paying for — and did twice this week, in the two changes either side of this one. So this
     one starts at the function a route calls and asks the *span* what it carries.
     """
+    from gateway.tests.test_persistence_recorder import _request
     from opentelemetry import trace
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
@@ -119,7 +120,6 @@ async def test_the_figures_reach_the_span_through_the_recorder() -> None:
 
     from aira_gateway.auth.attribution import Attribution
     from aira_gateway.persistence.recorder import record_request
-    from gateway.tests.test_persistence_recorder import _request
 
     exporter = InMemorySpanExporter()
     provider = TracerProvider()
@@ -163,6 +163,7 @@ async def test_the_figures_reach_the_span_through_the_recorder() -> None:
 async def test_an_ordinary_request_leaves_the_span_alone() -> None:
     """The other half of the same wire: no tools means no attributes, asserted where it is
     produced rather than on the helper that decides it."""
+    from gateway.tests.test_persistence_recorder import _request
     from opentelemetry import trace
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
@@ -170,7 +171,6 @@ async def test_an_ordinary_request_leaves_the_span_alone() -> None:
 
     from aira_gateway.auth.attribution import Attribution
     from aira_gateway.persistence.recorder import record_request
-    from gateway.tests.test_persistence_recorder import _request
 
     exporter = InMemorySpanExporter()
     provider = TracerProvider()
