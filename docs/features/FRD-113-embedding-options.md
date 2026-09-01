@@ -150,6 +150,11 @@ redaction rules. FR-6 is the security-relevant requirement here — it closes a 
 `aira.embedding.batch_size`, `aira.embedding.task_type`, `aira.embedding.dimensions` on the span,
 and batch size on the audit row.
 
+**The three span attributes were built on 2026-08-31**, in `prepare_for_dispatch`; the batch size
+has been on the row since the verb shipped. `task_type` and `dimensions` are absent where the
+caller named neither — an unset option is not the same fact as a default one, and a span that says
+`dimensions = 0` for a request that asked for nothing invents a figure.
+
 ## 10. Testing & Acceptance Criteria
 
 - **Unit** — a single text and a list both work; order is preserved; an undeclared task type is

@@ -5,6 +5,196 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The three signals, and the two that were not arriving (2026-08-31)
+
+A review round, asked for as *"work through the project, go through all the tests and check whether
+the behaviour the system needs is actually guaranteed"*, with OpenTelemetry named as the thing that
+has to work and auth, roles, interface stability and *"the policies a use case defines actually
+being applied"* named beside it.
+
+The round before this one, on the same day, was also about OTel and found four defects behind a
+switch that had never been turned on. This one found the two it did not, and they have the same
+shape as each other: **a signal the documents describe, the code does not produce, and no test can
+reach.**
+
+### An upstream call is not in the trace
+
+`FRD-117` §5.3 specifies `HTTPXClientInstrumentor` and `SQLAlchemyInstrumentor` "enabled with the
+existing OTel switch"; §10a of the same document records *"FR-1 through FR-6"* as delivered on
+2026-08-06, and `GAP-ANALYSIS.md` row 21 repeats it. Neither package was a declared dependency of
+anything, and neither instrumentor was ever called.
+
+So the trace of a request that spent nine seconds inside a model was **one span, nine seconds
+long, with nothing underneath it** — and *is the gateway slow or is the model slow*, which is the
+first question anybody asks of a gateway, could not be answered from the trace at all. The same for
+the database read that decides whether a request is allowed: `PipelineStore.get`, the grant
+resolver, the budget ledger and the audit writer are all invisible.
+
+`LESSONS.md` §7 already names the shape — *an FRD that cites a control as an existing fact is not a
+check that it exists* — and it was written about `ADR-0021` naming `thinking_modes` in passing. The
+same sentence, one document along, three weeks later.
+
+**Switching it on had a hazard the original section did not consider, and it is ours rather than a
+caller's.** The Gemini dialect authenticates with `?key=<api key>`; `upstreams/gemini.py` puts
+*this installation's* key there on every call to Google AI Studio, and the httpx instrumentation
+records the request URL verbatim — its own `redact_url` removes `user:password@` and nothing else.
+Measured before the wiring shipped: the key in `http.url` on every model call, on its way to a
+trace backend whose readers are not the people who can read the secret store. It goes through the
+same `SENSITIVE_QUERY_PARAMS` list as the inbound server span and the access log now — one
+definition of *what is a credential in a URL*, three readers.
+
+And the hook has to be handed over **twice**. The instrumentation picks `async_request_hook` for an
+`AsyncClient` and silently drops it unless it is a coroutine function; every upstream adapter here
+uses `AsyncClient`. A sync-only hook looks exactly like a working redaction and redacts nothing,
+which is why the test drives an async client and asserts on the attribute rather than on the call —
+`OT2` reintroduces exactly that.
+
+*And the sentence about SQLAlchemy described a mechanism that does not exist.* "Statement text
+**hidden**" is not an option the instrumentation has; what it records is the statement with its
+placeholders and never the parameter values. The reason the requirement was written for is
+therefore met, and §5.3 now says what is recorded instead of what is hidden, with a test that
+asserts a bound value never reaches a span.
+
+### Logs were the signal nobody had
+
+`FRD-001` FR-6: *"structured logs carry `trace_id`/`span_id`; logs shipped via OTLP"*, with §5's
+own diagram ending in `logs (Loki)` and §10 accepting on *"when I view logs, they include
+trace_id/span_id correlation"*. The first clause was true. The second was not, and had never been.
+
+`configure_observability` attaches an OTLP `LoggingHandler` to the **root** logger, and
+`configure_logging` configured structlog with `PrintLoggerFactory` — which writes to stdout and
+creates no `logging.LogRecord` at all. Nothing in the Compose stack collects container output:
+there is no filelog receiver in the collector config and no shipper beside it. And uvicorn
+configures `uvicorn.access` with `propagate: False`, so not even the access log reached the root
+handler. Traces and metrics arrived; every line this system writes about itself —
+`rate_limited`, `oidc_token_rejected`, `config_event_failed`, `unhandled_error` — went to stdout
+and stopped there.
+
+The wire is one processor, **after** the renderer: the finished line is handed to a stdlib logger
+that propagates to the root and returned unchanged for `PrintLogger` to write. One rendering, two
+sinks — stdout is byte-for-byte what it was, and there is no second definition of what a log line
+looks like. Three properties on the export logger and each is load-bearing: a level of its own (a
+record is filtered by the level of the logger it is emitted on, and the root's default is
+`WARNING`), `propagate` (the handler is on the root), and a `NullHandler` (without it
+`logging.lastResort` prints every warning a second time, on **stderr**, whenever telemetry is off).
+
+**This one had been written down.** The previous entry records it in passing — *"AIRA's own log
+lines are not exported"* — as something a reader would look for and not find. A note is not a wire,
+and an FRD whose acceptance criterion is unmet is not Done because somebody mentioned it in a log.
+
+### Measured on the running stack
+
+Not inferred from a passing test. A gateway built from this branch, telemetry on, pointed at the
+stack's own collector, one request to the local model:
+
+```
+[aira-gateway-review] SERVER  4300ms  POST /v1beta/models/{resource}
+                              aira.api.surface = gemini · aira.request.parts = 1
+                              aira.model = qwen3:0.6b · aira.outcome = served
+[aira-gateway-review] CLIENT  4246ms  POST http://localhost:11434/v1/chat/completions
+[aira-gateway-review] CLIENT     2ms  SELECT aira_gateway   (model_catalog · WHERE model = %(pk_1)s)
+[aira-gateway-review] CLIENT     1ms  SELECT aira_gateway   (access_suspensions)
+[aira-gateway-review] CLIENT     1ms  SELECT aira_gateway   (budgets · WHERE use_case = %(use_case_1)s)
+                              … seven database spans, every statement a placeholder, no bound value
+```
+
+**4246 of 4300 milliseconds were the model.** That is the whole of what this change buys, and
+before it the trace said nothing at all about where the time went.
+
+And in Loki, from the same build, a refusal on a bad bearer token:
+
+```
+{"reason":"DecodeError","event":"oidc_token_rejected","trace_id":"9db11724d2af536e6cea2d0b2dc520d7", …}
+   span_id=a5407d09b6d8ad17  service_name=aira-gateway-review  severity_text=INFO
+```
+
+— the same trace id the response returned in `x-trace-id`, which is `FRD-001` §10's third
+acceptance criterion answered for the first time. The exported record's `code.*` attributes name
+the forwarder rather than the emitting line, and that is written down in the function rather than
+approximated with a guessed `stacklevel`.
+
+### Four Observability sections describing attributes nothing set
+
+`FRD-107` §9 (`aira.api.surface`), `FRD-110` §9 (`aira.request.parts`,
+`aira.request.attachment_bytes`), `FRD-112` §9 (`aira.response_schema` and a digest) and `FRD-113`
+§9 (the three embedding ones) each named span attributes, and not one of them was set. `FRD-131`
+§9 named `aira.tools.declared`, which is the *audit row's* key; the span attribute is
+`aira.tools.offered`, so a panel built from that document would have come back empty.
+
+Built rather than documented-as-unbuilt, because they answer the questions this round was about:
+which surface a client is on, why a request was slow, and whether the same schema is expensive
+every time. All of them in `prepare_for_dispatch` and `record_request` — the two functions every
+surface and every verb pass through — because a shape attribute written at a surface is one the
+next surface does not write.
+
+### The mutation that could not fail
+
+`make mutants` reported one survivor in 665: `G7`, *"an account nobody invited is claimed by
+nobody"* — the account-takeover fix from the day before. It is defended, by
+`test_an_uninvited_account_is_claimed_by_nobody`. The mutation was the problem: re-anchored on
+2026-08-30 to `.filter(user__username__in=[preferred, preferred])`, which is **the same query** as
+the `.filter(user__username=preferred)` it replaces. A guard that cannot fail, in the direction
+`LESSONS.md` §7 calls the more expensive one — it reports a security property as undefended and
+sends the next reader to write a test that is already there. It now manufactures the invitation for
+any account carrying the name, which is the defect itself.
+
+### The roles document described the mechanism that was abolished
+
+Asked to check *roles*, the code answered well: one definition in `aira_common.roles`, group
+membership as the only source (`ADR-0017`), three role sets kept apart for three different
+questions, and a test comparing the console's copy with the server's. `INTEGRATIONS.md` §2 says all
+of it correctly, including *"a Keycloak realm role grants nothing"*.
+
+`docs/ROLES.md` — the page a reader opens to answer *who may do what* — said the opposite, in four
+places. **Five** roles rather than three; a heading counting them; *"both read the same
+`realm_access.roles` claim from the same token"*, citing the module that opens by naming that exact
+sentence as a defect it had already corrected; and a §5 *"Setting the roles up"* telling an
+operator to assign realm roles and never mentioning `AIRA_ROLE_GROUPS`. Following it end to end
+produces an installation where **nobody holds a role**, with no error anywhere: the mapping is
+empty, the claim is not read, and an empty console looks like an empty console.
+
+*Correct the definition, then grep for the comparison* — the definition was corrected on
+2026-08-11 in `roles.py`, and the grep found the document three weeks later. It has a counterpart
+now (`test_the_roles_document_names_the_roles_that_exist.py`), written against `ALL_ROLES` rather
+than against a list typed in the test, because a second list goes stale the way the first one did.
+
+Two more of the same family in `REQUEST-LIFECYCLE.md`, the document whose subject is *every control
+in the order it runs*: its middleware table listed three of the four and had the last two in the
+wrong order — the very order `app.py` changed deliberately so a 413 and a 500 carry the security
+headers — and §3 repeated the realm-roles sentence.
+
+### Three closed gaps still listed as open
+
+`DEPLOYMENT.md` §7 exists so *"a deployment guide that hides them wastes your time"*. Three of its
+rows had been closed and not struck: **Kafka has no auth/TLS settings** (`ADR-0018` gave it
+`KafkaSecurity`, and both planes refuse PLAINTEXT outside `local`), **membership is split between
+Management and Keycloak groups** (`FRD-209` — the same thing §5.4 was still describing), and **no
+content redaction** (`FRD-406` masks credentials; the PII half is *declined* by `ADR-0016`, which
+is a decision rather than a pending item). A stale *open* gap costs the mirror of a stale *closed*
+one: somebody works around a problem that was fixed, or plans work that is done.
+
+### And a test of mine left the instrumentation on
+
+Found by the suite rather than by reading: `test_outgoing_calls_are_traced.py` passed alone and
+failed in the run. `test_app.py` builds an app with `otel_enabled=True`, which now also instruments
+httpx and SQLAlchemy — and those patch **modules**, so every later test's httpx call was wrapped
+and its spans queued for a collector nothing answers. Worse, both instrumentors are singletons that
+refuse a second `instrument()` **without a word**, so the test that measures those spans got the
+first one's tracer provider and an empty exporter.
+
+The repository-root `conftest.py` was written about exactly this shape one library along, and the
+answer is the same: a fixture that clears the instrumentation on the way **in** as well as out, so
+a test that leaves it on is something the next test survives rather than something it inherits.
+
+### And the gate was red
+
+`make lint-py` failed on `main`: two `ruff` I001 findings in the test file added with the previous
+round's last commit, so `make ci` was red before any change in this one. *A gate nobody runs is a
+gate that is already red* — the entry `LESSONS.md` §7 already carries, arriving again four
+commits later.
+
+---
+
 ## A trace that stopped at the bus, and a URL nothing printed (2026-08-31)
 
 `FRD-615`, and it started as a question rather than a round: *what actually goes over OTel, and how

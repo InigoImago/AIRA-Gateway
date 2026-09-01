@@ -165,6 +165,12 @@ outside the supported set; a bound exceeded, naming it; no dispatchable model de
 `aira.response_schema` (boolean) and `aira.response_schema.digest` on the span, so "structured
 requests are slower / more expensive" is answerable without storing schemas.
 
+**Built on 2026-08-31**, in `prepare_for_dispatch` with the other request-shape attributes; until
+then this section described a control the code did not have. The digest is the first 16 hex
+characters of a SHA-256 over the schema's normalised form — enough to group *the same schema* across
+requests, and not enough to reconstruct one, which is the whole point of a digest rather than the
+schema itself. Absent, never `false`, on a request that asked for no schema.
+
 ## 10. Testing & Acceptance Criteria
 
 - **Unit** — each supported type and field parses; an unknown field is refused naming it; each

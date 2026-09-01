@@ -146,6 +146,13 @@ async def record_request(
         {
             "aira.model": model,
             "aira.operation": operation,
+            # **Which surface answered** (`FRD-107` §9). The audit row and the reporting breakdown
+            # have carried it since that surface shipped and the span never did, so a trace could
+            # not tell the two apart at all and *"which of my clients have migrated"* was a
+            # question for the database only. Here rather than in `prepare_for_dispatch`, because
+            # this function runs for a **refused** request too and that is a request that had a
+            # surface.
+            "aira.api.surface": api,
             "aira.status": status,
             "aira.outcome": str(outcome),
             "aira.source_ip": source_ip,

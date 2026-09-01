@@ -882,10 +882,24 @@ MUTATIONS = [
         # username matched, and this mutation removed the "unbound" half. The whole "by name" half
         # is gone now — an account is claimable only where somebody **invited** it — so the
         # property to defend is that the invitation is required, not that a binding is checked.
+        # **And re-written 2026-08-31, because the re-anchoring above produced an edit that could
+        # not fail.** `.filter(user__username__in=[preferred, preferred])` is the *same query* as
+        # `.filter(user__username=preferred)`, so this reported `SURVIVED` about a property
+        # `test_an_uninvited_account_is_claimed_by_nobody` has defended since the day it was
+        # written. `LESSONS.md` §7 names that as the more expensive direction of *a guard that
+        # cannot fail*: it sends the next reader to write a test that already exists, and it says
+        # the account-takeover fix is undefended when it is not. The edit below reintroduces the
+        # defect itself — an invitation manufactured for **any** account carrying the name — which
+        # is what the sentence beside it claims to be guarding.
         "an account nobody invited is claimed by nobody, however its name matches",
         "management/backend/src/aira_management/apps/api/authentication.py",
-        "                    .filter(user__username=preferred)",
-        "                    .filter(user__username__in=[preferred, preferred])  # any match",
+        """                invited = (
+                    PendingIdentity.objects.select_related("user")
+                    .filter(user__username=preferred)
+                    .first()
+                )""",
+        """                _any = user_model.objects.filter(username=preferred).first()
+                invited = PendingIdentity.objects.create(user=_any) if _any else None""",
         f"{MGMT_HARDENING} management/backend/tests/test_an_identity_is_claimed_once.py",
     ),
     Mutation(
@@ -6163,6 +6177,47 @@ MUTATIONS = [
         "    if text and len(text) <= USERNAME_MAX_LENGTH:",
         "    if text:",
         "management/backend/tests/test_an_identity_is_claimed_once.py",
+    ),
+    # ── FRD-117 FR-5 and FRD-001 FR-6, both specified years before they were built ────────────
+    Mutation(
+        "OT1",
+        "an upstream call and a database read are spans of their own",
+        "gateway/src/aira_gateway/app.py",
+        "        instrument_outgoing_calls(engine)",
+        "        pass  # outgoing calls intentionally untraced",
+        "gateway/tests/test_outgoing_calls_are_traced.py",
+    ),
+    Mutation(
+        "OT2",
+        "this installation's upstream key never reaches a client span",
+        "gateway/src/aira_gateway/telemetry.py",
+        "            async_request_hook=redact_client_span_url_async,",
+        "            async_request_hook=None,",
+        "gateway/tests/test_outgoing_calls_are_traced.py",
+    ),
+    Mutation(
+        "OT3",
+        "the application's own log lines are exported, not only printed",
+        "libs/src/aira_common/logging.py",
+        "        processors=[*processors, renderer, forward_to_stdlib],",
+        "        processors=[*processors, renderer],",
+        "libs/tests/test_app_logs_are_exported.py",
+    ),
+    Mutation(
+        "OT4",
+        "a span says what the request carried — parts, attachment bytes, schema, batch",
+        "gateway/src/aira_gateway/api/serving.py",
+        "    describe_on_the_span(canonical, embed)",
+        "    pass  # request shape intentionally left off the span",
+        "gateway/tests/test_the_span_says_what_the_request_was.py",
+    ),
+    Mutation(
+        "OT5",
+        "a span says which surface the request came in on",
+        "gateway/src/aira_gateway/persistence/recorder.py",
+        '            "aira.api.surface": api,',
+        "            # surface intentionally left off the span",
+        "gateway/tests/test_the_span_says_what_the_request_was.py",
     ),
 ]
 

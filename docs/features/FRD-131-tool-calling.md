@@ -183,9 +183,15 @@ compromised key includes function calling everywhere.
 
 ## 9. Observability
 
-- `aira.tools.declared` (count) and `aira.tools.called` (count) as span attributes, so the
+- `aira.tools.offered` (count) and `aira.tools.called` (count) as span attributes, so the
   proportion of turns that produce a call is visible — the number that tells you whether an
-  assistant is working or looping.
+  assistant is working or looping. A third, `aira.tools.names`, carries the names where there was a
+  call.
+- **The span attribute is `offered`; the audit row's key is `declared`.** This section said
+  `aira.tools.declared` until 2026-08-31, which is a name nothing sets — so a reader building a
+  panel from this document got an empty one, and an empty panel reads as *"nothing happened"*
+  rather than as a wrong query. The two words are deliberate and stay: the row is what the request
+  *declared*, the span is what it *offered* to the model.
 - A skipped candidate keeps its reason on the row, as `ADR-0012` §3 already requires.
 
 ## 10. Testing & Acceptance Criteria

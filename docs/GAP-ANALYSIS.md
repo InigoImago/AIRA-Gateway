@@ -57,7 +57,7 @@ rather than correctness — each does what it says for what it covers.
 | 18 | Document processing (PDF, images) | done `FRD-110` — 15 media types, signature checks, a model that cannot read it is **refused by name** |
 | 19 | Extensibility as a measurable property | done the assertion passes and the claim has now been tested **three** times — Vertex/Gemini, Vertex/Anthropic, and Foundry, which reused the OpenAI dialect without a line of change |
 | 20 | Secrets from Vault | done `FRD-116` — a settings source, fail-closed |
-| 21 | Operational diagnostics | partly `FRD-117` — build identity, upstream health, trace header, CORS done; **FR-7 (a second OpenAPI 3.0 document) not built** |
+| 21 | Operational diagnostics | partly `FRD-117` — build identity, upstream health, trace header, CORS done; outgoing calls traced since 2026-08-31 (**FR-5 was recorded here as done from 2026-08-06 and had never been built** — see `FRD-117` §5.3); **FR-7 (a second OpenAPI 3.0 document) not built** |
 | 22 | Masking sensitive content in stored payloads | partly `FRD-406` (2026-08-08) — **credentials** are masked; PII deliberately is not |
 | 23 | Report export | done `FRD-602` — CSV as a renderer on the existing endpoint |
 | 24 | Multiple Keycloak backends / groups from UserInfo | **partly** `FRD-118` (2026-08-18) — several issuers, each with its own JWKS and audience set, selected by the token's issuer; **groups from UserInfo stays declined** (FR-3). The "need unclear" this row carried was answered by the owner and built. |

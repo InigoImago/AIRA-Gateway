@@ -13,6 +13,13 @@ dependencies = [
     "pyjwt[crypto]>=2.9",
     "alembic>=1.13",
     "httpx>=0.28",
+    # What this gateway **calls**, as spans (`FRD-117` FR-5). Specified in that FRD's §5.3 and
+    # recorded there as delivered from 2026-08-06 — and neither package was ever a dependency of
+    # anything, so the trace of a request that spent nine seconds inside a model was one span with
+    # nothing underneath it. See `aira_gateway/telemetry.py`, including the credential of *ours*
+    # that the httpx spans had to not carry.
+    "opentelemetry-instrumentation-httpx>=0.50b0",
+    "opentelemetry-instrumentation-sqlalchemy>=0.50b0",
 ]
 
 [build-system]

@@ -60,3 +60,35 @@ def authed_client() -> Iterator[TestClient]:
     settings = GatewaySettings(log_json=True, auth_required=True, demo_mode=True)
     with TestClient(create_app(settings)) as test_client:
         yield test_client
+
+
+@pytest.fixture
+def instrumentation_restored() -> Iterator[None]:
+    """Put the **global** client instrumentation back the way it was found.
+
+    `HTTPXClientInstrumentor` and `SQLAlchemyInstrumentor` patch modules rather than applications,
+    so a test that builds an app with `otel_enabled=True` leaves every later test's httpx call
+    wrapped and its spans queued for a collector nothing is listening to — the shape the
+    repository-root `conftest.py` was written about, one library along.
+
+    It also makes the *next* test that means to instrument a **no-op**: both instrumentors are
+    singletons that refuse a second `instrument()` and return without a word, so the second test
+    gets the first one's tracer provider and its own in-memory exporter stays empty. That is how
+    `test_outgoing_calls_are_traced.py` came to pass alone and fail in the suite.
+
+    Cleared on the way **in** as well as on the way out, because a test that leaves the
+    instrumentation on is exactly what this exists to survive.
+    """
+    from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+    from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
+
+    def _clear() -> None:
+        for instrumentor in (HTTPXClientInstrumentor(), SQLAlchemyInstrumentor()):
+            if instrumentor.is_instrumented_by_opentelemetry:
+                instrumentor.uninstrument()
+
+    _clear()
+    try:
+        yield
+    finally:
+        _clear()
