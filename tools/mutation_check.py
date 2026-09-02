@@ -6317,6 +6317,22 @@ MUTATIONS = [
         "libs/tests/test_a_line_about_otel_does_not_travel_by_otel.py",
     ),
     Mutation(
+        "ID21",
+        "a key set twice in the env file is reported, whatever the file's provenance",
+        "tools/config_render.py",
+        "    duplicates = duplicated_keys(text)",
+        "    duplicates = []",
+        "tools/tests/test_the_config_outranks_the_deployment.py",
+    ),
+    Mutation(
+        "ID22",
+        "the console host reaches the realm's redirect URIs",
+        "deploy/compose/docker-compose.yml",
+        "      AIRA_CONSOLE_HOST: ${AIRA_CONSOLE_HOST:-localhost}",
+        "      # console host intentionally not passed",
+        "tools/tests/test_the_realm_follows_the_console_port.py",
+    ),
+    Mutation(
         "ID19",
         "a batch the collector partly threw away is not reported as a success",
         "libs/src/aira_common/observability.py",

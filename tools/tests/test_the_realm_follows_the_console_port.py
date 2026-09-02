@@ -34,6 +34,14 @@ APPS = COMPOSE_DIR / "docker-compose.apps.yml"
 PLACEHOLDER = "${AIRA_CONSOLE_PORT:4200}"
 VARIABLE = "AIRA_CONSOLE_PORT"
 
+#: And the **host** half, added 2026-09-02 for the same reason one step later. Moving the port was
+#: made possible and moving the machine was not: the realm pinned `localhost` and `127.0.0.1`, so a
+#: stack reached from anywhere else failed at the redirect — *after* the operator had already found
+#: `AIRA_BIND_HOST` and `AIRA_OIDC_ISSUER`, which is two fixes deep before a third wall that gives
+#: the same `server could not be reached`.
+HOST_PLACEHOLDER = "${AIRA_CONSOLE_HOST:localhost}"
+HOST_VARIABLE = "AIRA_CONSOLE_HOST"
+
 #: The console's published port, as Compose writes it. Both names, outermost first — the inner one
 #: predates the `AIRA_PUBLISH_` family and `docs/SETUP.md` documented it for months.
 PUBLISHED_CHAIN = "${AIRA_PUBLISH_FRONTEND_PORT:-${AIRA_FRONTEND_PORT:-4200}}"
@@ -47,7 +55,8 @@ BROWSER_CHAIN = "${AIRA_CONSOLE_PORT:-" + PUBLISHED_CHAIN + "}"
 
 def _client() -> dict:
     """The console's OIDC client, from the realm this stack imports."""
-    realm = json.loads(REALM.read_text().replace(PLACEHOLDER, "4200"))
+    text = REALM.read_text().replace(PLACEHOLDER, "4200").replace(HOST_PLACEHOLDER, "localhost")
+    realm = json.loads(text)
     for client in realm["clients"]:
         if client.get("clientId") == "aira-gateway":
             return client
@@ -128,3 +137,51 @@ def test_the_two_chains_are_the_same_chain() -> None:
             f"the console is published on {entry!r}, and Keycloak is told "
             f"{BROWSER_CHAIN} — one of them moved"
         )
+
+
+# --- and the host, which is the same rule one step out ------------------------------------------
+
+
+def test_the_realm_offers_a_host_that_is_not_this_machine() -> None:
+    """A console reached from another machine has to be a redirect URI, or Keycloak refuses it.
+
+    The URIs are pinned rather than wildcarded on purpose — a wildcard on a public client lets an
+    attacker capture the authorization code (`ADR-0007`) — so the answer is a *named* host, not a
+    looser pattern.
+    """
+    source = REALM.read_text()
+
+    assert HOST_PLACEHOLDER in source, (
+        f"the realm names only this machine, so a console at any other address cannot log in. "
+        f"Use {HOST_PLACEHOLDER}; Keycloak substitutes it on import."
+    )
+
+
+def test_loopback_still_works_whatever_the_host_is_set_to() -> None:
+    """The laptop must not pay for the deployment. `localhost` and `127.0.0.1` stay listed in their
+    own right, so setting the host **adds** an address and never swaps one out."""
+    client = _client()
+    urls = [*client["redirectUris"], *client["webOrigins"]]
+
+    assert any(u.startswith("http://localhost:") for u in urls), urls
+    assert any(u.startswith("http://127.0.0.1:") for u in urls), urls
+
+
+def test_compose_hands_keycloak_the_console_host() -> None:
+    """Keycloak can only substitute a variable its container has — the port's own lesson, and the
+    one that makes this knob real rather than a placeholder nothing fills in."""
+    infra = INFRA.read_text()
+
+    assert f"{HOST_VARIABLE}: ${{{HOST_VARIABLE}:-localhost}}" in infra, (
+        f"the Keycloak service must set `{HOST_VARIABLE}`, or the placeholder falls back to its "
+        "own default and the realm silently names only this machine again"
+    )
+
+
+def test_both_schemes_are_offered_for_a_named_host() -> None:
+    """A stack behind a TLS-terminating proxy is reached at `https://`, and the browser's scheme is
+    what Keycloak compares. Naming only `http://` there would move the same failure one step on."""
+    source = REALM.read_text()
+
+    assert f"http://{HOST_PLACEHOLDER}" in source, source
+    assert f"https://{HOST_PLACEHOLDER}" in source, source

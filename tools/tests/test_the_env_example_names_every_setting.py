@@ -129,3 +129,34 @@ def test_no_example_line_names_a_variable_that_nothing_defines() -> None:
         "Either the name is a typo, or it was renamed and this file was not — both read to an "
         "operator as a knob that works."
     )
+
+
+def test_no_key_is_defined_twice() -> None:
+    """A key set twice is a file whose meaning depends on line order.
+
+    Docker Compose takes the **last** definition and says nothing about the first, so a value
+    somebody appended silently beats the one they edited — and the edited one is the one they will
+    go back and read. Found in a live `deploy/compose/.env` on 2026-09-02: `AIRA_BIND_HOST` at line
+    10 (`127.0.0.1`, from this example) and again at line 123 (`0.0.0.0`, appended later). The
+    stack was reachable, the file said loopback at the place anybody looks, and rebuilding `.env`
+    from the example silently took the override away.
+
+    Checked on the example rather than on `.env`, because `.env` is git-ignored and belongs to the
+    operator; what this repository can promise is that the file it hands out does not teach the
+    shape. `make config-verify` is the check for a deployment's own file.
+    """
+    seen: dict[str, int] = {}
+    duplicates: list[str] = []
+    for number, line in enumerate(ENV_EXAMPLE.read_text(encoding="utf-8").splitlines(), start=1):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key = stripped.split("=", 1)[0].strip()
+        if key in seen:
+            duplicates.append(f"{key} (lines {seen[key]} and {number})")
+        seen[key] = number
+
+    assert not duplicates, (
+        f"These keys are defined more than once: {duplicates}. Compose takes the last and says "
+        "nothing about the first, so the file means something other than what it reads like."
+    )

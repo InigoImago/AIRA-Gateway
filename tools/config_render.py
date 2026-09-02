@@ -241,6 +241,36 @@ def _effective_environment(compose_files: list[Path]) -> dict[str, set[str]] | N
     return seen
 
 
+def duplicated_keys(text: str) -> list[str]:
+    """Keys the file defines more than once, with both line numbers.
+
+    **Checked whatever the file's provenance**, because this is about the file disagreeing with
+    itself rather than with a config source. Compose takes the *last* definition and says nothing
+    about the first, so a value appended at the bottom silently beats the one near the top — and
+    the one near the top is the one somebody goes back and reads.
+
+    Found in a live `deploy/compose/.env` on 2026-09-02: `AIRA_BIND_HOST=127.0.0.1` at line 10,
+    from the shipped example, and `AIRA_BIND_HOST=0.0.0.0` at line 123, appended later to make the
+    stack reachable. The stack was reachable; the file said loopback where anybody looks; and
+    rebuilding `.env` from the example took the override away with no sign that anything had been
+    lost — which arrives as `server could not be reached` and sends you looking at Docker.
+    """
+    seen: dict[str, int] = {}
+    found: list[str] = []
+    for number, line in enumerate(text.splitlines(), start=1):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key = stripped.split("=", 1)[0].strip()
+        if key in seen:
+            found.append(
+                f"{key} is set on line {seen[key]} and again on line {number} — Compose uses the "
+                f"second and ignores the first."
+            )
+        seen[key] = number
+    return found
+
+
 def verify(env_file: Path, compose_files: list[Path]) -> list[str]:
     """Every way the deployment could be running on something the config file did not say."""
     problems: list[str] = []
@@ -248,6 +278,11 @@ def verify(env_file: Path, compose_files: list[Path]) -> list[str]:
         return [f"{env_file} does not exist — nothing has been rendered."]
 
     text = env_file.read_text(encoding="utf-8")
+    # **Before the provenance check, and never behind its early return.** A hand-made `.env` — the
+    # demo path, and every operator who edited the example — takes the `note:` branch below and
+    # was therefore checked for nothing at all. A key set twice is exactly the defect a hand-made
+    # file acquires, because that is what appending to one does.
+    duplicates = duplicated_keys(text)
     source_line = next((ln for ln in text.splitlines() if ln.startswith(STAMP_SOURCE)), None)
     if source_line is None:
         marker = marker_of(env_file)
@@ -255,8 +290,9 @@ def verify(env_file: Path, compose_files: list[Path]) -> list[str]:
             # Not a finding. The demo path ships a hand-made `.env` on purpose and names no
             # config file, so there is nothing above it to disagree with.
             return [
+                *duplicates,
                 f"note: {env_file} was not rendered from a config file, and nothing claims it "
-                "should have been — it is authoritative because nothing else is."
+                "should have been — it is authoritative because nothing else is.",
             ]
         return [
             f"{env_file} carries no `{STAMP_SOURCE}` stamp, and "
@@ -266,7 +302,11 @@ def verify(env_file: Path, compose_files: list[Path]) -> list[str]:
         ]
     source = Path(source_line.split(":", 1)[1].strip())
     if not source.is_file():
-        return [f"{env_file} names {source} as its source, and that file is gone."]
+        return [*duplicates, f"{env_file} names {source} as its source, and that file is gone."]
+
+    # Carried into the rendered path too: a rendered file that somebody appended to has the same
+    # problem, and the appended line is precisely the one nobody re-renders.
+    problems.extend(duplicates)
 
     # 1. the source changed, or the file was edited after rendering
     stamped = next((ln for ln in text.splitlines() if ln.startswith(STAMP_DIGEST)), "")

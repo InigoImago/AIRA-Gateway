@@ -69,6 +69,10 @@ COMPOSE_ONLY = {
     # PORT` because the realm's placeholder syntax takes one name and one default, while Compose's
     # takes a chain — and the chain has to be resolved somewhere.
     "AIRA_CONSOLE_PORT",
+    # And the host, for the same twenty seconds. The realm pins its redirect URIs — a wildcard on
+    # a public client lets an attacker capture the authorization code — so the host a browser
+    # actually types has to be one of them, and until 2026-09-02 only the port was a variable.
+    "AIRA_CONSOLE_HOST",
     "AIRA_PUBLISH_POSTGRES_PORT",
     "AIRA_PUBLISH_KEYCLOAK_PORT",
     "AIRA_PUBLISH_KEYCLOAK_HEALTH_PORT",

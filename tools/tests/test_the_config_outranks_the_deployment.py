@@ -229,3 +229,59 @@ def test_the_real_examples_all_render_a_file_that_verifies(tmp_path, monkeypatch
         assert [p for p in config_render.verify(env, COMPOSE) if not p.startswith("note:")] == [], (
             source.name
         )
+
+
+# --- a file that disagrees with itself ----------------------------------------------------------
+
+
+def test_a_key_set_twice_is_reported_even_in_a_hand_made_file(tmp_path, monkeypatch):
+    """The one an operator actually acquires, and the one `verify` returned before reaching.
+
+    A hand-made `.env` takes the `note:` branch, and that branch was an early `return` — so the
+    demo path and every operator who edited the shipped example was checked for **nothing**. A key
+    set twice is exactly what appending to a file does, and Compose takes the second and says
+    nothing about the first.
+
+    Measured on a live `deploy/compose/.env` on 2026-09-02: `AIRA_BIND_HOST=127.0.0.1` on line 10,
+    from the shipped example, and `AIRA_BIND_HOST=0.0.0.0` on line 123, appended later so the
+    stack could be reached. Rebuilding `.env` from the example took the override away with nothing
+    saying so, which arrives as `server could not be reached` and sends you to look at Docker.
+    """
+    _no_docker(monkeypatch)
+    env = tmp_path / ".env"
+    env.write_text(
+        "AIRA_BIND_HOST=127.0.0.1\nAIRA_CURRENCY=EUR\nAIRA_BIND_HOST=0.0.0.0\n", encoding="utf-8"
+    )
+    problems = config_render.verify(env, COMPOSE)
+
+    (duplicate,) = [p for p in problems if not p.startswith("note:")]
+    assert "AIRA_BIND_HOST" in duplicate
+    assert "line 1" in duplicate and "line 3" in duplicate
+    # And it is a finding, not a note: `make up` prints it and the exit code says so.
+    assert config_render.main(["--verify", str(env)]) != 0
+
+
+def test_a_comment_that_looks_like_an_assignment_is_not_a_duplicate(tmp_path, monkeypatch):
+    """The shipped example offers most settings as commented-out lines, so a check that counted
+    those would fire on every file this repository hands out."""
+    _no_docker(monkeypatch)
+    env = tmp_path / ".env"
+    env.write_text("#AIRA_BIND_HOST=0.0.0.0\nAIRA_BIND_HOST=127.0.0.1\n", encoding="utf-8")
+    assert all(p.startswith("note:") for p in config_render.verify(env, COMPOSE))
+
+
+def test_a_key_set_twice_is_reported_in_a_rendered_file_too(rendered, monkeypatch):
+    """A rendered file somebody appended to has the same problem, and the appended line is
+    precisely the one nobody re-renders."""
+    _no_docker(monkeypatch)
+    _source, env = rendered
+    first = next(
+        line.split("=", 1)[0]
+        for line in env.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.startswith("#") and "=" in line
+    )
+    with env.open("a", encoding="utf-8") as handle:
+        handle.write(f"\n{first}=appended-later\n")
+
+    problems = config_render.verify(env, COMPOSE)
+    assert any(first in p and "ignores the first" in p for p in problems), problems

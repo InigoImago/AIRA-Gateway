@@ -22,6 +22,29 @@ Detail and dates: [`DEVLOG.md`](DEVLOG.md) · decisions: [`adr/`](adr/README.md)
 These have each happened more than once. When something behaves impossibly, check these before
 reading code.
 
+- **An address handed to a browser is not an address, it is an address *from where the browser
+  is*.** `localhost` is correct in `runtime-config.js`, in the realm's redirect URIs, in
+  `AIRA_OIDC_ISSUER` and in everything `make` prints — and every one of them is correct only for a
+  browser on the Docker host. From anywhere else all four give the same `server could not be
+  reached`, at four different walls, in an order that makes each fix look like the last one
+  needed. When a value crosses into a browser, ask whose name resolution will read it.
+
+  *And half a rule is the worse half.* The console's **port** was made a variable in August with a
+  test file explaining that a knob which silently breaks authentication is worse than no knob; the
+  **host** in the same two lines stayed a literal until somebody tried to reach the stack from
+  their own machine. A parameter added beside a literal reads as *this is configurable* — so the
+  next person stops looking at exactly the point where the remaining literal is about to refuse
+  them.
+
+- **A file that sets a key twice means whatever its line order means.** Compose takes the last
+  definition and says nothing about the first, so a value appended at the bottom silently beats the
+  one near the top — and the top one is what anybody reads. Found live: `AIRA_BIND_HOST` at lines
+  10 and 123 of a working `.env`, which made rebuilding that file from the shipped example look
+  like a regression in something else entirely. The check is cheap; the reason it was missing is
+  the interesting part — `verify` returned early with a friendly note for hand-made files, so the
+  files most likely to have the defect were the ones checked for nothing. **An early return that
+  skips a whole class of file is a check that does not cover its likeliest case.**
+
 - **A success returned by a client library is a claim about the client's own call, not about the
   far end.** `SpanExportResult.SUCCESS` means `resp.ok` and nothing more — and OTLP answers `200`
   with a body saying it dropped half the batch, which the Python exporter discards unread. So the

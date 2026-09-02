@@ -87,11 +87,15 @@
       "standardFlowEnabled": true,
       "redirectUris": [
         "http://localhost:${AIRA_CONSOLE_PORT:4200}/*",
-        "http://127.0.0.1:${AIRA_CONSOLE_PORT:4200}/*"
+        "http://127.0.0.1:${AIRA_CONSOLE_PORT:4200}/*",
+        "http://${AIRA_CONSOLE_HOST:localhost}:${AIRA_CONSOLE_PORT:4200}/*",
+        "https://${AIRA_CONSOLE_HOST:localhost}:${AIRA_CONSOLE_PORT:4200}/*"
       ],
       "webOrigins": [
         "http://localhost:${AIRA_CONSOLE_PORT:4200}",
-        "http://127.0.0.1:${AIRA_CONSOLE_PORT:4200}"
+        "http://127.0.0.1:${AIRA_CONSOLE_PORT:4200}",
+        "http://${AIRA_CONSOLE_HOST:localhost}:${AIRA_CONSOLE_PORT:4200}",
+        "https://${AIRA_CONSOLE_HOST:localhost}:${AIRA_CONSOLE_PORT:4200}"
       ],
       "attributes": {
         "pkce.code.challenge.method": "S256"

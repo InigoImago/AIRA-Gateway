@@ -74,6 +74,12 @@ services:
       # sends. Get this wrong and the console loads while login fails with *"Invalid parameter:
       # redirect_uri"*.
       AIRA_CONSOLE_PORT: ${AIRA_CONSOLE_PORT:-${AIRA_PUBLISH_FRONTEND_PORT:-${AIRA_FRONTEND_PORT:-4200}}}
+      # **And the host the browser types.** The realm's redirect URIs pinned `localhost` and
+      # `127.0.0.1` and parameterised only the port, so a stack reached from any other machine
+      # failed at the redirect — after the operator had already found `AIRA_BIND_HOST` and
+      # `AIRA_OIDC_ISSUER`, which is two fixes deep for a third wall. Defaults to `localhost`, so
+      # the entry it adds is a duplicate of the first one and nothing changes for a laptop.
+      AIRA_CONSOLE_HOST: ${AIRA_CONSOLE_HOST:-localhost}
     ports:
       - "${AIRA_BIND_HOST:-127.0.0.1}:${AIRA_PUBLISH_KEYCLOAK_PORT:-8080}:8080"   # Keycloak HTTP
       - "[${AIRA_BIND_HOST6:-::1}]:${AIRA_PUBLISH_KEYCLOAK_PORT:-8080}:8080"   # Keycloak HTTP

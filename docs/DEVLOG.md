@@ -5,6 +5,61 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## `server could not be reached`, and the four walls behind it (2026-09-02)
+
+Reported: *why is the showcase suddenly talking to localhost, and when I rebuild `.env` I get
+`server could not be reached`.* Two separate things, and the first is not new.
+
+### What was actually happening
+
+`AIRA_BIND_HOST=127.0.0.1` has been in `deploy/compose/.env.example` since long before this week
+and I did not touch it (`git diff 3d24bf5..HEAD` on that file names no such line). What made it
+visible: the live `deploy/compose/.env` sets **`AIRA_BIND_HOST` twice** — `127.0.0.1` on line 10,
+from the shipped example, and `0.0.0.0` on line 123, appended later so the stack could be reached
+from another machine. Compose takes the second. Rebuilding `.env` from the example takes the
+override away, and nothing anywhere says a value was lost.
+
+So `make up` now says it. `config_render.verify` gained `duplicated_keys`, and — the part that
+mattered — it runs **before the provenance check's early return**. A hand-made `.env` (the demo
+path, and every operator who edited the example) took the `note:` branch and was therefore checked
+for *nothing at all*, while a key set twice is precisely the defect appending to a file produces.
+
+### And the second thing was a real gap in the file I had just rewritten
+
+Yesterday's `.env.example` rewrite opens with "the six switches that change what you get" and did
+not mention the one thing most likely to bite somebody bringing this up for the first time from
+anywhere but the Docker host. There are **four** walls, each giving the same message:
+
+1. `AIRA_BIND_HOST` / `AIRA_BIND_HOST6` — nothing listening on a reachable interface. Both,
+   because Docker opens one socket per published entry.
+2. `AIRA_OIDC_ISSUER` — the console loads and the login goes nowhere: its default
+   `http://localhost:8080/realms/aira` is written into `runtime-config.js` and handed to **the
+   browser**, which resolves `localhost` to itself. It is also what the gateway checks `iss`
+   against, so the two cannot differ.
+3. `AIRA_CSP_CONNECT_SRC` — the token request is blocked by the console's own content policy.
+4. The realm's redirect URIs — Keycloak refuses the redirect.
+
+The fourth had no knob at all: `aira-realm.json` pinned `localhost` and `127.0.0.1` and
+parameterised only the port. Moving the port was made possible in August; moving the machine was
+not. `AIRA_CONSOLE_HOST` now joins `AIRA_CONSOLE_PORT`, adding `http://` and `https://` entries for
+the named host while `localhost` and `127.0.0.1` stay listed in their own right — so a laptop pays
+nothing. Verified against a throwaway Keycloak 26 with `AIRA_CONSOLE_HOST=aira.intern.example`, and
+all four URIs came out; the running stack was not touched to prove it.
+
+`.env.example` now carries the four in order, with what breaks at each and the whole set together.
+
+### The shape
+
+Making the port a variable and leaving the host a literal is *half a rule*, and the half that was
+left is the one an operator meets second — after they have already found `AIRA_BIND_HOST` and
+`AIRA_OIDC_ISSUER` and believe they are nearly there. The port fix's own test file says a knob that
+silently breaks authentication is worse than no knob; the same sentence applies to the address the
+knob does not cover.
+
+Four new mutations across this round and the last; the harness defends **696** properties.
+
+---
+
 ## A green line about telemetry that was thrown away (2026-09-02)
 
 Reported after the first day with `AIRA_DEBUG_INTEGRATIONS=otel`: *you see a line, but not that it
